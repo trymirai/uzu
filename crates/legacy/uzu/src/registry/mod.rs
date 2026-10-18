@@ -3,6 +3,7 @@ mod error;
 pub mod local;
 mod merged;
 pub mod mirai;
+#[cfg(not(target_family = "wasm"))]
 pub mod openai;
 
 pub use cached::CachedRegistry;

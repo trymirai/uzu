@@ -141,7 +141,7 @@ impl ChatSession {
     pub async fn with_instance(instance: &ChatInstance) -> Result<Self, ChatSessionError> {
         let model = instance.model();
 
-        let instance = tokio::spawn({
+        let instance_future = {
             let instance = instance.clone();
             async move {
                 match instance.kind() {
@@ -153,11 +153,13 @@ impl ChatSession {
                     },
                 }
             }
-        })
-        .await
-        .map_err(|error| ChatSessionError::Backend {
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let instance = tokio::spawn(instance_future).await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })??;
+        #[cfg(target_family = "wasm")]
+        let instance = instance_future.await?;
 
         let supports_tool_calls = instance.supports_tool_calls();
         Ok(Self {
@@ -640,7 +642,7 @@ impl ChatSession {
         #[cfg(feature = "bindings-pyo3")]
         bindings_pyo3::spawn_with_current_task_locals(turn);
         #[cfg(not(feature = "bindings-pyo3"))]
-        tokio::spawn(turn);
+        kiban::rt::spawn(turn);
         ChatSessionStream {
             receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,

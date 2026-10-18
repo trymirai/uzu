@@ -1,9 +1,10 @@
 mod config;
 
-use std::{fs, future::Future, path::Path, pin::Pin};
+use std::{future::Future, path::Path, pin::Pin};
 
 pub use config::Config;
 use hanashi::chat::EncodingConfig;
+use kiban::{fs::asyn as fs, rt::MakeSendFuture};
 use shoji::{
     traits::Registry as RegistryTrait,
     types::{
@@ -20,19 +21,19 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub(crate) fn model_at_path(
+    pub(crate) async fn model_at_path(
         path: &Path,
         backend_identifier: String,
         backend_version: String,
     ) -> Result<Model, RegistryError> {
         let registry =
-            Self::new(Config::new(backend_identifier, backend_version, path.to_string_lossy().into_owned()))?;
-        registry.model(Path::new(&registry.config.path))
+            Self::new(Config::new(backend_identifier, backend_version, path.to_string_lossy().into_owned())).await?;
+        registry.model(Path::new(&registry.config.path)).await
     }
 
-    pub fn new(mut config: Config) -> Result<Self, RegistryError> {
-        config.path = Path::new(&config.path)
-            .canonicalize()
+    pub async fn new(mut config: Config) -> Result<Self, RegistryError> {
+        config.path = fs::canonicalize(&config.path)
+            .await
             .map_err(|error| RegistryError::UnableToGetModels {
                 message: format!("Unable to open local model path {}: {error}", config.path),
             })?
@@ -52,29 +53,22 @@ impl RegistryTrait for Registry {
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
-        Box::pin(async {
+        Box::pin(MakeSendFuture::new(async {
             let path = Path::new(&self.config.path);
-            if path.join("config.json").is_file() {
-                return Ok(vec![self.model(path)?]);
+            if fs::is_file(path.join("config.json")).await {
+                return Ok(vec![self.model(path).await?]);
             }
 
-            let entries = fs::read_dir(path).map_err(|error| RegistryError::UnableToGetModels {
+            let entries = fs::read_dir(path).await.map_err(|error| RegistryError::UnableToGetModels {
                 message: error.to_string(),
             })?;
 
             let mut models = Vec::new();
-            for entry in entries {
-                let entry = entry.map_err(|error| RegistryError::UnableToGetModels {
-                    message: error.to_string(),
-                })?;
-                let path = entry.path();
-                let file_type = entry.file_type().map_err(|error| RegistryError::UnableToGetModels {
-                    message: error.to_string(),
-                })?;
-                if !file_type.is_dir() {
+            for path in entries {
+                if !fs::is_dir_no_follow(&path).await {
                     continue;
                 }
-                match self.model(&path) {
+                match self.model(&path).await {
                     Ok(model) => models.push(model),
                     Err(error) => {
                         tracing::warn!(?error, path = %path.display(), "skipping invalid local model");
@@ -83,12 +77,12 @@ impl RegistryTrait for Registry {
             }
 
             Ok(models)
-        })
+        }))
     }
 }
 
 impl Registry {
-    fn model(
+    async fn model(
         &self,
         path: &Path,
     ) -> Result<Model, RegistryError> {
@@ -96,6 +90,7 @@ impl Registry {
             message: format!("Invalid local model path: {}", path.display()),
         })?;
         let specialization = resolve_model_type(path)
+            .await
             .map(|model_type| match model_type {
                 ModelType::LanguageModel => ModelSpecialization::Chat {},
                 ModelType::Classifier => ModelSpecialization::Classification {},
@@ -116,13 +111,13 @@ impl Registry {
                     path: path.to_string_lossy().to_string(),
                 },
             },
-            load_encoding(path),
+            load_encoding(path).await,
         ))
     }
 }
 
-fn load_encoding(model_path: &Path) -> Option<Value> {
-    let Ok(text) = fs::read_to_string(model_path.join("encoding.json")) else {
+async fn load_encoding(model_path: &Path) -> Option<Value> {
+    let Ok(text) = fs::read_to_string(model_path.join("encoding.json")).await else {
         return None;
     };
     let parsed = serde_json::from_str::<serde_json::Value>(&text);

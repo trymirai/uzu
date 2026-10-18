@@ -87,7 +87,10 @@ pub fn null_result() -> Value {
 /// Runs a synchronous tool on the blocking thread pool so heavy work
 /// doesn't stall the async runtime.
 pub async fn run_blocking<T: Send + 'static>(func: impl FnOnce() -> T + Send + 'static) -> Result<T, ErrorFuture> {
-    tokio::task::spawn_blocking(func).await.map_err(|error| -> ErrorFuture { error.into() })
+    #[cfg(not(target_family = "wasm"))]
+    return tokio::task::spawn_blocking(func).await.map_err(|error| -> ErrorFuture { error.into() });
+    #[cfg(target_family = "wasm")]
+    Ok(func())
 }
 
 fn coerce_to_schema(

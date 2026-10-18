@@ -31,7 +31,9 @@
         "format": "./scripts/format",
         "tsn": "ts-node -r tsconfig-paths/register",
         "lint": "./scripts/lint",
-        "fix": "./scripts/format"
+        "fix": "./scripts/format",
+        "build:wasm": "./scripts/build-wasm",
+        "test:browser": "node scripts/test-browser.mjs"
     },
     "dependencies": {
         "zod": "^4.2.1"
@@ -74,6 +76,10 @@
         "./*": {
             "import": "./dist/*.mjs",
             "require": "./dist/*.js"
+        },
+        "./browser": {
+            "types": "./dist-wasm/index.d.ts",
+            "import": "./dist-wasm/index.js"
         }
     }
 }

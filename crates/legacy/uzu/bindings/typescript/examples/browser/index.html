@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Uzu WebGPU chat</title>
+<script type="importmap">
+    { "imports": { "@trymirai/uzu/browser": "../index.js" } }
+</script>
+<pre id="output">Loading…</pre>
+<script type="module">
+    import { main } from './quickStart.js';
+    window.uzuResult = main();
+    window.uzuResult.then(
+        (result) => (document.querySelector('#output').textContent = JSON.stringify(result, null, 2)),
+        (error) => {
+            document.querySelector('#output').textContent = String(error);
+            console.error(error);
+        },
+    );
+</script>

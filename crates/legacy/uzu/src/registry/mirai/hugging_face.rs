@@ -21,10 +21,8 @@ impl HuggingFace {
         #[builder(default = HUGGING_FACE_URL.to_string(), into)] endpoint: String,
         token: Option<BearerToken>,
     ) -> Result<Self, RegistryError> {
-        let client = Client::builder().timeout(Duration::from_secs(30)).build().map_err(|error| {
-            RegistryError::UnableToCreate {
-                message: error.to_string(),
-            }
+        let client = Client::builder().build().map_err(|error| RegistryError::UnableToCreate {
+            message: error.to_string(),
         })?;
         let endpoint = Url::parse(&endpoint).map_err(|error| RegistryError::UnableToCreate {
             message: error.to_string(),
@@ -53,7 +51,7 @@ impl HuggingFace {
         let mut metadata_url = self
             .url(["api", "models"].into_iter().chain(repository.identifier.split('/')).chain(["revision", revision]))?;
         metadata_url.set_query(Some("blobs=true"));
-        let mut request = self.client.get(metadata_url);
+        let mut request = self.client.get(metadata_url).timeout(Duration::from_secs(30));
         if let Some(token) = &self.token {
             request = request.header(AUTHORIZATION, token.header_value());
         }

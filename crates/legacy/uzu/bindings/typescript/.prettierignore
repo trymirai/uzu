@@ -3,6 +3,7 @@
 
 # don't format tsc output, will break source maps
 /dist
+/dist-wasm
 
 /examples
 README.md

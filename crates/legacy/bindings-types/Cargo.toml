@@ -29,6 +29,7 @@ bindings-pyo3 = [
     "dep:inventory",
 ]
 bindings-wasm = [
+    "dep:js-sys",
     "dep:wasm-bindgen",
     "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen-futures",
@@ -36,6 +37,7 @@ bindings-wasm = [
 ]
 
 [dependencies]
+js-sys = { workspace = true, optional = true }
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }

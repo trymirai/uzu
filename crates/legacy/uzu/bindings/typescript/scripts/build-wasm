@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+workspace="$(cd ../../../../.. && pwd)"
+
+cargo build --manifest-path "$workspace/Cargo.toml" --locked --release \
+    -p uzu --lib --no-default-features --features backend-webgpu,bindings-wasm \
+    --target wasm32-unknown-unknown
+wasm-bindgen "$workspace/target/wasm32-unknown-unknown/release/uzu.wasm" \
+    --target web --out-dir dist-wasm --out-name index
+printf '%s\n' '{"type":"module"}' > dist-wasm/package.json
+./node_modules/.bin/tsc -p tsconfig.browser.json
+cp examples/browser/index.html dist-wasm/example/index.html

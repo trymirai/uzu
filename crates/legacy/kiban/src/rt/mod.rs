@@ -1,8 +1,10 @@
+mod send_future;
 #[cfg(not(target_family = "wasm"))]
 mod tokio;
 #[cfg(target_family = "wasm")]
 mod wasm;
 
+pub use send_future::MakeSendFuture;
 #[cfg(not(target_family = "wasm"))]
 pub use tokio::TokioRuntimeHandle as RuntimeHandle;
 #[cfg(target_family = "wasm")]

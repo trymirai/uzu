@@ -4,6 +4,7 @@ import unusedImports from 'eslint-plugin-unused-imports';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
+    { ignores: ['dist-wasm/**'] },
     {
         languageOptions: {
             parser: tseslint.parser,
