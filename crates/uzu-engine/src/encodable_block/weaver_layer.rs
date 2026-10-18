@@ -41,10 +41,10 @@ pub struct WeaverLayer<B: Backend> {
 }
 
 impl<B: Backend> WeaverLayer<B> {
-    pub fn new(
+    pub async fn new(
         add_to_residual: bool,
         config: &WeaverConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, WeaverNewError<B>> {
         let WeaverConfig {
@@ -65,7 +65,8 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             &parameter_tree.subtree("qkv_projection"),
             context,
-        )?;
+        )
+        .await?;
         let out_projection = <dyn Linear<B>>::new(
             model_dim,
             model_dim,
@@ -73,7 +74,8 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             &parameter_tree.subtree("out_projection"),
             context,
-        )?;
+        )
+        .await?;
         let prefix_attention = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
             AttentionKernelConfig {
@@ -106,7 +108,8 @@ impl<B: Backend> WeaverLayer<B> {
             norm_config,
             &parameter_tree.subtree("pre_attention_norm"),
             context,
-        )?;
+        )
+        .await?;
         let pre_mlp_norm = Normalization::new(
             model_dim,
             DATA_TYPE,
@@ -116,7 +119,8 @@ impl<B: Backend> WeaverLayer<B> {
             norm_config,
             &parameter_tree.subtree("pre_mlp_norm"),
             context,
-        )?;
+        )
+        .await?;
         let mlp_config = AnyMLPConfig::DenseMLPConfig(DenseMLPConfig::unclipped(
             linear_config.clone(),
             AnyActivation::SiLU(SiLU::default()),
@@ -124,7 +128,8 @@ impl<B: Backend> WeaverLayer<B> {
             true,
         ));
         let (mlp, up_input_hadamard_factors) =
-            <dyn Mlp<B>>::new(model_dim, hidden_dim, DATA_TYPE, &mlp_config, &parameter_tree.subtree("mlp"), context)?;
+            <dyn Mlp<B>>::new(model_dim, hidden_dim, DATA_TYPE, &mlp_config, &parameter_tree.subtree("mlp"), context)
+                .await?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
             .map_err(WeaverNewError::Backend)?;

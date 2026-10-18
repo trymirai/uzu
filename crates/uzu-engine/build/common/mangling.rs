@@ -1,9 +1,12 @@
-#![cfg(all(feature = "metal", target_os = "macos"))]
+#![cfg(any(all(feature = "metal", target_os = "macos"), feature = "webgpu"))]
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use std::iter::repeat_n;
 
 use itertools::Itertools;
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use proc_macro2::TokenStream;
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use quote::quote;
 
 pub fn static_mangle(
@@ -25,6 +28,7 @@ pub fn static_mangle(
     )
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub fn dynamic_mangle(
     function_name: impl AsRef<str>,
     variant: impl IntoIterator<Item = TokenStream>,

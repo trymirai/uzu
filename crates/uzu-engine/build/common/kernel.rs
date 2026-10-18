@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::identifiers::{ArgumentName, KernelName};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
 pub enum KernelBufferAccess {
     Read,
     ReadWrite,

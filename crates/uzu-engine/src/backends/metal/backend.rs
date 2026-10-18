@@ -25,6 +25,7 @@ impl Backend for Metal {
     type CommandBuffer = MetalCommandBuffer;
     type DebugGroupSpan<'a> = MetalDebugGroupSpan<'a>;
     type GlobalBuffer = BlockAllocation<MetalDenseBuffer>;
+    type GlobalBufferInitializer = BlockAllocation<MetalDenseBuffer>;
     type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
     type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
     type SparseBuffer = MetalSparseBuffer;

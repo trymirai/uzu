@@ -3,7 +3,7 @@ use std::{os::raw::c_void, ptr::NonNull};
 use metal::MTLBuffer;
 
 use crate::backends::{
-    common::{Buffer, BufferCpuAccessible, GlobalBuffer, allocator::block::BlockAllocation},
+    common::{Buffer, BufferCpuAccessible, GlobalBuffer, GlobalBufferInitializer, allocator::block::BlockAllocation},
     metal::{Metal, buffer::dense::MetalDenseBuffer},
 };
 
@@ -22,3 +22,8 @@ impl BufferCpuAccessible for BlockAllocation<MetalDenseBuffer> {
 }
 
 impl GlobalBuffer for BlockAllocation<MetalDenseBuffer> {}
+impl GlobalBufferInitializer for BlockAllocation<MetalDenseBuffer> {
+    fn end_initialization(self) -> BlockAllocation<MetalDenseBuffer> {
+        self
+    }
+}

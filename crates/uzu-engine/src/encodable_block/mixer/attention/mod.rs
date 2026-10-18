@@ -76,12 +76,12 @@ pub enum AttentionEncodeError<B: Backend> {
 }
 
 impl<B: Backend> Attention<B> {
-    pub fn new(
+    pub async fn new(
         hidden_dim: u32,
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AttentionConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<B::GlobalBuffer>), AttentionNewError<B>> {
         let is_kv_sharing = config.is_kv_sharing;
@@ -116,7 +116,8 @@ impl<B: Backend> Attention<B> {
             config.has_qkvg_biases,
             &projection_tree,
             context,
-        )?;
+        )
+        .await?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
@@ -133,7 +134,8 @@ impl<B: Backend> Attention<B> {
             value_norm_config,
             parameter_tree,
             context,
-        )?;
+        )
+        .await?;
 
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
@@ -143,8 +145,11 @@ impl<B: Backend> Attention<B> {
             rope_config.is_some(),
         )
         .map_err(AttentionNewError::Backend)?;
-        let sinks =
-            config.has_sinks.then(|| parameter_tree.read_buffer("sinks", &[num_q_heads], data_type)).transpose()?;
+        let sinks = if config.has_sinks {
+            Some(parameter_tree.read_buffer("sinks", &[num_q_heads], data_type).await?)
+        } else {
+            None
+        };
 
         assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
         let ring_capacity = sliding_window_size;
@@ -190,7 +195,8 @@ impl<B: Backend> Attention<B> {
             config.has_out_biases,
             &parameter_tree.subtree("out_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         Ok((
             Self {

@@ -95,13 +95,13 @@ pub struct WeightMatrix<B: Backend> {
 }
 
 impl<B: Backend> WeightMatrix<B> {
-    pub fn load(
+    pub async fn load(
         output_dim: u32,
         input_dim: u32,
         data_type: DataType,
         spec: AnyWeightMatrixSpec,
         required_layout: Layout,
-        tree: &ParameterTree<B>,
+        tree: &ParameterTree<'_, B>,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
             layout,
@@ -115,7 +115,7 @@ impl<B: Backend> WeightMatrix<B> {
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization_info else {
-            let values = tree.read_buffer("weights", &[rows, columns], data_type)?;
+            let values = tree.read_buffer("weights", &[rows, columns], data_type).await?;
             return Ok(Self {
                 values,
                 quantized: None,
@@ -137,22 +137,22 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let groups = columns.div_ceil(group_size);
 
-        let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type)?;
+        let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type).await?;
         let params = QuantParams::new(params_layout, rows, groups);
-        let load_plane =
-            |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
-                Ok(tree.read_buffer(name, &shape, storage_type)?)
-            };
-        let scales = load_plane("scales", params.scale_shape(), data_type)?;
+        let load_plane = async |name: &str,
+                                shape: [u32; 2],
+                                storage_type: DataType|
+               -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
+            Ok(tree.read_buffer(name, &shape, storage_type).await?)
+        };
+        let scales = load_plane("scales", params.scale_shape(), data_type).await?;
         let correction = match info.method {
             QuantizationMethod::ScaleBias => {
-                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type)?)
+                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type).await?)
             },
-            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(load_plane(
-                "zero_points",
-                params.zero_point_shape(info.mode),
-                info.mode.storage_type(),
-            )?),
+            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
+                load_plane("zero_points", params.zero_point_shape(info.mode), info.mode.storage_type()).await?,
+            ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
 
