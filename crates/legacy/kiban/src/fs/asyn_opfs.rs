@@ -2,15 +2,14 @@ use std::{
     io,
     io::ErrorKind,
     ops::RangeBounds,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     sync::OnceLock,
 };
 
 use tokio::sync::Mutex;
 use web_sys::{js_sys::Reflect, wasm_bindgen::JsValue};
 
-use super::opfs::{self, WriteCommandType, WriteParams};
-use crate::time::SystemTime;
+use crate::{fs::opfs, time::SystemTime};
 
 pub async fn dir_create_all(path: &str) -> Result<(), io::Error> {
     let mut root = get_root_dir().await?;
@@ -21,9 +20,7 @@ pub async fn dir_create_all(path: &str) -> Result<(), io::Error> {
 }
 
 pub async fn dir_entries(path: &str) -> Result<Vec<String>, io::Error> {
-    let root = get_root_dir().await?;
-    let (parent, name) = resolve_parent(&root, path).await?;
-    let directory = get_dir_handle(&parent, &name, false).await?;
+    let directory = get_dir_handle_root(path).await?;
     let entries = directory.entries().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     Ok(entries.into_iter().map(|(name, _)| name).collect())
 }
@@ -36,6 +33,9 @@ pub async fn dir_remove_all(path: &str) -> Result<(), io::Error> {
 
 pub async fn exists(path: &str) -> Result<bool, io::Error> {
     let root = get_root_dir().await?;
+    if normalized_segments(path)?.is_empty() {
+        return Ok(true);
+    }
     let (parent, name) = match resolve_parent(&root, path).await {
         Ok(path) => path,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
@@ -66,36 +66,12 @@ pub async fn file_copy(
     }
 
     let src_file = get_file_handle_root(src_path, false).await?;
-    let total = src_file.size().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
-
+    let contents = src_file.get_file().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
     let dst_file = get_file_handle_root(dst_path, true).await?;
     let writer = dst_file.create_writable(false).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
-
-    let chunk_size = 16 * 1024;
-    let mut offset = 0u64;
-    while offset < total {
-        let end = (offset + chunk_size).min(total);
-        let chunk =
-            src_file.read_range(offset..end).await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
-        if chunk.is_empty() {
-            break;
-        }
-
-        let chunk_length = chunk.len();
-        let params = &WriteParams {
-            command_type: WriteCommandType::Write,
-            data: Some(chunk),
-            position: Some(offset),
-            size: None,
-        };
-        match writer.write_with_params(params).await {
-            Ok(_) => {},
-            Err(err) => {
-                let _ = writer.abort().await;
-                return Err(js_value_to_io_error(&err, ErrorKind::Other));
-            },
-        }
-        offset += chunk_length as u64;
+    if let Err(err) = writer.write_blob(contents.as_blob()).await {
+        let _ = writer.abort().await;
+        return Err(js_value_to_io_error(&err, ErrorKind::Other));
     }
 
     writer.close().await.map_err(|err| js_value_to_io_error(&err, ErrorKind::Other))?;
@@ -186,6 +162,26 @@ pub async fn file_write_if_absent(
 
 pub async fn is_file(path: &str) -> bool {
     get_file_handle_root(path, false).await.is_ok()
+}
+
+pub async fn is_dir(path: &str) -> bool {
+    get_dir_handle_root(path).await.is_ok()
+}
+
+pub async fn canonicalize(path: &str) -> Result<PathBuf, io::Error> {
+    let normalized = Path::new("/").join(normalized_segments(path)?.join("/"));
+    if !exists(path).await? {
+        return Err(io::Error::from(ErrorKind::NotFound));
+    }
+    Ok(normalized)
+}
+
+async fn get_dir_handle_root(path: &str) -> Result<opfs::DirectoryHandle, io::Error> {
+    let mut directory = get_root_dir().await?;
+    for segment in normalized_segments(path)? {
+        directory = get_dir_handle(&directory, &segment, false).await?;
+    }
+    Ok(directory)
 }
 
 pub async fn get_dir_handle(

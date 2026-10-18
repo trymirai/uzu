@@ -1904,12 +1904,12 @@ public func FfiConverterTypeChatModelInfo_lower(_ value: ChatModelInfo) -> RustB
 public struct Device: Equatable, Hashable, Codable {
     public var osName: String?
     public var cpuName: String?
-    public var memoryTotal: Int64
+    public var memoryTotal: Int64?
     public var homePath: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(osName: String?, cpuName: String?, memoryTotal: Int64, homePath: String) {
+    public init(osName: String?, cpuName: String?, memoryTotal: Int64?, homePath: String) {
         self.osName = osName
         self.cpuName = cpuName
         self.memoryTotal = memoryTotal
@@ -1934,7 +1934,7 @@ public struct FfiConverterTypeDevice: FfiConverterRustBuffer {
             try Device(
                 osName: FfiConverterOptionString.read(from: &buf), 
                 cpuName: FfiConverterOptionString.read(from: &buf), 
-                memoryTotal: FfiConverterInt64.read(from: &buf), 
+                memoryTotal: FfiConverterOptionInt64.read(from: &buf), 
                 homePath: FfiConverterString.read(from: &buf)
         )
     }
@@ -1942,7 +1942,7 @@ public struct FfiConverterTypeDevice: FfiConverterRustBuffer {
     public static func write(_ value: Device, into buf: inout [UInt8]) {
         FfiConverterOptionString.write(value.osName, into: &buf)
         FfiConverterOptionString.write(value.cpuName, into: &buf)
-        FfiConverterInt64.write(value.memoryTotal, into: &buf)
+        FfiConverterOptionInt64.write(value.memoryTotal, into: &buf)
         FfiConverterString.write(value.homePath, into: &buf)
     }
 }
@@ -2826,6 +2826,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
+    typealias SwiftType = Int64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt64.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

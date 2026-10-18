@@ -53,6 +53,7 @@ bindings-wasm = [
 [dependencies]
 bindings-types = { workspace = true, optional = true }
 bon.workspace = true
+kiban.workspace = true
 bindings.workspace = true
 nagare-macros.workspace = true
 shoji.workspace = true
@@ -67,7 +68,7 @@ reqwest.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 tokenizers.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 uniffi = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
@@ -82,7 +83,11 @@ wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["full"] }
 uuid.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 keisoku.workspace = true

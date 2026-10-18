@@ -18,8 +18,10 @@ pub enum EngineError {
     BackendNotFound {},
     #[error(transparent)]
     ChatSession(#[from] nagare::chat::ChatSessionError),
+    #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     ClassificationSession(#[from] nagare::classification::ClassificationSessionError),
+    #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
     #[error("Unable to read model configuration: {message}")]

@@ -1,5 +1,4 @@
 use std::{
-    fs::{read_to_string, remove_file, rename, write},
     future::Future,
     io,
     path::{Path, PathBuf},
@@ -10,6 +9,10 @@ use std::{
 use bon::bon;
 use download_manager::BearerToken;
 use futures::{StreamExt, stream};
+use kiban::{
+    fs::asyn::{read_to_string, remove_file, rename, write},
+    rt::MakeSendFuture,
+};
 use nagare::api::{Client, Error as ApiError};
 use shoji::{
     traits::Registry as RegistryTrait,
@@ -39,7 +42,7 @@ pub struct Registry {
 #[bon]
 impl Registry {
     #[builder]
-    pub fn new(
+    pub async fn new(
         api_key: Option<String>,
         huggingface_api_key: Option<BearerToken>,
         device: Device,
@@ -56,7 +59,7 @@ impl Registry {
         })?;
         let hugging_face =
             HuggingFace::builder().endpoint(hugging_face_url).maybe_token(huggingface_api_key).build()?;
-        let snapshot = Self::load_registry(&cache_path).ok().map(|models| (models, false));
+        let snapshot = Self::load_registry(&cache_path).await.ok().map(|models| (models, false));
 
         Ok(Self {
             device: (&device).into(),
@@ -98,7 +101,7 @@ impl RegistryTrait for Registry {
         &self,
         on_update: Arc<dyn Fn() + Send + Sync>,
     ) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), RegistryError>> + Send + '_>> {
-        Box::pin(async move {
+        Box::pin(MakeSendFuture::new(async move {
             let cached = self.cached_listing().map(|(models, _)| models).unwrap_or_default();
             if !cached.is_empty() {
                 self.publish((cached.clone(), false), &on_update);
@@ -107,12 +110,12 @@ impl RegistryTrait for Registry {
                 message: error.to_string(),
             })?;
             let listing = self.resolve(models, cached, &on_update).await;
-            if let Err(error) = self.save_registry(&listing.0) {
+            if let Err(error) = self.save_registry(&listing.0).await {
                 tracing::warn!(?error, "failed to save Mirai registry");
             }
             self.publish(listing.clone(), &on_update);
             Ok(listing)
-        })
+        }))
     }
 }
 
@@ -122,7 +125,7 @@ impl Registry {
             .device(self.device.clone())
             .backends(self.backends.clone())
             .include_traces(self.include_traces)
-            .show_all(std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok())
+            .show_all(cfg!(target_family = "wasm") || std::env::var("UZU_REGISTRY_SHOW_ALL").is_ok())
             .build();
         let response = self.client.call::<FetchModels>(&request).await?;
         response.models().ok_or_else(|| ApiError::Decode("response contained no models".to_string()))
@@ -211,27 +214,29 @@ impl Registry {
         Some(model)
     }
 
-    fn save_registry(
+    async fn save_registry(
         &self,
         models: &[Model],
     ) -> io::Result<()> {
         let temporary = self.cache_path.join(format!(".registry-{}.json", uuid::Uuid::new_v4()));
-        let saved = (|| {
+        let saved = async {
             let contents = serde_json::to_vec_pretty(models).map_err(io::Error::other)?;
-            write(&temporary, contents)?;
-            rename(&temporary, self.cache_path.join("registry.json"))
-        })();
+            write(&temporary, contents).await?;
+            rename(&temporary, self.cache_path.join("registry.json")).await
+        }
+        .await;
         if saved.is_err() {
-            let _ = remove_file(temporary);
+            let _ = remove_file(temporary).await;
         }
         saved
     }
 
-    fn load_registry(cache_path: &Path) -> Result<Vec<Model>, RegistryError> {
-        let contents =
-            read_to_string(cache_path.join("registry.json")).map_err(|error| RegistryError::UnableToGetModels {
+    async fn load_registry(cache_path: &Path) -> Result<Vec<Model>, RegistryError> {
+        let contents = read_to_string(cache_path.join("registry.json")).await.map_err(|error| {
+            RegistryError::UnableToGetModels {
                 message: format!("Unable to read registry: {}", error),
-            })?;
+            }
+        })?;
         serde_json::from_str(&contents).map_err(|error| RegistryError::UnableToGetModels {
             message: format!("Unable to parse registry: {}", error),
         })

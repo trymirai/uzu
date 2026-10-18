@@ -141,35 +141,40 @@ impl UniversalStream {
         let mut downloaded_bytes = resume_from;
         let mut last_progress = Instant::now().checked_sub(PROGRESS_INTERVAL).unwrap_or_else(Instant::now);
         let mut body = response.bytes_stream();
-        loop {
-            let chunk = tokio::select! {
-                _ = Self::paused(&mut self.pause) => {
-                    file.flush().await?;
+        let result = async {
+            loop {
+                let chunk = tokio::select! {
+                    _ = Self::paused(&mut self.pause) => {
+                        return Ok(true);
+                    },
+                    chunk = body.next() => chunk,
+                };
+                let Some(chunk) = chunk else {
+                    break;
+                };
+                let chunk = chunk?;
+                downloaded_bytes += chunk.len() as u64;
+                if let Some(expected_bytes) = config.expected_bytes
+                    && downloaded_bytes > expected_bytes
+                {
+                    return Err(UniversalBackendError::Protocol(format!(
+                        "response exceeded the declared size of {expected_bytes} bytes"
+                    )));
+                }
+                file.write_all(&chunk).await?;
+                if last_progress.elapsed() >= PROGRESS_INTERVAL {
                     self.events.send_progress(self.generation, downloaded_bytes, total_bytes);
-                    return Ok(true);
-                },
-                chunk = body.next() => chunk,
-            };
-            let Some(chunk) = chunk else {
-                break;
-            };
-            let chunk = chunk?;
-            downloaded_bytes += chunk.len() as u64;
-            if let Some(expected_bytes) = config.expected_bytes
-                && downloaded_bytes > expected_bytes
-            {
-                return Err(UniversalBackendError::Protocol(format!(
-                    "response exceeded the declared size of {expected_bytes} bytes"
-                )));
+                    last_progress = Instant::now();
+                }
             }
-            file.write_all(&chunk).await?;
-            if last_progress.elapsed() >= PROGRESS_INTERVAL {
-                self.events.send_progress(self.generation, downloaded_bytes, total_bytes);
-                last_progress = Instant::now();
-            }
+            Ok::<_, UniversalBackendError>(false)
         }
+        .await;
         file.flush().await?;
         self.events.send_progress(self.generation, downloaded_bytes, total_bytes);
+        if result? {
+            return Ok(true);
+        }
         fs::asyn::rename(artifact, &config.destination).await?;
         Ok(false)
     }

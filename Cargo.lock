@@ -722,6 +722,7 @@ name = "bindings-types"
 version = "0.6.13"
 dependencies = [
  "inventory",
+ "js-sys",
  "napi",
  "napi-build",
  "napi-derive",
@@ -4964,6 +4965,7 @@ dependencies = [
  "indexmap 2.14.2",
  "inventory",
  "keisoku",
+ "kiban",
  "nagare-macros",
  "napi",
  "napi-build",
@@ -10007,6 +10009,7 @@ dependencies = [
  "fancy-regex 0.19.2",
  "futures",
  "futures-util",
+ "getrandom 0.4.3",
  "hanashi",
  "indexmap 2.14.2",
  "indicatif",
@@ -10050,6 +10053,7 @@ dependencies = [
  "uzu-engine",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "wiremock",
 ]
 
