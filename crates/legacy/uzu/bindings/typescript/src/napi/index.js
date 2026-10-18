@@ -635,5 +635,3 @@ module.exports.Engine = nativeBinding.Engine
 module.exports.EngineCallback = nativeBinding.EngineCallback
 module.exports.EngineConfig = nativeBinding.EngineConfig
 module.exports.Player = nativeBinding.Player
-module.exports.Settings = nativeBinding.Settings
-module.exports.SettingKind = nativeBinding.SettingKind

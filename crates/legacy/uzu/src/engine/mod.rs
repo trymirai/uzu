@@ -48,7 +48,7 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use crate::{
     device::Device,
     engine::bridge::UzuLlmBackend,
-    helpers::{SharedAccess, is_endpoint_reachable},
+    helpers::SharedAccess,
     logs,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
@@ -57,14 +57,12 @@ use crate::{
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
         unique_model,
     },
-    settings::Settings,
     storage::{BearerToken, Config as StorageConfig, DownloadPhase, DownloadState, Storage},
 };
 
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct Engine {
-    settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
     storage: Arc<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
@@ -80,16 +78,6 @@ impl Engine {
         let runtime_handle = RuntimeHandle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
-
-        let settings = if let Some(application_identifier) = &config.application_identifier {
-            Some(Settings::new(application_identifier.clone())?)
-        } else {
-            None
-        };
-        let mut config = config;
-        if let Some(settings) = &settings {
-            config.synchronize_with_settings(settings)?;
-        }
 
         let device = Device::new()?;
 
@@ -108,7 +96,6 @@ impl Engine {
         let storage = Arc::new(Storage::new(runtime_handle, storage_config).await?);
 
         let engine = Self {
-            settings: SharedAccess::new(settings),
             storage,
             registry,
             backends: SharedAccess::new(HashMap::new()),
@@ -154,16 +141,10 @@ impl Engine {
 
         let mut openai_configs: Vec<OpenAIConfig> = vec![];
         if config.allow_ollama_usage {
-            let ollama_config = OpenAIConfig::ollama();
-            if is_endpoint_reachable(&ollama_config.api_endpoint).await {
-                openai_configs.push(ollama_config);
-            }
+            openai_configs.push(OpenAIConfig::ollama());
         }
         if config.allow_lmstudio_usage {
-            let lmstudio_config = OpenAIConfig::lmstudio();
-            if is_endpoint_reachable(&lmstudio_config.api_endpoint).await {
-                openai_configs.push(lmstudio_config);
-            }
+            openai_configs.push(OpenAIConfig::lmstudio());
         }
         if let Some(openai_api_key) = config.openai_api_key {
             openai_configs.push(OpenAIConfig::openai(openai_api_key));
@@ -690,14 +671,6 @@ impl Engine {
         } else {
             Err(EngineError::BackendNotFound {})
         }
-    }
-}
-
-#[bindings::export(Implementation)]
-impl Engine {
-    #[bindings::export(Method)]
-    pub async fn settings(&self) -> Result<Settings, EngineError> {
-        self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)
     }
 }
 

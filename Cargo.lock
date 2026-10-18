@@ -174,17 +174,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "apple-native-keyring-store"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b350bfd03649e07aa05c0a81b3e15934374e585c98204a57e20b9d49f49bb9a"
-dependencies = [
- "keyring-core",
- "log",
- "security-framework",
-]
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3321,8 +3310,8 @@ dependencies = [
 name = "hanashi"
 version = "0.6.13"
 dependencies = [
+ "chrono",
  "indexmap 2.14.2",
- "libc",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -4284,15 +4273,6 @@ checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
-]
-
-[[package]]
-name = "keyring-core"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29fbf4b551298c67925f38cf341a1ada797a75f1837bdf8ae1fc8e2ebc6efb59"
-dependencies = [
- "log",
 ]
 
 [[package]]
@@ -10016,13 +9996,11 @@ name = "uzu"
 version = "0.6.13"
 dependencies = [
  "anyhow",
- "apple-native-keyring-store",
  "async-openai",
  "backend-remote",
  "bindings",
  "bindings-types",
  "bon",
- "confy",
  "dirs",
  "dotenvy",
  "download-manager",
@@ -10033,7 +10011,6 @@ dependencies = [
  "indexmap 2.14.2",
  "indicatif",
  "inventory",
- "keyring-core",
  "kiban",
  "mock-registry",
  "nagare",

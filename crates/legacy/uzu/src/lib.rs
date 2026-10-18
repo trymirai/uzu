@@ -54,8 +54,6 @@ pub mod player;
 #[cfg(not(target_family = "wasm"))]
 pub mod registry;
 #[cfg(not(target_family = "wasm"))]
-pub mod settings;
-#[cfg(not(target_family = "wasm"))]
 pub mod storage;
 #[cfg(not(target_family = "wasm"))]
 pub use nagare as session;

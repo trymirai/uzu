@@ -99,7 +99,6 @@ async fn engine() -> (Engine, TempDir) {
     let storage = Arc::new(Storage::new(RuntimeHandle::current(), config).await.unwrap());
     (
         Engine {
-            settings: SharedAccess::new(None),
             registry: SharedAccess::new(MergedRegistry::new(vec![])),
             storage,
             backends: SharedAccess::new(HashMap::new()),

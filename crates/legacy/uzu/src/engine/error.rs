@@ -9,8 +9,6 @@ pub enum EngineError {
     #[error(transparent)]
     Device(#[from] crate::device::DeviceError),
     #[error(transparent)]
-    Settings(#[from] crate::settings::SettingsError),
-    #[error(transparent)]
     Storage(#[from] crate::storage::StorageError),
     #[error(transparent)]
     Registry(#[from] crate::registry::RegistryError),
@@ -24,8 +22,6 @@ pub enum EngineError {
     ClassificationSession(#[from] nagare::classification::ClassificationSessionError),
     #[error(transparent)]
     TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
-    #[error("Settings not available")]
-    SettingsNotAvailable,
     #[error("Unable to read model configuration: {message}")]
     ModelConfig {
         message: String,

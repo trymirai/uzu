@@ -1,5 +1,3 @@
-mod auth;
-mod auth_key;
 mod exit;
 mod model_families;
 mod model_registries;
@@ -8,7 +6,6 @@ mod registry;
 mod settings;
 mod theme;
 
-pub use auth::AuthFlow;
 pub use exit::ExitFlow;
 use iocraft::prelude::*;
 pub use model_families::ModelFamiliesFlow;
