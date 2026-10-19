@@ -26,12 +26,17 @@ type Format = (u32, u32, u32);
 fn lookup<B: Backend>(
     format: Format,
     model_dim: u32,
+    word_order: bool,
 ) -> Vec<bf16> {
     let (vector_width, transition_bits, restart_columns) = format;
     let mixing_dimension = model_dim >> model_dim.trailing_zeros();
     let mut rng = SmallRng::seed_from_u64(u64::from(model_dim));
     // At least a row's bytes per entry: both sides compute the row stride themselves.
-    let codes: Vec<u8> = (0..VOCAB_SIZE * model_dim).map(|_| rng.random()).collect();
+    let mut codes: Vec<u8> = (0..VOCAB_SIZE * model_dim).map(|_| rng.random()).collect();
+    // V4 restart tapes are stored as little-endian 32-bit words; the CPU reference reads bytes.
+    if word_order && vector_width == 4 && restart_columns != 0 {
+        codes.as_chunks_mut::<4>().0.iter_mut().for_each(|word| word.reverse());
+    }
     let row_scales: Vec<f32> = (0..VOCAB_SIZE).map(|_| rng.random_range(0.01..0.05)).collect();
     let signs: Vec<f32> = (0..model_dim).map(|_| [1.0, -1.0][rng.random_range(0..2)]).collect();
     let mixing: Vec<f32> = (0..mixing_dimension * mixing_dimension).map(|_| rng.random_range(-0.5..0.5)).collect();
@@ -80,11 +85,11 @@ fn trellis_embedding_lookup_matches_cpu(
     #[case] format: Format,
     #[case] model_dim: u32,
 ) {
-    let expected = lookup::<Cpu>(format, model_dim);
+    let expected = lookup::<Cpu>(format, model_dim, false);
     let in_vocab = 2 * model_dim as usize;
     assert!(expected[..in_vocab].iter().any(|value| *value != bf16::ZERO), "in-vocab rows are empty");
     assert!(expected[in_vocab..].iter().all(|value| *value == bf16::ZERO), "out-of-vocab row is not zero");
     for_each_non_cpu_backend!(|B| {
-        assert_eq_float(&expected, &lookup::<B>(format, model_dim), 0.02, std::any::type_name::<B>());
+        assert_eq_float(&expected, &lookup::<B>(format, model_dim, true), 0.02, std::any::type_name::<B>());
     });
 }
