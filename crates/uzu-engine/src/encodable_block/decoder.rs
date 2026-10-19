@@ -12,7 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{Transformer, TransformerNewError, TransformerState},
+        transformer::{SubmitChunk, Transformer, TransformerNewError, TransformerState},
     },
     parameters::ParameterTree,
 };
@@ -141,6 +141,7 @@ impl<B: Backend> Decoder<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
+        submit_chunk: Option<&mut SubmitChunk<'_, B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         command_buffer.push_debug_group("decoder");
@@ -173,6 +174,7 @@ impl<B: Backend> Decoder<B> {
                 output_range,
                 hidden_feature_layer_indices,
                 Some(state),
+                submit_chunk,
                 command_buffer,
             )
             .map_err(DecoderError::Backend)?;
