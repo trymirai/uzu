@@ -5,8 +5,8 @@ use crate::{
         common::{
             Backend, CommandBufferEncoding, Kernels,
             kernel::{
-                BuildTreeGramKernel, BuildTreeOutKernel, BuildTreePrefixKernel, TreeUpdateSolveKernel,
-                delta_net_tree_verify::DeltaNetTreeVerify,
+                BuildTreeGramKernel, BuildTreeOutKernel, BuildTreePrefixKernel, DeltaNetNormGateKernel,
+                TreeUpdateSolveKernel, TreeVerifyFusedKernel, delta_net_tree_verify::DeltaNetTreeVerify,
             },
         },
         metal::{
@@ -21,6 +21,9 @@ use crate::{
 const TOKEN_BLOCK: u32 = 16;
 const BLOCK_PAIR_WIDTH: u32 = 2 * TOKEN_BLOCK;
 const INNER_DATA_TYPE: DataType = DataType::F32;
+/// BF16 trees up to this size run as one fused kernel per value head; larger trees take the
+/// blocked prefix/gram/solve/out/norm-gate chain.
+const FUSED_MAX_TREE: u32 = 32;
 
 struct Layout {
     tree_size: u32,
@@ -56,10 +59,13 @@ impl Layout {
 
 pub struct MetalDeltaNetTreeVerify {
     arguments: TreeVerifyNewArguments,
+    /// MAX_TREE 16 and 32 variants; only for BF16 activations.
+    fused: Option<[<MetalKernels as Kernels>::TreeVerifyFusedKernel; 2]>,
     prefix: <MetalKernels as Kernels>::BuildTreePrefixKernel,
     gram: <MetalKernels as Kernels>::BuildTreeGramKernel,
     solve: <MetalKernels as Kernels>::TreeUpdateSolveKernel,
     out: <MetalKernels as Kernels>::BuildTreeOutKernel,
+    norm_gate: <MetalKernels as Kernels>::DeltaNetNormGateKernel,
 }
 
 impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
@@ -77,8 +83,18 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         let transposed_h0 = !use_mxu
             && context.gpu_core_count < LARGE_MIN_GPU_CORES
             && context.apple_gpu_family <= MTLGPUFamily::Apple8;
+        let fused =
+            if arguments.data_type == DataType::BF16 && arguments.head_k_dim == 128 && arguments.head_v_dim == 128 {
+                Some([
+                    <MetalKernels as Kernels>::TreeVerifyFusedKernel::new(context, arguments.data_type, 16)?,
+                    <MetalKernels as Kernels>::TreeVerifyFusedKernel::new(context, arguments.data_type, 32)?,
+                ])
+            } else {
+                None
+            };
         Ok(Self {
             arguments: *arguments,
+            fused,
             prefix: <MetalKernels as Kernels>::BuildTreePrefixKernel::new(context)?,
             gram: <MetalKernels as Kernels>::BuildTreeGramKernel::new(context, arguments.data_type, use_mxu, true)?,
             solve: <MetalKernels as Kernels>::TreeUpdateSolveKernel::new(context, arguments.data_type, 32, true)?,
@@ -90,6 +106,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
                 transposed_h0,
                 true,
             )?,
+            norm_gate: <MetalKernels as Kernels>::DeltaNetNormGateKernel::new(context, arguments.data_type)?,
         })
     }
 
@@ -99,6 +116,34 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let layout = Layout::new(arguments.tree_size, &self.arguments);
+        let mut output = command_buffer.allocate_scratch_for_shape(
+            &[layout.tree_size, layout.num_v_heads, layout.head_v_dim],
+            self.arguments.data_type,
+        )?;
+
+        if let Some(fused) = self.fused.as_ref().filter(|_| arguments.tree_size <= FUSED_MAX_TREE) {
+            fused[(arguments.tree_size > 16) as usize].encode(
+                arguments.q,
+                arguments.k,
+                arguments.v,
+                arguments.trie,
+                arguments.log_decay,
+                arguments.beta,
+                arguments.h0,
+                arguments.in_projected,
+                arguments.norm_weight,
+                &mut output,
+                arguments.tree_size,
+                self.arguments.num_k_heads,
+                self.arguments.num_v_heads,
+                arguments.conv_dim,
+                arguments.total_proj_dim,
+                arguments.norm_epsilon,
+                command_buffer,
+            );
+            return Ok(output);
+        }
+
         let mut h0_indices = command_buffer.allocate_scratch(DataType::I32.size_in_bytes())?;
         command_buffer.encode_fill(&mut h0_indices, 0);
 
@@ -112,10 +157,6 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             .allocate_scratch_for_shape(&[layout.tree_size, layout.num_v_heads, layout.head_v_dim], INNER_DATA_TYPE)?;
         let mut u = command_buffer
             .allocate_scratch_for_shape(&[layout.num_v_heads, layout.tree_size, layout.head_v_dim], INNER_DATA_TYPE)?;
-        let mut output = command_buffer.allocate_scratch_for_shape(
-            &[layout.tree_size, layout.num_v_heads, layout.head_v_dim],
-            self.arguments.data_type,
-        )?;
 
         self.prefix.encode(
             arguments.trie,
@@ -177,6 +218,19 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             self.arguments.num_v_heads,
             self.arguments.head_k_dim,
             self.arguments.head_v_dim,
+            command_buffer,
+        );
+        self.norm_gate.encode(
+            &mut output,
+            arguments.in_projected,
+            arguments.norm_weight,
+            self.arguments.num_v_heads,
+            self.arguments.head_v_dim,
+            self.arguments.num_v_heads * self.arguments.head_v_dim,
+            arguments.conv_dim,
+            arguments.total_proj_dim,
+            arguments.norm_epsilon,
+            arguments.tree_size,
             command_buffer,
         );
         Ok(output)

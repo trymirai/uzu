@@ -381,7 +381,7 @@ impl<B: Backend> DeltaNet<B> {
             command_buffer,
         );
 
-        let mut delta_output = tree_verify.encode(
+        let delta_output = tree_verify.encode(
             TreeVerifyEncodeArguments {
                 q: &q,
                 k: &k,
@@ -390,23 +390,15 @@ impl<B: Backend> DeltaNet<B> {
                 log_decay: &log_decay,
                 beta: &beta,
                 h0: &state.ssm_state,
+                in_projected: &tree_projected,
+                norm_weight: &self.norm_weight,
+                norm_epsilon: self.norm_epsilon,
+                conv_dim: self.conv_dim,
+                total_proj_dim: self.total_proj_dim,
                 tree_size,
             },
             command_buffer,
         )?;
-        self.delta_net_norm_gate.encode(
-            &mut delta_output,
-            &tree_projected,
-            &self.norm_weight,
-            self.num_heads,
-            self.value_head_dim,
-            self.value_dim,
-            self.conv_dim,
-            self.total_proj_dim,
-            self.norm_epsilon,
-            tree_size,
-            command_buffer,
-        );
 
         let output = self.out_projection.encode(delta_output, tree_size, command_buffer)?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {
