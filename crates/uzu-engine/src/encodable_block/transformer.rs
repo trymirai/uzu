@@ -24,6 +24,14 @@ enum TransformerLayerStateType<B: Backend> {
     Shared(u32),
 }
 
+/// Submits the command buffer encoded so far and replaces it with a fresh one.
+pub type SubmitChunk<'a, B> = dyn FnMut(&mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding) -> Result<(), <B as Backend>::Error>
+    + 'a;
+
+/// Decode layers per command buffer when chunked submission is on: ~0.1 ms of CPU encode per chunk,
+/// against several ms of GPU time, so only the first chunk's encode is exposed.
+const LAYERS_PER_CHUNK: usize = 8;
+
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
@@ -225,6 +233,8 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
+    /// `submit_chunk`, when given, is called every `LAYERS_PER_CHUNK` layers to submit the command buffer encoded
+    /// so far and swap in a fresh one, so the GPU starts on the first layers while the CPU encodes the rest.
     pub fn encode(
         &self,
         input: B::ScratchBuffer,
@@ -233,6 +243,7 @@ impl<B: Backend> Transformer<B> {
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
+        mut submit_chunk: Option<&mut SubmitChunk<'_, B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, B::Error> {
         let mut hidden = input;
@@ -249,13 +260,24 @@ impl<B: Backend> Transformer<B> {
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
         let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
 
-        let precalculated_ropes = self
-            .ropes
-            .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
-            .collect::<Result<Box<[_]>, B::Error>>()?;
+        // RoPE tables are constants, which belong to one command buffer: recomputed after every chunk switch.
+        let precalculate_ropes = |command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding| {
+            self.ropes
+                .iter()
+                .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
+                .collect::<Result<Box<[_]>, B::Error>>()
+        };
+        let mut precalculated_ropes = precalculate_ropes(command_buffer)?;
 
-        for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
+        for (layer_index, (layer, layer_rope_index)) in self.layers.iter().take(layer_count).enumerate() {
+            if layer_index > 0
+                && layer_index.is_multiple_of(LAYERS_PER_CHUNK)
+                && let Some(submit_chunk) = submit_chunk.as_mut()
+            {
+                drop(precalculated_ropes);
+                submit_chunk(command_buffer)?;
+                precalculated_ropes = precalculate_ropes(command_buffer)?;
+            }
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
