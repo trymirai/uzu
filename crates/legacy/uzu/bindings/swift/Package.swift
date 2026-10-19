@@ -27,7 +27,6 @@ let package = Package(
                 .linkedLibrary("c++"),
                 .linkedLibrary("compression"),
                 .linkedFramework("SystemConfiguration", .when(platforms: [.macOS])),
-                .linkedFramework("OpenDirectory", .when(platforms: [.macOS])),
                 .linkedFramework("Metal"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),

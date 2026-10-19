@@ -96,7 +96,7 @@ minijinja-contrib = { version = "3.0.1", features = ["pycompat"] }
 clap = { version = "4.6.7", features = ["derive"] }
 rand = "0.10.3"
 rand_distr = "0.6.0"
-sysinfo = "0.39.6"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 itertools = "0.15.0"
 schemars = { version = "1.2.3", features = ["derive", "preserve_order"] }
 is_close = "0.1.3"
