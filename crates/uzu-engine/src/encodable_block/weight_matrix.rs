@@ -7,7 +7,10 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat},
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout, qtip_gaussian::QtipGaussianSpec},
+    config::weight_matrix::{
+        AnyWeightMatrixSpec, Layout,
+        qtip_gaussian::{QtipGaussianSpec, TrellisCodeWordOrder},
+    },
     data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -243,6 +246,14 @@ fn load_trellis<B: Backend>(
 ) -> Result<WeightMatrix<B>, WeightMatrixError<B>> {
     if required_layout != Layout::OutputInput {
         return Err(WeightMatrixError::UnsupportedConfiguration("QTIP Gaussian requires OutputInput layout".into()));
+    }
+    let word_order = if spec.vector_width == 4 && spec.restart_columns != 0 {
+        TrellisCodeWordOrder::LittleEndianWords
+    } else {
+        TrellisCodeWordOrder::Bytes
+    };
+    if spec.code_word_order != word_order {
+        return Err(WeightMatrixError::UnsupportedConfiguration(format!("trellis codes must be {word_order:?}")));
     }
     let format = TrellisFormat {
         vector_width: spec.vector_width,

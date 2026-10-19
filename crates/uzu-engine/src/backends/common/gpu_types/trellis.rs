@@ -4,3 +4,9 @@ pub const COLUMN_GROUP_COUNT: u32 = 4;
 pub fn mixing_dimension(columns: u32) -> u32 {
     columns >> columns.trailing_zeros()
 }
+
+/// Rows of a trellis activation buffer: the trellis GEMM loads whole M tiles (at most 128 rows) without row bounds
+/// checks; rows past the batch are never stored.
+pub fn padded_activation_rows(batch_dim: u32) -> u32 {
+    batch_dim.next_multiple_of(128)
+}

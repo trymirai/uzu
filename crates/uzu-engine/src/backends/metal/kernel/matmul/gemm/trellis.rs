@@ -59,6 +59,13 @@ impl TrellisGemm {
         else {
             return Err(unsupported());
         };
+        // V4 restart tapes decode four states (16 + 3 * transition_bits bits) of one block from a 64-bit window.
+        if format.vector_width == 4
+            && format.restart_columns != 0
+            && !((6..=8).contains(&format.transition_bits) && format.restart_columns.is_multiple_of(16))
+        {
+            return Err(unsupported());
+        }
         let (m, n, k) = (arguments.m, arguments.n, arguments.k);
         let output_stride = arguments.output.row_stride.unwrap_or(n);
         let (tiling, split_k) = (plan.tiling, plan.split_k);
@@ -77,8 +84,11 @@ impl TrellisGemm {
             aligned_inner_iterations: k / split_k / K_STEP,
             ..Default::default()
         };
-        let alignment =
-            GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
+        assert!(
+            activations.size() >= (m.next_multiple_of(tiling.block_m()) * k) as usize,
+            "trellis activations must be padded to whole M tiles"
+        );
+        let alignment = GemmAlignment::new(true, n.is_multiple_of(tiling.block_n()), true);
         let key = (tiling, format, alignment);
         let kernel = match self.kernels.entry(key) {
             Entry::Occupied(entry) => entry.into_mut(),

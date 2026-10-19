@@ -4,7 +4,7 @@ use super::{Linear, LinearInput, LinearInputPreparation, LinearMatmul};
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::trellis::COLUMN_GROUP_COUNT,
+        gpu_types::trellis::{COLUMN_GROUP_COUNT, padded_activation_rows},
         kernel::{ActivationTransform, TrellisTransformKernel, matmul::ActivationFormat},
     },
     data_type::DataType,
@@ -78,7 +78,8 @@ impl<B: Backend> TrellisRotation<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.input_dim], DataType::I8)?;
+        let mut values = command_buffer
+            .allocate_scratch_for_shape(&[padded_activation_rows(batch_dim), self.input_dim], DataType::I8)?;
         let mut column_group_sums =
             command_buffer.allocate_scratch_for_shape(&[batch_dim, COLUMN_GROUP_COUNT], DataType::F32)?;
         let mut scales = command_buffer.allocate_scratch_for_shape(&[batch_dim], DataType::F32)?;
