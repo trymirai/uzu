@@ -4,6 +4,8 @@ use parking_lot::Mutex;
 
 // TODO: this is a stub, real block allocator should suballocate from large pages
 
+const LARGEST_CACHED_PAGE: usize = 1 << 20;
+
 pub struct BlockAllocator<T> {
     min_page_size: usize,
     cache: Mutex<HashMap<usize, Vec<T>>>,
@@ -34,7 +36,7 @@ impl<T> BlockAllocator<T> {
         };
 
         Ok(BlockAllocation {
-            allocator: self.clone(),
+            allocator: Some(self.clone()),
             page: ManuallyDrop::new(page),
             range: (0..size).into(),
         })
@@ -45,17 +47,32 @@ impl<T> BlockAllocator<T> {
         page: T,
         range: Range<usize>,
     ) {
+        // Large pages are prefill or old-pool scratch: cached, they stay wired and count toward the phone's jetsam.
+        if range.iter().len() >= LARGEST_CACHED_PAGE {
+            return;
+        }
         self.cache.lock().entry(range.iter().len().max(self.min_page_size)).or_default().push(page);
     }
 }
 
 pub struct BlockAllocation<T> {
-    allocator: Arc<BlockAllocator<T>>,
+    allocator: Option<Arc<BlockAllocator<T>>>,
     page: ManuallyDrop<T>,
     range: Range<usize>,
 }
 
 impl<T> BlockAllocation<T> {
+    pub fn unpooled(
+        page: T,
+        range: Range<usize>,
+    ) -> Self {
+        Self {
+            allocator: None,
+            page: ManuallyDrop::new(page),
+            range,
+        }
+    }
+
     pub fn page(&self) -> &T {
         &self.page
     }
@@ -67,6 +84,9 @@ impl<T> BlockAllocation<T> {
 
 impl<T> Drop for BlockAllocation<T> {
     fn drop(&mut self) {
-        self.allocator.free(unsafe { ManuallyDrop::take(&mut self.page) }, self.range);
+        let page = unsafe { ManuallyDrop::take(&mut self.page) };
+        if let Some(allocator) = &self.allocator {
+            allocator.free(page, self.range);
+        }
     }
 }

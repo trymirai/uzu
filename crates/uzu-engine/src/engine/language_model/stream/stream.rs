@@ -201,7 +201,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             model_state.last_output_token.take();
 
             // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
-            let max_batch_size = 1024;
+            // 128-row chunks keep the prefill scratch near the decode scratch (0.15 vs 0.6 GiB for XS).
+            let max_batch_size = 128;
             let number_of_batches = input.len().div_ceil(max_batch_size);
 
             model_state
@@ -212,10 +213,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
+            // The prefill scratch gets its own pool, released with the prefill outputs.
             let mut command_buffer = model
                 .engine
                 .context
-                .create_command_buffer(Some("prefill"), Some(allocation_pool.clone()))
+                .create_command_buffer(Some("prefill"), Some(model.engine.context.create_allocation_pool()))
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let mut output_tokens = None;
@@ -604,8 +606,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         if let Some(accept_command_buffer) = command_buffer.take() {
             pending.push(accept_command_buffer.end_encoding().submit());
         }
-
-        self.allocation_pool = self.model.engine.context.create_allocation_pool();
 
         let mut command_buffer = self
             .model

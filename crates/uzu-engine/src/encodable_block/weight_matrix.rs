@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut,
+        Backend, BufferMut, BufferRef, Context,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat},
     },
@@ -135,9 +135,12 @@ impl<B: Backend> WeightMatrix<B> {
         }
     }
 
-    pub fn try_prepare_a8_storage(&mut self) -> bool {
+    pub fn try_prepare_a8_storage(
+        &mut self,
+        context: &B::Context,
+    ) -> bool {
         match &mut self.encoding {
-            WeightEncoding::Quantized(quantized) => quantized.prepare_a8_storage(),
+            WeightEncoding::Quantized(quantized) => quantized.prepare_a8_storage(context),
             _ => false,
         }
     }
@@ -272,7 +275,10 @@ fn load_trellis<B: Backend>(
 }
 
 impl<B: Backend> Quantized<B> {
-    fn prepare_a8_storage(&mut self) -> bool {
+    fn prepare_a8_storage(
+        &mut self,
+        context: &B::Context,
+    ) -> bool {
         if self.params.layout() != QuantParamsLayout::GroupOutput {
             return false;
         }
@@ -280,10 +286,15 @@ impl<B: Backend> Quantized<B> {
             if !self.signed_codes
                 && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
             {
-                let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>((&mut self.codes).as_slice_mut());
-                words.iter_mut().for_each(|word| *word ^= broadcast_mask);
-                prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+                // The codes may be pages of the mapped weights file, which Metal already uses: flip into new memory.
+                let codes = (&self.codes).as_slice::<u8>();
+                let mut signed = context.create_buffer(codes.len()).expect("signed codes buffer");
+                (&mut signed)
+                    .as_slice_mut::<u8>()
+                    .iter_mut()
+                    .zip(codes)
+                    .for_each(|(signed, code)| *signed = code ^ sign_flip_mask);
+                self.codes = signed;
             }
             self.signed_codes = true;
         }

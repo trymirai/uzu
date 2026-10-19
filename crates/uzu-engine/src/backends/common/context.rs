@@ -1,5 +1,7 @@
 use std::{path::Path, sync::Arc};
 
+#[cfg(unix)]
+use crate::backends::common::FileMapping;
 use crate::backends::common::{Backend, CommandBuffer, DeviceCapabilities};
 
 pub trait Context: Sized + Send + Sync {
@@ -19,6 +21,18 @@ pub trait Context: Sized + Send + Sync {
         &self,
         size: usize,
     ) -> Result<<Self::Backend as Backend>::GlobalBuffer, <Self::Backend as Backend>::Error>;
+
+    /// `size` bytes at `offset` of a mapped weights file as a buffer that uses them in place, or `None` when this
+    /// backend reads weights into memory of its own.
+    #[cfg(unix)]
+    fn mapped_buffer(
+        &self,
+        _mapping: &Arc<FileMapping>,
+        _offset: usize,
+        _size: usize,
+    ) -> Result<Option<<Self::Backend as Backend>::GlobalBuffer>, <Self::Backend as Backend>::Error> {
+        Ok(None)
+    }
 
     fn create_sparse_buffer(
         &self,
