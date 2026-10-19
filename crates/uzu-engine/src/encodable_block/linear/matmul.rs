@@ -115,7 +115,7 @@ impl<B: Backend> LinearMatmul<B> {
         let mut candidate = self.matmul_shape(1, false);
         candidate.signed_codes = signed_codes;
         let quantization = self.kernel.lock().select_activation_quantization(&candidate, context)?;
-        self.matrix.try_prepare_a8_storage().then_some(quantization)
+        self.matrix.try_prepare_a8_storage(context).then_some(quantization)
     }
 
     pub(super) fn encode_with_a(

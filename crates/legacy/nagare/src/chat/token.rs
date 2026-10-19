@@ -37,6 +37,9 @@ use tokio_util::sync::CancellationToken;
 use crate::util::power::{EnergyRecorder, Error as EnergyError};
 use crate::{chat::ChatSessionError, util::helpers::error_stream};
 
+struct NoState;
+impl State for NoState {}
+
 pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
@@ -203,6 +206,8 @@ impl Session {
     }
 
     async fn state_reset(&mut self) -> Result<(), ChatSessionError> {
+        // Drop the old state first so two states never coexist.
+        self.state = Box::new(NoState);
         self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;

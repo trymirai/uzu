@@ -4,6 +4,8 @@ mod buffer;
 mod command_buffer;
 mod context;
 mod device_capabilities;
+#[cfg(unix)]
+mod file_mapping;
 pub mod gpu_types;
 pub mod kernel;
 
@@ -22,4 +24,6 @@ pub use command_buffer::{
 };
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
+#[cfg(unix)]
+pub use file_mapping::FileMapping;
 pub use kernel::Kernels;

@@ -17,8 +17,11 @@ use parking_lot::Mutex;
 
 use crate::backends::{
     common::{
-        Backend, Context, DeviceCapabilities,
-        allocator::{block::BlockAllocator, pool::PoolAllocator},
+        Backend, Context, DeviceCapabilities, FileMapping,
+        allocator::{
+            block::{BlockAllocation, BlockAllocator},
+            pool::PoolAllocator,
+        },
     },
     metal::{
         Metal,
@@ -145,7 +148,8 @@ impl Context for MetalContext {
 
         let block_allocator = BlockAllocator::new(16 * 1024);
 
-        let heaps = MetalHeaps::new(device.clone(), peak_memory_usage.clone(), MTLSparsePageSize::KB256, 256);
+        // 16 MiB heaps: sparse buffers (KV caches) grow in 16 MiB steps.
+        let heaps = MetalHeaps::new(device.clone(), peak_memory_usage.clone(), MTLSparsePageSize::KB256, 64);
 
         Ok(Arc::new_cyclic(|weak_self: &Weak<Self>| Self {
             device,
@@ -186,6 +190,17 @@ impl Context for MetalContext {
         size: usize,
     ) -> Result<<Metal as Backend>::GlobalBuffer, MetalError> {
         self.block_allocator.allocate(size, |size| MetalDenseBuffer::new(&self.weak_self.upgrade().unwrap(), size))
+    }
+
+    fn mapped_buffer(
+        &self,
+        mapping: &Arc<FileMapping>,
+        offset: usize,
+        size: usize,
+    ) -> Result<Option<<Metal as Backend>::GlobalBuffer>, MetalError> {
+        let (pages, length, offset) = mapping.pages(offset, size);
+        let buffer = MetalDenseBuffer::new_mapped(self, mapping.clone(), pages, length)?;
+        Ok(Some(BlockAllocation::unpooled(buffer, (offset..offset + size).into())))
     }
 
     fn create_sparse_buffer(

@@ -2,6 +2,8 @@
 use std::os::unix::fs::FileExt;
 #[cfg(target_family = "wasm")]
 use std::os::wasi::fs::FileExt;
+#[cfg(unix)]
+use std::sync::Arc;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -12,12 +14,18 @@ use super::{
     error::ParameterLoaderError,
     safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata},
 };
+#[cfg(unix)]
+use crate::backends::common::FileMapping;
 use crate::{
     array::{ArrayElement, size_for_shape},
     backends::common::{Backend, BufferMut, Context},
     data_type::DataType,
     utils::strict_serde::DeserializeStrictOwned,
 };
+
+// Kernels load 16-byte vectors from a tensor's first byte; tensors off this boundary are copied.
+#[cfg(unix)]
+const MAPPED_TENSOR_ALIGNMENT: usize = 16;
 
 struct ParameterMetadata {
     shape: Box<[u32]>,
@@ -32,6 +40,8 @@ pub struct ParameterLoader<'a, B: Backend> {
     metadata: HashMap<String, String>,
     validated_tensors: RefCell<HashSet<String>>,
     file: &'a File,
+    #[cfg(unix)]
+    mapping: Arc<FileMapping>,
 }
 
 impl<'a, B: Backend> ParameterLoader<'a, B> {
@@ -73,6 +83,8 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
             metadata,
             validated_tensors: RefCell::new(HashSet::new()),
             file,
+            #[cfg(unix)]
+            mapping: Arc::new(FileMapping::new(file)?),
         })
     }
 
@@ -134,6 +146,16 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
     }
 
     pub fn read_buffer(&self) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
+        #[cfg(unix)]
+        if self.metadata.offset.is_multiple_of(MAPPED_TENSOR_ALIGNMENT)
+            && let Some(buffer) = self
+                .loader
+                .context
+                .mapped_buffer(&self.loader.mapping, self.metadata.offset, self.metadata.size)
+                .map_err(ParameterLoaderError::BackendError)?
+        {
+            return Ok(buffer);
+        }
         let mut buffer =
             self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
         self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.metadata.offset as u64)?;
