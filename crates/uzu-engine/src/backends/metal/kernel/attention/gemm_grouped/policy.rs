@@ -30,44 +30,18 @@ pub fn select_head_dim_slices(
     kv_length: u32,
     use_mxu: bool,
 ) -> Option<u32> {
-    if use_mxu {
-        select_mxu_head_dim_slices(head_dim, mask, suffix_length)
-    } else {
-        select_simdgroup_head_dim_slices(head_dim, mask, suffix_length, kv_length)
-    }
-}
-
-fn select_mxu_head_dim_slices(
-    head_dim: u32,
-    mask: MaskKind,
-    suffix_length: u32,
-) -> Option<u32> {
-    const MXU_DECODE_MIN_SUFFIX: u32 = 2;
-    const MXU_PREFILL_MAX_SUFFIX: u32 = 1024;
-
-    let decode = (MXU_DECODE_MIN_SUFFIX..=MXU_DECODE_MAX_SUFFIX).contains(&suffix_length);
-    let causal_prefill = head_dim == 256
-        && mask == MaskKind::Causal
-        && (MXU_DECODE_MAX_SUFFIX + 1..=MXU_PREFILL_MAX_SUFFIX).contains(&suffix_length);
-    (decode || causal_prefill).then_some(head_dim / kv_layout::SLICE_DIMS)
-}
-
-fn select_simdgroup_head_dim_slices(
-    head_dim: u32,
-    mask: MaskKind,
-    suffix_length: u32,
-    kv_length: u32,
-) -> Option<u32> {
     const SIMDGROUP_DECODE_MIN_KV_LENGTH: u32 = 16_384;
     const SIMDGROUP_PREFILL_MIN_KV_LENGTH: u32 = 61_440;
 
-    match (mask, head_dim, suffix_length) {
-        (MaskKind::Causal, 256, 1) if kv_length >= SIMDGROUP_DECODE_MIN_KV_LENGTH => Some(8),
-        (MaskKind::Causal, 256, 2) if kv_length >= SIMDGROUP_DECODE_MIN_KV_LENGTH => Some(4),
-        (MaskKind::Causal, 256, 4) if kv_length >= SIMDGROUP_DECODE_MIN_KV_LENGTH => Some(2),
-        (MaskKind::Causal, 128, 1 | 2 | 4) if kv_length >= SIMDGROUP_DECODE_MIN_KV_LENGTH => Some(4),
-        (MaskKind::Causal, 128, 512 | 1024) if kv_length >= 30_720 => Some(1),
-        (MaskKind::Causal, 256, 512 | 1024) if kv_length >= SIMDGROUP_PREFILL_MIN_KV_LENGTH => Some(2),
+    match (use_mxu, mask, head_dim, suffix_length) {
+        (true, _, _, 2..=64) => Some(head_dim / kv_layout::SLICE_DIMS),
+        (true, MaskKind::Causal, 256, 65..=1024) => Some(4),
+        (false, MaskKind::Causal, 256, 1 | 2 | 4) if kv_length >= SIMDGROUP_DECODE_MIN_KV_LENGTH => {
+            Some(8 / suffix_length)
+        },
+        (false, MaskKind::Causal, 128, 1 | 2 | 4) if kv_length >= SIMDGROUP_DECODE_MIN_KV_LENGTH => Some(4),
+        (false, MaskKind::Causal, 128, 512 | 1024) if kv_length >= 30_720 => Some(1),
+        (false, MaskKind::Causal, 256, 512 | 1024) if kv_length >= SIMDGROUP_PREFILL_MIN_KV_LENGTH => Some(2),
         _ => None,
     }
 }
