@@ -288,8 +288,13 @@ impl<B: Backend> DeltaNet<B> {
                 None
             };
 
-        let chunked = <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(context, outer_data_type, config.head_dim)
-            .map_err(DeltaNetNewError::Backend)?;
+        let chunked = <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(
+            context,
+            outer_data_type,
+            config.head_dim,
+            config.num_heads / config.num_groups,
+        )
+        .map_err(DeltaNetNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new_mixed_precision(
             value_dim,

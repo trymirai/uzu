@@ -1,6 +1,5 @@
 use super::super::{
-    DeltaNetChunkedADiagInvMetalKernel, DeltaNetChunkedCausalInvMetalKernel, DeltaNetChunkedCumsumMetalKernel,
-    DeltaNetChunkedGramMetalKernel, DeltaNetChunkedOutputAndStateMetalKernel, DeltaNetPrefillPrepMetalKernel,
+    DeltaNetChunkedOutputAndStateMetalKernel, DeltaNetChunkedPrecomputeMetalKernel, DeltaNetPrefillPrepMetalKernel,
 };
 use crate::{
     backends::{
@@ -18,17 +17,13 @@ use crate::{
 
 const MXU_MIN_T: u32 = 256;
 const CHUNK_SIZE: u32 = 64;
-const BLOCK_SIZE: u32 = 16;
 const VT: u32 = 32;
 const INNER_DATA_TYPE: DataType = DataType::F32;
 
 pub struct MetalDeltaNetChunkedPrefill {
     min_t: u32,
     prep: DeltaNetPrefillPrepMetalKernel,
-    cumsum: DeltaNetChunkedCumsumMetalKernel,
-    gram: DeltaNetChunkedGramMetalKernel,
-    a_diag_inv: DeltaNetChunkedADiagInvMetalKernel,
-    causal_inv: DeltaNetChunkedCausalInvMetalKernel,
+    precompute: DeltaNetChunkedPrecomputeMetalKernel,
     output_and_state: DeltaNetChunkedOutputAndStateMetalKernel,
 }
 
@@ -39,12 +34,18 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
         context: &MetalContext,
         outer_data_type: DataType,
         head_dim: u32,
+        groups_per_head: u32,
     ) -> Result<Option<Self>, <Metal as Backend>::Error> {
         if outer_data_type == DataType::F16 {
             return Ok(None);
         }
 
         if !context.supports_mxu {
+            return Ok(None);
+        }
+
+        // The precompute kernel assigns one grouped v-head to each of its four simdgroups.
+        if groups_per_head > 4 {
             return Ok(None);
         }
 
@@ -64,10 +65,7 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
                 true,
                 false,
             )?,
-            cumsum: DeltaNetChunkedCumsumMetalKernel::new(context, CHUNK_SIZE)?,
-            gram: DeltaNetChunkedGramMetalKernel::new(context, head_dim, CHUNK_SIZE)?,
-            a_diag_inv: DeltaNetChunkedADiagInvMetalKernel::new(context, CHUNK_SIZE)?,
-            causal_inv: DeltaNetChunkedCausalInvMetalKernel::new(context, CHUNK_SIZE, VT)?,
+            precompute: DeltaNetChunkedPrecomputeMetalKernel::new(context, head_dim, CHUNK_SIZE)?,
             output_and_state: DeltaNetChunkedOutputAndStateMetalKernel::new(
                 context,
                 outer_data_type,
@@ -94,8 +92,6 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
     ) -> Result<(), <Metal as Backend>::Error> {
         let suffix_len = args.suffix_len;
         let num_chunks = suffix_len.div_ceil(CHUNK_SIZE);
-        let num_blocks = CHUNK_SIZE.div_ceil(BLOCK_SIZE);
-        let num_col_pairs = num_blocks.div_ceil(2);
 
         let mut q_norm = command_buffer.allocate_scratch_for_shape(&[suffix_len, args.key_dim], INNER_DATA_TYPE)?;
         let mut k_norm = command_buffer.allocate_scratch_for_shape(&[suffix_len, args.key_dim], INNER_DATA_TYPE)?;
@@ -103,18 +99,8 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
         let mut log_decay =
             command_buffer.allocate_scratch_for_shape(&[suffix_len, args.num_heads], INNER_DATA_TYPE)?;
         let mut g = command_buffer.allocate_scratch_for_shape(&[suffix_len, args.num_heads], INNER_DATA_TYPE)?;
-        let mut kk = command_buffer
-            .allocate_scratch_for_shape(&[num_chunks, args.num_groups, CHUNK_SIZE, CHUNK_SIZE], INNER_DATA_TYPE)?;
         let mut qk = command_buffer
             .allocate_scratch_for_shape(&[num_chunks, args.num_heads, CHUNK_SIZE, CHUNK_SIZE], INNER_DATA_TYPE)?;
-        let mut a_packed = command_buffer.allocate_scratch_for_shape(
-            &[num_chunks, args.num_heads, num_blocks, num_col_pairs, BLOCK_SIZE, 2 * BLOCK_SIZE],
-            INNER_DATA_TYPE,
-        )?;
-        let mut a_inv = command_buffer.allocate_scratch_for_shape(
-            &[num_chunks, args.num_heads, num_blocks, BLOCK_SIZE, BLOCK_SIZE],
-            INNER_DATA_TYPE,
-        )?;
         let mut t_mat = command_buffer
             .allocate_scratch_for_shape(&[num_chunks, args.num_heads, CHUNK_SIZE, CHUNK_SIZE], DataType::BF16)?;
 
@@ -134,31 +120,20 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
             suffix_len,
             command_buffer,
         );
-        self.cumsum.encode(&log_decay, &mut g, args.num_heads, suffix_len, command_buffer);
-        self.gram.encode(
+        self.precompute.encode(
             &q_norm,
             &k_norm,
-            &g,
-            &mut kk,
+            &log_decay,
+            &beta,
+            &mut g,
             &mut qk,
+            &mut t_mat,
             args.num_heads,
             args.num_groups,
             args.key_dim,
             suffix_len,
             command_buffer,
         );
-        self.a_diag_inv.encode(
-            &kk,
-            &beta,
-            &g,
-            &mut a_packed,
-            &mut a_inv,
-            args.num_heads,
-            args.num_groups,
-            suffix_len,
-            command_buffer,
-        );
-        self.causal_inv.encode(&a_packed, &a_inv, &mut t_mat, args.num_heads, suffix_len, command_buffer);
         self.output_and_state.encode(
             &q_norm,
             &k_norm,
