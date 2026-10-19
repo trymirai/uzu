@@ -3,8 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::{HADAMARD_TRANSFORM_BLOCK_SIZE, trellis::mixing_dimension},
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -173,14 +172,7 @@ impl<B: Backend> TransformedLinear<B> {
                 let signs_tree = tree.subtree("incoherence_signs");
                 let quantized_tree = tree.subtree("quantized");
                 if hybrid.incoherence_kind == IncoherenceKind::Kronecker {
-                    let mixing_dimension = mixing_dimension(input_dimension);
-                    let signs = signs_tree.leaf("signs")?.validate(&[input_dimension], DataType::F32)?.read_buffer()?;
-                    let mixing = signs_tree
-                        .leaf("small_q")?
-                        .validate(&[mixing_dimension, mixing_dimension], DataType::F32)?
-                        .read_buffer()?;
-                    let rotation = TrellisRotation::new(context, signs, mixing, input_dimension)
-                        .map_err(TransformedLinearError::BackendError)?;
+                    let rotation = TrellisRotation::load(context, &signs_tree, input_dimension)?;
                     let blocks = Self::row_stack_parts(*hybrid.quantization_spec, rows, quantized_tree)
                         .into_iter()
                         .map(|(rows, spec, tree)| load(spec, rows, &tree, None, None))

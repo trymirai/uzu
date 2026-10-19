@@ -10,11 +10,17 @@ use crate::{
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput},
         },
     },
-    config::{embedding::AnyEmbeddingConfig, weight_matrix::AnyWeightMatrixSpec},
+    config::{
+        embedding::AnyEmbeddingConfig,
+        weight_matrix::{
+            AnyWeightMatrixSpec,
+            hybrid_spec::{HybridSpec, IncoherenceKind},
+        },
+    },
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{Gather, LinearMatmulError, UntiedReadout},
+        linear::{Gather, LinearMatmulError, TransformedLinearError, TrellisEmbedding, UntiedReadout},
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -31,6 +37,8 @@ pub enum EmbeddingError<B: Backend> {
     EmbeddingTable(#[from] EmbeddingTableError<B>),
     #[error(transparent)]
     LinearMatmul(#[from] LinearMatmulError<B>),
+    #[error(transparent)]
+    TransformedLinear(#[from] TransformedLinearError<B>),
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -38,9 +46,14 @@ enum EmbeddingTying<B: Backend> {
         table: EmbeddingTable<B>,
         readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     },
+    TiedTrellis(TrellisEmbedding<B>),
     Untied {
         input_table: EmbeddingTable<B>,
         output: UntiedReadout<B>,
+    },
+    UntiedTrellis {
+        input_table: EmbeddingTable<B>,
+        output: TrellisEmbedding<B>,
     },
 }
 
@@ -79,46 +92,81 @@ impl<B: Backend> Embedding<B> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
-                if table.as_matrix().is_none() {
-                    return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
-                }
-                // The output norm fuses the readout's input rotation, so it needs its own copy of the factors.
-                let readout_input_hadamard_factors =
-                    if let AnyWeightMatrixSpec::HybridSpec(_) = embedding_tree.metadata("spec")? {
-                        Some(read_output_signs(&embedding_tree, model_dim)?)
-                    } else {
-                        None
-                    };
-                (
-                    EmbeddingTying::Tied {
-                        table,
-                        readout: readout_kernel(context, data_type)?,
+                match embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")? {
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_kind: IncoherenceKind::Kronecker,
+                        ..
+                    }) => {
+                        let embedding = TrellisEmbedding::load(
+                            context,
+                            &embedding_tree,
+                            *quantization_spec,
+                            vocab_size,
+                            model_dim,
+                            data_type,
+                        )?;
+                        (EmbeddingTying::TiedTrellis(embedding), None)
                     },
-                    readout_input_hadamard_factors,
-                )
+                    spec => {
+                        let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
+                        if table.as_matrix().is_none() {
+                            return Err(EmbeddingError::UnsupportedConfiguration(
+                                "tied embeddings need a matrix table".into(),
+                            ));
+                        }
+                        // The output norm fuses the readout's input rotation, so it needs its own copy of the factors.
+                        let readout_input_hadamard_factors = if let AnyWeightMatrixSpec::HybridSpec(_) = spec {
+                            Some(read_output_signs(&embedding_tree, model_dim)?)
+                        } else {
+                            None
+                        };
+                        (
+                            EmbeddingTying::Tied {
+                                table,
+                                readout: readout_kernel(context, data_type)?,
+                            },
+                            readout_input_hadamard_factors,
+                        )
+                    },
+                }
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
                 let input_table =
                     EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
-                let output_embedding_spec = output_embedding_tree.metadata("spec")?;
-                let output = UntiedReadout::load(
-                    context,
-                    &output_embedding_tree,
-                    output_embedding_spec,
-                    vocab_size,
-                    model_dim,
-                    data_type,
-                )?;
-                (
-                    EmbeddingTying::Untied {
+                let tying = match output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")? {
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_kind: IncoherenceKind::Kronecker,
+                        ..
+                    }) => EmbeddingTying::UntiedTrellis {
                         input_table,
-                        output,
+                        output: TrellisEmbedding::load(
+                            context,
+                            &output_embedding_tree,
+                            *quantization_spec,
+                            vocab_size,
+                            model_dim,
+                            data_type,
+                        )?,
                     },
-                    None,
-                )
+                    spec => EmbeddingTying::Untied {
+                        input_table,
+                        output: UntiedReadout::load(
+                            context,
+                            &output_embedding_tree,
+                            spec,
+                            vocab_size,
+                            model_dim,
+                            data_type,
+                        )?,
+                    },
+                };
+                (tying, None)
             },
         };
 
@@ -163,17 +211,23 @@ impl<B: Backend> Embedding<B> {
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
-        let table = match &self.tying {
+        match &self.tying {
             EmbeddingTying::Tied {
                 table,
                 ..
-            } => table,
+            } => table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer),
+            EmbeddingTying::TiedTrellis(embedding) => {
+                embedding.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer)
+            },
             EmbeddingTying::Untied {
                 input_table,
                 ..
-            } => input_table,
-        };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
+            }
+            | EmbeddingTying::UntiedTrellis {
+                input_table,
+                ..
+            } => input_table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer),
+        }
 
         command_buffer.pop_debug_group();
 
@@ -226,6 +280,19 @@ impl<B: Backend> Embedding<B> {
                     output_dim,
                 });
                 output.encode(input_buffer, batch_dim, gather, command_buffer).map_err(EmbeddingError::BackendError)?
+            },
+            EmbeddingTying::TiedTrellis(embedding)
+            | EmbeddingTying::UntiedTrellis {
+                output: embedding,
+                ..
+            } => {
+                let gather = gather_indices.map(|indices| Gather {
+                    indices,
+                    output_dim,
+                });
+                embedding
+                    .encode_readout(input_buffer, batch_dim, gather, command_buffer)
+                    .map_err(EmbeddingError::BackendError)?
             },
             EmbeddingTying::Tied {
                 table,
