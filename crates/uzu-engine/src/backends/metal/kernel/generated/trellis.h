@@ -6,4 +6,6 @@ using namespace metal;
 
 namespace uzu::trellis {
 static constant constexpr uint32_t COLUMN_GROUP_COUNT = 4;
+
+static constant constexpr uint32_t LOOKUP_MAX_COLUMNS = 8192;
 } // namespace uzu::trellis

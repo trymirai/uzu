@@ -5,11 +5,13 @@ mod input_transform;
 mod matmul;
 mod qlora_wrapper;
 mod transformed_linear;
+mod trellis_embedding;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
 pub use transformed_linear::{TransformedLinear, TransformedLinearError};
+pub use trellis_embedding::TrellisEmbedding;
 pub use untied_readout::UntiedReadout;
 
 use crate::{

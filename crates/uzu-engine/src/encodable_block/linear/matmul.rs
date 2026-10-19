@@ -36,7 +36,7 @@ pub enum LinearMatmulError<B: Backend> {
 
 pub struct LinearMatmul<B: Backend> {
     kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
-    matrix: WeightMatrix<B>,
+    pub(super) matrix: WeightMatrix<B>,
     biases: Option<B::GlobalBuffer>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
     input_dim: u32,

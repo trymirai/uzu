@@ -1,1 +1,2 @@
 mod input_embedding_lookup_test;
+mod trellis_embedding_lookup_test;

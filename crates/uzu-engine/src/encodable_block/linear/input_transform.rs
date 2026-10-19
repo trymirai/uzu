@@ -1,13 +1,14 @@
 use std::mem::size_of;
 
-use super::{Linear, LinearInput, LinearInputPreparation, LinearMatmul};
+use super::{Linear, LinearInput, LinearInputPreparation, LinearMatmul, TransformedLinearError};
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::trellis::COLUMN_GROUP_COUNT,
+        gpu_types::trellis::{COLUMN_GROUP_COUNT, mixing_dimension},
         kernel::{ActivationTransform, TrellisTransformKernel, matmul::ActivationFormat},
     },
     data_type::DataType,
+    parameters::ParameterTree,
 };
 
 pub(super) enum InputTransform<B: Backend> {
@@ -52,27 +53,33 @@ impl<B: Backend> InputTransform<B> {
 
 pub(super) struct TrellisRotation<B: Backend> {
     kernel: <B::Kernels as Kernels>::TrellisTransformKernel,
-    signs: B::GlobalBuffer,
-    mixing: B::GlobalBuffer,
+    pub(super) signs: B::GlobalBuffer,
+    pub(super) mixing: B::GlobalBuffer,
     input_dim: u32,
 }
 
 impl<B: Backend> TrellisRotation<B> {
-    pub(super) fn new(
+    pub(super) fn load(
         context: &B::Context,
-        signs: B::GlobalBuffer,
-        mixing: B::GlobalBuffer,
+        signs_tree: &ParameterTree<B>,
         input_dim: u32,
-    ) -> Result<Self, B::Error> {
+    ) -> Result<Self, TransformedLinearError<B>> {
+        let mixing_dimension = mixing_dimension(input_dim);
+        let signs = signs_tree.leaf("signs")?.validate(&[input_dim], DataType::F32)?.read_buffer()?;
+        let mixing = signs_tree
+            .leaf("small_q")?
+            .validate(&[mixing_dimension, mixing_dimension], DataType::F32)?
+            .read_buffer()?;
         Ok(Self {
-            kernel: <B::Kernels as Kernels>::TrellisTransformKernel::new(context, input_dim)?,
+            kernel: <B::Kernels as Kernels>::TrellisTransformKernel::new(context, input_dim)
+                .map_err(TransformedLinearError::BackendError)?,
             signs,
             mixing,
             input_dim,
         })
     }
 
-    fn prepare(
+    pub(super) fn prepare(
         &self,
         input: impl BufferRef<Backend = B>,
         batch_dim: u32,

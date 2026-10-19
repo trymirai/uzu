@@ -153,7 +153,7 @@ static METAL_FUNC void rotate_columns(
 
 // TODO: a columns agnostic kernel
 template <uint DIMENSION>
-VARIANTS(DIMENSION, 4096, 5120, 6144, 6656, 17408, 19968)
+VARIANTS(DIMENSION, 2048, 2560, 4096, 5120, 6144, 6656, 9216, 12288, 17408, 19968)
 PUBLIC KERNEL(TrellisTransform)(
     device const bfloat* input,
     device const float* rht_factors,
