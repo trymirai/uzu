@@ -304,6 +304,11 @@ impl GemvKernel {
         };
 
         let a = a.subrange(a_offset..);
+        if b.quantized().is_some_and(|quantized| quantized.rows.is_some()) {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "Gemv gathered weight rows",
+            });
+        }
         let (scales, biases, zero_points, scale_strides, zero_point_strides) =
             b.quantized().map_or((None, None, None, Default::default(), Default::default()), |quantized| {
                 (

@@ -128,6 +128,7 @@ impl<B: Backend> WeightMatrix<B> {
                 mode: quantized.info.mode,
                 group_size: quantized.info.group_size,
                 signed_codes: quantized.signed_codes,
+                rows: None,
             }),
             WeightEncoding::Trellis(trellis) => MatmulB::Trellis {
                 codes: &trellis.codes,

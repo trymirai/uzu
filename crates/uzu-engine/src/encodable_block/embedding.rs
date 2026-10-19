@@ -180,6 +180,30 @@ impl<B: Backend> Embedding<B> {
         Ok(output)
     }
 
+    /// Readout logits of the tokens rows[0..row_count] only (no logit transform).
+    pub fn encode_readout_rows(
+        &self,
+        batch_dim: u32,
+        input_buffer: impl BufferRef<Backend = B>,
+        rows: &B::GlobalBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
+        let EmbeddingTying::Untied {
+            output,
+            ..
+        } = &self.tying
+        else {
+            return Err(EmbeddingError::UnsupportedConfiguration("readout rows need an untied readout".into()));
+        };
+        command_buffer.push_debug_group("embedding readout rows");
+        let logits = output
+            .encode_rows(input_buffer, batch_dim, rows, row_count, command_buffer)
+            .map_err(EmbeddingError::BackendError)?;
+        command_buffer.pop_debug_group();
+        Ok(logits)
+    }
+
     pub fn encode_readout(
         &self,
         batch_dim: u32,

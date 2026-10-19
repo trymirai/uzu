@@ -8,7 +8,10 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::{
             ActivationQuantization, Kernels,
-            matmul::{ActivationFormat, MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape},
+            matmul::{
+                ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
+                MatmulShape, QuantizedB,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -161,6 +164,44 @@ impl<B: Backend> LinearMatmul<B> {
             },
             command_buffer,
         )
+    }
+
+    /// Rows rows[0..row_count] of the matrix (selected outputs read in place), from int8 activations.
+    pub(super) fn encode_rows(
+        &self,
+        a: MatmulA<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        rows: &B::GlobalBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        let MatmulB::Quantized(quantized) = self.matrix.matmul_b() else {
+            panic!("gathered rows need a quantized matrix");
+        };
+        assert!(self.d_ops().mask().is_empty(), "gathered rows cannot take output biases or transforms");
+        let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, row_count], self.output_data_type)?;
+        self.kernel.lock().encode(
+            MatmulArguments {
+                a,
+                b: MatmulB::Quantized(QuantizedB {
+                    rows: Some(rows),
+                    ..quantized
+                }),
+                b_leading_dimension: None,
+                b_transpose: true,
+                output: MatmulOutput {
+                    values: output.subrange_mut(0..),
+                    row_stride: None,
+                    ops: MatmulDOps::none(),
+                },
+                n: row_count,
+                gather_indices: None::<&B::GlobalBuffer>,
+                m: batch_dim,
+                k: self.input_dim,
+            },
+            command_buffer,
+        )?;
+        Ok(output)
     }
 
     fn matmul_shape(

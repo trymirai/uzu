@@ -6,7 +6,8 @@ use thiserror::Error;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        gpu_types::trie::TrieNode, kernel::DraftLogitScatterKernel,
     },
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
@@ -24,7 +25,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::ParameterTree,
+    parameters::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
 
@@ -54,6 +55,67 @@ pub struct DFlash<B: Backend> {
     mask_token_id: u32,
     target_feature_input_dim: u32,
     data_type: DataType,
+    draft_vocabulary: Option<DraftVocabulary<B>>,
+}
+
+/// A draft vocabulary (the target's most frequent tokens): the draft readout reads only those rows of the target's
+/// readout, in place, and every other token's draft logit is -inf. The target still verifies every token.
+struct DraftVocabulary<B: Backend> {
+    // [size]: the tokens, rows of the target readout
+    token_ids: B::GlobalBuffer,
+    // [target vocab]: each token's index in token_ids, or -1
+    vocab_slots: B::GlobalBuffer,
+    size: u32,
+    scatter: <B::Kernels as Kernels>::DraftLogitScatterKernel,
+    data_type: DataType,
+}
+
+impl<B: Backend> DraftVocabulary<B> {
+    fn load(
+        context: &B::Context,
+        tree: &ParameterTree<B>,
+        vocab_size: u32,
+        data_type: DataType,
+    ) -> Result<Option<Self>, DFlashNewError<B>> {
+        let slots = match tree.leaf("vocab_slots") {
+            Err(ParameterLoaderError::KeyNotFound(_)) => return Ok(None),
+            leaf => leaf?.validate(&[vocab_size], DataType::I32)?,
+        };
+        let host_slots = slots.read_slice::<i32>()?;
+        let size = host_slots.iter().filter(|&&slot| slot >= 0).count() as u32;
+        let token_ids = tree.leaf("token_ids")?.validate(&[size], DataType::U32)?;
+        for (slot, &token) in token_ids.read_slice::<u32>()?.iter().enumerate() {
+            assert!(
+                host_slots.get(token as usize) == Some(&(slot as i32)),
+                "draft vocabulary slots must invert token_ids"
+            );
+        }
+        Ok(Some(Self {
+            token_ids: token_ids.read_buffer()?,
+            vocab_slots: slots.read_buffer()?,
+            size,
+            scatter: <B::Kernels as Kernels>::DraftLogitScatterKernel::new(context, data_type)
+                .map_err(DFlashNewError::Backend)?,
+            data_type,
+        }))
+    }
+
+    fn encode_readout(
+        &self,
+        target_embedding: &Embedding<B>,
+        hidden: impl BufferRef<Backend = B>,
+        rows: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, DFlashEncodeError<B>> {
+        let draft_logits =
+            target_embedding.encode_readout_rows(rows, hidden, &self.token_ids, self.size, command_buffer)?;
+        let vocab_size = target_embedding.vocab_size();
+        let mut logits = command_buffer
+            .allocate_scratch_for_shape(&[rows, vocab_size], self.data_type)
+            .map_err(DFlashEncodeError::Backend)?;
+        self.scatter.encode(&draft_logits, &self.vocab_slots, &mut logits, rows, self.size, vocab_size, command_buffer);
+        Ok(logits)
+    }
 }
 
 pub struct DFlashOutput<B: Backend> {
@@ -77,6 +139,8 @@ pub enum DFlashNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("invalid DFlash attention config: {0}")]
     InvalidAttentionConfig(&'static str),
+    #[error("Parameter loading error: {0}")]
+    ParameterLoader(#[from] ParameterLoaderError<B>),
 }
 
 #[derive(Debug, Error)]
@@ -157,6 +221,9 @@ impl<B: Backend> DFlash<B> {
             context,
         )?;
 
+        let draft_vocabulary =
+            DraftVocabulary::load(context, &parameter_tree.subtree("draft_vocabulary"), config.vocab_size, data_type)?;
+
         Ok(Self {
             target_feature_projection,
             projected_feature_norm,
@@ -171,6 +238,7 @@ impl<B: Backend> DFlash<B> {
             mask_token_id,
             target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
             data_type,
+            draft_vocabulary,
         })
     }
 
@@ -339,14 +407,19 @@ impl<B: Backend> DFlash<B> {
         let mut lookahead_hidden =
             command_buffer.allocate_scratch(lookahead_rows.iter().len()).map_err(DFlashEncodeError::Backend)?;
         command_buffer.encode_copy(draft_hidden.subrange(lookahead_rows), &mut lookahead_hidden);
-        let logits = target_embedding.encode_readout(
-            batch_size - 1,
-            &lookahead_hidden,
-            target_embedding.vocab_size(),
-            None::<&B::ScratchBuffer>,
-            false,
-            command_buffer,
-        )?;
+        let logits = match &self.draft_vocabulary {
+            None => target_embedding.encode_readout(
+                batch_size - 1,
+                &lookahead_hidden,
+                target_embedding.vocab_size(),
+                None::<&B::ScratchBuffer>,
+                false,
+                command_buffer,
+            )?,
+            Some(draft_vocabulary) => {
+                draft_vocabulary.encode_readout(target_embedding, &lookahead_hidden, batch_size - 1, command_buffer)?
+            },
+        };
 
         command_buffer.pop_debug_group();
 

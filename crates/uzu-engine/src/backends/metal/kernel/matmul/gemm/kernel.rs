@@ -80,6 +80,7 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
+                    specialization.gather_right_rows,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -243,6 +244,18 @@ impl GemmKernel {
                 quantized.zero_point_strides(),
             ),
         };
+        let right_rows = quantized.as_ref().and_then(|quantized| quantized.rows);
+        if right_rows.is_some()
+            && !(use_mxu
+                && shape.b_bits == Some(4)
+                && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
+                && matches!(a, MatmulA::Int8Symmetric { .. }))
+        {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "Gemm gathered rows",
+            }
+            .into());
+        }
         let (a_full_precision, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match &a {
             MatmulA::FullPrecision {
                 values,
@@ -292,6 +305,7 @@ impl GemmKernel {
             self.encode_split_k(
                 a,
                 weights,
+                right_rows,
                 scales,
                 biases,
                 zero_points,
@@ -340,15 +354,18 @@ impl GemmKernel {
         }
         params.use_morton = use_morton;
 
-        let specialization = GemmSpecialization::from_plan(
-            plan,
-            shape,
-            self.weights_data_type,
-            output_transform,
-            alignment,
-            a_prologue,
-            a_group_size,
-        )?;
+        let specialization = GemmSpecialization {
+            gather_right_rows: right_rows.is_some(),
+            ..GemmSpecialization::from_plan(
+                plan,
+                shape,
+                self.weights_data_type,
+                output_transform,
+                alignment,
+                a_prologue,
+                a_group_size,
+            )?
+        };
         let kernel = self.get_or_create(command_buffer.context(), specialization)?;
         kernel.encode(
             a_full_precision,
@@ -362,6 +379,7 @@ impl GemmKernel {
             a_int8,
             a_scales,
             a_group_sums,
+            right_rows,
             std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
@@ -376,6 +394,7 @@ impl GemmKernel {
         &mut self,
         a: MatmulA<impl BufferRef<Backend = Metal>>,
         weights: impl BufferRef<Backend = Metal>,
+        right_rows: Option<impl BufferRef<Backend = Metal>>,
         scales: Option<impl BufferRef<Backend = Metal>>,
         biases: Option<impl BufferRef<Backend = Metal>>,
         zero_points: Option<impl BufferRef<Backend = Metal>>,
@@ -421,15 +440,18 @@ impl GemmKernel {
         let base_gy = m.div_ceil(tiling.block_m());
         let alignment =
             GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
-        let part_spec = GemmSpecialization::from_plan(
-            plan,
-            shape,
-            self.weights_data_type,
-            GemmDTransform::empty(),
-            alignment,
-            a_prologue,
-            a_group_size,
-        )?;
+        let part_spec = GemmSpecialization {
+            gather_right_rows: right_rows.is_some(),
+            ..GemmSpecialization::from_plan(
+                plan,
+                shape,
+                self.weights_data_type,
+                GemmDTransform::empty(),
+                alignment,
+                a_prologue,
+                a_group_size,
+            )?
+        };
 
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
@@ -449,6 +471,7 @@ impl GemmKernel {
             a_int8,
             a_scales,
             a_group_sums,
+            right_rows,
             std::slice::from_ref(&params),
             base_gx,
             base_gy,

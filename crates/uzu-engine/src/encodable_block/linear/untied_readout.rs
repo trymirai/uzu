@@ -75,6 +75,20 @@ impl<B: Backend> UntiedReadout<B> {
         })
     }
 
+    /// Logits of the tokens rows[0..row_count] only, reading those rows of the readout in place.
+    pub fn encode_rows(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        batch_dim: u32,
+        rows: &B::GlobalBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        let input_rht = self.input_rht.as_ref().expect("readout rows need the Hadamard int4 readout");
+        let input = input_rht.prepare(input, batch_dim, ActivationFormat::Int8, command_buffer)?;
+        self.linear.encode_rows(input.as_matmul_a(), batch_dim, rows, row_count, command_buffer)
+    }
+
     pub fn encode(
         &self,
         input: impl BufferRef<Backend = B>,

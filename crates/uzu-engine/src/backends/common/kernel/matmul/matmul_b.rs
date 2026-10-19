@@ -35,6 +35,8 @@ pub struct QuantizedB<TB: BufferRef> {
     pub mode: QuantizationMode,
     pub group_size: u32,
     pub signed_codes: bool,
+    /// Gathered rows: logical row n is stored row rows[n] (the int8-activation MXU route, symmetric 4-bit only).
+    pub rows: Option<TB>,
 }
 
 #[derive(Clone, Copy)]

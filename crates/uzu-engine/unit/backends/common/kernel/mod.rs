@@ -1,6 +1,7 @@
 mod activation_test;
 mod activation_transform_test;
 mod attention;
+mod draft_logit_scatter_test;
 mod embedding;
 mod gated_act_mul_test;
 mod gdn;

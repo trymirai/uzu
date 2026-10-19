@@ -121,18 +121,34 @@ struct W4Cursor {
   short tile_row_limit;
   short2 position;
   bool signed_codes;
+  // Gathered rows: `current` starts at the matrix's first row, and each word's row starts at row_bytes[word].
+  bool gather_rows;
+  size_t row_bytes[PackedChunk::WORD_COUNT];
+
+  // `tile_rows` are the stored rows of this simdgroup's logical rows.
+  METAL_FUNC void gather(const device uint32_t* tile_rows) thread {
+    const short row_limit = tile_row_limit - position.y;
+    for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
+      const bool live = ALIGNED || row_offset < row_limit;
+      row_bytes[PackedChunk::word_index(fragment_row, row_slot)] =
+          live ? size_t(tile_rows[int(position.y) + int(row_offset)]) * size_t(row_stride_bytes) : 0;
+    });
+  }
 
   METAL_FUNC PackedChunk fetch(const uint chunk_index) const thread {
     // Padding decodes to zero after the optional sign flip and code-origin adjustment.
     const uint padding_word = (CODE_ORIGIN == 0) == signed_codes ? W4_SIGN_MASK : 0u;
     const device uint8_t* base =
         current + chunk_index * CHUNK_BYTES + int(position.y) * row_stride_bytes + int(position.x);
+    const device uint8_t* gathered_base = current + chunk_index * CHUNK_BYTES + int(position.x);
     const short row_limit = tile_row_limit - position.y;
     PackedChunk packed_chunk;
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
       uint word = padding_word;
       if (ALIGNED || row_offset < row_limit) {
-        word = *reinterpret_cast<const device uint*>(base + int(row_offset) * row_stride_bytes);
+        const ushort index = PackedChunk::word_index(fragment_row, row_slot);
+        word = gather_rows ? *reinterpret_cast<const device uint*>(gathered_base + row_bytes[index])
+                           : *reinterpret_cast<const device uint*>(base + int(row_offset) * row_stride_bytes);
       }
       packed_chunk.words[PackedChunk::word_index(fragment_row, row_slot)] = word;
     });
@@ -192,19 +208,26 @@ static METAL_FUNC auto make_right_cursor(
   using Fragment = uzu::matmul::Fragment<int8_t, Core::TILES_N, Core::TILES_K, Ops, uzu::matmul::ReadDirect, true>;
   const int row_stride_bytes =
       int(uint(params->K) * uint(get_bytes_per_pack<Operand::BITS>()) / uint(get_pack_factor<Operand::BITS>()));
-  const device uint8_t* current =
-      source.codes + size_t(tile.block_col + tile.tile_col_offset) * size_t(row_stride_bytes) +
+  const size_t k_bytes =
       size_t(tile.k_offset) * size_t(get_bytes_per_pack<Operand::BITS>()) / size_t(get_pack_factor<Operand::BITS>());
+  const size_t tile_first_row = tile.block_col + tile.tile_col_offset;
+  const device uint8_t* current =
+      source.codes + (source.gather_rows ? 0 : tile_first_row * size_t(row_stride_bytes)) + k_bytes;
 
   if constexpr (Operand::BITS == 4) {
     static_assert(Core::TILES_K == get_pack_factor<Operand::BITS>(), "W4 requires two K fragments");
-    return W4Cursor<Fragment, ALIGNED, Operand::CODE_ORIGIN>{
+    W4Cursor<Fragment, ALIGNED, Operand::CODE_ORIGIN> cursor{
         current,
         row_stride_bytes,
         tile.simdgroup_limit_n,
         Ops::get_position(thread_context.simd_lane_id),
-        source.signed_codes
+        source.signed_codes,
+        source.gather_rows
     };
+    if (source.gather_rows) {
+      cursor.gather(source.rows + tile_first_row);
+    }
+    return cursor;
   } else {
     static_assert(Operand::BITS == 8, "integer tile cursors support 4-bit and 8-bit codes");
     const device int8_t* origin_int8 = reinterpret_cast<const device int8_t*>(current);

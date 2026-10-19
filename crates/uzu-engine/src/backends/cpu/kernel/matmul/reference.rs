@@ -62,6 +62,9 @@ impl WeightData {
             } => Err(MatmulError::UnsupportedLayout {
                 path: "CpuMatmul",
             }),
+            MatmulB::Quantized(quantized) if quantized.rows.is_some() => Err(MatmulError::UnsupportedLayout {
+                path: "CpuMatmul gathered weight rows",
+            }),
             MatmulB::Quantized(quantized) => Ok(WeightData::Quantized {
                 weights: buffer_ptr(quantized.codes),
                 scales: buffer_ptr(quantized.scales),
