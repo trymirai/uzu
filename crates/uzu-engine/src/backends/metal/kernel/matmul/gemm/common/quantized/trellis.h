@@ -57,11 +57,13 @@ states_at(const GemmTrellisFormat format, const device uchar* code_row, const ui
       block_column %= format.restart_columns;
     }
     const uint first_bit = block_first_bit + block_column / V4_VECTOR_WIDTH * format.transition_bits;
-    const device uchar* state_bytes = code_row + first_bit / BYTE_BITS;
+    const uint byte = first_bit / BYTE_BITS;
     const uint shift = first_bit % BYTE_BITS;
+    // Restart rows hold little-endian words, so stream byte i sits at i ^ 3.
+    const uint swizzle = format.restart_columns != 0 ? 3 : 0;
     // A state at a byte boundary may be the row's last; any other one spans three bytes of its row.
-    const uint third_byte = shift == 0 ? 0 : uint(state_bytes[2]);
-    const uint window = uint(state_bytes[0]) << 16 | uint(state_bytes[1]) << 8 | third_byte;
+    const uint third_byte = shift == 0 ? 0 : uint(code_row[(byte + 2) ^ swizzle]);
+    const uint window = uint(code_row[byte ^ swizzle]) << 16 | uint(code_row[(byte + 1) ^ swizzle]) << 8 | third_byte;
     return uint2((window >> (BYTE_BITS - shift)) & ((1u << STATE_BITS) - 1), 0);
   }
   const uint first_bit = code_column / format.vector_width * format.transition_bits;
@@ -110,14 +112,10 @@ static METAL_FUNC uint state_weights(const uint state) {
   return biased_weights(final_fold(hash_without_final_fold(state)));
 }
 
-static METAL_FUNC uint big_endian(const uint little_endian) {
-  return as_type<uint>(as_type<uchar4>(little_endian).wzyx);
-}
-
 // Columns code_column..code_column + 15 (code_column a multiple of 16) of a V4 restart tape: four states of one block
-// from one 64-bit window. Needs 6 <= transition_bits <= 8 and 16-byte rows. T6 and T8 windows end by bit 64; T7
-// windows can pass it and always load a third word, from a selected index (an unused load re-reads the middle word),
-// which is cheaper than a conditional load.
+// from one 64-bit window of little-endian words. Needs 6 <= transition_bits <= 8 and 16-byte rows. T6 and T8 windows
+// end by bit 64; T7 windows can pass it and always load a third word, from a selected index (an unused load re-reads
+// the middle word), which is cheaper than a conditional load.
 static METAL_FUNC uint4 v4_decode_biased_weight_quad(
     const GemmTrellisFormat format,
     const device uchar* codes,
@@ -130,10 +128,10 @@ static METAL_FUNC uint4 v4_decode_biased_weight_quad(
   const uint byte = row_byte + first_bit / BYTE_BITS;
   const uint shift = byte % 4 * BYTE_BITS + first_bit % BYTE_BITS;
   const device uint* words = reinterpret_cast<const device uint*>(codes) + byte / 4;
-  const uint high = big_endian(words[0]);
-  const uint middle = big_endian(words[1]);
+  const uint high = words[0];
+  const uint middle = words[1];
   const bool window_past_64_bits = shift + STATE_BITS + 3 * transition_bits > 64;
-  const uint low = transition_bits == 7 ? big_endian(words[1 + uint(window_past_64_bits)]) : 0u;
+  const uint low = transition_bits == 7 ? words[1 + uint(window_past_64_bits)] : 0u;
   const uint top = (high << shift) | ((middle >> 1) >> (31 - shift));
   const uint bottom = (middle << shift) | ((low >> 1) >> (31 - shift));
   const uint state_mask = (1u << STATE_BITS) - 1;

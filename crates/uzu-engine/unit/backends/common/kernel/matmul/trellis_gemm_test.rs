@@ -97,6 +97,17 @@ fn block_bits(
     16 + (block_columns / format.vector_width as usize - 1) * format.transition_bits as usize
 }
 
+// V4 restart tapes are stored as little-endian 32-bit words (rows are whole words), other tapes as bytes.
+fn stored_codes(
+    format: TrellisFormat,
+    stream: &[u8],
+) -> Vec<u8> {
+    if format.vector_width != 4 || format.restart_columns == 0 {
+        return stream.to_vec();
+    }
+    stream.as_chunks::<4>().0.iter().flat_map(|word| word.iter().rev().copied()).collect()
+}
+
 // Restart blocks sit back to back and the row pads to 16 bytes; a connected tape pads to a byte.
 fn row_bytes(
     format: TrellisFormat,
@@ -159,7 +170,7 @@ fn run_projection(
     let activations = create_buffer_with_data::<Metal, i8>(context, &padded_values);
     let group_sums = create_buffer_with_data::<Metal, f32>(context, &group_sums_host);
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
-    let codes = create_buffer_with_data::<Metal, u8>(context, &stored);
+    let codes = create_buffer_with_data::<Metal, u8>(context, &stored_codes(format, &stored));
     let row_scales_buffer = create_buffer_with_data::<Metal, f32>(context, &row_scales);
     let mut output = create_buffer_with_data::<Metal, u16>(context, &vec![SENTINEL; m * (n + PADDING)]);
     let arguments = MatmulArguments {
