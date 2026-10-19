@@ -148,7 +148,6 @@ impl Context for MetalContext {
         let sparse_queue = device
             .new_mtl4_command_queue_with_descriptor(&queue_descriptor)
             .map_err(|_| MetalError::CannotCreateCommandQueue)?;
-        sparse_queue.add_residency_set(&residency_set);
 
         let sparse_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
         sparse_event.set_label(Some("sparse event"));
