@@ -14,7 +14,6 @@ using namespace uzu::matmul;
 using namespace uzu::attention;
 using namespace uzu::trie;
 
-// TODO: support more BD and should tune more to replace AttentionGEMM
 template <typename T, uint BK, uint BD, uint HEAD_DIM_SLICES, bool USE_MXU>
 VARIANTS(T, bfloat)
 VARIANTS(BK, 16, 32)
@@ -208,7 +207,6 @@ KERNEL(AttentionGemmGrouped)(
   v += size_t(block_begin) * value_block_stride;
 
   const AccumType score_scale = GROUP_FOUR_Q_HEADS ? AccumType(1) : AccumType(params.scale) * AccumType(M_LOG2E_F);
-  // Masked scores are multiplied by score_scale below, so pre-divide this value.
   const AccumType masked_score_pre_scale = (static_cast<AccumType>(-1e9f) * M_LOG2E_F) / score_scale;
   const uint first_key = block_begin * uint(BK);
 
@@ -311,7 +309,6 @@ KERNEL(AttentionGemmGrouped)(
           thread_context
       );
       value_block.prepare();
-      // Bound the live V fragment on pre-M5 without chunking the output's other operations.
       METAL_PRAGMA_UNROLL
       for (ushort chunk = 0; chunk < PV_CHUNKS; ++chunk) {
         const ushort first_col = chunk * PV_COL_FRAGMENTS;

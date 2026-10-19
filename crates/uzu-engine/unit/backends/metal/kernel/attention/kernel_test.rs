@@ -125,7 +125,6 @@ fn attention_kernel_matches_cpu() {
         (64, 8, 2, 8, 0, false, false),
         (64, 8, 8, 8, 1024, false, false),
         (64, 8, 2, 8, 1024, false, false),
-        // These KV lengths select grouped attention on pre-M5 chips.
         (256, 24, 4, 1, 16_383, true, false),
         (256, 24, 4, 2, 16_383, true, false),
         (256, 24, 4, 4, 16_380, true, false),

@@ -10,9 +10,7 @@ const MXU_DECODE_MAX_SUFFIX: u32 = 64;
 const SHORT_SUFFIX_MAX: u32 = 4;
 
 pub fn is_supported(arguments: &AttentionKernelConfig) -> bool {
-    const SUPPORTED_HEAD_DIMS: [u32; 2] = [128, 256];
-
-    SUPPORTED_HEAD_DIMS.contains(&arguments.head_dim)
+    matches!(arguments.head_dim, 128 | 256)
         && arguments.data_type == DataType::BF16
         && !arguments.has_sinks
         && !arguments.is_kv_cache_ring
