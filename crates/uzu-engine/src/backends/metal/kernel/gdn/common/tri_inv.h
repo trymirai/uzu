@@ -5,9 +5,9 @@
 
 using namespace metal;
 
-template <uint BLOCK>
+template <uint BLOCK, uint A_STRIDE = BLOCK, typename OutPtr>
 METAL_FUNC void invert_lower_triangular_block(
-    device float* a_inv_block,
+    OutPtr a_inv_block,
     threadgroup const float* a_tile,
     const uint block_size,
     const uint lane
@@ -27,7 +27,7 @@ METAL_FUNC void invert_lower_triangular_block(
       METAL_PRAGMA_UNROLL
       for (uint prev_row = 0; prev_row < BLOCK; prev_row++) {
         if (prev_row < row) {
-          acc += a_tile[row * BLOCK + prev_row] * inverse_col[prev_row];
+          acc += a_tile[row * A_STRIDE + prev_row] * inverse_col[prev_row];
         }
       }
       inverse_col[row] = -acc;

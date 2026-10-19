@@ -26,6 +26,7 @@ pub trait DeltaNetChunkedPrefill: Sized + Send + Sync {
         context: &<Self::Backend as Backend>::Context,
         outer_data_type: DataType,
         head_dim: u32,
+        groups_per_head: u32,
     ) -> Result<Option<Self>, <Self::Backend as Backend>::Error>;
 
     fn should_use(
@@ -48,6 +49,7 @@ impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Unsupported<B>>>> Delt
         _context: &B::Context,
         _outer_data_type: DataType,
         _head_dim: u32,
+        _groups_per_head: u32,
     ) -> Result<Option<Self>, B::Error> {
         Ok(None)
     }

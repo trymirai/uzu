@@ -9,133 +9,110 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::Conv1dPackKernel,
+            kernel::DeltaNetConvPackKernel,
         },
         cpu::Cpu,
     },
-    data_type::{DataType, DataTypeRepr},
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
+const KERNEL_SIZE: u32 = 4;
+const TAPS: u32 = KERNEL_SIZE - 1;
+
 struct Input<T: DataTypeRepr + Float> {
-    state_in: Box<[T]>,
+    state_in: Box<[f32]>,
     x: Box<[T]>,
-    state_stride: u32,
-    row_stride: u32,
     suffix_len: u32,
-    num_channels: u32,
+    tile_tokens: u32,
+    row_stride: u32,
+    conv_dim: u32,
 }
 
 fn get_input<T: DataTypeRepr + Float>(
-    state_stride: u32,
-    row_stride: u32,
     suffix_len: u32,
-    num_channels: u32,
+    tile_tokens: u32,
+    row_stride: u32,
+    conv_dim: u32,
 ) -> Input<T> {
-    let state_size = num_channels as usize * state_stride as usize;
-    let x_size = suffix_len as usize * row_stride as usize;
-
-    let state_in: Vec<T> = (0..state_size).map(|i| T::from(0.1 * (i as f64 + 1.0)).unwrap()).collect();
-    let x: Vec<T> = (0..x_size).map(|i| T::from(-0.05 * (i as f64 + 1.0)).unwrap()).collect();
+    let state_in: Vec<f32> = (0..conv_dim * TAPS).map(|i| 0.1 * (i as f32 + 1.0)).collect();
+    let x: Vec<T> = (0..suffix_len * row_stride).map(|i| T::from(-0.05 * (i as f64 + 1.0)).unwrap()).collect();
 
     Input {
         state_in: state_in.into_boxed_slice(),
         x: x.into_boxed_slice(),
-        state_stride,
-        row_stride,
         suffix_len,
-        num_channels,
+        tile_tokens,
+        row_stride,
+        conv_dim,
     }
 }
 
-fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
+fn get_output<B: Backend, T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<f32> {
     let context = block_on(B::Context::new()).expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
-        .expect("Failed to create Conv1dPackKernel");
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::DeltaNetConvPackKernel::new(&context, T::data_type(), KERNEL_SIZE)
+            .expect("Failed to create DeltaNetConvPackKernel");
 
-    let total_rows = input.state_stride as usize + input.suffix_len as usize;
-    let padded_size = total_rows * input.row_stride as usize;
-
-    let state = create_buffer_with_data::<B, T>(&context, &input.state_in);
+    let num_tiles = input.suffix_len.div_ceil(input.tile_tokens);
+    let state = create_buffer_with_data::<B, f32>(&context, &input.state_in);
     let x = create_buffer_with_data::<B, T>(&context, &input.x);
-    let mut padded = create_buffer::<B, T>(&context, padded_size);
+    let mut packed = create_buffer::<B, f32>(&context, (num_tiles * TAPS * input.conv_dim) as usize);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         &state,
         &x,
-        &mut padded,
-        input.state_stride,
-        input.row_stride,
+        &mut packed,
         input.suffix_len,
-        input.num_channels,
+        input.tile_tokens,
+        input.row_stride,
+        input.conv_dim,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
-    buffer_to_vec(&padded)
-}
-
-fn get_test_data<T: DataTypeRepr + Float>(
-    state_stride: u32,
-    row_stride: u32,
-    suffix_len: u32,
-    num_channels: u32,
-) -> (Input<T>, Vec<T>) {
-    let input = get_input::<T>(state_stride, row_stride, suffix_len, num_channels);
-    let expected = get_output::<Cpu, T>(&input);
-    (input, expected)
+    buffer_to_vec(&packed)
 }
 
 fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
-    input: &Input<T>,
-    expected: &[T],
+    suffix_len: u32,
+    tile_tokens: u32,
+    row_stride: u32,
+    conv_dim: u32,
     label: &str,
 ) {
-    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
-        1e-3f32
-    } else {
-        1e-6
-    };
+    let input = get_input::<T>(suffix_len, tile_tokens, row_stride, conv_dim);
+    let expected = get_output::<Cpu, T>(&input);
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, T>(input);
-        let msg = format!("Conv1dPack {} {} (type={})", std::any::type_name::<B>(), label, std::any::type_name::<T>(),);
-        assert_eq_float::<T>(expected, &output, eps, &msg);
+        let output = get_output::<B, T>(&input);
+        let msg =
+            format!("DeltaNetConvPack {} {} (type={})", std::any::type_name::<B>(), label, std::any::type_name::<T>());
+        assert_eq_float::<f32>(&expected, &output, 1e-6, &msg);
     });
 }
 
 fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
-    // 4 channels, state_stride=3 (kernel_size=4), 2 tokens
-    let (input, expected) = get_test_data::<T>(3, 4, 2, 4);
-    test_internal(&input, &expected, "basic");
+    // several tiles, partial last tile
+    test_internal::<T>(20, 8, 16, 8, "basic");
 }
 
-fn test_single_token<T: DataTypeRepr + Float + Debug + Display>() {
-    // 8 channels, state_stride=1, 1 token
-    let (input, expected) = get_test_data::<T>(1, 8, 1, 8);
-    test_internal(&input, &expected, "single_token");
+fn test_single_tile<T: DataTypeRepr + Float + Debug + Display>() {
+    // a single tile takes only the carried state
+    test_internal::<T>(5, 16, 8, 8, "single_tile");
 }
 
-fn test_many_tokens<T: DataTypeRepr + Float + Debug + Display>() {
-    // Minimal state (kernel_size=2), many tokens
-    let (input, expected) = get_test_data::<T>(1, 4, 8, 4);
-    test_internal(&input, &expected, "many_tokens");
-}
-
-fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
-    // Larger dimensions closer to real usage
-    let (input, expected) = get_test_data::<T>(3, 128, 16, 128);
-    test_internal(&input, &expected, "large");
+fn test_exact_tiles<T: DataTypeRepr + Float + Debug + Display>() {
+    test_internal::<T>(64, 16, 24, 8, "exact_tiles");
 }
 
 fn test_channels_lt_row_stride<T: DataTypeRepr + Float + Debug + Display>() {
-    // num_channels < row_stride (padded channels that kernel doesn't write)
-    let (input, expected) = get_test_data::<T>(2, 8, 3, 6);
-    test_internal(&input, &expected, "channels_lt_row_stride");
+    // conv_dim < row_stride (trailing projection channels are not packed)
+    test_internal::<T>(30, 4, 40, 32, "channels_lt_row_stride");
 }
 
 // f32
@@ -145,18 +122,13 @@ fn test_basic_f32() {
 }
 
 #[uzu_test]
-fn test_single_token_f32() {
-    test_single_token::<f32>();
+fn test_single_tile_f32() {
+    test_single_tile::<f32>();
 }
 
 #[uzu_test]
-fn test_many_tokens_f32() {
-    test_many_tokens::<f32>();
-}
-
-#[uzu_test]
-fn test_large_f32() {
-    test_large::<f32>();
+fn test_exact_tiles_f32() {
+    test_exact_tiles::<f32>();
 }
 
 #[uzu_test]
@@ -171,16 +143,16 @@ fn test_basic_bf16() {
 }
 
 #[uzu_test]
-fn test_single_token_bf16() {
-    test_single_token::<bf16>();
+fn test_single_tile_bf16() {
+    test_single_tile::<bf16>();
 }
 
 #[uzu_test]
-fn test_many_tokens_bf16() {
-    test_many_tokens::<bf16>();
+fn test_exact_tiles_bf16() {
+    test_exact_tiles::<bf16>();
 }
 
 #[uzu_test]
-fn test_large_bf16() {
-    test_large::<bf16>();
+fn test_channels_lt_row_stride_bf16() {
+    test_channels_lt_row_stride::<bf16>();
 }
