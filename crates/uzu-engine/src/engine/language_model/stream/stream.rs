@@ -545,7 +545,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
-                &self.options.sampling_method,
             )
             && let (root_token, Some(output_norm)) = {
                 let resolved = prev_output
@@ -564,6 +563,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     root_token as u32,
                     self.model.decoder.embedding(),
                     shape,
+                    &self.options.sampling_method,
                     #[cfg(grammar)]
                     self.options.grammar.as_mut(),
                     &self.model_state.prng,
