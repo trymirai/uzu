@@ -127,10 +127,13 @@ KERNEL(RadixTopKSmallPass)(
     if (lid < simdgroups)
       simd_prefixes[lid] = simd_prefix;
   }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  higher += simd_prefixes[lid / METAL_SIMD_SIZE];
 
   uint rank = pass == 0 ? k - 1 : ranks[row];
+
+  threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+
+  higher += simd_prefixes[lid / METAL_SIMD_SIZE];
+
   if (higher <= rank && rank < higher + sum) {
     rank -= higher;
     const uint group_begin = BUCKETS - (lid + 1) * BUCKETS_PER_THREAD;
