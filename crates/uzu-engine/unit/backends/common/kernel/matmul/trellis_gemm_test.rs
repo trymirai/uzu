@@ -9,6 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Kernels,
+            gpu_types::trellis::padded_activation_rows,
             kernel::matmul::{
                 MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat,
             },
@@ -153,7 +154,9 @@ fn run_projection(
         })
         .collect();
     let activation_scales_host: Vec<f32> = (0..m).map(|_| rng.random_range(0.001..0.01)).collect();
-    let activations = create_buffer_with_data::<Metal, i8>(context, &values);
+    let mut padded_values = values.clone();
+    padded_values.resize(padded_activation_rows(m as u32) as usize * k, 0);
+    let activations = create_buffer_with_data::<Metal, i8>(context, &padded_values);
     let group_sums = create_buffer_with_data::<Metal, f32>(context, &group_sums_host);
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
     let codes = create_buffer_with_data::<Metal, u8>(context, &stored);

@@ -106,9 +106,51 @@ KERNEL(GemmTrellis)(
 
   Products products;
   products.clear();
-  uzu::dispatch_bool(alignment.contains(GemmAlignment::M) || token_end == Core::SIMDGROUP_BLOCK_M, [&](auto aligned_m) {
+  if (trellis_format.vector_width == trellis::V4_VECTOR_WIDTH && trellis_format.restart_columns != 0) {
+    // Four consecutive states per row and lane: per K step a lane covers columns 16 q .. 16 q + 15,
+    // q = position.x / 4; the first MXU chunk gets 16 q .. 16 q + 7, the second 16 q + 8 .. 16 q + 15. Activations
+    // use the same K order, and the integer products do not depend on it.
+    using LeftFragment = uzu::matmul::Fragment<int8_t, Core::TILES_M, Core::TILES_K, Ops>;
+    const uint lane_column = 4 * uint(position.x);
+    const uint k_steps = token_end > 0 && row_end > 0 ? params->aligned_inner_iterations : 0;
+    const device int8_t* lane_activations = activations + (token_base + position.y) * params->leading_dimension_a;
+    const uint lane_row_byte = (row_base + position.y) * code_row_bytes;
     uzu::dispatch_bool(alignment.contains(GemmAlignment::N) || row_end == Core::SIMDGROUP_BLOCK_N, [&](auto aligned_n) {
-      auto left = quantized::make_left_cursor<true, Core, LeftOperand, aligned_m.value>(
+      METAL_PRAGMA_NO_UNROLL
+      for (uint step = 0; step < k_steps; ++step) {
+        const uint k = tile_context.k_offset + step * trellis::K_STEP + lane_column;
+        LeftFragment first_left, second_left;
+        RightFragment first_right, second_right;
+        quantized::for_each_fragment_row<LeftFragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
+          const uint4 values =
+              *reinterpret_cast<const device uint4*>(lane_activations + row_offset * params->leading_dimension_a + k);
+          reinterpret_cast<thread uint*>(&first_left.fragment_at(fragment_row, 0))[row_slot] = values.x;
+          reinterpret_cast<thread uint*>(&first_left.fragment_at(fragment_row, 1))[row_slot] = values.y;
+          reinterpret_cast<thread uint*>(&second_left.fragment_at(fragment_row, 0))[row_slot] = values.z;
+          reinterpret_cast<thread uint*>(&second_left.fragment_at(fragment_row, 1))[row_slot] = values.w;
+        });
+        quantized::for_each_fragment_row<RightFragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
+          const bool live = aligned_n.value || position.y + row_offset < row_end;
+          const uint4 weights = live ? trellis::v4_decode_biased_weight_quad(
+                                           trellis_format,
+                                           codes,
+                                           lane_row_byte + row_offset * code_row_bytes,
+                                           k
+                                       )
+                                     : uint4(0u);
+          reinterpret_cast<thread uint*>(&first_right.fragment_at(fragment_row, 0))[row_slot] = weights.x;
+          reinterpret_cast<thread uint*>(&first_right.fragment_at(fragment_row, 1))[row_slot] = weights.y;
+          reinterpret_cast<thread uint*>(&second_right.fragment_at(fragment_row, 0))[row_slot] = weights.z;
+          reinterpret_cast<thread uint*>(&second_right.fragment_at(fragment_row, 1))[row_slot] = weights.w;
+        });
+        uzu::matmul::fragment_mma(products, first_left, first_right);
+        uzu::matmul::fragment_mma(products, second_left, second_right);
+      }
+    });
+  } else {
+    uzu::dispatch_bool(alignment.contains(GemmAlignment::N) || row_end == Core::SIMDGROUP_BLOCK_N, [&](auto aligned_n) {
+      // Activations come padded to whole M tiles, so every row of the tile loads.
+      auto left = quantized::make_left_cursor<true, Core, LeftOperand, true>(
           left_storage,
           params,
           tile_context,
@@ -134,7 +176,7 @@ KERNEL(GemmTrellis)(
         trellis_cursor.advance();
       }
     });
-  });
+  }
 
   const bool write_split_k_partials = params->aligned_inner_iterations * trellis::K_STEP < params->K;
   const size_t partial_sum_offset = size_t(group_z) * params->M * params->N;
