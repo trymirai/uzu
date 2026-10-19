@@ -3,9 +3,8 @@
 
 using namespace metal;
 
-// Saves, for every token tile, the KERNEL_SIZE - 1 rows that precede it, before the in-place DeltaNetConvScan
-// overwrites them: packed[tile, tap, channel] = row (tile * tile_tokens - TAPS + tap) of [conv state ++ x].
-// Tile 0 takes the carried conv state; later tiles take raw x rows (x is read before the scan runs).
+// Saves the KERNEL_SIZE - 1 rows before each token tile, which the in-place DeltaNetConvScan overwrites:
+// packed[tile, tap] = row (tile * tile_tokens - TAPS + tap) of [conv state ++ x].
 //
 // state_in: [conv_dim, KERNEL_SIZE - 1]
 // x:        [suffix_len, row_stride]
