@@ -4,69 +4,61 @@ use uzu_engine_macros::kernel;
 
 use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
-// Multi-token causal conv1d with SiLU for DeltaNet.
-// Reads from conv_padded (Conv1dPack output), writes conv'd+SiLU'd values
-// back to in_proj with stride out_stride, updates conv state.
+// Multi-token causal conv1d with SiLU for DeltaNet, in place on in_proj. Each token tile starts from its packed rows (see
+// DeltaNetConvPack), so tiles are independent; the last tile writes the new conv state.
 //
-// conv_padded: [state_stride + suffix_len, row_stride] — packed history + input
-// conv_weight: [conv_dim, kernel_size]
-// bias:      [conv_dim] (optional)
-// in_proj:    [suffix_len, out_stride] — first conv_dim channels overwritten
-// state_out: [conv_dim, state_stride]
+// packed:      [num_tiles, KERNEL_SIZE - 1, conv_dim]
+// conv_weight: [conv_dim, KERNEL_SIZE]
+// bias:        [conv_dim] (optional)
+// in_proj:     [suffix_len, out_stride] - first conv_dim channels overwritten
+// state_out:   [conv_dim, KERNEL_SIZE - 1]
 #[kernel(DeltaNetConvScan)]
 #[variants(T, f32, bf16)]
-pub fn delta_net_conv_scan<T: DataTypeRepr + Float>(
-    conv_padded: *const f32,
+#[variants(KERNEL_SIZE, 4)]
+pub fn delta_net_conv_scan<T: DataTypeRepr + Float, const KERNEL_SIZE: u32>(
+    packed: *const f32,
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,
     in_proj: *mut T,
     state_out: *mut f32,
     suffix_len: u32,
-    kernel_size: u32,
-    row_stride: u32,
-    state_stride: u32,
+    tile_tokens: u32,
     conv_dim: u32,
     out_stride: u32,
     #[specialize] has_bias: bool,
 ) {
+    let kernel_size = KERNEL_SIZE as usize;
+    let taps = kernel_size - 1;
     let suffix_len = suffix_len as usize;
-    let kernel_size = kernel_size as usize;
-    let row_stride = row_stride as usize;
-    let state_stride = state_stride as usize;
+    let tile_tokens = tile_tokens as usize;
     let conv_dim = conv_dim as usize;
     let out_stride = out_stride as usize;
 
-    for token in 0..suffix_len {
+    for tile in 0..suffix_len.div_ceil(tile_tokens) {
         for channel in 0..conv_dim {
-            let w_offset = channel * kernel_size;
-
-            let mut acc = if has_bias {
-                unsafe { *bias.unwrap().add(channel) }
-            } else {
-                0.0f32
-            };
-
-            for tap in 0..kernel_size {
-                let padded_row = token + tap;
-                let padded_idx = padded_row * row_stride + channel;
-                let sample = unsafe { *conv_padded.add(padded_idx) };
-                acc += unsafe { *conv_weight.add(w_offset + tap) } * sample;
+            let mut window: Vec<f32> =
+                (0..taps).map(|tap| unsafe { *packed.add((tile * taps + tap) * conv_dim + channel) }).collect();
+            for token in tile * tile_tokens..((tile + 1) * tile_tokens).min(suffix_len) {
+                let sample = unsafe { (*in_proj.add(token * out_stride + channel)).to_f32().unwrap() };
+                let mut acc = if has_bias {
+                    unsafe { *bias.unwrap().add(channel) }
+                } else {
+                    0.0f32
+                };
+                for (tap, &previous) in window.iter().enumerate() {
+                    acc += unsafe { *conv_weight.add(channel * kernel_size + tap) } * previous;
+                }
+                acc += unsafe { *conv_weight.add(channel * kernel_size + taps) } * sample;
+                unsafe {
+                    *in_proj.add(token * out_stride + channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
+                }
+                window.remove(0);
+                window.push(sample);
             }
-
-            unsafe {
-                *in_proj.add(token * out_stride + channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
-            }
-        }
-    }
-
-    // state_out layout: [conv_dim, state_stride] (channel-major)
-    for channel in 0..conv_dim {
-        for tap in 0..state_stride {
-            let padded_row = suffix_len + tap;
-            let padded_idx = padded_row * row_stride + channel;
-            let sample = unsafe { *conv_padded.add(padded_idx) };
-            unsafe {
-                *state_out.add(channel * state_stride + tap) = sample;
+            if (tile + 1) * tile_tokens >= suffix_len {
+                for (tap, &value) in window.iter().enumerate() {
+                    unsafe { *state_out.add(channel * taps + tap) = value };
+                }
             }
         }
     }
