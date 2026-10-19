@@ -405,6 +405,7 @@ fn quant_b_variant<TB: BufferRef, T: ArrayElement + Float>(
         mode: input.mode,
         group_size: input.group_size,
         signed_codes: input.signed_codes,
+        rows: None,
     })
 }
 

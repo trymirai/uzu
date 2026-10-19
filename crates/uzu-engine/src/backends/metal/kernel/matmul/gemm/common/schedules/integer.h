@@ -150,9 +150,20 @@ struct IntegerSchedule {
           right_scale_column_start =
               clamp_group_output_column(right_scale_column_start, metadata_context.right_scale_group_stride);
         }
-        scales[tile_n] = *reinterpret_cast<const device ScaleVector*>(
-            right.scales + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
-        );
+        if (right.gather_rows) {
+          // Gathered rows (symmetric weights only): each column's scale sits at its stored row.
+          const device ScaleElement* group_scales =
+              right.scales + right_group_index * metadata_context.right_scale_group_stride;
+          const uint logical_column = metadata_context.right_column_base + uint(right_column_offset);
+          for (ushort column = 0; column < Ops::THREAD_ELEMENT_COLS; ++column) {
+            const bool live = ALIGNED_N || short(right_column_offset + column) < metadata_context.right_column_limit;
+            scales[tile_n][column] = live ? group_scales[right.rows[logical_column + column]] : ScaleElement(0);
+          }
+        } else {
+          scales[tile_n] = *reinterpret_cast<const device ScaleVector*>(
+              right.scales + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
+          );
+        }
         if constexpr (HAS_BIAS) {
           bias_offsets[tile_n] = *reinterpret_cast<const device ScaleVector*>(
               right.bias() + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start

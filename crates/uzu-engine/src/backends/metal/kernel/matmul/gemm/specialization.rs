@@ -21,6 +21,7 @@ pub(super) struct GemmSpecialization {
     pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
     pub(super) a_group_size: Option<u32>,
+    pub(super) gather_right_rows: bool,
 }
 
 impl GemmSpecialization {
@@ -46,6 +47,7 @@ impl GemmSpecialization {
             b_group_size: shape.b_group_size,
             signed_codes: shape.signed_codes,
             a_group_size,
+            gather_right_rows: false,
         };
         specialization.validate()?;
         Ok(specialization)
