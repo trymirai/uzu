@@ -161,7 +161,7 @@ KERNEL(RadixTopKSmallCollect)(
     const device ulong* prefixes,
     device atomic_uint* selected_counts,
     device atomic_uint* done_counts,
-    device ulong* selected_keys,
+    device coherent(device) ulong* selected_keys,
     constant uint& rows,
     constant uint& k,
     const uint columns SPECIALIZE,
