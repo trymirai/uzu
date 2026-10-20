@@ -10,7 +10,7 @@ template <typename T, uint BD>
 VARIANTS(T, bfloat)
 VARIANTS(BD, 128, 256)
 KERNEL(AttentionGemmGroupedCombine)(
-    const device float* partials,
+    const device T* partials,
     const device float* partial_maxs,
     const device float* partial_sums,
     device T* o,
@@ -33,7 +33,7 @@ KERNEL(AttentionGemmGroupedCombine)(
   const uint q_head_idx = kv_head_idx * params.gqa_factor + head_in_group;
   const device float* row_maxs = partial_maxs + row;
   const device float* row_sums = partial_sums + row;
-  const device float* row_partials = partials + row * BD + column;
+  const device T* row_partials = partials + row * BD + column;
 
   float numerator = 0.0f;
   float denominator = 0.0f;
@@ -52,7 +52,7 @@ KERNEL(AttentionGemmGroupedCombine)(
       const float rescale = fast::exp2(row_maxs[s * split_rows] - global_max);
       const float weight = rescale * split_sum;
       denominator += weight;
-      numerator += rescale * row_partials[size_t(s) * split_rows * BD];
+      numerator += rescale * float(row_partials[size_t(s) * split_rows * BD]);
     }
   }
   const float mean = denominator > 0.0f ? numerator / denominator : 0.0f;
