@@ -53,7 +53,8 @@ export const downloadStatePatch = (
         ? null
         : { phase: modelDownloadPhases.downloading, error: "" };
     case "deleted":
-      return { phase: modelDownloadPhases.notDownloaded, downloadedKbytes: 0, totalKbytes: 0, error: "" };
+      // totalKbytes is the model's size shown in the list, not download progress.
+      return { phase: modelDownloadPhases.notDownloaded, downloadedKbytes: 0, error: "" };
   }
 };
 

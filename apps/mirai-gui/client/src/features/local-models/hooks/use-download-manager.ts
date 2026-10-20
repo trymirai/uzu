@@ -20,12 +20,7 @@ export const useDownloadManager = () => {
       const { getModelState, updateModelState } = useModelsStore.getState();
       // A retry starts from a clean row instead of showing the previous failure until the first tick.
       if (getModelState(model.repoId)?.phase === modelDownloadPhases.error) {
-        updateModelState(model.repoId, {
-          phase: modelDownloadPhases.downloading,
-          downloadedKbytes: 0,
-          totalKbytes: 0,
-          error: "",
-        });
+        updateModelState(model.repoId, { phase: modelDownloadPhases.downloading, downloadedKbytes: 0, error: "" });
       }
       const { models } = getPlatform();
       try {

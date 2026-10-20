@@ -59,6 +59,9 @@ const capabilityErrorPrefix = "Could not check this model's chat capabilities:";
 const errorText = (error: unknown): string => {
   if (error instanceof DOMException && error.name === "QuotaExceededError")
     return "The browser has run out of storage. Delete a model or free device space, then resume the download.";
+  // Chrome reports a full disk this way, but also other storage failures.
+  if (error instanceof DOMException && error.name === "UnknownError")
+    return "The browser could not save model data. If the device is low on storage, free space, then try again.";
   return error instanceof Error ? error.message : String(error);
 };
 
@@ -329,19 +332,34 @@ function publishState(model: BrowserModel, next: DownloadState): void {
   changed();
 }
 
+// Chrome reports quota as usage + min(10 GiB, disk size); only below this cap is it a real limit.
+const REPORTED_QUOTA_HEADROOM_CAP_BYTES = 10 * 1024 ** 3;
+
+export function fitsReportedQuota(neededBytes: number, estimate: StorageEstimate | undefined): boolean {
+  if (estimate?.quota == null || estimate.usage == null) return true;
+  return estimate.quota - estimate.usage >= Math.min(neededBytes, REPORTED_QUOTA_HEADROOM_CAP_BYTES);
+}
+
+function logDownloadFailure(context: Record<string, unknown>, error: unknown): void {
+  const log = (storage?: StorageEstimate) =>
+    console.error("[downloads] download failed", { ...context, storage }, error);
+  const estimate = navigator.storage?.estimate?.();
+  if (!estimate) return log();
+  // Not awaited: estimate() can hang on a full disk.
+  void estimate.then(log, () => log());
+}
+
 async function download(model: BrowserModel, signal: AbortSignal): Promise<void> {
   const totalBytes = model.files.reduce((sum, file) => sum + file.sizeBytes, 0);
   let completedBytes = 0;
   try {
     await rememberModelFiles(model);
     const stored = await storedProgress(model);
-    const estimate = await navigator.storage?.estimate?.();
-    const needed = totalBytes - stored.completedBytes;
-    if (estimate?.quota != null && estimate.usage != null && needed > estimate.quota - estimate.usage)
+    await navigator.storage?.persist?.();
+    if (!fitsReportedQuota(totalBytes - stored.completedBytes, await navigator.storage?.estimate?.()))
       throw new Error(
         "Not enough browser storage for this model. Delete a model or free device space, then try again.",
       );
-    await navigator.storage?.persist?.();
     await setState(model, { phase: "Downloading", completedBytes: stored.completedBytes, totalBytes });
     let lastProgress = 0;
     const files = [...model.files].sort((a, b) => Number(b.name === "config.json") - Number(a.name === "config.json"));
@@ -369,6 +387,8 @@ async function download(model: BrowserModel, signal: AbortSignal): Promise<void>
   } catch (error) {
     const progress = await storedProgress(model);
     const message = errorText(error);
+    if (!signal.aborted)
+      logDownloadFailure({ identifier: model.identifier, completedBytes: progress.completedBytes, totalBytes }, error);
     await setState(model, {
       phase: signal.aborted ? "Paused" : "Error",
       completedBytes: progress.completedBytes,

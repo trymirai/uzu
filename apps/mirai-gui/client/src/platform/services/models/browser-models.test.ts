@@ -169,10 +169,22 @@ it("retains truncated but valid prefixes for a subsequent retry", async () => {
   await vi.waitFor(async () => expect((await manager.getModels()).models[0]?.state.phase).toBe("Downloaded"));
 });
 
-it("rejects unavailable storage before starting any file request", async () => {
+it("trusts the reported quota only below Chrome's 10 GiB headroom cap", async () => {
+  const { fitsReportedQuota } = await import("./browser-models");
+  const GiB = 1024 ** 3;
+  const estimate = (headroom: number) => ({ usage: 3 * GiB, quota: 3 * GiB + headroom });
+  expect(fitsReportedQuota(15 * GiB, estimate(10 * GiB))).toBe(true);
+  expect(fitsReportedQuota(27 * GiB, estimate(19 * GiB))).toBe(true);
+  expect(fitsReportedQuota(15 * GiB, estimate(8 * GiB))).toBe(false);
+  expect(fitsReportedQuota(5 * GiB, estimate(8 * GiB))).toBe(true);
+  expect(fitsReportedQuota(2 * GiB, estimate(1 * GiB))).toBe(false);
+  expect(fitsReportedQuota(15 * GiB, undefined)).toBe(true);
+});
+
+it("rejects a download that does not fit a real reported quota before any file request", async () => {
   Object.defineProperty(navigator, "storage", {
     configurable: true,
-    value: { estimate: async () => ({ quota: 10, usage: 5 }) },
+    value: { estimate: async () => ({ quota: 10, usage: 5 }), persist: async () => false },
   });
   const { browserModelManager: manager } = await import("./browser-models");
   await manager.startDownload(repoId);
@@ -180,6 +192,49 @@ it("rejects unavailable storage before starting any file request", async () => {
     expect((await manager.getModels()).models[0]?.state.error).toContain("Not enough browser storage"),
   );
   expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("https://models.example/"))).toHaveLength(0);
+});
+
+it("requests persistent storage before checking the quota and downloading", async () => {
+  const calls: string[] = [];
+  Object.defineProperty(navigator, "storage", {
+    configurable: true,
+    value: {
+      persist: async () => (calls.push("persist"), true),
+      estimate: async () => (calls.push("estimate"), { quota: 10 * 1024 ** 3, usage: 0 }),
+    },
+  });
+  const { browserModelManager: manager } = await import("./browser-models");
+  await manager.startDownload(repoId);
+  await vi.waitFor(async () => expect((await manager.getModels()).models[0]?.state.phase).toBe("Downloaded"));
+  expect(calls.slice(0, 2)).toEqual(["persist", "estimate"]);
+});
+
+it("reports a storage failure when the chunk cache rejects a write with Chrome's UnknownError", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const failure = new DOMException("Failed to execute 'put' on 'Cache': Unexpected internal error.", "UnknownError");
+  const put = vi.fn(async (url: string, response: Response) => {
+    if (url.includes("model.safetensors")) throw failure;
+    cached.set(url, new Response(await response.arrayBuffer(), { headers: response.headers }));
+  });
+  vi.stubGlobal("caches", {
+    open: async () => ({
+      match: async (url: string) => cached.get(url)?.clone(),
+      put,
+      delete: async (url: string) => cached.delete(url),
+    }),
+  });
+  const { browserModelManager: manager } = await import("./browser-models");
+  await manager.startDownload(repoId);
+  await vi.waitFor(async () =>
+    expect((await manager.getModels()).models[0]?.state).toMatchObject({
+      phase: "Error",
+      error: expect.stringContaining("could not save model data"),
+      downloadedKbytes: (bytes["config.json"]!.length + bytes["tokenizer.json"]!.length) / 1024,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(log).toHaveBeenCalledWith("[downloads] download failed", expect.objectContaining({ identifier }), failure),
+  );
 });
 
 it("shows unsupported checkpoints without offering a download", async () => {

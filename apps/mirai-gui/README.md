@@ -64,9 +64,14 @@ reloading, or losing the network retains received bytes; resuming requests the
 remaining byte range. A server that ignores ranges restarts that file safely.
 SHA-256, Git blob SHA-1, or CRC32C checksums from the catalog verify the entire file
 before the model is marked downloaded. Deletion cancels an active download across
-browser tabs and removes its complete and partial files. The app checks storage
-quota, requests persistent storage where available, and reports storage, network,
-access, and integrity errors. Clearing site data removes models and conversations.
+browser tabs and removes its complete and partial files. The app requests persistent
+storage where available and reports storage, network, access, and integrity errors.
+`navigator.storage.estimate()` is only trusted below 10 GiB of free quota: Chrome
+reports usage + min(10 GiB, disk size) and WebKit raises its reported quota as usage
+grows, so at that cap the real limit is unknown. A download is rejected up front only
+when the reported free quota is below both the model size and 10 GiB. A full disk
+fails a chunk write and stops the download with a storage error; retrying resumes
+from the received bytes. Clearing site data removes models and conversations.
 
 When loading a model, the worker composes the cached chunks into a Blob and reads
 bounded ranges for GPU upload. It does not concatenate the entire checkpoint into
