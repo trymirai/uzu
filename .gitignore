@@ -2,7 +2,6 @@
 **/mutants.out*/
 *.DS_Store
 *.proptest-regressions
-.idea/
 
 # Nix
 result
@@ -27,9 +26,9 @@ result
 .claude/settings.local.json
 
 # Local-only dev tools
-.env
-.DS_Store
-.claude/settings.local.json
+.env/
+.idea/
+.vscode/
 
 tools/gpu_trace/*.json
 

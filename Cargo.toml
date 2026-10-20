@@ -216,6 +216,7 @@ tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-updater = "2.14.0"
 plist = "1.10.1"
+sha2 = "0.11"
 
 [workspace.lints.clippy]
 # TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal

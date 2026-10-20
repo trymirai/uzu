@@ -22,6 +22,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        conf_head::{ConfidenceHead, ConfidenceHeadError, ConfidenceHeadTreeParameters, get_conf_head},
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
@@ -45,6 +46,8 @@ pub enum DFlashTreeError<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum DFlashSpeculatorLoadError<B: Backend> {
+    #[error("Confidence head error: {0}")]
+    ConfidenceHead(ConfidenceHeadError<B>),
     #[error("I/O error: {0}")]
     IO(#[from] io::Error),
     #[error("Serde error: {0}")]
@@ -90,6 +93,7 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     context: Arc<B::Context>,
     dflash: DFlash<B>,
     weaver: Option<Weaver<B>>,
+    confidence_head: Option<ConfidenceHead<B>>,
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
@@ -138,12 +142,42 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.assert_all_tensors_read()?;
 
+        let confidence_head: Option<ConfidenceHead<B>> = match (&shape.construction_method, weaver.as_ref()) {
+            (
+                DFlashTfmTreeConstructionMethod::Weaver {
+                    rounds,
+                    expand_per_round,
+                    expand_width,
+                    ..
+                },
+                Some(weaver),
+            ) => {
+                let params = ConfidenceHeadTreeParameters {
+                    rounds: *rounds,
+                    expand_per_round: *expand_per_round,
+                    expand_width: *expand_width,
+                    max_depth: weaver.max_depth(),
+                    pool: weaver.candidate_pool_size(),
+                };
+                if let Some(result) = get_conf_head(&*context, model_path, &params) {
+                    match result {
+                        Ok(res) => Some(res),
+                        Err(err) => return Err(DFlashSpeculatorLoadError::ConfidenceHead(err)),
+                    }
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        };
+
         let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
 
         Ok(Some(Self {
             context,
             dflash,
             weaver,
+            confidence_head,
             sampling,
             config,
             shape,

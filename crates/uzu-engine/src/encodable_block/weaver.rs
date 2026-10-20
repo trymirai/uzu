@@ -295,6 +295,10 @@ impl<B: Backend> Weaver<B> {
         self.max_depth
     }
 
+    pub fn candidate_pool_size(&self) -> u32 {
+        self.candidate_pool_size
+    }
+
     fn encode_prefix(
         &self,
         target_hidden: impl BufferRef<Backend = B>,

@@ -9,6 +9,7 @@ use crate::{
     config::{model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::{
+        conf_head::ConfidenceHeadError,
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
     },
@@ -39,6 +40,8 @@ pub struct LanguageModel<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum EngineLoadLanguageModelError<B: Backend> {
+    #[error("Confidence head error: {0}")]
+    ConfidenceHead(#[from] ConfidenceHeadError<B>),
     #[error("I/O error: {0}")]
     IO(#[from] io::Error),
     #[error("Serde error: {0}")]
