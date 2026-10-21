@@ -4,7 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, kernel::matmul::ActivationFormat},
     config::mlp::dense_mlp::DenseMLPConfig,
     data_type::DataType,
     encodable_block::{
@@ -74,6 +74,100 @@ impl<B: Backend> DenseMlp<B> {
             },
             up_input_hadamard_factors,
         ))
+    }
+
+    #[allow(dead_code)]
+    pub fn new_self_contained(
+        model_dimension: u32,
+        hidden_dimension: u32,
+        data_type: DataType,
+        config: &DenseMLPConfig,
+        parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
+    ) -> Result<Self, DenseMlpNewError<B>> {
+        let up = <dyn Linear<B>>::new(
+            model_dimension,
+            2 * hidden_dimension,
+            data_type,
+            config.has_up_biases,
+            &parameter_tree.subtree("up_projection"),
+            context,
+        )?;
+
+        let (down, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
+            hidden_dimension,
+            model_dimension,
+            data_type,
+            config.has_down_biases,
+            &parameter_tree.subtree("down_projection"),
+            context,
+        )?;
+
+        let gate = MlpGateActMulEncodable::new(
+            hidden_dimension,
+            data_type,
+            config.activation.clone(),
+            config.gate_clipping,
+            config.up_clipping,
+            down_input_preparation,
+            context,
+        )
+        .map_err(DenseMlpNewError::Backend)?;
+
+        Ok(Self {
+            up,
+            gate,
+            down,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn select_up_activation_format(
+        &self,
+        batch_dim: u32,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        self.up.select_activation_format(batch_dim, context)
+    }
+
+    #[allow(dead_code)]
+    pub fn encode_ref(
+        &self,
+        input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
+
+        let fused_up = self.up.encode_ref(input, batch_dim, command_buffer)?;
+        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let down_input = self
+            .gate
+            .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)
+            .map_err(MlpEncodeError::Backend)?;
+        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
+
+        Ok(output)
+    }
+
+    #[allow(dead_code)]
+    pub fn encode_prerotated_bf16(
+        &self,
+        rotated_input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
+
+        let fused_up = self.up.encode_prerotated_bf16(rotated_input, batch_dim, command_buffer)?;
+        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let down_input = self
+            .gate
+            .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)
+            .map_err(MlpEncodeError::Backend)?;
+        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
+
+        Ok(output)
     }
 }
 
