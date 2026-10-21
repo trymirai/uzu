@@ -41,6 +41,7 @@ template <GemmTiling GEMM_TILING>
 VARIANTS(
     GEMM_TILING,
     GemmTiling::Tile16x32x256_Simdgroups1x1,
+    GemmTiling::Tile32x64x256_Simdgroups2x2,
     GemmTiling::Tile64x64x256_Simdgroups2x2,
     GemmTiling::Tile128x128x256_Simdgroups4x4)
 KERNEL(GemmTrellis)(
@@ -125,13 +126,41 @@ KERNEL(GemmTrellis)(
       const int k_chunks = token_end > 0 && row_end > 0
                                ? int(params->aligned_inner_iterations) * int(trellis::K_STEP / Core::SIMDGROUP_BLOCK_K)
                                : 0;
-      METAL_PRAGMA_NO_UNROLL
-      for (int chunk = 0; chunk < k_chunks; ++chunk) {
-        auto left_tile = left.load(0u);
-        auto right_tile = trellis_cursor.load(0u);
-        uzu::matmul::fragment_mma(products, left_tile, right_tile);
-        left.advance();
-        trellis_cursor.advance();
+      if constexpr (GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4) {
+        if (trellis_vector_width == trellis::V4_VECTOR_WIDTH && trellis_transition_bits == 8 &&
+            trellis_restart_columns == 64 && params->aligned_inner_iterations > 1) {
+          static_assert(trellis::K_STEP % (2 * Core::SIMDGROUP_BLOCK_K) == 0, "paired K chunks must be complete");
+          auto run_chunk = [&]() {
+            auto left_tile = left.load(0u);
+            auto right_tile = trellis_cursor.load(0u);
+            uzu::matmul::fragment_mma(products, left_tile, right_tile);
+            left.advance();
+            trellis_cursor.advance();
+          };
+          METAL_PRAGMA_NO_UNROLL
+          for (int chunk = 0; chunk < k_chunks; chunk += 2) {
+            run_chunk();
+            run_chunk();
+          }
+        } else {
+          METAL_PRAGMA_NO_UNROLL
+          for (int chunk = 0; chunk < k_chunks; ++chunk) {
+            auto left_tile = left.load(0u);
+            auto right_tile = trellis_cursor.load(0u);
+            uzu::matmul::fragment_mma(products, left_tile, right_tile);
+            left.advance();
+            trellis_cursor.advance();
+          }
+        }
+      } else {
+        METAL_PRAGMA_NO_UNROLL
+        for (int chunk = 0; chunk < k_chunks; ++chunk) {
+          auto left_tile = left.load(0u);
+          auto right_tile = trellis_cursor.load(0u);
+          uzu::matmul::fragment_mma(products, left_tile, right_tile);
+          left.advance();
+          trellis_cursor.advance();
+        }
       }
     });
   });
