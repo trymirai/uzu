@@ -125,6 +125,15 @@ fn attention_kernel_matches_cpu() {
         (64, 8, 2, 8, 0, false, false),
         (64, 8, 8, 8, 1024, false, false),
         (64, 8, 2, 8, 1024, false, false),
+        (256, 24, 4, 1, 16_383, true, false),
+        (256, 24, 4, 2, 16_383, true, false),
+        (256, 24, 4, 4, 16_380, true, false),
+        (128, 32, 8, 1, 16_383, true, false),
+        (256, 6, 1, 512, 60_928, true, false),
+        (256, 1, 1, 1024, 60_417, true, false),
+        (128, 4, 1, 512, 30_208, true, false),
+        (128, 4, 1, 1024, 29_696, true, false),
+        (128, 8, 2, 512, 30_208, true, false),
     ] {
         let nodes = use_trie.then_some(trie.as_slice());
         let shape = (head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal);
@@ -265,7 +274,7 @@ fn attention_gate_matches_standalone_gate_on_cpu() {
 fn attention_gate_matches_standalone_gate_on_metal() {
     let context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     for (suffix_length, prefix_length) in
-        [(1, 100), (1, 2000), (200, 800), (2, 1022), (16, 16368), (65, 959), (65, 16319), (1024, 0)]
+        [(1, 100), (1, 2000), (200, 800), (2, 1022), (16, 16368), (65, 959), (65, 16319), (1024, 0), (512, 60_928)]
     {
         check_attention_gate::<Metal>(context.as_ref(), suffix_length, prefix_length);
     }
