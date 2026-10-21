@@ -221,6 +221,19 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         self.kv.prepare(self.cache.required_prefix_len(context_length) + suffix_length)
     }
 
+    fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        assert!(
+            matches!(self.cache, KVCacheState::Full { .. }),
+            "sliding window attention state can't change its context length"
+        );
+        self.cache = KVCacheState::Full {
+            length: context_length,
+        };
+    }
+
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
