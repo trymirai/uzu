@@ -104,6 +104,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         ParameterTree {
             loader: self,
             prefix: String::new(),
+            unit_mixture: false,
         }
     }
 
@@ -127,6 +128,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
     prefix: String,
+    unit_mixture: bool,
 }
 
 impl<B: Backend> ParameterTree<'_, B> {
@@ -137,6 +139,16 @@ impl<B: Backend> ParameterTree<'_, B> {
         Self {
             loader: self.loader,
             prefix: format!("{}{name}.", self.prefix),
+            unit_mixture: self.unit_mixture,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn unit_mixture(&self) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: self.prefix.clone(),
+            unit_mixture: true,
         }
     }
 
@@ -162,7 +174,9 @@ impl<B: Backend> ParameterTree<'_, B> {
         let key = format!("{}{name}", self.prefix);
         let tensor =
             self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
-        if (tensor.shape.as_ref(), tensor.dtype) != (shape, dtype) {
+        let matches_shape = tensor.shape.as_ref() == shape
+            || (self.unit_mixture && tensor.shape.first() == Some(&1) && &tensor.shape[1..] == shape);
+        if !matches_shape || tensor.dtype != dtype {
             return Err(ParameterLoaderError::InvalidTensor {
                 key,
                 shape: tensor.shape.clone(),
@@ -217,5 +231,62 @@ impl<B: Backend> ParameterTree<'_, B> {
         self.loader.file.read_exact_at(bytemuck::cast_slice_mut(&mut data), self.loader.data_offset + start).await?;
         tensor.read.store(true, Ordering::Relaxed);
         Ok(data.into_boxed_slice())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use futures::executor::block_on;
+    use uzu_engine_macros::uzu_test;
+
+    use super::*;
+    use crate::backends::{common::Context, cpu::Cpu};
+
+    #[uzu_test]
+    fn test_unit_mixture_tensor_reading() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "safetensors_test_{}_{}.safetensors",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+
+        let header_json = serde_json::json!({
+            "shared_weight": {
+                "dtype": "F32",
+                "shape": [1, 4, 8],
+                "data_offsets": [0, 128]
+            }
+        })
+        .to_string();
+
+        let header_bytes = header_json.as_bytes();
+        let header_len = (header_bytes.len() as u64).to_le_bytes();
+        let raw_data = vec![0u8; 128];
+
+        {
+            let mut file = std::fs::File::create(&temp_path).expect("failed to create temp file");
+            file.write_all(&header_len).unwrap();
+            file.write_all(header_bytes).unwrap();
+            file.write_all(&raw_data).unwrap();
+            file.flush().unwrap();
+        }
+
+        let context = block_on(<Cpu as Backend>::Context::new()).expect("failed to create Cpu context");
+        let loader =
+            block_on(ParameterLoader::<Cpu>::new(&temp_path, context.as_ref())).expect("failed to create loader");
+
+        // Standard reading without unit_mixture: reading [4, 8] must fail because the file has [1, 4, 8]
+        let default_tree = loader.tree();
+        assert!(block_on(default_tree.read_slice::<f32>("shared_weight", &[4, 8])).is_err());
+
+        // Opt-in unit_mixture: reading [4, 8] must succeed by accepting the leading dimension of 1
+        let mixture_tree = default_tree.unit_mixture();
+        let slice = block_on(mixture_tree.read_slice::<f32>("shared_weight", &[4, 8]))
+            .expect("should succeed with unit_mixture");
+        assert_eq!(slice.len(), 32);
+
+        let _ = std::fs::remove_file(temp_path);
     }
 }
