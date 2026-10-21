@@ -505,15 +505,17 @@ impl<B: Backend> MoeMlp<B> {
             )));
         }
 
-        let router = <dyn Linear<B>>::new(
+        let router = <dyn Linear<B>>::new_mixed_precision(
             model_dimension,
             config.num_routed_experts,
             data_type,
+            data_type,
+            DataType::F32,
             config.router_has_biases,
             &parameter_tree.subtree("router"),
             context,
         )?;
-        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, data_type, false)
+        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, false)
             .map_err(MoeMlpNewError::Backend)?;
 
         let routed_tree = parameter_tree.subtree("routed_experts");
