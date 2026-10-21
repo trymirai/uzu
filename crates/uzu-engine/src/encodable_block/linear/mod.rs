@@ -45,6 +45,24 @@ pub trait Linear<B: Backend>: Send + Sync {
         self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
     }
 
+    #[allow(dead_code)]
+    fn encode_ref(
+        &self,
+        input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
+
+    #[allow(dead_code)]
+    fn encode_prerotated_bf16(
+        &self,
+        rotated_input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        self.encode_ref(rotated_input, batch_dim, command_buffer)
+    }
+
     fn encode_input(
         &self,
         input: LinearInput<B>,
@@ -151,7 +169,7 @@ impl<B: Backend> dyn Linear<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 incoherence_block_size: Some(block_size),
-                incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+                incoherence_processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
                 input_dimension,

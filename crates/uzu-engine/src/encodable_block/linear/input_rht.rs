@@ -9,24 +9,26 @@ use crate::{
     data_type::DataType,
 };
 
-pub(super) struct InputRht<B: Backend> {
+pub struct InputRht<B: Backend> {
     rht_signs: B::GlobalBuffer,
     rht: ActivationTransform<B>,
+    rht_in_place: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,
 }
 
 impl<B: Backend> InputRht<B> {
-    pub(super) fn new(
+    pub fn new(
         data_type: DataType,
         preparation: LinearInputPreparation<B>,
-        in_place: bool,
+        _in_place: bool,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         let LinearInputPreparation {
             rht_signs,
             activation_quantization,
         } = preparation;
-        let rht = ActivationTransform::input_rht(context, data_type, in_place)?;
+        let rht = ActivationTransform::input_rht(context, data_type, false)?;
+        let rht_in_place = ActivationTransform::input_rht(context, data_type, true)?;
         let quantizer = activation_quantization
             .map(|quantization| ActivationTransform::quantize(context, data_type, quantization))
             .transpose()?;
@@ -34,11 +36,12 @@ impl<B: Backend> InputRht<B> {
         Ok(Self {
             rht_signs,
             rht,
+            rht_in_place,
             quantizer,
         })
     }
 
-    pub(super) fn prepare(
+    pub fn prepare(
         &self,
         input: impl BufferRef<Backend = B>,
         batch_dim: u32,
@@ -97,7 +100,7 @@ impl<B: Backend> InputRht<B> {
         }
 
         let input_dim = self.input_dim();
-        self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
+        self.rht_in_place.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
         Ok(LinearInput::FullPrecision(input))
     }
 

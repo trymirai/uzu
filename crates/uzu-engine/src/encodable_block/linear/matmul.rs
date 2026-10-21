@@ -198,6 +198,23 @@ impl<B: Backend> LinearMatmul<B> {
 }
 
 impl<B: Backend> Linear<B> for LinearMatmul<B> {
+    fn encode_ref(
+        &self,
+        input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        self.encode_with_a(
+            MatmulA::FullPrecision {
+                values: input,
+                offset: 0,
+            },
+            batch_dim,
+            None::<Gather<&B::ScratchBuffer>>,
+            command_buffer,
+        )
+    }
+
     fn encode_input(
         &self,
         input: LinearInput<B>,
