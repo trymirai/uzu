@@ -2,7 +2,7 @@ use std::{
     iter::{once, repeat_n},
     mem::replace,
     range::Range,
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
 };
 
 use futures::executor::block_on;
@@ -12,8 +12,8 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
+        TimestampSpan,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
         gpu_types::trie::TrieNode as GpuTrieNode,
         kernel::ContextRingUpdateKernel,
@@ -26,7 +26,10 @@ use crate::{
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie::TrieNode,
-    utils::size_for_shape::size_for_shape,
+    utils::{
+        size_for_shape::size_for_shape,
+        timestamps::{record, wait},
+    },
 };
 
 enum ForwardPassChaining<B: Backend> {
@@ -41,6 +44,7 @@ impl<B: Backend> ForwardPassChaining<B> {
     async fn resolve<'a>(
         &'a mut self,
         tokens: &mut Vec<u64>,
+        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
     ) -> Result<(u64, Option<&'a B::ScratchBuffer>), LanguageModelStreamError<B>> {
         match self {
@@ -51,7 +55,7 @@ impl<B: Backend> ForwardPassChaining<B> {
             Self::InFlight(in_flight) => {
                 assert!(in_flight.full_accept);
                 for pending in replace(&mut in_flight.pending, Box::new([])) {
-                    pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
+                    wait(pending, timestamps).await.map_err(LanguageModelStreamError::Backend)?;
                 }
                 let output_tokens = in_flight.output_tokens.as_slice::<u32>();
                 assert_eq!(output_tokens.len(), 1);
@@ -207,11 +211,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let mut command_buffer = model
+            let command_buffer = model
                 .engine
                 .context
                 .create_command_buffer(Some("prefill"), Some(allocation_pool.clone()))
                 .map_err(LanguageModelStreamError::Backend)?;
+            let mut command_buffer = record(command_buffer, options.timestamps.as_ref());
 
             command_buffer.debug_point(&format!(
                 "prefill at context {}, suffix {} ({} batches)",
@@ -401,7 +406,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     (ForwardPassChaining::InFlight(forward_pass_pending), None)
                 } else {
                     for pending in forward_pass_pending.pending {
-                        pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
+                        wait(pending, self.options.timestamps.as_ref())
+                            .await
+                            .map_err(LanguageModelStreamError::Backend)?;
                     }
                     let sampled_tokens = forward_pass_pending
                         .output_tokens
@@ -454,7 +461,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                     let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                     let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                    let mut command_buffer = self
+                    let command_buffer = self
                         .model
                         .engine
                         .context
@@ -463,6 +470,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             Some(self.allocation_pool.clone()),
                         )
                         .map_err(LanguageModelStreamError::Backend)?;
+                    let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
                     self.model_state
                         .transformer_state
                         .encode_accept(&accepted_token_indicies, &mut command_buffer)
@@ -525,6 +533,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 prev_output
                     .resolve(
                         &mut self.model_state.tokens,
+                        self.options.timestamps.as_ref(),
                         #[cfg(grammar)]
                         self.options.grammar.as_mut(),
                     )
@@ -550,6 +559,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 let resolved = prev_output
                     .resolve(
                         &mut self.model_state.tokens,
+                        self.options.timestamps.as_ref(),
                         #[cfg(grammar)]
                         self.options.grammar.as_mut(),
                     )
@@ -569,6 +579,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     &self.model_state.prng,
                     self.allocation_pool.clone(),
                     Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
+                    self.options.timestamps.as_ref(),
                 )
                 .await?;
             prev_output.drop_output_norm();
@@ -588,7 +599,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         self.allocation_pool = self.model.engine.context.create_allocation_pool();
 
-        let mut command_buffer = self
+        let command_buffer = self
             .model
             .engine
             .context
@@ -597,6 +608,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 Some(self.allocation_pool.clone()),
             )
             .map_err(LanguageModelStreamError::Backend)?;
+        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
 
         command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
@@ -650,7 +662,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             if chain_copy.is_some() {
                 pending.push(command_buffer.end_encoding().submit());
 
-                let mut command_buffer = self
+                let command_buffer = self
                     .model
                     .engine
                     .context
@@ -659,6 +671,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         Some(self.allocation_pool.clone()),
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
+                let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
 
                 let mut bitmask = command_buffer
                     .allocate_constant(
@@ -666,7 +679,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
 
-                prev_output.resolve(&mut self.model_state.tokens, Some(grammar)).await?;
+                prev_output
+                    .resolve(&mut self.model_state.tokens, self.options.timestamps.as_ref(), Some(grammar))
+                    .await?;
                 if grammar.next_bitmask(bitmask.as_slice_mut()) {
                     (Some(bitmask), command_buffer)
                 } else {
@@ -782,6 +797,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             prev_output
                 .resolve(
                     &mut self.model_state.tokens,
+                    self.options.timestamps.as_ref(),
                     #[cfg(grammar)]
                     self.options.grammar.as_mut(),
                 )
@@ -801,11 +817,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             } => Some(seed_token),
             DecodingState::ForwardPassPending(in_flight) => {
                 for pending in in_flight.pending {
-                    pending.wait_until_completed().await.map_err(LanguageModelStreamError::Backend)?;
+                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
                 }
 
                 if !in_flight.full_accept {
-                    let mut command_buffer = self
+                    let command_buffer = self
                         .model
                         .engine
                         .context
@@ -814,6 +830,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             Some(self.allocation_pool.clone()),
                         )
                         .map_err(LanguageModelStreamError::Backend)?;
+                    let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
                     self.model_state
                         .transformer_state
                         .encode_accept(&[0], &mut command_buffer)
@@ -826,10 +843,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                             &mut command_buffer,
                         )?;
                     }
-                    command_buffer
-                        .end_encoding()
-                        .submit()
-                        .wait_until_completed()
+                    wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref())
                         .await
                         .map_err(LanguageModelStreamError::Backend)?;
                 }
@@ -845,7 +859,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             } => {
                 assert!(num_accepted > 0 && num_accepted < full.len());
 
-                let mut command_buffer = self
+                let command_buffer = self
                     .model
                     .engine
                     .context
@@ -854,6 +868,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         Some(self.allocation_pool.clone()),
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
+                let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
                 let accepted_token_indicies =
                     full.iter().take(num_accepted + 1).map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                 self.model_state
@@ -868,10 +883,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                         &mut command_buffer,
                     )?;
                 }
-                command_buffer
-                    .end_encoding()
-                    .submit()
-                    .wait_until_completed()
+                wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref())
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
 

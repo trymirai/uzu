@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::Path,
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
 };
 
 use derive_more::Debug;
@@ -15,8 +15,8 @@ pub use crate::encodable_block::dflash::DFlashState;
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-        Context, gpu_types::trie::TrieNode as GpuTrieNode,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
+        gpu_types::trie::TrieNode as GpuTrieNode,
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
@@ -29,6 +29,7 @@ use crate::{
     },
     safetensors::{ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
+    utils::timestamps::{record, wait},
 };
 
 #[derive(Debug, Error)]
@@ -206,6 +207,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
         command_buffer_name: Option<&str>,
+        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
@@ -219,10 +221,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let root_position = state.context_length();
 
-        let mut command_buffer = self
+        let command_buffer = self
             .context
             .create_command_buffer(command_buffer_name, Some(allocation_pool))
             .map_err(DFlashTreeError::Backend)?;
+        let mut command_buffer = record(command_buffer, timestamps);
 
         let nodes = match shape.construction_method {
             DFlashTfmTreeConstructionMethod::Argmax => {
@@ -271,12 +274,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &mut command_buffer,
                     )
                     .map_err(DFlashTreeError::Backend)?;
-                let completed = command_buffer
-                    .end_encoding()
-                    .submit()
-                    .wait_until_completed()
-                    .await
-                    .map_err(DFlashTreeError::Backend)?;
+                let completed =
+                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
                 let tokens = sampled.copyout::<u32>();
                 drop(completed);
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
@@ -349,12 +348,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     },
                     &mut command_buffer,
                 )?;
-                let completed = command_buffer
-                    .end_encoding()
-                    .submit()
-                    .wait_until_completed()
-                    .await
-                    .map_err(DFlashTreeError::Backend)?;
+                let completed =
+                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
                 let nodes = tree.read_nodes();
                 drop(completed);
                 nodes
