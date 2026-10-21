@@ -18,7 +18,7 @@ use rangemap::RangeSet;
 use crate::backends::{
     common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-        CommandBufferExecutable, CommandBufferPending, Context, allocator::bump::BumpAllocator,
+        CommandBufferExecutable, CommandBufferPending, Context, TimestampSpan, allocator::bump::BumpAllocator,
     },
     metal::{
         Metal,
@@ -26,6 +26,7 @@ use crate::backends::{
         context::MetalContext,
         error::MetalError,
         kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
+        timestamp_recorder::MetalTimestampRecorder,
     },
 };
 
@@ -55,6 +56,7 @@ pub struct MetalCommandBufferEncoding {
     constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalBuffer>>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
+    timestamps: Option<MetalTimestampRecorder>,
 }
 
 unsafe impl Send for MetalCommandBufferEncoding {}
@@ -108,6 +110,7 @@ impl MetalCommandBufferEncoding {
             constant_allocator: Some(constant_allocator),
             allocation_pool,
             context,
+            timestamps: None,
         })
     }
 
@@ -205,6 +208,9 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         name: &str,
     ) -> MetalDebugGroupSpan<'_> {
         ProtocolObject::<dyn MTL4CommandEncoder>::push_debug_group(self.compute_encoder.as_ref(), name);
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.start(name, &self.context.device, &self.compute_encoder);
+        }
         MetalDebugGroupSpan {
             command_buffer: self,
         }
@@ -217,6 +223,11 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         ProtocolObject::<dyn MTL4CommandEncoder>::insert_debug_signpost(self.compute_encoder.as_ref(), name);
     }
 
+    fn with_timestamps(mut self) -> Self {
+        self.timestamps = Some(MetalTimestampRecorder::default());
+        self
+    }
+
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
@@ -227,6 +238,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             constant_allocator,
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
+            timestamps: self.timestamps.take(),
         }
     }
 }
@@ -263,7 +275,11 @@ impl DerefMut for MetalDebugGroupSpan<'_> {
 
 impl Drop for MetalDebugGroupSpan<'_> {
     fn drop(&mut self) {
-        self.command_buffer.compute_encoder.pop_debug_group();
+        let command_buffer = &mut *self.command_buffer;
+        if let Some(timestamps) = &mut command_buffer.timestamps {
+            timestamps.end(&command_buffer.context.device, &command_buffer.compute_encoder);
+        }
+        command_buffer.compute_encoder.pop_debug_group();
     }
 }
 
@@ -273,6 +289,7 @@ pub struct MetalCommandBufferExecutable {
     constant_allocator: BumpAllocator<<Metal as Backend>::GlobalBuffer>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
+    timestamps: Option<MetalTimestampRecorder>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -294,14 +311,18 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
         let context_clone = self.context.clone();
+        let timestamps = self.timestamps;
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
             let message = if let Some(error) = feedback.error() {
-                Err(error.to_string())
+                Err(MetalError::CommandBufferExecution(error.to_string()))
             } else {
-                Ok(Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()))
+                timestamps
+                    .as_ref()
+                    .map_or_else(|| Ok(Box::default()), |timestamps| timestamps.resolve(&context_clone.device))
+                    .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), spans))
             };
             let _ = sender.unbounded_send(message);
             context_clone.command_allocator_cache.lock().push(command_allocator.clone());
@@ -319,26 +340,25 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 }
 
 pub struct MetalCommandBufferPending {
-    receiver: mpsc::UnboundedReceiver<Result<Duration, String>>,
+    receiver: mpsc::UnboundedReceiver<Result<(Duration, Box<[TimestampSpan]>), MetalError>>,
 }
 
 impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     async fn wait_until_completed(mut self) -> Result<MetalCommandBufferCompleted, MetalError> {
+        let (gpu_execution_time, timestamps) =
+            self.receiver.recv().await.map_err(|_| MetalError::CommandBufferWait)??;
         Ok(MetalCommandBufferCompleted {
-            gpu_execution_time: self
-                .receiver
-                .recv()
-                .await
-                .map_err(|_| MetalError::CommandBufferWait)?
-                .map_err(MetalError::CommandBufferExecution)?,
+            gpu_execution_time,
+            timestamps,
         })
     }
 }
 
 pub struct MetalCommandBufferCompleted {
     gpu_execution_time: Duration,
+    timestamps: Box<[TimestampSpan]>,
 }
 
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
@@ -346,5 +366,9 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
+    }
+
+    fn timestamps(&self) -> &[TimestampSpan] {
+        &self.timestamps
     }
 }

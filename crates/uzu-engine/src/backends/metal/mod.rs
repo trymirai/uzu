@@ -9,5 +9,6 @@ mod gpu_types;
 mod heaps;
 mod kernel;
 mod metal_extensions;
+mod timestamp_recorder;
 
 pub use backend::Metal;
