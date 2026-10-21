@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "async-openai",
  "futures",
@@ -657,7 +657,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks-uzu"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "anyhow",
  "cc",
@@ -680,7 +680,7 @@ checksum = "383d29d513d8764dcdc42ea295d979eb99c3c9f00607b3692cf68a431f7dca72"
 
 [[package]]
 name = "bindings"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -690,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "inventory",
  "napi",
@@ -1242,7 +1242,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "anyhow",
  "clap",
@@ -1754,7 +1754,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2155,7 +2155,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "async-trait",
  "bindings",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "indexmap 2.14.2",
  "libc",
@@ -4047,7 +4047,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "fancy-regex 0.19.2",
  "indexmap 2.14.2",
@@ -4129,7 +4129,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "libc",
  "obfstr",
@@ -4149,7 +4149,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "bitflags 2.13.2",
  "kanka",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "kiban"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4641,7 +4641,7 @@ dependencies = [
 
 [[package]]
 name = "mirai-gui"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "chrono",
  "futures",
@@ -4663,7 +4663,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "base64 0.23.1",
  "bitflags 2.13.2",
@@ -4797,7 +4797,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "nagare"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "async-trait",
  "bindings",
@@ -4836,7 +4836,7 @@ dependencies = [
 
 [[package]]
 name = "nagare-macros"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
@@ -5410,17 +5410,6 @@ checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
 dependencies = [
  "bitflags 2.13.2",
  "libc",
- "objc2",
- "objc2-core-foundation",
- "objc2-foundation",
-]
-
-[[package]]
-name = "objc2-open-directory"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb82bed227edf5201dfedf072bba4015a33d3d4a98519837295a90f0a23f676d"
-dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
@@ -7231,9 +7220,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -7749,7 +7738,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -8230,7 +8219,6 @@ dependencies = [
  "ntapi",
  "objc2-core-foundation",
  "objc2-io-kit",
- "objc2-open-directory",
  "windows 0.62.2",
 ]
 
@@ -8950,7 +8938,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "indexmap 2.14.2",
  "json-transform",
@@ -9760,7 +9748,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -9825,7 +9813,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
@@ -9880,7 +9868,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine-macros"
-version = "0.6.9"
+version = "0.6.11"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -10155,18 +10143,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
