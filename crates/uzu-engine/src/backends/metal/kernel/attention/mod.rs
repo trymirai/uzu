@@ -21,7 +21,7 @@ use crate::backends::{
     metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, kernel::SigmoidGateMetalKernel},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum MaskKind {
     None,
     Causal,
@@ -71,7 +71,7 @@ impl AttentionKernel for AttentionMetalKernel {
         context: &MetalContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, AttentionMetalError> {
-        let grouped = gemm_grouped::AttentionGemmGrouped::is_supported(&config, context)
+        let grouped = gemm_grouped::AttentionGemmGrouped::is_supported(&config)
             .then(|| gemm_grouped::AttentionGemmGrouped::new(&config));
         let int8 = int8::Int8Attention::is_supported(&config, context)
             .then(|| int8::Int8Attention::new(context, &config))
@@ -164,7 +164,7 @@ impl AttentionMetalKernel {
         if !is_ring
             && let Some(mask) = mask
             && let Some(grouped) = &self.grouped
-            && grouped.should_encode(mask, suffix_length)
+            && grouped.should_encode(mask, suffix_length, kv_length, command_buffer.context().supports_mxu)
         {
             return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
         }

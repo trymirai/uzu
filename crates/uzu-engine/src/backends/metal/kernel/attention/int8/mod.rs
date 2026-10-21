@@ -34,7 +34,7 @@ impl Int8Attention {
         config: &AttentionKernelConfig,
         context: &MetalContext,
     ) -> bool {
-        policy::is_supported(config, context) && config.is_causal
+        policy::is_supported(config) && context.supports_mxu && config.is_causal
     }
 
     pub fn new(
