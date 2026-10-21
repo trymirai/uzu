@@ -410,7 +410,7 @@ impl<B: Backend> DeltaNet<B> {
             command_buffer,
         );
 
-        let mut delta_output = tree_verify
+        let delta_output = tree_verify
             .encode(
                 TreeVerifyEncodeArguments {
                     q: &q,
@@ -420,24 +420,16 @@ impl<B: Backend> DeltaNet<B> {
                     log_decay: &log_decay,
                     beta: &beta,
                     h0: &state.ssm_state,
+                    in_proj: &tree_projected,
+                    norm_weight: &self.norm_weight,
+                    conv_dim: self.conv_dim,
+                    total_proj_dim: self.total_proj_dim,
+                    norm_epsilon: self.norm_epsilon,
                     tree_size,
                 },
                 command_buffer,
             )
             .map_err(MixerEncodeError::Backend)?;
-        self.delta_net_norm_gate.encode(
-            &mut delta_output,
-            &tree_projected,
-            &self.norm_weight,
-            self.num_heads,
-            self.value_head_dim,
-            self.value_dim,
-            self.conv_dim,
-            self.total_proj_dim,
-            self.norm_epsilon,
-            tree_size,
-            command_buffer,
-        );
 
         let output = self.out_projection.encode(delta_output, tree_size, command_buffer)?;
         state.suffix_status = Some(DeltaNetSuffixStatus::Tree {

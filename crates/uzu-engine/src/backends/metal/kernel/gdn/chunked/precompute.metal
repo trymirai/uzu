@@ -60,8 +60,6 @@ KERNEL(DeltaNetChunkedPrecompute)(
   using GramRightFragment = OperandFragment<float, 1, GRAM_COL_FRAGMENTS, Ops, ReadTranspose>;
 
   using TileFragment = Fragment<float, ROW_FRAGMENTS, ROW_FRAGMENTS, Ops>;
-  using MatrixFragment = OperandFragment<float, ROW_FRAGMENTS, ROW_FRAGMENTS, Ops>;
-  using ValueFragment = OperandFragment<bfloat, ROW_FRAGMENTS, ROW_FRAGMENTS, Ops>;
 
   static_assert(HEAD_K_DIM % Ops::FRAGMENT_ROWS == 0, "HEAD_K_DIM must align to fragment K");
   constexpr uint num_blocks = CHUNK_SIZE / BLOCK_SIZE;
@@ -211,50 +209,20 @@ KERNEL(DeltaNetChunkedPrecompute)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     // Solve this simdgroup's 16-column slice of T; blocks above the slice are zero, solved blocks stay in registers.
-    const uint slice_base = block_idx * BLOCK_SIZE;
-    device bfloat* t_head = t_out + head_base * CHUNK_SIZE * CHUNK_SIZE + slice_base;
-    ValueFragment t_blocks[num_blocks];
-    METAL_PRAGMA_UNROLL
-    for (uint b = 0; b < num_blocks; ++b) {
-      TileFragment t_block;
-      t_block.clear();
-      if (b >= block_idx) {
-        const threadgroup float* b_tiles = a_tiles + tile_base(b) * (BLOCK_SIZE * COL_TILE);
-        TileFragment acc_t;
-        acc_t.map_coords(lane, [&](short local_row, short local_col, float) UZU_ALWAYS_INLINE {
-          return b * BLOCK_SIZE + uint(local_row) == slice_base + uint(local_col) ? 1.0f : 0.0f;
-        });
-        METAL_PRAGMA_UNROLL
-        for (uint prev_block_idx = 0; prev_block_idx < b; ++prev_block_idx) {
-          if (prev_block_idx >= block_idx) {
-            MatrixFragment a_frag;
-            a_frag.load_from(
-                lane,
-                fragment_source(
-                    b_tiles + (prev_block_idx / 2) * (BLOCK_SIZE * COL_TILE) + (prev_block_idx % 2) * BLOCK_SIZE,
-                    COL_TILE
-                )
-            );
-            a_frag.map([](float value) UZU_ALWAYS_INLINE { return -value; });
-            fragment_mma(acc_t, a_frag, t_blocks[prev_block_idx]);
-          }
-        }
-        MatrixFragment inv_frag;
-        inv_frag.load_from(
-            lane,
-            fragment_source(
-                static_cast<const threadgroup float*>(diag_inverses + b * (BLOCK_SIZE * BLOCK_SIZE)),
-                BLOCK_SIZE
-            )
-        );
-        fragment_mma(t_block, inv_frag, acc_t);
-      }
-      t_block.store(lane, t_head + b * BLOCK_SIZE * CHUNK_SIZE, CHUNK_SIZE);
-      METAL_PRAGMA_UNROLL
-      for (ushort e = 0; e < ValueFragment::ELEMENTS_PER_FRAGMENT; ++e) {
-        t_blocks[b].elements()[e] = bfloat(t_block.elements()[e]);
-      }
-    }
+    device bfloat* t_head = t_out + head_base * CHUNK_SIZE * CHUNK_SIZE + block_idx * BLOCK_SIZE;
+    solve_lower_triangular_slice<BLOCK_SIZE, num_blocks, bfloat>(
+        [&](uint b) UZU_ALWAYS_INLINE {
+          return static_cast<const threadgroup float*>(a_tiles + tile_base(b) * (BLOCK_SIZE * COL_TILE));
+        },
+        [](const threadgroup float* row, uint m)
+            UZU_ALWAYS_INLINE { return row + (m / 2) * (BLOCK_SIZE * COL_TILE) + (m % 2) * BLOCK_SIZE; },
+        COL_TILE,
+        diag_inverses,
+        [&](uint b, thread TileFragment& t_block)
+            UZU_ALWAYS_INLINE { t_block.store(lane, t_head + b * BLOCK_SIZE * CHUNK_SIZE, CHUNK_SIZE); },
+        block_idx,
+        lane
+    );
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
