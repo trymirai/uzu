@@ -1,12 +1,6 @@
-use std::{
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
-};
+use std::{fs::File, io::BufReader, path::Path};
 
 use serde::Deserialize;
-
-use crate::encodable_block::conf_head::CONF_HEAD_DIR;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfidenceHeadTreeConfig {
@@ -44,8 +38,7 @@ pub struct ConfidenceHeadConfig {
 }
 
 impl ConfidenceHeadConfig {
-    pub fn new(model_dir: &Path) -> Result<Self, std::io::Error> {
-        let conf_head_dir = PathBuf::from(model_dir).join(CONF_HEAD_DIR);
+    pub fn new(conf_head_dir: &Path) -> Result<Self, std::io::Error> {
         let config_file_path = conf_head_dir.join("config.json");
         let config_file = File::open(config_file_path)?;
         let config_reader = BufReader::new(config_file);

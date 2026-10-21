@@ -9,8 +9,6 @@ using namespace metal;
 
 #define BLOCK_SIZE 1024
 
-// TODO: Are numerics of subtract_mean fine?
-
 template <typename InputT, typename AffineT, typename OutputT, typename AccumT>
 VARIANTS(InputT, float, half, bfloat)
 VARIANTS(AffineT, float, half, bfloat)
@@ -57,9 +55,9 @@ PUBLIC KERNEL(Normalization)(
   // Step 1 - threads read from global and accumulate sum / sum of squares
   AccumT thread_sum = static_cast<AccumT>(0.0f);
   AccumT thread_sum_of_squares = static_cast<AccumT>(0.0f);
-
   for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
     InputT val = input[i];
+
     // We can also fuse:
     // - TensorCopy (copy_to_shortcut)
     // - TensorAddSwap (copy_to_shortcut + residual_add)
@@ -73,33 +71,35 @@ PUBLIC KERNEL(Normalization)(
       }
       shortcut[i] = val;
     }
+
     AccumT val_accum_t = static_cast<AccumT>(val);
     if (subtract_mean) {
       thread_sum += val_accum_t;
+    } else {
+      thread_sum_of_squares += val_accum_t * val_accum_t;
     }
-    thread_sum_of_squares += val_accum_t * val_accum_t;
   }
 
   // Step 2 - threads reduce their partial sums / sums of squares
-  AccumT total_sum;
+  AccumT mean = static_cast<AccumT>(0.0f);
   if (subtract_mean) {
-    total_sum =
+    const AccumT total_sum =
         threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(thread_sum, shared_sum, thread_context);
+    mean = total_sum / static_cast<AccumT>(element_count);
+
+    // Center first: E[x²] - E[x]² loses precision for nearly constant rows.
+    for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
+      const AccumT value = static_cast<AccumT>(residual_add ? shortcut[i] : input[i]);
+      const AccumT centered = value - mean;
+      thread_sum_of_squares += centered * centered;
+    }
   }
   AccumT total_sum_of_squares = threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
       thread_sum_of_squares,
       shared_sum,
       thread_context
   );
-
-  // And calculate mean/var/rms_inv from it
-  AccumT mean = static_cast<AccumT>(0.0f);
-  if (subtract_mean) {
-    mean = total_sum / static_cast<AccumT>(element_count);
-  }
-
-  AccumT var = total_sum_of_squares / static_cast<AccumT>(element_count) - mean * mean;
-
+  AccumT var = total_sum_of_squares / static_cast<AccumT>(element_count);
   AccumT rms_inv = rsqrt(var + static_cast<AccumT>(epsilon));
 
   // Step 3 - elementwise normalization

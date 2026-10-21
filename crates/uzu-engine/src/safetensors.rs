@@ -125,7 +125,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
 
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
-    prefix: String,
+    pub prefix: String,
 }
 
 impl<B: Backend> ParameterTree<'_, B> {

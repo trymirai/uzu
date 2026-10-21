@@ -97,11 +97,11 @@ pub struct DFlashTfmSpeculator<B: Backend> {
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub fn new(
-        model_path: &Path,
+        speculator_path: &Path,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
         let mut shapes = serde_json::from_reader::<_, HashMap<String, DFlashTfmTreeShape>>(BufReader::new(
-            File::open(model_path.join("shapes.json"))?,
+            File::open(speculator_path.join("shapes.json"))?,
         ))?;
 
         let Some(shape) = context
@@ -115,10 +115,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let data_type = DataType::BF16;
 
         let config: SpeculatorModelConfig =
-            serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
+            serde_json::from_reader(BufReader::new(File::open(speculator_path.join("config.json"))?))?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
 
-        let weights_file = File::open(model_path.join("model.safetensors"))?;
+        let weights_file = File::open(speculator_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
@@ -155,7 +155,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     max_depth: weaver.max_depth(),
                     pool: weaver.candidate_pool_size(),
                 };
-                if let Some(result) = get_conf_head(&*context, model_path, &params) {
+                if let Some(result) = get_conf_head(&*context, speculator_path, &params) {
                     match result {
                         Ok(res) => Some(res),
                         Err(err) => return Err(DFlashSpeculatorLoadError::ConfidenceHead(err)),
@@ -166,6 +166,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             },
             _ => None,
         };
+        if let Some(ref _head) = confidence_head {
+            println!("Confidence head loaded!")
+        }
 
         let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
 

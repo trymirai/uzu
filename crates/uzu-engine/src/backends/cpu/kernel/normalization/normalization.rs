@@ -83,15 +83,28 @@ pub fn normalization<
             let accum_val = AccumT::from(val).unwrap();
             if subtract_mean {
                 sum = sum + accum_val;
+            } else {
+                sum_sq = sum_sq + accum_val * accum_val;
             }
-            sum_sq = sum_sq + accum_val * accum_val;
         }
         let mean = if subtract_mean {
             sum / element_count_accum
         } else {
             AccumT::zero()
         };
-        let variance = sum_sq / element_count_accum - mean * mean;
+        if subtract_mean {
+            // Center first: E[x²] - E[x]² loses precision for nearly constant rows.
+            for i in 0..element_count {
+                let value = if residual_add {
+                    unsafe { *shortcut.unwrap().add(batch_offset + i) }
+                } else {
+                    unsafe { *input.add(batch_offset + i) }
+                };
+                let centered = AccumT::from(value).unwrap() - mean;
+                sum_sq = sum_sq + centered * centered;
+            }
+        }
+        let variance = sum_sq / element_count_accum;
         let rms_inv = AccumT::from((variance + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
 
         // Normalization and scaling

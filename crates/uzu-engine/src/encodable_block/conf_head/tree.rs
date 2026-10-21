@@ -1,14 +1,14 @@
 use crate::{
     backends::Backend,
-    config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
     encodable_block::{
         conf_head::{
             CONF_HEAD_SLOT_NUMBERS, ConfidenceHeadError,
             config::{ConfidenceHeadConfig, ConfidenceHeadTreeConfig},
+            util::{create_linear, create_normalization},
         },
-        linear::{Linear, LinearBlockError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        linear::Linear,
+        normalization::{Normalization, ShortcutMode},
     },
     safetensors::ParameterTree,
 };
@@ -41,14 +41,6 @@ impl<B: Backend> ConfidenceHeadTree<B> {
         tree_config: &ConfidenceHeadTreeConfig,
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let tree = parameters.subtree("tree");
-        let norm_config = NormalizationConfig {
-            epsilon: config.layer_norm_eps,
-            scale_offset: None,
-            upcast_mode: UpcastMode::FullLayer,
-            subtract_mean: true,
-            has_scale: true,
-            has_biases: true,
-        };
 
         let node_in = create_linear(context, &tree.subtree("node_in"), config.hidden, tree_config.width)?;
         let child_in = create_linear(
@@ -57,9 +49,14 @@ impl<B: Backend> ConfidenceHeadTree<B> {
             config.hidden + CONF_HEAD_SLOT_NUMBERS as u32,
             tree_config.width,
         )?;
-        let layers = get_tree_layers(context, &tree, tree_config, &norm_config)?.into_boxed_slice();
-        let final_norm =
-            create_norm(context, &tree.subtree("final_norm"), tree_config.width, ShortcutMode::Add, &norm_config)?;
+        let layers = get_tree_layers(context, &tree, config, tree_config)?.into_boxed_slice();
+        let final_norm = create_normalization(
+            context,
+            &tree.subtree("final_norm"),
+            tree_config.width,
+            ShortcutMode::Add,
+            config.layer_norm_eps,
+        )?;
         let couple_node = create_linear(context, &tree.subtree("couple_node"), tree_config.width, config.hidden)?;
         let couple_child = create_linear(context, &tree.subtree("couple_child"), tree_config.width, config.hidden)?;
         let depth_embedding =
@@ -80,30 +77,11 @@ impl<B: Backend> ConfidenceHeadTree<B> {
     }
 }
 
-fn create_linear<B: Backend>(
-    context: &B::Context,
-    tree: &ParameterTree<B>,
-    input_dim: u32,
-    output_dim: u32,
-) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-    <dyn Linear<B>>::new(input_dim, output_dim, DataType::F32, true, tree, context)
-}
-
-fn create_norm<B: Backend>(
-    context: &B::Context,
-    tree: &ParameterTree<B>,
-    element_count: u32,
-    shortcut_mode: ShortcutMode,
-    config: &NormalizationConfig,
-) -> Result<Normalization<B>, NormalizationNewError<B>> {
-    Normalization::new(element_count, DataType::F32, None, shortcut_mode, PostLayerScalar::None, config, tree, context)
-}
-
 fn get_tree_layers<B: Backend>(
     context: &B::Context,
     tree: &ParameterTree<B>,
+    config: &ConfidenceHeadConfig,
     tree_config: &ConfidenceHeadTreeConfig,
-    norm_config: &NormalizationConfig,
 ) -> Result<Vec<ConfidenceHeadTreeLayer<B>>, ConfidenceHeadError<B>> {
     let mut tree_layers: Vec<ConfidenceHeadTreeLayer<B>> = Vec::new();
     for i in 0..tree_config.layers {
@@ -114,21 +92,21 @@ fn get_tree_layers<B: Backend>(
             ShortcutMode::Add
         };
         let layer = ConfidenceHeadTreeLayer {
-            attention_norm: create_norm(
+            attention_norm: create_normalization(
                 context,
                 &subtree.subtree("attention_norm"),
                 tree_config.width,
                 shortcut_mode,
-                norm_config,
+                config.layer_norm_eps,
             )?,
             qkv: create_linear(context, &subtree.subtree("qkv"), tree_config.width, 3 * tree_config.width)?,
             out: create_linear(context, &subtree.subtree("out"), tree_config.width, tree_config.width)?,
-            mlp_norm: create_norm(
+            mlp_norm: create_normalization(
                 context,
                 &subtree.subtree("mlp_norm"),
                 tree_config.width,
                 shortcut_mode,
-                norm_config,
+                config.layer_norm_eps,
             )?,
             up: create_linear(context, &subtree.subtree("up"), tree_config.width, tree_config.mlp_hidden)?,
             down: create_linear(context, &subtree.subtree("down"), tree_config.mlp_hidden, tree_config.width)?,

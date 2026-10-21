@@ -2,7 +2,11 @@ use thiserror::Error;
 
 use crate::{
     backends::Backend,
-    encodable_block::{embedding::EmbeddingError, linear::LinearBlockError, normalization::NormalizationNewError},
+    encodable_block::{
+        embedding::EmbeddingError,
+        linear::{LinearBlockError, LinearEncodeError},
+        normalization::NormalizationNewError,
+    },
     safetensors::ParameterLoaderError,
 };
 
@@ -16,8 +20,10 @@ pub enum ConfidenceHeadError<B: Backend> {
     Embedding(#[from] EmbeddingError<B>),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("linear error: {0}")]
-    Linear(#[from] LinearBlockError<B>),
+    #[error("linear block error: {0}")]
+    LinearBlock(#[from] LinearBlockError<B>),
+    #[error("linear encode error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
     #[error("confidence head was trained with another model")]
     ModelMismatch,
     #[error("normalization error: {0}")]

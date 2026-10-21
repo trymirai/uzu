@@ -2,9 +2,10 @@ mod config;
 mod error;
 mod head;
 mod tree;
+mod util;
 mod weights;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub use error::ConfidenceHeadError;
 pub use head::ConfidenceHead;
@@ -32,15 +33,25 @@ pub struct ConfidenceHeadTreeParameters {
 
 pub fn get_conf_head<B: Backend>(
     context: &B::Context,
-    model_dir: &Path,
+    speculator_dir: &Path,
     params: &ConfidenceHeadTreeParameters,
 ) -> Option<Result<ConfidenceHead<B>, ConfidenceHeadError<B>>> {
-    let dir = model_dir.join(CONF_HEAD_DIR);
-    if !dir.is_dir() {
+    // TODO agolokoz: use actual path
+    // let conf_head_dir = speculator_dir.join(CONF_HEAD_DIR);
+    let conf_head_dir = PathBuf::from("/Users/glk/src/rust/uzu/workspace/confidence_head");
+    if !conf_head_dir.is_dir() {
         return None;
     }
 
-    Some(load_conf_head(context, &dir, params))
+    let config = match ConfidenceHeadConfig::new(&conf_head_dir) {
+        Ok(config) => config,
+        Err(err) => return Some(Err(ConfidenceHeadError::Io(err))),
+    };
+    if let Some(mismatch) = get_conf_head_mismatch(&config, params) {
+        return Some(Err(ConfidenceHeadError::TreeMismatch(mismatch)));
+    }
+
+    Some(ConfidenceHead::new(context, &speculator_dir, &conf_head_dir, config))
 }
 
 pub fn get_conf_head_mismatch(
@@ -66,17 +77,4 @@ pub fn get_conf_head_mismatch(
 			slot_count
         )
     })
-}
-
-fn load_conf_head<B: Backend>(
-    context: &B::Context,
-    model_dir: &Path,
-    params: &ConfidenceHeadTreeParameters,
-) -> Result<ConfidenceHead<B>, ConfidenceHeadError<B>> {
-    let config = ConfidenceHeadConfig::new(model_dir).map_err(ConfidenceHeadError::Io)?;
-    if let Some(mismatch) = get_conf_head_mismatch(&config, params) {
-        return Err(ConfidenceHeadError::TreeMismatch(mismatch));
-    }
-
-    Ok(ConfidenceHead::new(context, model_dir, config)?)
 }

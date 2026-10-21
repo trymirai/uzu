@@ -1,72 +1,14 @@
-use std::sync::OnceLock;
-
 use crate::{
     backends::{
         Backend,
         common::{BufferMut, Context},
     },
-    data_type::DataType,
     encodable_block::conf_head::{
         CONF_HEAD_NODE_OUTPUTS, CONF_HEAD_POOL_INPUTS, CONF_HEAD_SLOT_NUMBERS, ConfidenceHeadError,
         config::ConfidenceHeadConfig,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
-
-pub struct ConfidenceHeadWeights<B: Backend> {
-    pub draft_norm_scales: B::GlobalBuffer,
-    pub draft_norm_biases: B::GlobalBuffer,
-    pub draft_weights: B::GlobalBuffer,
-    pub draft_biases: B::GlobalBuffer,
-    pub token_norm_scales: B::GlobalBuffer,
-    pub token_norm_biases: B::GlobalBuffer,
-    pub token_weights: B::GlobalBuffer,
-    pub token_biases: B::GlobalBuffer,
-    pub token_table: OnceLock<B::GlobalBuffer>,
-}
-
-impl<B: Backend> ConfidenceHeadWeights<B> {
-    pub fn new(
-        tree: &ParameterTree<B>,
-        config: &ConfidenceHeadConfig,
-    ) -> Result<Self, ParameterLoaderError<B>> {
-        let draft_norm_tree = tree.subtree("draft_norm");
-        let draft_norm_scales = draft_norm_tree.read_buffer("scales", &[config.model_width], DataType::F32)?;
-        let draft_norm_biases = draft_norm_tree.read_buffer("biases", &[config.model_width], DataType::F32)?;
-
-        let draft_tree = tree.subtree("draft");
-        let draft_weights = draft_tree.subtree("weights").read_buffer(
-            "weights",
-            &[config.hidden, config.model_width],
-            DataType::F32,
-        )?;
-        let draft_biases = draft_tree.read_buffer("biases", &[config.hidden], DataType::F32)?;
-
-        let token_norm_tree = tree.subtree("token_norm");
-        let token_norm_scales = token_norm_tree.read_buffer("scales", &[config.model_width], DataType::F32)?;
-        let token_norm_biases = token_norm_tree.read_buffer("biases", &[config.model_width], DataType::F32)?;
-
-        let token_tree = tree.subtree("token_projection");
-        let token_weights = token_tree.subtree("weights").read_buffer(
-            "weights",
-            &[config.hidden, config.model_width],
-            DataType::F32,
-        )?;
-        let token_biases = token_tree.read_buffer("biases", &[config.hidden], DataType::F32)?;
-
-        Ok(ConfidenceHeadWeights {
-            draft_norm_scales,
-            draft_norm_biases,
-            draft_weights,
-            draft_biases,
-            token_norm_scales,
-            token_norm_biases,
-            token_weights,
-            token_biases,
-            token_table: OnceLock::new(),
-        })
-    }
-}
 
 pub fn get_local_weights_buffer<B: Backend>(
     context: &B::Context,
