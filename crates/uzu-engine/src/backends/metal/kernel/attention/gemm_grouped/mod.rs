@@ -1,3 +1,5 @@
+use std::collections::{HashMap, hash_map::Entry};
+
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use super::FullPrecisionInput;
@@ -26,11 +28,12 @@ use super::MaskKind;
 
 const SIMDGROUPS_PER_THREADGROUP: u32 = 8;
 const SLICE_COLS: u32 = 64;
-const TILE_ROWS: u32 = 16;
+const MXU_TILE_ROWS: u32 = 16;
+const SIMDGROUP_TILE_ROWS: u32 = 8;
 const BLOCK_K: u32 = 32;
 
 pub fn query_rows_per_threadgroup(head_dim: u32) -> u32 {
-    SIMDGROUPS_PER_THREADGROUP / (head_dim / SLICE_COLS) * TILE_ROWS
+    SIMDGROUPS_PER_THREADGROUP / (head_dim / SLICE_COLS) * MXU_TILE_ROWS
 }
 
 struct AttentionGemmGroupedMetal {
@@ -43,46 +46,59 @@ struct AttentionGemmGroupedMetal {
     scale: Option<f32>,
     gate_row_stride: Option<u32>,
     query_rows_per_threadgroup: u32,
+    block_k: u32,
     mask: MaskKind,
 }
 
 impl AttentionGemmGroupedMetal {
     fn new_fixed(
         context: &MetalContext,
-        head_dim: u32,
-        num_groups: u32,
-        num_q_heads: u32,
-        scale: Option<f32>,
-        gate_row_stride: Option<u32>,
+        config: &AttentionKernelConfig,
+        head_dim_slices: u32,
         mask: MaskKind,
     ) -> Result<Self, MetalError> {
-        assert!(matches!(head_dim, 128 | 256), "head_dim must be 128 or 256");
-        assert_eq!(num_q_heads % num_groups, 0, "num_q_heads must be divisible by num_groups");
-        let slices = head_dim / SLICE_COLS;
+        let tile_rows = if context.supports_mxu {
+            MXU_TILE_ROWS
+        } else {
+            SIMDGROUP_TILE_ROWS
+        };
+        let block_k = if head_dim_slices == 1 {
+            16
+        } else {
+            BLOCK_K
+        };
+        assert!(matches!(config.head_dim, 128 | 256), "head_dim must be 128 or 256");
+        assert_eq!(config.num_q_heads % config.num_groups, 0, "num_q_heads must be divisible by num_groups");
         let new_kernel = |split| {
             AttentionGemmGroupedMetalKernel::new(
                 context,
                 DataType::BF16,
-                BLOCK_K,
-                head_dim,
-                slices,
+                block_k,
+                config.head_dim,
+                head_dim_slices,
+                context.supports_mxu,
                 split,
                 mask.is_causal(),
                 mask.is_trie(),
             )
         };
-        let combine =
-            AttentionGemmGroupedCombineMetalKernel::new(context, DataType::BF16, head_dim, gate_row_stride.is_some())?;
+        let combine = AttentionGemmGroupedCombineMetalKernel::new(
+            context,
+            DataType::BF16,
+            config.head_dim,
+            config.gate_row_stride.is_some(),
+        )?;
         Ok(Self {
             kernel: new_kernel(false)?,
             split_kernel: new_kernel(true)?,
             combine,
-            head_dim,
-            num_groups,
-            num_q_heads,
-            scale,
-            gate_row_stride,
-            query_rows_per_threadgroup: query_rows_per_threadgroup(head_dim),
+            head_dim: config.head_dim,
+            num_groups: config.num_groups,
+            num_q_heads: config.num_q_heads,
+            scale: config.scale,
+            gate_row_stride: config.gate_row_stride,
+            query_rows_per_threadgroup: SIMDGROUPS_PER_THREADGROUP / head_dim_slices * tile_rows,
+            block_k,
             mask,
         })
     }
@@ -125,7 +141,7 @@ impl AttentionGemmGroupedMetal {
         }
 
         let partial_rows = self.num_groups * query_tiles * num_splits * self.query_rows_per_threadgroup;
-        let mut partials = command_buffer.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::F32)?;
+        let mut partials = command_buffer.allocate_scratch_for_shape(&[partial_rows, self.head_dim], DataType::BF16)?;
         let mut partial_maxs = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
         let mut partial_sums = command_buffer.allocate_scratch_for_shape(&[partial_rows], DataType::F32)?;
 
@@ -184,21 +200,16 @@ impl AttentionGemmGroupedMetal {
             q_off: kv_length - suffix_length,
             nq_aligned: 0,
             q_rem: 0,
-            nk: kv_length.div_ceil(BLOCK_K),
-            nk_aligned: kv_length / BLOCK_K,
-            k_rem: kv_length % BLOCK_K,
+            nk: kv_length.div_ceil(self.block_k),
+            nk_aligned: kv_length / self.block_k,
+            k_rem: kv_length % self.block_k,
         }
     }
 }
 
 pub struct AttentionGemmGrouped {
-    non_trie: Mutex<Option<AttentionGemmGroupedMetal>>,
-    trie: Mutex<Option<AttentionGemmGroupedMetal>>,
-    head_dim: u32,
-    num_groups: u32,
-    num_q_heads: u32,
-    scale: Option<f32>,
-    gate_row_stride: Option<u32>,
+    variants: Mutex<HashMap<(MaskKind, u32), AttentionGemmGroupedMetal>>,
+    config: AttentionKernelConfig,
 }
 
 impl AttentionGemmGrouped {
@@ -206,43 +217,26 @@ impl AttentionGemmGrouped {
         &self,
         context: &MetalContext,
         mask: MaskKind,
+        head_dim_slices: u32,
     ) -> Result<MappedMutexGuard<'_, AttentionGemmGroupedMetal>, MetalError> {
-        let cache = if mask.is_trie() {
-            &self.trie
-        } else {
-            &self.non_trie
-        };
-        let mut cache = cache.lock();
-        if cache.is_none() {
-            *cache = Some(AttentionGemmGroupedMetal::new_fixed(
-                context,
-                self.head_dim,
-                self.num_groups,
-                self.num_q_heads,
-                self.scale,
-                self.gate_row_stride,
-                mask,
-            )?);
+        let key = (mask, head_dim_slices);
+        let mut variants = self.variants.lock();
+        if let Entry::Vacant(slot) = variants.entry(key) {
+            slot.insert(AttentionGemmGroupedMetal::new_fixed(context, &self.config, head_dim_slices, mask)?);
         }
-        Ok(MutexGuard::map(cache, |cache| cache.as_mut().expect("attention pipeline was just initialized")))
+        Ok(MutexGuard::map(variants, |variants| {
+            variants.get_mut(&key).expect("attention variant was just initialized")
+        }))
     }
 
-    pub fn is_supported(
-        config: &AttentionKernelConfig,
-        context: &MetalContext,
-    ) -> bool {
-        policy::is_supported(config, context)
+    pub fn is_supported(config: &AttentionKernelConfig) -> bool {
+        policy::is_supported(config)
     }
 
     pub fn new(config: &AttentionKernelConfig) -> Self {
         Self {
-            non_trie: Mutex::new(None),
-            trie: Mutex::new(None),
-            head_dim: config.head_dim,
-            num_groups: config.num_groups,
-            num_q_heads: config.num_q_heads,
-            scale: config.scale,
-            gate_row_stride: config.gate_row_stride,
+            variants: Mutex::new(HashMap::new()),
+            config: *config,
         }
     }
 
@@ -250,8 +244,11 @@ impl AttentionGemmGrouped {
         &self,
         mask: MaskKind,
         suffix_length: u32,
+        kv_length: u32,
+        use_mxu: bool,
     ) -> bool {
-        policy::should_encode(self.head_dim, mask, suffix_length)
+        let slices = policy::select_head_dim_slices(self.config.head_dim, mask, suffix_length, kv_length, use_mxu);
+        slices.is_some_and(|slices| slices != 1 || self.config.num_q_heads == self.config.num_groups * 4)
     }
 
     pub fn encode(
@@ -270,22 +267,30 @@ impl AttentionGemmGrouped {
         assert!(arguments.sinks.is_none(), "attention sinks are unsupported");
 
         let kv_length = arguments.cache.prefix_len() + suffix_length;
-        let mut output = command_buffer
-            .allocate_scratch_for_shape(&[suffix_length, self.num_q_heads, self.head_dim], DataType::BF16)?;
-        let gpu_core_count = command_buffer.context().gpu_core_count;
-        let core = self.get_or_create(command_buffer.context(), mask)?;
-        let num_splits = choose_splits(
-            SplitGeometry {
-                head_dim: core.head_dim,
-                num_q_heads: core.num_q_heads,
-                num_groups: core.num_groups,
-                query_rows_per_threadgroup: core.query_rows_per_threadgroup,
-                block_k: BLOCK_K,
-            },
+        let head_dim_slices = policy::select_head_dim_slices(
+            self.config.head_dim,
+            mask,
             suffix_length,
             kv_length,
-            gpu_core_count,
-        );
+            command_buffer.context().supports_mxu,
+        )
+        .expect("grouped attention request must be supported");
+        assert!(head_dim_slices != 1 || self.config.num_q_heads == self.config.num_groups * 4);
+        let mut output = command_buffer.allocate_scratch_for_shape(
+            &[suffix_length, self.config.num_q_heads, self.config.head_dim],
+            DataType::BF16,
+        )?;
+        let gpu_core_count = command_buffer.context().gpu_core_count;
+        let core = self.get_or_create(command_buffer.context(), mask, head_dim_slices)?;
+        let geometry = SplitGeometry {
+            head_dim: core.head_dim,
+            num_q_heads: core.num_q_heads,
+            num_groups: core.num_groups,
+            query_rows_per_threadgroup: core.query_rows_per_threadgroup,
+            block_k: core.block_k,
+        };
+        let num_splits =
+            choose_splits(geometry, suffix_length, kv_length, gpu_core_count, command_buffer.context().supports_mxu);
         let gate_applied = core.encode(
             input.queries,
             input.keys,
