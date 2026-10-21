@@ -124,7 +124,7 @@ impl<B: Backend> ConfidenceHead<B> {
         &self.config
     }
 
-    /// Builds and caches an F32 [vocab_size, hidden] table from the target model's BF16 input embedding
+    /// Builds and caches an float32 [vocab_size, hidden] table from the target model's bfloat16 input embedding
     /// and the confidence head's learned projection:
     ///
     /// E_t       = target input embedding lookup(t)       // model_width values
