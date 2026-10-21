@@ -709,9 +709,50 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use futures::executor::block_on;
     use uzu_engine_macros::uzu_test;
 
     use super::*;
+    use crate::{
+        backends::{common::Context, cpu::Cpu},
+        config::mlp::mixture_of_experts::MixtureOfExpertsConfig,
+        safetensors::ParameterLoader,
+    };
+
+    fn make_test_moe_config(
+        num_active: u32,
+        num_routed: u32,
+        num_shared: u32,
+    ) -> MixtureOfExpertsConfig {
+        serde_json::from_value(serde_json::json!({
+            "type": "MixtureOfExpertsConfig",
+            "expert_config": {
+                "type": "DenseMLPConfig",
+                "linear_config": {},
+                "activation": {
+                    "type": "SiLU",
+                    "alpha": 1.0
+                },
+                "has_up_biases": false,
+                "has_down_biases": false,
+                "gate_clipping": null,
+                "up_clipping": null
+            },
+            "router_config": {},
+            "routing_function": {
+                "type": "SoftmaxRouting"
+            },
+            "num_routed_experts": num_routed,
+            "num_active_routed_experts": num_active,
+            "router_has_biases": false,
+            "num_shared_experts": num_shared,
+            "expert_hidden_dim": 64,
+            "gate_config": null
+        }))
+        .expect("valid MixtureOfExpertsConfig")
+    }
 
     #[uzu_test]
     fn test_verify_uniform_expert_signs_identical_rows() {
@@ -728,6 +769,20 @@ mod tests {
     }
 
     #[uzu_test]
+    fn test_verify_uniform_expert_signs_empty_and_zero() {
+        assert!(verify_uniform_expert_signs(&[], 0, 4));
+        assert!(verify_uniform_expert_signs(&[], 1, 4));
+        assert!(verify_uniform_expert_signs(&[1, -1], 1, 2));
+    }
+
+    #[uzu_test]
+    fn test_verify_uniform_expert_signs_insufficient_length() {
+        // If buffer is shorter than num_experts * dim, it gracefully returns true
+        let signs = vec![1, -1, 1, 1];
+        assert!(verify_uniform_expert_signs(&signs, 2, 4));
+    }
+
+    #[uzu_test]
     fn test_verify_uniform_expert_signs_flipped_sign_fails() {
         // 2 experts, dim 4, expert 1 has one flipped sign
         let mut signs = vec![
@@ -739,5 +794,79 @@ mod tests {
         // Fix the flipped sign
         signs[6] = 1;
         assert!(verify_uniform_expert_signs(&signs, 2, 4));
+    }
+
+    #[uzu_test]
+    fn test_verify_uniform_expert_signs_many_experts_and_corruption() {
+        // 8 experts, dim 8, all identical
+        let row = [1, -1, 1, -1, -1, 1, 1, -1];
+        let mut signs: Vec<i32> = row.iter().copied().cycle().take(8 * 8).collect();
+        assert!(verify_uniform_expert_signs(&signs, 8, 8));
+
+        // Flip one sign in the 8th expert
+        let last_idx = signs.len() - 1;
+        signs[last_idx] = -signs[last_idx];
+        assert!(!verify_uniform_expert_signs(&signs, 8, 8));
+    }
+
+    #[uzu_test]
+    fn test_moe_mlp_config_validation_bounds() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "moe_test_{}_{}.safetensors",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let header_json = serde_json::json!({}).to_string();
+        let header_bytes = header_json.as_bytes();
+        let header_len = (header_bytes.len() as u64).to_le_bytes();
+
+        {
+            let mut file = std::fs::File::create(&temp_path).expect("failed to create temp file");
+            file.write_all(&header_len).unwrap();
+            file.write_all(header_bytes).unwrap();
+            file.flush().unwrap();
+        }
+
+        let std_file = std::fs::File::open(&temp_path).expect("failed to open temp file");
+        let context = block_on(<Cpu as Backend>::Context::new()).expect("failed to create Cpu context");
+        let loader = ParameterLoader::<Cpu>::new(&std_file, context.as_ref()).expect("failed to create loader");
+        let tree = loader.tree();
+
+        // 1. num_active_routed_experts == 0 fails
+        let config = make_test_moe_config(0, 4, 0);
+        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        assert!(
+            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (0)"))
+        );
+
+        // 2. num_active_routed_experts > 32 fails
+        let config = make_test_moe_config(33, 64, 0);
+        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        assert!(
+            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (33)"))
+        );
+
+        // 3. num_routed_experts == 0 fails
+        let config = make_test_moe_config(4, 0, 0);
+        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        assert!(
+            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_routed_experts (0)"))
+        );
+
+        // 4. num_routed_experts > 512 fails
+        let config = make_test_moe_config(4, 513, 0);
+        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        assert!(
+            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_routed_experts (513)"))
+        );
+
+        // 5. num_shared_experts > 1 fails
+        let config = make_test_moe_config(4, 8, 2);
+        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        assert!(
+            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_shared_experts (2)"))
+        );
+
+        let _ = std::fs::remove_file(temp_path);
     }
 }
