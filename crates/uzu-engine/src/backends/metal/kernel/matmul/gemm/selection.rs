@@ -154,18 +154,24 @@ pub(super) fn select_trellis_plan(
     n: u32,
     k: u32,
 ) -> GemmPlan {
-    let (tiling, target_workgroups) = match policy::mxu_mn_tile(true, m, n) {
-        GemmTiling::Tile16x32x256_Simdgroups1x1 => {
-            (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
-        },
-        GemmTiling::Tile32x64x256_Simdgroups2x2 => {
-            (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
-        },
-        GemmTiling::Tile128x128x256_Simdgroups4x4 => {
-            (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
-        },
-        _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
-    };
+    // The M16 wide finalist favored a 32x64 tile and a 256-workgroup target.
+    let (tiling, target_workgroups) =
+        if m == 16 && n >= 4096 && (2048..=5120).contains(&k) && k.is_multiple_of(TRELLIS_K_STEP) {
+            (GemmTiling::Tile32x64x256_Simdgroups2x2, 256)
+        } else {
+            match policy::mxu_mn_tile(true, m, n) {
+                GemmTiling::Tile16x32x256_Simdgroups1x1 => {
+                    (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
+                },
+                GemmTiling::Tile32x64x256_Simdgroups2x2 => {
+                    (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
+                },
+                GemmTiling::Tile128x128x256_Simdgroups4x4 => {
+                    (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
+                },
+                _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
+            }
+        };
     let output_workgroups = (n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m())).max(1);
     let k_steps = (k / TRELLIS_K_STEP).max(1);
     let mut split_k = (target_workgroups / output_workgroups).clamp(1, k_steps);

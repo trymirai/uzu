@@ -8,10 +8,15 @@ use crate::{
         common::{
             Backend, Context, Kernels,
             kernel::matmul::{
-                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat,
+                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape, TrellisFormat,
             },
         },
-        metal::{Metal, context::MetalContext},
+        metal::{
+            Metal,
+            context::MetalContext,
+            gpu_types::gemm::GemmTiling,
+            kernel::matmul::{GemmKernel, MatmulOutputWork, gemm::GemmEngine},
+        },
     },
     data_type::DataType,
     tests::{
@@ -81,13 +86,22 @@ const PADDING: usize = 24;
 const SENTINEL: u16 = 0x7F7F;
 const RELATIVE_TOLERANCE: f32 = 1e-2;
 // Cases are ordered as (m, n, k).
-const CASES: [(usize, usize, usize); 7] =
-    [(1, 80, 5120), (17, 80, 5120), (512, 80, 5120), (16, 128, 64), (32, 128, 64), (1, 6, 64), (2048, 2048, 128)];
+const CASES: [(usize, usize, usize); 8] = [
+    (1, 80, 5120),
+    (17, 80, 5120),
+    (512, 80, 5120),
+    (16, 4096, 2048),
+    (16, 128, 64),
+    (32, 128, 64),
+    (1, 6, 64),
+    (2048, 2048, 128),
+];
 
 fn run_projection(
     context: &MetalContext,
     format: TrellisFormat,
     dimensions: (usize, usize, usize),
+    forced_plan: Option<(GemmTiling, u32)>,
 ) {
     let (m, n, k) = dimensions;
     let mut rng = SmallRng::seed_from_u64((m * k + n) as u64);
@@ -97,6 +111,15 @@ fn run_projection(
     if m > 1 {
         // Exercise the zero-activation path in the epilogue.
         values[k..2 * k].fill(0);
+    }
+    if m > 3 {
+        for (column, value) in values[3 * k..4 * k].iter_mut().enumerate() {
+            *value = if column % 2 == 0 {
+                -128
+            } else {
+                127
+            };
+        }
     }
     let group_sums_host: Vec<f32> = values
         .chunks_exact(k)
@@ -136,10 +159,20 @@ fn run_projection(
         n: n as u32,
         k: k as u32,
     };
-    let mut matmul =
-        <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    matmul.encode(arguments, &mut command_buffer).unwrap();
+    if let Some((tiling, split_k)) = forced_plan {
+        let shape = MatmulShape::from_arguments(&arguments);
+        let mut gemm = GemmKernel::new(DataType::BF16, DataType::BF16, DataType::BF16);
+        let mut plan = gemm.select_plan_for_engine(&shape, GemmEngine::Mxu, context).unwrap();
+        plan.tiling = tiling;
+        plan.split_k = split_k;
+        let output_work = MatmulOutputWork::new(context, DataType::BF16, DataType::BF16).unwrap();
+        gemm.encode_plan(arguments, plan, &output_work, &mut command_buffer).unwrap();
+    } else {
+        let mut matmul =
+            <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
+        matmul.encode(arguments, &mut command_buffer).unwrap();
+    }
     submit_command_buffer(command_buffer);
     let decoded_levels: Vec<i32> = stored
         .chunks_exact(row_bytes(format, k))
@@ -181,7 +214,10 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     if !context.supports_mxu {
         return;
     }
-    for (m, n, k) in CASES {
-        run_projection(&context, format, (m, n, k));
+    for dimensions in CASES {
+        run_projection(&context, format, dimensions, None);
     }
+    run_projection(&context, format, (129, 132, 1024), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
+    run_projection(&context, format, (129, 132, 64), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
+    run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile32x64x256_Simdgroups2x2, 1)));
 }
