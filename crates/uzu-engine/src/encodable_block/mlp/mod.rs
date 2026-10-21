@@ -1,5 +1,6 @@
 mod dense;
 mod gate_act_mul;
+mod moe;
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -10,7 +11,10 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::LinearEncodeError,
-        mlp::dense::{DenseMlp, DenseMlpNewError},
+        mlp::{
+            dense::{DenseMlp, DenseMlpNewError},
+            moe::{MoeMlp, MoeMlpNewError},
+        },
     },
     safetensors::ParameterTree,
 };
@@ -36,8 +40,8 @@ pub trait Mlp<B: Backend>: Send + Sync {
 pub enum MlpBlockNewError<B: Backend> {
     #[error("Dense MLP error: {0}")]
     Dense(#[from] DenseMlpNewError<B>),
-    #[error("Mixture of experts is not supported")]
-    UnsupportedMixtureOfExperts,
+    #[error("Mixture of experts error: {0}")]
+    Moe(#[from] MoeMlpNewError<B>),
 }
 
 impl<B: Backend> dyn Mlp<B> {
@@ -56,7 +60,11 @@ impl<B: Backend> dyn Mlp<B> {
 
                 Ok((Box::new(dense), up_input_hadamard_factors))
             },
-            AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockNewError::UnsupportedMixtureOfExperts),
+            AnyMLPConfig::MixtureOfExpertsConfig(config) => {
+                let moe = MoeMlp::new(model_dimension, data_type, config, parameter_tree, context)?;
+
+                Ok((Box::new(moe), None))
+            },
         }
     }
 }
