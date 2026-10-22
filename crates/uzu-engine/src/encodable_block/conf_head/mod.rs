@@ -1,6 +1,7 @@
 mod config;
 mod error;
 mod head;
+mod layout;
 mod tree;
 mod util;
 mod weights;
@@ -21,7 +22,7 @@ const CONF_HEAD_NODE_OUTPUTS: usize = 3;
 const CONF_HEAD_POOL_INPUTS: usize = 3;
 
 /// Standardised numbers per child: log pi_a(c), log pi_l(c), G_c and log(1 + drafter rank).
-const CONF_HEAD_SLOT_NUMBERS: usize = 4;
+pub(crate) const CONF_HEAD_SLOT_NUMBERS: usize = 4;
 
 pub struct ConfidenceHeadTreeParameters {
     pub rounds: u32,

@@ -5,7 +5,7 @@ use crate::{
     },
     encodable_block::conf_head::{
         CONF_HEAD_NODE_OUTPUTS, CONF_HEAD_POOL_INPUTS, CONF_HEAD_SLOT_NUMBERS, ConfidenceHeadError,
-        config::ConfidenceHeadConfig,
+        config::ConfidenceHeadConfig, layout::LocalLayout,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -57,5 +57,7 @@ fn read_local_weights<B: Backend>(
         tree.subtree("output").read_slice::<f32>("biases", &[CONF_HEAD_NODE_OUTPUTS as u32])?,
     ]
     .concat();
+    let layout = LocalLayout::new(config.hidden as usize, config.pool_hidden as usize, config.edge_hidden as usize);
+    assert_eq!(weights.len(), layout.total, "packed local weights must match the round kernel layout");
     Ok(weights)
 }

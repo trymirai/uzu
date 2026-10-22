@@ -7,7 +7,8 @@ use crate::{
         Backend,
         common::{
             BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context, Kernels, kernel::ConfidenceHeadPoolNoiseKernel,
+            Context, Kernels,
+            kernel::{ConfidenceHeadPoolNoiseKernel, ConfidenceHeadRoundKernel},
         },
     },
     data_type::DataType,
@@ -52,6 +53,7 @@ pub struct ConfidenceHead<B: Backend> {
     draft_norm: Normalization<B>,
     draft_proj: Box<dyn Linear<B>>,
     pool_noise: <B::Kernels as Kernels>::ConfidenceHeadPoolNoiseKernel,
+    round: <B::Kernels as Kernels>::ConfidenceHeadRoundKernel,
 }
 
 impl<B: Backend> ConfidenceHead<B> {
@@ -133,6 +135,15 @@ impl<B: Backend> ConfidenceHead<B> {
 
         let pool_noise = <B::Kernels as Kernels>::ConfidenceHeadPoolNoiseKernel::new(context)
             .map_err(ConfidenceHeadError::Backend)?;
+        let round = <B::Kernels as Kernels>::ConfidenceHeadRoundKernel::new(
+            context,
+            config.pool,
+            config.children,
+            config.hidden,
+            config.pool_hidden,
+            config.edge_hidden,
+        )
+        .map_err(ConfidenceHeadError::Backend)?;
 
         Ok(Self {
             config,
@@ -145,6 +156,7 @@ impl<B: Backend> ConfidenceHead<B> {
             draft_norm,
             draft_proj,
             pool_noise,
+            round,
         })
     }
 
@@ -281,6 +293,52 @@ impl<B: Backend> ConfidenceHead<B> {
         );
 
         Ok(step)
+    }
+
+    /// Scores the children just selected by Weaver and updates their frontier edges, path scores and priorities.
+    /// Saves local node and child features by tree slot for the final tree-wide refinement.
+    pub fn encode_round(
+        &self,
+        token_table: &B::GlobalBuffer,
+        residual_logits: impl BufferRef<Backend = B>,
+        candidate_logits: impl BufferRef<Backend = B>,
+        candidate_ids: impl BufferRef<Backend = B>,
+        node_metadata: impl BufferRef<Backend = B>,
+        node_valid: impl BufferRef<Backend = B>,
+        packed_tree: impl BufferRef<Backend = B>,
+        rows: u32,
+        frontier_capacity: u32,
+        tree_slot_count: u32,
+        frontier: impl BufferMut<Backend = B>,
+        step: &mut ConfidenceHeadStep<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        self.round.encode(
+            residual_logits,
+            candidate_logits,
+            candidate_ids,
+            &step.noise,
+            &step.draft_rows,
+            node_metadata,
+            node_valid,
+            packed_tree,
+            token_table,
+            &self.local_weights,
+            &mut step.child_edges,
+            frontier,
+            &mut step.nodes,
+            &mut step.child_inputs,
+            &mut step.child_indices,
+            &mut step.child_real,
+            &mut step.slot_logits,
+            rows,
+            step.pool_rows,
+            self.config.cap,
+            self.config.layer_norm_eps,
+            frontier_capacity,
+            tree_slot_count,
+            command_buffer,
+        );
     }
 }
 
