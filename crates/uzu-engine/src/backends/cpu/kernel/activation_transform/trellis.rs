@@ -32,8 +32,7 @@ fn rotate_token(
 }
 
 #[kernel(TrellisTransform)]
-#[variants(DIMENSION, 4096, 5120, 6144, 6656, 17408, 19968)]
-pub fn trellis_transform<const DIMENSION: u32>(
+pub fn trellis_transform(
     input: *const bf16,
     rht_factors: *const f32,
     mixing: *const f32,
@@ -41,9 +40,10 @@ pub fn trellis_transform<const DIMENSION: u32>(
     column_group_sums: *mut f32,
     scales: *mut f32,
     batch: u32,
+    #[specialize] dimension: u32,
 ) {
-    let columns = DIMENSION as usize;
-    let mixing_dimension = mixing_dimension(DIMENSION) as usize;
+    let columns = dimension as usize;
+    let mixing_dimension = mixing_dimension(dimension) as usize;
     let rht_factors = unsafe { std::slice::from_raw_parts(rht_factors, columns) };
     let mixing = unsafe { std::slice::from_raw_parts(mixing, mixing_dimension * mixing_dimension) };
 
