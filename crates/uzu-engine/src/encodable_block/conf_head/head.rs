@@ -5,15 +5,19 @@ use futures::lock::Mutex;
 use crate::{
     backends::{
         Backend,
-        common::{BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
+        common::{
+            BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
+            Context, Kernels, kernel::ConfidenceHeadPoolNoiseKernel,
+        },
     },
     data_type::DataType,
     encodable_block::{
         conf_head::{
+            CONF_HEAD_SLOT_NUMBERS,
             config::ConfidenceHeadConfig,
             error::ConfidenceHeadError,
             tree::ConfidenceHeadTree,
-            util::{create_normalization, create_normalization_config, map_norm_new_error},
+            util::{create_normalization_config, map_norm_new_error},
             weights::get_local_weights_buffer,
         },
         embedding::Embedding,
@@ -23,6 +27,19 @@ use crate::{
     safetensors::ParameterLoader,
     utils,
 };
+
+pub struct ConfidenceHeadStep<B: Backend> {
+    noise: B::ScratchBuffer,
+    draft_rows: B::ScratchBuffer,
+    nodes: B::ScratchBuffer,
+    child_inputs: B::ScratchBuffer,
+    child_indices: B::ScratchBuffer,
+    child_real: B::ScratchBuffer,
+    slot_logits: B::ScratchBuffer,
+    child_edges: B::ScratchBuffer,
+    slot_count: u32,
+    pool_rows: u32,
+}
 
 pub struct ConfidenceHead<B: Backend> {
     config: ConfidenceHeadConfig,
@@ -34,6 +51,7 @@ pub struct ConfidenceHead<B: Backend> {
     token_proj: Box<dyn Linear<B>>,
     draft_norm: Normalization<B>,
     draft_proj: Box<dyn Linear<B>>,
+    pool_noise: <B::Kernels as Kernels>::ConfidenceHeadPoolNoiseKernel,
 }
 
 impl<B: Backend> ConfidenceHead<B> {
@@ -89,13 +107,19 @@ impl<B: Backend> ConfidenceHead<B> {
         )
         .map_err(ConfidenceHeadError::LinearBlock)?;
 
-        let draft_norm = create_normalization(
-            context,
-            &weights_tree.subtree("draft_norm"),
+        let draft_norm = Normalization::new_mixed_types(
             config.model_width,
+            DataType::BF16,
+            DataType::F32,
+            DataType::F32,
+            None,
             ShortcutMode::None,
-            config.layer_norm_eps,
-        )?;
+            PostLayerScalar::None,
+            &norm_config,
+            &weights_tree.subtree("draft_norm"),
+            context,
+        )
+        .map_err(map_norm_new_error)?;
 
         let draft_proj = <dyn Linear<B>>::new(
             config.model_width,
@@ -107,6 +131,9 @@ impl<B: Backend> ConfidenceHead<B> {
         )
         .map_err(ConfidenceHeadError::LinearBlock)?;
 
+        let pool_noise = <B::Kernels as Kernels>::ConfidenceHeadPoolNoiseKernel::new(context)
+            .map_err(ConfidenceHeadError::Backend)?;
+
         Ok(Self {
             config,
             local_weights,
@@ -117,6 +144,7 @@ impl<B: Backend> ConfidenceHead<B> {
             token_proj,
             draft_norm,
             draft_proj,
+            pool_noise,
         })
     }
 
@@ -190,6 +218,69 @@ impl<B: Backend> ConfidenceHead<B> {
         command_buffer.end_encoding().submit().wait_until_completed().await.map_err(ConfidenceHeadError::Backend)?;
 
         Ok(self.token_features.get_or_init(|| table_buffer))
+    }
+
+    /// Prepares per-depth noise and drafter features once for all rounds of tree construction.
+    pub fn encode_step(
+        &self,
+        draft_hidden: impl BufferRef<Backend = B>,
+        candidate_ids: impl BufferRef<Backend = B>,
+        depth_seeds: impl BufferRef<Backend = B>,
+        pool_rows: u32,
+        slot_count: u32,
+        nodes_per_round: u32,
+        vocab_size: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<ConfidenceHeadStep<B>, ConfidenceHeadError<B>> {
+        let normalized = self
+            .draft_norm
+            .encode(draft_hidden, 1, pool_rows, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let draft_rows =
+            self.draft_proj.encode(normalized, pool_rows, command_buffer).map_err(ConfidenceHeadError::LinearEncode)?;
+
+        let mut step = ConfidenceHeadStep {
+            noise: command_buffer
+                .allocate_scratch_for_shape(&[pool_rows, self.config.pool], DataType::F32)
+                .map_err(ConfidenceHeadError::Backend)?,
+            draft_rows,
+            nodes: command_buffer
+                .allocate_scratch_for_shape(&[slot_count, self.config.hidden], DataType::F32)
+                .map_err(ConfidenceHeadError::Backend)?,
+            child_inputs: command_buffer
+                .allocate_scratch_for_shape(
+                    &[slot_count * self.config.children, self.config.hidden + CONF_HEAD_SLOT_NUMBERS as u32],
+                    DataType::F32,
+                )
+                .map_err(ConfidenceHeadError::Backend)?,
+            child_indices: command_buffer
+                .allocate_scratch_for_shape(&[slot_count * self.config.children], DataType::U32)
+                .map_err(ConfidenceHeadError::Backend)?,
+            child_real: command_buffer
+                .allocate_scratch_for_shape(&[slot_count * self.config.children], DataType::U32)
+                .map_err(ConfidenceHeadError::Backend)?,
+            slot_logits: command_buffer
+                .allocate_scratch_for_shape(&[slot_count, self.config.pool], DataType::F32)
+                .map_err(ConfidenceHeadError::Backend)?,
+            child_edges: command_buffer
+                .allocate_scratch_for_shape(&[nodes_per_round, self.config.children], DataType::F32)
+                .map_err(ConfidenceHeadError::Backend)?,
+            slot_count,
+            pool_rows,
+        };
+        command_buffer.encode_fill(&mut step.child_real, 0);
+
+        self.pool_noise.encode(
+            candidate_ids,
+            depth_seeds,
+            &mut step.noise,
+            pool_rows * self.config.pool,
+            self.config.pool,
+            vocab_size,
+            command_buffer,
+        );
+
+        Ok(step)
     }
 }
 

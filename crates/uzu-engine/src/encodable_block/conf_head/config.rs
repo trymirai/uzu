@@ -22,18 +22,41 @@ pub struct ConfidenceHeadSampling {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(from = "ConfidenceHeadFile")]
 pub struct ConfidenceHeadConfig {
+    /// Serialized configuration and weights format version. The loader currently supports version 2.
     pub format: u32,
+    /// Lowercase hex SHA-256 of the speculator's `model.safetensors` used during training.
     pub speculator_sha256: String,
+    /// Target sampling settings used to collect the training rollouts.
     pub sampling: ConfidenceHeadSampling,
+    /// Local feature width H: projected drafter rows, projected token embeddings and node vectors z_u.
+    /// Also the residual stream width of the edge MLP; independent of the tree attention width.
     pub hidden: u32,
+    /// Per-candidate feature width P inside the pool set encoder.
+    /// Its weighted mean and componentwise maximum are concatenated into 2P features, then projected to `hidden` to form the pool contribution to z_u.
     pub pool_hidden: u32,
+    /// Intermediate width of the edge MLP's residual block: H -> edge_hidden -> H.
+    /// The edge MLP predicts the child-specific logit correction delta_{u,t}.
     pub edge_hidden: u32,
+    /// Children per expanded node used during training, must match Weaver's `expand_width`.
+    /// Determines the number of child feature records and edge scores stored per tree slot.
     pub children: u32,
+    /// Candidates per depth in the drafter's top-K pool, must match Weaver's candidate pool size.
+    /// The head normalizes its transition scores over all these candidates, including unselected children.
     pub pool: u32,
+    /// Maximum tree depth in edges, with the root at depth 0, must match Weaver's configured maximum.
+    /// Tree attention has `max_depth + 1` learned depth embeddings.
     pub max_depth: u32,
+    /// Target embedding and drafter hidden-state width D, serialized as `target_width`.
+    /// Both token and drafter projections map D features to `hidden` features.
     pub model_width: u32,
+    /// Upper bound applied after softplus to the node's alpha and beta coefficients.
+    /// These scale Weaver logits and sampler Gumbel noise in alpha * logits + beta * noise + delta.
     pub cap: f32,
+    /// Epsilon added to the variance in the head's LayerNorm operations for numerical stability.
     pub layer_norm_eps: f32,
+    /// Optional tree attention configuration, serialized as `attention`.
+    /// Refines node and child features after tree growth, before final edge rescoring and pruning.
+    /// `None` selects the local head without this tree-wide refinement.
     pub tree: Option<ConfidenceHeadTreeConfig>,
 }
 
