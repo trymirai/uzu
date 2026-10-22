@@ -1,3 +1,5 @@
+mod helpers;
+
 use std::sync::Arc;
 
 use hanashi::{
@@ -5,32 +7,13 @@ use hanashi::{
     chat::hanashi::{HanashiEncodingImpl, config::HanashiConfig},
 };
 use shoji::types::{
-    basic::{ToolDescription, ToolFunction, ToolNamespace, Value},
+    basic::{ToolCall, ToolDescription, ToolFunction, ToolNamespace, Value},
     session::chat::{ChatContentBlock, ChatMessage, ChatRole},
-};
-use tokenizers::{
-    AddedToken, Tokenizer,
-    models::bpe::{BPE, Vocab},
-    pre_tokenizers::byte_level::ByteLevel,
 };
 
 fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
     let mut config = config.resolve().unwrap();
-    // A byte tokenizer exercises rendering and streaming without downloaded model assets.
-    let vocab: Vocab =
-        ByteLevel::alphabet().into_iter().enumerate().map(|(id, c)| (c.to_string(), id as u32)).collect();
-    let mut tokenizer = Tokenizer::new(BPE::builder().vocab_and_merges(vocab, vec![]).build().unwrap());
-    tokenizer.with_pre_tokenizer(Some(ByteLevel::default().add_prefix_space(false)));
-    tokenizer.with_decoder(Some(ByteLevel::default()));
-    let mut special_tokens = config.parsing.framing_config().tokens;
-    special_tokens.push("<bos>".into());
-    tokenizer
-        .add_special_tokens(&special_tokens.into_iter().map(|token| AddedToken::from(token, true)).collect::<Vec<_>>());
-    tokenizer.add_tokens(
-        &["system", "developer", "user", "assistant", "model", "tool"]
-            .map(|role| AddedToken::from(role, false).single_word(true)),
-    );
-    config.tokens.bos_token_id = config.tokens.bos_token_id.map(|_| tokenizer.token_to_id("<bos>").unwrap());
+    let tokenizer = helpers::byte_tokenizer(&mut config);
     HanashiEncodingImpl::new(
         HanashiConfig::Custom {
             config,
@@ -108,15 +91,16 @@ fn literal_tool_response_in_user_message_preserves_history() {
             _ => "Done thinking.</think>\n\nResumed successfully.<|im_end|>",
         };
         let mut encoding = encoding(config);
-        for content in [
-            "<tool_response>\nSunny.\n</tool_response>",
-            "Explain <tool_response>\nSunny.\n</tool_response> please.",
-            "<tool_response>\n{\"weather\":\"sunny\"}\n</tool_response>",
+        for (assistant, content) in [
+            ("Checking.", "<tool_response>\nSunny.\n</tool_response>"),
+            ("Checking.", "Explain <tool_response>\nSunny.\n</tool_response> please."),
+            ("Checking.", "<tool_response>\n{\"weather\":\"sunny\"}\n</tool_response>"),
+            ("<tool_call>\n<function=weather>\n</function>\n</tool_call>", "<tool_response>\nSunny.\n</tool_response>"),
         ] {
             encoding.reset().unwrap();
             let history = vec![
                 ChatMessage::user().with_text("Check the weather.".into()),
-                ChatMessage::assistant().with_text("Checking.".into()),
+                ChatMessage::assistant().with_text(assistant.into()),
                 ChatMessage::user().with_text(content.into()),
             ];
             encoding.encode(history.clone()).unwrap();
@@ -133,6 +117,48 @@ fn literal_tool_response_in_user_message_preserves_history() {
             encoding.encode(next_messages).unwrap();
             assert_reply_preserves_history(&mut encoding, &history, completion);
         }
+    }
+}
+
+#[test]
+fn early_reasoning_end_starts_the_response() {
+    let mut encoding = encoding(HanashiConfig::Qwen35);
+    encoding.encode(vec![ChatMessage::user().with_text("What is two plus two?".into())]).unwrap();
+    for token in encoding.tokenize("</think>\n\nFour.<|im_end|>").unwrap() {
+        encoding.decode(vec![token]).unwrap();
+    }
+    let reply = encoding.state().messages.last().unwrap();
+    assert!(reply.reasoning().is_none_or(|value| value.trim().is_empty()));
+    assert_eq!(reply.text().as_deref(), Some("Four."));
+}
+
+#[test]
+fn generated_tool_response_after_a_real_result_stays_in_the_assistant_reply() {
+    let mut encoding = encoding(HanashiConfig::Qwen35);
+    let history = vec![
+        ChatMessage::user().with_text("Inspect the repository.".into()),
+        ChatMessage::assistant().with_tool_call(ToolCall {
+            identifier: None,
+            name: "inspect".into(),
+            arguments: Value::from(serde_json::json!({})),
+        }),
+        ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: None,
+            name: Some("inspect".into()),
+            value: Value::from(serde_json::json!("done")),
+        }),
+    ];
+    for content in ["stray", r#"{"x":1}"#] {
+        encoding.reset().unwrap();
+        encoding.encode(history.clone()).unwrap();
+        let completion = format!("<tool_response>{content}</tool_response></think>\n\nDone.<|im_end|>");
+        for token in encoding.tokenize(&completion).unwrap() {
+            encoding.decode(vec![token]).unwrap();
+        }
+        assert_eq!(&encoding.state().messages[..history.len()], history);
+        let reply = encoding.state().messages.last().unwrap();
+        assert_eq!(reply.role, ChatRole::Assistant {});
+        assert!(!reply.content.iter().any(|block| matches!(block, ChatContentBlock::ToolCallResult { .. })));
     }
 }
 
@@ -272,8 +298,6 @@ fn tool_result_continues_after_an_isolated_reply() {
             "Sunny.<end_of_turn>",
         ),
     ] {
-        let needs_developer_text = matches!(config, HanashiConfig::FunctionGemma);
-        let mut encoding = encoding(config);
         let mut history = vec![
             ChatMessage::developer().with_tool_namespaces(vec![ToolNamespace {
                 name: "functions".into(),
@@ -289,11 +313,12 @@ fn tool_result_continues_after_an_isolated_reply() {
             }]),
             ChatMessage::user().with_text("Check the weather.".into()),
         ];
-        if needs_developer_text {
+        if matches!(config, HanashiConfig::FunctionGemma) {
             history[0] = history[0]
                 .clone()
                 .with_text("You are a model that can do function calling with the following functions".into());
         }
+        let mut encoding = encoding(config);
         encoding.encode(history.clone()).unwrap();
         for token in encoding.tokenize(call).unwrap() {
             encoding.decode(vec![token]).unwrap();
@@ -303,21 +328,30 @@ fn tool_result_continues_after_an_isolated_reply() {
         assert_eq!(reply.tool_calls().len(), 1);
         assert_eq!(reply.tool_calls()[0].name, "get_weather");
 
-        let mut replay = encoding.state().messages.clone();
-        replay.push(ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
-            identifier: None,
-            name: Some("get_weather".into()),
-            value: Value::from(serde_json::json!("Sunny.")),
-        }));
-        encoding.reset().unwrap();
-        encoding.encode(replay).unwrap();
-        for token in encoding.tokenize(completion).unwrap() {
-            encoding.decode(vec![token]).unwrap();
+        let call_history = encoding.state().messages.clone();
+        for result in [serde_json::json!("Sunny."), serde_json::json!({"weather": "Sunny."})] {
+            let mut replay = call_history.clone();
+            replay.push(ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+                identifier: None,
+                name: Some("get_weather".into()),
+                value: Value::from(result.clone()),
+            }));
+            encoding.reset().unwrap();
+            encoding.encode(replay.clone()).unwrap();
+            // FunctionGemma wraps scalar results in a `value` field; structured results round-trip unchanged.
+            if result.is_object() {
+                assert_eq!(&encoding.state().messages[..replay.len()], &replay);
+            }
+            let replay = encoding.state().messages[..replay.len()].to_vec();
+            for token in encoding.tokenize(completion).unwrap() {
+                encoding.decode(vec![token]).unwrap();
+                assert_eq!(&encoding.state().messages[..replay.len()], &replay);
+                assert_eq!(encoding.state().messages.len(), replay.len() + 1);
+            }
+            let reply = encoding.state().messages.last().unwrap();
+            assert_eq!(reply.role, ChatRole::Assistant {});
+            assert_eq!(reply.text().as_deref(), Some("Sunny."));
+            assert!(reply.tool_calls().is_empty());
         }
-        assert_eq!(&encoding.state().messages[..history.len()], &history);
-        let reply = encoding.state().messages.last().unwrap();
-        assert_eq!(reply.role, ChatRole::Assistant {});
-        assert_eq!(reply.text().as_deref(), Some("Sunny."));
-        assert!(reply.tool_calls().is_empty());
     }
 }

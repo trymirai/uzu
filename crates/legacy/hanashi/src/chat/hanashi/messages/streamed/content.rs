@@ -84,6 +84,14 @@ impl Content {
                         },
                         Section::ToolCallResult {
                             value: Some(value),
+                        } if matches!(role, ChatRole::Assistant {}) => {
+                            text_parts.push(match value {
+                                Value::String(text) => text,
+                                other => other.to_string(),
+                            });
+                        },
+                        Section::ToolCallResult {
+                            value: Some(value),
                         } => {
                             let (name, value) = tool_call_result_parts(value);
                             tool_call_results.push(ChatContentBlock::ToolCallResult {

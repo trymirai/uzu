@@ -267,24 +267,33 @@ impl HanashiEncodingImpl {
         let value = self.parser.state().value.clone();
         let messages =
             serde_json::from_value::<Vec<StreamedMessage>>(value).map_err(|_| Error::InvalidStreamedContent)?;
-        let rendering_config = &self.config.rendering;
+        // The tool result remains last until synchronization appends the assistant reply.
+        let continuing_tool_reply = match self.state.messages.as_slice() {
+            [.., last] if last.role == (ChatRole::Tool {}) => true,
+            [.., previous, last] if last.role == (ChatRole::Assistant {}) => previous.role == (ChatRole::Tool {}),
+            _ => false,
+        };
 
         let mut streamed_messages: Vec<ChatMessage> = Vec::new();
         for msg in messages {
-            let role = rendering_config.get_role_by_name(&msg.role.to_string());
-            // templates may render tool results inside another role's turn (e.g. qwen renders them as `<|im_start|>user\n<tool_response>...`,
-            // functiongemma keeps calls, responses and the follow-up reply in one model turn),
-            // so tool result sections are split into standalone tool messages in stream order
+            let role = self.config.rendering.get_role_by_name(&msg.role.to_string());
+            // Qwen embeds results in user frames; FunctionGemma embeds them in assistant frames.
+            // Assistant-generated tool markup is text unless a real tool reply is being continued.
+            let split_tool_results = match role {
+                ChatRole::Assistant {} => continuing_tool_reply,
+                _ => true,
+            };
             match msg.content {
                 Some(StreamedContent::Sections(sections))
-                    if sections.iter().any(|section| {
-                        matches!(
-                            section,
-                            StreamedSection::ToolCallResult {
-                                value: Some(serde_json::Value::Object(_))
-                            }
-                        )
-                    }) =>
+                    if split_tool_results
+                        && sections.iter().any(|section| {
+                            matches!(
+                                section,
+                                StreamedSection::ToolCallResult {
+                                    value: Some(serde_json::Value::Object(_))
+                                }
+                            )
+                        }) =>
                 {
                     let mut pending: Vec<StreamedSection> = Vec::new();
                     for section in sections {
@@ -303,14 +312,14 @@ impl HanashiEncodingImpl {
                             pending.push(section);
                         }
                     }
-                    let message = Self::message_from_sections(pending, role.clone());
+                    let message = Self::message_from_sections(pending, role);
                     if !message.content.is_empty() {
                         streamed_messages.push(message);
                     }
                 },
                 content => {
                     let mut message = ChatMessage::from(StreamedMessage {
-                        role: role.clone(),
+                        role,
                         content,
                     });
                     if !message.content.is_empty()

@@ -3,14 +3,20 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use hanashi::chat::{
-    Encoding, EncodingConfig, TokenizerLocation, hanashi::HanashiEncodingImpl, harmony::HarmonyEncodingImpl,
+    Encoding, EncodingConfig, TokenizerLocation,
+    hanashi::{HanashiEncodingImpl, config::HanashiResolvedConfig},
+    harmony::HarmonyEncodingImpl,
 };
 use serde::Deserialize;
 use shoji::types::{
     basic::{ReasoningEffort, ToolDescription, ToolNamespace, TranslationPayload},
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
-use tokenizers::Tokenizer;
+use tokenizers::{
+    AddedToken, Tokenizer,
+    models::bpe::{BPE, Vocab},
+    pre_tokenizers::byte_level::ByteLevel,
+};
 
 fn test_data_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("data")
@@ -91,6 +97,25 @@ pub fn load_tokenizer(model_name: &str) -> Tokenizer {
     let path = tokenizer_directory(model_name).join("tokenizer.json");
     Tokenizer::from_file(path.to_str().unwrap())
         .unwrap_or_else(|error| panic!("Failed to load tokenizer {}: {error}", path.display()))
+}
+
+pub fn byte_tokenizer(config: &mut HanashiResolvedConfig) -> Tokenizer {
+    let mut alphabet: Vec<_> = ByteLevel::alphabet().into_iter().collect();
+    alphabet.sort_unstable();
+    let vocab: Vocab = alphabet.into_iter().enumerate().map(|(id, c)| (c.to_string(), id as u32)).collect();
+    let mut tokenizer = Tokenizer::new(BPE::builder().vocab_and_merges(vocab, vec![]).build().unwrap());
+    tokenizer.with_pre_tokenizer(Some(ByteLevel::default().add_prefix_space(false)));
+    tokenizer.with_decoder(Some(ByteLevel::default()));
+    let mut special_tokens = config.parsing.framing_config().tokens;
+    special_tokens.push("<bos>".into());
+    tokenizer
+        .add_special_tokens(&special_tokens.into_iter().map(|token| AddedToken::from(token, true)).collect::<Vec<_>>());
+    tokenizer.add_tokens(
+        &["system", "developer", "user", "assistant", "model", "tool"]
+            .map(|role| AddedToken::from(role, false).single_word(true)),
+    );
+    config.tokens.bos_token_id = config.tokens.bos_token_id.map(|_| tokenizer.token_to_id("<bos>").unwrap());
+    tokenizer
 }
 
 pub fn build_encoding(

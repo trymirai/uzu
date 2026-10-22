@@ -1,3 +1,5 @@
+mod helpers;
+
 use std::sync::Arc;
 
 use hanashi::{
@@ -8,29 +10,14 @@ use shoji::types::{
     basic::{ReasoningEffort, ToolDescription, ToolFunction, ToolNamespace, Value},
     session::chat::{ChatContentBlock, ChatMessage, ChatRole},
 };
-use tokenizers::{AddedToken, Tokenizer, models::bpe::BPE, pre_tokenizers::byte_level::ByteLevel};
+use tokenizers::AddedToken;
 
 fn encoding(config: HanashiConfig) -> HanashiEncodingImpl {
     let mut config = config.resolve().unwrap();
-    let mut alphabet: Vec<_> = ByteLevel::alphabet().into_iter().collect();
-    alphabet.sort_unstable();
-    let vocabulary: [(String, u32); 256] = alphabet
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| (value.to_string(), index as u32))
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-    let model = BPE::builder().vocab_and_merges(vocabulary, Vec::new()).build().unwrap();
-    let mut tokenizer = Tokenizer::new(model);
-    tokenizer.with_pre_tokenizer(Some(ByteLevel::new(false, false, false)));
-    tokenizer.with_decoder(Some(ByteLevel::new(false, false, false)));
-    tokenizer.add_tokens(
-        &["system", "user", "assistant", "tool", "model", "inspect"].map(|value| AddedToken::from(value, false)),
-    );
-    let mut markers = config.parsing.framing_config().tokens;
-    markers.extend(["<bos>".to_string(), "<eos>".to_string()]);
-    tokenizer.add_special_tokens(&markers.into_iter().map(|value| AddedToken::from(value, true)).collect::<Vec<_>>());
+    let mut tokenizer = helpers::byte_tokenizer(&mut config);
+    // The continuation tests sample "inspect" both as one token and as individual bytes.
+    tokenizer.add_tokens(&[AddedToken::from("inspect", false)]);
+    tokenizer.add_special_tokens(&[AddedToken::from("<eos>", true)]);
     config.tokens.bos_token_id = tokenizer.token_to_id("<bos>");
     config.tokens.eos_token_id = tokenizer.token_to_id("<eos>");
     HanashiEncodingImpl::new(
