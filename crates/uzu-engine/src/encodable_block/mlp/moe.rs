@@ -5,7 +5,7 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::{
-            gemm::{GemmBPrologueKind, GemmDTransform},
+            gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             quantization_method::QuantizationMethod,
         },
@@ -335,6 +335,7 @@ impl<B: Backend> RoutedProjection<B> {
             output_transform,
             input_aligned,
             false,
+            GemmBLayout::RowMajor,
             full_tile,
             a_per_token,
         )
@@ -515,7 +516,14 @@ impl<B: Backend> MoeMlp<B> {
             &parameter_tree.subtree("router"),
             context,
         )?;
-        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, false)
+        let max_top_k = if config.num_active_routed_experts <= 8 {
+            8
+        } else if config.num_active_routed_experts <= 16 {
+            16
+        } else {
+            32
+        };
+        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, max_top_k, false)
             .map_err(MoeMlpNewError::Backend)?;
 
         let routed_tree = parameter_tree.subtree("routed_experts");
