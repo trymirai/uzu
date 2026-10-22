@@ -196,7 +196,6 @@ impl<B: Backend> ParameterTree<'_, B> {
         self.read_buffer_with_tail(name, shape, dtype, 0)
     }
 
-    /// Like `read_buffer`, with `tail` extra bytes after the data for kernels that read a word past the end.
     pub fn read_buffer_with_tail(
         &self,
         name: &str,

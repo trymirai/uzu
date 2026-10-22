@@ -25,7 +25,6 @@ pub struct HybridSpec {
     pub adapter_spec: Option<Unsupported>,
     pub incoherence_block_size: Option<u32>,
     pub incoherence_processing_mode: IncoherenceProcessingMode,
-    /// Absent in legacy checkpoints, which are all Hadamard.
     #[serde(default)]
     pub incoherence_kind: IncoherenceKind,
 }

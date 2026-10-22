@@ -34,7 +34,6 @@ pub struct RHTLinearWrapper<B: Backend> {
     inner_linear: LinearMatmul<B>,
 }
 
-/// `Some(has_output_rht)` for the Hadamard specs this wrapper runs.
 fn input_rht_spec(spec: &AnyWeightMatrixSpec) -> Option<bool> {
     match spec {
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {

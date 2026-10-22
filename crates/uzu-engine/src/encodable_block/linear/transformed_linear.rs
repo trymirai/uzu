@@ -40,7 +40,6 @@ enum Rotation<B: Backend> {
     Hadamard(InputRht<B>),
 }
 
-/// Row-stacked hybrid parts, each under its own input rotation, writing their rows into one output.
 pub struct TransformedLinear<B: Backend> {
     groups: Box<[(Rotation<B>, Box<[LinearMatmul<B>]>)]>,
     input_dim: u32,
@@ -59,7 +58,6 @@ fn unsupported<B: Backend>(message: String) -> TransformedLinearError<B> {
     TransformedLinearError::UnsupportedConfiguration(message)
 }
 
-/// `(rows, spec, tree)` of each row-stack part, or the whole matrix when `spec` is not a stack.
 fn row_stack_parts<'t, B: Backend>(
     spec: AnyWeightMatrixSpec,
     rows: u32,

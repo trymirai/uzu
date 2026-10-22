@@ -151,7 +151,6 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(output)
     }
 
-    /// Writes this linear's outputs into columns `column..` of `output` rows that are `row_stride` wide.
     pub(super) fn encode_columns(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
