@@ -104,7 +104,7 @@ impl<B: Backend> RoutedProjection<B> {
         proj_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<(Self, Option<LinearInputPreparation<B>>), MoeMlpNewError<B>> {
-        if !matches!(data_type, DataType::BF16 | DataType::F32) {
+        if data_type != DataType::BF16 {
             return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
                 "unsupported data type for MoE routed projection: {data_type:?}"
             )));
@@ -495,9 +495,9 @@ impl<B: Backend> MoeMlp<B> {
         context: &B::Context,
     ) -> Result<Self, MoeMlpNewError<B>> {
         let AnyRoutingFunction::SoftmaxRouting(_) = config.routing_function;
-        if config.num_active_routed_experts == 0 || config.num_active_routed_experts > 32 {
+        if config.num_active_routed_experts == 0 || config.num_active_routed_experts > 8 {
             return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "num_active_routed_experts ({}) must be in 1..=32",
+                "num_active_routed_experts ({}) must be in 1..=8",
                 config.num_active_routed_experts
             )));
         }
@@ -524,7 +524,7 @@ impl<B: Backend> MoeMlp<B> {
             &parameter_tree.subtree("router"),
             context,
         )?;
-        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, false)
+        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, 8, false)
             .map_err(MoeMlpNewError::Backend)?;
 
         let routed_tree = parameter_tree.subtree("routed_experts");
@@ -849,11 +849,11 @@ mod tests {
             matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (0)"))
         );
 
-        // 2. num_active_routed_experts > 32 fails
-        let config = make_test_moe_config(33, 64, 0);
+        // 2. num_active_routed_experts > 8 fails
+        let config = make_test_moe_config(9, 64, 0);
         let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
         assert!(
-            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (33)"))
+            matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (9)"))
         );
 
         // 3. num_routed_experts == 0 fails
