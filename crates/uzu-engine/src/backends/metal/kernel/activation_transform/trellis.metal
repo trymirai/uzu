@@ -27,86 +27,108 @@ static METAL_FUNC uint hadamard_index_before_transpose(ushort lane, ushort simdg
   return METAL_SIMD_SIZE * (simdgroup + SIMDGROUPS_PER_THREADGROUP * value_index) + lane;
 }
 
-template <uint DIMENSION>
+// Supported limits; arrays are sized for them.
+UZU_CONST uint MAX_DIMENSION = 20480;
+UZU_CONST uint MIN_HADAMARD_SIZE = 512;
+UZU_CONST uint MAX_HADAMARD_SIZE = 4096;
+UZU_CONST uint MAX_COLUMNS_PER_PASS = 4;
+
+UZU_CONST uint MAX_MIXING_DIMENSION = MAX_DIMENSION / MIN_HADAMARD_SIZE;
+UZU_CONST uint MAX_VALUES_PER_THREAD = MAX_HADAMARD_SIZE / THREADS_PER_THREADGROUP;
+UZU_CONST uint MAX_PRIVATE_VALUES = MAX_DIMENSION / THREADS_PER_THREADGROUP;
+UZU_CONST uint MAX_SCRATCH_SIZE = MAX_HADAMARD_SIZE + MAX_HADAMARD_SIZE / METAL_SIMD_SIZE;
+UZU_CONST uint MAX_MIXING_SIZE = MAX_MIXING_DIMENSION * MAX_MIXING_DIMENSION;
+static_assert(
+    sizeof(float) * (MAX_SCRATCH_SIZE + SIMDGROUPS_PER_THREADGROUP + MAX_MIXING_SIZE) <= THREADGROUP_MEMORY_LIMIT,
+    "does not fit threadgroup memory"
+);
+
 struct TransformLayout {
-  static constant constexpr uint HADAMARD_SIZE = DIMENSION & (0u - DIMENSION);
-  static constant constexpr uint MIXING_DIMENSION = DIMENSION / HADAMARD_SIZE;
-  static constant constexpr uint VALUES_PER_THREAD = HADAMARD_SIZE / THREADS_PER_THREADGROUP;
-  static constant constexpr uint IN_THREAD_VALUES = HADAMARD_SIZE > 1024 ? HADAMARD_SIZE / 1024 : 1;
-  static constant constexpr uint SECOND_LANE_STRIDE_LIMIT =
-      HADAMARD_SIZE == THREADS_PER_THREADGROUP ? METAL_SIMD_SIZE / 4 : METAL_SIMD_SIZE / 2;
-  static constant constexpr uint COLUMNS_PER_PASS = HADAMARD_SIZE >= 2048 ? 1 : (MIXING_DIMENSION > 8 ? 4 : 2);
-  static constant constexpr uint COLUMN_SCRATCH_SIZE = HADAMARD_SIZE + HADAMARD_SIZE / METAL_SIMD_SIZE;
-  static constant constexpr uint SCRATCH_SIZE = COLUMNS_PER_PASS * COLUMN_SCRATCH_SIZE;
-  static constant constexpr uint MIXING_SIZE = MIXING_DIMENSION * MIXING_DIMENSION;
-  static constant constexpr uint THREADGROUP_BYTES =
-      sizeof(float) * (SCRATCH_SIZE + SIMDGROUPS_PER_THREADGROUP + MIXING_SIZE);
-  typedef float SignFlippedInput[VALUES_PER_THREAD][MIXING_DIMENSION];
-  typedef float RotatedColumns[MIXING_DIMENSION][VALUES_PER_THREAD];
+  uint hadamard_size;
+  uint mixing_dimension;
+  uint values_per_thread;
+  uint in_thread_values;
+  uint second_lane_stride_limit;
+  uint columns_per_pass;
+  uint column_scratch_size;
+
+  METAL_FUNC TransformLayout(const uint dimension) {
+    hadamard_size = dimension & (0u - dimension);
+    mixing_dimension = dimension / hadamard_size;
+    values_per_thread = hadamard_size / THREADS_PER_THREADGROUP;
+    in_thread_values = hadamard_size > 1024 ? hadamard_size / 1024 : 1;
+    second_lane_stride_limit = hadamard_size == THREADS_PER_THREADGROUP ? METAL_SIMD_SIZE / 4 : METAL_SIMD_SIZE / 2;
+    columns_per_pass = hadamard_size >= 2048 ? 1 : (mixing_dimension > 8 ? 4 : 2);
+    column_scratch_size = hadamard_size + hadamard_size / METAL_SIMD_SIZE;
+  }
 };
 
-template <typename Layout>
-static METAL_FUNC uint hadamard_index_after_transpose(ushort lane, ushort simdgroup, uint value_index) {
-  if constexpr (Layout::HADAMARD_SIZE == THREADS_PER_THREADGROUP) {
+static METAL_FUNC uint
+hadamard_index_after_transpose(const thread TransformLayout& layout, ushort lane, ushort simdgroup, uint value_index) {
+  if (layout.hadamard_size == THREADS_PER_THREADGROUP) {
     constexpr uint half_simd = METAL_SIMD_SIZE / 2;
     return METAL_SIMD_SIZE * (lane % half_simd) + half_simd * (lane / half_simd) + simdgroup;
   } else {
-    return METAL_SIMD_SIZE * (lane + METAL_SIMD_SIZE * (value_index % Layout::IN_THREAD_VALUES)) + simdgroup +
-           SIMDGROUPS_PER_THREADGROUP * (value_index / Layout::IN_THREAD_VALUES);
+    return METAL_SIMD_SIZE * (lane + METAL_SIMD_SIZE * (value_index % layout.in_thread_values)) + simdgroup +
+           SIMDGROUPS_PER_THREADGROUP * (value_index / layout.in_thread_values);
   }
 }
 
-template <typename Layout, uint COLUMNS, uint LANE_STRIDE_LIMIT = METAL_SIMD_SIZE / 2>
 static METAL_FUNC void hadamard_transform_lanes(
-    thread float (&column_values)[COLUMNS][Layout::VALUES_PER_THREAD],
-    const ushort lane
+    const thread TransformLayout& layout,
+    const uint columns,
+    thread float (&column_values)[MAX_COLUMNS_PER_PASS][MAX_VALUES_PER_THREAD],
+    const ushort lane,
+    const uint lane_stride_limit
 ) {
   METAL_PRAGMA_UNROLL
-  for (ushort lane_stride = 1; lane_stride <= LANE_STRIDE_LIMIT; lane_stride <<= 1) {
+  for (ushort lane_stride = 1; lane_stride <= lane_stride_limit; lane_stride <<= 1) {
     METAL_PRAGMA_UNROLL
-    for (uint column = 0; column < COLUMNS; ++column) {
+    for (uint column = 0; column < columns; ++column) {
       METAL_PRAGMA_UNROLL
-      for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
+      for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
         column_values[column][value_index] = butterfly(column_values[column][value_index], lane, lane_stride);
       }
     }
   }
 }
 
-template <typename Layout, uint COLUMNS>
 static METAL_FUNC void rotate_columns(
+    const thread TransformLayout& layout,
+    const uint columns,
     const uint first_output_mixing_index,
-    const thread typename Layout::SignFlippedInput& sign_flipped_input,
+    const thread float (&sign_flipped_input)[MAX_PRIVATE_VALUES],
     const threadgroup float* shared_mixing,
     threadgroup float* scratch,
-    thread typename Layout::RotatedColumns& rotated,
+    thread float (&rotated)[MAX_PRIVATE_VALUES],
     thread float& local_maximum,
     const ushort lane,
     const ushort simdgroup
 ) {
-  const float normalization = 1.0f / sqrt(float(Layout::HADAMARD_SIZE));
+  const float normalization = 1.0f / sqrt(float(layout.hadamard_size));
 
-  float column_values[COLUMNS][Layout::VALUES_PER_THREAD] = {};
+  float column_values[MAX_COLUMNS_PER_PASS][MAX_VALUES_PER_THREAD] = {};
   METAL_PRAGMA_UNROLL
-  for (uint mixing_index = 0; mixing_index < Layout::MIXING_DIMENSION; ++mixing_index) {
+  for (uint mixing_index = 0; mixing_index < layout.mixing_dimension; ++mixing_index) {
     METAL_PRAGMA_UNROLL
-    for (uint column = 0; column < COLUMNS; ++column) {
-      const float mixing =
-          shared_mixing[(first_output_mixing_index + column) * Layout::MIXING_DIMENSION + mixing_index];
+    for (uint column = 0; column < columns; ++column) {
+      const float mixing = shared_mixing[(first_output_mixing_index + column) * layout.mixing_dimension + mixing_index];
       METAL_PRAGMA_UNROLL
-      for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
+      for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
         column_values[column][value_index] =
-            fma(sign_flipped_input[value_index][mixing_index], mixing, column_values[column][value_index]);
+            fma(sign_flipped_input[value_index * layout.mixing_dimension + mixing_index],
+                mixing,
+                column_values[column][value_index]);
       }
     }
   }
-  hadamard_transform_lanes<Layout, COLUMNS>(column_values, lane);
+  hadamard_transform_lanes(layout, columns, column_values, lane, METAL_SIMD_SIZE / 2);
   METAL_PRAGMA_UNROLL
-  for (uint column = 0; column < COLUMNS; ++column) {
+  for (uint column = 0; column < columns; ++column) {
     METAL_PRAGMA_UNROLL
-    for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
+    for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
       scratch
-          [column * Layout::COLUMN_SCRATCH_SIZE +
+          [column * layout.column_scratch_size +
            bank_conflict_free_offset(hadamard_index_before_transpose(lane, simdgroup, value_index))] =
               column_values[column][value_index];
     }
@@ -114,21 +136,21 @@ static METAL_FUNC void rotate_columns(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   METAL_PRAGMA_UNROLL
-  for (uint column = 0; column < COLUMNS; ++column) {
+  for (uint column = 0; column < columns; ++column) {
     METAL_PRAGMA_UNROLL
-    for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
-      const uint hadamard_index = hadamard_index_after_transpose<Layout>(lane, simdgroup, value_index);
+    for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
+      const uint hadamard_index = hadamard_index_after_transpose(layout, lane, simdgroup, value_index);
       column_values[column][value_index] =
-          scratch[column * Layout::COLUMN_SCRATCH_SIZE + bank_conflict_free_offset(hadamard_index)];
+          scratch[column * layout.column_scratch_size + bank_conflict_free_offset(hadamard_index)];
     }
   }
-  hadamard_transform_lanes<Layout, COLUMNS, Layout::SECOND_LANE_STRIDE_LIMIT>(column_values, lane);
+  hadamard_transform_lanes(layout, columns, column_values, lane, layout.second_lane_stride_limit);
   METAL_PRAGMA_UNROLL
-  for (uint value_stride = 1; value_stride < Layout::IN_THREAD_VALUES; value_stride <<= 1) {
+  for (uint value_stride = 1; value_stride < layout.in_thread_values; value_stride <<= 1) {
     METAL_PRAGMA_UNROLL
-    for (uint column = 0; column < COLUMNS; ++column) {
+    for (uint column = 0; column < columns; ++column) {
       METAL_PRAGMA_UNROLL
-      for (uint block = 0; block < Layout::VALUES_PER_THREAD; block += 2 * value_stride) {
+      for (uint block = 0; block < layout.values_per_thread; block += 2 * value_stride) {
         METAL_PRAGMA_UNROLL
         for (uint value_index = block; value_index < block + value_stride; ++value_index) {
           const float lower = column_values[column][value_index];
@@ -140,20 +162,17 @@ static METAL_FUNC void rotate_columns(
     }
   }
   METAL_PRAGMA_UNROLL
-  for (uint column = 0; column < COLUMNS; ++column) {
+  for (uint column = 0; column < columns; ++column) {
     METAL_PRAGMA_UNROLL
-    for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
-      rotated[first_output_mixing_index + column][value_index] =
-          float(bfloat(column_values[column][value_index] * normalization));
-      local_maximum = max(local_maximum, abs(rotated[first_output_mixing_index + column][value_index]));
+    for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
+      thread float& output = rotated[(first_output_mixing_index + column) * layout.values_per_thread + value_index];
+      output = float(bfloat(column_values[column][value_index] * normalization));
+      local_maximum = max(local_maximum, abs(output));
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 }
 
-// TODO: a columns agnostic kernel
-template <uint DIMENSION>
-VARIANTS(DIMENSION, 4096, 5120, 6144, 6656, 17408, 19968)
 PUBLIC KERNEL(TrellisTransform)(
     device const bfloat* input,
     device const float* rht_factors,
@@ -162,47 +181,47 @@ PUBLIC KERNEL(TrellisTransform)(
     device float4* column_group_sums,
     device float* scales,
     constant uint& batch,
-    threadgroup float scratch[TransformLayout<DIMENSION>::SCRATCH_SIZE],
+    const uint dimension SPECIALIZE,
+    threadgroup float scratch[MAX_SCRATCH_SIZE],
     threadgroup float simdgroup_maxima[SIMDGROUPS_PER_THREADGROUP],
-    threadgroup float shared_mixing[TransformLayout<DIMENSION>::MIXING_SIZE],
+    threadgroup float shared_mixing[MAX_MIXING_SIZE],
     const uint token GROUPS(batch),
     const uint thread_index THREADS(THREADS_PER_THREADGROUP),
     const ThreadContext thread_context
 ) {
-  using Layout = TransformLayout<DIMENSION>;
-  static_assert(
-      Layout::HADAMARD_SIZE >= THREADS_PER_THREADGROUP && Layout::HADAMARD_SIZE <= 4096,
-      "unsupported Hadamard size"
-  );
-  static_assert(Layout::THREADGROUP_BYTES <= THREADGROUP_MEMORY_LIMIT, "does not fit threadgroup memory");
+  const TransformLayout layout(dimension);
 
   const ushort lane = ushort(thread_context.simd_lane_id);
   const ushort simdgroup = ushort(thread_context.simdgroup_index);
 
-  for (uint index = thread_index; index < Layout::MIXING_DIMENSION * Layout::MIXING_DIMENSION;
+  for (uint index = thread_index; index < layout.mixing_dimension * layout.mixing_dimension;
        index += THREADS_PER_THREADGROUP) {
     shared_mixing[index] = mixing[index];
   }
 
-  typename Layout::SignFlippedInput sign_flipped_input;
+  float sign_flipped_input[MAX_PRIVATE_VALUES];
   METAL_PRAGMA_UNROLL
-  for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
+  for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
     const uint hadamard_index = hadamard_index_before_transpose(lane, simdgroup, value_index);
+    const uint first_column = hadamard_index * layout.mixing_dimension;
+    const device bfloat* token_input = input + token * dimension + first_column;
+    const device float* token_factors = rht_factors + first_column;
     METAL_PRAGMA_UNROLL
-    for (uint mixing_index = 0; mixing_index < Layout::MIXING_DIMENSION; ++mixing_index) {
-      sign_flipped_input[value_index][mixing_index] =
-          float(input[token * DIMENSION + hadamard_index * Layout::MIXING_DIMENSION + mixing_index]) *
-          rht_factors[hadamard_index * Layout::MIXING_DIMENSION + mixing_index];
+    for (uint mixing_index = 0; mixing_index < layout.mixing_dimension; ++mixing_index) {
+      sign_flipped_input[value_index * layout.mixing_dimension + mixing_index] =
+          float(token_input[mixing_index]) * token_factors[mixing_index];
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  typename Layout::RotatedColumns rotated;
+  float rotated[MAX_PRIVATE_VALUES];
   float local_maximum = 0.0f;
   uint output_mixing_index = 0;
-  for (; output_mixing_index + Layout::COLUMNS_PER_PASS <= Layout::MIXING_DIMENSION;
-       output_mixing_index += Layout::COLUMNS_PER_PASS) {
-    rotate_columns<Layout, Layout::COLUMNS_PER_PASS>(
+  for (; output_mixing_index + layout.columns_per_pass <= layout.mixing_dimension;
+       output_mixing_index += layout.columns_per_pass) {
+    rotate_columns(
+        layout,
+        layout.columns_per_pass,
         output_mixing_index,
         sign_flipped_input,
         shared_mixing,
@@ -213,8 +232,10 @@ PUBLIC KERNEL(TrellisTransform)(
         simdgroup
     );
   }
-  if constexpr (Layout::MIXING_DIMENSION % Layout::COLUMNS_PER_PASS != 0) {
-    rotate_columns<Layout, Layout::MIXING_DIMENSION % Layout::COLUMNS_PER_PASS>(
+  if (layout.mixing_dimension % layout.columns_per_pass != 0) {
+    rotate_columns(
+        layout,
+        layout.mixing_dimension % layout.columns_per_pass,
         output_mixing_index,
         sign_flipped_input,
         shared_mixing,
@@ -235,17 +256,19 @@ PUBLIC KERNEL(TrellisTransform)(
 
   int local_column_group_sums[trellis::COLUMN_GROUP_COUNT] = {};
   METAL_PRAGMA_UNROLL
-  for (uint mixing_index = 0; mixing_index < Layout::MIXING_DIMENSION; ++mixing_index) {
+  for (uint value_index = 0; value_index < layout.values_per_thread; ++value_index) {
+    const uint first_column =
+        hadamard_index_after_transpose(layout, lane, simdgroup, value_index) * layout.mixing_dimension;
+    device int8_t* token_activations = activations + token * dimension + first_column;
     METAL_PRAGMA_UNROLL
-    for (uint value_index = 0; value_index < Layout::VALUES_PER_THREAD; ++value_index) {
-      const uint hadamard_index = hadamard_index_after_transpose<Layout>(lane, simdgroup, value_index);
-      const uint column = hadamard_index * Layout::MIXING_DIMENSION + mixing_index;
-      const int8_t quantized = quantize_activation_int8(rotated[mixing_index][value_index], scale);
-      activations[token * DIMENSION + column] = quantized;
+    for (uint mixing_index = 0; mixing_index < layout.mixing_dimension; ++mixing_index) {
+      const int8_t quantized =
+          quantize_activation_int8(rotated[mixing_index * layout.values_per_thread + value_index], scale);
+      token_activations[mixing_index] = quantized;
       METAL_PRAGMA_UNROLL
       for (uint column_group_index = 0; column_group_index < trellis::COLUMN_GROUP_COUNT; ++column_group_index) {
         local_column_group_sums[column_group_index] +=
-            (column % trellis::COLUMN_GROUP_COUNT) == column_group_index ? int(quantized) : 0;
+            ((first_column + mixing_index) % trellis::COLUMN_GROUP_COUNT) == column_group_index ? int(quantized) : 0;
       }
     }
   }
