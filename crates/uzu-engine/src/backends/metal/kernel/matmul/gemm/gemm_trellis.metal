@@ -5,6 +5,7 @@
 
 #include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"
+#include "common/quantized/cursor.h"
 #include "common/quantized/trellis.h"
 
 using namespace metal;
@@ -103,66 +104,57 @@ KERNEL(GemmTrellis)(
 
   const uint code_row_bytes = trellis::row_bytes(trellis_format, params->K);
   const short2 position = Ops::get_position(thread_context.simd_lane_id);
-  const auto left_storage = operands::pack_left<LeftOperand, bfloat>(nullptr, activations, nullptr, nullptr);
 
   Products products;
   products.clear();
-  uzu::dispatch_bool(alignment.contains(GemmAlignment::M) || token_end == Core::SIMDGROUP_BLOCK_M, [&](auto aligned_m) {
-    uzu::dispatch_bool(alignment.contains(GemmAlignment::N) || row_end == Core::SIMDGROUP_BLOCK_N, [&](auto aligned_n) {
-      auto left = quantized::make_left_cursor<Core, LeftOperand, aligned_m.value>(
-          left_storage,
-          params,
-          tile_context,
-          thread_context
-      );
-      quantized::TrellisCursor<RightFragment, aligned_n.value> trellis_cursor{
-          codes + size_t(row_base + position.y) * code_row_bytes,
-          code_row_bytes,
-          row_end,
-          position,
-          tile_context.k_offset,
-          trellis_format
-      };
-      const int k_chunks = token_end > 0 && row_end > 0
-                               ? int(params->aligned_inner_iterations) * int(trellis::K_STEP / Core::SIMDGROUP_BLOCK_K)
-                               : 0;
-      if constexpr (GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4) {
-        if (trellis_vector_width == trellis::V4_VECTOR_WIDTH && trellis_transition_bits == 8 &&
-            trellis_restart_columns == 64 && params->aligned_inner_iterations > 1) {
-          static_assert(trellis::K_STEP % (2 * Core::SIMDGROUP_BLOCK_K) == 0, "paired K chunks must be complete");
-          auto run_chunk = [&]() {
-            auto left_tile = left.load(0u);
-            auto right_tile = trellis_cursor.load(0u);
-            uzu::matmul::fragment_mma(products, left_tile, right_tile);
-            left.advance();
-            trellis_cursor.advance();
-          };
-          METAL_PRAGMA_NO_UNROLL
-          for (int chunk = 0; chunk < k_chunks; chunk += 2) {
-            run_chunk();
-            run_chunk();
-          }
-        } else {
-          METAL_PRAGMA_NO_UNROLL
-          for (int chunk = 0; chunk < k_chunks; ++chunk) {
-            auto left_tile = left.load(0u);
-            auto right_tile = trellis_cursor.load(0u);
-            uzu::matmul::fragment_mma(products, left_tile, right_tile);
-            left.advance();
-            trellis_cursor.advance();
-          }
+  // Each lane decodes 16 consecutive K columns: chunk 0 takes columns 0..7, chunk 1 takes 8..15
+  using LeftFragment = uzu::matmul::Fragment<int8_t, Core::TILES_M, Core::TILES_K, Ops>;
+  const uint lane_column = 4 * uint(position.x);
+  const uint k_steps = token_end > 0 && row_end > 0 ? params->aligned_inner_iterations : 0;
+  const device int8_t* lane_activations = activations + size_t(token_base + position.y) * params->leading_dimension_a;
+  // Rows past M re-read the last row; the store drops them
+  const bool aligned_m = alignment.contains(GemmAlignment::M);
+  const device int8_t* tile_activations = activations + size_t(token_base) * params->leading_dimension_a;
+  const short last_tile_row = token_end - 1;
+  const uint lane_row_byte = (row_base + position.y) * code_row_bytes;
+  uzu::dispatch_bool(alignment.contains(GemmAlignment::N) || row_end == Core::SIMDGROUP_BLOCK_N, [&](auto aligned_n) {
+    METAL_PRAGMA_NO_UNROLL
+    for (uint step = 0; step < k_steps; ++step) {
+      const uint k = tile_context.k_offset + step * trellis::K_STEP + lane_column;
+      LeftFragment left[2];
+      RightFragment right[2];
+      quantized::for_each_fragment_row<LeftFragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
+        const device int8_t* row = aligned_m ? lane_activations + row_offset * params->leading_dimension_a
+                                             : tile_activations + min(short(position.y + row_offset), last_tile_row) *
+                                                                      params->leading_dimension_a;
+        const uint4 values = *reinterpret_cast<const device uint4*>(row + k);
+        METAL_PRAGMA_UNROLL
+        for (uint index = 0; index < 4; ++index) {
+          reinterpret_cast<thread uint*>(&left[index / 2].fragment_at(fragment_row, index % 2))[row_slot] =
+              values[index];
         }
-      } else {
-        METAL_PRAGMA_NO_UNROLL
-        for (int chunk = 0; chunk < k_chunks; ++chunk) {
-          auto left_tile = left.load(0u);
-          auto right_tile = trellis_cursor.load(0u);
-          uzu::matmul::fragment_mma(products, left_tile, right_tile);
-          left.advance();
-          trellis_cursor.advance();
+      });
+      quantized::for_each_fragment_row<RightFragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
+        const bool live = aligned_n.value || position.y + row_offset < row_end;
+        const uint4 weights = live ? trellis::decode_biased_weight_quad(
+                                         trellis_format,
+                                         codes,
+                                         lane_row_byte + row_offset * code_row_bytes,
+                                         k,
+                                         params->K
+                                     )
+                                   : uint4(0u);
+        METAL_PRAGMA_UNROLL
+        for (uint index = 0; index < 4; ++index) {
+          reinterpret_cast<thread uint*>(&right[index / 2].fragment_at(fragment_row, index % 2))[row_slot] =
+              weights[index];
         }
+      });
+      METAL_PRAGMA_UNROLL
+      for (uint chunk = 0; chunk < 2; ++chunk) {
+        uzu::matmul::fragment_mma(products, left[chunk], right[chunk]);
       }
-    });
+    }
   });
 
   const bool write_split_k_partials = params->aligned_inner_iterations * trellis::K_STEP < params->K;

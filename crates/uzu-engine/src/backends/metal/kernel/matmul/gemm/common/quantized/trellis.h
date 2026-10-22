@@ -4,7 +4,6 @@
 
 #include "../../../../common/defines.h"
 #include "../../../../generated/gemm.h"
-#include "cursor.h"
 
 using namespace metal;
 
@@ -20,7 +19,7 @@ struct GemmTrellisFormat {
 };
 
 UZU_CONST uint K_STEP = 64, WEIGHT_BIAS = 54;
-UZU_CONST uint STATE_BITS = 16, BYTE_BITS = 8, V4_VECTOR_WIDTH = 4, V2T6_TRANSITION_BITS = 6;
+UZU_CONST uint STATE_BITS = 16, BYTE_BITS = 8, WORD_BYTES = 4, WORD_BITS = 32, LANE_COLUMNS = 16, ROW_ALIGNMENT = 16;
 
 UZU_CONST uint HASH_MULTIPLIER = 0xCFCCB83Fu, HASH_INCREMENT = 0x584B4AA3u;
 UZU_CONST uint HASH_AVALANCHE_MULTIPLIER = 0x85EBCA6Bu, HASH_FOLD_BITS = 16;
@@ -29,40 +28,52 @@ UZU_CONST uint TWO_BIT_FIELD_SHIFT = 2, NIBBLE_SHIFT = 4, FIELD_SUM_SHIFT = 3;
 UZU_CONST uint TWO_BIT_FIELDS_MASK = 0x33333333u, BYTE_NIBBLES_MASK = 0x0F0F0F0Fu;
 UZU_CONST uint FIELD_PAIR_SUM_MULTIPLIER = 3, DITHER_MULTIPLIER = 3;
 
-// Row layout
-static METAL_FUNC uint block_bytes(const GemmTrellisFormat format, const uint block_columns) {
+// Row layout: restart rows pad to ROW_ALIGNMENT bytes, connected rows to a byte
+static METAL_FUNC uint block_bits(const GemmTrellisFormat format, const uint block_columns) {
   const uint state_count = block_columns / format.vector_width;
   const uint transition_count = state_count - 1;
-  return (STATE_BITS + transition_count * format.transition_bits + BYTE_BITS - 1) / BYTE_BITS;
+  return STATE_BITS + transition_count * format.transition_bits;
 }
 
 static METAL_FUNC uint row_bytes(const GemmTrellisFormat format, const uint code_columns) {
-  const uint block_columns = format.restart_columns == 0 ? code_columns : format.restart_columns;
-  return code_columns / block_columns * block_bytes(format, block_columns);
+  if (format.restart_columns == 0) {
+    return (block_bits(format, code_columns) + BYTE_BITS - 1) / BYTE_BITS;
+  }
+  const uint stream_bits = code_columns / format.restart_columns * block_bits(format, format.restart_columns);
+  const uint stream_bytes = (stream_bits + BYTE_BITS - 1) / BYTE_BITS;
+  return (stream_bytes + ROW_ALIGNMENT - 1) / ROW_ALIGNMENT * ROW_ALIGNMENT;
 }
 
-// MSB-first codes. code_column must be a multiple of 4.
-static METAL_FUNC uint2
-states_at(const GemmTrellisFormat format, const device uchar* code_row, const uint code_column) {
-  if (format.vector_width == V4_VECTOR_WIDTH) {
-    const device uchar* block_codes = code_row;
-    uint block_column = code_column;
-    if (format.restart_columns != 0) {
-      block_codes += code_column / format.restart_columns * block_bytes(format, format.restart_columns);
-      block_column %= format.restart_columns;
-    }
-    const device uchar* state_bytes = block_codes + block_column / V4_VECTOR_WIDTH;
-    return uint2(uint(state_bytes[0]) << BYTE_BITS | state_bytes[1], 0);
+// Tape 2: each block's bits reversed, LSB first; state i is the LE 16-bit field at bit B - 16 - i*T
+static METAL_FUNC uint states_per_lane(const GemmTrellisFormat format) { return LANE_COLUMNS / format.vector_width; }
+
+static METAL_FUNC uint states_per_window(const GemmTrellisFormat format) {
+  const uint block_states = format.restart_columns / format.vector_width;
+  return format.restart_columns == 0 ? states_per_lane(format) : min(states_per_lane(format), 1u << ctz(block_states));
+}
+
+static METAL_FUNC uint window_bits(const GemmTrellisFormat format) {
+  return STATE_BITS + (states_per_window(format) - 1) * format.transition_bits;
+}
+
+// Window starts are multiples of a power of two bits, at least a byte (row starts are only byte aligned)
+static METAL_FUNC uint max_window_bit_offset(const GemmTrellisFormat format) {
+  const uint spacing = states_per_window(format) * format.transition_bits;
+  uint unit = spacing;
+  if (format.restart_columns != 0) {
+    unit |= block_bits(format, format.restart_columns) | (spacing - format.transition_bits);
   }
-  const uint first_bit = code_column / format.vector_width * format.transition_bits;
-  const device uchar* bytes = code_row + first_bit / BYTE_BITS;
-  const uint shift = first_bit % BYTE_BITS;
-  const uint fourth_byte = format.transition_bits == V2T6_TRANSITION_BITS ? uint(bytes[3]) : 0;
-  const uint window = uint(bytes[0]) << 24 | uint(bytes[1]) << 16 | uint(bytes[2]) << 8 | fourth_byte;
-  const uint state_mask = (1u << STATE_BITS) - 1;
-  const uint first_state = (window >> (16 - shift)) & state_mask;
-  const uint second_state = (window >> (16 - format.transition_bits - shift)) & state_mask;
-  return uint2(first_state, second_state);
+  return WORD_BITS - min(BYTE_BITS, 1u << ctz(unit));
+}
+
+static METAL_FUNC uint state_field(const uint word0, const uint word1, const uint word2, const uint first_bit) {
+  const uint word = first_bit / WORD_BITS, bit = first_bit % WORD_BITS;
+  const uint low = word == 0 ? word0 : (word == 1 ? word1 : word2);
+  uint value = low >> bit;
+  if (bit + STATE_BITS > WORD_BITS) {
+    value |= (word == 0 ? word1 : word2) << (WORD_BITS - bit);
+  }
+  return value & ((1u << STATE_BITS) - 1);
 }
 
 // State -> hash -> biased weights
@@ -83,58 +94,59 @@ static METAL_FUNC uint biased_weights(const uint hash_bytes) {
   return (byte_field_sums << FIELD_SUM_SHIFT) + low_nibble_dither;
 }
 
-static METAL_FUNC uint
-decode_biased_weights(const GemmTrellisFormat format, const device uchar* code_row, const uint code_column) {
-  const uint2 code_states = states_at(format, code_row, code_column);
-  const uint first_hash = hash_without_final_fold(code_states.x);
-  if (format.vector_width == V4_VECTOR_WIDTH) {
-    return biased_weights(final_fold(first_hash));
-  }
-  const uint second_hash = hash_without_final_fold(code_states.y);
+static METAL_FUNC uint state_pair_weights(const uint first_state, const uint second_state) {
+  const uint first_hash = hash_without_final_fold(first_state);
+  const uint second_hash = hash_without_final_fold(second_state);
   const uint low_halves = insert_bits(first_hash, second_hash, HASH_FOLD_BITS, HASH_FOLD_BITS);
   const uint high_halves = insert_bits(second_hash, first_hash >> HASH_FOLD_BITS, 0, HASH_FOLD_BITS);
   return biased_weights(low_halves ^ high_halves);
 }
 
+// Biased weights of the 16 columns from code_column, four per word
+static METAL_FUNC uint4 decode_biased_weight_quad(
+    const GemmTrellisFormat format,
+    const device uchar* codes,
+    const uint row_start_byte,
+    const uint code_column,
+    const uint row_columns
+) {
+  const uint transition_bits = format.transition_bits;
+  const uint window_states = states_per_window(format);
+  const uint states_per_weight_word = WORD_BYTES / format.vector_width;
+  const uint block_columns = format.restart_columns != 0 ? format.restart_columns : row_columns;
+  const uint block_size = block_bits(format, block_columns);
+  const uint bits_in_window = window_bits(format);
+  const bool third_word_possible = max_window_bit_offset(format) + bits_in_window > 2 * WORD_BITS;
+  uint4 weights;
+  METAL_PRAGMA_UNROLL
+  for (uint window = 0; window < states_per_lane(format) / window_states; ++window) {
+    const uint column = code_column + window * window_states * format.vector_width;
+    const uint block = format.restart_columns != 0 ? column / block_columns : 0;
+    const uint state_in_block = column % block_columns / format.vector_width;
+    const uint first_bit =
+        block * block_size + block_size - STATE_BITS - (state_in_block + window_states - 1) * transition_bits;
+    const uint byte = row_start_byte + first_bit / BYTE_BITS;
+    const uint shift = byte % WORD_BYTES * BYTE_BITS + first_bit % BYTE_BITS;
+    const device uint* words = reinterpret_cast<const device uint*>(codes) + byte / WORD_BYTES;
+    const uint first = words[0], second = words[1];
+    const uint third = third_word_possible ? words[1 + uint(shift + bits_in_window > 2 * WORD_BITS)] : 0u;
+    const uint word0 = (first >> shift) | ((second << 1) << (WORD_BITS - 1 - shift));
+    const uint word1 = (second >> shift) | ((third << 1) << (WORD_BITS - 1 - shift));
+    const uint word2 = third >> shift;
+    METAL_PRAGMA_UNROLL
+    for (uint output = 0; output < window_states / states_per_weight_word; ++output) {
+      const uint first_state_bit = (window_states - 1 - output * states_per_weight_word) * transition_bits;
+      const uint first_state = state_field(word0, word1, word2, first_state_bit);
+      weights[window * (window_states / states_per_weight_word) + output] =
+          format.vector_width == 4
+              ? biased_weights(final_fold(hash_without_final_fold(first_state)))
+              : state_pair_weights(first_state, state_field(word0, word1, word2, first_state_bit - transition_bits));
+    }
+  }
+  return weights;
+}
+
 } // namespace trellis
 
-namespace quantized {
-
-template <typename Fragment, bool ALIGNED>
-struct TrellisCursor {
-  using Ops = typename Fragment::FragmentOpsType;
-  UZU_CONST short BLOCK_K = short(Fragment::COL_FRAGMENTS * Ops::FRAGMENT_ROWS);
-
-  const device uint8_t* code_rows;
-  uint code_row_stride_bytes;
-  short tile_row_limit;
-  short2 position;
-  uint k_offset;
-  trellis::GemmTrellisFormat format;
-
-  METAL_FUNC Fragment load(const uint) const thread {
-    const short row_limit = tile_row_limit - position.y;
-    Fragment tile;
-    for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
-      const bool live = ALIGNED || row_offset < row_limit;
-      const device uint8_t* code_row = code_rows + int(row_offset) * int(code_row_stride_bytes);
-      METAL_PRAGMA_UNROLL
-      for (ushort k_fragment = 0; k_fragment < Fragment::COL_FRAGMENTS; ++k_fragment) {
-        reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, k_fragment))[row_slot] =
-            live ? trellis::decode_biased_weights(
-                       format,
-                       code_row,
-                       k_offset + uint(k_fragment * Ops::FRAGMENT_ROWS) + uint(position.x)
-                   )
-                 : 0u;
-      }
-    });
-    return tile;
-  }
-
-  METAL_FUNC void advance() thread { k_offset += uint(BLOCK_K); }
-};
-
-} // namespace quantized
 } // namespace gemm
 } // namespace uzu
