@@ -12,8 +12,8 @@ use uzu_engine::{
     engine::{Engine, language_model::stream::SamplingMethod},
 };
 
-const PREFIX_LENGTHS: [usize; 17] =
-    [0, 256, 512, 1023, 1024, 2048, 4096, 5120, 8192, 16384, 30720, 32768, 51200, 61440, 65536, 131072, 196608];
+const PREFIX_LENGTHS: [usize; 16] =
+    [256, 512, 1023, 1024, 2048, 4096, 5120, 8192, 16384, 30720, 32768, 51200, 61440, 65536, 131072, 196608];
 const MAX_SUFFIX_LENGTH: usize = 1024;
 const DENSE_SUFFIX_LENGTH: usize = 64;
 const MAX_TREE_SIZE: usize = 32;
@@ -57,9 +57,6 @@ impl BackendSelection for CollectGpuTimestamps {
             let started = Instant::now();
             for (mode, lengths) in &modes {
                 let tree = *mode == "tree";
-                if tree && prefix_length == 0 {
-                    continue;
-                }
                 let mut spans_file = if self.spans {
                     let path = self.output_dir.join(format!("{mode}_prefix_{prefix_length}.csv"));
                     let mut file = BufWriter::new(File::create(path)?);
