@@ -16,10 +16,10 @@ using namespace uzu;
 using namespace uzu::gemm;
 
 #define MOE_ROUTER_MAX_PER_LANE 16
-#define MOE_ROUTER_MAX_TOP_K 32
 
-template <typename T>
-VARIANTS(T, float, half, bfloat)
+template <typename T, uint MAX_TOP_K>
+VARIANTS(T, float, bfloat)
+VARIANTS(MAX_TOP_K, 8, 16, 32)
 PUBLIC KERNEL(MoeRouterTopK)(
     const device T* logits,
     const device T* biases OPTIONAL(has_biases),
@@ -47,8 +47,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
     }
   }
 
-  float chosen_vals[MOE_ROUTER_MAX_TOP_K];
-  uint chosen_ids[MOE_ROUTER_MAX_TOP_K];
+  float chosen_vals[MAX_TOP_K];
+  uint chosen_ids[MAX_TOP_K];
   float max_chosen = -INFINITY;
 
   for (uint k = 0; k < top_k; ++k) {
@@ -141,6 +141,7 @@ PUBLIC KERNEL(MoeGemv)(
     const GemmDTransform output_transform SPECIALIZE,
     const bool input_aligned SPECIALIZE,
     const bool signed_codes SPECIALIZE,
+    const GemmBLayout gemm_b_layout SPECIALIZE,
     const bool full_tile SPECIALIZE,
     const bool a_per_token SPECIALIZE,
     threadgroup float shared_results[32],
@@ -193,7 +194,7 @@ PUBLIC KERNEL(MoeGemv)(
       output_transform,
       /* gathered = */ false,
       signed_codes,
-      GemmBLayout::RowMajor
+      gemm_b_layout
   };
 
   constexpr uint GROUP_LANES =
@@ -257,7 +258,7 @@ PUBLIC KERNEL(MoeGemv)(
 }
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(MoeCombine)(
     const device T* expert_outputs,
     const device float* expert_weights,

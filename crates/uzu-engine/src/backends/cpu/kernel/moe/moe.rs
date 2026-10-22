@@ -1,11 +1,11 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
         common::gpu_types::{
-            gemm::{GemmBPrologueKind, GemmDTransform},
+            gemm::{GemmBLayout, GemmBPrologueKind, GemmDTransform},
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         },
         cpu::kernel::activation_transform::hadamard_transform,
@@ -14,8 +14,9 @@ use crate::{
 };
 
 #[kernel(MoeRouterTopK)]
-#[variants(T, f32, f16, bf16)]
-pub fn moe_router_top_k<T: DataTypeRepr + Float>(
+#[variants(T, f32, bf16)]
+#[variants(MAX_TOP_K, 8, 16, 32)]
+pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     logits: *const T,
     #[optional(has_biases)] biases: Option<*const T>,
     expert_ids: *mut u32,
@@ -103,6 +104,9 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     #[specialize]
     input_aligned: bool,
     #[specialize] signed_codes: bool,
+    #[allow(unused)]
+    #[specialize]
+    gemm_b_layout: GemmBLayout,
     #[allow(unused)]
     #[specialize]
     full_tile: bool,
@@ -224,7 +228,7 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
 }
 
 #[kernel(MoeCombine)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 pub fn moe_combine<T: DataTypeRepr + Float>(
     expert_outputs: *const T,
     expert_weights: *const f32,

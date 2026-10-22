@@ -8,13 +8,7 @@ pub enum GemmAPrologueKind {
     Int8Symmetric,
 }
 
-#[repr(C)]
-#[derive(Debug, Display, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GemmBLayout {
-    #[default]
-    RowMajor,
-    MxuTiled,
-}
+pub use crate::backends::common::gpu_types::gemm::GemmBLayout;
 
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
