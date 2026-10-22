@@ -1,7 +1,7 @@
 mod config;
 mod error;
 mod head;
-mod layout;
+pub(crate) mod layout;
 mod tree;
 mod util;
 mod weights;

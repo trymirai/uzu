@@ -1,5 +1,12 @@
 use crate::{
-    backends::Backend,
+    backends::{
+        Backend,
+        common::{
+            Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+            gpu_types::activation_type::ActivationType,
+            kernel::{ActivationKernel, ConfidenceHeadTreeAttentionKernel, ConfidenceHeadTreeTokensKernel},
+        },
+    },
     data_type::DataType,
     encodable_block::{
         conf_head::{
@@ -23,6 +30,8 @@ pub struct ConfidenceHeadTreeLayer<B: Backend> {
 }
 
 pub struct ConfidenceHeadTree<B: Backend> {
+    config: ConfidenceHeadTreeConfig,
+    max_depth: u32,
     node_in: Box<dyn Linear<B>>,
     child_in: Box<dyn Linear<B>>,
     layers: Box<[ConfidenceHeadTreeLayer<B>]>,
@@ -31,6 +40,16 @@ pub struct ConfidenceHeadTree<B: Backend> {
     couple_child: Box<dyn Linear<B>>,
     depth_embedding: B::GlobalBuffer,
     relation_weights: B::GlobalBuffer,
+    tree_tokens: <B::Kernels as Kernels>::ConfidenceHeadTreeTokensKernel,
+    tree_attention: <B::Kernels as Kernels>::ConfidenceHeadTreeAttentionKernel,
+    activation: <B::Kernels as Kernels>::ActivationKernel,
+}
+
+pub(super) struct ConfidenceHeadTreeOutput<B: Backend> {
+    pub node_shifts: B::ScratchBuffer,
+    pub child_shifts: B::ScratchBuffer,
+    pub slot_tokens: B::ScratchBuffer,
+    pub token_slots: B::ScratchBuffer,
 }
 
 impl<B: Backend> ConfidenceHeadTree<B> {
@@ -54,7 +73,11 @@ impl<B: Backend> ConfidenceHeadTree<B> {
             context,
             &tree.subtree("final_norm"),
             tree_config.width,
-            ShortcutMode::Add,
+            if tree_config.layers == 0 {
+                ShortcutMode::None
+            } else {
+                ShortcutMode::Add
+            },
             config.layer_norm_eps,
         )?;
         let couple_node = create_linear(context, &tree.subtree("couple_node"), tree_config.width, config.hidden)?;
@@ -65,6 +88,8 @@ impl<B: Backend> ConfidenceHeadTree<B> {
             tree.read_buffer("relation_weight", &[tree_config.heads, tree_config.relations], DataType::F32)?;
 
         Ok(Self {
+            config: tree_config.clone(),
+            max_depth: config.max_depth,
             node_in,
             child_in,
             layers,
@@ -73,6 +98,136 @@ impl<B: Backend> ConfidenceHeadTree<B> {
             couple_child,
             depth_embedding,
             relation_weights,
+            tree_tokens: <B::Kernels as Kernels>::ConfidenceHeadTreeTokensKernel::new(context)
+                .map_err(ConfidenceHeadError::Backend)?,
+            tree_attention: <B::Kernels as Kernels>::ConfidenceHeadTreeAttentionKernel::new(
+                context,
+                tree_config.heads,
+                tree_config.width / tree_config.heads,
+                tree_config.relations,
+                config.max_depth,
+            )
+            .map_err(ConfidenceHeadError::Backend)?,
+            activation: <B::Kernels as Kernels>::ActivationKernel::new(context, DataType::F32, true)
+                .map_err(ConfidenceHeadError::Backend)?,
+        })
+    }
+
+    /// Refines the grown tree's node and child features using relation-biased attention.
+    pub(super) fn encode(
+        &self,
+        nodes: &B::ScratchBuffer,
+        child_inputs: &B::ScratchBuffer,
+        child_real: &B::ScratchBuffer,
+        packed_tree: impl BufferRef<Backend = B>,
+        frontier: impl BufferRef<Backend = B>,
+        slots: u32,
+        children: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<ConfidenceHeadTreeOutput<B>, ConfidenceHeadError<B>> {
+        let token_count = 1 + slots * children;
+        let width = self.config.width;
+        // Linear consumes its scratch input; retain the local features for final edge scoring.
+        let mut nodes_copy = command_buffer.allocate_scratch(nodes.size()).map_err(ConfidenceHeadError::Backend)?;
+        command_buffer.encode_copy(nodes, &mut nodes_copy);
+        let node_inputs = self.node_in.encode(nodes_copy, slots, command_buffer)?;
+        let mut children_copy =
+            command_buffer.allocate_scratch(child_inputs.size()).map_err(ConfidenceHeadError::Backend)?;
+        command_buffer.encode_copy(child_inputs, &mut children_copy);
+        let child_inputs = self.child_in.encode(children_copy, slots * children, command_buffer)?;
+
+        let mut tokens = command_buffer
+            .allocate_scratch_for_shape(&[token_count, width], DataType::F32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut token_parents = command_buffer
+            .allocate_scratch_for_shape(&[token_count], DataType::U32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut token_depths = command_buffer
+            .allocate_scratch_for_shape(&[token_count], DataType::U32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut token_present = command_buffer
+            .allocate_scratch_for_shape(&[token_count], DataType::U32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut token_slots = command_buffer
+            .allocate_scratch_for_shape(&[token_count], DataType::U32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut token_ancestors = command_buffer
+            .allocate_scratch_for_shape(&[token_count, self.max_depth + 1], DataType::U32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut slot_tokens =
+            command_buffer.allocate_scratch_for_shape(&[slots], DataType::U32).map_err(ConfidenceHeadError::Backend)?;
+        command_buffer.encode_fill(&mut slot_tokens, 0);
+        self.tree_tokens.encode(
+            packed_tree,
+            frontier,
+            child_real,
+            &node_inputs,
+            &child_inputs,
+            &self.depth_embedding,
+            &mut tokens,
+            &mut token_parents,
+            &mut token_depths,
+            &mut token_present,
+            &mut token_slots,
+            &mut token_ancestors,
+            &mut slot_tokens,
+            slots,
+            children,
+            width,
+            self.max_depth,
+            command_buffer,
+        );
+
+        let mut residual = command_buffer
+            .allocate_scratch_for_shape(&[token_count, width], DataType::F32)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut layer_input = tokens;
+        for layer in &self.layers {
+            let attention_input = layer
+                .attention_norm
+                .encode(&layer_input, 0, token_count, Some(&mut residual), command_buffer)
+                .map_err(ConfidenceHeadError::Backend)?;
+            let qkv = layer.qkv.encode(attention_input, token_count, command_buffer)?;
+            let mut attention = command_buffer
+                .allocate_scratch_for_shape(&[token_count, width], DataType::F32)
+                .map_err(ConfidenceHeadError::Backend)?;
+            self.tree_attention.encode(
+                &qkv,
+                &self.relation_weights,
+                &token_parents,
+                &token_depths,
+                &token_present,
+                &token_ancestors,
+                &mut attention,
+                token_count,
+                command_buffer,
+            );
+            let projected = layer.out.encode(attention, token_count, command_buffer)?;
+            let mlp_input = layer
+                .mlp_norm
+                .encode(&projected, 0, token_count, Some(&mut residual), command_buffer)
+                .map_err(ConfidenceHeadError::Backend)?;
+            let mut raised = layer.up.encode(mlp_input, token_count, command_buffer)?;
+            self.activation.encode(
+                None::<&B::ScratchBuffer>,
+                &mut raised,
+                token_count * self.config.mlp_hidden,
+                ActivationType::SILU,
+                command_buffer,
+            );
+            layer_input = layer.down.encode(raised, token_count, command_buffer)?;
+        }
+        let normed = self
+            .final_norm
+            .encode(&layer_input, 0, token_count, Some(&mut residual), command_buffer)
+            .map_err(ConfidenceHeadError::Backend)?;
+        let mut normed_copy = command_buffer.allocate_scratch(normed.size()).map_err(ConfidenceHeadError::Backend)?;
+        command_buffer.encode_copy(&normed, &mut normed_copy);
+        Ok(ConfidenceHeadTreeOutput {
+            node_shifts: self.couple_node.encode(normed, token_count, command_buffer)?,
+            child_shifts: self.couple_child.encode(normed_copy, token_count, command_buffer)?,
+            slot_tokens,
+            token_slots,
         })
     }
 }
@@ -105,7 +260,7 @@ fn get_tree_layers<B: Backend>(
                 context,
                 &subtree.subtree("mlp_norm"),
                 tree_config.width,
-                shortcut_mode,
+                ShortcutMode::Add,
                 config.layer_norm_eps,
             )?,
             up: create_linear(context, &subtree.subtree("up"), tree_config.width, tree_config.mlp_hidden)?,
@@ -116,3 +271,7 @@ fn get_tree_layers<B: Backend>(
 
     Ok(tree_layers)
 }
+
+#[cfg(test)]
+#[path = "../../../unit/encodable_block/confidence_head_tree_test.rs"]
+mod tests;

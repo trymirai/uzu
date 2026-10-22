@@ -8,7 +8,7 @@ use crate::{
         common::{
             BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context, Kernels,
-            kernel::{ConfidenceHeadPoolNoiseKernel, ConfidenceHeadRoundKernel},
+            kernel::{ConfidenceHeadPoolNoiseKernel, ConfidenceHeadPruneKernel, ConfidenceHeadRoundKernel},
         },
     },
     data_type::DataType,
@@ -54,6 +54,7 @@ pub struct ConfidenceHead<B: Backend> {
     draft_proj: Box<dyn Linear<B>>,
     pool_noise: <B::Kernels as Kernels>::ConfidenceHeadPoolNoiseKernel,
     round: <B::Kernels as Kernels>::ConfidenceHeadRoundKernel,
+    prune: <B::Kernels as Kernels>::ConfidenceHeadPruneKernel,
 }
 
 impl<B: Backend> ConfidenceHead<B> {
@@ -145,6 +146,16 @@ impl<B: Backend> ConfidenceHead<B> {
         )
         .map_err(ConfidenceHeadError::Backend)?;
 
+        let prune = <B::Kernels as Kernels>::ConfidenceHeadPruneKernel::new(
+            context,
+            config.pool,
+            config.children,
+            config.hidden,
+            config.pool_hidden,
+            config.edge_hidden,
+        )
+        .map_err(ConfidenceHeadError::Backend)?;
+
         Ok(Self {
             config,
             local_weights,
@@ -157,6 +168,7 @@ impl<B: Backend> ConfidenceHead<B> {
             draft_proj,
             pool_noise,
             round,
+            prune,
         })
     }
 
@@ -340,6 +352,59 @@ impl<B: Backend> ConfidenceHead<B> {
             command_buffer,
         );
     }
+
+    /// Refines the grown tree's features and rewrites edge scores for the subsequent budget prune.
+    /// Without tree attention, the local scores written by `encode_round` remain unchanged.
+    pub fn encode_prune(
+        &self,
+        step: &ConfidenceHeadStep<B>,
+        mut packed_tree: impl BufferMut<Backend = B>,
+        mut frontier: impl BufferMut<Backend = B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), ConfidenceHeadError<B>> {
+        let Some(tree) = &self.tree else {
+            return Ok(());
+        };
+        // The Metal token kernel gathers metadata for up to 512 slots in threadgroup memory.
+        if step.slot_count == 0 || step.slot_count > 512 {
+            return Err(ConfidenceHeadError::Unsupported(format!(
+                "tree refinement needs 1..=512 slots, got {}",
+                step.slot_count
+            )));
+        }
+        let command_buffer = &mut *command_buffer.debug_group("confidence head prune");
+        let output = tree.encode(
+            &step.nodes,
+            &step.child_inputs,
+            &step.child_real,
+            packed_tree.as_ref(),
+            frontier.as_ref(),
+            step.slot_count,
+            self.config.children,
+            command_buffer,
+        )?;
+        self.prune.encode(
+            &step.nodes,
+            &step.child_inputs,
+            &step.child_indices,
+            &step.child_real,
+            &step.slot_logits,
+            &step.noise,
+            &output.node_shifts,
+            &output.child_shifts,
+            &output.slot_tokens,
+            &output.token_slots,
+            &self.local_weights,
+            packed_tree.reborrow(),
+            frontier.reborrow(),
+            step.slot_count,
+            step.pool_rows,
+            self.config.cap,
+            self.config.layer_norm_eps,
+            command_buffer,
+        );
+        Ok(())
+    }
 }
 
 fn validate_config<B: Backend>(config: &ConfidenceHeadConfig) -> Result<(), ConfidenceHeadError<B>> {
@@ -404,6 +469,7 @@ fn validate_config<B: Backend>(config: &ConfidenceHeadConfig) -> Result<(), Conf
         }
 
         if tree.heads == 0
+            || tree.width == 0
             || tree.width % tree.heads != 0
             || 256 % (tree.width / tree.heads) != 0
             || tree.width / tree.heads > 64
