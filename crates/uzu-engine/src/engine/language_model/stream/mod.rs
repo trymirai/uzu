@@ -20,6 +20,7 @@ mod stream;
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
     pub timestamps: Option<Sender<Box<[TimestampSpan]>>>,
+    pub draft_tree_size: Option<usize>,
     #[cfg(grammar)]
     pub grammar: Option<Grammar>,
 }
@@ -50,6 +51,7 @@ impl<B: Backend> LanguageModel<B> {
         LanguageModelStreamOptions {
             sampling_method: self.default_sampling_method(),
             timestamps: None,
+            draft_tree_size: None,
             #[cfg(grammar)]
             grammar: None,
         }
