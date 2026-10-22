@@ -15,7 +15,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
 };
 
@@ -60,19 +60,21 @@ impl<B: Backend> TransformerState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        command_buffer.push_debug_group("transformer accept");
+        {
+            let command_buffer = &mut *command_buffer.debug_group("transformer accept");
 
-        for layer_state in &mut self.layer_states {
-            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                continue;
-            };
+            for layer_state in &mut self.layer_states {
+                let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                    continue;
+                };
 
-            layer_state.encode_accept(accepted_indices, command_buffer)?;
+                layer_state.encode_accept(accepted_indices, command_buffer)?;
+            }
+
+            self.context_length += accepted_indices.len() as u32;
         }
 
-        self.context_length += accepted_indices.len() as u32;
-
-        command_buffer.pop_debug_group();
+        command_buffer.debug_point(&format!("accepted {} tokens", accepted_indices.len()));
 
         Ok(())
     }
@@ -88,6 +90,14 @@ pub enum TransformerNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
 }
 
+#[derive(Debug, Error)]
+pub enum TransformerEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Layer error: {0}")]
+    Layer(#[from] TransformerLayerError<B>),
+}
+
 pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
@@ -98,11 +108,11 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub fn new(
-        context: &B::Context,
-        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         data_type: DataType,
+        output_norm_hadamard_factors: Option<B::GlobalBuffer>,
         transformer_config: &TransformerConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
@@ -122,14 +132,14 @@ impl<B: Backend> Transformer<B> {
                 });
 
                 let layer = TransformerLayer::new(
-                    context,
                     transformer_config.model_dim,
                     transformer_config.hidden_dim,
                     num_layers,
-                    layer_config,
                     layer_index,
-                    &layer_loader,
                     data_type,
+                    layer_config,
+                    &layer_loader,
+                    context,
                 )?;
 
                 Ok((layer, rope))
@@ -138,10 +148,10 @@ impl<B: Backend> Transformer<B> {
 
         let output_norm = Normalization::new(
             transformer_config.model_dim,
+            data_type,
             output_norm_hadamard_factors,
             ShortcutMode::Add,
             PostLayerScalar::None,
-            data_type,
             &transformer_config.output_norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
@@ -234,7 +244,7 @@ impl<B: Backend> Transformer<B> {
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<TransformerEncodeOutput<B>, B::Error> {
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
         let mut hidden = input;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
@@ -242,7 +252,7 @@ impl<B: Backend> Transformer<B> {
             self.layers.len()
         };
 
-        let mut shortcut = command_buffer.allocate_scratch(hidden.size())?;
+        let mut shortcut = command_buffer.allocate_scratch(hidden.size()).map_err(TransformerEncodeError::Backend)?;
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
@@ -253,7 +263,8 @@ impl<B: Backend> Transformer<B> {
             .ropes
             .iter()
             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
-            .collect::<Result<Box<[_]>, B::Error>>()?;
+            .collect::<Result<Box<[_]>, B::Error>>()
+            .map_err(TransformerEncodeError::Backend)?;
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
@@ -287,7 +298,9 @@ impl<B: Backend> Transformer<B> {
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
-                        let feature = self.capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)?;
+                        let feature = self
+                            .capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)
+                            .map_err(TransformerEncodeError::Backend)?;
                         hidden_features[feature_index] = Some(feature);
                     }
                 }
@@ -316,13 +329,16 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        let output_normalized = self.output_norm.encode(
-            &hidden,
-            output_range.start,
-            output_range.end - output_range.start,
-            Some(&mut shortcut),
-            command_buffer,
-        )?;
+        let output_normalized = self
+            .output_norm
+            .encode(
+                &hidden,
+                output_range.start,
+                output_range.end - output_range.start,
+                Some(&mut shortcut),
+                command_buffer,
+            )
+            .map_err(TransformerEncodeError::Backend)?;
 
         Ok(TransformerEncodeOutput {
             output: Some(output_normalized),

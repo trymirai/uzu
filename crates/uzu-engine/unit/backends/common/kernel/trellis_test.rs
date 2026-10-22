@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rstest::rstest;
@@ -7,8 +8,8 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::trellis::{COLUMN_GROUP_COUNT, mixing_dimension},
-            kernel::TrellisTransformKernel,
+            gpu_types::trellis::COLUMN_GROUP_COUNT,
+            kernel::{TrellisTransformKernel, mixing_dimension},
         },
         cpu::Cpu,
     },
@@ -44,7 +45,7 @@ fn run<B: Backend>(
     mixing: &[f32],
     input: &[bf16],
 ) -> (Vec<i8>, Vec<f32>, Vec<f32>) {
-    let context = B::Context::new().expect("context");
+    let context = block_on(B::Context::new()).expect("context");
     let transform =
         <B::Kernels as Kernels>::TrellisTransformKernel::new(context.as_ref(), columns).expect("trellis transform");
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
@@ -65,7 +66,7 @@ fn run<B: Backend>(
         batch,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     (
         buffer_to_vec::<B, i8>(&activations),
         buffer_to_vec::<B, f32>(&column_group_sums),
@@ -75,7 +76,10 @@ fn run<B: Backend>(
 
 #[rstest]
 #[test_attr(uzu_test)]
-fn transform_matches_cpu(#[values(4096, 5120, 6144, 6656, 17408, 19968)] columns: u32) {
+fn transform_matches_cpu(
+    #[values(2048, 2560, 3072, 3584, 4096, 5120, 6144, 6656, 7168, 9216, 10240, 12288, 14336, 17408, 18944, 19968)]
+    columns: u32
+) {
     let mut rng = SmallRng::seed_from_u64(u64::from(columns));
     for batch in BATCHES {
         let (rht_factors, mixing, mut input) = random_transform_data(&mut rng, columns, batch);

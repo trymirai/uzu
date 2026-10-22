@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -5,12 +6,13 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::weaver::MetadataIdx, kernel::WeaverTopChildrenKernel,
+            gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx},
+            kernel::WeaverTopChildrenKernel,
         },
         cpu::Cpu,
     },
     encodable_block::sampling::{gumbel_float, revidx},
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 const CANDIDATES: usize = 512;
@@ -19,6 +21,8 @@ const VOCAB_SIZE: u32 = 131_072;
 const DEPTHS: [u32; 3] = [0, 1, 2];
 const DEPTH_SEEDS: [u64; 3] = [0x9E3779B97F4A7C15, 0xD1B54A32D192ED03, 0x2545F4914F6CDD1D];
 const ROWS: usize = 3;
+const TREE_SLOT_COUNT: usize = ROWS + 1;
+const FRONTIER_CAPACITY: usize = TREE_SLOT_COUNT * CHILDREN;
 const PRUNE_NOISE_SCALE: f32 = 1.0 / 1.5;
 
 fn inputs() -> (Vec<bf16>, Vec<f32>, Vec<u32>) {
@@ -33,30 +37,34 @@ fn inputs() -> (Vec<bf16>, Vec<f32>, Vec<u32>) {
     (residual, candidate_logits, ids)
 }
 
-fn top_children<B: Backend>(
-    residual: &[bf16],
-    candidate_logits: &[f32],
-    ids: &[u32],
+fn score_key(bits: u32) -> u32 {
+    if bits & 0x8000_0000 == 0 {
+        bits ^ 0x8000_0000
+    } else {
+        !bits
+    }
+}
+
+fn run_top_children<B: Backend>(
     prune_noise_scale: Option<f32>,
-) -> (Vec<u32>, Vec<f32>, Option<Vec<f32>>) {
-    let rows = residual.len() / CANDIDATES;
-    assert_eq!(residual.len(), rows * CANDIDATES);
-    assert_eq!(candidate_logits.len(), rows * CANDIDATES);
-    assert_eq!(ids.len(), rows * CANDIDATES);
-    assert!(rows <= DEPTHS.len());
+    node_valid: &[u32; ROWS],
+    tree_values: &[u32; TreeIdx::COUNT * TREE_SLOT_COUNT],
+) -> Vec<u32> {
+    let (residual, candidate_logits, ids) = inputs();
     let context = create_context::<B>();
-    let residual = create_buffer_with_data::<B, bf16>(&context, residual);
-    let candidate_logits = create_buffer_with_data::<B, f32>(&context, candidate_logits);
-    let ids = create_buffer_with_data::<B, u32>(&context, ids);
+    let residual = create_buffer_with_data::<B, bf16>(&context, &residual);
+    let candidate_logits = create_buffer_with_data::<B, f32>(&context, &candidate_logits);
+    let ids = create_buffer_with_data::<B, u32>(&context, &ids);
     let depth_seeds = create_buffer_with_data::<B, u64>(&context, &DEPTH_SEEDS);
-    let mut metadata_values = vec![0u32; rows * MetadataIdx::COUNT];
-    for row in 0..rows {
-        metadata_values[MetadataIdx::Depth as usize * rows + row] = DEPTHS[row];
+    let mut metadata_values = vec![0u32; ROWS * MetadataIdx::COUNT];
+    for row in 0..ROWS {
+        metadata_values[MetadataIdx::Depth as usize * ROWS + row] = DEPTHS[row];
+        metadata_values[MetadataIdx::TreeSlot as usize * ROWS + row] = row as u32 + 1;
     }
     let node_metadata = create_buffer_with_data::<B, u32>(&context, &metadata_values);
-    let mut output_token_ids = create_buffer::<B, u32>(&context, rows * CHILDREN);
-    let mut output_model_logprobs = create_buffer::<B, f32>(&context, rows * CHILDREN);
-    let mut output_prune_logprobs = prune_noise_scale.map(|_| create_buffer::<B, f32>(&context, rows * CHILDREN));
+    let tree = create_buffer_with_data::<B, u32>(&context, tree_values);
+    let valid = create_buffer_with_data::<B, u32>(&context, node_valid);
+    let mut frontier = create_buffer_with_data::<B, u32>(&context, &vec![42; FrontierIdx::COUNT * FRONTIER_CAPACITY]);
     let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context, prune_noise_scale.is_some()).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
@@ -65,42 +73,91 @@ fn top_children<B: Backend>(
         &ids,
         &depth_seeds,
         &node_metadata,
-        &mut output_token_ids,
-        &mut output_model_logprobs,
-        output_prune_logprobs.as_mut(),
-        rows as u32,
+        &tree,
+        &valid,
+        &mut frontier,
+        ROWS as u32,
         CANDIDATES as u32,
         CHILDREN as u32,
         VOCAB_SIZE,
+        FRONTIER_CAPACITY as u32,
+        TREE_SLOT_COUNT as u32,
         prune_noise_scale,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    buffer_to_vec(&frontier)
+}
+
+fn top_children<B: Backend>(prune_noise_scale: Option<f32>) -> (Vec<u32>, Vec<f32>, Option<Vec<f32>>) {
+    let frontier = run_top_children::<B>(prune_noise_scale, &[1; ROWS], &[0; TreeIdx::COUNT * TREE_SLOT_COUNT]);
+    let field = |field: FrontierIdx| {
+        frontier[field as usize * FRONTIER_CAPACITY + CHILDREN..(field as usize + 1) * FRONTIER_CAPACITY].to_vec()
+    };
     (
-        buffer_to_vec(&output_token_ids),
-        buffer_to_vec(&output_model_logprobs),
-        output_prune_logprobs.as_ref().map(buffer_to_vec),
+        field(FrontierIdx::TokenId),
+        field(FrontierIdx::PathLogprobBits).into_iter().map(f32::from_bits).collect(),
+        prune_noise_scale.map(|_| field(FrontierIdx::EdgeLogprobBits).into_iter().map(f32::from_bits).collect()),
     )
 }
 
 #[uzu_test]
 fn weaver_top_children_matches_cpu() {
-    let (residual, candidate_logits, ids) = inputs();
-
+    let mut tree = [0u32; TreeIdx::COUNT * TREE_SLOT_COUNT];
+    for slot in 0..TREE_SLOT_COUNT {
+        tree[TreeIdx::PathLogprobBits as usize * TREE_SLOT_COUNT + slot] = (slot as f32 * -0.25).to_bits();
+        tree[TreeIdx::Depth as usize * TREE_SLOT_COUNT + slot] = slot as u32 * 2;
+    }
     for prune_noise_scale in [None, Some(PRUNE_NOISE_SCALE)] {
-        for_each_non_cpu_backend!(|B| {
-            let expected = top_children::<Cpu>(&residual, &candidate_logits, &ids, prune_noise_scale);
-            let actual = top_children::<B>(&residual, &candidate_logits, &ids, prune_noise_scale);
-            assert_eq!(actual.0, expected.0);
-            for (actual, expected) in actual.1.iter().zip(expected.1) {
-                assert!((actual - expected).abs() < 1e-5);
+        let (tokens, model, prune) = top_children::<Cpu>(prune_noise_scale);
+        for valid in [[1, 1, 1], [1, 0, 1]] {
+            let expected = run_top_children::<Cpu>(prune_noise_scale, &valid, &tree);
+            let field = |field: FrontierIdx, slot: usize| expected[field as usize * FRONTIER_CAPACITY + slot];
+            for slot in 0..FRONTIER_CAPACITY {
+                if slot < CHILDREN || valid[slot / CHILDREN - 1] == 0 {
+                    assert!((0..FrontierIdx::COUNT).all(|field| expected[field * FRONTIER_CAPACITY + slot] == 42));
+                    continue;
+                }
+                let row = slot / CHILDREN - 1;
+                let child = slot % CHILDREN;
+                let index = row * CHILDREN + child;
+                assert_eq!(field(FrontierIdx::TokenId, slot), tokens[index]);
+                assert_eq!(field(FrontierIdx::ParentSlot, slot), (row + 1) as u32);
+                assert_eq!(field(FrontierIdx::Depth, slot), (row as u32 + 1) * 2 + 1);
+                let path_bits = ((row as f32 + 1.0) * -0.25 + model[index]).to_bits();
+                assert_eq!(field(FrontierIdx::PathLogprobBits, slot), path_bits);
+                assert_eq!(
+                    field(FrontierIdx::EdgeLogprobBits, slot),
+                    prune.as_ref().map_or(model[index], |prune| prune[index]).to_bits()
+                );
+                assert_eq!(field(FrontierIdx::PathScoreKey, slot), score_key(path_bits));
+                assert_eq!(field(FrontierIdx::Active, slot), 1);
             }
-            assert_eq!(actual.2.is_some(), expected.2.is_some());
-            // The prune channel also carries the Gumbel transform, which Metal evaluates with fast-math logs.
-            for (actual, expected) in actual.2.iter().flatten().zip(expected.2.iter().flatten()) {
-                assert!((actual - expected).abs() < 1e-3);
-            }
-        });
+            for_each_non_cpu_backend!(|B| {
+                let actual = run_top_children::<B>(prune_noise_scale, &valid, &tree);
+                for offset in 0..expected.len() {
+                    let field_index = offset / FRONTIER_CAPACITY;
+                    let slot = offset % FRONTIER_CAPACITY;
+                    let active = field(FrontierIdx::Active, slot) == 1;
+                    if active
+                        && (field_index == FrontierIdx::PathLogprobBits as usize
+                            || field_index == FrontierIdx::EdgeLogprobBits as usize)
+                    {
+                        let tolerance = if field_index == FrontierIdx::PathLogprobBits as usize {
+                            1e-5
+                        } else {
+                            1e-3
+                        };
+                        assert!((f32::from_bits(actual[offset]) - f32::from_bits(expected[offset])).abs() < tolerance);
+                    } else if active && field_index == FrontierIdx::PathScoreKey as usize {
+                        let path_bits = actual[FrontierIdx::PathLogprobBits as usize * FRONTIER_CAPACITY + slot];
+                        assert_eq!(actual[offset], score_key(path_bits));
+                    } else {
+                        assert_eq!(actual[offset], expected[offset]);
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -111,9 +168,8 @@ fn weaver_top_children_matches_cpu() {
 #[uzu_test]
 fn weaver_top_children_prune_logprobs_match_reference() {
     let (residual, candidate_logits, ids) = inputs();
-    let (tokens, model, none) = top_children::<Cpu>(&residual, &candidate_logits, &ids, None);
-    let (prune_tokens, prune_model, prune) =
-        top_children::<Cpu>(&residual, &candidate_logits, &ids, Some(PRUNE_NOISE_SCALE));
+    let (tokens, model, none) = top_children::<Cpu>(None);
+    let (prune_tokens, prune_model, prune) = top_children::<Cpu>(Some(PRUNE_NOISE_SCALE));
     assert!(none.is_none());
     let prune = prune.unwrap();
     assert_eq!(prune_tokens, tokens);

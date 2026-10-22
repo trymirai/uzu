@@ -691,6 +691,7 @@ public enum DownloadPhase: Equatable, Hashable, Codable {
     )
     case error(message: String
     )
+    case initializing
 
 
 
@@ -726,6 +727,8 @@ public struct FfiConverterTypeDownloadPhase: FfiConverterRustBuffer {
         case 6: return .error(message: try FfiConverterString.read(from: &buf)
         )
         
+        case 7: return .initializing
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -759,6 +762,10 @@ public struct FfiConverterTypeDownloadPhase: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
             FfiConverterString.write(message, into: &buf)
             
+        
+        case .initializing:
+            writeInt(&buf, Int32(7))
+        
         }
     }
 }

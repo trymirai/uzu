@@ -1,0 +1,31 @@
+[project]
+name = "benchmarks-splash"
+version = "0.0.1"
+requires-python = ">=3.13.7,<3.14"
+dependencies = [
+    "benchmarks-common",
+    "cryptography>=50.0.1",
+    "httpx>=0.28.1",
+    "huggingface-hub>=1.28.0",
+    "jinja2>=3.1.6",
+    "jsonschema>=4.26.0",
+    "llguidance==1.8.0",
+    "numpy>=2.3.5",
+    "pillow>=12.3.0",
+    "tokenizers==0.22.2",
+    "transformers>=5.15.1,<6",
+    "typer>=0.27.2",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+bench-splash = "bench_splash:main"
+
+[tool.setuptools]
+py-modules = ["bench_splash"]
+
+[tool.uv.sources]
+benchmarks-common = { path = "../common-py", editable = true }

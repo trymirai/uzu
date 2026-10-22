@@ -9,12 +9,15 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulShape, QuantParamsLayout},
         },
-        metal::kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
+        metal::{
+            gpu_types::gemm::GemmBLayout,
+            kernel::matmul::{MatmulDispatch, MatmulMetalKernel, gemv::GemvSpecialization},
+        },
     },
     data_type::DataType,
 };
 
-const FROZEN_PLAN_FINGERPRINT: u64 = 5_839_212_743_558_880_136;
+const FROZEN_PLAN_FINGERPRINT: u64 = 10_794_242_881_707_148_570;
 
 const DEVICES: [(&str, &str, u32, MTLGPUFamily, bool); 7] = [
     ("m1", "Apple M1", 8, MTLGPUFamily::Apple7, false),
@@ -25,19 +28,16 @@ const DEVICES: [(&str, &str, u32, MTLGPUFamily, bool); 7] = [
     ("m4-pro", "Apple M4 Pro", 20, MTLGPUFamily::Apple9, false),
     ("m5-max", "Apple M5 Max", 40, MTLGPUFamily::Apple10, true),
 ];
-const FORMATS: [(&str, u32, u32, GemmBPrologueKind); 4] = [
-    ("W4/ZP G32", 4, 32, GemmBPrologueKind::ScaleZeroPointDequant),
+const FORMATS: [(&str, u32, u32, GemmBPrologueKind); 2] = [
     ("W4/ZP G64", 4, 64, GemmBPrologueKind::ScaleZeroPointDequant),
-    ("W8/Symmetric G32", 8, 32, GemmBPrologueKind::ScaleSymmetricDequant),
     ("W8/Symmetric G64", 8, 64, GemmBPrologueKind::ScaleSymmetricDequant),
 ];
-const SHAPES: [(&str, u32, u32); 7] = [
+const SHAPES: [(&str, u32, u32); 6] = [
     ("down", 5120, 17408),
     ("gate", 6144, 5120),
     ("gate-up", 34816, 5120),
     ("projection-in", 16480, 5120),
     ("projection-out", 5120, 6144),
-    ("qkv", 8192, 5120),
     ("readout", 248320, 5120),
 ];
 
@@ -74,7 +74,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
     for &(device_label, device_name, gpu_core_count, apple_gpu_family, supports_mxu) in &DEVICES {
         for &(format_name, bits, group, prologue) in &FORMATS {
             for m in 2..=7 {
-                for &(shape_name, n, k) in &SHAPES {
+                for &(shape_name, n, k) in SHAPES.iter().filter(|shape| bits == 4 || shape.0 != "gate") {
                     let mask = shape(n, k);
                     let matches: Vec<_> = ROWS
                         .iter()
@@ -97,6 +97,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
                     assert_eq!(route(device_name, apple_gpu_family, supports_mxu, &problem, true), Some(selected));
                     let runtime = MatmulMetalKernel::choose_dispatch(
                         &problem,
+                        GemmBLayout::RowMajor,
                         device_name,
                         gpu_core_count,
                         apple_gpu_family,
@@ -108,6 +109,7 @@ fn table_is_complete_and_fingerprint_is_stable() {
                     if let QmvRoute::Tuned(tile) | QmvRoute::MainGemv(tile) = selected {
                         let specialization = GemvSpecialization::select_tile(
                             &problem,
+                            GemmBLayout::RowMajor,
                             DataType::BF16,
                             DataType::BF16,
                             DataType::BF16,
@@ -124,8 +126,30 @@ fn table_is_complete_and_fingerprint_is_stable() {
     }
     assert!(matched_rows.into_iter().all(|matched| matched), "route table contains an orphaned row");
     canonical.sort();
-    assert_eq!(canonical.len(), 1176);
+    assert_eq!(canonical.len(), 462);
     assert_eq!(xxh3_64(canonical.join("\n").as_bytes()), FROZEN_PLAN_FINGERPRINT);
+}
+
+#[uzu_test]
+fn weaver_linears_select_the_tuned_tile() {
+    for n in [5120, 6144] {
+        let mut p = problem(4, n, 2048, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
+        p.params_layout = Some(QuantParamsLayout::GroupOutput);
+        p.d_transform = GemmDTransform::RHT;
+        let tile = GemvTile::quantized_output_tile(2, 16, 4, 8, 1);
+        assert_eq!(route("Apple M5 Max", MTLGPUFamily::Apple10, true, &p, true), Some(QmvRoute::Tuned(tile)));
+        assert!(
+            GemvSpecialization::select_tile(
+                &p,
+                GemmBLayout::RowMajor,
+                DataType::BF16,
+                DataType::BF16,
+                DataType::BF16,
+                tile
+            )
+            .is_some()
+        );
+    }
 }
 
 #[uzu_test]
@@ -152,13 +176,31 @@ fn exact_lookup_rejects_non_matrix_inputs() {
     let QmvRoute::Tuned(tile) = selected else {
         panic!("test anchor must use a tuned tile");
     };
-    let deferred = GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).unwrap();
+    let deferred = GemvSpecialization::select_tile(
+        &rht,
+        GemmBLayout::RowMajor,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+        tile,
+    )
+    .unwrap();
     assert_eq!(deferred.output_row_tile(), 16);
     assert!(!deferred.fuses_rht());
     rht.n -= 1;
-    assert!(GemvSpecialization::select_tile(&rht, DataType::BF16, DataType::BF16, DataType::BF16, tile).is_none());
+    assert!(
+        GemvSpecialization::select_tile(
+            &rht,
+            GemmBLayout::RowMajor,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            tile
+        )
+        .is_none()
+    );
 
-    let p = problem(7, 6144, 5120, 8, 64, GemmBPrologueKind::ScaleSymmetricDequant);
+    let p = problem(7, 5120, 17408, 8, 64, GemmBPrologueKind::ScaleSymmetricDequant);
     assert!(matches!(route("Apple M5 Max", MTLGPUFamily::Apple10, true, &p, true), Some(QmvRoute::MainGemm(_))));
     assert_eq!(route("Apple M5 Max", MTLGPUFamily::Apple10, false, &p, true), None);
 }
@@ -170,6 +212,7 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
         assert_eq!(route("Apple M1", MTLGPUFamily::Apple7, false, &problem, true), None);
         let specialization = GemvSpecialization::select_shape(
             &problem,
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -179,7 +222,7 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
         .expect("normal M1 policy should select GEMV for this anchor");
         assert!(matches!(
             MatmulMetalKernel::choose_dispatch(
-                &problem,
+                &problem, GemmBLayout::RowMajor,
                 "Apple M1",
                 8,
                 MTLGPUFamily::Apple7,
@@ -199,12 +242,26 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
     let mut with_rht = fp;
     with_rht.d_transform = GemmDTransform::RHT;
     for (cores, family) in [(8, MTLGPUFamily::Apple7), (40, MTLGPUFamily::Apple10)] {
-        let plain =
-            GemvSpecialization::select_shape(&fp, DataType::BF16, DataType::BF16, DataType::BF16, cores, family)
-                .expect("generic M=1 FP GEMV tile");
-        let rht =
-            GemvSpecialization::select_shape(&with_rht, DataType::BF16, DataType::BF16, DataType::BF16, cores, family)
-                .expect("generic M=1 FP RHT GEMV tile");
+        let plain = GemvSpecialization::select_shape(
+            &fp,
+            GemmBLayout::RowMajor,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            cores,
+            family,
+        )
+        .expect("generic M=1 FP GEMV tile");
+        let rht = GemvSpecialization::select_shape(
+            &with_rht,
+            GemmBLayout::RowMajor,
+            DataType::BF16,
+            DataType::BF16,
+            DataType::BF16,
+            cores,
+            family,
+        )
+        .expect("generic M=1 FP RHT GEMV tile");
         assert!(plain.output_row_tile() < 32);
         assert_eq!(rht, plain);
     }
@@ -212,7 +269,7 @@ fn normal_routing_handles_inputs_outside_the_frozen_matrix() {
 
 #[uzu_test]
 fn family_lookup_requires_one_unanimous_route() {
-    let m1_route = problem(4, 8192, 5120, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
+    let m1_route = problem(4, 34816, 5120, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
     let unanimous = problem(6, 5120, 17408, 4, 64, GemmBPrologueKind::ScaleZeroPointDequant);
     let families: [(&MatmulShape, MTLGPUFamily, bool, &str, &[&str]); 4] = [
         (&m1_route, MTLGPUFamily::Apple7, false, "Apple M1", &["Apple M1 Pro", "Apple M1 Max", "Apple M1 Ultra"]),

@@ -1,5 +1,6 @@
 use parking_lot::Mutex;
 
+use super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
@@ -13,9 +14,9 @@ use crate::{
             Metal,
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
-            error::MetalError,
             kernel::{
                 AttentionFallbackScatterScoresMetalKernel, AttentionFallbackScatterValuesMetalKernel, MetalKernels,
+                attention::AttentionMetalError,
             },
         },
     },
@@ -39,13 +40,13 @@ pub struct AttentionFallback {
 
 impl AttentionFallback {
     pub fn is_supported(config: &AttentionKernelConfig) -> bool {
-        config.head_dim == HEAD_DIM && matches!(config.data_type, DataType::BF16 | DataType::F32)
+        config.head_dim == HEAD_DIM && config.data_type == DataType::BF16
     }
 
     pub fn new(
         config: &AttentionKernelConfig,
         context: &MetalContext,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, AttentionMetalError> {
         let scatter_scores = AttentionFallbackScatterScoresMetalKernel::new(
             context,
             config.data_type,
@@ -82,16 +83,14 @@ impl AttentionFallback {
 
     pub fn encode(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
+        input: FullPrecisionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+    ) -> Result<<Metal as Backend>::ScratchBuffer, AttentionMetalError> {
         assert!(arguments.trie.is_none(), "fallback does not support trie");
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.cache.prefix_len() + suffix_length;
@@ -111,11 +110,11 @@ impl AttentionFallback {
             self.matmul.lock().encode(
                 MatmulArguments {
                     a: MatmulA::FullPrecision {
-                        values: arguments.queries,
+                        values: input.queries,
                         offset: group_index as usize * group_rows * head_dim_bytes,
                     },
                     b: MatmulB::FullPrecision {
-                        b: arguments.keys.subrange(group_index as usize * head_dim_bytes..),
+                        b: input.keys.subrange(group_index as usize * head_dim_bytes..),
                     },
                     b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: true,
@@ -166,7 +165,7 @@ impl AttentionFallback {
                         offset: group_index as usize * group_rows * sequence_length as usize * dt_bytes,
                     },
                     b: MatmulB::FullPrecision {
-                        b: arguments.values.subrange(group_index as usize * head_dim_bytes..),
+                        b: input.values.subrange(group_index as usize * head_dim_bytes..),
                     },
                     b_leading_dimension: Some(self.num_groups * self.head_dim),
                     b_transpose: false,

@@ -74,6 +74,10 @@ KERNEL(DeltaNetChunkedOutputAndState)(
   constexpr ushort TOKEN_FRAGMENTS = TOKEN_TILE / FR;
   constexpr ushort VALUE_FRAGMENTS = VT / FC;
   constexpr ushort KEY_FRAGMENTS = OUTPUT_STATE_KEY_TILE / FC;
+  // Per-row terms are hoisted into row_* arrays: a lane owns rows lane_row + slot * ROW_STRIDE.
+  constexpr ushort ROW_STRIDE = Ops::THREAD_ELEMENT_ROW_STRIDE;
+  constexpr ushort ROW_SLOTS = Ops::THREAD_ELEMENT_ROWS;
+  constexpr ushort TOKEN_ROW_SLOTS = TOKEN_FRAGMENTS * ROW_SLOTS;
 
   using TokenValueFragment = Fragment<float, TOKEN_FRAGMENTS, VALUE_FRAGMENTS, Ops>;
   using TokenKeyFragment = OperandFragment<float, TOKEN_FRAGMENTS, 1, Ops>;
@@ -89,6 +93,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
   if (value_base >= head_v_dim) {
     return;
   }
+  const short lane_row = Ops::get_position(ushort(lane)).y;
   const uint hk_idx = hv_idx / (num_v_heads / num_k_heads);
   const uint num_chunks = (suffix_len + OUTPUT_STATE_CHUNK - 1) / OUTPUT_STATE_CHUNK;
   const uint conv_dim = 2 * key_dim + value_dim;
@@ -109,8 +114,14 @@ KERNEL(DeltaNetChunkedOutputAndState)(
     const uint token_base = chunk_idx * OUTPUT_STATE_CHUNK;
     const uint valid_tokens = token_base < suffix_len ? min(uint(OUTPUT_STATE_CHUNK), suffix_len - token_base) : 0u;
     const uint chunk_head_base = (chunk_idx * num_v_heads + hv_idx);
+    const bool full_chunk = valid_tokens == OUTPUT_STATE_CHUNK;
+    auto chunk_source = [&](auto source, const short rows, const short cols) {
+      return full_chunk ? source : source.bounded(rows, cols);
+    };
 
     TokenValueFragment output_acc;
+    float row_beta[TOKEN_ROW_SLOTS];
+    float row_exp_g[TOKEN_ROW_SLOTS];
     // -- R phase: R = beta (.) (V - e^g (.) (K . S^T)) into residual_new_value_tile ----------
     if (simdgroup_idx < NUM_TOKEN_TILES) {
       const uint token_tile_base = simdgroup_idx * TOKEN_TILE;
@@ -126,14 +137,30 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         TokenKeyFragment key_frag;
         TokenKeyFragment query_frag;
         KeyValueFragment state_frag;
-        key_frag.load_from(lane, fragment_source(k_tile + key_block_start, int(key_dim)).bounded(valid_token_rows, FR));
+        key_frag.load_from(
+            lane,
+            chunk_source(fragment_source(k_tile + key_block_start, int(key_dim)), valid_token_rows, FR)
+        );
         query_frag.load_from(
             lane,
-            fragment_source(q_norm + query_tile_base + key_block_start, int(key_dim)).bounded(valid_token_rows, FR)
+            chunk_source(
+                fragment_source(q_norm + query_tile_base + key_block_start, int(key_dim)),
+                valid_token_rows,
+                FR
+            )
         );
         state_frag.load_from(lane, fragment_source(transposed_state_tile + key_block_start * VT, int(VT), 1));
         fragment_mma(residual_acc, key_frag, state_frag);
         fragment_mma(output_acc, query_frag, state_frag);
+      }
+
+      METAL_PRAGMA_UNROLL
+      for (ushort slot = 0; slot < TOKEN_ROW_SLOTS; ++slot) {
+        const uint row = uint(lane_row + slot * ROW_STRIDE);
+        const uint token = token_base + token_tile_base + row;
+        const bool valid = row < valid_token_rows;
+        row_beta[slot] = valid ? beta[token * num_v_heads + hv_idx] : 0.0f;
+        row_exp_g[slot] = valid ? fast::exp(g_head[token]) : 0.0f;
       }
 
       const device T* value_input_tile =
@@ -142,11 +169,8 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         if (uint(row) >= valid_token_rows) {
           return 0.0f;
         }
-        const uint token = token_base + token_tile_base + uint(row);
-        const float beta_t = beta[token * num_v_heads + hv_idx];
-        const float g_t = g_head[token];
         const float value_input = float(value_input_tile[uint(row) * total_proj_dim + uint(col)]);
-        return beta_t * (value_input - fast::exp(g_t) * state_projection);
+        return row_beta[row / ROW_STRIDE] * (value_input - row_exp_g[row / ROW_STRIDE] * state_projection);
       });
       residual_acc.store(lane, residual_new_value_tile + token_tile_base * VT, int(VT));
     }
@@ -170,8 +194,11 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         ScratchKeyValueFragment residual_frag;
         causal_inv_frag.load_from(
             lane,
-            fragment_source(causal_inv_rows + source_token_block_start, int(OUTPUT_STATE_CHUNK))
-                .bounded(valid_token_rows, FR)
+            chunk_source(
+                fragment_source(causal_inv_rows + source_token_block_start, int(OUTPUT_STATE_CHUNK)),
+                valid_token_rows,
+                FR
+            )
         );
         residual_frag.load_from(
             lane,
@@ -195,13 +222,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
       const uint valid_token_rows =
           token_tile_base < valid_tokens ? min(uint(TOKEN_TILE), valid_tokens - token_tile_base) : 0u;
 
-      output_acc.map_coords(lane, [&](short row, short, float value) {
-        if (uint(row) >= valid_token_rows) {
-          return 0.0f;
-        }
-        const uint token = token_base + token_tile_base + uint(row);
-        return value * fast::exp(g_head[token]);
-      });
+      output_acc.map_coords(lane, [&](short row, short, float value) { return value * row_exp_g[row / ROW_STRIDE]; });
 
       const uint qk_tile_base =
           chunk_head_base * OUTPUT_STATE_CHUNK * OUTPUT_STATE_CHUNK + token_tile_base * OUTPUT_STATE_CHUNK;
@@ -215,8 +236,11 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         ScratchKeyValueFragment new_value_frag;
         qk_frag.load_from(
             lane,
-            fragment_source(qk_scaled + qk_tile_base + source_token_block_start, int(OUTPUT_STATE_CHUNK))
-                .bounded(valid_token_rows, valid_source_tokens)
+            chunk_source(
+                fragment_source(qk_scaled + qk_tile_base + source_token_block_start, int(OUTPUT_STATE_CHUNK)),
+                valid_token_rows,
+                valid_source_tokens
+            )
         );
         new_value_frag.load_from(
             lane,
@@ -226,7 +250,13 @@ KERNEL(DeltaNetChunkedOutputAndState)(
       }
 
       const uint output_tile_base = (token_base + token_tile_base) * value_dim + hv_idx * head_v_dim + value_base;
-      output_acc.store_safe(lane, out + output_tile_base, int(value_dim), short2(short(VT), short(valid_token_rows)));
+      output_acc.store_maybe_bounded(
+          lane,
+          out + output_tile_base,
+          int(value_dim),
+          full_chunk,
+          short2(short(VT), short(valid_token_rows))
+      );
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -247,23 +277,32 @@ KERNEL(DeltaNetChunkedOutputAndState)(
         TokenKeyTileFragment key_frag;
         new_value_frag.load_from(
             lane,
-            fragment_source(residual_new_value_tile + source_token_block_start * VT, 1, int(VT))
-                .bounded(short(VT), short(valid_source_tokens))
+            chunk_source(
+                fragment_source(residual_new_value_tile + source_token_block_start * VT, 1, int(VT)),
+                short(VT),
+                short(valid_source_tokens)
+            )
         );
         const device float* k_tile =
             k_norm + (token_base + source_token_block_start) * key_dim + hk_idx * HEAD_K_DIM + key_tile_base;
         key_frag.load_from(
             lane,
-            fragment_source(k_tile, int(key_dim)).bounded(short(valid_source_tokens), short(OUTPUT_STATE_KEY_TILE))
+            chunk_source(
+                fragment_source(k_tile, int(key_dim)),
+                short(valid_source_tokens),
+                short(OUTPUT_STATE_KEY_TILE)
+            )
         );
-        key_frag.map_coords(lane, [&](short row, short, float value) {
-          if (uint(row) >= valid_source_tokens) {
-            return 0.0f;
-          }
-          const uint token = token_base + source_token_block_start + uint(row);
-          // beta is already folded into Vnew through R.
-          return value * fast::exp(g_last - g_head[token]);
-        });
+        float row_decay[ROW_SLOTS];
+        METAL_PRAGMA_UNROLL
+        for (ushort slot = 0; slot < ROW_SLOTS; ++slot) {
+          const uint row = uint(lane_row + slot * ROW_STRIDE);
+          row_decay[slot] = row < valid_source_tokens
+                                ? fast::exp(g_last - g_head[token_base + source_token_block_start + row])
+                                : 0.0f;
+        }
+        // beta is already folded into Vnew through R.
+        key_frag.map_coords(lane, [&](short row, short, float value) { return value * row_decay[row / ROW_STRIDE]; });
         fragment_mma(state_update_acc, new_value_frag, key_frag);
       }
 

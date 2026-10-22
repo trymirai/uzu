@@ -2,12 +2,12 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::data_type::DataTypeRepr;
 
-fn apply_rope<ElementT: ArrayElement + Float>(
+pub(super) fn apply_rope<ElementT: DataTypeRepr + Float>(
     head: *const ElementT,
-    cosines: *const (impl ArrayElement + Float),
-    sines: *const (impl ArrayElement + Float),
+    cosines: *const (impl DataTypeRepr + Float),
+    sines: *const (impl DataTypeRepr + Float),
     batch_idx: usize,
     head_dim_idx: usize,
     rope_dim: usize,
@@ -34,7 +34,7 @@ fn apply_rope<ElementT: ArrayElement + Float>(
 #[kernel(AttentionPrepare)]
 #[variants(ElementT, bf16)]
 #[variants(RopeT, f32)]
-pub fn attention_prepare<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
+pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + Float>(
     qkvg: *const ElementT,
     queries: *mut ElementT,
     #[optional(has_kv)] keys: Option<*mut ElementT>,

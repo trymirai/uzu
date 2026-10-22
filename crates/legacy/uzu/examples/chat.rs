@@ -28,6 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_message: Option<ChatMessage> = None;
     while let Some(chunk) = stream.next().await {
         match chunk {
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Replies {
                 replies,
             } => {

@@ -1,6 +1,7 @@
 #[cfg(backend = "metal")]
 use std::time::Instant;
 
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
@@ -40,7 +41,7 @@ fn radix_top_k_small<B: Backend>(
     let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, columns as u32).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut command_buffer).unwrap();
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     (buffer_to_vec(&ids), buffer_to_vec(&scores))
 }
 
@@ -135,7 +136,7 @@ fn benchmark_radix_top_k_small() {
         for _ in 0..BATCH {
             kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut command_buffer).unwrap();
         }
-        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         (completed.gpu_execution_time().div_f64(BATCH as f64), start.elapsed().div_f64(BATCH as f64))
     };
     for _ in 0..5 {

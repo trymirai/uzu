@@ -3,8 +3,8 @@ mod common;
 use std::{path::Path, sync::Arc, time::Duration};
 
 use download_manager::{
-    Checksum, DestinationLock, DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadState,
-    DownloadTask, DownloadTaskRequest, LockError, LockOwner,
+    DestinationLock, DownloadError, DownloadManager, DownloadManagerType, DownloadPhase, DownloadState, DownloadTask,
+    DownloadTaskRequest, LockError, LockOwner,
 };
 use kiban::rt::RuntimeHandle;
 use rstest::rstest;
@@ -18,8 +18,6 @@ use wiremock::{
 use crate::common::{Behavior, MockRegistry, artifact_path, file_request, foreign_lock, model_request, wait_for_state};
 
 const HELLO: &[u8] = b"hello\n";
-const HELLO_SHA256: &str = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
-const HELLO_GIT_BLOB_SHA1: &str = "ce013625030ba8dba906f756967f9e9ca394464a";
 
 fn manager(kind: DownloadManagerType) -> DownloadManager {
     DownloadManager::new(kind, RuntimeHandle::current())
@@ -45,7 +43,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let directory = tempfile::tempdir()?;
     let manager = manager(kind);
-    let request = model_request(&registry, directory.path())?;
+    let request = model_request(&registry, directory.path());
     let total_bytes: i64 = registry.files.iter().map(|served| served.file.size).sum();
     let mut last_downloaded_bytes = 0;
 
@@ -93,7 +91,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     for served in registry.files.iter() {
         let destination = directory.path().join(&served.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served.bytes.to_vec());
-        assert!(artifact_path(&destination, "checksum").is_file());
+        assert!(!artifact_path(&destination, "checksum").exists());
     }
 
     model.delete().await?;
@@ -110,12 +108,11 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     let destination = directory.path().join(&first.file.name);
     let expected_bytes = Some(first.file.size as u64);
     let conflicting_url =
-        manager.download_task(file_request("http://example.invalid/other", &destination, None, expected_bytes)).await;
+        manager.download_task(file_request("http://example.invalid/other", &destination, expected_bytes)).await;
     assert!(matches!(conflicting_url, Err(DownloadError::ConflictingConfig(_))));
-    let conflicting_size =
-        manager.download_task(file_request(&first.file.url, &destination, Some(first.crc32c()?), Some(1))).await;
+    let conflicting_size = manager.download_task(file_request(&first.file.url, &destination, Some(1))).await;
     assert!(matches!(conflicting_size, Err(DownloadError::ConflictingConfig(_))));
-    let same = file_request(&first.file.url, &destination, Some(first.crc32c()?), expected_bytes);
+    let same = file_request(&first.file.url, &destination, expected_bytes);
     let (task_a, task_b) = tokio::join!(manager.download_task(same.clone()), manager.download_task(same));
     assert!(Arc::ptr_eq(&task_a?, &task_b?));
     Ok(())
@@ -131,10 +128,9 @@ async fn startup_reconciliation(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let served = registry.file("config.json")?;
-    let crc = served.crc32c()?;
     let size = Some(served.file.size as u64);
     let manager = manager(kind);
-    let request = |destination: &Path| file_request(&served.file.url, destination, Some(crc.clone()), size);
+    let request = |destination: &Path| file_request(&served.file.url, destination, size);
 
     let valid = tempfile::tempdir()?;
     let destination = valid.path().join(&served.file.name);
@@ -144,26 +140,13 @@ async fn startup_reconciliation(
     let task = manager.download_task(request(&destination)).await?;
     assert_eq!(task.state().phase, DownloadPhase::Downloaded {});
     assert!(!artifact.exists());
-    let receipt: serde_json::Value =
-        serde_json::from_str(&tokio::fs::read_to_string(artifact_path(&destination, "checksum")).await?)?;
-    assert_eq!(receipt["version"].as_u64(), Some(2));
-    assert_eq!(receipt["checksum"]["Crc32c"].as_str(), Some(crc.as_str()));
-    assert_eq!(receipt["file_size"].as_u64(), size);
+    assert!(!artifact_path(&destination, "checksum").exists());
 
-    let mut changed_bytes = served.bytes.to_vec();
-    changed_bytes[0] = changed_bytes[0].wrapping_add(1);
-    let stale_receipt = serde_json::to_vec(&serde_json::json!({
-        "version": 2,
-        "checksum": { "Crc32c": crc.clone() },
-        "file_size": served.file.size,
-        "modified_unix_seconds": 0,
-        "modified_nanos": 0,
-    }))?;
-    for cache in [crc.clone().into_bytes(), stale_receipt] {
-        let stale = tempfile::tempdir()?;
-        let destination = stale.path().join(&served.file.name);
-        tokio::fs::write(&destination, &changed_bytes).await?;
-        tokio::fs::write(artifact_path(&destination, "checksum"), cache).await?;
+    // Crash leftovers and truncated files cannot be loaded as completed models.
+    for actual_size in [served.file.size - 1, served.file.size + 1] {
+        let incomplete = tempfile::tempdir()?;
+        let destination = incomplete.path().join(&served.file.name);
+        tokio::fs::File::create(&destination).await?.set_len(actual_size as u64).await?;
         let task = manager.download_task(request(&destination)).await?;
         assert_eq!(task.state().phase, DownloadPhase::NotDownloaded {});
         assert!(!destination.exists());
@@ -172,33 +155,26 @@ async fn startup_reconciliation(
     let folder = tempfile::tempdir()?;
     let destination = folder.path().join(&served.file.name);
     tokio::fs::create_dir(&destination).await?;
-    let task = manager.download_task(file_request(&served.file.url, &destination, None, None)).await?;
+    let task = manager.download_task(file_request(&served.file.url, &destination, None)).await?;
     assert_eq!(task.state().phase, DownloadPhase::NotDownloaded {});
 
     let locked = tempfile::tempdir()?;
     let destination = locked.path().join(&served.file.name);
     let artifact = artifact_path(&destination, resume_artifact_extension);
     tokio::fs::write(&destination, b"corrupt").await?;
-    tokio::fs::write(artifact_path(&destination, "checksum"), &crc).await?;
     tokio::fs::write(&artifact, b"partial").await?;
     let lock = foreign_lock(&destination).await;
     let group = manager
         .download_task(
             DownloadTaskRequest::group()
                 .destination(locked.path())
-                .subrequests(vec![file_request(
-                    &served.file.url,
-                    Path::new(&served.file.name),
-                    Some(crc.clone()),
-                    size,
-                )])
+                .subrequests(vec![file_request(&served.file.url, Path::new(&served.file.name), size)])
                 .build(),
         )
         .await?;
     assert!(matches!(group.state().phase, DownloadPhase::Locked { .. }));
     assert!(matches!(group.delete().await, Err(DownloadError::Lock(LockError::LockedByOther { .. }))));
     assert!(destination.exists());
-    assert!(artifact_path(&destination, "checksum").exists());
     assert!(artifact.exists());
     let mut progress = group.progress();
     if kind == DownloadManagerType::Universal {
@@ -239,37 +215,13 @@ async fn startup_reconciliation(
 async fn failures(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
     let manager = manager(kind);
 
-    let corrupt = MockRegistry::start_with(Behavior::CORRUPT_BODY).await?;
-    let served = corrupt.file("tokenizer.json")?;
     let directory = tempfile::tempdir()?;
-    let destination = directory.path().join(&served.file.name);
-    let task = manager
-        .download_task(file_request(
-            &served.file.url,
-            &destination,
-            Some(served.crc32c()?),
-            Some(served.file.size as u64),
-        ))
-        .await?;
-    let mut progress = task.progress();
-    task.download().await?;
-    let state = wait_for_state(&task, &mut progress, |state| matches!(state.phase, DownloadPhase::Error { .. })).await;
-    let DownloadPhase::Error {
-        message,
-    } = state.phase
-    else {
-        panic!("expected an error phase, got {:?}", state.phase)
-    };
-    assert!(message.contains("CRC"), "unexpected error: {message}");
-    task.delete().await?;
-    assert_eq!(task.state().phase, DownloadPhase::NotDownloaded {});
 
     let truncated = MockRegistry::start_with(Behavior::TRUNCATE_BODY).await?;
     let served = truncated.file("config.json")?;
     let destination = directory.path().join(&served.file.name);
-    let task = manager
-        .download_task(file_request(&served.file.url, &destination, None, Some(served.file.size as u64)))
-        .await?;
+    let task =
+        manager.download_task(file_request(&served.file.url, &destination, Some(served.file.size as u64))).await?;
     let mut progress = task.progress();
     task.download().await?;
     let state = wait_for_state(&task, &mut progress, |state| {
@@ -281,6 +233,41 @@ async fn failures(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::
         "truncated body must surface as Error, got {:?}",
         state.phase
     );
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
+#[tokio::test(flavor = "multi_thread")]
+async fn declared_size_must_match(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = manager(kind);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/model.bin"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
+        .mount(&server)
+        .await;
+    let directory = tempfile::tempdir()?;
+    for expected in [HELLO.len() - 1, HELLO.len(), HELLO.len() + 1] {
+        let destination = directory.path().join(expected.to_string());
+        let task = manager
+            .download_task(file_request(&format!("{}/model.bin", server.uri()), &destination, Some(expected as u64)))
+            .await?;
+        let mut progress = task.progress();
+        task.download().await?;
+        let state = wait_for_state(&task, &mut progress, |state| {
+            matches!(state.phase, DownloadPhase::Downloaded {} | DownloadPhase::Error { .. })
+        })
+        .await;
+        if expected == HELLO.len() {
+            assert_eq!(state.phase, DownloadPhase::Downloaded {});
+            assert_eq!(tokio::fs::read(&destination).await?, HELLO);
+        } else {
+            assert!(matches!(state.phase, DownloadPhase::Error { .. }));
+            assert!(!destination.exists());
+        }
+    }
     Ok(())
 }
 
@@ -298,9 +285,7 @@ async fn shutdown_and_locks(
     let destination = directory.path().join(&served.file.name);
     let lock = artifact_path(&destination, "lock");
     let artifact = artifact_path(&destination, resume_artifact_extension);
-    let request = || {
-        file_request(&served.file.url, &destination, Some(served.crc32c().expect("crc")), Some(served.file.size as u64))
-    };
+    let request = || file_request(&served.file.url, &destination, Some(served.file.size as u64));
 
     let manager_a = manager(kind);
     let task_a = manager_a.download_task(request()).await?;
@@ -358,7 +343,6 @@ async fn universal_resume() -> Result<(), Box<dyn std::error::Error>> {
         .download_task(file_request(
             &format!("{}/model.bin", ignoring_range.uri()),
             &destination,
-            None,
             Some(full_bytes.len() as u64),
         ))
         .await?;
@@ -385,7 +369,6 @@ async fn universal_resume() -> Result<(), Box<dyn std::error::Error>> {
         .download_task(file_request(
             &format!("{}/model.bin", misaligned.uri()),
             &destination,
-            None,
             Some(full_bytes.len() as u64),
         ))
         .await?;
@@ -414,7 +397,7 @@ async fn locked_takeover(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     let manager = manager(kind);
     let first = registry.files.first().ok_or("mock registry must include files")?;
     let lock = foreign_lock(&directory.path().join(&first.file.name)).await;
-    let group = manager.download_task(model_request(&registry, directory.path())?).await?;
+    let group = manager.download_task(model_request(&registry, directory.path())).await?;
     let mut progress = group.progress();
     group.download().await?;
     assert!(matches!(group.state().phase, DownloadPhase::Locked { .. }));
@@ -434,62 +417,10 @@ async fn ancestor_destination_rejected(#[case] kind: DownloadManagerType) -> Res
     let directory = tempfile::tempdir()?;
     let request = DownloadTaskRequest::group()
         .destination(directory.path())
-        .subrequests(vec![file_request("http://127.0.0.1/unused", directory.path(), None, None)])
+        .subrequests(vec![file_request("http://127.0.0.1/unused", directory.path(), None)])
         .build();
     let result = timeout(Duration::from_secs(5), manager(kind).download_task(request)).await?;
     assert!(matches!(result, Err(DownloadError::ConflictingConfig(_))));
-    Ok(())
-}
-
-#[rstest]
-#[case::universal(DownloadManagerType::Universal)]
-#[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
-#[tokio::test(flavor = "multi_thread")]
-async fn checksums(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
-    let manager = manager(kind);
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/hello"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(HELLO))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/jello"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"jello\n".as_slice()))
-        .mount(&server)
-        .await;
-    let directory = tempfile::tempdir()?;
-    for (checksum, algorithm) in [
-        (Checksum::Sha256(HELLO_SHA256.to_string()), "SHA-256"),
-        (Checksum::GitBlobSha1(HELLO_GIT_BLOB_SHA1.to_string()), "Git blob SHA-1"),
-    ] {
-        let request = |name: &str| {
-            DownloadTaskRequest::file()
-                .destination(directory.path().join(format!("{algorithm} {name}")))
-                .source_url(format!("{}/{name}", server.uri()))
-                .expected_checksum(checksum.clone())
-                .expected_bytes(HELLO.len() as u64)
-                .build()
-        };
-        let task = manager.download_task(request("hello")).await?;
-        let mut progress = task.progress();
-        task.download().await?;
-        wait_for_state(&task, &mut progress, |state| matches!(state.phase, DownloadPhase::Downloaded {})).await;
-        assert!(artifact_path(&task.request().destination, "checksum").is_file());
-
-        let corrupt = manager.download_task(request("jello")).await?;
-        let mut progress = corrupt.progress();
-        corrupt.download().await?;
-        let state =
-            wait_for_state(&corrupt, &mut progress, |state| matches!(state.phase, DownloadPhase::Error { .. })).await;
-        let DownloadPhase::Error {
-            message,
-        } = state.phase
-        else {
-            panic!("expected an error phase, got {:?}", state.phase)
-        };
-        assert!(message.contains(algorithm), "unexpected error: {message}");
-    }
     Ok(())
 }
 

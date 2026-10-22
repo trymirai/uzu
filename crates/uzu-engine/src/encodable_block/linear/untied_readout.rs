@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA},
     },
     config::weight_matrix::{
@@ -10,9 +10,9 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_transform::InputRht,
+        Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
 };
 
 pub struct UntiedReadout<B: Backend> {
@@ -22,16 +22,15 @@ pub struct UntiedReadout<B: Backend> {
 
 impl<B: Backend> UntiedReadout<B> {
     pub fn load(
-        context: &B::Context,
-        tree: &ParameterTree<B>,
-        spec: AnyWeightMatrixSpec,
         vocab_size: u32,
         model_dim: u32,
         data_type: DataType,
+        spec: AnyWeightMatrixSpec,
+        tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
-            adapter_spec: None,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode: IncoherenceProcessingMode::Input,
             ..
@@ -39,35 +38,31 @@ impl<B: Backend> UntiedReadout<B> {
         else {
             return Ok(Self {
                 linear: LinearMatmul::load(
-                    context, spec, model_dim, vocab_size, data_type, data_type, data_type, tree, None, None,
+                    model_dim, vocab_size, data_type, data_type, data_type, spec, None, tree, None, context,
                 )?,
                 input_rht: None,
             });
         };
 
         let mut linear = LinearMatmul::load(
-            context,
-            *quantization_spec,
             model_dim,
             vocab_size,
             data_type,
             data_type,
             data_type,
+            *quantization_spec,
+            None,
             &tree.subtree("quantized"),
             None,
-            None,
+            context,
         )?;
-        let rht_signs = tree
-            .subtree("incoherence_signs")
-            .leaf("input_signs")?
-            .validate(&[model_dim], DataType::I32)?
-            .read_buffer()?;
+        let rht_signs = tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32)?;
         let preparation = LinearInputPreparation {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),
         };
-        let input_rht =
-            InputRht::new(context, data_type, preparation, false).map_err(LinearMatmulError::BackendError)?;
+        let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)
+            .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             linear,
@@ -81,7 +76,7 @@ impl<B: Backend> UntiedReadout<B> {
         batch_dim: u32,
         gather: Option<Gather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::FullPrecision {
                 values: input,
@@ -95,7 +90,7 @@ impl<B: Backend> UntiedReadout<B> {
         } else {
             self.linear.select_activation_format(batch_dim, command_buffer.context())
         };
-        let input = input_rht.prepare(input, batch_dim, format, command_buffer)?;
+        let input = input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
         self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)
     }
 }

@@ -112,6 +112,36 @@ fn add_tool_result(
 }
 
 #[test]
+fn muse_glimmer_tool_arguments_survive_continuation() {
+    let config = HanashiConfig::MuseGlimmer;
+    for options in [
+        "printf '%s\\n' \"hello\", \"world\"\n",
+        "héllo 🙂\n\"quoted\"\\path\n</atem:parametric>\n",
+        "{\n  \"b\": 2,\n  \"a\": [1, true, null]\n}",
+    ] {
+        let mut encoding = encoding(config.clone());
+        let mut history = history();
+        history[0] = ChatMessage::system().with_reasoning_effort(ReasoningEffort::High);
+        encoding.encode(history.clone()).unwrap();
+        decode(
+            &mut encoding,
+            &format!(
+                " to=inspect<|message|><atem:function_calls>\n<atem:invoke name=\"inspect\">\n\
+                 <atem:parameter name=\"options\">{options}</atem:parameter>\n\
+                 </atem:invoke>\n</atem:function_calls><|eot|>"
+            ),
+        );
+        let sampled = encoding.state().tokens.clone();
+        add_tool_result(&encoding, &mut history, options);
+        let suffix = encoding.try_append(&history).unwrap().expect("must retain the sampled tool call");
+        assert!(!suffix.is_empty());
+        assert_eq!(&encoding.state().tokens[..sampled.len()], sampled);
+        // A fresh session must be able to replay the same call as well.
+        assert!(canonical_text(config.clone(), history).contains(options));
+    }
+}
+
+#[test]
 fn formatting_and_sampled_token_ids_survive_repeated_tool_continuations() {
     for config in [HanashiConfig::Qwen35, HanashiConfig::Qwen36, HanashiConfig::Qwen38] {
         for options in [r#"{"a":1,"b":2}"#, r#"{"a":1, "b": 2}"#, "{\n  \"b\": 2,\n  \"a\": 1\n}"] {
@@ -146,6 +176,64 @@ fn formatting_and_sampled_token_ids_survive_repeated_tool_continuations() {
                 assert!(matches!(encoding.state().messages.last().unwrap().role, ChatRole::Assistant {}));
             }
         }
+    }
+}
+
+#[test]
+fn structured_tool_results_render_as_json_without_changing_history() {
+    for result in [
+        serde_json::json!({
+            "type": "line",
+            "title": "Revenue < forecast: \"2026\"",
+            "labels": ["January", "February"],
+            "datasets": [{"label": "Revenue", "data": [12.5, 15.0]}],
+        }),
+        serde_json::json!({"error": "Invalid chart", "retryable": true, "details": null}),
+        serde_json::json!([{"x": 1, "y": 2}, null, "point"]),
+        serde_json::json!(12.5),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+        serde_json::json!("done"),
+    ] {
+        let config = HanashiConfig::Qwen38;
+        let mut live = encoding(config.clone());
+        let mut history = history();
+        live.encode(history.clone()).unwrap();
+        let options = r#"{"a":1, "b": 2}"#;
+        decode(&mut live, &(tool_call(options) + "  <|im_end|>"));
+        let sampled = live.state().tokens.clone();
+        let sampled_text = live.state().text();
+        add_tool_result(&live, &mut history, options);
+        let result_index = history.len() - 1;
+        let ChatContentBlock::ToolCallResult {
+            value,
+            ..
+        } = &mut history[result_index].content[0]
+        else {
+            unreachable!();
+        };
+        *value = Value::from(result.clone());
+        let original_result = history[result_index].clone();
+        let text = result.as_str().map(str::to_owned).unwrap_or_else(|| result.to_string());
+        let response = format!("<tool_response>\n{text}\n</tool_response>");
+
+        live.try_append(&history).unwrap().expect("must continue after a structured tool result");
+
+        assert_eq!(&live.state().tokens[..sampled.len()], sampled);
+        assert_eq!(
+            &live.state().text()[sampled_text.len()..],
+            format!("\n<|im_start|>user\n{response}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        );
+        assert_eq!(live.state().messages[result_index], original_result);
+        assert_eq!(history[result_index], original_result);
+
+        decode(&mut live, "Done.<|im_end|>");
+        assert_eq!(live.state().messages[result_index], original_result);
+
+        let mut replay = encoding(config);
+        replay.encode(history).unwrap();
+        assert!(replay.state().text().contains(&response));
+        assert_eq!(replay.state().messages[result_index], original_result);
     }
 }
 

@@ -1,11 +1,13 @@
 pub(super) mod allocator;
 mod backend;
 mod buffer;
+pub mod capture_matcher;
 mod command_buffer;
 mod context;
 mod device_capabilities;
 pub mod gpu_types;
 pub mod kernel;
+mod timestamp_span;
 
 pub use backend::Backend;
 pub use buffer::{
@@ -13,7 +15,7 @@ pub use buffer::{
     constant::ConstantBuffer,
     cpu_accessible::BufferCpuAccessible,
     global::GlobalBuffer,
-    reference::{BufferMut, BufferRef, Subbuffer},
+    reference::{BufferMut, BufferRef},
     scratch::ScratchBuffer,
     sparse::SparseBuffer,
 };
@@ -23,3 +25,4 @@ pub use command_buffer::{
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
 pub use kernel::Kernels;
+pub use timestamp_span::TimestampSpan;

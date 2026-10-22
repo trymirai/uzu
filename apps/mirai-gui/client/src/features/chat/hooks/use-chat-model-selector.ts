@@ -27,6 +27,7 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
   const models = useModelsStore((s) => s.models);
   const modelPhasesById = useModelsStore((s) => s.modelPhasesById);
   const localsLoaded = useModelsStore((s) => s.hasLoadedModels);
+  const catalogComplete = useModelsStore((s) => s.catalogComplete);
 
   const setChatModel = useChatStore((s) => s.setChatModel);
   const selectedChatModel = useChatStore(
@@ -54,9 +55,19 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
 
     const exists = allAvailableModels.some((model) => model.repoId === selectedId);
     if (exists) return;
+    if (modelPhasesById[selectedId] === modelDownloadPhases.initializing || !catalogComplete) return;
 
     setChatModel(chatId, "", "");
-  }, [selectedChatModel.modelId, searchModel, allAvailableModels, chatId, setChatModel, localsLoaded]);
+  }, [
+    selectedChatModel.modelId,
+    searchModel,
+    allAvailableModels,
+    chatId,
+    setChatModel,
+    localsLoaded,
+    catalogComplete,
+    modelPhasesById,
+  ]);
 
   useEffect(() => {
     if (autoSelectSuppressed) return;
@@ -77,7 +88,12 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
 
     if (lastUsedModel?.modelId) {
       const isAvailable = allAvailableModels.some((model) => model.repoId === lastUsedModel.modelId);
-      if (!localsLoaded || isAvailable) {
+      if (
+        !localsLoaded ||
+        !catalogComplete ||
+        modelPhasesById[lastUsedModel.modelId] === modelDownloadPhases.initializing ||
+        isAvailable
+      ) {
         setChatModel(chatId, lastUsedModel.modelId, lastUsedModel.modelName);
       }
     }
@@ -93,6 +109,8 @@ export function useChatModelSelector(props: UseChatModelSelectorProps): UseChatM
     lastUsedModel?.modelId,
     lastUsedModel?.modelName,
     localsLoaded,
+    catalogComplete,
+    modelPhasesById,
   ]);
 
   const currentModelId = selectedChatModel.modelId || searchModel;

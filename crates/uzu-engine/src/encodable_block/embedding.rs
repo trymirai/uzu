@@ -14,15 +14,17 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{Gather, LinearMatmulError, UntiedReadout},
+        linear::{Gather, LinearEncodeError, LinearMatmulError, UntiedReadout},
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum EmbeddingError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("Matmul error: {0}")]
+    Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported configuration: {0}")]
@@ -31,6 +33,8 @@ pub enum EmbeddingError<B: Backend> {
     EmbeddingTable(#[from] EmbeddingTableError<B>),
     #[error(transparent)]
     LinearMatmul(#[from] LinearMatmulError<B>),
+    #[error("Linear encoding error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
 }
 
 enum EmbeddingTying<B: Backend> {
@@ -69,17 +73,17 @@ impl<B: Backend> Embedding<B> {
     }
 
     pub fn new(
-        context: &B::Context,
         vocab_size: u32,
         model_dim: u32,
+        data_type: DataType,
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
+        context: &B::Context,
     ) -> Result<(Self, Option<B::GlobalBuffer>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let table = EmbeddingTable::load(context, &embedding_tree, vocab_size, model_dim, data_type)?;
+                let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context)?;
                 if table.as_matrix().is_none() {
                     return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
                 }
@@ -101,16 +105,16 @@ impl<B: Backend> Embedding<B> {
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
                 let input_table =
-                    EmbeddingTable::load(context, &input_embedding_tree, vocab_size, model_dim, data_type)?;
+                    EmbeddingTable::load(vocab_size, model_dim, data_type, &input_embedding_tree, context)?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 let output = UntiedReadout::load(
-                    context,
-                    &output_embedding_tree,
-                    output_embedding_spec,
                     vocab_size,
                     model_dim,
                     data_type,
+                    output_embedding_spec,
+                    &output_embedding_tree,
+                    context,
                 )?;
                 (
                     EmbeddingTying::Untied {
@@ -157,8 +161,6 @@ impl<B: Backend> Embedding<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding lookup");
-
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
             .map_err(EmbeddingError::BackendError)?;
@@ -175,21 +177,19 @@ impl<B: Backend> Embedding<B> {
         };
         table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
 
-        command_buffer.pop_debug_group();
-
         Ok(output)
     }
 
     pub fn encode_readout(
         &self,
-        batch_dim: u32,
         input_buffer: impl BufferRef<Backend = B>,
+        batch_dim: u32,
         output_dim: u32,
         gather_indices: Option<impl BufferRef<Backend = B>>,
         apply_logit_transform: bool,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
-        command_buffer.push_debug_group("embedding readout");
+        let command_buffer = &mut *command_buffer.debug_group("embedding readout");
 
         assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
         let mut output_buffer = match &self.tying {
@@ -201,7 +201,7 @@ impl<B: Backend> Embedding<B> {
                     indices,
                     output_dim,
                 });
-                output.encode(input_buffer, batch_dim, gather, command_buffer).map_err(EmbeddingError::BackendError)?
+                output.encode(input_buffer, batch_dim, gather, command_buffer)?
             },
             EmbeddingTying::Tied {
                 table,
@@ -224,7 +224,7 @@ impl<B: Backend> Embedding<B> {
                     n: output_dim,
                     k: self.model_dim,
                 };
-                readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::BackendError)?;
+                readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::Matmul)?;
                 output
             },
         };
@@ -240,8 +240,6 @@ impl<B: Backend> Embedding<B> {
             );
         }
 
-        command_buffer.pop_debug_group();
-
         Ok(output_buffer)
     }
 }
@@ -250,6 +248,6 @@ fn readout_kernel<B: Backend>(
     data_type: DataType,
 ) -> Result<Mutex<<B::Kernels as Kernels>::MatmulKernel>, EmbeddingError<B>> {
     let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
-        .map_err(EmbeddingError::BackendError)?;
+        .map_err(EmbeddingError::Matmul)?;
     Ok(Mutex::new(kernel))
 }

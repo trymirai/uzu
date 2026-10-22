@@ -1,25 +1,26 @@
 use std::fmt::Display;
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, Context, Kernels,
             gpu_types::{
-                EmbeddingTableKind::{self, D4S4, Dense, Quantized},
-                QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
-                QuantizationMode::{self, I8, U4, U8},
                 d4s4,
+                embedding::EmbeddingTableKind::{self, D4S4, Dense, Quantized},
+                quantization::QuantizationMode::{self, I8, U4, U8},
+                quantization_method::QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
             },
             kernel::InputEmbeddingLookupKernel,
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{
@@ -41,19 +42,19 @@ fn pattern(
     (0..len).map(|index| (index * seed + 9) as u8).collect()
 }
 
-fn floats<T: ArrayElement + Float>(
+fn floats<T: DataTypeRepr + Float>(
     len: u32,
     value: impl Fn(u32) -> f32,
 ) -> Vec<T> {
     (0..len).map(|index| T::from(value(index)).unwrap()).collect()
 }
 
-fn lookup<B: Backend, T: ArrayElement + Float>(
+fn lookup<B: Backend, T: DataTypeRepr + Float>(
     table_kind: EmbeddingTableKind,
     quantization: Option<Quantization>,
     use_hadamard: bool,
 ) -> Vec<T> {
-    let context = <B as Backend>::Context::new().unwrap();
+    let context = block_on(<B as Backend>::Context::new()).unwrap();
     let context = context.as_ref();
     let bytes = |data: &[u8]| create_buffer_with_data::<B, u8>(context, data);
     let (mut scales, mut zero_points, mut biases) = (None, None, None);
@@ -139,7 +140,7 @@ fn lookup<B: Backend, T: ArrayElement + Float>(
     buffer_to_vec::<B, T>(&output)
 }
 
-fn check<T: ArrayElement + Float + Display>(
+fn check<T: DataTypeRepr + Float + Display>(
     table_kind: EmbeddingTableKind,
     quantization: Option<Quantization>,
     use_hadamard: bool,

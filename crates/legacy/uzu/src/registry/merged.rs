@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use shoji::{
     traits::Registry,
@@ -7,20 +7,21 @@ use shoji::{
 
 use crate::registry::RegistryError;
 
+#[derive(Clone)]
 pub struct MergedRegistry {
-    registries: Vec<Box<dyn Registry<Error = RegistryError>>>,
+    registries: Vec<Arc<dyn Registry<Error = RegistryError>>>,
 }
 
 impl MergedRegistry {
     pub fn new(registries: Vec<Box<dyn Registry<Error = RegistryError>>>) -> Self {
         Self {
-            registries,
+            registries: registries.into_iter().map(Arc::from).collect(),
         }
     }
 
     pub fn add(
         &mut self,
-        registry: Box<dyn Registry<Error = RegistryError>>,
+        registry: Arc<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), RegistryError> {
         if self.registries.iter().any(|current_registry| current_registry.identifier() == registry.identifier()) {
             return Err(RegistryError::UnableToAddRegistry {
@@ -98,7 +99,39 @@ impl Registry for MergedRegistry {
 
     fn listing(&self) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), RegistryError>> + Send + '_>> {
         Box::pin(async {
-            let results = futures::future::join_all(self.registries.iter().map(|registry| registry.listing())).await;
+            if let Some(listing) = self.cached_listing() {
+                return Ok(listing);
+            }
+            self.refresh_listing(Arc::new(|| {})).await
+        })
+    }
+
+    fn cached_listing(&self) -> Option<(Vec<Model>, bool)> {
+        let mut models = Vec::new();
+        let mut complete = true;
+        let mut loaded = self.registries.is_empty();
+        for registry in &self.registries {
+            match registry.cached_listing() {
+                Some((snapshot, registry_complete)) => {
+                    loaded = true;
+                    models.extend(snapshot);
+                    complete &= registry_complete;
+                },
+                None => complete = false,
+            }
+        }
+        loaded.then_some((models, complete))
+    }
+
+    fn refresh_listing(
+        &self,
+        on_update: Arc<dyn Fn() + Send + Sync>,
+    ) -> Pin<Box<dyn Future<Output = Result<(Vec<Model>, bool), RegistryError>> + Send + '_>> {
+        Box::pin(async move {
+            let results = futures::future::join_all(
+                self.registries.iter().map(|registry| registry.refresh_listing(on_update.clone())),
+            )
+            .await;
 
             let mut models = Vec::new();
             let mut complete = true;
@@ -110,6 +143,9 @@ impl Registry for MergedRegistry {
                     },
                     Err(error) => {
                         complete = false;
+                        if let Some((cached, _)) = registry.cached_listing() {
+                            models.extend(cached);
+                        }
                         tracing::warn!(?error, registry = %registry.identifier(), "skipping registry that failed to list models");
                     },
                 }

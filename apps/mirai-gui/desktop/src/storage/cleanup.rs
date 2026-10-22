@@ -168,7 +168,8 @@ pub async fn cleanup_execute(
             for (identifier, state) in states.iter() {
                 let is_active = matches!(
                     state.phase,
-                    uzu::storage::DownloadPhase::Downloading {}
+                    uzu::storage::DownloadPhase::Initializing {}
+                        | uzu::storage::DownloadPhase::Downloading {}
                         | uzu::storage::DownloadPhase::Paused {}
                         | uzu::storage::DownloadPhase::Locked { .. }
                 );

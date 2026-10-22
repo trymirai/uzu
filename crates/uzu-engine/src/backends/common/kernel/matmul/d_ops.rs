@@ -2,7 +2,6 @@ use crate::backends::common::{Backend, gpu_types::gemm::GemmDTransform};
 
 pub struct MatmulDOps<'a, B: Backend> {
     pub ab_scale: f32,
-    pub accumulate: bool,
     pub bias: Option<&'a B::GlobalBuffer>,
     pub rht_factors: Option<&'a B::GlobalBuffer>,
     pub soft_cap: Option<f32>,
@@ -12,7 +11,6 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
     pub fn none() -> Self {
         Self {
             ab_scale: 1.0,
-            accumulate: false,
             bias: None,
             rht_factors: None,
             soft_cap: None,
@@ -23,9 +21,6 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
         let mut m = GemmDTransform::empty();
         if self.ab_scale != 1.0 {
             m |= GemmDTransform::SCALE;
-        }
-        if self.accumulate {
-            m |= GemmDTransform::ACCUMULATE;
         }
         if self.bias.is_some() {
             m |= GemmDTransform::BIAS;
@@ -48,11 +43,6 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
                 1.0
             } else {
                 self.ab_scale
-            },
-            accumulate: if bits.contains(GemmDTransform::ACCUMULATE) {
-                false
-            } else {
-                self.accumulate
             },
             bias: if bits.contains(GemmDTransform::BIAS) {
                 None

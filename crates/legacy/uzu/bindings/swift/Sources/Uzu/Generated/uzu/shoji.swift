@@ -1072,7 +1072,7 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
     public var grammar: Grammar?
     /**
      * Maximum number of automatic tool-call turns per reply.
-     * `None` falls back to the session default.
+     * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
      */
     public var toolTurnLimit: UInt32?
 
@@ -1081,7 +1081,7 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
     public init(tokenLimit: UInt32?, samplingPolicy: SamplingPolicy, grammar: Grammar?, 
         /**
          * Maximum number of automatic tool-call turns per reply.
-         * `None` falls back to the session default.
+         * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
          */toolTurnLimit: UInt32?) {
         self.tokenLimit = tokenLimit
         self.samplingPolicy = samplingPolicy
@@ -3225,7 +3225,10 @@ public enum ChatContentBlock: Equatable, Hashable, Codable {
     )
     case toolCall(value: ToolCall
     )
-    case toolCallCandidate(value: Value
+    case toolCallCandidate(value: Value, 
+        /**
+         * Assigned by the session and retained when the candidate becomes a tool call.
+         */identifier: String?
     )
     case toolCallResult(identifier: String?, name: String?, value: Value
     )
@@ -3293,7 +3296,7 @@ public struct FfiConverterTypeChatContentBlock: FfiConverterRustBuffer {
         case 13: return .toolCall(value: try FfiConverterTypeToolCall.read(from: &buf)
         )
         
-        case 14: return .toolCallCandidate(value: try FfiConverterTypeValue.read(from: &buf)
+        case 14: return .toolCallCandidate(value: try FfiConverterTypeValue.read(from: &buf), identifier: try FfiConverterOptionString.read(from: &buf)
         )
         
         case 15: return .toolCallResult(identifier: try FfiConverterOptionString.read(from: &buf), name: try FfiConverterOptionString.read(from: &buf), value: try FfiConverterTypeValue.read(from: &buf)
@@ -3378,9 +3381,10 @@ public struct FfiConverterTypeChatContentBlock: FfiConverterRustBuffer {
             FfiConverterTypeToolCall.write(value, into: &buf)
             
         
-        case let .toolCallCandidate(value):
+        case let .toolCallCandidate(value,identifier):
             writeInt(&buf, Int32(14))
             FfiConverterTypeValue.write(value, into: &buf)
+            FfiConverterOptionString.write(identifier, into: &buf)
             
         
         case let .toolCallResult(identifier,name,value):

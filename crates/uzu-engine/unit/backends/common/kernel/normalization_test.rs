@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,7 +13,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
@@ -22,9 +22,9 @@ use crate::{
 
 fn get_output<
     B: Backend,
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float,
 >(
     input: &[InputT],
     scales: Option<&[AffineT]>,
@@ -34,7 +34,7 @@ fn get_output<
     full_layer: bool,
     hadamard_factors: Option<&[i32]>,
 ) -> Vec<OutputT> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::NormalizationKernel::new(
         &context,
         InputT::data_type(),
@@ -75,15 +75,15 @@ fn get_output<
         1.0,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     buffer_to_vec::<B, OutputT>(&output_buffer)
 }
 
 fn test_internal<
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
 >(
     has_scales: bool,
     full_layer: bool,
@@ -138,9 +138,9 @@ fn test_internal<
 }
 
 fn test_normalization<
-    InputT: ArrayElement + Float,
-    AffineT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
+    InputT: DataTypeRepr + Float,
+    AffineT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
 >() {
     for has_scales in [true, false] {
         for full_layer in [true, false] {
@@ -150,7 +150,7 @@ fn test_normalization<
 }
 
 // The fused transform has to match plain normalization followed by the standalone input RHT
-fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
+fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
     let batch_size = 2u32;
     let element_count = 64u32;
     let epsilon = 1e-6f32;
@@ -170,7 +170,7 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
 
     let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), batch_size, element_count, epsilon, true, None);
 
-    let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
+    let context = block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Context");
     let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
         .expect("Failed to create ActivationTransform");
     let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
@@ -185,7 +185,7 @@ fn test_hadamard<T: ArrayElement + Float + Debug + Display>() {
         element_count,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
     let expected = buffer_to_vec::<Cpu, T>(&expected_buffer);
 
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {

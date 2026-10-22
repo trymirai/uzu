@@ -5,6 +5,7 @@ mod jsr;
 mod license;
 mod mirai_gui;
 mod package_json;
+mod pi_extension;
 mod playground;
 mod pyproject;
 mod readme;
@@ -102,9 +103,15 @@ pub fn run_sync(check: bool) -> Result<()> {
 
     PlaygroundSyncTask.run(&platforms, &workspace, &root_path.join("apps/playground/Project.swift"), check)?;
 
+    pi_extension::PiExtensionSyncTask.run(
+        &platforms,
+        &workspace,
+        &root_path.join("apps/uzu-pi-extension/package.json"),
+        check,
+    )?;
+
     let mirai_gui_path = root_path.join("apps/mirai-gui");
     MiraiGuiSyncTask::PackageJson.run(&platforms, &workspace, &mirai_gui_path.join("package.json"), check)?;
-    MiraiGuiSyncTask::CargoToml.run(&platforms, &workspace, &mirai_gui_path.join("desktop/Cargo.toml"), check)?;
     MiraiGuiSyncTask::TauriConf.run(&platforms, &workspace, &mirai_gui_path.join("desktop/tauri.conf.json"), check)?;
 
     docs::sync_docs(&platforms, root_path, check)?;

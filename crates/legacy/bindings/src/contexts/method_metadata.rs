@@ -92,7 +92,7 @@ fn extract_void_fn_inputs(ty: &syn::Type) -> Option<Vec<syn::Type>> {
         if !returns_unit {
             return None;
         }
-        return Some(paren.inputs.iter().cloned().collect());
+        return Some(paren.inputs.iter().map(|input| input.ty.clone()).collect());
     }
     None
 }

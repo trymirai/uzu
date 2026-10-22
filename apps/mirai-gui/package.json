@@ -1,9 +1,9 @@
 {
   "name": "mirai-gui",
-  "version": "0.6.1",
+  "version": "0.6.11",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@12.14.0",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build --target aarch64-apple-darwin",
@@ -14,8 +14,8 @@
     "typecheck": "tsc -p client/tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "lint:rust": "cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings",
-    "test:rust": "cargo test --manifest-path desktop/Cargo.toml",
+    "lint:rust": "cargo clippy -p mirai-gui --all-targets -- -D warnings",
+    "test:rust": "cargo test -p mirai-gui",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm lint:rust && pnpm test:rust",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\""
@@ -23,17 +23,12 @@
   "author": "Mirai Team",
   "license": "MIT",
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.19"
   },
   "prettier": {
     "singleQuote": false,
     "trailingComma": "all",
     "printWidth": 120
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -67,10 +62,12 @@
     "@tanstack/react-router": "^1.170.41",
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.8.0",
+    "chart.js": "^4.5.1",
     "date-fns": "^4.4.0",
     "jszip": "^3.10.2",
     "katex": "^0.16.47",
     "lucide-react": "^0.544.0",
+    "marked": "^18.0.14",
     "motion": "^12.43.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

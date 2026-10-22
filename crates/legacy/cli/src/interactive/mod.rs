@@ -1,9 +1,6 @@
-use comfy_table::{
-    ContentArrangement, Table,
-    modifiers::{UTF8_ROUND_CORNERS, UTF8_SOLID_INNER_BORDERS},
-    presets::UTF8_FULL,
-};
+use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 use shoji::types::basic::ReasoningEffort;
+use tokio_stream::StreamExt;
 use uzu::engine::{Engine, EngineConfig};
 
 use crate::interactive::{
@@ -40,7 +37,7 @@ pub async fn run_interactive(
 pub async fn run_list_models() -> anyhow::Result<()> {
     let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let engine = Engine::new(engine_config).await?;
-    let models = engine.models().await?;
+    let models = list_models(&engine).await?;
     if models.is_empty() {
         return Err(anyhow::anyhow!("No models to run"));
     }
@@ -48,9 +45,7 @@ pub async fn run_list_models() -> anyhow::Result<()> {
     let families = get_families(&models);
     let mut table = Table::new();
     table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .apply_modifier(UTF8_SOLID_INNER_BORDERS)
+        .load_style(UTF8_FULL.with_rounded_corners().with_solid_inner_borders())
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec!["Name", "ID"]);
 
@@ -65,7 +60,7 @@ pub async fn run_list_models() -> anyhow::Result<()> {
 pub async fn run_list_checkpoints(model_id: String) -> anyhow::Result<()> {
     let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
     let engine = Engine::new(engine_config).await?;
-    let models = engine.models().await?;
+    let models = list_models(&engine).await?;
     let checkpoints = get_checkpoints(&models, &model_id);
     if checkpoints.is_empty() {
         return Err(anyhow::anyhow!("No checkpoints found for model: {model_id}"));
@@ -73,9 +68,7 @@ pub async fn run_list_checkpoints(model_id: String) -> anyhow::Result<()> {
 
     let mut table = Table::new();
     table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .apply_modifier(UTF8_SOLID_INNER_BORDERS)
+        .load_style(UTF8_FULL.with_rounded_corners().with_solid_inner_borders())
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec!["Name", "ID"]);
 
@@ -85,4 +78,16 @@ pub async fn run_list_checkpoints(model_id: String) -> anyhow::Result<()> {
     println!("{table}");
 
     Ok(())
+}
+
+async fn list_models(engine: &Engine) -> anyhow::Result<Vec<shoji::types::model::Model>> {
+    // These commands print once and exit; take the final snapshot rather than
+    // whichever registry happened to answer first. Interactive views subscribe.
+    let mut updates = engine.catalog_subscribe();
+    while engine.catalog_is_refreshing() {
+        if updates.next().await.is_none() {
+            break;
+        }
+    }
+    Ok(engine.models().await?)
 }

@@ -33,6 +33,9 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ["**/*.wasm"],
     test: {
       environment: "jsdom",
+      poolOptions: {
+        forks: { execArgv: ["--no-experimental-webstorage"] },
+      },
       include: ["src/**/*.test.{ts,tsx}"],
       css: false,
     },

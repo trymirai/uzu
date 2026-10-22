@@ -31,8 +31,8 @@ pub struct Sampling<B: Backend> {
 
 impl<B: Backend> Sampling<B> {
     pub fn new(
-        data_type: DataType,
         vocab_size: u32,
+        data_type: DataType,
     ) -> Self {
         Self {
             vocab_size,
@@ -87,12 +87,12 @@ impl<B: Backend> Sampling<B> {
         bitmask: Option<impl BufferRef<Backend = B>>,
         context_ring: Option<impl BufferRef<Backend = B>>,
         token_ids: Option<impl BufferRef<Backend = B>>,
-        sampling_method: &SamplingMethod,
         batch_dim: &BatchTopology,
         sampling_range: Range<u32>,
+        sampling_method: &SamplingMethod,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::GlobalBuffer, B::Error> {
-        command_buffer.push_debug_group("sampling");
+        let command_buffer = &mut *command_buffer.debug_group("sampling");
 
         let sampling_length = sampling_range.end - sampling_range.start;
 
@@ -193,8 +193,6 @@ impl<B: Backend> Sampling<B> {
             sampling_length,
             command_buffer,
         );
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

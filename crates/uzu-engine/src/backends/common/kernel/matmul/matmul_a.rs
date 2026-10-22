@@ -46,7 +46,6 @@ impl Int8CodeLayout {
     }
 }
 
-#[derive(Clone, Copy)]
 pub enum MatmulA<T: BufferRef> {
     FullPrecision {
         values: T,

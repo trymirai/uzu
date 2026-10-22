@@ -1,20 +1,20 @@
-pub mod common;
+pub(crate) mod common;
 
 #[cfg(backend = "cpu")]
-pub mod cpu;
+pub(crate) mod cpu;
 #[cfg(backend = "metal")]
-pub mod metal;
+pub(crate) mod metal;
 
-use crate::backends::common::Backend;
+pub use common::Backend;
 
 pub trait BackendSelection {
     type Output;
     type Error;
 
-    fn select<B: Backend>(self) -> Result<Self::Output, Self::Error>;
+    fn select<B: Backend>(self) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
 }
 
-pub fn select_backend<S: BackendSelection>(
+pub async fn select_backend<S: BackendSelection>(
     selection: S,
     unknown: S::Error,
 ) -> Result<S::Output, S::Error> {
@@ -29,9 +29,9 @@ pub fn select_backend<S: BackendSelection>(
     // TODO: remove magic env var
     match std::env::var("UZU_BACKEND").map(|s| s.to_lowercase()).as_deref().unwrap_or(default) {
         #[cfg(backend = "cpu")]
-        "cpu" => selection.select::<cpu::Cpu>(),
+        "cpu" => selection.select::<cpu::Cpu>().await,
         #[cfg(backend = "metal")]
-        "metal" => selection.select::<metal::Metal>(),
+        "metal" => selection.select::<metal::Metal>().await,
         _ => Err(unknown),
     }
 }

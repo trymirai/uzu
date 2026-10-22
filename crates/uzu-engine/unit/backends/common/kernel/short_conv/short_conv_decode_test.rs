@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +13,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     in_proj: Box<[T]>,
     w: Box<[f32]>,
     b: Option<Box<[f32]>>,
@@ -32,11 +32,11 @@ struct Input<T: ArrayElement + Float> {
     model_dim: u32,
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(
+fn get_output<T: DataTypeRepr + Float, B: Backend>(
     input: &Input<T>,
     state_in_place: bool,
 ) -> (Vec<T>, Vec<T>) {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvDecodeKernel::new(
@@ -83,12 +83,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         input.model_dim,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     (buffer_to_vec(&out), buffer_to_vec(&next_state))
 }
 
-fn get_test_data_basic<T: ArrayElement + Float>(
+fn get_test_data_basic<T: DataTypeRepr + Float>(
     model_dim: usize,
     kernel_size: usize,
     has_bias: bool,
@@ -155,7 +155,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     (input, out, next_state)
 }
 
-fn get_test_data_edge<T: ArrayElement + Float>(
+fn get_test_data_edge<T: DataTypeRepr + Float>(
     model_dim: usize,
     kernel_size: usize,
     has_bias: bool,
@@ -216,7 +216,7 @@ fn get_test_data_edge<T: ArrayElement + Float>(
     (input, out, next_state)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected_out: &[T],
     expected_state: &[T],
@@ -252,7 +252,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     for has_bias in [false, true] {
         for state_in_place in [false, true] {
             let (input, expected_out, expected_state) = get_test_data_basic::<T>(64, 4, has_bias);
@@ -261,7 +261,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     for has_bias in [false, true] {
         for state_in_place in [false, true] {
             let (input, expected_out, expected_state) = get_test_data_basic::<T>(256, 4, has_bias);
@@ -270,7 +270,7 @@ fn test_large<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
-fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
+fn test_edge_small<T: DataTypeRepr + Float + Debug + Display>() {
     for has_bias in [false, true] {
         for state_in_place in [false, true] {
             let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 2, has_bias);
@@ -279,7 +279,7 @@ fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
-fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
+fn test_edge_kernel<T: DataTypeRepr + Float + Debug + Display>() {
     for has_bias in [false, true] {
         for state_in_place in [false, true] {
             let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);

@@ -19,12 +19,14 @@ impl GpuTypeStructFieldType {
             Type::Path(TypePath {
                 qself: _,
                 path,
+                attrs: _,
             }) => Ok(Self::Scalar(path.into_token_stream().to_string().into())),
             Type::Array(TypeArray {
                 bracket_token: _,
                 elem,
                 semi_token: _,
                 len,
+                attrs: _,
             }) => {
                 let Type::Path(elem) = *elem else {
                     bail!("Array element must be a Path, found {elem:?}");

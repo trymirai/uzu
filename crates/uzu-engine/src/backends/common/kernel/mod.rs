@@ -1,3 +1,4 @@
+#[cfg(backend = "cpu")]
 use std::{convert::Infallible, marker::PhantomData};
 
 use crate::backends::common::Backend;
@@ -7,12 +8,18 @@ pub mod attention;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
+pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
+mod trellis;
 
 pub use activation_transform::{ActivationQuantization, ActivationTransform};
-pub use attention::{AttentionArguments, AttentionKernel, AttentionKernelConfig};
+pub use attention::{
+    AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, FullPrecisionInput, Int8Input, KVFormat,
+};
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
+
+pub use crate::backends::common::kernel::trellis::mixing_dimension;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
@@ -27,6 +34,7 @@ pub trait Kernels: Sized {
     type RadixTopKSmall: radix_top_k_small::RadixTopKSmall<Backend = Self::Backend>;
 }
 
+#[cfg(backend = "cpu")]
 pub struct Unsupported<B: Backend> {
     never: Infallible,
     _marker: PhantomData<fn() -> B>,

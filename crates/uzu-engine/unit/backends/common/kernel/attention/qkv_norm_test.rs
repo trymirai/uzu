@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +13,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT: ArrayElement + Float> {
+struct Input<InputT: DataTypeRepr + Float, ScaleT: DataTypeRepr + Float, OutputT: DataTypeRepr + Float> {
     qkvg: Box<[OutputT]>,
     scales: Box<[ScaleT]>,
     batch_size: u32,
@@ -39,10 +39,10 @@ struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT
 }
 
 fn get_test_data<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float,
+    AccumT: DataTypeRepr + Float,
 >(
     head_offset: u32,
     head_count: u32,
@@ -116,14 +116,14 @@ fn get_test_data<
 
 fn get_output<
     B: Backend,
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float,
+    AccumT: DataTypeRepr + Float,
 >(
     input: &Input<InputT, ScaleT, OutputT>
 ) -> Vec<OutputT> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::QKVNormKernel::new(
         &context,
@@ -154,16 +154,16 @@ fn get_output<
         input.full_layer,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     buffer_to_vec(&qkvg)
 }
 
 fn test_internal<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
+    AccumT: DataTypeRepr + Float,
 >(
     input: &Input<InputT, ScaleT, OutputT>,
     expected: &[OutputT],
@@ -192,10 +192,10 @@ fn test_internal<
 }
 
 fn test_q_norm<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
+    AccumT: DataTypeRepr + Float,
 >() {
     for full_layer in [true, false] {
         // Normalize Q heads: head_offset=0, head_count=num_q_heads(4)
@@ -205,10 +205,10 @@ fn test_q_norm<
 }
 
 fn test_k_norm<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
+    AccumT: DataTypeRepr + Float,
 >() {
     for full_layer in [true, false] {
         // Normalize K heads: head_offset=num_q_heads(4), head_count=num_kv_heads(2)
@@ -218,20 +218,20 @@ fn test_k_norm<
 }
 
 fn test_v_norm_no_scales<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
+    AccumT: DataTypeRepr + Float,
 >() {
     let (input, expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(6, 2, true, false);
     test_internal::<InputT, ScaleT, OutputT, AccumT>(&input, &expected);
 }
 
 fn test_addressing<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
+    AccumT: DataTypeRepr + Float,
 >() {
     // Test that Q norm only modifies Q heads and leaves K/V untouched
     let (input, _expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(0, 4, false, true);
@@ -273,10 +273,10 @@ fn test_addressing<
 }
 
 fn test_v_addressing<
-    InputT: ArrayElement + Float,
-    ScaleT: ArrayElement + Float,
-    OutputT: ArrayElement + Float + Debug + Display,
-    AccumT: ArrayElement + Float,
+    InputT: DataTypeRepr + Float,
+    ScaleT: DataTypeRepr + Float,
+    OutputT: DataTypeRepr + Float + Debug + Display,
+    AccumT: DataTypeRepr + Float,
 >() {
     // Weightless V norm must modify only V heads and leave Q/K untouched.
     let (input, _expected) = get_test_data::<InputT, ScaleT, OutputT, AccumT>(6, 2, true, false);

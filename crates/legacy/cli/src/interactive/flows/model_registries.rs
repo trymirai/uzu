@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use iocraft::prelude::*;
 use shoji::types::model::{Model, ModelRegistry};
+use tokio_stream::StreamExt;
 
 use crate::interactive::{
     components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
@@ -66,11 +67,19 @@ fn ModelRegistries(
         let on_pick = on_pick.clone();
         let engine = state.read().engine.clone();
         async move {
-            let registries = engine.model_registries().await.unwrap_or_default();
-            if registries.len() == 1 {
-                on_pick(registries[0].clone());
-            } else {
-                registries_state.set(Some(registries));
+            let mut updates = engine.catalog_subscribe();
+            loop {
+                let registries = engine.model_registries().await.unwrap_or_default();
+                let refreshing = engine.catalog_is_refreshing();
+                if registries.len() == 1 && !refreshing {
+                    on_pick(registries[0].clone());
+                    break;
+                } else if !refreshing || !registries.is_empty() {
+                    registries_state.set(Some(registries));
+                }
+                if updates.next().await.is_none() {
+                    break;
+                }
             }
         }
     });

@@ -26,4 +26,8 @@ pub enum EngineError {
     TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
     #[error("Settings not available")]
     SettingsNotAvailable,
+    #[error("Unable to read model configuration: {message}")]
+    ModelConfig {
+        message: String,
+    },
 }

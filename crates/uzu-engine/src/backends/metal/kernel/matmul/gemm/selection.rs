@@ -1,11 +1,16 @@
 use metal::MTLGPUFamily;
 use thiserror::Error;
 
-use super::{GemmEngine, GemmPlan, policy};
 use crate::{
-    backends::common::{
-        gpu_types::gemm::{GemmBPrologueKind, GemmTiling},
-        kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+    backends::{
+        common::{
+            gpu_types::gemm::GemmBPrologueKind,
+            kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+        },
+        metal::{
+            gpu_types::gemm::GemmTiling,
+            kernel::matmul::gemm::{GemmEngine, GemmPlan, policy},
+        },
     },
     data_type::DataType,
 };
@@ -22,7 +27,7 @@ pub struct GemmProblem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
-pub(super) enum GemmPlanError {
+pub enum GemmPlanError {
     #[error("MXU engine is not available for this GEMM")]
     MxuUnavailable,
     #[error("GEMM input layout is unsupported: {0}")]
@@ -63,10 +68,12 @@ impl GemmProblem {
         self,
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
-        self.validate_engine(engine)?;
         if self.shape.b_is_trellis {
-            return Ok(select_trellis_plan(self.shape.m, self.shape.n, self.shape.k));
+            let mut plan = select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
+            plan.engine = engine;
+            return Ok(plan);
         }
+        self.validate_engine(engine)?;
         Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
     }
 
@@ -77,10 +84,8 @@ impl GemmProblem {
         if engine == GemmEngine::Mxu && !self.supports_mxu {
             return Err(GemmPlanError::MxuUnavailable);
         }
-        if (self.shape.is_quant() || self.shape.b_is_trellis)
-            && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some())
-        {
-            return Err(GemmPlanError::UnsupportedLayout("packed weights require transposed contiguous B"));
+        if self.shape.is_quant() && (!self.shape.b_transpose || self.shape.b_leading_dimension.is_some()) {
+            return Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"));
         }
         if self.shape.b_is_trellis && !self.shape.k.is_multiple_of(TRELLIS_K_STEP) {
             return Err(GemmPlanError::UnsupportedLayout("Trellis K must be divisible by 64"));
@@ -117,16 +122,7 @@ impl GemmProblem {
         let Some(step) = outer_block_k(shape, engine, tiling) else {
             return 1;
         };
-        let group_size = shape.b_group_size.unwrap_or(0);
-        let mut align = if engine == GemmEngine::Mxu || !shape.is_quant() {
-            step
-        } else {
-            step.max(group_size)
-        };
-        if shape.b_prologue == GemmBPrologueKind::ScaleZeroPointDequant && shape.b_bits == Some(4) {
-            align = align.max(2_u32.saturating_mul(group_size));
-        }
-        let align = align.max(ACTIVATION_SCALE_GROUP_SIZE).max(group_size);
+        let align = step.max(ACTIVATION_SCALE_GROUP_SIZE) * tiling.simdgroups_k();
         let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
         let mut split_k = (target_tiles / base_tiles).max(1).min((shape.k / align).max(1));
         if !shape.a_full_precision && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
@@ -158,25 +154,27 @@ pub(super) fn select_trellis_plan(
     n: u32,
     k: u32,
 ) -> GemmPlan {
-    let (tiling, target_workgroups) = match policy::mxu_mn_tile(true, m, n) {
-        GemmTiling::Tile16x32x256_Simdgroups1x1 => {
-            (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
-        },
-        GemmTiling::Tile32x64x256_Simdgroups2x2 => {
-            (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
-        },
-        GemmTiling::Tile128x128x256_Simdgroups4x4 => {
-            (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
-        },
-        _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
-    };
+    // The M16 wide finalist favored a 32x64 tile and a 256-workgroup target.
+    let (tiling, target_workgroups) =
+        if m == 16 && n >= 4096 && (2048..=5120).contains(&k) && k.is_multiple_of(TRELLIS_K_STEP) {
+            (GemmTiling::Tile32x64x256_Simdgroups2x2, 256)
+        } else {
+            match policy::mxu_mn_tile(true, m, n) {
+                GemmTiling::Tile16x32x256_Simdgroups1x1 => {
+                    (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
+                },
+                GemmTiling::Tile32x64x256_Simdgroups2x2 => {
+                    (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
+                },
+                GemmTiling::Tile128x128x256_Simdgroups4x4 => {
+                    (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
+                },
+                _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
+            }
+        };
     let output_workgroups = (n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m())).max(1);
     let k_steps = (k / TRELLIS_K_STEP).max(1);
-    let mut split_k = if n.is_multiple_of(4) {
-        (target_workgroups / output_workgroups).clamp(1, k_steps)
-    } else {
-        1
-    };
+    let mut split_k = (target_workgroups / output_workgroups).clamp(1, k_steps);
     while !k_steps.is_multiple_of(split_k) {
         split_k -= 1;
     }
@@ -205,7 +203,7 @@ fn mxu_is_eligible(shape: MatmulShape) -> bool {
     }
     shape.b_transpose
         && shape.b_leading_dimension.is_none()
-        && shape.k.is_multiple_of(select_mxu_quant_tiling(shape).block_k())
+        && shape.k.is_multiple_of(policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n).block_k())
 }
 
 fn select_tiling(
@@ -214,24 +212,23 @@ fn select_tiling(
     apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
-        GemmEngine::Simdgroup if shape.is_quant() => {
-            policy::simdgroup_quant_tile(shape.m, shape.n, shape.b_group_size.unwrap_or(0), apple_gpu_family)
-        },
+        GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m, shape.n, apple_gpu_family),
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
-        GemmEngine::Mxu if !shape.a_full_precision || shape.is_quant() => select_mxu_quant_tiling(shape),
+        GemmEngine::Mxu if !shape.a_full_precision => match policy::mxu_int8_gemm_tile(shape.m, shape.n) {
+            tiling
+                if tiling.simdgroups_k() > 1
+                    && !shape.k.is_multiple_of(tiling.simdgroups_k() * ACTIVATION_SCALE_GROUP_SIZE) =>
+            {
+                GemmTiling::Tile16x32x256_Simdgroups1x1
+            },
+            tiling => tiling,
+        },
+        GemmEngine::Mxu if shape.is_quant() => policy::mxu_mn_tile(false, shape.m, shape.n),
         GemmEngine::Mxu if shape.b_transpose => policy::mxu_fp_tile(shape.m, shape.n, shape.k),
         GemmEngine::Mxu => policy::mxu_mn_tile(false, shape.m, shape.n),
     }
 }
 
-fn select_mxu_quant_tiling(shape: MatmulShape) -> GemmTiling {
-    let tiling = policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n);
-    if tiling.fits_quant_group_size(shape.b_group_size.unwrap_or(0)) {
-        tiling
-    } else {
-        policy::MXU_DEFAULT_TILE
-    }
-}
 #[cfg(test)]
 #[path = "../../../../../../unit/backends/metal/kernel/matmul/gemm/selection_test.rs"]
 mod tests;

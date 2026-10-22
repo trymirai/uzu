@@ -2,11 +2,11 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::array::ArrayElement;
+use crate::{backends::common::kernel::kv_layout::Int8KVLayout, data_type::DataTypeRepr};
 
 #[kernel(KVCacheUpdate)]
 #[variants(T, f32, bf16)]
-pub fn kv_cache_update<T: ArrayElement + Float>(
+pub fn kv_cache_update<T: DataTypeRepr + Float>(
     in_place_keys: *mut T,
     in_place_values: *mut T,
     copies: &[crate::backends::common::gpu_types::kv_cache_update::Copy],
@@ -22,6 +22,40 @@ pub fn kv_cache_update<T: ArrayElement + Float>(
             unsafe {
                 *in_place_keys.add(dest_idx) = *in_place_keys.add(source_idx);
                 *in_place_values.add(dest_idx) = *in_place_values.add(source_idx);
+            }
+        }
+    }
+}
+
+#[kernel(KVCacheUpdateInt8)]
+pub fn kv_cache_update_int8(
+    in_place_k_codes: *mut i8,
+    in_place_v_codes: *mut u8,
+    in_place_k_scales: *mut bf16,
+    in_place_v_scales: *mut bf16,
+    copies: &[crate::backends::common::gpu_types::kv_cache_update::Copy],
+    copy_count: u32,
+    #[specialize] head_dim: u32,
+    #[specialize] num_kv_heads: u32,
+) {
+    let layout = Int8KVLayout::new(head_dim, num_kv_heads);
+    for copy in copies.iter().take(copy_count as usize) {
+        for head in 0..num_kv_heads {
+            for channel in 0..head_dim {
+                let source_k = layout.k_code_index(copy.source, head, channel);
+                let destination_k = layout.k_code_index(copy.destination, head, channel);
+                let source_v = layout.v_code_index(copy.source, head, channel);
+                let destination_v = layout.v_code_index(copy.destination, head, channel);
+                unsafe {
+                    *in_place_k_codes.add(destination_k) = *in_place_k_codes.add(source_k);
+                    *in_place_v_codes.add(destination_v) = *in_place_v_codes.add(source_v);
+                }
+            }
+            let source = layout.scale_index(copy.source, head);
+            let destination = layout.scale_index(copy.destination, head);
+            unsafe {
+                *in_place_k_scales.add(destination) = *in_place_k_scales.add(source);
+                *in_place_v_scales.add(destination) = *in_place_v_scales.add(source);
             }
         }
     }

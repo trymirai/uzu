@@ -1,13 +1,15 @@
 use std::{
-    sync::{Arc, mpsc},
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+use futures::channel::oneshot;
 
 use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-            CommandBufferExecutable, CommandBufferPending, allocator::bump::BumpAllocator,
+            CommandBufferExecutable, CommandBufferPending, TimestampSpan, allocator::bump::BumpAllocator,
         },
         cpu::{
             Cpu,
@@ -110,13 +112,22 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         });
     }
 
-    fn push_debug_group(
+    fn debug_group(
+        &mut self,
+        _name: &str,
+    ) -> <Cpu as Backend>::DebugGroupSpan<'_> {
+        self
+    }
+
+    fn debug_point(
         &mut self,
         _name: &str,
     ) {
     }
 
-    fn pop_debug_group(&mut self) {}
+    fn with_timestamps(self) -> Self {
+        panic!("the CPU backend does not record timestamps")
+    }
 
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         assert!(self.constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
@@ -140,7 +151,7 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
     type CommandBuffer = CpuCommandBuffer;
 
     fn submit(self) -> CpuCommandBufferPending {
-        let (return_sender, return_receiver) = mpsc::channel();
+        let (return_sender, return_receiver) = oneshot::channel();
         let allocation_pool = self.allocation_pool.clone();
 
         self.context
@@ -172,15 +183,15 @@ impl CommandBufferExecutable for CpuCommandBufferExecutable {
 }
 
 pub struct CpuCommandBufferPending {
-    return_receiver: mpsc::Receiver<CpuCommandBufferCompleted>,
+    return_receiver: oneshot::Receiver<CpuCommandBufferCompleted>,
     _allocation_pool: Arc<<Cpu as Backend>::AllocationPool>,
 }
 
 impl CommandBufferPending for CpuCommandBufferPending {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn wait_until_completed(self) -> Result<CpuCommandBufferCompleted, CpuError> {
-        Ok(self.return_receiver.recv()?)
+    async fn wait_until_completed(self) -> Result<CpuCommandBufferCompleted, CpuError> {
+        self.return_receiver.await.map_err(|_| CpuError::CommandBufferExecutionFailed)
     }
 }
 
@@ -194,5 +205,9 @@ impl CommandBufferCompleted for CpuCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
+    }
+
+    fn timestamps(&self) -> &[TimestampSpan] {
+        &[]
     }
 }

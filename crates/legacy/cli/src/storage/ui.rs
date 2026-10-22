@@ -66,6 +66,7 @@ fn render_section(
     let items: Vec<ListItem> = section_models
         .iter()
         .map(|(id, model_with_state)| match &model_with_state.state.phase {
+            DownloadPhase::Initializing {} => ListItem::new(format!("{} (Checking…)", id)),
             DownloadPhase::Downloaded {} => ListItem::new(format!("✓ {}", id)),
             DownloadPhase::NotDownloaded {} => {
                 let size_mb = model_with_state.state.total_bytes as f64 / 1_000_000.0;
@@ -183,6 +184,7 @@ fn render_downloading_model(
         progress * 100.0
     );
     let (info, gauge_color, selected_border) = match &state.phase {
+        DownloadPhase::Initializing {} => (" [CHECKING]".to_string(), Color::Gray, Color::White),
         DownloadPhase::Downloading {} => (format!(" {bytes_info}"), Color::Cyan, Color::Blue),
         DownloadPhase::Paused {} => (format!(" [PAUSED] {bytes_info}"), Color::Yellow, Color::Yellow),
         DownloadPhase::Locked {

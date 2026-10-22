@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use regex::Regex;
-use toml_edit::{DocumentMut, value};
 
 use crate::{
     configs::{PlatformsConfig, WorkspaceManifest},
@@ -9,7 +8,6 @@ use crate::{
 
 pub enum MiraiGuiSyncTask {
     PackageJson,
-    CargoToml,
     TauriConf,
 }
 
@@ -23,11 +21,6 @@ impl SyncTask for MiraiGuiSyncTask {
         let version = &workspace.workspace.package.version;
         match self {
             Self::PackageJson => replace_string_field(input, "version", version),
-            Self::CargoToml => {
-                let mut document: DocumentMut = input.parse()?;
-                document["package"]["version"] = value(version);
-                Ok(document.to_string())
-            },
             Self::TauriConf => {
                 let target = platforms
                     .envs

@@ -24,7 +24,7 @@ use crate::{
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
     engine::Engine,
-    parameters::{ParameterLoader, ParameterLoaderError},
+    safetensors::{ParameterLoader, ParameterLoaderError},
 };
 
 pub struct ClassifierModel<B: Backend> {
@@ -66,10 +66,10 @@ impl<B: Backend> Engine<B> {
         let weight_loader = ParameterLoader::new(&weights_file, context.as_ref())?;
 
         let classifier = ClassifierEncodable::new(
-            context.as_ref(),
+            data_type,
             &config.classifier_config,
             &weight_loader.tree().subtree("classifier"),
-            data_type,
+            context.as_ref(),
         )?;
 
         let output_labels = if let Some(output_labels) = config.classifier_config.output_labels {
@@ -79,7 +79,7 @@ impl<B: Backend> Engine<B> {
             (0..config.classifier_config.num_labels).map(|index| format!("class_{index}")).collect()
         };
 
-        weight_loader.tree().assert_all_tensors_validated()?;
+        weight_loader.assert_all_tensors_read()?;
 
         let tokenizer = Arc::new(Tokenizer::from_file(model_path.join("tokenizer.json"))?);
         let token_codec_config = config.token_codec_config;
@@ -129,7 +129,7 @@ impl<B: Backend> ClassifierModel<B> {
         }
     }
 
-    pub fn classify(
+    pub async fn classify(
         &self,
         input: &[u64],
     ) -> Result<ClassifierOutput, ClassifierModelClassifyError<B>> {
@@ -164,7 +164,12 @@ impl<B: Backend> ClassifierModel<B> {
         drop(logits);
         drop(token_ids);
 
-        command_buffer.end_encoding().submit().wait_until_completed().map_err(ClassifierModelClassifyError::Backend)?;
+        command_buffer
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .await
+            .map_err(ClassifierModelClassifyError::Backend)?;
 
         assert!(self.data_type == DataType::BF16);
 

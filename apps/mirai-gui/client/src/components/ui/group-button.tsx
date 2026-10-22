@@ -19,7 +19,7 @@ const Base: React.FC<GroupButtonProps> = ({ className, children }) => {
   return (
     <div
       className={twMerge(
-        "h-8 flex items-center rounded-lg overflow-hidden border border-cell-border bg-transparent",
+        "h-8 flex items-center rounded-lg overflow-clip border border-cell-border bg-transparent",
         className,
       )}
     >

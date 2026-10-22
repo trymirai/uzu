@@ -9,7 +9,7 @@ pub struct ChatReplyConfig {
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
     /// Maximum number of automatic tool-call turns per reply.
-    /// `None` falls back to the session default.
+    /// `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
     pub tool_turn_limit: Option<u32>,
 }
 

@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
+import { resolveModelTools, useModelParamsStore } from "@/stores/use-model-params-store";
+import { useModelsStore } from "@/stores/use-models-store";
+import { getPlatform } from "@/platform/platform-singleton";
+import type { LlmRunResult } from "@/types/llm-stream";
 import { Roles } from "../types";
 import { attachmentStorage } from "../services/attachment-storage";
 import { getChatRunBlockMessage, prepareChatModelForRun } from "../services/chat-run-preflight";
@@ -13,7 +17,7 @@ type UseRegenerateMessageParams = {
   chatId: string;
   globalInstructions: string | null | undefined;
   toast: ToastApi;
-  startStream: (options: StartStreamOptions) => Promise<void | null>;
+  startStream: (options: StartStreamOptions) => Promise<LlmRunResult | void | null>;
 };
 
 export const useRegenerateMessage = ({
@@ -55,64 +59,83 @@ export const useRegenerateMessage = ({
         globalInstructions,
       });
 
-      const accepted = await useChatSessionStore.getState().withOperation("running", async () => {
-        const newVersions = projectAssistantVersion(targetMessage, modelId, modelName, userMessage.attachmentIds);
-        const regeneratePatch = {
-          text: "",
-          modelId,
-          modelName,
-          versions: newVersions,
-          currentVersionIndex: newVersions.length - 1,
-        };
-        state.updateMessage(messageId, regeneratePatch);
-        await state.persistMessagePatch(chatId, messageId, regeneratePatch);
-        const { setLoadingMessage } = useChatSessionStore.getState();
-        setLoadingMessage(chatId, messageId);
+      const accepted = await useChatSessionStore.getState().withOperation(
+        "running",
+        async (signal) => {
+          const canceled = () => {
+            if (!signal.aborted) return false;
+            useChatSessionStore.getState().setLoadingMessage(chatId, null);
+            return true;
+          };
+          const newVersions = projectAssistantVersion(targetMessage, modelId, modelName, userMessage.attachmentIds);
+          const regeneratePatch = {
+            text: "",
+            modelId,
+            modelName,
+            versions: newVersions,
+            currentVersionIndex: newVersions.length - 1,
+          };
+          state.updateMessage(messageId, regeneratePatch);
+          await state.persistMessagePatch(chatId, messageId, regeneratePatch);
+          if (canceled()) return;
+          const { setLoadingMessage } = useChatSessionStore.getState();
+          setLoadingMessage(chatId, messageId);
 
-        const updateText = (id: string, updatedText: string) => {
-          const current = useChatStore.getState().messages.find((m) => m.id === id);
-          useChatStore.getState().updateMessage(id, {
-            text: updatedText,
-            versions: patchActiveVersion(current?.versions, {
+          const updateText = (id: string, updatedText: string) => {
+            const current = useChatStore.getState().messages.find((m) => m.id === id);
+            useChatStore.getState().updateMessage(id, {
               text: updatedText,
-              attachmentIds: userMessage.attachmentIds,
-            }),
-          });
-        };
+              versions: patchActiveVersion(current?.versions, {
+                text: updatedText,
+                attachmentIds: userMessage.attachmentIds,
+              }),
+            });
+          };
 
-        const failVersion = (errorText: string) => {
-          const current = useChatStore.getState().messages.find((m) => m.id === messageId);
-          const nextVersions = patchActiveVersion(current?.versions, { text: "", error: errorText });
-          useChatStore
-            .getState()
-            .updateMessage(
-              messageId,
-              nextVersions.length > 0 ? { text: "", versions: nextVersions } : { text: "", error: errorText },
+          const failVersion = (errorText: string) => {
+            if (canceled()) return;
+            const current = useChatStore.getState().messages.find((m) => m.id === messageId);
+            const nextVersions = patchActiveVersion(current?.versions, { text: "", error: errorText });
+            useChatStore
+              .getState()
+              .updateMessage(
+                messageId,
+                nextVersions.length > 0 ? { text: "", versions: nextVersions } : { text: "", error: errorText },
+              );
+            setLoadingMessage(chatId, null);
+          };
+
+          try {
+            const tools = resolveModelTools(
+              useModelParamsStore.getState().getParams(modelId),
+              await getPlatform().settings.getModelChatNamingEnabled(),
+              useModelsStore.getState().models.find((model) => model.repoId === modelId)?.paramSize,
             );
-          setLoadingMessage(chatId, null);
-        };
-
-        try {
-          await startStream({
-            repoId: modelId,
-            messages: messagesForRun,
-            messageId,
-            chatId,
-            onDone: () => setLoadingMessage(chatId, null),
-            updateText,
-            onError: (_id, errorText) => failVersion(errorText),
-            onFinishReason: (reason) => {
-              if (reason === "ContextLimitReached") {
-                toast.warning("Conversation reached the model's context limit; reply may be truncated");
-              } else if (reason === "Length") {
-                toast.warning("Reply hit the output length limit and may be truncated");
-              }
-            },
-          });
-        } catch (e) {
-          failVersion(`Error: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      });
+            if (canceled()) return;
+            await startStream({
+              signal,
+              repoId: modelId,
+              messages: messagesForRun,
+              messageId,
+              chatId,
+              ...tools,
+              onDone: () => setLoadingMessage(chatId, null),
+              updateText,
+              onError: (_id, errorText) => failVersion(errorText),
+              onFinishReason: (reason) => {
+                if (reason === "ContextLimitReached") {
+                  toast.warning("Conversation reached the model's context limit; reply may be truncated");
+                } else if (reason === "Length") {
+                  toast.warning("Reply hit the output length limit and may be truncated");
+                }
+              },
+            });
+          } catch (e) {
+            failVersion(`Error: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        },
+        chatId,
+      );
       if (accepted === null) toast.error("Model is not ready yet, please wait");
     },
     [chatId, globalInstructions, toast, startStream],

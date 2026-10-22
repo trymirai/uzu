@@ -1,8 +1,16 @@
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
 use crate::{
-    array::ArrayElement,
+    backends::{
+        common::kernel::{DeltaNetConvPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel},
+        metal::Metal,
+    },
+    tests::helpers::buffer_prefix_to_vec,
+};
+use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -10,16 +18,8 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
-};
-#[cfg(backend = "metal")]
-use crate::{
-    backends::{
-        common::kernel::{Conv1dPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel},
-        metal::Metal,
-    },
-    tests::helpers::buffer_prefix_to_vec,
 };
 
 #[cfg(backend = "metal")]
@@ -32,7 +32,7 @@ fn run_conv_update<B: Backend>(
     conv_dim: u32,
     state_stride: u32,
 ) -> (Vec<f32>, Vec<f32>) {
-    let context = B::Context::new().expect("Failed to create context");
+    let context = block_on(B::Context::new()).expect("Failed to create context");
 
     let w_array = create_buffer_with_data::<B, f32>(&context, w);
     let b_array = create_buffer_with_data::<B, f32>(&context, b);
@@ -53,14 +53,14 @@ fn run_conv_update<B: Backend>(
         state_stride,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     let out = buffer_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
     let new_state = buffer_to_vec::<B, f32>(&state_buffer);
     (out, new_state)
 }
 
-fn run_delta_net_update<B: Backend, T: ArrayElement>(
+fn run_delta_net_update<B: Backend, T: DataTypeRepr>(
     in_proj: &[T],
     a_log: &[f32],
     dt_bias: &[f32],
@@ -73,7 +73,7 @@ fn run_delta_net_update<B: Backend, T: ArrayElement>(
     key_dim: u32,
     value_dim: u32,
 ) -> (Vec<f32>, Vec<f32>) {
-    let context = B::Context::new().expect("Failed to create context");
+    let context = block_on(B::Context::new()).expect("Failed to create context");
 
     let in_proj_array = create_buffer_with_data::<B, T>(&context, in_proj);
     let a_log_array = create_buffer_with_data::<B, f32>(&context, a_log);
@@ -101,14 +101,14 @@ fn run_delta_net_update<B: Backend, T: ArrayElement>(
         1e-6f32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     let out = buffer_to_vec::<B, T>(&out).into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
     let new_state = buffer_to_vec::<B, f32>(&state_buffer);
     (out, new_state)
 }
 
-fn to_activation<T: ArrayElement>(values: &[f32]) -> Vec<T> {
+fn to_activation<T: DataTypeRepr>(values: &[f32]) -> Vec<T> {
     values.iter().map(|&value| <T as num_traits::NumCast>::from(value).expect("input to activation dtype")).collect()
 }
 
@@ -149,16 +149,17 @@ fn test_delta_net_conv_update_small() {
     assert_close(&cpu_state, &gpu_state, 1e-5, 1e-4, "ConvUpdate state");
 }
 
-// DeltaNetConvScan
+// DeltaNetConvPack + DeltaNetConvScan
 
 #[cfg(backend = "metal")]
-#[uzu_test]
-fn test_delta_net_conv_scan() {
+fn test_delta_net_conv_scan_impl<B: Backend>(
+    suffix_len: usize,
+    tile_tokens: usize,
+) {
     let conv_dim = 32;
     let kernel_size: usize = 4;
     let tap_count = kernel_size - 1;
-    let suffix_len: usize = 16;
-    let extra_dim = 10;
+    let extra_dim = 16;
     let total_proj_dim = conv_dim + extra_dim;
 
     let w: Vec<f32> = (0..conv_dim * kernel_size).map(|i| ((i % 11) as f32) * 0.05 - 0.2).collect();
@@ -187,50 +188,51 @@ fn test_delta_net_conv_scan() {
     }
     let ref_outputs: Vec<f32> = ref_outputs.iter().copied().map(|value| f32::from(bf16::from_f32(value))).collect();
 
-    // Test: Conv1dPack + DeltaNetConvScan on Metal
-    let context = <Metal as Backend>::Context::new().expect("context");
-    let state_array = create_buffer_with_data::<Metal, f32>(&context, &init_state);
-    let mut in_proj_array = create_buffer_with_data::<Metal, bf16>(&context, &in_proj);
-    let w_array = create_buffer_with_data::<Metal, f32>(&context, &w);
-    let b_array = create_buffer_with_data::<Metal, f32>(&context, &b);
+    // Test: DeltaNetConvPack + DeltaNetConvScan on backend B
+    let context = block_on(B::Context::new()).expect("context");
+    let mut state_array = create_buffer_with_data::<B, f32>(&context, &init_state);
+    let mut in_proj_array = create_buffer_with_data::<B, bf16>(&context, &in_proj);
+    let w_array = create_buffer_with_data::<B, f32>(&context, &w);
+    let b_array = create_buffer_with_data::<B, f32>(&context, &b);
 
-    let padded_len = (tap_count + suffix_len) * total_proj_dim;
-    let mut padded_array = create_buffer::<Metal, f32>(&context, padded_len);
-    let mut state_out_array = create_buffer::<Metal, f32>(&context, conv_dim * tap_count);
+    let num_tiles = suffix_len.div_ceil(tile_tokens);
+    let mut packed_array = create_buffer::<B, f32>(&context, num_tiles * tap_count * conv_dim);
 
     let pack_kernel =
-        <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, DataType::BF16)
+        <<B as Backend>::Kernels as Kernels>::DeltaNetConvPackKernel::new(&context, DataType::BF16, kernel_size as u32)
             .expect("pack");
-    let scan_kernel =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, true)
-            .expect("scan");
+    let scan_kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(
+        &context,
+        DataType::BF16,
+        kernel_size as u32,
+        true,
+    )
+    .expect("scan");
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     pack_kernel.encode(
         &state_array,
         &in_proj_array,
-        &mut padded_array,
-        tap_count as u32,
-        total_proj_dim as u32,
+        &mut packed_array,
         suffix_len as u32,
+        tile_tokens as u32,
+        total_proj_dim as u32,
         conv_dim as u32,
         &mut command_buffer,
     );
     scan_kernel.encode(
-        &padded_array,
+        &packed_array,
         &w_array,
         Some(&b_array),
         &mut in_proj_array,
-        &mut state_out_array,
+        &mut state_array,
         suffix_len as u32,
-        kernel_size as u32,
-        total_proj_dim as u32,
-        tap_count as u32,
+        tile_tokens as u32,
         conv_dim as u32,
         total_proj_dim as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     let in_proj_result: Vec<bf16> = buffer_to_vec(&in_proj_array);
     let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
@@ -238,17 +240,31 @@ fn test_delta_net_conv_scan() {
     for t in 0..suffix_len {
         scan_outputs[t * conv_dim..(t + 1) * conv_dim]
             .copy_from_slice(&in_proj_result[t * total_proj_dim..t * total_proj_dim + conv_dim]);
+        // channels past conv_dim are untouched
+        assert_eq!(
+            in_proj_result[t * total_proj_dim + conv_dim..(t + 1) * total_proj_dim],
+            in_proj_f32[t * total_proj_dim + conv_dim..(t + 1) * total_proj_dim],
+        );
     }
-    let scan_state: Vec<f32> = buffer_to_vec(&state_out_array);
+    let scan_state: Vec<f32> = buffer_to_vec(&state_array);
 
     assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
     assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
 }
 
+#[cfg(backend = "metal")]
+#[uzu_test]
+fn test_delta_net_conv_scan() {
+    // single partial tile, shorter than the conv window, exact tiles, several tiles with a partial last one
+    for (suffix_len, tile_tokens) in [(2, 32), (96, 32), (100, 32), (70, 8)] {
+        for_each_backend!(|B| test_delta_net_conv_scan_impl::<B>(suffix_len, tile_tokens));
+    }
+}
+
 // DeltaNetUpdate (decode)
 
 // The reference is the CPU f32 kernel on the same rounded inputs; a_log, dt_bias, norm weight and state stay f32
-fn test_delta_net_update_impl<T: ArrayElement>(
+fn test_delta_net_update_impl<T: DataTypeRepr>(
     num_v_heads: usize,
     num_k_heads: usize,
     head_k_dim: usize,
@@ -318,7 +334,7 @@ fn test_delta_net_update_qwen35_shapes_bf16() {
 
 // DeltaNetPrefill + NormGate
 
-fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
+fn run_prefill_with_norm_gate_typed<B: Backend, T: DataTypeRepr>(
     in_proj: &[T],
     a_log: &[f32],
     dt_bias: &[f32],
@@ -336,7 +352,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
     let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
     let num_dv_groups = head_v_dim.div_ceil(16) as u32;
 
-    let context = <B as Backend>::Context::new().expect("context");
+    let context = block_on(<B as Backend>::Context::new()).expect("context");
     let in_proj_array = create_buffer_with_data::<B, T>(&context, in_proj);
     let a_log_array = create_buffer_with_data::<B, f32>(&context, a_log);
     let dt_bias_array = create_buffer_with_data::<B, f32>(&context, dt_bias);
@@ -410,7 +426,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
         suffix_len as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     let out: Vec<T> = buffer_to_vec(&out_array);
     let out = out.into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
@@ -418,7 +434,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: ArrayElement>(
     (out, state)
 }
 
-fn test_prefill_norm_gate_impl<T: ArrayElement>(
+fn test_prefill_norm_gate_impl<T: DataTypeRepr>(
     num_v_heads: usize,
     num_k_heads: usize,
     head_k_dim: usize,
@@ -522,7 +538,7 @@ fn test_delta_net_prefill_prep() {
     let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.3 + (i as f32) * 0.02).collect();
 
     // CPU reference via Kernels trait
-    let cpu_ctx = <Cpu as Backend>::Context::new().expect("cpu context");
+    let cpu_ctx = block_on(<Cpu as Backend>::Context::new()).expect("cpu context");
     let cpu_in_proj = create_buffer_with_data::<Cpu, bf16>(&cpu_ctx, &in_proj);
     let cpu_a_log = create_buffer_with_data::<Cpu, f32>(&cpu_ctx, &a_log);
     let cpu_dt_bias = create_buffer_with_data::<Cpu, f32>(&cpu_ctx, &dt_bias);
@@ -558,7 +574,7 @@ fn test_delta_net_prefill_prep() {
         suffix_len as u32,
         &mut cpu_enc,
     );
-    cpu_enc.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(cpu_enc.end_encoding().submit().wait_until_completed()).unwrap();
 
     let ref_q = buffer_to_vec::<Cpu, bf16>(&cpu_q).into_iter().map(f32::from).collect::<Vec<_>>();
     let ref_k = buffer_to_vec::<Cpu, bf16>(&cpu_k).into_iter().map(f32::from).collect::<Vec<_>>();
@@ -572,7 +588,7 @@ fn test_delta_net_prefill_prep() {
     assert_eq!(ref_v, expected_v);
 
     // Metal
-    let context = <Metal as Backend>::Context::new().expect("context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("context");
     let in_proj_array = create_buffer_with_data::<Metal, bf16>(&context, &in_proj);
     let a_log_array = create_buffer_with_data::<Metal, f32>(&context, &a_log);
     let dt_bias_array = create_buffer_with_data::<Metal, f32>(&context, &dt_bias);
@@ -610,7 +626,7 @@ fn test_delta_net_prefill_prep() {
         suffix_len as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     let gpu_q = buffer_to_vec::<Metal, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
     let gpu_k = buffer_to_vec::<Metal, bf16>(&k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
@@ -648,7 +664,7 @@ fn bench_delta_net_prefill() {
     let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.3 + (i as f32) * 0.02).collect();
     let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
 
-    let context = <Metal as Backend>::Context::new().expect("context");
+    let context = block_on(<Metal as Backend>::Context::new()).expect("context");
     let in_proj_array = create_buffer_with_data::<Metal, f32>(&context, &in_proj);
     let a_log_array = create_buffer_with_data::<Metal, f32>(&context, &a_log);
     let dt_bias_array = create_buffer_with_data::<Metal, f32>(&context, &dt_bias);
@@ -704,7 +720,7 @@ fn bench_delta_net_prefill() {
             suffix_len as u32,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     });
     prep_result.print();
 
@@ -760,7 +776,7 @@ fn bench_delta_net_prefill() {
             suffix_len as u32,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     });
     prefill_result.print();
 }

@@ -1,28 +1,28 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::ActivationType,
+            gpu_types::activation_type::ActivationType,
             kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout},
         },
         cpu::Cpu,
     },
     config::clipping::ClippingBounds,
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
     },
 };
 
-struct InterleavedInput<T: ArrayElement + Float> {
+struct InterleavedInput<T: DataTypeRepr + Float> {
     fused_up: Box<[T]>,
     hadamard_factors: Box<[i32]>,
     gated_dim: u32,
@@ -30,7 +30,7 @@ struct InterleavedInput<T: ArrayElement + Float> {
     act_type: ActivationType,
 }
 
-fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> InterleavedInput<T> {
+fn interleaved_input<T: DataTypeRepr + Float>(act_type: ActivationType) -> InterleavedInput<T> {
     let gated_dim = 128u32;
     let batch_dim = 4u32;
     let fused_length = (batch_dim * 2 * gated_dim) as usize;
@@ -47,11 +47,11 @@ fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> Inter
     }
 }
 
-fn run_interleaved<T: ArrayElement + Float, B: Backend>(
+fn run_interleaved<T: DataTypeRepr + Float, B: Backend>(
     input: &InterleavedInput<T>,
     use_hadamard: bool,
 ) -> Vec<T> {
-    let context = B::Context::new().expect("create context");
+    let context = block_on(B::Context::new()).expect("create context");
     let kernel =
         GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard, GatedActMulSettings::default())
             .expect("create GatedActMul");
@@ -75,12 +75,12 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(
         input.act_type,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, T>(&output)
 }
 
-fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
+fn interleaved_test<T: DataTypeRepr + Float + Debug + Display>(act_type: ActivationType) {
     let eps = if matches!(T::data_type(), DataType::BF16) {
         0.02f32
     } else {
@@ -117,7 +117,7 @@ fn test_gated_act_mul_interleaved_silu_bf16() {
 }
 
 fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (Vec<i8>, Vec<f32>) {
-    let context = B::Context::new().expect("create context");
+    let context = block_on(B::Context::new()).expect("create context");
     let act_operand = create_buffer_with_data::<B, bf16>(&context, &input.fused_up);
     let factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
     let mut values = create_buffer::<B, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
@@ -142,7 +142,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
         input.act_type,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     (buffer_to_vec(&values), buffer_to_vec(&scales))
 }
 
@@ -184,7 +184,7 @@ fn test_gated_act_mul_interleaved_gelu_exact_f32() {
     interleaved_test::<f32>(ActivationType::GELUExact);
 }
 
-struct SeparateInput<T: ArrayElement + Float> {
+struct SeparateInput<T: DataTypeRepr + Float> {
     gate_out: Box<[T]>,
     per_layer_input: Box<[T]>,
     gated_dim: u32,
@@ -194,7 +194,7 @@ struct SeparateInput<T: ArrayElement + Float> {
     act_type: ActivationType,
 }
 
-fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
+fn separate_input<T: DataTypeRepr + Float>() -> (SeparateInput<T>, Vec<T>) {
     let gate_out = [1.0_f32, 2.0, 3.0, 4.0].into_iter().map(|value| T::from(value).unwrap()).collect::<Vec<_>>();
     let per_layer_input = [0.0_f32, 0.0, 10.0, 20.0, 30.0, 40.0, 0.0, 0.0, 50.0, 60.0, 70.0, 80.0]
         .into_iter()
@@ -217,8 +217,8 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
     )
 }
 
-fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
-    let context = B::Context::new().expect("create context");
+fn run_separate<T: DataTypeRepr + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
+    let context = block_on(B::Context::new()).expect("create context");
     let kernel =
         GatedActMul::<B>::full_precision(&context, T::data_type(), false, false, GatedActMulSettings::default())
             .expect("create GatedActMul");
@@ -240,12 +240,12 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
         input.act_type,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, T>(&output)
 }
 
-fn separate_test<T: ArrayElement + Float + Debug>() {
+fn separate_test<T: DataTypeRepr + Float + Debug>() {
     let (input, expected) = separate_input::<T>();
     for_each_backend!(|B| {
         let output = run_separate::<T, B>(&input);
@@ -263,7 +263,7 @@ fn test_gated_act_mul_separate_bf16() {
     separate_test::<bf16>();
 }
 
-fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
+fn transformed_interleaved_test<T: DataTypeRepr + Float + Debug + Display>(
     gate_clipping: ClippingBounds,
     value_clipping: ClippingBounds,
 ) {
@@ -297,7 +297,7 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().expect("create context");
+        let context = block_on(<B as Backend>::Context::new()).expect("create context");
         let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false, settings)
             .expect("create transformed GatedActMul");
         let fused_up = create_buffer_with_data::<B, T>(&context, &fused_up);
@@ -315,7 +315,7 @@ fn transformed_interleaved_test<T: ArrayElement + Float + Debug + Display>(
             ActivationType::SILU,
             &mut command_buffer,
         );
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
         let output = buffer_to_vec::<B, T>(&output);
         assert_eq_float(

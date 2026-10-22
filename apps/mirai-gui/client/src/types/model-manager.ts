@@ -1,6 +1,7 @@
 import type { ReasoningSupport } from "./sampling";
 
 export const modelDownloadPhases = {
+  initializing: "Initializing",
   notDownloaded: "NotDownloaded",
   downloading: "Downloading",
   paused: "Paused",
@@ -32,7 +33,14 @@ export type EngineModel = {
   familyName?: string;
   paramSize?: number;
   reasoning: ReasoningSupport;
+  supportsTools: boolean;
   quantization?: string | null;
   quantizationBits?: number;
   state: ModelDownloadState;
+};
+
+export type ModelCatalog = {
+  models: EngineModel[];
+  complete: boolean;
+  refreshing: boolean;
 };

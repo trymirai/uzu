@@ -10,6 +10,6 @@ export const useSaveFailureToast = (): void => {
   useEffect(() => {
     if (saveFailureCount === seenRef.current) return;
     seenRef.current = saveFailureCount;
-    toast.error("Failed to save the message. It may be missing after a restart.", { id: "chat-save-failed" });
+    toast.error("Failed to save chat changes. They may be missing after a restart.", { id: "chat-save-failed" });
   }, [saveFailureCount, toast]);
 };

@@ -1,19 +1,20 @@
 use std::fmt::Debug;
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         kernel::TensorAddBiasKernel,
     },
+    data_type::DataTypeRepr,
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     input: Box<[T]>,
     bias: Box<[T]>,
     output: Box<[T]>,
@@ -21,7 +22,7 @@ struct Input<T: ArrayElement + Float> {
     length: u32,
 }
 
-fn get_test_data<T: ArrayElement + Float>(in_place: bool) -> (Input<T>, Vec<T>) {
+fn get_test_data<T: DataTypeRepr + Float>(in_place: bool) -> (Input<T>, Vec<T>) {
     let length = 1025usize;
     let num_cols = 129usize;
 
@@ -55,11 +56,11 @@ fn get_test_data<T: ArrayElement + Float>(in_place: bool) -> (Input<T>, Vec<T>) 
     (input, expected)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(
+fn get_output<T: DataTypeRepr + Float, B: Backend>(
     input: &Input<T>,
     in_place: bool,
 ) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
         &context,
@@ -86,12 +87,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         input.length,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec::<B, T>(&output_buffer)
 }
 
-fn test<T: ArrayElement + Float + Debug>(in_place: bool) {
+fn test<T: DataTypeRepr + Float + Debug>(in_place: bool) {
     let (input, expected) = get_test_data::<T>(in_place);
     for_each_backend!(|B| {
         let output = get_output::<T, B>(&input, in_place);

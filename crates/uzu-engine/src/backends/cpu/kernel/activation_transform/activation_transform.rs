@@ -4,11 +4,11 @@ use uzu_engine_macros::kernel;
 
 use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{
-    array::ArrayElement,
     backends::common::{
-        gpu_types::{ActivationTransformOp, HADAMARD_TRANSFORM_BLOCK_SIZE},
+        gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::matmul::Int8CodeLayout,
     },
+    data_type::DataTypeRepr,
 };
 
 pub fn quantize_transformed_row(
@@ -48,7 +48,7 @@ pub fn quantize_transformed_row(
 #[kernel(ActivationTransform)]
 #[variants(T, f32, bf16)]
 #[variants(BiasT, f32, bf16)]
-pub fn activation_transform<T: ArrayElement + Float, BiasT: ArrayElement + Float>(
+pub fn activation_transform<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float>(
     #[optional(!in_place)] input: Option<*const T>,
     #[optional(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)] fp_out: Option<
         *mut T,

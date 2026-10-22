@@ -71,17 +71,6 @@ struct SimdgroupFragmentOps {
       }
     }
   }
-
-  template <bool transpose_a, bool transpose_b, class OutputFragment, class LeftFragment, class RightFragment>
-  METAL_FUNC static void fragment_mm(
-      thread OutputFragment& output,
-      thread LeftFragment& left,
-      thread RightFragment& right
-  ) {
-    // simdgroup_multiply is slower here.
-    output.clear();
-    fragment_mma<transpose_a, transpose_b>(output, left, right);
-  }
 };
 
 template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, int STRIDE_X, int STRIDE_Y, typename FragT>

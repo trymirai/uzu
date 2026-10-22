@@ -8,11 +8,11 @@ WATCHOS_DEPLOYMENT_TARGET = "26.4"
 [tools]
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
 # See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
-swift = { provider = "cargo", version = "0.11.0" }
-zigbuild = { provider = "cargo", version = "0.22.3" }
-xwin = { provider = "cargo", version = "0.22.0" }
-ziglang = { provider = "uv", version = "0.16.0" }
-maturin = { provider = "uv", version = "1.13.1" }
+swift = { provider = "cargo", version = "0.11.1" }
+zigbuild = { provider = "cargo", version = "0.23.4" }
+xwin = { provider = "cargo", version = "0.23.1" }
+ziglang = { provider = "uv", version = "0.17.0" }
+maturin = { provider = "uv", version = "1.15.0" }
 
 [targets."aarch64-apple-darwin"]
 backend = "metal"

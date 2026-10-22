@@ -112,7 +112,6 @@ async-openai.workspace = true
 fancy-regex.workspace = true
 confy.workspace = true
 keyring-core.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true

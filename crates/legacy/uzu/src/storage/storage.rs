@@ -1,31 +1,30 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use download_manager::{Checksum, DestinationLock, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
-use futures_util::future::join_all;
+use download_manager::{DestinationLock, DownloadManager, DownloadState, DownloadTask, DownloadTaskRequest};
 use kiban::{fs, rt::RuntimeHandle};
 use shoji::types::{
-    basic::{File, HashMethod},
+    basic::File,
     model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
 };
 use tokio::sync::{
     Mutex as TokioMutex,
     broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
 };
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     helpers::same_origin,
-    storage::{Config, StorageError, model_tasks::ModelTasks},
+    storage::{
+        Config, StorageError,
+        model_tasks::{ModelTask, ModelTasks},
+    },
 };
 
 pub struct Storage {
     config: Config,
-    download_manager: DownloadManager,
+    download_manager: Arc<DownloadManager>,
     tasks: TokioMutex<ModelTasks>,
+    refresh_lock: TokioMutex<()>,
     events: TokioBroadcastSender<(ModelIdentifier, DownloadState)>,
 }
 
@@ -40,9 +39,10 @@ impl Storage {
         })?;
         let (events, _) = tokio_broadcast_channel(256);
         Ok(Self {
-            download_manager: DownloadManager::new(config.download_manager_type, runtime_handle),
+            download_manager: Arc::new(DownloadManager::new(config.download_manager_type, runtime_handle)),
             config,
             tasks: TokioMutex::new(ModelTasks::new()),
+            refresh_lock: TokioMutex::new(()),
             events,
         })
     }
@@ -65,6 +65,7 @@ impl Storage {
         models: &[Model],
         complete: bool,
     ) -> Result<(), StorageError> {
+        let _refresh = self.refresh_lock.lock().await;
         let mut requests = HashMap::new();
         for model in models {
             let ModelAccessibility::OnDevice {
@@ -76,64 +77,73 @@ impl Storage {
             else {
                 continue;
             };
-            requests.entry(model.identifier.clone()).or_insert(self.request(model, files)?);
+            let total_bytes = files.iter().map(|file| file.size.max(0)).fold(0_i64, i64::saturating_add);
+            requests.entry(model.identifier.clone()).or_insert_with(|| (self.request(model, files), total_bytes));
         }
-        let destinations: Vec<&Path> = requests.values().map(|request| request.destination.as_path()).collect();
-        let is_listed = |path: &Path| destinations.iter().any(|destination| destination.starts_with(path));
-        for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
-            let old_paths = if is_listed(&model_path) {
-                fs::asyn::read_dir(&model_path).await.unwrap_or_default()
-            } else if complete && !destinations.is_empty() {
-                vec![model_path]
-            } else {
+        let mut tasks = self.tasks.lock().await;
+        let mut keep_paths: Vec<PathBuf> = requests
+            .values()
+            .filter_map(|(request, _)| request.as_ref().ok().map(|request| request.destination.clone()))
+            .collect();
+        let can_clean = complete && !keep_paths.is_empty();
+        keep_paths.extend(
+            tasks
+                .values()
+                .filter(|task| task.state().phase.is_in_progress())
+                .filter_map(|task| task.request.as_ref().ok().map(|request| request.destination.clone())),
+        );
+        if complete {
+            tasks.retain(|identifier, _| requests.contains_key(identifier));
+        }
+        for (identifier, (request, total_bytes)) in requests {
+            if tasks.get(&identifier).is_some_and(|task| task.request == request) {
                 continue;
+            }
+            let previous = tasks.remove(&identifier);
+            tasks.insert(
+                identifier.clone(),
+                Arc::new(ModelTask::new(
+                    identifier,
+                    request,
+                    total_bytes,
+                    Arc::clone(&self.download_manager),
+                    self.events.clone(),
+                    previous,
+                )),
+            );
+        }
+        drop(tasks);
+        if can_clean {
+            self.remove_obsolete_checkpoints(&keep_paths).await;
+        }
+        Ok(())
+    }
+
+    async fn remove_obsolete_checkpoints(
+        &self,
+        keep_paths: &[PathBuf],
+    ) {
+        for model_path in fs::asyn::read_dir(self.models_path()).await.unwrap_or_default() {
+            if !tokio::fs::symlink_metadata(&model_path).await.is_ok_and(|metadata| metadata.is_dir()) {
+                continue;
+            }
+            let candidates = if keep_paths.iter().any(|path| path.starts_with(&model_path)) {
+                fs::asyn::read_dir(&model_path).await.unwrap_or_default()
+            } else {
+                vec![model_path]
             };
-            for old_path in old_paths {
-                if is_listed(&old_path)
-                    || fs::asyn::is_file(&old_path).await
-                    || DestinationLock::held_within(&old_path).await
+            for path in candidates {
+                if keep_paths.iter().any(|keep| keep.starts_with(&path))
+                    || !tokio::fs::symlink_metadata(&path).await.is_ok_and(|metadata| metadata.is_dir())
+                    || DestinationLock::held_within(&path).await
                 {
                     continue;
                 }
-                match fs::asyn::remove_dir_all(&old_path).await {
-                    Ok(()) => tracing::info!(path = %old_path.display(), "removed old model"),
-                    Err(error) => tracing::warn!(?error, path = %old_path.display(), "failed to remove old model"),
+                if let Err(error) = fs::asyn::remove_dir_all(&path).await {
+                    tracing::warn!(?error, path = %path.display(), "failed to remove obsolete checkpoint");
                 }
             }
         }
-        let missing: Vec<(ModelIdentifier, DownloadTaskRequest)> = {
-            let mut tasks = self.tasks.lock().await;
-            tasks.retain(|identifier, (task, forwarder)| {
-                let keep = requests.get(identifier).is_some_and(|request| task.request() == request);
-                if !keep {
-                    forwarder.abort();
-                }
-                keep
-            });
-            requests.into_iter().filter(|(identifier, _)| !tasks.contains_key(identifier)).collect()
-        };
-        let created = join_all(missing.into_iter().map(|(identifier, request)| async move {
-            (identifier, self.download_manager.download_task(request).await)
-        }))
-        .await;
-        let mut tasks = self.tasks.lock().await;
-        for (identifier, task) in created {
-            let task = task?;
-            let events = self.events.clone();
-            let mut progress = task.progress();
-            let forwarder = kiban::rt::spawn({
-                let identifier = identifier.clone();
-                async move {
-                    while let Some(state) = progress.next().await {
-                        let _ = events.send((identifier.clone(), state));
-                    }
-                }
-            });
-            if let Some((_, replaced)) = tasks.insert(identifier, (task, forwarder)) {
-                replaced.abort();
-            }
-        }
-        Ok(())
     }
 
     pub fn subscribe(&self) -> BroadcastStream<(ModelIdentifier, DownloadState)> {
@@ -144,17 +154,40 @@ impl Storage {
         &self,
         identifier: &ModelIdentifier,
     ) -> Result<DownloadState, StorageError> {
+        Ok(self.entry(identifier).await?.state())
+    }
+
+    pub async fn ready_state(
+        &self,
+        identifier: &ModelIdentifier,
+    ) -> Result<DownloadState, StorageError> {
         Ok(self.model(identifier).await?.state())
     }
 
     pub async fn states(&self) -> HashMap<ModelIdentifier, DownloadState> {
-        self.tasks.lock().await.iter().map(|(identifier, (task, _))| (identifier.clone(), task.state())).collect()
+        self.tasks.lock().await.iter().map(|(identifier, task)| (identifier.clone(), task.state())).collect()
     }
 
     pub async fn download(
         &self,
         identifier: &ModelIdentifier,
     ) -> Result<(), StorageError> {
+        {
+            let mut tasks = self.tasks.lock().await;
+            if let Some(task) = tasks.get(identifier)
+                && task.failed()
+            {
+                let replacement = Arc::new(ModelTask::new(
+                    identifier.clone(),
+                    task.request.clone(),
+                    task.state().total_bytes,
+                    Arc::clone(&self.download_manager),
+                    self.events.clone(),
+                    Some(Arc::clone(task)),
+                ));
+                tasks.insert(identifier.clone(), replacement);
+            }
+        }
         Ok(self.model(identifier).await?.download().await?)
     }
 
@@ -176,10 +209,15 @@ impl Storage {
         &self,
         identifier: &ModelIdentifier,
     ) -> Result<Arc<DownloadTask>, StorageError> {
-        self.tasks.lock().await.get(identifier).map(|(task, _)| Arc::clone(task)).ok_or_else(|| {
-            StorageError::ModelNotFound {
-                identifier: identifier.clone(),
-            }
+        self.entry(identifier).await?.ready().await
+    }
+
+    async fn entry(
+        &self,
+        identifier: &ModelIdentifier,
+    ) -> Result<Arc<ModelTask>, StorageError> {
+        self.tasks.lock().await.get(identifier).cloned().ok_or_else(|| StorageError::ModelNotFound {
+            identifier: identifier.clone(),
         })
     }
 
@@ -204,27 +242,14 @@ impl Storage {
                     .huggingface_api_key
                     .clone()
                     .filter(|_| same_origin(&file.url, &self.config.huggingface_url));
-                let checksum = file
-                    .hashes
-                    .first()
-                    .map(|hash| match hash.method {
-                        HashMethod::CRC32C => Checksum::Crc32c(hash.value.clone()),
-                        HashMethod::Sha256 => Checksum::Sha256(hash.value.clone()),
-                        HashMethod::GitBlobSha1 => Checksum::GitBlobSha1(hash.value.clone()),
-                    })
-                    .ok_or_else(|| StorageError::HashNotFound {
-                        identifier: model.identifier.clone(),
-                        name: file.name.clone(),
-                    })?;
-                Ok(DownloadTaskRequest::file()
+                DownloadTaskRequest::file()
                     .destination(&file.name)
                     .source_url(&file.url)
                     .maybe_bearer_token(bearer_token)
-                    .expected_checksum(checksum)
                     .maybe_expected_bytes(u64::try_from(file.size).ok())
-                    .build())
+                    .build()
             })
-            .collect::<Result<Vec<_>, StorageError>>()?;
+            .collect();
         Ok(DownloadTaskRequest::group().destination(cache_path).subrequests(subrequests).build())
     }
 }

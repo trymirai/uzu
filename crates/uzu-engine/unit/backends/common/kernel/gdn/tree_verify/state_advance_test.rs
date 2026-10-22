@@ -3,14 +3,20 @@ use std::time::Duration;
 
 #[cfg(backend = "metal")]
 use criterion::Criterion;
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 #[cfg(backend = "metal")]
 use uzu_engine_macros::uzu_bench;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
 use crate::{
-    array::ArrayElement,
+    backends::metal::Metal,
+    data_type::DataType,
+    tests::{cold_pool::ColdPool, helpers::buffer_size_bytes, matmul::iter_encode_loop_named},
+};
+use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -18,16 +24,11 @@ use crate::{
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
-};
-#[cfg(backend = "metal")]
-use crate::{
-    backends::metal::Metal,
-    data_type::DataType,
-    tests::{cold_pool::ColdPool, helpers::buffer_size_bytes, matmul::iter_encode_loop_named},
 };
 
 const TREE_SIZE: usize = 128;
@@ -36,8 +37,8 @@ const PATH: &[u32] = &[0, 1, 3, 7, 15, 31, 47, 63, 79, 95, 111, 119, 123, 125, 1
 const TEST_NUM_V_HEADS: usize = 6;
 const TEST_NUM_K_HEADS: usize = 2;
 
-fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32> {
-    let context = B::Context::new().expect("context");
+fn run<B: Backend, T: DataTypeRepr + Float>(accepted_indices: &[u32]) -> Vec<f32> {
+    let context = block_on(B::Context::new()).expect("context");
     let kernel = <<B as Backend>::Kernels as Kernels>::StateAdvanceKernel::new(
         &context,
         T::data_type(),
@@ -75,7 +76,7 @@ fn run<B: Backend, T: ArrayElement + Float>(accepted_indices: &[u32]) -> Vec<f32
         accepted_len as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec(&committed_state)
 }
 

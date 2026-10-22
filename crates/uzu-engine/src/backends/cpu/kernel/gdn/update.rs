@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 // Single-token delta net update: decay state, apply delta rule, RMSNorm + SiLU gate.
 // Steps per v-head:
@@ -13,7 +13,7 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 #[kernel(DeltaNetUpdate)]
 #[variants(T, f32, bf16)]
 #[variants(HEAD_K_DIM, 128)]
-pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
+pub fn delta_net_update<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
     in_proj: *const T,
     a_log: *const f32,
     dt_bias: *const f32,

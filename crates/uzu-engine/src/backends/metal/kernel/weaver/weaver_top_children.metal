@@ -47,13 +47,15 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const device uint* candidate_ids,
     const device uint64_t* depth_seeds,
     const device uint* node_metadata,
-    device uint* output_token_ids,
-    device float* output_model_logprobs,
-    device float* output_prune_logprobs OPTIONAL(has_prune_noise),
+    const device uint* packed_tree,
+    const device uint* node_valid,
+    device uint* frontier,
     constant uint& rows,
     constant uint& candidates,
     constant uint& expand_width,
     constant uint& vocab_size,
+    constant uint& frontier_capacity,
+    constant uint& tree_slot_count,
     constant float& prune_noise_scale OPTIONAL(has_prune_noise),
     const bool has_prune_noise SPECIALIZE,
     threadgroup float reduce_float[TOP_CHILDREN_SIMDGROUPS],
@@ -68,9 +70,18 @@ PUBLIC KERNEL(WeaverTopChildren)(
     const uint row GROUPS(rows),
     const uint lid THREADS(TOP_CHILDREN_THREADS)
 ) {
-  if (candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > candidates) {
+  if (candidates == 0 || candidates > CANDIDATES_MAX || expand_width == 0 || expand_width > candidates ||
+      frontier_capacity == 0 || tree_slot_count == 0) {
     return;
   }
+  if (node_valid[row] == 0u) {
+    return;
+  }
+  const uint tree_slot = node_metadata[uint(MetadataIdx::TreeSlot) * rows + row];
+  if (tree_slot >= tree_slot_count) {
+    return;
+  }
+  const uint frontier_base = tree_slot * expand_width;
 
   const uint base = row * candidates;
   const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
@@ -196,13 +207,32 @@ PUBLIC KERNEL(WeaverTopChildren)(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (lid == 0) {
-      const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
-      output_token_ids[row * expand_width + child] = winner_token;
-      output_model_logprobs[row * expand_width + child] = winner_logit - log_sum;
+      const uint slot = frontier_base + child;
+      if (slot < frontier_capacity) {
+        const float winner_logit = candidate_logits[base + winner_index] + float(residual_logits[base + winner_index]);
+        const float model_logprob = winner_logit - log_sum;
+        const float path_logprob =
+            as_type<float>(packed_tree[uint(TreeIdx::PathLogprobBits) * tree_slot_count + tree_slot]);
+        const float cumulative_logprob = path_logprob + model_logprob;
+        const uint depth = packed_tree[uint(TreeIdx::Depth) * tree_slot_count + tree_slot] + 1u;
+        frontier[uint(FrontierIdx::TokenId) * frontier_capacity + slot] = winner_token;
+        frontier[uint(FrontierIdx::ParentSlot) * frontier_capacity + slot] = tree_slot;
+        frontier[uint(FrontierIdx::Depth) * frontier_capacity + slot] = depth;
+        frontier[uint(FrontierIdx::PathLogprobBits) * frontier_capacity + slot] = as_type<uint>(cumulative_logprob);
+        if (!has_prune_noise) {
+          frontier[uint(FrontierIdx::EdgeLogprobBits) * frontier_capacity + slot] = as_type<uint>(model_logprob);
+        }
+        frontier[uint(FrontierIdx::PathScoreKey) * frontier_capacity + slot] = top_k_score_key(cumulative_logprob);
+        frontier[uint(FrontierIdx::Active) * frontier_capacity + slot] = 1u;
+      }
     }
     if (has_prune_noise && (first_index == winner_index || second_index == winner_index)) {
-      output_prune_logprobs[row * expand_width + child] =
-          (first_index == winner_index ? first_prune_logit : second_prune_logit) - prune_log_sum;
+      const uint slot = frontier_base + child;
+      if (slot < frontier_capacity) {
+        const float edge_logprob =
+            (first_index == winner_index ? first_prune_logit : second_prune_logit) - prune_log_sum;
+        frontier[uint(FrontierIdx::EdgeLogprobBits) * frontier_capacity + slot] = as_type<uint>(edge_logprob);
+      }
     }
     first_active = first_active && first_index != winner_index;
     second_active = second_active && second_index != winner_index;

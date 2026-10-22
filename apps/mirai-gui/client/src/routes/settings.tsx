@@ -4,7 +4,7 @@ import { SettingsPage, type SettingsTab } from "@/features/settings/components/s
 export const Route = createFileRoute("/settings")({
   component: SettingsPage,
   validateSearch: (search: Record<string, unknown>) => {
-    const allowed = new Set<SettingsTab>(["general", "privacy", "about"]);
+    const allowed = new Set<SettingsTab>(["general", "about"]);
     const tab =
       typeof search.tab === "string" && allowed.has(search.tab as SettingsTab)
         ? (search.tab as SettingsTab)

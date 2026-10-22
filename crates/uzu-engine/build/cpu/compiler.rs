@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
     Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, PathArguments, Type, punctuated::Punctuated,
-    token::Comma,
+    token::Comma, visit_mut::VisitMut,
 };
 use walkdir::WalkDir;
 
@@ -14,7 +14,7 @@ use crate::common::{
     codegen::write_tokens,
     compiler::Compiler,
     constraints::Constraints,
-    enum_paths::EnumPaths,
+    gpu_type_paths::GpuTypePaths,
     gpu_types::GpuTypes,
     identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
@@ -38,7 +38,7 @@ pub struct FunctionArgument {
 impl FunctionArgument {
     fn to_kernel_argument(
         &self,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> Option<KernelArgument> {
         Some(KernelArgument {
             name: ArgumentName::from(self.name.to_string()),
@@ -46,14 +46,14 @@ impl FunctionArgument {
             ty: match &self.ty {
                 FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
                 FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
-                    format!("&[{}]", canonicalize_type_text(ty, enum_paths)).into_boxed_str(),
+                    format!("&[{}]", canonicalize_type_text(ty, gpu_type_paths)).into_boxed_str(),
                 ),
                 FunctionArgumentType::Constant(ty, Some(size)) => KernelArgumentType::Constant(
-                    format!("&[{}; {}]", canonicalize_type_text(ty, enum_paths), size.to_token_stream(),)
+                    format!("&[{}; {}]", canonicalize_type_text(ty, gpu_type_paths), size.to_token_stream(),)
                         .into_boxed_str(),
                 ),
                 FunctionArgumentType::Scalar(ty) => {
-                    KernelArgumentType::Constant(canonicalize_type_text(ty, enum_paths).into_boxed_str())
+                    KernelArgumentType::Constant(canonicalize_type_text(ty, gpu_type_paths).into_boxed_str())
                 },
                 FunctionArgumentType::Specialization(_) => {
                     return None;
@@ -64,13 +64,13 @@ impl FunctionArgument {
 
     fn to_kernel_parameter(
         &self,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> Option<KernelParameter> {
         Some(KernelParameter {
             name: self.name.to_string().into_boxed_str(),
             ty: match &self.ty {
                 FunctionArgumentType::Specialization(ty) => {
-                    KernelParameterType::Value(canonicalize_type_text(ty, enum_paths).into_boxed_str())
+                    KernelParameterType::Value(canonicalize_type_text(ty, gpu_type_paths).into_boxed_str())
                 },
                 _ => {
                     return None;
@@ -82,10 +82,29 @@ impl FunctionArgument {
 
 fn canonicalize_type_text(
     ty: &Type,
-    enum_paths: &EnumPaths,
+    gpu_type_paths: &GpuTypePaths,
 ) -> String {
+    struct TypeNames<'a>(&'a GpuTypePaths);
+
+    impl VisitMut for TypeNames<'_> {
+        fn visit_type_path_mut(
+            &mut self,
+            ty: &mut syn::TypePath,
+        ) {
+            if ty.qself.is_none()
+                && let Some(segment) = ty.path.segments.last()
+                && matches!(segment.arguments, PathArguments::None)
+                && self.0.full_path_for(&segment.ident.to_string()).is_some()
+            {
+                let ident = &segment.ident;
+                ty.path = syn::parse_quote! { #ident };
+            }
+            syn::visit_mut::visit_type_path_mut(self, ty);
+        }
+    }
+
     let mut canonicalized = ty.clone();
-    enum_paths.canonicalize_type(&mut canonicalized);
+    TypeNames(gpu_type_paths).visit_type_mut(&mut canonicalized);
     canonicalized.to_token_stream().to_string().replace(" :: ", "::")
 }
 
@@ -104,14 +123,14 @@ pub struct FunctionParameter {
 impl FunctionParameter {
     fn to_kernel_parameter(
         &self,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> KernelParameter {
         KernelParameter {
             name: self.name.to_string().into_boxed_str(),
             ty: match &self.ty {
                 FunctionParameterType::Type => KernelParameterType::Type,
                 FunctionParameterType::Value(ty) => {
-                    KernelParameterType::Value(canonicalize_type_text(ty, enum_paths).into_boxed_str())
+                    KernelParameterType::Value(canonicalize_type_text(ty, gpu_type_paths).into_boxed_str())
                 },
             },
         }
@@ -141,7 +160,7 @@ impl CpuCompiler {
     fn compile(
         &self,
         source_path: PathBuf,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<(KernelPath, Box<[Kernel]>)> {
         let src_rel_path: KernelPath = source_path
             .strip_prefix(&self.src_dir)
@@ -164,7 +183,7 @@ impl CpuCompiler {
                 if let Item::Fn(ifn) = item
                     && ifn.attrs.iter().any(|attr| attr.path().is_ident("kernel"))
                 {
-                    Some(self.compile_kernel(ifn, enum_paths))
+                    Some(self.compile_kernel(ifn, gpu_type_paths))
                 } else {
                     None
                 }
@@ -177,7 +196,7 @@ impl CpuCompiler {
     fn compile_kernel(
         &self,
         ifn: ItemFn,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<Kernel> {
         let mut kernel_ident = None;
         let mut function_variants = Vec::new();
@@ -294,13 +313,13 @@ impl CpuCompiler {
 
         let kernel_parameters = function_parameters
             .iter()
-            .map(|parameter| parameter.to_kernel_parameter(enum_paths))
-            .chain(function_arguments.iter().flat_map(|argument| argument.to_kernel_parameter(enum_paths)))
+            .map(|parameter| parameter.to_kernel_parameter(gpu_type_paths))
+            .chain(function_arguments.iter().flat_map(|argument| argument.to_kernel_parameter(gpu_type_paths)))
             .collect::<Box<[KernelParameter]>>();
 
         let kernel_arguments = function_arguments
             .iter()
-            .flat_map(|argument| argument.to_kernel_argument(enum_paths))
+            .flat_map(|argument| argument.to_kernel_argument(gpu_type_paths))
             .collect::<Box<[KernelArgument]>>();
 
         if function_parameters.len() != function_variants.len() {
@@ -355,7 +374,7 @@ impl CpuCompiler {
                         quote! { #[allow(non_snake_case)] #parameter_ident: crate::data_type::DataType }
                     },
                     KernelParameterType::Value(ty) => {
-                        let ty: syn::Type = syn::parse_str(ty.as_ref()).unwrap();
+                        let ty = gpu_type_paths.resolve_type(ty)?;
                         quote! { #[allow(non_snake_case)] #parameter_ident: #ty }
                     },
                 })
@@ -377,7 +396,7 @@ impl CpuCompiler {
                         },
                     },
                     KernelArgumentType::Constant(ty) => {
-                        let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
+                        let ty = gpu_type_paths.resolve_type(ty)?;
                         quote! { #ty }
                     },
                 };
@@ -621,7 +640,7 @@ impl CpuCompiler {
 
     fn parse_type(ty: Type) -> anyhow::Result<FunctionArgumentType> {
         Ok(match ty {
-            Type::Ptr(ty) => FunctionArgumentType::Buffer(if ty.mutability.is_some() {
+            Type::Ptr(ty) => FunctionArgumentType::Buffer(if matches!(ty.mutability, syn::PointerMutability::Mut(_)) {
                 KernelBufferAccess::ReadWrite
             } else {
                 KernelBufferAccess::Read
@@ -669,7 +688,7 @@ impl Compiler for CpuCompiler {
     fn build(
         &self,
         _gpu_types: &GpuTypes,
-        enum_paths: &EnumPaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         let objects = WalkDir::new(&self.src_dir)
             .into_iter()
@@ -677,7 +696,7 @@ impl Compiler for CpuCompiler {
             .filter(|entry| {
                 entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
             })
-            .map(|entry| self.compile(entry.into_path(), enum_paths))
+            .map(|entry| self.compile(entry.into_path(), gpu_type_paths))
             .collect::<anyhow::Result<Vec<(KernelPath, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
 

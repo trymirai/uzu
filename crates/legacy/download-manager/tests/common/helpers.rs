@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use download_manager::{Checksum, DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest, LockOwner};
+use download_manager::{DestinationLock, DownloadState, DownloadTask, DownloadTaskRequest, LockOwner};
 use kiban::stream::BoxStream;
 use mock_registry::MockRegistry;
 use tokio::time::timeout;
@@ -10,13 +10,11 @@ use uuid::Uuid;
 pub fn file_request(
     source_url: &str,
     destination: &Path,
-    expected_crc32c: Option<String>,
     expected_bytes: Option<u64>,
 ) -> DownloadTaskRequest {
     DownloadTaskRequest::file()
         .destination(destination)
         .source_url(source_url)
-        .maybe_expected_checksum(expected_crc32c.map(Checksum::Crc32c))
         .maybe_expected_bytes(expected_bytes)
         .build()
 }
@@ -24,19 +22,18 @@ pub fn file_request(
 pub fn model_request(
     registry: &MockRegistry,
     directory: &Path,
-) -> Result<DownloadTaskRequest, Box<dyn std::error::Error>> {
+) -> DownloadTaskRequest {
     let mut files = Vec::new();
     for served in registry.files.iter() {
         files.push(
             DownloadTaskRequest::file()
                 .destination(&served.file.name)
                 .source_url(&served.file.url)
-                .expected_checksum(Checksum::Crc32c(served.crc32c()?))
                 .expected_bytes(served.file.size as u64)
                 .build(),
         );
     }
-    Ok(DownloadTaskRequest::group().destination(directory).subrequests(files).build())
+    DownloadTaskRequest::group().destination(directory).subrequests(files).build()
 }
 
 pub async fn wait_for_state(

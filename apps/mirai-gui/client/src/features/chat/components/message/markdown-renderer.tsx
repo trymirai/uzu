@@ -10,6 +10,7 @@ import "katex/dist/katex.min.css";
 import React, { useMemo, useRef } from "react";
 import type { BundledTheme } from "shiki";
 import { Streamdown } from "streamdown";
+import { MarkdownBlock } from "./markdown-block";
 
 type MarkdownRendererProps = {
   content: string;
@@ -64,7 +65,7 @@ const MarkdownTable = ({ children, ...props }: MarkdownComponentProps<"table">) 
       <div className="absolute right-1 top-[10px] z-10">
         <CopyButton className="!min-w-6 !min-h-6" onCopy={handleTableCopy} />
       </div>
-      <div className="overflow-x-auto thin-scrollbar">
+      <div className="overflow-x-auto overscroll-x-contain overscroll-y-auto thin-scrollbar">
         <table ref={tableRef} className="min-w-full" {...props}>
           {children}
         </table>
@@ -299,12 +300,12 @@ const OneFontSizeComponents = {
   ),
 };
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+export const MarkdownRenderer = React.memo(function MarkdownRenderer({
   content,
   useOneFontSize = false,
   className = "max-w-none text-label-title markdown-body",
   streaming = false,
-}) => {
+}: MarkdownRendererProps) {
   const isDarkMode = useAppStore((s) => s.isDarkMode);
 
   const codePlugin = useMemo(() => {
@@ -313,9 +314,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       : ["github-light", "github-light"];
     return createCodePlugin({ themes });
   }, [isDarkMode]);
+  // This is a context value in Streamdown; replacing it wakes completed code
+  // blocks even when only the trailing prose changed.
+  const plugins = useMemo(() => ({ code: codePlugin, math, cjk }), [codePlugin]);
   return (
-    <div className={className}>
+    <div className={`wrap-break-word ${className}`}>
       <Streamdown
+        BlockComponent={MarkdownBlock}
         mode="streaming"
         isAnimating={streaming}
         parseIncompleteMarkdown
@@ -324,10 +329,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         linkSafety={LINK_SAFETY}
         remend={REMEND}
         components={useOneFontSize ? OneFontSizeComponents : CustomComponents}
-        plugins={{ code: codePlugin, math, cjk }}
+        plugins={plugins}
       >
         {content}
       </Streamdown>
     </div>
   );
-};
+});

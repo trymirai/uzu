@@ -1,15 +1,16 @@
 use criterion::{BenchmarkId, Criterion, Throughput};
+use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    array::ArrayElement,
     backends::common::{
         Backend, Context,
-        gpu_types::QuantizationMethod,
+        gpu_types::quantization_method::QuantizationMethod,
         kernel::{Kernels, matmul::MatmulKernel},
     },
+    data_type::DataTypeRepr,
     tests::{
         cold_pool::ColdPool,
         helpers::for_each_backend,
@@ -18,7 +19,7 @@ use crate::{
     },
 };
 
-fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
+fn bench_gemv_typed<B: Backend, T: DataTypeRepr + Float>(
     c: &mut Criterion,
     context: &B::Context,
     label: &str,
@@ -56,13 +57,11 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
 #[uzu_bench]
 fn bench_gemv(c: &mut Criterion) {
     for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().unwrap();
+        let context = block_on(<B as Backend>::Context::new()).unwrap();
         bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs32", 32, 4, QuantizationMethod::ScaleBias);
         bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::ScaleZeroPoint);
         bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
         bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
-        bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
+        bench_gemv_typed::<B, bf16>(c, &context, "Sym_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleSymmetric);
     });
 }

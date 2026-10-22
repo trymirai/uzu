@@ -1,5 +1,4 @@
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{AncestorAttentionKernel, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
@@ -14,9 +13,10 @@ use crate::{
         mixer::attention::rope::PrecalculatedRoPE,
         mlp::Mlp,
         normalization::{Normalization, PostLayerScalar, ShortcutMode},
-        weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverNewError},
+        weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverEncodeError, WeaverNewError},
     },
-    parameters::ParameterTree,
+    safetensors::ParameterTree,
+    utils::size_for_shape::size_for_shape,
 };
 
 pub struct PreparedPrefixAttention<B: Backend> {
@@ -42,10 +42,10 @@ pub struct WeaverLayer<B: Backend> {
 
 impl<B: Backend> WeaverLayer<B> {
     pub fn new(
-        context: &B::Context,
-        config: &WeaverConfig,
         add_to_residual: bool,
+        config: &WeaverConfig,
         parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, WeaverNewError<B>> {
         let WeaverConfig {
             model_dim,
@@ -60,19 +60,19 @@ impl<B: Backend> WeaverLayer<B> {
         let attention_scale = 1.0 / (head_dim as f32).sqrt();
         let qkv_projection = <dyn Linear<B>>::new(
             model_dim,
-            [3 * model_dim],
-            false,
-            context,
+            3 * model_dim,
             DATA_TYPE,
+            false,
             &parameter_tree.subtree("qkv_projection"),
+            context,
         )?;
         let out_projection = <dyn Linear<B>>::new(
             model_dim,
-            [model_dim],
-            false,
-            context,
+            model_dim,
             DATA_TYPE,
+            false,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
         let prefix_attention = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
@@ -81,6 +81,7 @@ impl<B: Backend> WeaverLayer<B> {
                 num_groups: num_heads,
                 num_q_heads: num_heads,
                 has_sinks: false,
+                gate_row_stride: None,
                 is_kv_cache_ring: false,
                 is_causal: true,
                 sliding_window_size: None,
@@ -88,12 +89,13 @@ impl<B: Backend> WeaverLayer<B> {
                 data_type: DATA_TYPE,
             },
         )
-        .map_err(WeaverNewError::Backend)?;
+        .map_err(WeaverNewError::Attention)?;
         let attention_prepare =
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true)
                 .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
             model_dim,
+            DATA_TYPE,
             None,
             if add_to_residual {
                 ShortcutMode::Add
@@ -101,17 +103,16 @@ impl<B: Backend> WeaverLayer<B> {
                 ShortcutMode::Copy
             },
             PostLayerScalar::None,
-            DATA_TYPE,
             norm_config,
             &parameter_tree.subtree("pre_attention_norm"),
             context,
         )?;
         let pre_mlp_norm = Normalization::new(
             model_dim,
+            DATA_TYPE,
             None,
             ShortcutMode::Add,
             PostLayerScalar::None,
-            DATA_TYPE,
             norm_config,
             &parameter_tree.subtree("pre_mlp_norm"),
             context,
@@ -123,7 +124,7 @@ impl<B: Backend> WeaverLayer<B> {
             true,
         ));
         let (mlp, up_input_hadamard_factors) =
-            <dyn Mlp<B>>::new(&mlp_config, model_dim, hidden_dim, context, &parameter_tree.subtree("mlp"), DATA_TYPE)?;
+            <dyn Mlp<B>>::new(model_dim, hidden_dim, DATA_TYPE, &mlp_config, &parameter_tree.subtree("mlp"), context)?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
             .map_err(WeaverNewError::Backend)?;
@@ -151,14 +152,19 @@ impl<B: Backend> WeaverLayer<B> {
         rope: &PrecalculatedRoPE<B>,
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<PreparedPrefixAttention<B>, B::Error> {
-        let attention_input =
-            self.pre_attention_norm.encode(residual_input, 0, token_count, Some(residual_state), command_buffer)?;
-        let qkv = self.qkv_projection.encode(attention_input, token_count, command_buffer)?;
-        let mut queries =
-            command_buffer.allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)?;
+    ) -> Result<PreparedPrefixAttention<B>, WeaverEncodeError<B>> {
+        let input = self
+            .pre_attention_norm
+            .encode(residual_input, 0, token_count, Some(residual_state), command_buffer)
+            .map_err(WeaverEncodeError::Backend)?;
+        let qkv = self.qkv_projection.encode(input, token_count, command_buffer)?;
+        let mut queries = command_buffer
+            .allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)
+            .map_err(WeaverEncodeError::Backend)?;
         let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
-        let mut kv_cache = command_buffer.allocate_scratch_for_shape(&[2, token_count, self.model_dim], DATA_TYPE)?;
+        let mut kv_cache = command_buffer
+            .allocate_scratch_for_shape(&[2, token_count, self.model_dim], DATA_TYPE)
+            .map_err(WeaverEncodeError::Backend)?;
         let (keys, values) = kv_cache.split_at(kv_plane_bytes);
         self.attention_prepare.encode(
             &qkv,
@@ -188,10 +194,12 @@ impl<B: Backend> WeaverLayer<B> {
         residual_state: impl BufferMut<Backend = B>,
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, WeaverEncodeError<B>> {
         let projected_attention = self.out_projection.encode(attention_output, token_count, command_buffer)?;
-        let mlp_input =
-            self.pre_mlp_norm.encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)?;
-        self.mlp.encode(mlp_input, token_count, command_buffer)
+        let mlp_input = self
+            .pre_mlp_norm
+            .encode(&projected_attention, 0, token_count, Some(residual_state), command_buffer)
+            .map_err(WeaverEncodeError::Backend)?;
+        self.mlp.encode(mlp_input, token_count, command_buffer).map_err(WeaverEncodeError::Mlp)
     }
 }

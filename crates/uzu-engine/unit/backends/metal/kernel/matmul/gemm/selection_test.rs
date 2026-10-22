@@ -1,10 +1,15 @@
+use futures::executor::block_on;
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::backends::{
-    common::{gpu_types::gemm::GemmDTransform, kernel::matmul::QuantParamsLayout},
-    metal::kernel::matmul::MatmulMetalKernel,
+    common::{
+        Context,
+        gpu_types::gemm::GemmDTransform,
+        kernel::matmul::{MatmulKernel, QuantParamsLayout},
+    },
+    metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
 };
 
 fn shape(
@@ -71,18 +76,17 @@ fn policy_boundaries_are_preserved() {
         assert_eq!(policy::mxu_fp_tile(m, n, k), expected);
     }
 
-    for (m, n, group_size, family, expected) in [
-        (16, 4096, 31, MTLGPUFamily::Apple7, Tile64x64x16_Simdgroups2x2),
-        (16, 4096, 32, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
-        (8, 4096, 32, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
-        (9, 4096, 32, MTLGPUFamily::Apple8, Tile32x32x32_Simdgroups2x2),
-        (9, 4096, 32, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
-        (31, 4096, 32, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
-        (32, 4096, 32, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
-        (64, 6143, 32, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
-        (64, 6144, 32, MTLGPUFamily::Apple9, Tile64x64x32_Simdgroups2x2),
+    for (m, n, family, expected) in [
+        (16, 4096, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
+        (8, 4096, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
+        (9, 4096, MTLGPUFamily::Apple8, Tile32x32x32_Simdgroups2x2),
+        (9, 4096, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
+        (31, 4096, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
+        (32, 4096, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
+        (64, 6143, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
+        (64, 6144, MTLGPUFamily::Apple9, Tile64x64x32_Simdgroups2x2),
     ] {
-        assert_eq!(policy::simdgroup_quant_tile(m, n, group_size, family), expected);
+        assert_eq!(policy::simdgroup_quant_tile(m, n, family), expected);
     }
 }
 
@@ -118,15 +122,11 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Mxu);
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
 
-    let mut large_group = quant(shape(512, 4096, 4096));
-    large_group.a_full_precision = false;
-    large_group.b_group_size = Some(128);
-    assert_eq!(problem(large_group, DataType::BF16).select_plan().tiling, Tile64x64x256_Simdgroups2x2);
-
     for (m, n, k, expected_tiling, expected_split_k) in [
-        (16, 4096, 4096, Tile16x32x256_Simdgroups1x1, 8),
-        (16, 1024, 4096, Tile16x32x256_Simdgroups1x1, 16),
-        (16, 34816, 4096, Tile16x32x256_Simdgroups1x1, 1),
+        (16, 4096, 4096, Tile16x32x256_Simdgroups1x1x4, 2),
+        (16, 1024, 4096, Tile16x32x256_Simdgroups1x1x4, 8),
+        (16, 34816, 4096, Tile16x32x256_Simdgroups1x1x4, 1),
+        (8, 4096, 384, Tile16x32x256_Simdgroups1x1, 1),
     ] {
         let mut a8 = quant(shape(m, n, k));
         a8.a_full_precision = false;
@@ -155,10 +155,15 @@ fn trellis_plan_matches_projection_cases() {
 
     for (m, n, k, tiling, split_k) in [
         (16, 128, 64, Tile16x32x256_Simdgroups1x1, 1),
+        (16, 4096, 2048, Tile32x64x256_Simdgroups2x2, 4),
+        (16, 5120, 5120, Tile32x64x256_Simdgroups2x2, 2),
+        (16, 5120, 5184, Tile16x32x256_Simdgroups1x1, 3),
+        (16, 4096, 1984, Tile16x32x256_Simdgroups1x1, 1),
+        (16, 32, 5120, Tile64x64x256_Simdgroups2x2, 80),
+        (17, 12_288, 2048, Tile64x64x256_Simdgroups2x2, 2),
         (17, 80, 64, Tile64x64x256_Simdgroups2x2, 1),
         (2048, 2048, 128, Tile128x128x256_Simdgroups4x4, 1),
         (1, 80, 5120, Tile16x32x256_Simdgroups1x1, 80),
-        (1, 6, 5120, Tile64x64x256_Simdgroups2x2, 1),
     ] {
         let mut trellis_shape = shape(m, n, k);
         trellis_shape.a_full_precision = false;
@@ -177,15 +182,12 @@ fn forced_engine_errors_are_preserved() {
         Err(GemmPlanError::MxuUnavailable)
     );
 
-    let mut trellis = huge;
-    trellis.b_is_trellis = true;
-    for mut packed in [quant(huge), trellis] {
-        packed.b_transpose = false;
-        assert_eq!(
-            problem(packed, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
-            Err(GemmPlanError::UnsupportedLayout("packed weights require transposed contiguous B"))
-        );
-    }
+    let mut invalid_layout = quant(huge);
+    invalid_layout.b_transpose = false;
+    assert_eq!(
+        problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
+        Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"))
+    );
 }
 
 #[uzu_test]
@@ -204,4 +206,40 @@ fn gemv_gemm_route_boundaries_are_preserved() {
     gathered.gathered = true;
     let plan = problem(gathered, DataType::BF16).select_plan();
     assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+}
+
+#[uzu_test]
+fn int8_activations_require_mxu_tiled_weights() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let kernel =
+        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
+    for (n, k, bits, expected) in [
+        (96, 256, 4, true),
+        (72, 256, 4, false),
+        (64, 40960, 4, true),
+        (64, 41088, 4, false),
+        (64, 20480, 8, true),
+        (64, 20608, 8, false),
+    ] {
+        let shape = MatmulShape {
+            b_prologue: if bits == 4 {
+                GemmBPrologueKind::ScaleZeroPointDequant
+            } else {
+                GemmBPrologueKind::ScaleSymmetricDequant
+            },
+            b_bits: Some(bits),
+            signed_codes: bits == 8,
+            a_full_precision: false,
+            params_layout: Some(QuantParamsLayout::GroupOutput),
+            ..quant(shape(16, n, k))
+        };
+        assert_eq!(
+            kernel.select_activation_quantization(&shape, &context).is_some(),
+            expected,
+            "n={n} k={k} bits={bits}"
+        );
+    }
 }

@@ -1,20 +1,27 @@
 use crate::backends::common::Backend;
 
+mod error;
 mod fallback;
 mod gemm;
 mod gemm_grouped;
+mod int8;
 mod single_pass;
 mod two_pass;
+
+pub use error::AttentionMetalError;
 
 use crate::backends::{
     common::{
         BufferRef, CommandBufferEncoding,
-        kernel::{AttentionArguments, AttentionKernel, AttentionKernelConfig},
+        kernel::{
+            AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, FullPrecisionInput,
+            SigmoidGateKernel,
+        },
     },
-    metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
+    metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, kernel::SigmoidGateMetalKernel},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum MaskKind {
     None,
     Causal,
@@ -44,13 +51,12 @@ impl MaskKind {
 }
 
 const SINGLE_PASS_KV_THRESHOLD: u32 = 1_024;
-const D256_SINGLE_PASS_KV_THRESHOLD: u32 = 150_000;
-const D128_SHORT_KV_GEMM_THRESHOLD: u32 = 2_048;
 
 pub struct AttentionMetalKernel {
-    head_dim: u32,
-    is_causal: bool,
+    config: AttentionKernelConfig,
+    gate: Option<(SigmoidGateMetalKernel, u32)>,
     grouped: Option<gemm_grouped::AttentionGemmGrouped>,
+    int8: Option<int8::Int8Attention>,
     gemm: Option<gemm::AttentionGemm>,
     fallback: Option<fallback::AttentionFallback>,
     two_pass: two_pass::AttentionTwoPass,
@@ -59,21 +65,31 @@ pub struct AttentionMetalKernel {
 
 impl AttentionKernel for AttentionMetalKernel {
     type Backend = Metal;
+    type Error = AttentionMetalError;
 
     fn new(
         context: &MetalContext,
         config: AttentionKernelConfig,
-    ) -> Result<Self, MetalError> {
-        let grouped = gemm_grouped::AttentionGemmGrouped::is_supported(&config, context)
+    ) -> Result<Self, AttentionMetalError> {
+        let grouped = gemm_grouped::AttentionGemmGrouped::is_supported(&config)
             .then(|| gemm_grouped::AttentionGemmGrouped::new(&config));
+        let int8 = int8::Int8Attention::is_supported(&config, context)
+            .then(|| int8::Int8Attention::new(context, &config))
+            .transpose()
+            .map_err(AttentionMetalError::Backend)?;
         let gemm = gemm::AttentionGemm::is_supported(&config).then(|| gemm::AttentionGemm::new(&config));
         let fallback = fallback::AttentionFallback::is_supported(&config)
             .then(|| fallback::AttentionFallback::new(&config, context))
             .transpose()?;
+        let gate = config
+            .gate_row_stride
+            .map(|stride| SigmoidGateMetalKernel::new(context, config.data_type).map(|kernel| (kernel, stride)))
+            .transpose()?;
         Ok(Self {
-            head_dim: config.head_dim,
-            is_causal: config.is_causal,
+            config,
+            gate,
             grouped,
+            int8,
             gemm,
             fallback,
             two_pass: two_pass::AttentionTwoPass::new(&config),
@@ -81,79 +97,91 @@ impl AttentionKernel for AttentionMetalKernel {
         })
     }
 
+    fn supports_int8(&self) -> bool {
+        self.int8.is_some()
+    }
+
     fn encode(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
+        input: AttentionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        command_buffer.push_debug_group("attention core");
-        let result = self.encode_impl(arguments, command_buffer);
-        command_buffer.pop_debug_group();
-        result
+    ) -> Result<<Metal as Backend>::ScratchBuffer, AttentionMetalError> {
+        let command_buffer = &mut *command_buffer.debug_group("attention core");
+        let (gate, suffix_length) = (arguments.gate, arguments.suffix_length);
+        match input {
+            AttentionInput::Int8(input) => {
+                if arguments.sinks.is_some() {
+                    return Err(AttentionMetalError::UnsupportedInt8KV);
+                }
+                self.int8
+                    .as_ref()
+                    .ok_or(AttentionMetalError::UnsupportedInt8KV)?
+                    .encode(input, arguments, command_buffer)
+                    .map_err(AttentionMetalError::Backend)
+            },
+            AttentionInput::FullPrecision(input) => {
+                self.encode_impl(input, arguments, command_buffer).map(|(mut output, gate_applied)| {
+                    if let (Some(gate), Some((kernel, stride)), false) = (gate, &self.gate, gate_applied) {
+                        kernel.encode(
+                            gate,
+                            &mut output,
+                            self.config.num_q_heads * self.config.head_dim,
+                            suffix_length,
+                            *stride,
+                            command_buffer,
+                        );
+                    }
+                    output
+                })
+            },
+        }
     }
 }
 
 impl AttentionMetalKernel {
     fn encode_impl(
         &self,
-        arguments: AttentionArguments<
-            '_,
-            Metal,
-            impl BufferRef<Backend = Metal>,
+        input: FullPrecisionInput<
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
+        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+    ) -> Result<(<Metal as Backend>::ScratchBuffer, bool), AttentionMetalError> {
         let suffix_length = arguments.suffix_length;
+        let gate_applied_by_two_pass = arguments.gate.is_some();
         let kv_length = arguments.cache.prefix_len() + suffix_length;
         let is_trie = arguments.trie.is_some();
         let is_ring = arguments.cache.ring_params().is_some();
-        let mask = MaskKind::for_attention(self.is_causal, is_trie);
+        let mask = MaskKind::for_attention(self.config.is_causal, is_trie);
 
         if !is_ring
             && let Some(mask) = mask
             && let Some(grouped) = &self.grouped
+            && grouped.should_encode(mask, suffix_length, kv_length, command_buffer.context().supports_mxu)
         {
-            if grouped.should_encode(mask, suffix_length, kv_length) {
-                return grouped.encode(mask, arguments, command_buffer);
-            }
-
-            // These measured sibling exceptions apply only when the
-            // grouped core was built for this layer.
-            if self.head_dim == 256 && (1..=16).contains(&suffix_length) && kv_length > D256_SINGLE_PASS_KV_THRESHOLD {
-                return self.single_pass.encode(arguments, command_buffer);
-            }
-            if (self.head_dim == 256 && (9..=16).contains(&suffix_length))
-                || (self.head_dim == 128
-                    && (9..=16).contains(&suffix_length)
-                    && kv_length > D128_SHORT_KV_GEMM_THRESHOLD)
-            {
-                return self.two_pass.encode(arguments, command_buffer);
-            }
+            return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
         }
 
         if suffix_length > 8 {
             if let Some(gemm) = &self.gemm {
-                return gemm.encode(arguments, command_buffer);
+                return Ok((gemm.encode(input, arguments, command_buffer)?, false));
             }
             if !is_trie && let Some(fallback) = &self.fallback {
-                return fallback.encode(arguments, command_buffer);
+                return Ok((fallback.encode(input, arguments, command_buffer)?, false));
             }
         }
 
         if kv_length > SINGLE_PASS_KV_THRESHOLD {
-            self.two_pass.encode(arguments, command_buffer)
+            Ok((self.two_pass.encode(input, arguments, command_buffer)?, gate_applied_by_two_pass))
         } else {
-            self.single_pass.encode(arguments, command_buffer)
+            Ok((self.single_pass.encode(input, arguments, command_buffer)?, false))
         }
     }
 }

@@ -75,39 +75,28 @@ private:
       if (!(FULL_TILE || input_row < params.batch_size)) {
         return;
       }
-      device DT* output = ops.d + input_row * params.out_vec_size + tile.row0;
+      device DT* output = ops.d + input_row * params.out_vec_size;
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
-        const uint global_row = tile.row0 + R;
+        const uint global_row = params.output_row(tile.row0 + R);
         if (!OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
           return;
         }
-        if (tile.clamped && params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
-          return;
-        }
         if constexpr (STAGE_HADAMARD) {
-          shared_results[I * Tile::OUTPUT_ROWS + tile.local_row + R] =
-              transform<false>(result[I][R], output + R, global_row, ops, params);
+          shared_results[I * Tile::OUTPUT_ROWS + params.output_row(tile.local_row + R)] =
+              transform<false>(result[I][R], global_row, ops, params);
         } else {
-          output[R] = static_cast<DT>(transform<true>(result[I][R], output + R, global_row, ops, params));
+          output[global_row] = static_cast<DT>(transform<true>(result[I][R], global_row, ops, params));
         }
       });
     });
   }
 
   template <bool APPLY_BIAS>
-  static METAL_FUNC U transform(
-      U value,
-      const device DT* output,
-      uint global_row,
-      const thread GemvOperands<AT, BT, DT>& ops,
-      const thread GemvParams& params
-  ) {
+  static METAL_FUNC U
+  transform(U value, uint global_row, const thread GemvOperands<AT, BT, DT>& ops, const thread GemvParams& params) {
     if (params.output_transform.contains(GemmDTransform::SCALE)) {
       value *= params.ab_scale;
-    }
-    if (params.output_transform.contains(GemmDTransform::ACCUMULATE)) {
-      value += static_cast<U>(*output);
     }
     if constexpr (APPLY_BIAS) {
       if (params.output_transform.contains(GemmDTransform::BIAS)) {

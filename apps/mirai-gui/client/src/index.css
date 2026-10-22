@@ -27,6 +27,13 @@
 @source "../../node_modules/streamdown/dist";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Ellipsis should clip labels, not create hidden scroll containers that swallow
+   wheel gestures before they reach the surrounding list. */
+@utility truncate {
+  min-width: 0;
+  overflow: clip;
+}
+
 @utility thin-scrollbar {
   &::-webkit-scrollbar {
     width: 6px;
@@ -42,6 +49,12 @@
 }
 
 @layer base {
+  /* App chrome must stay still. Content scrollers opt into overscroll on their
+     scrolling axis; independent panes use contain to stop scroll chaining. */
+  * {
+    overscroll-behavior: none;
+  }
+
   /* Tailwind 4 defaults borders to currentColor, buttons to cursor: default and
      placeholders to a translucent currentColor; the app was designed on the
      Tailwind 3 defaults, kept here. */
@@ -77,6 +90,7 @@
   body,
   #root {
     height: 100%;
+    overflow: clip;
   }
 
   body {
@@ -117,7 +131,7 @@
   }
 
   [data-streamdown="code-block"] {
-    @apply w-full overflow-hidden border border-cell-border bg-bg-modal;
+    @apply w-full border border-cell-border bg-bg-modal;
     /* The 200px placeholder flashes a scrollbar as the block scrolls into view. */
     content-visibility: visible !important;
   }
@@ -139,6 +153,8 @@
 
   [data-streamdown="code-block-body"] {
     @apply p-4;
+    /* Horizontal code scrolling stays local; vertical gestures scroll the chat. */
+    overscroll-behavior: contain auto;
     background: transparent !important;
     border: 0 !important;
     font-size: 12px !important;
@@ -173,6 +189,14 @@
   [data-streamdown="code-block-body"] span::before {
     content: none !important;
     display: none !important;
+  }
+}
+
+@layer utilities {
+  /* Streamdown supplies overflow-hidden on this rounded wrapper. Its body is
+     the scroll owner; the wrapper only clips the corners. */
+  [data-streamdown="code-block"] {
+    overflow: clip;
   }
 }
 

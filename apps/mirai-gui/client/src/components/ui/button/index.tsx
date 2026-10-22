@@ -1,4 +1,5 @@
 import { forwardRef } from "react";
+import { Button as HeadlessButton, DataInteractive } from "@headlessui/react";
 import { twMerge } from "tailwind-merge";
 import { Spinner } from "../spinner";
 import {
@@ -92,16 +93,18 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
     const linkRel = target === "_blank" && !rel ? "noopener noreferrer" : rel;
     const linkProps = isLinkInteractive ? { href, target, rel: linkRel, onClick } : { tabIndex: -1 };
     return (
-      <a ref={ref as React.Ref<HTMLAnchorElement>} {...linkProps} {...commonProps} {...restLinkProps}>
-        {content}
-      </a>
+      <DataInteractive>
+        <a ref={ref as React.Ref<HTMLAnchorElement>} {...linkProps} {...commonProps} {...restLinkProps}>
+          {content}
+        </a>
+      </DataInteractive>
     );
   }
 
   const { type = "button", onClick, ...restButtonProps } = rest as ButtonPassthroughProps;
 
   return (
-    <button
+    <HeadlessButton
       ref={ref as React.Ref<HTMLButtonElement>}
       type={type}
       disabled={disabled || loading}
@@ -110,6 +113,6 @@ export const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonPr
       {...restButtonProps}
     >
       {content}
-    </button>
+    </HeadlessButton>
   );
 });

@@ -2,16 +2,15 @@
 #![cfg_attr(test, test_runner(crate::tests::harness::uzu_harness))]
 #![cfg_attr(target_family = "wasm", feature(wasi_ext))]
 
-mod array;
 mod config;
+mod data_type;
 mod encodable_block;
-mod parameters;
+mod safetensors;
 mod speculators;
 mod trie;
 mod utils;
 
 pub mod backends;
-pub mod data_type;
 
 pub mod engine;
 

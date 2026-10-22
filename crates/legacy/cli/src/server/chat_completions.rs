@@ -33,7 +33,7 @@ use crate::{
         chat_tool_calls::{
             OaiTool, OaiToolCall, ToolCallStreamer, ToolParameterTypes, backfill_tool_result_names, choose_tools,
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
-            to_tool_call, tool_call_result_block, withhold_stream_text,
+            to_tool_call, tool_call_result_block, tool_parameter_types, withhold_stream_text,
         },
         request_info::RequestInfo,
         request_log::RequestLog,
@@ -252,7 +252,7 @@ pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
             if let Some(identifier) = &message.tool_call_id {
                 let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
                 chat_message = chat_message.with_block(result);
-            } else if let Some(content) = &message.content {
+            } else if let Some(content) = message.content.as_ref().filter(|content| !content.is_empty()) {
                 chat_message = chat_message.with_text(content.clone());
             }
             for tool_call in message.tool_calls.iter().flatten() {
@@ -674,40 +674,47 @@ fn json_values_equivalent(
     }
 }
 
-/// Tool call identifiers are assigned per turn and never rendered into tokens, so they are
-/// excluded from the comparison; everything else about the messages must match.
+/// Clients may omit assistant reasoning when echoing a previous turn, keep the session's reasoning in that case.
+/// Tool call identifiers are assigned per turn and never rendered into tokens, so they are excluded from the comparison.
+/// All other content must match.
 fn messages_have_prefix(
     messages: &[ChatMessage],
     prefix: &[ChatMessage],
 ) -> bool {
     prefix.len() <= messages.len()
         && prefix.iter().zip(messages).all(|(prefix_message, message)| {
+            let omitted_reasoning = matches!(message.role, ChatRole::Assistant {})
+                && !message.content.iter().any(|block| matches!(block, ChatContentBlock::Reasoning { .. }));
+            let prefix_content = prefix_message
+                .content
+                .iter()
+                .filter(|block| !omitted_reasoning || !matches!(block, ChatContentBlock::Reasoning { .. }));
             prefix_message.role == message.role
                 && prefix_message.metadata == message.metadata
-                && prefix_message.content.len() == message.content.len()
-                && prefix_message.content.iter().zip(&message.content).all(|(prefix_block, block)| {
-                    match (prefix_block, block) {
-                        (
-                            ChatContentBlock::ToolCall {
-                                value: prefix_call,
-                            },
-                            ChatContentBlock::ToolCall {
-                                value: call,
-                            },
-                        ) => {
-                            prefix_call.name == call.name
-                                && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
+                && prefix_content.clone().count() == message.content.len()
+                && prefix_content.zip(&message.content).all(|(prefix_block, block)| match (prefix_block, block) {
+                    (
+                        ChatContentBlock::ToolCall {
+                            value: prefix_call,
                         },
-                        _ => prefix_block == block,
-                    }
+                        ChatContentBlock::ToolCall {
+                            value: call,
+                        },
+                    ) => {
+                        prefix_call.name == call.name
+                            && tool_call_arguments_equivalent(&prefix_call.arguments.json, &call.arguments.json)
+                    },
+                    _ => prefix_block == block,
                 })
         })
 }
 
 /// Returns only the messages the session has not seen yet when the request
 /// extends the session's current history; otherwise resets the session and
-/// returns the full list. Token-level reuse itself is decided inside the
-/// session, which falls back to a full prefill if the rendered tokens diverge.
+/// returns the full list. Retaining the session history also retains assistant
+/// reasoning omitted by the client. Token-level reuse itself is decided inside
+/// the session, which falls back to a full prefill for incompatible boundaries
+/// (including truncated replies) or divergent rendered tokens.
 async fn prepare_input(
     session: &ChatSession,
     mut messages: Vec<ChatMessage>,
@@ -809,6 +816,9 @@ async fn run_blocking(
             } => {
                 final_replies = replies;
             },
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Error {
                 error,
             } => {
@@ -1001,19 +1011,32 @@ async fn run_stream(
                 let candidates = reply.message.content.iter().filter_map(|block| match block {
                     ChatContentBlock::ToolCallCandidate {
                         value,
+                        ..
                     } => Some(value),
                     _ => None,
                 });
                 for (offset, value) in candidates.enumerate() {
                     let index = finished_count + offset;
-                    // candidates carry their partial text as a JSON string document, except
-                    // object-valued ones (e.g. muse-glimmer's name-only progress objects)
+                    // Candidates carry partial markup as a JSON string document or a JSON object.
                     let raw = serde_json::from_str::<String>(&value.json).unwrap_or_else(|_| value.json.clone());
                     let deltas = tool_call_streamers.entry(index).or_insert_with(ToolCallStreamer::new).update(
                         index,
                         &raw,
                         &parameter_types,
                     );
+                    let deltas = match deltas {
+                        Ok(deltas) => deltas,
+                        Err(error) => {
+                            let message = error.to_string();
+                            let _ = sender.send(Event::data(
+                                serde_json::to_string(&oai_error_body(Status::BadRequest, "backend_error", &message))
+                                    .unwrap_or_default(),
+                            ));
+                            cancel_and_drain(&stream).await;
+                            log.fail(&message);
+                            return;
+                        },
+                    };
                     for delta in deltas {
                         let sent = sender.send(Event::data(chunk_json(
                             &id,
@@ -1043,7 +1066,23 @@ async fn run_stream(
                     }
                     let call = coerce_tool_call(&tool_calls[index], &parameter_types);
                     let delta = match tool_call_streamers.remove(&index) {
-                        Some(mut streamer) => streamer.finish(index, &call),
+                        Some(mut streamer) => match streamer.finish(index, &call) {
+                            Ok(delta) => delta,
+                            Err(error) => {
+                                let message = error.to_string();
+                                let _ = sender.send(Event::data(
+                                    serde_json::to_string(&oai_error_body(
+                                        Status::BadRequest,
+                                        "backend_error",
+                                        &message,
+                                    ))
+                                    .unwrap_or_default(),
+                                ));
+                                cancel_and_drain(&stream).await;
+                                log.fail(&message);
+                                return;
+                            },
+                        },
                         None => oai_tool_call(Some(index), &call),
                     };
                     let sent = sender.send(Event::data(chunk_json(
@@ -1075,6 +1114,9 @@ async fn run_stream(
                     .iter()
                     .any(|block| matches!(block, ChatContentBlock::ToolCallCandidate { .. }));
             },
+            ChatSessionStreamChunk::ToolResults {
+                ..
+            } => {},
             ChatSessionStreamChunk::Error {
                 error,
             } => {
@@ -1211,7 +1253,7 @@ pub async fn handle_chat_completions(
 
     // The parser keeps every argument the text the model wrote; the declared
     // schemas restore the types when replies cross back into the OpenAI wire format.
-    let parameter_types = ToolParameterTypes::from_tools(request.tools.as_deref());
+    let parameter_types = tool_parameter_types(request.tools.as_deref());
 
     let id = request_info.id.as_str().to_owned();
     if is_stream {

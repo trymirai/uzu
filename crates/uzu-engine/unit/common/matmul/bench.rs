@@ -1,57 +1,19 @@
-use std::{
-    env,
-    path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 use criterion::Bencher;
+use futures::executor::block_on;
 
-use super::super::env_vars;
 use crate::backends::common::{
     Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-    CommandBufferPending, Context,
+    CommandBufferPending, Context, capture_matcher::CAPTURE_MATCHER,
 };
-
-static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
-
-fn should_capture_benchmark(benchmark_path: &str) -> bool {
-    env_vars::enabled(env_vars::UZU_CAPTURE_BENCH)
-        && benchmark_path.starts_with("Metal/")
-        && env::var(env_vars::UZU_CAPTURE_BENCH_FILTER).map_or(true, |filter| benchmark_path.contains(&filter))
-        && !CAPTURE_TAKEN.swap(true, Ordering::AcqRel)
-}
-
-fn benchmark_capture_path() -> PathBuf {
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock before Unix epoch").as_secs();
-    env::var(env_vars::UZU_CAPTURE_BENCH_DIR)
-        .map(PathBuf::from)
-        .unwrap_or(env::current_dir().unwrap())
-        .join(format!("uzu_bench-{timestamp}.gputrace"))
-}
-
-fn start_benchmark_capture<B: Backend>(
-    context: &B::Context,
-    benchmark_path: &str,
-) -> bool {
-    if !should_capture_benchmark(benchmark_path) {
-        return false;
-    }
-
-    let path = benchmark_capture_path();
-    context.start_capture(&path).expect("failed to start benchmark GPU capture");
-    println!("GPU benchmark capture started for {benchmark_path}: {path:?}");
-    true
-}
 
 pub fn iter_encode_loop<B: Backend, F>(
     context: &B::Context,
     bencher: &mut Bencher,
-    mut encode: F,
+    encode: F,
 ) where
     F: FnMut(&mut <B::CommandBuffer as CommandBuffer>::Encoding),
 {
-    iter_encode_loop_named::<B, _>(context, bencher, "unnamed_benchmark", |command_buffer| encode(command_buffer));
+    iter_encode_loop_named::<B, _>(context, bencher, "unnamed_benchmark", encode);
 }
 
 pub fn iter_encode_loop_named<B: Backend, F>(
@@ -63,15 +25,14 @@ pub fn iter_encode_loop_named<B: Backend, F>(
     F: FnMut(&mut <B::CommandBuffer as CommandBuffer>::Encoding),
 {
     bencher.iter_custom(|n_iters| {
-        let capture = start_benchmark_capture::<B>(context, benchmark_path);
-        let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+        let _capture_span = CAPTURE_MATCHER
+            .capture::<B>(context, benchmark_path)
+            .unwrap_or_else(|error| panic!("failed to capture benchmark {benchmark_path}: {error}"));
+        let mut command_buffer = context.create_command_buffer(Some(benchmark_path), None).unwrap();
         for _ in 0..n_iters {
             encode(&mut command_buffer);
         }
-        let completed = command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-        if capture {
-            context.stop_capture().expect("failed to stop benchmark GPU capture");
-        }
+        let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         completed.gpu_execution_time()
     });
 }

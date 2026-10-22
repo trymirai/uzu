@@ -145,6 +145,9 @@ pub enum ChatContentBlock {
     },
     ToolCallCandidate {
         value: Value,
+        /// Assigned by the session and retained when the candidate becomes a tool call.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        identifier: Option<String>,
     },
     ToolCallResult {
         #[serde(rename = "id")]

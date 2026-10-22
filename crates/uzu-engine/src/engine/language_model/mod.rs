@@ -6,19 +6,17 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::{
-        model::{generation::GenerationConfig, language_model::LanguageModelConfig},
-        token_codec::AnyTokenCodecConfig,
-    },
+    config::{model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
-    parameters::{ParameterLoader, ParameterLoaderError},
+    safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
 };
+pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
 pub mod state;
 pub mod stream;
@@ -77,10 +75,10 @@ impl<B: Backend> Engine<B> {
         let data_type = DataType::BF16;
 
         let decoder = Decoder::new(
-            self.context.as_ref(),
+            data_type,
             &config.decoder_config,
             &weight_loader.tree().subtree("decoder"),
-            data_type,
+            self.context.as_ref(),
         )?;
 
         assert!(
@@ -94,12 +92,12 @@ impl<B: Backend> Engine<B> {
             .transpose()?
             .flatten();
 
-        let sampling = Sampling::new(data_type, config.decoder_config.vocab_size);
+        let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
 
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
-        weight_loader.tree().assert_all_tensors_validated()?;
+        weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
         let end_of_thinking_tag = match &config.token_codec_config {
@@ -139,7 +137,7 @@ impl<B: Backend> LanguageModel<B> {
             // Currenlty true for all mixers in uzu:
             // - full attention uses sparse if it's available to make max context free until it's actually used
             // - sliding window attention is bound, usually well below the recommended max context size on non-sparse (but can be made to use sparse if we care about it enough)
-            // - short conv/mamba2/delta net are constant state size
+            // - short conv/delta net are constant state size
             max_context_length
         } else if let Some(max_context_length) = max_context_length {
             // If sparse buffers aren't supported and model has finite maximum context length we assume that kv cache is expensive enough that we should probably clamp it to
@@ -162,14 +160,7 @@ impl<B: Backend> LanguageModel<B> {
     }
 
     pub fn default_sampling_method(&self) -> SamplingMethod {
-        SamplingMethod::Stochastic {
-            temperature: self.generation_config.temperature,
-            top_k: self.generation_config.top_k,
-            top_p: self.generation_config.top_p,
-            min_p: self.generation_config.min_p,
-            repetition_penalty: self.generation_config.repetition_penalty,
-            suffix_repetition_length: self.generation_config.suffix_repetition_length,
-        }
+        self.generation_config.default_sampling_method()
     }
 
     pub fn generation_config(&self) -> &GenerationConfig {

@@ -7,9 +7,10 @@ mod trellis;
 
 pub use error::GemmSpecializationError;
 pub use kernel::GemmKernel;
+pub use selection::GemmPlanError;
 pub(super) use selection::GemmProblem;
 
-use crate::backends::common::gpu_types::gemm::GemmTiling;
+use crate::backends::metal::gpu_types::gemm::GemmTiling;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GemmEngine {

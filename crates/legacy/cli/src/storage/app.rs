@@ -6,7 +6,7 @@ use ratatui::widgets::ListState;
 use shoji::types::model::{Model, ModelIdentifier};
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use uzu::{
-    engine::Engine,
+    engine::{Engine, EngineError},
     storage::{DownloadPhase, DownloadState},
 };
 
@@ -17,6 +17,28 @@ use super::{events::AppEvent, models::ModelOrganizer, sections::Section};
 pub struct ModelWithState {
     pub model: Model,
     pub state: DownloadState,
+}
+
+async fn catalog_models(engine: &Engine) -> Result<HashMap<ModelIdentifier, ModelWithState>, EngineError> {
+    let models = engine.models().await?;
+    let states = engine.download_states().await;
+    Ok(models
+        .into_iter()
+        .filter(|model| model.is_downloadable())
+        .map(|model| {
+            let state = states.get(&model.identifier).cloned().unwrap_or(DownloadState {
+                phase: DownloadPhase::Initializing {},
+                ..DownloadState::default()
+            });
+            (
+                model.identifier.clone(),
+                ModelWithState {
+                    model,
+                    state,
+                },
+            )
+        })
+        .collect())
 }
 
 pub struct App {
@@ -34,21 +56,7 @@ impl App {
         engine: Arc<Engine>,
         tokio_handle: tokio::runtime::Handle,
     ) -> Self {
-        let models =
-            engine.models().await.unwrap().into_iter().filter(|model| model.is_downloadable()).collect::<Vec<_>>();
-
-        // Fetch initial state for all models
-        let mut models_with_state = HashMap::new();
-        for model in models {
-            let state = engine.downloader(&model).state().await.unwrap();
-            models_with_state.insert(
-                model.identifier.clone(),
-                ModelWithState {
-                    model,
-                    state,
-                },
-            );
-        }
+        let models_with_state = catalog_models(&engine).await.unwrap_or_default();
 
         let mut list_states = HashMap::new();
         for section in Section::all() {
@@ -71,28 +79,33 @@ impl App {
         let models = Arc::clone(&self.models);
         let engine = Arc::clone(&self.engine);
         let mut updates = self.engine.storage_subscribe();
+        let mut catalog_updates = self.engine.catalog_subscribe();
 
         let handle = self.tokio_handle.spawn(async move {
-            while let Some(Ok((model_id, state))) = updates.next().await {
-                let mut models_guard = models.lock().await;
-
-                if let Some(model_with_state) = models_guard.get_mut(&model_id) {
-                    // Update the cached state
-                    model_with_state.state = state;
-                } else {
-                    // Model not in local HashMap; fetch from storage and add it
-                    drop(models_guard);
-                    if let Some(fresh_model) = engine.model_by_identifier(model_id.clone()).await.unwrap() {
-                        let state = engine.downloader(&fresh_model).state().await.unwrap();
-                        let mut models_guard = models.lock().await;
-                        models_guard.insert(
-                            model_id,
-                            ModelWithState {
-                                model: fresh_model,
-                                state,
+            // Subscribe before refreshing to include changes since App::new.
+            if let Ok(snapshot) = catalog_models(&engine).await {
+                *models.lock().await = snapshot;
+            }
+            loop {
+                tokio::select! {
+                    event = catalog_updates.next() => {
+                        if event.is_none() { break; }
+                    },
+                    event = updates.next() => {
+                        match event {
+                            Some(Ok((model_id, state))) => {
+                                if let Some(model) = models.lock().await.get_mut(&model_id) {
+                                    model.state = state;
+                                    continue;
+                                }
                             },
-                        );
+                            Some(Err(_)) => {},
+                            None => break,
+                        }
                     }
+                }
+                if let Ok(snapshot) = catalog_models(&engine).await {
+                    *models.lock().await = snapshot;
                 }
             }
         });
@@ -192,7 +205,9 @@ impl App {
 
         if let Some(id) = model_id {
             let models_guard = self.models.lock().await;
-            if let Some(model_with_state) = models_guard.get(&id) {
+            if let Some(model_with_state) = models_guard.get(&id)
+                && !matches!(model_with_state.state.phase, DownloadPhase::Initializing {})
+            {
                 let _ = self.engine.downloader(&model_with_state.model).resume().await;
             }
         }
@@ -238,6 +253,7 @@ impl App {
         if let Some(model_with_state) = self.get_selected_model_id(models).and_then(|id| models.get(&id)) {
             helpers.insert(0, "↑↓: Navigate".to_string());
             match &model_with_state.state.phase {
+                DownloadPhase::Initializing {} => helpers.push("Checking model…".to_string()),
                 DownloadPhase::NotDownloaded {} => helpers.push("d/Enter: Download".to_string()),
                 DownloadPhase::Paused {}
                 | DownloadPhase::Error {

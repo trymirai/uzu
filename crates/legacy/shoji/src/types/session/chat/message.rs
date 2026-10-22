@@ -142,6 +142,7 @@ impl ChatMessage {
     ) -> Self {
         self.with_block(ChatContentBlock::ToolCallCandidate {
             value,
+            identifier: None,
         })
     }
 }

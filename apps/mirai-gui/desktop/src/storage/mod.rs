@@ -172,11 +172,14 @@ pub fn settings_merge(
 }
 
 #[tauri::command]
-pub fn settings_patch(patch: serde_json::Value) -> AppResult<()> {
+pub fn settings_patch(
+    analytics: tauri::State<'_, crate::analytics::AnalyticsState>,
+    patch: serde_json::Value,
+) -> AppResult<()> {
     let serde_json::Value::Object(patch) = patch else {
         return Err(AppError::msg("settings patch must be an object"));
     };
-    settings_merge(patch).map(|_| ())
+    analytics.patch_settings(patch)
 }
 
 // One model's entry changes under the settings lock, so the other models'

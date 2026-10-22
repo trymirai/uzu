@@ -12,6 +12,8 @@ type ChatMessageListProps = {
   loadingMessageId: string | null;
   canceledMessageId: string | null;
   onMessageModelSelect: (messageId: string, modelId: string, modelName: string) => void;
+  onEditMessage: (messageId: string, text: string, onSaved: () => void) => Promise<void>;
+  canEditMessages: boolean;
 };
 
 export const ChatMessageList = ({
@@ -26,6 +28,8 @@ export const ChatMessageList = ({
   loadingMessageId,
   canceledMessageId,
   onMessageModelSelect,
+  onEditMessage,
+  canEditMessages,
 }: ChatMessageListProps) => (
   <MessageList
     isNew={isNewChat}
@@ -34,6 +38,8 @@ export const ChatMessageList = ({
     onScrolled={onScrolled}
     isUiStreaming={isChatStreaming}
     onMessageModelSelect={onMessageModelSelect}
+    onEditMessage={onEditMessage}
+    canEditMessages={canEditMessages}
     loadingMessageId={loadingMessageId}
     canceledMessageId={canceledMessageId}
     isModelLoading={isModelLoading}

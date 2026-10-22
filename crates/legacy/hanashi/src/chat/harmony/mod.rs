@@ -128,6 +128,7 @@ impl EncodingTrait for HarmonyEncodingImpl {
         &mut self,
         messages: Self::Input,
     ) -> Result<(), Self::Error> {
+        let is_initial = self.state.messages.is_empty();
         self.state.messages.extend(messages.clone());
         self.completion_message_start = self.state.messages.len();
         // Keep an empty completion in state until decoding replaces it. Cancellation
@@ -138,7 +139,7 @@ impl EncodingTrait for HarmonyEncodingImpl {
             .map_err(|_| Error::UnableToLoadEncoding)?;
         self.header_buffer = Some(Vec::new());
 
-        let conversation = HarmonyConversation::from_messages(bridge_messages_to_harmony(&messages)?);
+        let conversation = HarmonyConversation::from_messages(bridge_messages_to_harmony(&messages, is_initial)?);
         let token_ids = self
             .encoding
             .render_conversation_for_completion(&conversation, HarmonyRole::Assistant, None)

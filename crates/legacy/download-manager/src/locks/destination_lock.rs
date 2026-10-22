@@ -11,6 +11,10 @@ pub struct DestinationLock {
 }
 
 impl DestinationLock {
+    pub(crate) async fn exists(destination: &Path) -> bool {
+        fs::asyn::try_exists(Self::path_for(destination)).await.unwrap_or(false)
+    }
+
     pub async fn acquire(
         destination: &Path,
         owner: &LockOwner,
@@ -48,7 +52,16 @@ impl DestinationLock {
     pub async fn held_within(directory: &Path) -> bool {
         let mut directories = vec![directory.to_path_buf()];
         while let Some(directory) = directories.pop() {
-            for path in fs::asyn::read_dir(&directory).await.unwrap_or_default() {
+            let Ok(paths) = fs::asyn::read_dir(&directory).await else {
+                return true;
+            };
+            for path in paths {
+                // Cleanup must not follow links outside the checkpoint or infer
+                // that unreadable contents are safe to delete.
+                #[cfg(not(target_family = "wasm"))]
+                if !tokio::fs::symlink_metadata(&path).await.is_ok_and(|metadata| !metadata.is_symlink()) {
+                    return true;
+                }
                 if !fs::asyn::is_file(&path).await {
                     directories.push(path);
                 } else if path.extension().is_some_and(|extension| extension == "lock")

@@ -155,7 +155,7 @@ fn class_value_implementations(type_name: &Ident) -> TokenStream {
     quote! {
         #[cfg(feature = "bindings-napi")]
         const _: () = {
-            use napi::bindgen_prelude::{FromNapiValue, ToNapiValue};
+            use napi::bindgen_prelude::{ClassInstance, FromNapiValue, ToNapiValue};
             use napi::sys::{napi_env, napi_value};
 
             impl ToNapiValue for &#type_name {
@@ -174,8 +174,8 @@ fn class_value_implementations(type_name: &Ident) -> TokenStream {
 
             impl FromNapiValue for #type_name {
                 unsafe fn from_napi_value(env: napi_env, value: napi_value) -> napi::Result<Self> {
-                    let reference = <&#type_name as FromNapiValue>::from_napi_value(env, value)?;
-                    Ok(::core::clone::Clone::clone(reference))
+                    let instance = ClassInstance::<#type_name>::from_napi_value(env, value)?;
+                    Ok(::core::clone::Clone::clone(instance.as_ref()))
                 }
             }
         };

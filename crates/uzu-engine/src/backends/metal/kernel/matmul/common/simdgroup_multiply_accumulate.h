@@ -65,38 +65,6 @@ struct SimdgroupMMA<AccumulatorT, SIMDGROUP_MMA_ROWS, SIMDGROUP_MMA_COLS, LeftT,
     }
   }
 
-  template <
-      typename SourcePointerType,
-      typename RowStride,
-      typename ColStride,
-      typename RowLimit,
-      typename ColLimit,
-      typename RowOffset,
-      typename ColOffset>
-  METAL_FUNC static constexpr void load_safe(
-      thread ThreadDataType& destination,
-      SourcePointerType source,
-      RowStride row_stride,
-      ColStride col_stride,
-      RowLimit row_limit,
-      ColLimit col_limit,
-      RowOffset row_offset = 0,
-      ColOffset col_offset = 0
-  ) {
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
-      METAL_PRAGMA_UNROLL
-      for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        if ((row_offset + i) < row_limit && (col_offset + j) < col_limit) {
-          destination[i * THREAD_ELEMENT_COLS + j] =
-              static_cast<AccumulatorT>(source[(row_offset + i) * row_stride + (col_offset + j) * col_stride]);
-        } else {
-          destination[i * THREAD_ELEMENT_COLS + j] = AccumulatorT(0);
-        }
-      }
-    }
-  }
-
   template <typename DestinationPointerType, typename RowStride, typename ColStride>
   METAL_FUNC static constexpr void store(
       const thread ThreadDataType& source,

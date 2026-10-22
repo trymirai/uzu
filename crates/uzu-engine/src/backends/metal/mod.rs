@@ -1,14 +1,14 @@
 mod backend;
 mod buffer;
+mod capture;
 mod command_buffer;
 mod context;
 mod decompression;
 mod error;
+mod gpu_types;
 mod heaps;
 mod kernel;
 mod metal_extensions;
+mod timestamp_recorder;
 
 pub use backend::Metal;
-pub use context::MetalContext; // TODO: This should be removed
-#[cfg(test)]
-pub use kernel::matmul::gemm::GemmEngine;

@@ -16,7 +16,7 @@
     flake-utils,
     ...
   }:
-    flake-utils.lib.eachDefaultSystem (
+    flake-utils.lib.eachSystem ["aarch64-darwin" "aarch64-linux" "x86_64-linux"] (
       system: let
         pkgs = import nixpkgs {
           inherit system;
@@ -96,7 +96,7 @@
           '';
 
           meta = {
-            platforms = ["aarch64-darwin" "x86_64-darwin"];
+            platforms = ["aarch64-darwin"];
           };
         };
 
@@ -110,7 +110,9 @@
           [
             nil
             uv
-            wasmtime
+            nodejs_26
+            pnpm_12
+            wasmtime_36
             evcxr
             cargo-deny
             cargo-nextest

@@ -1,9 +1,14 @@
 #![cfg(not(target_family = "wasm"))]
 
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+
 use serde_json::{Value, json};
 use uzu::{
     device::Device,
-    registry::mirai::{Backend, HuggingFace, Registry},
+    registry::{
+        CachedRegistry, MergedRegistry, RegistryError,
+        mirai::{Backend, HuggingFace, Registry},
+    },
     traits::Registry as RegistryTrait,
     types::{
         basic::{File, Hash, HashMethod, Repository},
@@ -78,6 +83,210 @@ fn listed_model(
     })
 }
 
+fn registry_response(models: Vec<Value>) -> Value {
+    json!({
+        "metadatas": [
+            { "id": "registry-meta", "name": "Mirai", "description": null, "icons": [] },
+            { "id": "backend-meta", "name": "Uzu", "description": null, "icons": [] }
+        ],
+        "models": models,
+    })
+}
+
+fn cached_model(identifier: &str) -> Model {
+    Model::external(
+        identifier.to_string(),
+        "mirai".to_string(),
+        "Mirai".to_string(),
+        "uzu".to_string(),
+        "Uzu".to_string(),
+        "1".to_string(),
+        vec![],
+        ModelAccessibility::Remote {
+            repository: None,
+        },
+        None,
+    )
+}
+
+struct BlockingRegistry {
+    started: Arc<tokio::sync::Notify>,
+    finish: Arc<tokio::sync::Notify>,
+    snapshot: Option<Vec<Model>>,
+    result: Result<Vec<Model>, RegistryError>,
+}
+
+impl RegistryTrait for BlockingRegistry {
+    type Error = RegistryError;
+
+    fn identifier(&self) -> String {
+        "blocking".to_string()
+    }
+
+    fn cached_listing(&self) -> Option<(Vec<Model>, bool)> {
+        self.snapshot.clone().map(|models| (models, true))
+    }
+
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
+        Box::pin(async {
+            self.started.notify_one();
+            self.finish.notified().await;
+            self.result.clone()
+        })
+    }
+}
+
+#[tokio::test]
+async fn snapshots_stay_readable_during_refresh_and_survive_failure() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let finish = Arc::new(tokio::sync::Notify::new());
+    let registry = Arc::new(CachedRegistry::new(Box::new(BlockingRegistry {
+        started: started.clone(),
+        finish: finish.clone(),
+        snapshot: Some(vec![cached_model("cached")]),
+        result: Err(RegistryError::UnableToGetModels {
+            message: "offline".to_string(),
+        }),
+    })));
+    let mut merged = MergedRegistry::new(vec![]);
+    merged.add(registry.clone()).unwrap();
+    let refresh = tokio::spawn({
+        let registry = registry.clone();
+        async move { registry.refresh_listing(Arc::new(|| {})).await }
+    });
+    started.notified().await;
+
+    let (models, complete) = tokio::time::timeout(Duration::from_secs(1), merged.listing()).await.unwrap().unwrap();
+    assert_eq!(models[0].identifier, "cached");
+    assert!(!complete);
+    finish.notify_one();
+    assert!(refresh.await.unwrap().is_err());
+    assert_eq!(registry.cached_listing().unwrap().0[0].identifier, "cached");
+}
+
+#[tokio::test]
+async fn an_empty_completed_snapshot_is_distinct_from_an_unloaded_registry() {
+    let finish = Arc::new(tokio::sync::Notify::new());
+    let registry = CachedRegistry::new(Box::new(BlockingRegistry {
+        started: Arc::new(tokio::sync::Notify::new()),
+        finish: finish.clone(),
+        snapshot: None,
+        result: Ok(vec![]),
+    }));
+    assert!(registry.cached_listing().is_none());
+
+    finish.notify_one();
+    registry.refresh_listing(Arc::new(|| {})).await.unwrap();
+
+    assert_eq!(registry.cached_listing(), Some((vec![], true)));
+}
+
+#[tokio::test]
+async fn mirai_publishes_healthy_models_before_a_stalled_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    let hugging_face = MockServer::start().await;
+    for (name, delay) in [("slow", Duration::from_secs(1)), ("fast", Duration::ZERO)] {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/models/trymirai/{name}/revision/{REVISION}")))
+            .respond_with(ResponseTemplate::new(200).set_delay(delay).set_body_json(json!({
+                "sha": REVISION, "siblings": siblings(),
+            })))
+            .mount(&hugging_face)
+            .await;
+    }
+    let mirai = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/fetch/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(registry_response(vec![
+            listed_model("slow", pinned("trymirai/slow", REVISION)),
+            listed_model("fast", pinned("trymirai/fast", REVISION)),
+        ])))
+        .mount(&mirai)
+        .await;
+    let directory = tempfile::tempdir()?;
+    let registry = Arc::new(CachedRegistry::new(Box::new(
+        Registry::builder()
+            .device(Device::new()?)
+            .backends(vec![])
+            .cache_path(directory.path().to_path_buf())
+            .registry_url(mirai.uri())
+            .hugging_face_url(hugging_face.uri())
+            .build()?,
+    )));
+    assert!(registry.cached_listing().is_none());
+    let (updates, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let refresh = tokio::spawn({
+        let registry = registry.clone();
+        let snapshot = registry.clone();
+        async move {
+            registry
+                .refresh_listing(Arc::new(move || {
+                    let _ = updates.send(snapshot.cached_listing().unwrap());
+                }))
+                .await
+        }
+    });
+    let first_nonempty = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let listing = received.recv().await.expect("refresh ended without a snapshot");
+            if !listing.0.is_empty() {
+                break listing;
+            }
+        }
+    })
+    .await?;
+    assert_eq!(first_nonempty.0.iter().map(|model| model.identifier.as_str()).collect::<Vec<_>>(), ["fast"]);
+    assert!(!first_nonempty.1);
+    let (models, complete) = refresh.await??;
+    assert!(complete);
+    assert_eq!(models.iter().map(|model| model.identifier.as_str()).collect::<Vec<_>>(), ["slow", "fast"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn mirai_serves_disk_cache_and_keeps_it_when_new_metadata_fails() -> Result<(), Box<dyn std::error::Error>> {
+    let mirai = MockServer::start().await;
+    let hugging_face = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/fetch/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(registry_response(vec![listed_model("cached", pinned("trymirai/missing", REVISION))])),
+        )
+        .expect(1)
+        .mount(&mirai)
+        .await;
+    let directory = tempfile::tempdir()?;
+    let mut previous = cached_model("cached");
+    previous.accessibility = ModelAccessibility::OnDevice {
+        source: ModelSource::Registry {
+            toolchain_version: "1".to_string(),
+            repository: Some(repository(&"e".repeat(40), None)),
+            source_repository: None,
+            files: vec![File {
+                url: format!("{}/trymirai/model/resolve/{}/config.json", hugging_face.uri(), "e".repeat(40)),
+                name: "config.json".to_string(),
+                size: 6,
+                hashes: vec![],
+            }],
+        },
+    };
+    std::fs::write(directory.path().join("registry.json"), serde_json::to_vec(&vec![previous.clone()])?)?;
+    let registry = Registry::builder()
+        .device(Device::new()?)
+        .backends(vec![])
+        .cache_path(directory.path().to_path_buf())
+        .registry_url(mirai.uri())
+        .hugging_face_url(hugging_face.uri())
+        .build()?;
+
+    assert_eq!(registry.models().await?, vec![previous.clone()]);
+    assert!(mirai.received_requests().await.unwrap().is_empty());
+    let (models, complete) = registry.refresh_listing(Arc::new(|| {})).await?;
+    assert_eq!(models, vec![previous]);
+    assert!(!complete);
+    Ok(())
+}
+
 #[tokio::test]
 async fn hugging_face_files() -> Result<(), Box<dyn std::error::Error>> {
     let server = MockServer::start().await;
@@ -115,7 +324,7 @@ async fn hugging_face_rejects_bad_metadata() -> Result<(), Box<dyn std::error::E
     for body in [
         json!({ "sha": "main", "siblings": siblings() }),
         json!({ "sha": REVISION, "siblings": [{ "rfilename": "../config.json", "size": 6, "blobId": HELLO_GIT_BLOB_SHA1 }] }),
-        json!({ "sha": REVISION, "siblings": [{ "rfilename": "config.json", "size": 6, "blobId": null }] }),
+        json!({ "sha": REVISION, "siblings": [{ "rfilename": "config.json", "blobId": HELLO_GIT_BLOB_SHA1 }] }),
         json!({ "sha": REVISION, "siblings": [] }),
     ] {
         let server = MockServer::start().await;
@@ -123,6 +332,29 @@ async fn hugging_face_rejects_bad_metadata() -> Result<(), Box<dyn std::error::E
         let hugging_face = HuggingFace::builder().endpoint(server.uri()).build()?;
         assert!(hugging_face.files(&repository(REVISION, None)).await.is_err());
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn hugging_face_accepts_files_without_digests() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": REVISION,
+            "siblings": [
+                { "rfilename": "config.json", "size": 6, "blobId": null },
+                { "rfilename": "model.safetensors", "lfs": { "size": 20 } }
+            ],
+        })))
+        .mount(&server)
+        .await;
+    let hugging_face = HuggingFace::builder().endpoint(server.uri()).build()?;
+
+    let files = hugging_face.files(&repository(REVISION, None)).await?;
+
+    assert_eq!(files.len(), 2);
+    assert_eq!(files.iter().map(|file| file.size).collect::<Vec<_>>(), [6, 20]);
+    assert!(files.iter().all(|file| file.hashes.is_empty()));
     Ok(())
 }
 
@@ -213,7 +445,8 @@ async fn mirai_registry_resolves_pinned_models_once() -> Result<(), Box<dyn std:
             .registry_url(mirai.uri())
             .hugging_face_url(hugging_face.uri())
             .build()?;
-        let models = registry.models().await?;
+        let (models, complete) = registry.refresh_listing(Arc::new(|| {})).await?;
+        assert!(!complete);
         assert_eq!(
             models.iter().map(|model| model.identifier.as_str()).collect::<Vec<_>>(),
             ["pinned", "tagged", "unpinned"]

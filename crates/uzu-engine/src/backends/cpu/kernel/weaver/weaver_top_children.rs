@@ -2,7 +2,7 @@ use half::bf16;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    backends::common::gpu_types::weaver::{CANDIDATES_MAX, MetadataIdx},
+    backends::common::gpu_types::weaver::{CANDIDATES_MAX, FrontierIdx, MetadataIdx, TreeIdx},
     encodable_block::sampling::{gumbel_float, revidx},
 };
 
@@ -13,23 +13,40 @@ pub fn weaver_top_children(
     candidate_ids: *const u32,
     depth_seeds: *const u64,
     node_metadata: *const u32,
-    output_token_ids: *mut u32,
-    output_model_logprobs: *mut f32,
-    #[optional(has_prune_noise)] output_prune_logprobs: Option<*mut f32>,
+    packed_tree: *const u32,
+    node_valid: *const u32,
+    frontier: *mut u32,
     rows: u32,
     candidates: u32,
     expand_width: u32,
     vocab_size: u32,
+    frontier_capacity: u32,
+    tree_slot_count: u32,
     #[optional(has_prune_noise)] prune_noise_scale: Option<f32>,
     #[specialize] has_prune_noise: bool,
 ) {
     let rows = rows as usize;
     let candidates = candidates as usize;
     let expand_width = expand_width as usize;
-    if candidates == 0 || candidates > CANDIDATES_MAX as usize || expand_width == 0 || expand_width > candidates {
+    let frontier_capacity = frontier_capacity as usize;
+    let tree_slot_count = tree_slot_count as usize;
+    if candidates == 0
+        || candidates > CANDIDATES_MAX as usize
+        || expand_width == 0
+        || expand_width > candidates
+        || frontier_capacity == 0
+        || tree_slot_count == 0
+    {
         return;
     }
     for row in 0..rows {
+        if unsafe { *node_valid.add(row) == 0 } {
+            continue;
+        }
+        let tree_slot = unsafe { *node_metadata.add(MetadataIdx::TreeSlot as usize * rows + row) as usize };
+        if tree_slot >= tree_slot_count {
+            continue;
+        }
         let base = row * candidates;
         let depth = unsafe { *node_metadata.add(MetadataIdx::Depth as usize * rows + row) } as usize;
         let seed = unsafe { *depth_seeds.add(depth) };
@@ -58,14 +75,41 @@ pub fn weaver_top_children(
             perturbed[right].total_cmp(&perturbed[left]).then_with(|| token(left).cmp(&token(right)))
         });
         for (rank, index) in indices.into_iter().take(expand_width).enumerate() {
+            let slot = tree_slot * expand_width + rank;
+            if slot >= frontier_capacity {
+                continue;
+            }
+            let model_logprob = logits[index] - log_sum;
             unsafe {
-                *output_token_ids.add(row * expand_width + rank) = token(index);
-                *output_model_logprobs.add(row * expand_width + rank) = logits[index] - log_sum;
-                if let Some((prune_logits, prune_log_sum)) = &prune {
-                    *output_prune_logprobs.unwrap().add(row * expand_width + rank) =
-                        prune_logits[index] - prune_log_sum;
-                }
+                let path_logprob =
+                    f32::from_bits(*packed_tree.add(TreeIdx::PathLogprobBits as usize * tree_slot_count + tree_slot));
+                let depth = *packed_tree.add(TreeIdx::Depth as usize * tree_slot_count + tree_slot) + 1;
+                let cumulative_logprob = path_logprob + model_logprob;
+                let edge_logprob = prune
+                    .as_ref()
+                    .map_or(model_logprob, |(prune_logits, prune_log_sum)| prune_logits[index] - prune_log_sum);
+                *frontier.add(FrontierIdx::TokenId as usize * frontier_capacity + slot) = token(index);
+                *frontier.add(FrontierIdx::ParentSlot as usize * frontier_capacity + slot) = tree_slot as u32;
+                *frontier.add(FrontierIdx::Depth as usize * frontier_capacity + slot) = depth;
+                *frontier.add(FrontierIdx::PathLogprobBits as usize * frontier_capacity + slot) =
+                    cumulative_logprob.to_bits();
+                *frontier.add(FrontierIdx::EdgeLogprobBits as usize * frontier_capacity + slot) =
+                    edge_logprob.to_bits();
+                *frontier.add(FrontierIdx::PathScoreKey as usize * frontier_capacity + slot) =
+                    top_k_score_key(cumulative_logprob);
+                *frontier.add(FrontierIdx::Active as usize * frontier_capacity + slot) = 1;
             }
         }
+    }
+}
+
+const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
+
+fn top_k_score_key(score: f32) -> u32 {
+    let bits = score.to_bits();
+    if bits & F32_SIGN_BIT == 0 {
+        bits ^ F32_SIGN_BIT
+    } else {
+        !bits
     }
 }

@@ -5,7 +5,7 @@ use crate::backends::common::{Backend, CommandBuffer, DeviceCapabilities};
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
 
-    fn new() -> Result<Arc<Self>, <Self::Backend as Backend>::Error>;
+    fn new() -> impl Future<Output = Result<Arc<Self>, <Self::Backend as Backend>::Error>> + Send;
 
     fn device_name(&self) -> Option<&str>;
 
@@ -29,14 +29,10 @@ pub trait Context: Sized + Send + Sync {
 
     fn peak_memory_usage(&self) -> Option<usize>;
 
-    fn enable_capture();
-
     fn start_capture(
         &self,
-        trace_path: &Path,
-    ) -> Result<(), <Self::Backend as Backend>::Error>;
-
-    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
+        output_path: &Path,
+    ) -> Result<<Self::Backend as Backend>::CaptureSpan, <Self::Backend as Backend>::Error>;
 
     fn device_capabilities(&self) -> DeviceCapabilities;
 }

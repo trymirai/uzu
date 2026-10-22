@@ -3,6 +3,7 @@ import { ChatNotFoundError } from "@/platform/services/storage";
 import type { ChatMetadata } from "@/platform/services/storage";
 import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
 import type { Message, ParsedOutput } from "@/types/message";
+import type { TranscriptItem } from "@/types/llm-stream";
 import { computeErrorPatch, computeFinalizedUpdates } from "./message-patches";
 import type { ChatStoreApi } from "./types";
 
@@ -25,10 +26,11 @@ export const persistMessage = async (
     } catch (e) {
       if (!(e instanceof ChatNotFoundError)) throw e;
       const chatModel = get().chatModels[chatId];
+      const savedMetadata = get().savedChats.find((chat) => chat.id === chatId);
       const now = Date.now();
       const fallbackMetadata: ChatMetadata = {
         id: chatId,
-        title: UNTITLED_CHAT_TITLE,
+        title: savedMetadata?.title ?? UNTITLED_CHAT_TITLE,
         modelId: chatModel?.modelId,
         modelName: chatModel?.modelName,
         createdAt: now,
@@ -119,13 +121,14 @@ export const finalizeAssistantMessage = async (
   messageId: string,
   text: string,
   parsed?: ParsedOutput,
+  transcript?: TranscriptItem[],
 ): Promise<void> => {
   const { storage } = getPlatform();
   const inView = get().currentChatId === chatId;
   if (inView) {
     const current = get().messages.find((m) => m.id === messageId);
     if (!current) return;
-    get().updateMessage(messageId, computeFinalizedUpdates(current, text, parsed));
+    get().updateMessage(messageId, computeFinalizedUpdates(current, text, parsed, transcript));
   }
   try {
     // Read back so perf/stats written by applyPerf right before finalize
@@ -133,7 +136,7 @@ export const finalizeAssistantMessage = async (
     const latest = await findMessage({ get }, storage, chatId, messageId);
     if (!latest) return;
     const patch: Partial<Message> = {
-      ...computeFinalizedUpdates(latest, text, parsed),
+      ...computeFinalizedUpdates(latest, text, parsed, transcript),
       ...(inView && latest.perf ? { perf: latest.perf } : {}),
       ...(inView && latest.stats ? { stats: latest.stats } : {}),
     };

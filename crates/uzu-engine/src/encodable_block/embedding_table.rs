@@ -4,17 +4,17 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        gpu_types::{EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, d4s4},
-        kernel::{InputEmbeddingLookupKernel, matmul::MatmulB},
+        gpu_types::{d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
+        kernel::InputEmbeddingLookupKernel,
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-        lattice_spec::LatticeSpec,
+        d4s4_spec::LatticeSpec,
+        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 type LookupKernel<B> = <<B as Backend>::Kernels as Kernels>::InputEmbeddingLookupKernel;
@@ -58,27 +58,14 @@ struct LookupBindings<'a, B: Backend> {
 impl<B: Backend> Storage<B> {
     fn lookup_bindings(&self) -> LookupBindings<'_, B> {
         match self {
-            Self::Matrix(matrix) => {
-                let (values, scales, zero_points, biases) = match matrix.matmul_b() {
-                    MatmulB::FullPrecision {
-                        b,
-                    } => (b, None, None, None),
-                    MatmulB::Quantized(quantized) => {
-                        (quantized.codes, Some(quantized.scales), quantized.zero_points(), quantized.biases())
-                    },
-                    MatmulB::Trellis {
-                        ..
-                    } => unreachable!("trellis tables are rejected at load"),
-                };
-                LookupBindings {
-                    values,
-                    scales,
-                    zero_points,
-                    biases,
-                    ladder_indices: None,
-                    ladder: None,
-                    codebook: None,
-                }
+            Self::Matrix(matrix) => LookupBindings {
+                values: matrix.values(),
+                scales: matrix.scales(),
+                zero_points: matrix.zero_points(),
+                biases: matrix.biases(),
+                ladder_indices: None,
+                ladder: None,
+                codebook: None,
             },
             Self::D4S4(table) => LookupBindings {
                 values: &table.codes,
@@ -103,11 +90,11 @@ pub struct EmbeddingTable<B: Backend> {
 
 impl<B: Backend> EmbeddingTable<B> {
     pub fn load(
-        context: &B::Context,
-        tree: &ParameterTree<B>,
         vocab_size: u32,
         embedding_dim: u32,
         data_type: DataType,
+        tree: &ParameterTree<B>,
+        context: &B::Context,
     ) -> Result<Self, EmbeddingTableError<B>> {
         if !matches!(data_type, DataType::F32 | DataType::BF16) {
             return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
@@ -115,14 +102,14 @@ impl<B: Backend> EmbeddingTable<B> {
             )));
         }
         let load_matrix = |tree: &ParameterTree<B>, spec| {
-            WeightMatrix::load(tree, spec, Layout::InputOutput, embedding_dim, vocab_size, data_type)
+            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree)
         };
         let (storage, output_hadamard_factors) = match tree.metadata::<AnyWeightMatrixSpec>("spec")? {
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                adapter_spec: None,
                 incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
                 incoherence_processing_mode: IncoherenceProcessingMode::Output,
+                incoherence_kind: IncoherenceKind::Hadamard,
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
                 let quantized_tree = tree.subtree("quantized");
@@ -152,14 +139,12 @@ impl<B: Backend> EmbeddingTable<B> {
 
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => match matrix.matmul_b() {
-                MatmulB::FullPrecision {
-                    ..
-                } => (EmbeddingTableKind::Dense, None),
-                MatmulB::Quantized(_) => (EmbeddingTableKind::Quantized, matrix.quantization()),
-                MatmulB::Trellis {
-                    ..
-                } => return Err(EmbeddingTableError::UnsupportedConfiguration("trellis embedding tables".into())),
+            Storage::Matrix(matrix) => {
+                if let Some(info) = matrix.quantization() {
+                    (EmbeddingTableKind::Quantized, Some(info))
+                } else {
+                    (EmbeddingTableKind::Dense, None)
+                }
             },
         };
         let group_size = quantization.map(|info| info.group_size);
@@ -228,7 +213,7 @@ fn load_d4s4<B: Backend>(
             "{spec:?} with {data_type:?} and embedding dim {embedding_dim}"
         )));
     }
-    let read = |name: &str, shape: &[u32], data_type| tree.leaf(name)?.validate(shape, data_type)?.read_buffer();
+    let read = |name: &str, shape: &[u32], data_type| tree.read_buffer(name, shape, data_type);
     Ok(D4S4Table {
         codes: read("codes", &[vocab_size, embedding_dim / d4s4::VALUES_PER_CODE], DataType::U8)?,
         row_scales: read("row_scales", &[vocab_size], data_type)?,
@@ -247,5 +232,5 @@ pub(super) fn read_output_signs<B: Backend>(
     embedding_dim: u32,
 ) -> Result<B::GlobalBuffer, EmbeddingTableError<B>> {
     let signs = tree.subtree("incoherence_signs");
-    Ok(signs.leaf("output_signs")?.validate(&[embedding_dim], DataType::I32)?.read_buffer()?)
+    Ok(signs.read_buffer("output_signs", &[embedding_dim], DataType::I32)?)
 }

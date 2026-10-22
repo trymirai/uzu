@@ -19,6 +19,9 @@ result
 # Python
 *__pycache__
 
+# Node package cache
+.pnpm-store/
+
 # AI tools
 .cursor
 .claude/settings.local.json

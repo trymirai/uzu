@@ -4,15 +4,15 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Kernels,
-        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel, SigmoidGateKernel},
+        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareInt8Kernel, AttentionPrepareKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::{
-            Mixer, MixerState,
+            Mixer, MixerEncodeError, MixerState,
             attention::{
                 mode::LinearProjection,
                 qkv_norm::{QKVNorm, QKVNormError},
@@ -20,10 +20,11 @@ use crate::{
             },
         },
     },
-    parameters::{ParameterLoaderError, ParameterTree},
+    safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
 
+pub mod kv_storage;
 mod mode;
 mod qkv_norm;
 mod state;
@@ -35,21 +36,25 @@ pub mod rope;
 pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
+    num_groups: u32,
     num_kv_heads: Option<u32>,
     ring_capacity: Option<u32>,
     max_rope_length: Option<u32>,
     data_type: DataType,
+    has_gate: bool,
     projection_dim: u32,
     projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     sinks: Option<B::GlobalBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
-    gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     out_projection: Box<dyn Linear<B>>,
 }
 
 #[derive(Debug, Error)]
 pub enum AttentionNewError<B: Backend> {
+    #[error("Attention kernel error: {0}")]
+    Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
@@ -58,6 +63,16 @@ pub enum AttentionNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("QKVNorm error: {0}")]
     QKVNorm(#[from] QKVNormError<B>),
+}
+
+#[derive(Debug, Error)]
+pub enum AttentionEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearEncodeError<B>),
+    #[error("Attention kernel error: {0}")]
+    Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
 }
 
 impl<B: Backend> Attention<B> {
@@ -96,33 +111,29 @@ impl<B: Backend> Attention<B> {
         };
         let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            [projection_dim],
-            config.has_qkvg_biases,
-            context,
+            projection_dim,
             data_type,
+            config.has_qkvg_biases,
             &projection_tree,
+            context,
         )?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
         let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
-        let qkv_norm = (query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some())
-            .then(|| {
-                QKVNorm::new(
-                    context,
-                    data_type,
-                    query_norm_config,
-                    key_norm_config,
-                    value_norm_config,
-                    parameter_tree,
-                    config.num_heads,
-                    num_kv_heads.unwrap_or(0), // TODO: should take option
-                    projection_dim,
-                    config.head_dim,
-                )
-            })
-            .transpose()?;
+        let qkv_norm = QKVNorm::new(
+            num_q_heads,
+            num_kv_heads,
+            projection_dim,
+            head_dim,
+            data_type,
+            query_norm_config,
+            key_norm_config,
+            value_norm_config,
+            parameter_tree,
+            context,
+        )?;
 
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
@@ -132,10 +143,8 @@ impl<B: Backend> Attention<B> {
             rope_config.is_some(),
         )
         .map_err(AttentionNewError::Backend)?;
-        let sinks = config
-            .has_sinks
-            .then(|| parameter_tree.leaf("sinks")?.validate(&[num_q_heads], data_type)?.read_buffer())
-            .transpose()?;
+        let sinks =
+            config.has_sinks.then(|| parameter_tree.read_buffer("sinks", &[num_q_heads], data_type)).transpose()?;
 
         assert!(sliding_window_size.is_none_or(|size| size > 0), "zero sliding window size");
         let ring_capacity = sliding_window_size;
@@ -148,6 +157,7 @@ impl<B: Backend> Attention<B> {
                 num_groups,
                 num_q_heads,
                 has_sinks: sinks.is_some(),
+                gate_row_stride: config.has_gate.then_some(projection_dim),
                 is_kv_cache_ring,
                 is_causal,
                 sliding_window_size,
@@ -155,40 +165,52 @@ impl<B: Backend> Attention<B> {
                 data_type,
             },
         )
-        .map_err(AttentionNewError::Backend)?;
-
-        let gate_kernel = config
-            .has_gate
-            .then(|| <B::Kernels as Kernels>::SigmoidGateKernel::new(context, data_type))
+        .map_err(AttentionNewError::Kernel)?;
+        let prepare_int8 = kernel
+            .supports_int8()
+            .then(|| {
+                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+                    context,
+                    data_type,
+                    DataType::F32,
+                    head_dim,
+                    rope_config.is_some(),
+                    true,
+                    num_groups,
+                    !is_kv_sharing,
+                )
+            })
             .transpose()
             .map_err(AttentionNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
-            [hidden_dim],
-            config.has_out_biases,
-            context,
+            hidden_dim,
             data_type,
+            config.has_out_biases,
             &parameter_tree.subtree("out_projection"),
+            context,
         )?;
 
         Ok((
             Self {
                 head_dim,
                 num_q_heads,
+                num_groups,
                 num_kv_heads,
                 ring_capacity,
                 max_rope_length,
                 data_type,
+                has_gate: config.has_gate,
                 projection_dim,
                 projection: LinearProjection {
                     lin: projection,
                     norm: qkv_norm,
                 },
                 prepare,
+                prepare_int8,
                 sinks,
                 kernel,
-                gate_kernel,
                 out_projection,
             },
             in_projection_input_hadamard_factors,
@@ -220,16 +242,14 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
-        command_buffer.push_debug_group("attention");
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("attention");
 
         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
         let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
-
-        command_buffer.pop_debug_group();
 
         Ok(output)
     }

@@ -5,11 +5,6 @@
 using namespace metal;
 
 namespace uzu::gemm {
-enum class GemmAPrologueKind : uint32_t {
-  FullPrecision = 0,
-  Int8Symmetric = 1,
-};
-
 enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
@@ -22,14 +17,23 @@ struct GemmDTransform {
   constexpr GemmDTransform() thread : raw_value(0) {}
   constexpr GemmDTransform(uint32_t __dsl_v) thread : raw_value(__dsl_v) {}
   static constant constexpr uint32_t SCALE = 1 << 0;
-  static constant constexpr uint32_t ACCUMULATE = 1 << 1;
-  static constant constexpr uint32_t BIAS = 1 << 2;
-  static constant constexpr uint32_t RHT = 1 << 3;
-  static constant constexpr uint32_t SOFT_CAP = 1 << 4;
+  static constant constexpr uint32_t BIAS = 1 << 1;
+  static constant constexpr uint32_t RHT = 1 << 2;
+  static constant constexpr uint32_t SOFT_CAP = 1 << 3;
   constexpr bool contains(uint32_t flag) const thread { return (raw_value & flag) != 0; }
   constexpr bool contains(uint32_t flag) const constant { return (raw_value & flag) != 0; }
   constexpr uint32_t bits() const thread { return raw_value; }
   constexpr uint32_t bits() const constant { return raw_value; }
+};
+
+enum class GemmAPrologueKind : uint32_t {
+  FullPrecision = 0,
+  Int8Symmetric = 1,
+};
+
+enum class GemmBLayout : uint32_t {
+  RowMajor = 0,
+  MxuTiled = 1,
 };
 
 enum class GemmTiling : uint32_t {
@@ -39,11 +43,12 @@ enum class GemmTiling : uint32_t {
   Tile64x64x32_Simdgroups2x2 = 3,
   Tile32x32x32_Simdgroups2x2 = 4,
   Tile16x32x256_Simdgroups1x1 = 5,
-  Tile16x128x256_Simdgroups1x4 = 6,
-  Tile32x64x256_Simdgroups2x2 = 7,
-  Tile64x32x256_Simdgroups4x1 = 8,
-  Tile64x64x256_Simdgroups2x2 = 9,
-  Tile128x128x256_Simdgroups4x4 = 10,
+  Tile16x32x256_Simdgroups1x1x4 = 6,
+  Tile16x128x256_Simdgroups1x4 = 7,
+  Tile32x64x256_Simdgroups2x2 = 8,
+  Tile64x32x256_Simdgroups4x1 = 9,
+  Tile64x64x256_Simdgroups2x2 = 10,
+  Tile128x128x256_Simdgroups4x4 = 11,
 };
 
 static constant constexpr uint32_t MXU_SIMDGROUP_BLOCK_K = 32;

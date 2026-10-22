@@ -18,6 +18,11 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub log_decay: &'a B::ScratchBuffer,
     pub beta: &'a B::ScratchBuffer,
     pub h0: &'a B::GlobalBuffer,
+    pub in_proj: &'a B::ScratchBuffer,
+    pub norm_weight: &'a B::GlobalBuffer,
+    pub conv_dim: u32,
+    pub total_proj_dim: u32,
+    pub norm_epsilon: f32,
     pub tree_size: u32,
 }
 

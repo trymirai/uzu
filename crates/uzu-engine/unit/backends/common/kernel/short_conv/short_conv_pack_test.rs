@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
@@ -13,14 +13,14 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     state_in: Box<[T]>,
     in_proj: Box<[T]>,
     state_stride: u32,
@@ -29,8 +29,8 @@ struct Input<T: ArrayElement + Float> {
     model_dim: u32,
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
 
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(&context, T::data_type())
         .expect("Failed to create ShortConvPackKernel");
@@ -53,7 +53,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.model_dim,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     buffer_to_vec(&padded)
 }
@@ -66,7 +66,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 ///     - columns [0..model_dim)          = pre_gate
 ///     - columns [2*model_dim..3*model_dim) = x_in
 ///   padded (output): [(state_stride + suffix_len), model_dim]
-fn get_input<T: ArrayElement + Float>(
+fn get_input<T: DataTypeRepr + Float>(
     model_dim: usize,
     state_stride: usize,
     suffix_len: usize,
@@ -106,7 +106,7 @@ fn get_input<T: ArrayElement + Float>(
     (input, output)
 }
 
-fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.02f32
     } else {
@@ -124,7 +124,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-fn test_large<T: ArrayElement + Float + Debug + Display>() {
+fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.02f32
     } else {
@@ -142,7 +142,7 @@ fn test_large<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-fn test_edge_single_token<T: ArrayElement + Float + Debug + Display>() {
+fn test_edge_single_token<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.02f32
     } else {
@@ -160,7 +160,7 @@ fn test_edge_single_token<T: ArrayElement + Float + Debug + Display>() {
     });
 }
 
-fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
+fn test_edge_small<T: DataTypeRepr + Float + Debug + Display>() {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         0.02f32
     } else {

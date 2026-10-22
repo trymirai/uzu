@@ -25,7 +25,7 @@ function MenuItem({ icon: Icon, title, url, onClick, isActive }: MenuItemProps) 
   const content = (
     <div className="flex px-2">
       <div
-        className={`flex items-center gap-2 px-2 py-[6px] w-full rounded-md hover:bg-bg-hover ${isActive ? "bg-bg-hover dark:bg-bg-hover" : ""}`}
+        className={`flex items-center gap-2 px-2 py-[6px] w-full rounded-md transition-colors duration-150 ${isActive ? "bg-sidebar-chat-selected" : "hover:bg-sidebar-chat-hover"}`}
       >
         <Icon className="w-5 h-5 flex-shrink-0 text-label-muted" />
         <p className="text-[13px] font-[350] leading-[150%] text-label-title truncate min-w-0">{title}</p>

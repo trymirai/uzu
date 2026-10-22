@@ -1,36 +1,34 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::bf16;
-#[cfg(backend = "metal")]
-use ndarray::{Array, Array3};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::kv_cache_update::Copy,
+            kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, kv_layout::Int8KVLayout},
         },
         cpu::Cpu,
     },
+    data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
-#[cfg(backend = "metal")]
-use crate::{backends::metal::Metal, data_type::DataType};
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     keys: Box<[T]>,
     values: Box<[T]>,
     copies: Vec<Copy>,
     element_dim: u32,
 }
 
-fn make_data<T: ArrayElement + Float>(
+fn make_data<T: DataTypeRepr + Float>(
     max_sequence_length: usize,
     element_dim: usize,
 ) -> (Vec<T>, Vec<T>) {
@@ -44,8 +42,8 @@ fn make_data<T: ArrayElement + Float>(
     (keys, values)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
-    let context = B::Context::new().expect("Failed to create Context");
+fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, T::data_type())
         .expect("Failed to create KVCacheUpdateKernel");
 
@@ -61,13 +59,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.element_dim,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     (buffer_to_vec(&keys), buffer_to_vec(&values))
 }
 
 /// Single copy between two different positions.
-fn get_test_data_single_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_single_copy<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 4usize;
     let head_dim = 3usize;
@@ -92,7 +90,7 @@ fn get_test_data_single_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Ve
 }
 
 /// Multiple copies.
-fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_multi_copy<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 8usize;
     let head_dim = 4usize;
@@ -109,6 +107,10 @@ fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec
             source: 0,
             destination: 5,
         },
+        Copy {
+            source: 3,
+            destination: 6,
+        },
     ];
 
     let input = Input {
@@ -123,7 +125,7 @@ fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec
 }
 
 /// No copies — data should remain unchanged.
-fn get_test_data_no_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_no_copy<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 4usize;
     let head_dim = 3usize;
@@ -145,7 +147,7 @@ fn get_test_data_no_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>
 }
 
 /// Larger dimensions to exercise more threads.
-fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+fn get_test_data_large<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 8usize;
     let max_sequence_length = 64usize;
     let head_dim = 128usize;
@@ -179,7 +181,7 @@ fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) 
     (input, expected_keys, expected_values)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected_keys: &[T],
     expected_values: &[T],
@@ -195,32 +197,27 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn test_single_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_single_copy_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_single_copy::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "single_copy");
 }
 
-fn test_multi_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_multi_copy_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_multi_copy::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "multi_copy");
 }
 
-fn test_no_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_no_copy_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_no_copy::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "no_copy");
 }
 
-fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
+fn test_large_internal<T: DataTypeRepr + Float + Debug + Display>() {
     let (input, expected_keys, expected_values) = get_test_data_large::<T>();
     test_internal::<T>(&input, &expected_keys, &expected_values, "large");
 }
 
 // Single copy tests
-#[uzu_test]
-fn test_single_copy_f32() {
-    test_single_copy_internal::<f32>();
-}
-
 #[uzu_test]
 fn test_single_copy_bf16() {
     test_single_copy_internal::<bf16>();
@@ -228,21 +225,11 @@ fn test_single_copy_bf16() {
 
 // Multi copy tests
 #[uzu_test]
-fn test_multi_copy_f32() {
-    test_multi_copy_internal::<f32>();
-}
-
-#[uzu_test]
 fn test_multi_copy_bf16() {
     test_multi_copy_internal::<bf16>();
 }
 
 // No copy tests
-#[uzu_test]
-fn test_no_copy_f32() {
-    test_no_copy_internal::<f32>();
-}
-
 #[uzu_test]
 fn test_no_copy_bf16() {
     test_no_copy_internal::<bf16>();
@@ -250,129 +237,47 @@ fn test_no_copy_bf16() {
 
 // Large dimension tests
 #[uzu_test]
-fn test_large_f32() {
-    test_large_internal::<f32>();
-}
-
-#[uzu_test]
 fn test_large_bf16() {
     test_large_internal::<bf16>();
 }
 
-#[cfg(backend = "metal")]
-fn apply_copies_3d<T: Clone>(
-    array: &mut Array3<T>,
-    copies: &[Copy],
-) {
-    let (_seq_len, num_heads, head_dim) = array.dim();
-    for head in 0..num_heads {
-        for channel in 0..head_dim {
-            for copy in copies {
-                let src = copy.source as usize;
-                let dst = copy.destination as usize;
-                array[(dst, head, channel)] = array[(src, head, channel)].clone();
-            }
-        }
-    }
+#[uzu_test]
+fn test_int8_copy() {
+    let expected = get_int8_output::<Cpu>();
+    for_each_non_cpu_backend!(|B| {
+        assert_eq!(expected, get_int8_output::<B>(), "INT8 cache update mismatch on {}", std::any::type_name::<B>());
+    });
 }
 
-#[cfg(backend = "metal")]
-#[uzu_test]
-fn test_random_pattern_f32() {
-    let context = match <Metal as Backend>::Context::new() {
-        Ok(context) => context,
-        Err(error) => {
-            eprintln!("Failed to create Metal context: {error:?}. Skipping test.");
-            return;
-        },
-    };
-
-    let kernel = <<Metal as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, DataType::F32)
-        .expect("Failed to create KVCacheUpdateKernel");
-
-    let num_heads = 3usize;
-    let seq_len = 15usize;
-    let head_dim = 7usize;
-    let element_dim = num_heads * head_dim;
-
-    let key_data = Array3::<f32>::from_shape_fn((seq_len, num_heads, head_dim), |(token, head, channel)| {
-        (token * 1_000_000 + head * 100 + channel * 10) as f32
-    });
-
-    let value_data = Array3::<f32>::from_shape_fn((seq_len, num_heads, head_dim), |(token, head, channel)| {
-        (token * 1_000_000 + head * 100 + channel * 10 + 1_000) as f32
-    });
-
-    let copies = vec![
-        Copy {
-            source: 0,
-            destination: 14,
-        },
-        Copy {
-            source: 3,
-            destination: 11,
-        },
-        Copy {
-            source: 6,
-            destination: 8,
-        },
-        Copy {
-            source: 9,
-            destination: 5,
-        },
-        Copy {
-            source: 12,
-            destination: 2,
-        },
-        Copy {
-            source: 2,
-            destination: 12,
-        },
-        Copy {
-            source: 5,
-            destination: 9,
-        },
-        Copy {
-            source: 8,
-            destination: 6,
-        },
-        Copy {
-            source: 11,
-            destination: 3,
-        },
-        Copy {
-            source: 14,
-            destination: 0,
-        },
-    ];
-
-    let mut expected_keys = key_data.clone();
-    let mut expected_values = value_data.clone();
-    apply_copies_3d(&mut expected_keys, &copies);
-    apply_copies_3d(&mut expected_values, &copies);
-
-    let mut key_buffer = create_buffer_with_data::<Metal, f32>(&context, key_data.as_slice().unwrap());
-    let mut value_buffer = create_buffer_with_data::<Metal, f32>(&context, value_data.as_slice().unwrap());
-
+fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
+    let layout = Int8KVLayout::new(256, 2);
+    let scale_count = 64 * layout.num_kv_heads as usize;
+    let code_bytes = scale_count * layout.head_dim as usize;
+    let k_codes: Vec<i8> = (0..code_bytes).map(|i| ((i * 37) ^ (i >> 8)) as i8).collect();
+    let v_codes: Vec<u8> = (0..code_bytes).map(|i| ((i * 19) ^ (i >> 7)) as u8).collect();
+    let k_scales: Vec<bf16> = (0..scale_count).map(|i| bf16::from_f32(i as f32 + 1.0)).collect();
+    let v_scales: Vec<bf16> = (0..scale_count).map(|i| bf16::from_f32(i as f32 + 129.0)).collect();
+    let copies = [Copy {
+        source: 40,
+        destination: 5,
+    }];
+    let context = block_on(B::Context::new()).unwrap();
+    let mut keys = create_buffer_with_data::<B, i8>(&context, &k_codes);
+    let mut values = create_buffer_with_data::<B, u8>(&context, &v_codes);
+    let mut key_scales = create_buffer_with_data::<B, bf16>(&context, &k_scales);
+    let mut value_scales = create_buffer_with_data::<B, bf16>(&context, &v_scales);
+    let kernel =
+        <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(&context, layout.head_dim, layout.num_kv_heads).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
-        &mut key_buffer,
-        &mut value_buffer,
+        &mut keys,
+        &mut values,
+        &mut key_scales,
+        &mut value_scales,
         &copies,
         copies.len() as u32,
-        element_dim as u32,
         &mut command_buffer,
     );
-    command_buffer.end_encoding().submit().wait_until_completed().unwrap();
-
-    let key_values: Vec<f32> = buffer_to_vec(&key_buffer);
-    let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
-        .expect("Failed to convert key result to ndarray");
-
-    let value_values: Vec<f32> = buffer_to_vec(&value_buffer);
-    let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
-        .expect("Failed to convert value result to ndarray");
-
-    assert_eq!(key_result, expected_keys);
-    assert_eq!(value_result, expected_values);
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    ([&keys, &values].map(buffer_to_vec::<B, u8>), [&key_scales, &value_scales].map(buffer_to_vec::<B, bf16>))
 }

@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_config_abstract;
 
-use crate::backends::common::gpu_types::ActivationType;
+use crate::backends::common::gpu_types::activation_type::ActivationType;
 
 pub mod gelu;
 pub mod identity;

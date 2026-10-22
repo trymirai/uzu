@@ -16,6 +16,7 @@ __all__ = [
     "ChatMessage",
     "ChatMessageMetadata",
     "ChatModelCapabilities",
+    "ChatModelInfo",
     "ChatReply",
     "ChatReplyConfig",
     "ChatReplyEnergy",
@@ -84,6 +85,8 @@ __all__ = [
     "TextToSpeechStats",
     "Token",
     "ToolCall",
+    "ToolCallArgumentDelta",
+    "ToolCallArgumentStream",
     "ToolDescription",
     "ToolFunction",
     "ToolNamespace",
@@ -208,10 +211,15 @@ class ChatContentBlock:
     
     @typing.final
     class ToolCallCandidate(ChatContentBlock):
-        __match_args__ = ("value",)
+        __match_args__ = ("value", "identifier",)
         @property
         def value(self) -> Value: ...
-        def __new__(cls, value: Value) -> ChatContentBlock.ToolCallCandidate: ...
+        @property
+        def identifier(self) -> typing.Optional[builtins.str]:
+            r"""
+            Assigned by the session and retained when the candidate becomes a tool call.
+            """
+        def __new__(cls, value: Value, identifier: typing.Optional[builtins.str]) -> ChatContentBlock.ToolCallCandidate: ...
     
     @typing.final
     class ToolCallResult(ChatContentBlock):
@@ -316,6 +324,22 @@ class ChatModelCapabilities:
     def __new__(cls, supports_reasoning: builtins.bool, supports_disable_reasoning: builtins.bool, reasoning_efforts: typing.Sequence[ReasoningEffort], supports_tools: builtins.bool, supports_multiple_tool_calls: builtins.bool, requires_tools: builtins.bool) -> ChatModelCapabilities: ...
 
 @typing.final
+class ChatModelInfo:
+    r"""
+    Chat metadata available without loading model weights or allocating a session.
+    """
+    @property
+    def context_length(self) -> typing.Optional[builtins.int]:
+        r"""
+        Architectural limit; absent before download or for models without a finite limit.
+        """
+    @property
+    def capabilities(self) -> ChatModelCapabilities: ...
+    @property
+    def default_reasoning_effort(self) -> typing.Optional[ReasoningEffort]: ...
+    def __new__(cls, context_length: typing.Optional[builtins.int], capabilities: ChatModelCapabilities, default_reasoning_effort: typing.Optional[ReasoningEffort]) -> ChatModelInfo: ...
+
+@typing.final
 class ChatReply:
     @property
     def message(self) -> ChatMessage: ...
@@ -337,7 +361,7 @@ class ChatReplyConfig:
     def tool_turn_limit(self) -> typing.Optional[builtins.int]:
         r"""
         Maximum number of automatic tool-call turns per reply.
-        `None` falls back to the session default.
+        `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
         """
     def __new__(cls, token_limit: typing.Optional[builtins.int], sampling_policy: SamplingPolicy, grammar: typing.Optional[Grammar], tool_turn_limit: typing.Optional[builtins.int]) -> ChatReplyConfig: ...
     @staticmethod
@@ -507,6 +531,13 @@ class ChatSessionStreamChunk:
         def error(self) -> builtins.str: ...
         def __new__(cls, error: builtins.str) -> ChatSessionStreamChunk.Error: ...
     
+    @typing.final
+    class ToolResults(ChatSessionStreamChunk):
+        __match_args__ = ("messages",)
+        @property
+        def messages(self) -> builtins.list[ChatMessage]: ...
+        def __new__(cls, messages: typing.Sequence[ChatMessage]) -> ChatSessionStreamChunk.ToolResults: ...
+    
     ...
 
 @typing.final
@@ -645,6 +676,11 @@ class DownloadPhase:
         def message(self) -> builtins.str: ...
         def __new__(cls, message: builtins.str) -> DownloadPhase.Error: ...
     
+    @typing.final
+    class Initializing(DownloadPhase):
+        __match_args__ = ()
+        def __new__(cls) -> DownloadPhase.Initializing: ...
+    
     ...
 
 @typing.final
@@ -690,6 +726,7 @@ class Engine:
     def remove_registry(self, registry_identifier: builtins.str) -> collections.abc.Awaitable[None]: ...
     def remove_backend(self, identifier: builtins.str) -> collections.abc.Awaitable[None]: ...
     def models(self) -> collections.abc.Awaitable[builtins.list[Model]]: ...
+    def refresh_models(self) -> collections.abc.Awaitable[builtins.list[Model]]: ...
     def models_on_device(self) -> collections.abc.Awaitable[builtins.list[Model]]: ...
     def models_remote(self) -> collections.abc.Awaitable[builtins.list[Model]]: ...
     def models_downloadable(self) -> collections.abc.Awaitable[builtins.list[Model]]: ...
@@ -718,6 +755,7 @@ class Engine:
     def classification(self, model: Model) -> collections.abc.Awaitable[ClassificationSession]: ...
     def text_to_speech(self, model: Model) -> collections.abc.Awaitable[TextToSpeechSession]: ...
     def settings(self) -> collections.abc.Awaitable[Settings]: ...
+    def chat_model_info(self, model: Model) -> collections.abc.Awaitable[ChatModelInfo | None]: ...
 
 @typing.final
 class EngineCallback:
@@ -1231,6 +1269,24 @@ class ToolCall:
     @property
     def arguments(self) -> Value: ...
     def __new__(cls, identifier: typing.Optional[builtins.str], name: builtins.str, arguments: Value) -> ToolCall: ...
+
+@typing.final
+class ToolCallArgumentDelta:
+    @property
+    def name(self) -> builtins.str: ...
+    @property
+    def arguments(self) -> builtins.str: ...
+    def __new__(cls, name: builtins.str, arguments: builtins.str) -> ToolCallArgumentDelta: ...
+
+@typing.final
+class ToolCallArgumentStream:
+    r"""
+    Converts model tool-call candidates into append-only JSON argument fragments.
+    """
+    @staticmethod
+    def create(tools: typing.Sequence[ToolNamespace]) -> ToolCallArgumentStream: ...
+    def update(self, raw: builtins.str) -> ToolCallArgumentDelta: ...
+    def finish(self, call: ToolCall) -> ToolCallArgumentDelta: ...
 
 class ToolDescription:
     @typing.final

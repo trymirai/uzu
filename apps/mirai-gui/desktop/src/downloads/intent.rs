@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use futures::StreamExt;
 use tauri::{AppHandle, Manager};
 use uzu::{storage::DownloadPhase, types::model::Model};
 
@@ -67,42 +68,66 @@ pub fn auto_resume_on_startup(app: AppHandle) {
         let Ok(engine) = engine().await else {
             return;
         };
-        let wanted: Vec<String> =
+        let mut wanted: HashSet<String> =
             with_readiness(|map| map.iter().filter_map(|(k, v)| v.then_some(k.clone())).collect());
         if wanted.is_empty() {
             return;
         }
-        let Ok(models) = engine.models_for_chat().await else {
-            return;
-        };
-        for key in wanted {
-            let found = models.iter().filter(|m| m.is_on_device()).find(|m| m.repo_ids().contains(&key));
-            let Some(model) = found.cloned() else {
-                continue;
+        let mut catalog_updates = engine.catalog_subscribe();
+        let mut storage_updates = engine.storage_subscribe();
+        loop {
+            let Ok((models, complete)) = engine.catalog_snapshot().await else {
+                return;
             };
-            let Some(state) = engine.download_state(&model).await else {
-                continue;
-            };
-            // NotDownloaded with intent set = the cache moved to a new
-            // checkpoint_version dir (engine update); re-fetch automatically.
-            if !matches!(
-                state.phase,
-                DownloadPhase::Paused {} | DownloadPhase::Downloading {} | DownloadPhase::NotDownloaded {}
-            ) {
-                continue;
+            let mut waiting_for_storage = false;
+            for key in wanted.clone() {
+                if !with_readiness(|map| map.get(&key).copied().unwrap_or(false)) {
+                    wanted.remove(&key);
+                    continue;
+                }
+                let found = models.iter().filter(|m| m.is_on_device()).find(|m| m.repo_ids().contains(&key));
+                let Some(model) = found.cloned() else {
+                    if complete {
+                        wanted.remove(&key);
+                    }
+                    continue;
+                };
+                let Some(state) = engine.download_state(&model).await else {
+                    continue;
+                };
+                if matches!(state.phase, DownloadPhase::Initializing {}) {
+                    waiting_for_storage = true;
+                    continue;
+                }
+                wanted.remove(&key);
+                // NotDownloaded with intent set = the cache moved to a new
+                // checkpoint_version dir (engine update); re-fetch automatically.
+                if !matches!(
+                    state.phase,
+                    DownloadPhase::Paused {} | DownloadPhase::Downloading {} | DownloadPhase::NotDownloaded {}
+                ) {
+                    continue;
+                }
+                let downloads = app.state::<DownloadsState>();
+                downloads.remember_one(&model.identifier, &key).await;
+                ensure_watcher(app.clone(), &downloads);
+                match engine.downloader(&model).resume().await {
+                    Ok(()) => crate::logger::info(
+                        "download:auto-resume",
+                        Some(serde_json::json!({ "identifier": model.identifier })),
+                    ),
+                    Err(error) => crate::logger::warn(
+                        "download:auto-resume-failed",
+                        Some(serde_json::json!({ "identifier": model.identifier, "error": error.to_string() })),
+                    ),
+                }
             }
-            let downloads = app.state::<DownloadsState>();
-            downloads.remember_one(&model.identifier, &key).await;
-            ensure_watcher(app.clone(), &downloads);
-            match engine.downloader(&model).resume().await {
-                Ok(()) => crate::logger::info(
-                    "download:auto-resume",
-                    Some(serde_json::json!({ "identifier": model.identifier })),
-                ),
-                Err(error) => crate::logger::warn(
-                    "download:auto-resume-failed",
-                    Some(serde_json::json!({ "identifier": model.identifier, "error": error.to_string() })),
-                ),
+            if wanted.is_empty() || (!engine.catalog_is_refreshing() && !waiting_for_storage) {
+                break;
+            }
+            tokio::select! {
+                event = catalog_updates.next() => if event.is_none() { break; },
+                event = storage_updates.next() => if event.is_none() { break; },
             }
         }
     });

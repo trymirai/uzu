@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use criterion::Criterion;
+use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_bench;
 
@@ -31,16 +32,19 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         head_k_dim: HEAD_DIM as u32,
         head_v_dim: HEAD_DIM as u32,
     };
-    let context = <Metal as Backend>::Context::new().unwrap();
+    let context = block_on(<Metal as Backend>::Context::new()).unwrap();
     let started = Instant::now();
     let tree_verify =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetTreeVerify::new(context.as_ref(), &arguments).unwrap();
     eprintln!("GDN tree verification PSO construction: {:.2} ms", started.elapsed().as_secs_f64() * 1e3);
     let h0 = create_buffer_with_data::<Metal, f32>(&context, &vec![0.001; V_HEADS * HEAD_DIM * HEAD_DIM]);
+    let norm_weight = create_buffer_with_data::<Metal, f32>(&context, &vec![1.0; HEAD_DIM]);
+    const CONV_DIM: usize = 2 * K_HEADS * HEAD_DIM + V_HEADS * HEAD_DIM;
+    const TOTAL_PROJ_DIM: usize = CONV_DIM + V_HEADS * HEAD_DIM + 2 * V_HEADS;
     let mut group = c.benchmark_group("Metal/Kernel/GDNTreeVerify");
     group.sample_size(20).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
-    for tree_size in [32usize, 49, 64, 128] {
+    for tree_size in [16usize, 32] {
         let mut command_buffer = context.create_command_buffer(None, None).unwrap();
         let mut q = command_buffer.allocate_scratch(tree_size * K_HEADS * HEAD_DIM * size_of::<bf16>()).unwrap();
         q.copyin(&vec![bf16::from_f32(0.01); tree_size * K_HEADS * HEAD_DIM]);
@@ -48,6 +52,8 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         k.copyin(&vec![bf16::from_f32(0.02); tree_size * K_HEADS * HEAD_DIM]);
         let mut v = command_buffer.allocate_scratch(tree_size * V_HEADS * HEAD_DIM * size_of::<bf16>()).unwrap();
         v.copyin(&vec![bf16::from_f32(0.03); tree_size * V_HEADS * HEAD_DIM]);
+        let mut in_proj = command_buffer.allocate_scratch(tree_size * TOTAL_PROJ_DIM * size_of::<bf16>()).unwrap();
+        in_proj.copyin(&vec![bf16::from_f32(0.04); tree_size * TOTAL_PROJ_DIM]);
         let trie_nodes = (0..tree_size as u32).flat_map(|node| [node, tree_size as u32 - 1, node]).collect::<Vec<_>>();
         let mut log_decay = command_buffer.allocate_scratch(tree_size * V_HEADS * size_of::<f32>()).unwrap();
         log_decay.copyin(&vec![-0.01f32; tree_size * V_HEADS]);
@@ -67,6 +73,11 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             log_decay: &log_decay,
                             beta: &beta,
                             h0: &h0,
+                            in_proj: &in_proj,
+                            norm_weight: &norm_weight,
+                            conv_dim: CONV_DIM as u32,
+                            total_proj_dim: TOTAL_PROJ_DIM as u32,
+                            norm_epsilon: 1e-6,
                             tree_size: tree_size as u32,
                         },
                         command_buffer,

@@ -425,6 +425,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
     typealias FfiType = Int64
     typealias SwiftType = Int64
@@ -890,6 +906,12 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func modelsRemote() async throws  -> [Model]
     
+    /**
+     * Refresh registries and wait until the catalog has been published to storage.
+     * Registries that fail to refresh retain their last known entries.
+     */
+    func refreshModels() async throws  -> [Model]
+    
     func registerCallback(callback: EngineCallback) async throws 
     
     func removeBackend(identifier: String) async 
@@ -899,6 +921,13 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func settings() async throws  -> Settings
     
     func textToSpeech(model: Model) async throws  -> TextToSpeechSession
+    
+    /**
+     * Returns metadata for a Uzu chat model, including models not yet downloaded.
+     * Encoding capabilities come from the catalog; the context limit needs local configuration.
+     * Remote and non-chat models return `None`.
+     */
+    func chatModelInfo(model: Model) async throws  -> ChatModelInfo?
     
 }
 open class Engine: EngineProtocol, @unchecked Sendable {
@@ -1408,6 +1437,27 @@ open func modelsRemote()async throws  -> [Model]  {
         )
 }
     
+    /**
+     * Refresh registries and wait until the catalog has been published to storage.
+     * Registries that fail to refresh retain their last known entries.
+     */
+open func refreshModels()async throws  -> [Model]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_refresh_models(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
+            completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
+            freeFunc: ffi_uzu_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeModel.lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
 open func registerCallback(callback: EngineCallback)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -1490,6 +1540,28 @@ open func textToSpeech(model: Model)async throws  -> TextToSpeechSession  {
             completeFunc: ffi_uzu_rust_future_complete_u64,
             freeFunc: ffi_uzu_rust_future_free_u64,
             liftFunc: FfiConverterTypeTextToSpeechSession_lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
+    /**
+     * Returns metadata for a Uzu chat model, including models not yet downloaded.
+     * Encoding capabilities come from the catalog; the context limit needs local configuration.
+     * Remote and non-chat models return `None`.
+     */
+open func chatModelInfo(model: Model)async throws  -> ChatModelInfo?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_chat_model_info(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeModel_lower(model)
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
+            completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
+            freeFunc: ffi_uzu_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeChatModelInfo.lift,
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
@@ -1920,6 +1992,73 @@ public func FfiConverterTypeSettings_lower(_ value: Settings) -> UInt64 {
 
 
 
+/**
+ * Chat metadata available without loading model weights or allocating a session.
+ */
+public struct ChatModelInfo: Equatable, Hashable, Codable {
+    /**
+     * Architectural limit; absent before download or for models without a finite limit.
+     */
+    public var contextLength: UInt32?
+    public var capabilities: ChatModelCapabilities
+    public var defaultReasoningEffort: ReasoningEffort?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Architectural limit; absent before download or for models without a finite limit.
+         */contextLength: UInt32?, capabilities: ChatModelCapabilities, defaultReasoningEffort: ReasoningEffort?) {
+        self.contextLength = contextLength
+        self.capabilities = capabilities
+        self.defaultReasoningEffort = defaultReasoningEffort
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ChatModelInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatModelInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatModelInfo {
+        return
+            try ChatModelInfo(
+                contextLength: FfiConverterOptionUInt32.read(from: &buf), 
+                capabilities: FfiConverterTypeChatModelCapabilities.read(from: &buf), 
+                defaultReasoningEffort: FfiConverterOptionTypeReasoningEffort.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChatModelInfo, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.contextLength, into: &buf)
+        FfiConverterTypeChatModelCapabilities.write(value.capabilities, into: &buf)
+        FfiConverterOptionTypeReasoningEffort.write(value.defaultReasoningEffort, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatModelInfo_lift(_ buf: RustBuffer) throws -> ChatModelInfo {
+    return try FfiConverterTypeChatModelInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatModelInfo_lower(_ value: ChatModelInfo) -> RustBuffer {
+    return FfiConverterTypeChatModelInfo.lower(value)
+}
+
+
 public struct Device: Equatable, Hashable, Codable {
     public var osName: String?
     public var cpuName: String?
@@ -2290,6 +2429,8 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     case TextToSpeechSession(TextToSpeechSessionError
     )
     case SettingsNotAvailable
+    case ModelConfig(message: String
+    )
 
     
 
@@ -2346,6 +2487,9 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
             )
         case 11: return .SettingsNotAvailable
+        case 12: return .ModelConfig(
+            message: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2409,6 +2553,11 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
         case .SettingsNotAvailable:
             writeInt(&buf, Int32(11))
         
+        
+        case let .ModelConfig(message):
+            writeInt(&buf, Int32(12))
+            FfiConverterString.write(message, into: &buf)
+            
         }
     }
 }
@@ -2756,8 +2905,6 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     )
     case DownloadManager(message: String
     )
-    case HashNotFound(identifier: String, name: String
-    )
     case ModelNotFound(identifier: String
     )
     case UnsupportedModel(identifier: String
@@ -2797,14 +2944,10 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case 2: return .DownloadManager(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 3: return .HashNotFound(
-            identifier: try FfiConverterString.read(from: &buf), 
-            name: try FfiConverterString.read(from: &buf)
-            )
-        case 4: return .ModelNotFound(
+        case 3: return .ModelNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 5: return .UnsupportedModel(
+        case 4: return .UnsupportedModel(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -2829,19 +2972,13 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .HashNotFound(identifier,name):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(identifier, into: &buf)
-            FfiConverterString.write(name, into: &buf)
-            
-        
         case let .ModelNotFound(identifier):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(3))
             FfiConverterString.write(identifier, into: &buf)
             
         
         case let .UnsupportedModel(identifier):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(identifier, into: &buf)
             
         }
@@ -2879,9 +3016,8 @@ fileprivate struct UniffiCallbackInterfaceEngineCallbackHandler {
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
     //
-    // This creates 1-element array, since this seems to be the only way to construct a const
-    // pointer that we can pass to the Rust code.
-    static let vtable: [UniffiVTableCallbackInterfaceEngineCallbackHandler] = [UniffiVTableCallbackInterfaceEngineCallbackHandler(
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceEngineCallbackHandler = UniffiVTableCallbackInterfaceEngineCallbackHandler(
         uniffiFree: { (uniffiHandle: UInt64) -> () in
             do {
                 try FfiConverterCallbackInterfaceEngineCallbackHandler.handleMap.remove(handle: uniffiHandle)
@@ -2918,11 +3054,19 @@ fileprivate struct UniffiCallbackInterfaceEngineCallbackHandler {
                 writeReturn: writeReturn
             )
         }
-    )]
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceEngineCallbackHandler> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceEngineCallbackHandler>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
 }
 
 private func uniffiCallbackInitEngineCallbackHandler() {
-    uniffi_uzu_fn_init_callback_vtable_enginecallbackhandler(UniffiCallbackInterfaceEngineCallbackHandler.vtable)
+    uniffi_uzu_fn_init_callback_vtable_enginecallbackhandler(UniffiCallbackInterfaceEngineCallbackHandler.vtablePtr)
 }
 
 // FfiConverter protocol for callback interfaces
@@ -2983,6 +3127,30 @@ public func FfiConverterCallbackInterfaceEngineCallbackHandler_lift(_ handle: UI
 #endif
 public func FfiConverterCallbackInterfaceEngineCallbackHandler_lower(_ v: EngineCallbackHandler) -> UInt64 {
     return FfiConverterCallbackInterfaceEngineCallbackHandler.lower(v)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
 }
 
 #if swift(>=5.8)
@@ -3052,6 +3220,54 @@ fileprivate struct FfiConverterOptionTypeModel: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeModel.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeChatModelInfo: FfiConverterRustBuffer {
+    typealias SwiftType = ChatModelInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeChatModelInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeChatModelInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeReasoningEffort: FfiConverterRustBuffer {
+    typealias SwiftType = ReasoningEffort?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeReasoningEffort.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeReasoningEffort.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3379,6 +3595,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_models_remote() != 36115) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_uzu_checksum_method_engine_refresh_models() != 4090) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_uzu_checksum_method_engine_register_callback() != 18383) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3392,6 +3611,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_text_to_speech() != 62782) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_chat_model_info() != 60496) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_downloader_delete() != 65010) {

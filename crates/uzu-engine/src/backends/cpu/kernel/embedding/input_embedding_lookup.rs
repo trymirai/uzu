@@ -3,18 +3,19 @@ use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::gpu_types::{
-            EmbeddingTableKind, HADAMARD_TRANSFORM_BLOCK_SIZE, QuantizationMethod, QuantizationMode, d4s4,
+            d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            quantization::QuantizationMode, quantization_method::QuantizationMethod,
         },
         cpu::kernel::activation_transform::hadamard_transform,
     },
+    data_type::DataTypeRepr,
 };
 
 #[kernel(InputEmbeddingLookup)]
 #[variants(T, f32, bf16)]
-pub fn input_embedding_lookup<T: ArrayElement + Float>(
+pub fn input_embedding_lookup<T: DataTypeRepr + Float>(
     token_ids: *const u32,
     values: *const u8,
     #[optional(table_kind != EmbeddingTableKind::Dense)] scales: Option<*const T>,

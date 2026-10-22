@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     path::Path,
     sync::{Arc, Weak, mpsc},
     thread,
@@ -20,7 +21,7 @@ pub struct CpuContext {
 impl Context for CpuContext {
     type Backend = Cpu;
 
-    fn new() -> Result<Arc<Self>, CpuError> {
+    async fn new() -> Result<Arc<Self>, CpuError> {
         let (command_queue_sender, command_queue_receiever) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
 
         thread::spawn(|| {
@@ -71,16 +72,10 @@ impl Context for CpuContext {
         None
     }
 
-    fn enable_capture() {}
-
     fn start_capture(
         &self,
-        _trace_path: &Path,
-    ) -> Result<(), CpuError> {
-        Err(CpuError::NotSupported)
-    }
-
-    fn stop_capture(&self) -> Result<(), CpuError> {
+        _output_path: &Path,
+    ) -> Result<Infallible, CpuError> {
         Err(CpuError::NotSupported)
     }
 

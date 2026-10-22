@@ -1,32 +1,32 @@
 use std::fmt::{Debug, Display};
 
+use futures::executor::block_on;
 use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    array::ArrayElement,
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::ActivationType, kernel::ActivationKernel,
+            gpu_types::activation_type::ActivationType, kernel::ActivationKernel,
         },
         cpu::Cpu,
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
-struct Input<T: ArrayElement + Float> {
+struct Input<T: DataTypeRepr + Float> {
     data: Box<[T]>,
     act_type: ActivationType,
     in_place: bool,
 }
 
-fn make_data<T: ArrayElement + Float>(n: usize) -> Vec<T> {
+fn make_data<T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
     let mut data = Vec::with_capacity(n);
     for i in 0..n {
         // Use a range of values including negative to exercise both branches of activations
@@ -35,8 +35,8 @@ fn make_data<T: ArrayElement + Float>(n: usize) -> Vec<T> {
     data
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    let context = B::Context::new().expect("Failed to create Context");
+fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::ActivationKernel::new(&context, T::data_type(), input.in_place)
         .expect("Failed to create ActivationKernel");
 
@@ -46,19 +46,19 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         let mut output_buffer = create_buffer_with_data::<B, T>(&context, &input.data);
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
         kernel.encode(None::<&B::GlobalBuffer>, &mut output_buffer, n as u32, input.act_type, &mut command_buffer);
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         buffer_to_vec::<B, T>(&output_buffer)
     } else {
         let input_buffer = create_buffer_with_data::<B, T>(&context, &input.data);
         let mut output_buffer = create_buffer::<B, T>(&context, n);
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
         kernel.encode(Some(&input_buffer), &mut output_buffer, n as u32, input.act_type, &mut command_buffer);
-        command_buffer.end_encoding().submit().wait_until_completed().unwrap();
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         buffer_to_vec::<B, T>(&output_buffer)
     }
 }
 
-fn get_test_data<T: ArrayElement + Float>(
+fn get_test_data<T: DataTypeRepr + Float>(
     act_type: ActivationType,
     in_place: bool,
 ) -> (Input<T>, Vec<T>) {
@@ -76,7 +76,7 @@ fn get_test_data<T: ArrayElement + Float>(
 }
 
 /// Large input to exercise more threads on GPU.
-fn get_test_data_large<T: ArrayElement + Float>(
+fn get_test_data_large<T: DataTypeRepr + Float>(
     act_type: ActivationType,
     in_place: bool,
 ) -> (Input<T>, Vec<T>) {
@@ -93,7 +93,7 @@ fn get_test_data_large<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn test_internal<T: ArrayElement + Float + Debug + Display>(
+fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
     input: &Input<T>,
     expected: &[T],
     test_name: &str,
@@ -111,7 +111,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn test_activation<T: ArrayElement + Float + Debug + Display>(
+fn test_activation<T: DataTypeRepr + Float + Debug + Display>(
     act_type: ActivationType,
     in_place: bool,
 ) {
@@ -128,7 +128,7 @@ fn test_activation<T: ArrayElement + Float + Debug + Display>(
     test_internal::<T>(&input, &expected, &label);
 }
 
-fn test_activation_large<T: ArrayElement + Float + Debug + Display>(
+fn test_activation_large<T: DataTypeRepr + Float + Debug + Display>(
     act_type: ActivationType,
     in_place: bool,
 ) {

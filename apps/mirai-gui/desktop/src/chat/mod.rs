@@ -1,9 +1,12 @@
+mod chart;
 mod messages;
+mod naming;
 mod payloads;
 mod session;
 mod session_events;
 mod stream;
 mod title;
+mod transcript;
 
 use std::collections::HashMap;
 
@@ -14,7 +17,7 @@ use stream::run_stream_inner;
 use tauri::{AppHandle, Manager, ipc::Channel};
 use title::{TITLE_GEN_RUN_ID, title_gen_inner};
 use uzu::{
-    session::chat::ChatSession,
+    session::chat::{ChatInstance, ChatSession},
     types::basic::{CancelToken, ReasoningEffort},
 };
 
@@ -22,14 +25,15 @@ use crate::{error::AppResult, models::ReasoningSupport};
 
 const MIN_AUTO_EJECT_IDLE_MS: u64 = 60_000;
 const MAX_AUTO_EJECT_IDLE_MS: u64 = 24 * 60 * 60_000;
-const DEFAULT_AUTO_EJECT_IDLE_MS: u64 = 2 * 60_000;
+const DEFAULT_AUTO_EJECT_IDLE_MS: u64 = 15 * 60_000;
 
 struct IdleConfig {
     enabled: bool,
     idle_ms: u64,
 }
 
-// The exact message prefix currently represented by the session's KV cache.
+// The client-visible prefix represented by the resident session. The session
+// also retains internal tool calls and results that are absent from this projection.
 #[derive(Default)]
 struct SessionHistory {
     repo_id: String,
@@ -41,10 +45,12 @@ struct ResidentSession {
     repo_id: String,
     identifier: String,
     session: ChatSession,
+    instance: ChatInstance,
+    model_chat_naming_enabled: bool,
+    date_time_tool_enabled: bool,
+    chart_tool_enabled: bool,
+    naming: Option<naming::ChatNaming>,
     support: ReasoningSupport,
-    // Read right after load: uzu holds the instance lock for a whole reply, so
-    // asking the session later would block until generation ends.
-    sampling_defaults: Option<SamplingDefaults>,
 }
 
 // A run is registered before its model loads: a cold load takes tens of
@@ -198,17 +204,11 @@ enum RunPlan {
     Replay,
 }
 
-// try_lock: while a load holds the session lock there is nothing to report yet,
-// and the client re-asks once the session becomes resident.
 #[tauri::command]
-pub async fn chat_sampling_defaults(
-    state: tauri::State<'_, ChatState>,
-    repo_id: String,
-) -> AppResult<Option<SamplingDefaults>> {
-    let Ok(guard) = state.session.try_lock() else {
-        return Ok(None);
-    };
-    Ok(guard.as_ref().filter(|resident| resident.repo_id == repo_id).and_then(|r| r.sampling_defaults.clone()))
+pub async fn chat_sampling_defaults(repo_id: String) -> AppResult<Option<SamplingDefaults>> {
+    let model = crate::models::find_chat_model(&repo_id).await?;
+    let engine = crate::engine::engine().await?;
+    Ok(engine.model_sampling_defaults(&model).await?.map(SamplingDefaults::from))
 }
 
 #[tauri::command]
@@ -223,6 +223,9 @@ pub async fn run_stream(
     let result = run_stream_inner(&app, &state, &payload, &on_event).await;
     state.finish_run(&payload.run_id);
     if let Err(error) = result {
+        app.state::<crate::analytics::AnalyticsState>().report(|| crate::analytics::Event::InferenceFailed {
+            error: "generation_failed",
+        });
         crate::logger::error(
             "chat:run:error",
             Some(serde_json::json!({ "runId": payload.run_id, "repoId": payload.repo_id, "error": error })),
@@ -279,13 +282,14 @@ pub async fn eject_session(
     Ok(())
 }
 
-fn auto_eject_config_from(settings: &serde_json::Map<String, serde_json::Value>) -> (bool, Option<u64>) {
+fn auto_eject_config_from(settings: &serde_json::Map<String, serde_json::Value>) -> (bool, u64) {
     let enabled = settings.get("autoEjectEnabled").and_then(|v| v.as_bool()).unwrap_or(true);
     let idle_ms = settings
         .get("autoEjectMinutes")
         .and_then(|v| v.as_f64())
         .filter(|m| m.is_finite() && *m > 0.0)
-        .map(|minutes| ((minutes * 60_000.0) as u64).clamp(MIN_AUTO_EJECT_IDLE_MS, MAX_AUTO_EJECT_IDLE_MS));
+        .map(|minutes| ((minutes * 60_000.0) as u64).clamp(MIN_AUTO_EJECT_IDLE_MS, MAX_AUTO_EJECT_IDLE_MS))
+        .unwrap_or(DEFAULT_AUTO_EJECT_IDLE_MS);
     (enabled, idle_ms)
 }
 
@@ -293,13 +297,11 @@ fn apply_auto_eject_config(
     app: &AppHandle,
     state: &ChatState,
     enabled: bool,
-    idle_ms: Option<u64>,
+    idle_ms: u64,
 ) {
     let mut cfg = state.idle_config.lock().expect("idle_config mutex poisoned");
     cfg.enabled = enabled;
-    if let Some(idle_ms) = idle_ms {
-        cfg.idle_ms = idle_ms;
-    }
+    cfg.idle_ms = idle_ms;
     drop(cfg);
     if !enabled {
         state.cancel_idle_timer();
@@ -356,9 +358,10 @@ mod tests {
     use uzu::types::session::chat::ChatRole;
 
     #[test]
-    fn auto_eject_defaults_to_enabled_with_no_interval_override() {
+    fn auto_eject_defaults_to_enabled_after_fifteen_minutes() {
         let settings = serde_json::Map::new();
-        assert_eq!(auto_eject_config_from(&settings), (true, None));
+        assert_eq!(auto_eject_config_from(&settings), (true, 15 * 60_000));
+        assert_eq!(ChatState::default().idle_config.lock().unwrap().idle_ms, 15 * 60_000);
     }
 
     #[test]
@@ -366,16 +369,55 @@ mod tests {
         let mut settings = serde_json::Map::new();
         settings.insert("autoEjectEnabled".to_string(), false.into());
         settings.insert("autoEjectMinutes".to_string(), 0.1.into());
-        assert_eq!(auto_eject_config_from(&settings), (false, Some(MIN_AUTO_EJECT_IDLE_MS)));
+        assert_eq!(auto_eject_config_from(&settings), (false, MIN_AUTO_EJECT_IDLE_MS));
 
         settings.insert("autoEjectMinutes".to_string(), 100_000.into());
-        assert_eq!(auto_eject_config_from(&settings).1, Some(MAX_AUTO_EJECT_IDLE_MS));
+        assert_eq!(auto_eject_config_from(&settings).1, MAX_AUTO_EJECT_IDLE_MS);
 
         settings.insert("autoEjectMinutes".to_string(), (-3).into());
-        assert_eq!(auto_eject_config_from(&settings).1, None);
+        assert_eq!(auto_eject_config_from(&settings).1, DEFAULT_AUTO_EJECT_IDLE_MS);
+    }
+
+    #[test]
+    fn auto_eject_keeps_saved_intervals() {
+        for minutes in [2, 7, 30] {
+            let mut settings = serde_json::Map::new();
+            settings.insert("autoEjectMinutes".to_string(), minutes.into());
+            assert_eq!(auto_eject_config_from(&settings), (true, minutes as u64 * 60_000));
+        }
     }
 
     use super::{payloads::test_message, *};
+
+    #[test]
+    fn normalized_client_history_continues_the_resident_session() {
+        let state = ChatState::default();
+        let question = test_message(ChatRole::User {}, "question", None);
+        let raw_text = "An\u{0000} answer\u{FFFD} 👩\u{200D}💻\n";
+        let raw_reasoning = "\nConsider\u{FEFF} this\u{FFFD}.\n";
+        let projected = messages::assistant_history_message(raw_text, raw_reasoning, false).unwrap();
+        assert_eq!(projected.content, "An answer 👩\u{200D}💻\n");
+        assert_eq!(projected.reasoning_content.as_deref(), Some("Consider this."));
+        state.remember_history("model", vec![question.clone(), projected], Some(ReasoningEffort::Medium));
+
+        // The next request uses the finalized client fields, not raw engine output.
+        let parsed = messages::parsed_from(raw_text, raw_reasoning).unwrap();
+        let next_question = test_message(ChatRole::User {}, "next", None);
+        let request = vec![
+            question,
+            test_message(ChatRole::Assistant {}, &messages::sanitize(raw_text), parsed.chain_of_thought.as_deref()),
+            next_question.clone(),
+        ];
+        match state.plan_run("model", &request, Some(ReasoningEffort::Medium)) {
+            RunPlan::Continue {
+                tail,
+            } => assert!(tail == vec![next_question]),
+            RunPlan::Replay => panic!("client normalization should not discard the resident session"),
+        }
+
+        assert!(matches!(state.plan_run("other-model", &request, Some(ReasoningEffort::Medium)), RunPlan::Replay));
+        assert!(matches!(state.plan_run("model", &request, Some(ReasoningEffort::High)), RunPlan::Replay));
+    }
 
     #[test]
     fn continues_only_when_reasoning_prefix_matches() {

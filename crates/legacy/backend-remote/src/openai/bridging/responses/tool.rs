@@ -21,5 +21,8 @@ pub fn build(description: ToolDescription) -> Result<Tool, Error> {
         strict: None,
         description: Some(function.description),
         defer_loading: None,
+        r#async: None,
+        output_schema: None,
+        allowed_callers: None,
     }))
 }

@@ -22,10 +22,10 @@ defaults:
 jobs:
   linters:
     name: linters
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: prefect-github-actions
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: setup
         uses: ./.github/actions/setup
         with:
@@ -56,7 +56,8 @@ jobs:
 
       - name: Check with cargo-deny
         if: ${{ always() && steps.setup.outcome == 'success' }}
-        run: cargo deny check -D warnings
+        # The GUI has a separate audit for its supported macOS target.
+        run: cargo deny --exclude mirai-gui check -D warnings
 
       - name: Check sync
         if: ${{ always() && steps.setup.outcome == 'success' }}
@@ -64,7 +65,7 @@ jobs:
 
   tests:
     name: ${{ matrix.host }}${{ matrix.target && format(' ({0})', matrix.target) }}
-    runs-on: ${{ matrix.host == 'linux' && 'uzu-n4std16' || fromJSON('["self-hosted","macos","arm64"]') }}
+    runs-on: ${{ matrix.host == 'linux' && 'uzu-n4std16' || 'prefect-github-actions' }}
 
     strategy:
       matrix:
@@ -88,7 +89,7 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           metal: ${{ matrix.host == 'macos' && 'true' || 'false' }}
@@ -118,10 +119,10 @@ jobs:
 
   validate-bindings:
     name: validate-bindings
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: prefect-github-actions
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           metal: true
@@ -151,15 +152,15 @@ jobs:
           cargo tools test typescript
 
   linters-mirai-gui:
-    name: linters-mirai-gui
-    runs-on: [self-hosted, macos, arm64]
+    name: linters (mirai-gui)
+    runs-on: prefect-github-actions
 
     defaults:
       run:
         working-directory: apps/mirai-gui
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           linters: true
@@ -182,31 +183,14 @@ jobs:
         if: ${{ always() && steps.install.outcome == 'success' }}
         run: pnpm format:check
 
-      - name: Check Rust formatting
-        if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/desktop
-        run: cargo +nightly fmt --check
-
-      - name: Lint with clippy
-        if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/desktop
-        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
-
-      - name: Check that Cargo.lock is consistent with Cargo.toml
-        if: ${{ always() && steps.install.outcome == 'success' }}
-        working-directory: apps/mirai-gui/desktop
-        run: |
-          cargo metadata --locked --format-version=1 > /dev/null
-          git diff --exit-code -- Cargo.lock
-
       - name: Check with cargo-deny
         if: ${{ always() && steps.install.outcome == 'success' }}
         working-directory: apps/mirai-gui/desktop
         run: cargo deny check -D warnings
 
   tests-mirai-gui:
-    name: tests-mirai-gui
-    runs-on: [self-hosted, macos, arm64]
+    name: tests (mirai-gui)
+    runs-on: prefect-github-actions
 
     defaults:
       run:
@@ -216,7 +200,7 @@ jobs:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           metal: true
@@ -228,19 +212,16 @@ jobs:
       - name: Run client tests
         run: pnpm test
 
-      - name: Run Rust tests
-        run: pnpm test:rust
-
   build-mirai-gui:
-    name: build-mirai-gui
-    runs-on: [self-hosted, macos, arm64]
+    name: build (mirai-gui)
+    runs-on: prefect-github-actions
 
     defaults:
       run:
         working-directory: apps/mirai-gui
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           metal: true
@@ -253,16 +234,59 @@ jobs:
         run: pnpm build
 
       - name: Upload app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mirai-gui-macos-arm64
-          path: apps/mirai-gui/desktop/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  build-uzu-pi-extension:
+    name: check and build (uzu-pi-extension)
+    runs-on: prefect-github-actions
+
+    defaults:
+      run:
+        working-directory: apps/uzu-pi-extension
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          bindings: true
+          node-version: '26'
+
+      - name: Build monorepo bindings
+        working-directory: crates/legacy/uzu/bindings/typescript
+        env:
+          MIRAI_DISABLE_DENO_BUILD: '1'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features backend-metal,capability-grammar,bindings-napi --platform --output-dir src/napi
+          pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck, test and build
+        run: pnpm check
+
+      - name: Check package
+        run: |
+          pnpm --dir dist pack
+          node scripts/check-package.mjs
+
+      - name: Upload extension package
+        uses: actions/upload-artifact@v7
+        with:
+          name: uzu-pi-extension
+          path: apps/uzu-pi-extension/dist/*.tgz
           if-no-files-found: error
 
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui]
+    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-uzu-pi-extension]
     if: ${{ always() }}
 
     steps:
@@ -273,3 +297,4 @@ jobs:
           [ "${{ needs.linters-mirai-gui.result }}" = success ]
           [ "${{ needs.tests-mirai-gui.result }}" = success ]
           [ "${{ needs.build-mirai-gui.result }}" = success ]
+          [ "${{ needs.build-uzu-pi-extension.result }}" = success ]

@@ -3,9 +3,12 @@ use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::{
-    backends::common::{
-        gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-        kernel::matmul::{MatmulShape, QuantParamsLayout},
+    backends::{
+        common::{
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            kernel::matmul::{MatmulShape, QuantParamsLayout},
+        },
+        metal::gpu_types::gemm::GemmBLayout,
     },
     data_type::DataType,
 };
@@ -151,6 +154,7 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
     assert!(
         super::super::kernel::GemvSpecialization::select_shape(
             &shape,
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -162,10 +166,11 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
 }
 
 #[uzu_test]
-fn specialization_preserves_quantized_route_and_accumulate_tail() {
+fn specialization_preserves_quantized_route() {
     let select = |n, transform| {
         super::super::kernel::GemvSpecialization::select_shape(
             &quant_shape(4, n, transform),
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,
@@ -175,7 +180,7 @@ fn specialization_preserves_quantized_route_and_accumulate_tail() {
     };
     let clean = select(8192, GemmDTransform::empty()).expect("quantized specialization");
     assert!(clean.output_row_tile() > DEFAULT_RESULTS_PER_SIMDGROUP);
-    assert_eq!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::ACCUMULATE), None);
+    assert!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::empty()).is_some());
 }
 
 #[uzu_test]
@@ -186,6 +191,7 @@ fn gathered_group_major_is_a_gemv_route() {
     assert!(
         super::super::kernel::GemvSpecialization::select_tile(
             &shape,
+            GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
             DataType::BF16,

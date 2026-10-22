@@ -5,11 +5,14 @@ void uzu_metal_io_simulator_stubs_anchor(void) {}
 
 #if TARGET_OS_SIMULATOR
 
+#include <CoreFoundation/CFString.h>
+
 typedef void* MTLIOCompressionContext;
 typedef long MTLIOCompressionMethod;
 typedef long MTLIOCompressionStatus;
 
 const void* MTLIOErrorDomain = 0;
+const CFStringRef MTL4CommandQueueErrorDomain = CFSTR("MTL4CommandQueueErrorDomain");
 
 size_t MTLIOCompressionContextDefaultChunkSize(void) { return 0; }
 

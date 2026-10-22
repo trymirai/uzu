@@ -43,6 +43,8 @@ export const MessageVersionControls: React.FC<MessageVersionControlsProps> = ({
       <button
         onClick={handlePrevious}
         disabled={!canGoPrevious}
+        aria-label="Previous response"
+        title="Previous response"
         className={twMerge(
           "p-1 rounded transition-colors",
           canGoPrevious ? "text-label-muted hover:text-label-title" : "text-label-muted/50 cursor-not-allowed",
@@ -51,16 +53,15 @@ export const MessageVersionControls: React.FC<MessageVersionControlsProps> = ({
         <ChevronLeft className="w-4 h-4" />
       </button>
 
-      <span className="text-sm text-label-muted">
+      <span className="text-sm text-label-muted" title={currentModelName || undefined}>
         {currentVersion + 1}/{totalVersions}
       </span>
-      {currentModelName && (
-        <span className="text-[13px] leading-[130%] text-label-muted truncate max-w-[220px]">{currentModelName}</span>
-      )}
 
       <button
         onClick={handleNext}
         disabled={!canGoNext}
+        aria-label="Next response"
+        title="Next response"
         className={twMerge(
           "p-1 rounded transition-colors",
           canGoNext ? "text-label-muted hover:text-label-title" : "text-label-muted/50 cursor-not-allowed",

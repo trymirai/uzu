@@ -1,8 +1,12 @@
 import type { ModelParams } from "@/types/sampling";
 
+export const DEFAULT_AUTO_EJECT_MINUTES = 15;
+
 export type SettingsService = {
-  getEnableThinking(): Promise<boolean>;
-  setEnableThinking(enabled: boolean): Promise<boolean>;
+  getAnalyticsEnabled(): Promise<boolean>;
+  setAnalyticsEnabled(enabled: boolean): Promise<void>;
+  getModelChatNamingEnabled(): Promise<boolean>;
+  setModelChatNamingEnabled(enabled: boolean): Promise<void>;
   getModelParams(): Promise<Record<string, ModelParams>>;
   setModelParams(repoId: string, params: ModelParams | null): Promise<void>;
   getAutoEjectEnabled(): Promise<boolean>;
