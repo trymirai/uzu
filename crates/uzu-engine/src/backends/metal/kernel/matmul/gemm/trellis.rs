@@ -3,7 +3,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::backends::{
     common::{
         BufferMut, BufferRef, CommandBufferEncoding,
-        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, TrellisFormat},
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulB, TRELLIS_CODES_TAIL_BYTES, TrellisFormat},
     },
     metal::{
         Metal,
@@ -70,6 +70,7 @@ impl TrellisGemm {
             || arguments.b_leading_dimension.is_some()
             || output_stride < n
             || (split_k > 1 && !n.is_multiple_of(4))
+            || codes.size() < (n * format.code_row_bytes(k)) as usize + TRELLIS_CODES_TAIL_BYTES
         {
             return Err(unsupported());
         }

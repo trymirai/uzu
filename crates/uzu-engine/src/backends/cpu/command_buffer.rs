@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-            CommandBufferExecutable, CommandBufferPending, allocator::bump::BumpAllocator,
+            CommandBufferExecutable, CommandBufferPending, TimestampSpan, allocator::bump::BumpAllocator,
         },
         cpu::{
             Cpu,
@@ -125,6 +125,10 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
     ) {
     }
 
+    fn with_timestamps(self) -> Self {
+        panic!("the CPU backend does not record timestamps")
+    }
+
     fn end_encoding(self) -> CpuCommandBufferExecutable {
         assert!(self.constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
         CpuCommandBufferExecutable {
@@ -201,5 +205,9 @@ impl CommandBufferCompleted for CpuCommandBufferCompleted {
 
     fn gpu_execution_time(&self) -> Duration {
         self.gpu_execution_time
+    }
+
+    fn timestamps(&self) -> &[TimestampSpan] {
+        &[]
     }
 }

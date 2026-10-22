@@ -155,6 +155,12 @@ fn trellis_plan_matches_projection_cases() {
 
     for (m, n, k, tiling, split_k) in [
         (16, 128, 64, Tile16x32x256_Simdgroups1x1, 1),
+        (16, 4096, 2048, Tile32x64x256_Simdgroups2x2, 4),
+        (16, 5120, 5120, Tile32x64x256_Simdgroups2x2, 2),
+        (16, 5120, 5184, Tile16x32x256_Simdgroups1x1, 3),
+        (16, 4096, 1984, Tile16x32x256_Simdgroups1x1, 1),
+        (16, 32, 5120, Tile64x64x256_Simdgroups2x2, 80),
+        (17, 12_288, 2048, Tile64x64x256_Simdgroups2x2, 2),
         (17, 80, 64, Tile64x64x256_Simdgroups2x2, 1),
         (2048, 2048, 128, Tile128x128x256_Simdgroups4x4, 1),
         (1, 80, 5120, Tile16x32x256_Simdgroups1x1, 80),
