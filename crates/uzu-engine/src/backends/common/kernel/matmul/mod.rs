@@ -12,7 +12,7 @@ pub use kernel::MatmulKernel;
 pub use matmul_a::{Int8CodeLayout, MatmulA};
 #[cfg(backend = "metal")]
 pub use matmul_b::TrellisFormat;
-pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection};
+pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection, TRELLIS_CODES_TAIL_BYTES};
 pub use output::{MatmulOutput, MatmulOutputError};
 pub use routing::{ActivationFormat, MatmulShape};
 
