@@ -25,13 +25,12 @@ impl<B: Backend> LanguageModelState<B> {
         &mut self,
         context_length: u32,
     ) {
-        assert!(
-            self.speculator_state.is_none(),
-            "language model state with a speculator can't change its context length"
-        );
         self.tokens.resize(context_length as usize, 0);
-        self.last_output_token = None;
+        self.last_output_token = Some(0);
         self.transformer_state.set_context_length(context_length);
+        if let Some(speculator_state) = &mut self.speculator_state {
+            speculator_state.set_context_length(context_length);
+        }
     }
 }
 

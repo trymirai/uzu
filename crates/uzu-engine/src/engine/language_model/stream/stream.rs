@@ -551,7 +551,22 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
         #[allow(clippy::let_and_return)]
-        let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
+        let (input_trie, chain_copy, full_accept) = if let Some(draft_tree_size) = self.options.draft_tree_size {
+            let (root_token, _) = prev_output
+                .resolve(
+                    &mut self.model_state.tokens,
+                    self.options.timestamps.as_ref(),
+                    #[cfg(grammar)]
+                    self.options.grammar.as_mut(),
+                )
+                .await?;
+            prev_output.drop_output_norm();
+            (
+                TrieNode::branching(root_token, draft_tree_size, self.model_state.prng.derive(context_length as u64)),
+                None,
+                false,
+            )
+        } else if let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
             )
@@ -565,7 +580,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     )
                     .await?;
                 resolved
-            } {
+            }
+        {
             let trie = speculator
                 .propose_tree(
                     self.model_state.speculator_state.as_mut().unwrap(),

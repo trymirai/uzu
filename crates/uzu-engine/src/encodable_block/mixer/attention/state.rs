@@ -225,12 +225,20 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         &mut self,
         context_length: u32,
     ) {
-        assert!(
-            matches!(self.cache, KVCacheState::Full { .. }),
-            "sliding window attention state can't change its context length"
-        );
-        self.cache = KVCacheState::Full {
-            length: context_length,
+        self.cache = match self.cache {
+            KVCacheState::Full {
+                ..
+            } => KVCacheState::Full {
+                length: context_length,
+            },
+            KVCacheState::Ring {
+                capacity,
+                ..
+            } => KVCacheState::Ring {
+                offset: 0,
+                length: context_length.min(capacity),
+                capacity,
+            },
         };
     }
 

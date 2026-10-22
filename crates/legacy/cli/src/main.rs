@@ -42,11 +42,11 @@ enum Commands {
     CollectGpuTimestamps {
         /// Local model directory.
         model_path: std::path::PathBuf,
-        /// Directory to write one CSV per prefix length to.
+        /// Directory to write the CSV files to.
         output_dir: std::path::PathBuf,
-        /// Distance between swept prefix lengths.
-        #[arg(long, default_value_t = 8192)]
-        prefix_step: usize,
+        /// Also record per-block GPU spans (slows small passes down).
+        #[arg(long)]
+        spans: bool,
     },
     ListCheckpoints {
         /// Model ID shown by `list-models`.
@@ -91,8 +91,8 @@ async fn main() -> Result<()> {
         Some(Commands::CollectGpuTimestamps {
             model_path,
             output_dir,
-            prefix_step,
-        }) => collect_gpu_timestamps::run(model_path, output_dir, prefix_step).await?,
+            spans,
+        }) => collect_gpu_timestamps::run(model_path, output_dir, spans).await?,
         Some(Commands::ListCheckpoints {
             model_id,
         }) => interactive::run_list_checkpoints(model_id).await?,
