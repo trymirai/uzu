@@ -85,7 +85,6 @@ CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
-// 4-bit symmetric: int8-activation path only (Qwen3.8 XS output embedding).
 CONSTRAINT(
     B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 ||
     (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && GROUP_SIZE == 64 && DT == "bfloat"))
