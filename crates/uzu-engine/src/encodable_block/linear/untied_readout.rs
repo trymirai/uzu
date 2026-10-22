@@ -32,7 +32,8 @@ impl<B: Backend> UntiedReadout<B> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-            incoherence_processing_mode: IncoherenceProcessingMode::Input,
+            incoherence_processing_mode:
+                mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
             ..
         }) = spec
         else {
@@ -45,6 +46,12 @@ impl<B: Backend> UntiedReadout<B> {
             });
         };
 
+        let output_factors = if mode == IncoherenceProcessingMode::InputOutput {
+            Some(tree.subtree("incoherence_signs").read_buffer("output_signs", &[vocab_size], DataType::I32).await?)
+        } else {
+            None
+        };
+
         let mut linear = LinearMatmul::load(
             model_dim,
             vocab_size,
@@ -52,7 +59,7 @@ impl<B: Backend> UntiedReadout<B> {
             data_type,
             data_type,
             *quantization_spec,
-            None,
+            output_factors,
             &tree.subtree("quantized"),
             None,
             context,
