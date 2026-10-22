@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
@@ -14,8 +14,9 @@ use crate::{
 };
 
 #[kernel(MoeRouterTopK)]
-#[variants(T, f32, f16, bf16)]
-pub fn moe_router_top_k<T: DataTypeRepr + Float>(
+#[variants(T, f32)]
+#[variants(MAX_TOP_K, 8)]
+pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     logits: *const T,
     #[optional(has_biases)] biases: Option<*const T>,
     expert_ids: *mut u32,
@@ -69,9 +70,8 @@ pub fn moe_router_top_k<T: DataTypeRepr + Float>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 #[kernel(MoeGemv)]
-#[variants(T, bf16, f32)]
+#[variants(T, bf16)]
 #[variants(GROUP_SIZE, 0, 32, 64)]
 #[variants(BITS, 0, 4, 8)]
 #[constraint((BITS == 0) == (GROUP_SIZE == 0))]
@@ -224,7 +224,7 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
 }
 
 #[kernel(MoeCombine)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, bf16)]
 pub fn moe_combine<T: DataTypeRepr + Float>(
     expert_outputs: *const T,
     expert_weights: *const f32,

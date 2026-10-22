@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 
+#include "../attention/attention_gate.h"
 #include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/integral_constant.h"
@@ -11,15 +12,15 @@
 #include "../matmul/gemv/common/reduce.h"
 #include "../matmul/gemv/common/tile.h"
 
-using namespace metal;
 using namespace uzu;
 using namespace uzu::gemm;
 
 #define MOE_ROUTER_MAX_PER_LANE 16
-#define MOE_ROUTER_MAX_TOP_K 32
+#define MOE_GEMV_NUM_SIMDGROUPS 8
 
-template <typename T>
-VARIANTS(T, float, half, bfloat)
+template <typename T, uint MAX_TOP_K>
+VARIANTS(T, float)
+VARIANTS(MAX_TOP_K, 8)
 PUBLIC KERNEL(MoeRouterTopK)(
     const device T* logits,
     const device T* biases OPTIONAL(has_biases),
@@ -32,7 +33,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const uint token_idx GROUPS(batch_size),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  const device T* row = logits + ulong(token_idx) * num_experts;
+  const device T* row = logits + token_idx * num_experts;
   float vals[MOE_ROUTER_MAX_PER_LANE];
   for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
     const uint e = lane + i * METAL_SIMD_SIZE;
@@ -47,8 +48,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
     }
   }
 
-  float chosen_vals[MOE_ROUTER_MAX_TOP_K];
-  uint chosen_ids[MOE_ROUTER_MAX_TOP_K];
+  float chosen_vals[MAX_TOP_K];
+  uint chosen_ids[MAX_TOP_K];
   float max_chosen = -INFINITY;
 
   for (uint k = 0; k < top_k; ++k) {
@@ -98,8 +99,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
       sum_exp += e_val;
     }
     const float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
-    device uint* out_ids = expert_ids + ulong(token_idx) * top_k;
-    device float* out_weights = expert_weights + ulong(token_idx) * top_k;
+    device uint* out_ids = expert_ids + token_idx * top_k;
+    device float* out_weights = expert_weights + token_idx * top_k;
     for (uint k = 0; k < top_k; ++k) {
       out_ids[k] = (chosen_ids[k] < num_experts) ? chosen_ids[k] : min(k, num_experts - 1);
       out_weights[k] = chosen_vals[k] * inv_sum;
@@ -111,7 +112,7 @@ template <
     typename T,
     uint GROUP_SIZE,
     uint BITS>
-VARIANTS(T, bfloat, float)
+VARIANTS(T, bfloat)
 VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(BITS, 0, 4, 8)
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
@@ -143,11 +144,11 @@ PUBLIC KERNEL(MoeGemv)(
     const bool signed_codes SPECIALIZE,
     const bool full_tile SPECIALIZE,
     const bool a_per_token SPECIALIZE,
-    threadgroup float shared_results[32],
+    threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint route_idx GROUPS(num_routes),
     const uint output_tile_idx GROUPS(group_count_x),
-    const uint simd_lane THREADS(32),
-    const uint simd_group THREADS(8)
+    const uint simd_lane THREADS(METAL_SIMD_SIZE),
+    const uint simd_group THREADS(MOE_GEMV_NUM_SIMDGROUPS)
 ) {
   const uint expert_id = expert_ids[route_idx];
   const uint a_row_idx = a_per_token ? (route_idx / active_experts_per_token) : route_idx;
@@ -203,7 +204,7 @@ PUBLIC KERNEL(MoeGemv)(
       /* OUTPUT_ROW_TILE = */ 32,
       /* REDUCTION_LANES = */ 32,
       GROUP_LANES,
-      /* NUM_SIMDGROUPS = */ 8,
+      /* NUM_SIMDGROUPS = */ MOE_GEMV_NUM_SIMDGROUPS,
       /* K_SPLIT = */ 1>;
 
   dispatch_bool(full_tile, [&](auto full_tile_constant) {
@@ -257,7 +258,7 @@ PUBLIC KERNEL(MoeGemv)(
 }
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, bfloat)
 PUBLIC KERNEL(MoeCombine)(
     const device T* expert_outputs,
     const device float* expert_weights,
@@ -273,21 +274,19 @@ PUBLIC KERNEL(MoeCombine)(
     const uint token_idx AXIS(batch_size, 1)
 ) {
   float acc = 0.0f;
-  const device float* weights_row = expert_weights + ulong(token_idx) * top_k;
-  const ulong base_route = ulong(token_idx) * top_k;
+  const device float* weights_row = expert_weights + token_idx * top_k;
+  const uint base_route = token_idx * top_k;
   for (uint k = 0; k < top_k; ++k) {
     const float w = weights_row[k];
     const float val = float(expert_outputs[(base_route + k) * model_dim + col]);
     acc = fma(w, val, acc);
   }
   if (has_shared) {
-    float shared_w = 1.0f;
+    float s_val = float(shared_output[token_idx * model_dim + col]);
     if (has_gate) {
-      const float g = float(shared_gate[token_idx]);
-      shared_w = 1.0f / (1.0f + fast::exp(-g));
+      s_val = attention_apply_gate(s_val, float(shared_gate[token_idx]));
     }
-    const float s_val = float(shared_output[ulong(token_idx) * model_dim + col]);
-    acc = fma(shared_w, s_val, acc);
+    acc += s_val;
   }
-  output[ulong(token_idx) * model_dim + col] = T(acc);
+  output[token_idx * model_dim + col] = T(acc);
 }
