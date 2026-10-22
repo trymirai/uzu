@@ -10,10 +10,7 @@ use crate::{
             TrellisFormat, WeightsLayout,
         },
     },
-    config::weight_matrix::{
-        AnyWeightMatrixSpec, Layout,
-        qtip_gaussian::{QtipGaussianSpec, REVERSED_TAPE},
-    },
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, qtip_gaussian::QtipGaussianSpec},
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -198,12 +195,6 @@ impl<B: Backend> WeightMatrix<B> {
             return Err(WeightMatrixError::UnsupportedConfiguration(
                 "QTIP Gaussian requires OutputInput layout".into(),
             ));
-        }
-        if spec.tape != REVERSED_TAPE {
-            return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                "trellis tape {} (this build reads {REVERSED_TAPE}); re-export the package",
-                spec.tape
-            )));
         }
         let format = TrellisFormat {
             vector_width: spec.vector_width,
