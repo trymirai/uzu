@@ -106,6 +106,22 @@ impl Paths {
         self.artifacts_path().join("swift").join("slices")
     }
 
+    pub fn kotlin_staging_jni_libs_path(&self) -> PathBuf {
+        self.artifacts_path().join("kotlin").join("jniLibs")
+    }
+
+    pub fn kotlin_jni_libs_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Kotlin).join("src").join("main").join("jniLibs")
+    }
+
+    pub fn kotlin_generated_sources_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Kotlin).join("src").join("main").join("generated")
+    }
+
+    pub fn playground_android_path(&self) -> PathBuf {
+        self.root_path.join("apps").join("playground-android")
+    }
+
     pub fn root_package_swift_path(&self) -> PathBuf {
         self.root_path.join("Package.swift")
     }

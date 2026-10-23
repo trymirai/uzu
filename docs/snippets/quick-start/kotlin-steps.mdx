@@ -1,0 +1,37 @@
+<Step title="Create a new Android project">
+    In Android Studio, start from the **Empty Activity** template with Kotlin and Jetpack Compose.
+</Step>
+<Step title="Add the SDK">
+    Clone [uzu](https://github.com/trymirai/uzu), install cargo-ndk with `cargo tools install kotlin`, then include the Kotlin module:
+    ```kotlin
+    // settings.gradle.kts
+    dependencyResolutionManagement {
+        repositories {
+            google()
+            mavenCentral()
+            maven("https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/")
+        }
+    }
+    include(":uzu")
+    project(":uzu").projectDir = file("<uzu checkout>/crates/legacy/uzu/bindings/kotlin")
+
+    // app/build.gradle.kts
+    dependencies {
+        implementation(project(":uzu"))
+    }
+    ```
+</Step>
+<Step title="Paste the snippet">
+    <CodeKotlin/>
+</Step>
+<Step title="Add the snippet call">
+    ```kotlin
+    setContent {
+        val context = LocalContext.current
+        LaunchedEffect(Unit) {
+            runExampleName(context)
+        }
+        Text("On-device AI")
+    }
+    ```
+</Step>

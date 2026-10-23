@@ -1358,6 +1358,7 @@ dependencies = [
  "tokio",
  "toml 1.1.8+spec-1.1.0",
  "toml_edit 0.25.17+spec-1.1.0",
+ "uniffi",
  "walkdir",
 ]
 
@@ -10042,6 +10043,7 @@ dependencies = [
  "reqwest 0.13.5",
  "rodio",
  "rstest",
+ "rustls-platform-verifier",
  "schemars 1.2.3",
  "serde",
  "serde-wasm-bindgen",
