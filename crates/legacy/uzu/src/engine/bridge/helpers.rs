@@ -48,20 +48,29 @@ pub fn get_grammar(
 /// The token sequence of the model's end-of-thinking tag. A reasoning model
 /// opens every reply with reasoning tokens that no grammar can accept, so the
 /// grammar must stay disengaged until this sequence has been generated.
-/// Leading whitespace is excluded because BPE can merge it with preceding
-/// whitespace in both the prompt and generated reasoning.
+/// Leading whitespace-only tokens are excluded because BPE can merge them with
+/// preceding whitespace in both the prompt and generated reasoning. Tokens that
+/// fuse whitespace with marker text retain their original encoding.
 #[cfg(feature = "capability-grammar")]
 pub fn grammar_trigger_token_sequence(
     end_of_thinking_tag: Option<&str>,
     tokenizer: &Tokenizer,
 ) -> Option<Vec<u64>> {
-    let tag = end_of_thinking_tag?.trim_start();
-    if tag.is_empty() {
+    let tag = end_of_thinking_tag?;
+    if tag.trim().is_empty() {
         return None;
     }
 
+    let encoding = tokenizer.encode(tag, false).ok()?;
+    let token_ids = encoding.get_ids();
+    let leading_whitespace_tokens = token_ids
+        .iter()
+        .take_while(|&&token_id| {
+            tokenizer.decode(&[token_id], false).is_ok_and(|text| !text.is_empty() && text.trim().is_empty())
+        })
+        .count();
     let token_ids: Vec<u64> =
-        tokenizer.encode(tag, false).ok()?.get_ids().iter().map(|token_id| u64::from(*token_id)).collect();
+        token_ids[leading_whitespace_tokens..].iter().map(|token_id| u64::from(*token_id)).collect();
     (!token_ids.is_empty()).then_some(token_ids)
 }
 
@@ -228,9 +237,14 @@ mod tests {
             ("{", 10),
             ("}", 11),
             ("<eos>", 12),
+            ("Ġ", 13),
+            ("ĠY", 14),
         ]
         .map(|(token, id)| (token.to_string(), id));
-        let model = BPE::builder().vocab_and_merges(vocab, vec![("Ċ".into(), "Ċ".into())]).build().unwrap();
+        let model = BPE::builder()
+            .vocab_and_merges(vocab, vec![("Ċ".into(), "Ċ".into()), ("Ġ".into(), "Y".into())])
+            .build()
+            .unwrap();
         let mut tokenizer = Tokenizer::new(model);
         tokenizer.with_pre_tokenizer(Some(ByteLevel::new(false, false, true)));
         tokenizer.with_decoder(Some(ByteLevel::default()));
@@ -308,6 +322,40 @@ mod tests {
         assert_eq!(grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &prompt, &tokenizer), None);
         let history = encode(&tokenizer, "</think><think>\nYES<think>\n");
         assert_eq!(grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &history, &tokenizer), trigger);
+    }
+
+    #[test]
+    fn grammar_trigger_preserves_whitespace_fused_with_marker_text() {
+        let tokenizer = bpe_tokenizer();
+        let expected = encode(&tokenizer, " YES");
+        assert_eq!(expected, [14, 6, 7]);
+        assert_ne!(expected, encode(&tokenizer, "YES"));
+
+        // Preserve the fused space even when a separate newline precedes it.
+        for tag in [" YES", "\n YES"] {
+            let trigger = grammar_trigger_token_sequence(Some(tag), &tokenizer);
+            assert_eq!(trigger.as_deref(), Some(expected.as_slice()));
+
+            let prompt = encode(&tokenizer, "<think>\n\n YES\n\n");
+            assert_eq!(grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &prompt, &tokenizer), None);
+
+            let prompt = encode(&tokenizer, "<think>\n");
+            let trigger = grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &prompt, &tokenizer);
+            let mut grammar = get_grammar(
+                ShojiGrammar::Regex {
+                    pattern: "(YES|NO)".into(),
+                },
+                &tokenizer,
+                &[12],
+                trigger,
+            )
+            .unwrap();
+            for token in encode(&tokenizer, "\n\n YES") {
+                assert!(!grammar.next_bitmask(&mut [0]));
+                grammar.accept_token(token).unwrap();
+            }
+            assert!(grammar.next_bitmask(&mut [0]));
+        }
     }
 
     #[test]
