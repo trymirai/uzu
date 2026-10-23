@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
     configs::{HOST_TARGET, PlatformsConfig},
+    hanashi::export_tokenizers,
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
     },
@@ -64,6 +65,7 @@ enum Commands {
         /// Directory to stage release artifacts into
         path: std::path::PathBuf,
     },
+    HanashiTokenizers,
 }
 
 fn run_setup(include_platform_specific: bool) -> Result<()> {
@@ -157,6 +159,7 @@ fn main() -> Result<()> {
             version,
             path,
         }) => run_release(&version, &path)?,
+        Some(Commands::HanashiTokenizers) => export_tokenizers()?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

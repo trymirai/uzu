@@ -31,8 +31,6 @@ result
 .DS_Store
 .claude/settings.local.json
 
-tools/gpu_trace/*.json
-
 # Swift
 .build/
 .swiftpm/

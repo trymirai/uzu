@@ -23,6 +23,11 @@ serde.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
 regex.workspace = true
+download-manager.workspace = true
+futures-util.workspace = true
+kiban.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokenizers.workspace = true
 serde_json.workspace = true
 minijinja.workspace = true
 anyhow.workspace = true
