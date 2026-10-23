@@ -30,7 +30,7 @@ use crate::{
             ActivationQuantizeVulkanKernel, Error, GemmInt8K16VulkanKernel, GemmInt8NvVulkanKernel,
             GemmInt8VulkanKernel, GemmPrepareBLayoutVulkanKernel, GemmTensorVulkanKernel, GemmVulkanKernel,
             GemvInt8Native128VulkanKernel, GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer,
-            VkCommandBufferEncoding, VkContext, VkDeviceCapabilities, VkDeviceFacts, Vulkan,
+            VkCommandBufferEncoding, VkContext, VkDeviceCapabilities, VkDeviceFacts, VkKernelError, Vulkan,
             gpu_types::{gemm::GemmTiling, gemm_b_layout::GemmBLayout},
         },
     },
@@ -74,10 +74,11 @@ impl MatmulKernel for VkMatmulKernel {
     ) -> Result<Self, Error> {
         let data_types = [weights_data_type, input_data_type, output_data_type];
         if !data_types.iter().all(|data_type| matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)) {
-            return Err(Error::KernelVariant {
+            return Err(VkKernelError::KernelVariant {
                 kernel: "Matmul",
                 data_types: Box::new(data_types),
-            });
+            }
+            .into());
         }
         Ok(Self {
             weights_data_type,
@@ -263,10 +264,11 @@ impl VkMatmulKernel {
                 return Err(precondition("TrellisGemv", "no plan: TrellisGemv has a single configuration"));
             }
             if output_type != DataType::BF16 {
-                return Err(Error::KernelVariant {
+                return Err(VkKernelError::KernelVariant {
                     kernel: "TrellisGemv",
                     data_types: Box::new([output_type]),
-                });
+                }
+                .into());
             }
             let restart_columns = format.restart_columns.unwrap_or(0);
             let values = VkBuffer::resolve_ref(values);
@@ -834,10 +836,11 @@ fn precondition(
     kernel: &'static str,
     condition: &'static str,
 ) -> Error {
-    Error::KernelPrecondition {
+    VkKernelError::KernelPrecondition {
         kernel,
         condition,
     }
+    .into()
 }
 
 fn cached<K: Eq + Hash, V>(

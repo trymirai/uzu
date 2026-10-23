@@ -445,7 +445,10 @@ pub fn bindgen(
         match phase {
             "new" => new_preconditions.push(quote! {
                 if !(#condition) {
-                    return Err(Error::KernelPrecondition { kernel: #kernel_name, condition: #text });
+                    return Err(crate::backends::vulkan::VkKernelError::KernelPrecondition {
+                        kernel: #kernel_name,
+                        condition: #text,
+                    }.into());
                 }
             }),
             _ => {
@@ -533,7 +536,10 @@ pub fn bindgen(
         false => quote! {
             match (#(#type_parameters,)*) {
                 #(#entry_arms,)*
-                _ => return Err(Error::KernelVariant { kernel: #kernel_name, data_types: Box::new([#(#type_parameters),*]) }),
+                _ => return Err(crate::backends::vulkan::VkKernelError::KernelVariant {
+                    kernel: #kernel_name,
+                    data_types: Box::new([#(#type_parameters),*]),
+                }.into()),
             }
         },
     };
