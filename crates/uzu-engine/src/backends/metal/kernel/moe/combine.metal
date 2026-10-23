@@ -10,11 +10,12 @@ PUBLIC KERNEL(MoeCombine)(
     const device T* expert_outputs,
     const device float* expert_weights,
     const device T* shared_output OPTIONAL(has_shared),
-    const device T* shared_gate OPTIONAL(has_gate),
+    const device float* shared_gate OPTIONAL(has_gate),
     device T* output,
     const constant uint& model_dim,
     const constant uint& top_k,
     const constant uint& batch_size,
+    const constant uint& gate_stride,
     const bool has_shared SPECIALIZE,
     const bool has_gate SPECIALIZE,
     const uint col AXIS(model_dim, BD),
@@ -31,7 +32,7 @@ PUBLIC KERNEL(MoeCombine)(
   if (has_shared) {
     float s_val = float(shared_output[token_idx * model_dim + col]);
     if (has_gate) {
-      s_val = attention_apply_gate(s_val, float(shared_gate[token_idx]));
+      s_val = attention_apply_gate(s_val, float(shared_gate[token_idx * gate_stride]));
     }
     acc += s_val;
   }

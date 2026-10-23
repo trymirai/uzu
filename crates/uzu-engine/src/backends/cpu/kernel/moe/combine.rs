@@ -11,20 +11,22 @@ pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     expert_outputs: *const T,
     expert_weights: *const f32,
     #[optional(has_shared)] shared_output: Option<*const T>,
-    #[optional(has_gate)] shared_gate: Option<*const T>,
+    #[optional(has_gate)] shared_gate: Option<*const f32>,
     output: *mut T,
     model_dim: u32,
     top_k: u32,
     batch_size: u32,
+    gate_stride: u32,
     #[specialize] has_shared: bool,
     #[specialize] has_gate: bool,
 ) {
     let model_dim_u = model_dim as usize;
     let top_k_u = top_k as usize;
+    let gate_stride_u = gate_stride as usize;
     for token_idx in 0..batch_size as usize {
         let shared_w = if has_shared {
             if has_gate {
-                let g = unsafe { *shared_gate.unwrap().add(token_idx) }.to_f32().unwrap();
+                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) };
                 1.0f32 / (1.0f32 + (-g).exp())
             } else {
                 1.0f32

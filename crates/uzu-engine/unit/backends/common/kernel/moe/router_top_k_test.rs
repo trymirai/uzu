@@ -20,6 +20,7 @@ fn run_router_top_k<B: Backend>(
     num_experts: u32,
     k: u32,
     batch_dim: u32,
+    logit_stride: u32,
 ) -> (Vec<u32>, Vec<f32>) {
     let context = create_context::<B>();
     let to_bf16 = |values: &[f32]| values.iter().map(|&v| bf16::from_f32(v)).collect::<Vec<bf16>>();
@@ -42,6 +43,7 @@ fn run_router_top_k<B: Backend>(
         num_experts,
         k,
         batch_dim,
+        logit_stride,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -50,16 +52,21 @@ fn run_router_top_k<B: Backend>(
 
 #[uzu_test]
 fn moe_router_top_k_matches_cpu() {
-    for (batch_dim, num_experts, k, has_biases) in [
-        (1u32, 256u32, 8u32, false),
-        (2u32, 256u32, 8u32, true),
-        (16u32, 256u32, 8u32, false),
-        (5u32, 64u32, 4u32, true),
-        (1u32, 512u32, 1u32, false),
-        (2u32, 512u32, 8u32, true),
+    for (batch_dim, num_experts, k, has_biases, logit_stride) in [
+        (1u32, 256u32, 8u32, false, 256u32),
+        (2u32, 256u32, 8u32, true, 256u32),
+        (16u32, 256u32, 8u32, false, 256u32),
+        (5u32, 64u32, 4u32, true, 64u32),
+        (1u32, 512u32, 1u32, false, 512u32),
+        (2u32, 512u32, 8u32, true, 512u32),
+        (2u32, 256u32, 8u32, false, 257u32),
     ] {
-        let mut logits: Vec<f32> =
-            (0..(batch_dim * num_experts) as usize).map(|i| (((i * 37 + 13) % 97) as f32 - 48.0) * 0.125).collect();
+        let total_logits = if logit_stride == num_experts {
+            (batch_dim * num_experts) as usize
+        } else {
+            (batch_dim * logit_stride) as usize
+        };
+        let mut logits: Vec<f32> = (0..total_logits).map(|i| (((i * 37 + 13) % 97) as f32 - 48.0) * 0.125).collect();
         // Inject an exact tie to verify deterministic lowest-index tie-breaking
         if num_experts >= 16 {
             logits[3] = 10.0;
@@ -68,14 +75,14 @@ fn moe_router_top_k_matches_cpu() {
         let biases: Option<Vec<f32>> =
             has_biases.then(|| (0..num_experts as usize).map(|i| (((i * 19 + 7) % 31) as f32 - 15.0) * 0.05).collect());
 
-        let expected = run_router_top_k::<Cpu>(&logits, biases.as_deref(), num_experts, k, batch_dim);
+        let expected = run_router_top_k::<Cpu>(&logits, biases.as_deref(), num_experts, k, batch_dim, logit_stride);
         for row in expected.1.chunks_exact(k as usize) {
             let sum: f32 = row.iter().sum();
             assert!((sum - 1.0).abs() < 1e-5, "softmax weights should sum to 1.0, got {sum}");
         }
 
         for_each_non_cpu_backend!(|B| {
-            let actual = run_router_top_k::<B>(&logits, biases.as_deref(), num_experts, k, batch_dim);
+            let actual = run_router_top_k::<B>(&logits, biases.as_deref(), num_experts, k, batch_dim, logit_stride);
             assert_eq!(
                 actual.0, expected.0,
                 "expert_ids mismatch for shape=({batch_dim}, {num_experts}, {k}, has_biases={has_biases})"
@@ -106,12 +113,12 @@ fn moe_router_top_k_nan_safety() {
         logits[i] = f32::NAN;
     }
 
-    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim);
+    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim, num_experts);
     for &id in &expected.0 {
         assert!(id < num_experts, "CPU produced out-of-range expert id {id} >= {num_experts}");
     }
     for_each_non_cpu_backend!(|B| {
-        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim);
+        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim, num_experts);
         for &id in &actual.0 {
             assert!(id < num_experts, "Backend produced out-of-range expert id {id} >= {num_experts}");
         }
@@ -125,10 +132,10 @@ fn moe_router_top_k_jax_ties() {
     let num_experts = 5u32;
     let k = 2u32;
     let batch_dim = 1u32;
-    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim);
+    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim, num_experts);
     assert_eq!(expected.0, vec![1, 2], "Tie breaking expects lowest indices first: [1, 2]");
     for_each_non_cpu_backend!(|B| {
-        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim);
+        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim, num_experts);
         assert_eq!(actual.0, vec![1, 2], "Backend tie breaking must match CPU and JAX: [1, 2]");
     });
 }
