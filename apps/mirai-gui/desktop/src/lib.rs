@@ -90,23 +90,24 @@ pub fn run() {
                     false
                 })
                 .build()?;
-            // Closing hides the window; the Dock reopens it and ⌘Q quits.
+            // On macOS closing hides the window; the Dock reopens it and ⌘Q quits. Elsewhere nothing reopens a
+            // hidden window, so closing keeps quitting.
             #[cfg(target_os = "macos")]
-            let hide_target = window.clone();
-            #[cfg(target_os = "macos")]
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested {
-                    api,
-                    ..
-                } = event
-                {
-                    api.prevent_close();
-                    let _ = hide_target.hide();
-                }
-            });
-            // Elsewhere nothing reopens a hidden window, so closing quits.
+            {
+                let hide_target = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested {
+                        api,
+                        ..
+                    } = event
+                    {
+                        api.prevent_close();
+                        let _ = hide_target.hide();
+                    }
+                });
+            }
             #[cfg(not(target_os = "macos"))]
-            drop(window);
+            let _ = window;
             logger::info("app:start", Some(serde_json::json!({ "version": app.package_info().version.to_string() })));
             if let Err(error) = system_ui::remove_legacy_autostart() {
                 logger::warn("autostart:cleanup", Some(serde_json::json!({ "error": error.to_string() })));
@@ -169,15 +170,17 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, _event| {
+        .run(|app, event| {
             // Clicking the dock icon while the window is hidden must bring it
             // back; macOS delivers that as Reopen, not a window event.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 ..
-            } = _event
+            } = event
             {
-                system_ui::show_and_focus_main(_app);
+                system_ui::show_and_focus_main(app);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
         });
 }
