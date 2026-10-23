@@ -78,11 +78,18 @@ struct RoutedProjection<B: Backend> {
     scales: Option<B::GlobalBuffer>,
     zero_points: Option<B::GlobalBuffer>,
     biases: Option<B::GlobalBuffer>,
+    shared_weights: Option<B::GlobalBuffer>,
+    shared_scales: Option<B::GlobalBuffer>,
+    shared_zero_points: Option<B::GlobalBuffer>,
+    shared_biases: Option<B::GlobalBuffer>,
     output_bias: Option<B::GlobalBuffer>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
+    shared_output_bias: Option<B::GlobalBuffer>,
+    shared_output_hadamard_factors: Option<B::GlobalBuffer>,
     input_dim: u32,
     output_dim: u32,
     data_type: DataType,
+    has_shared: bool,
     b_expert_stride_bytes: u32,
     scale_expert_stride: u32,
     zero_point_expert_stride: u32,
@@ -101,6 +108,7 @@ impl<B: Backend> RoutedProjection<B> {
         has_biases: bool,
         fuse_input_rht_externally: bool,
         proj_tree: &ParameterTree<B>,
+        shared_proj_tree: Option<&ParameterTree<B>>,
         context: &B::Context,
     ) -> Result<(Self, Option<LinearInputPreparation<B>>), MoeMlpNewError<B>> {
         if !matches!(data_type, DataType::BF16 | DataType::F32) {
@@ -315,6 +323,84 @@ impl<B: Backend> RoutedProjection<B> {
             },
         };
 
+        let (
+            shared_weights,
+            shared_scales,
+            shared_zero_points,
+            shared_biases,
+            shared_output_bias,
+            shared_output_hadamard_factors,
+        ) = if let Some(shared_tree) = shared_proj_tree {
+            let shared_weights_tree = shared_tree.subtree("weights");
+            let shared_quant_tree = shared_weights_tree.subtree("quantized");
+
+            let shared_w = match quantization {
+                None => shared_quant_tree.read_buffer("weights", &[1, output_dim, input_dim], data_type)?,
+                Some(info) => {
+                    let packing_divisor = info.mode.packing_divisor();
+                    let storage_type = info.mode.storage_type();
+                    shared_quant_tree.read_buffer(
+                        "weights",
+                        &[1, output_dim, input_dim / packing_divisor],
+                        storage_type,
+                    )?
+                },
+            };
+
+            let (shared_s, shared_zp, shared_b) = match quantization {
+                None => (None, None, None),
+                Some(info) => {
+                    let groups = input_dim.div_ceil(info.group_size);
+                    let params = QuantParams::new(QuantParamsLayout::GroupOutput, output_dim, groups);
+                    let scale_shape = params.scale_shape();
+                    let s = shared_quant_tree.read_buffer("scales", &[1, scale_shape[0], scale_shape[1]], data_type)?;
+                    match info.method {
+                        QuantizationMethod::ScaleZeroPoint => {
+                            let zp_shape = params.zero_point_shape(info.mode);
+                            let zp = shared_quant_tree.read_buffer(
+                                "zero_points",
+                                &[1, zp_shape[0], zp_shape[1]],
+                                info.mode.storage_type(),
+                            )?;
+                            (Some(s), Some(zp), None)
+                        },
+                        QuantizationMethod::ScaleBias => {
+                            let b = shared_quant_tree.read_buffer(
+                                "biases",
+                                &[1, scale_shape[0], scale_shape[1]],
+                                data_type,
+                            )?;
+                            (Some(s), None, Some(b))
+                        },
+                        QuantizationMethod::ScaleSymmetric => (Some(s), None, None),
+                    }
+                },
+            };
+
+            let shared_out_bias =
+                has_biases.then(|| shared_tree.read_buffer("biases", &[1, output_dim], data_type)).transpose()?;
+
+            let shared_out_hadamard = if output_hadamard_factors.is_some() {
+                Some(shared_weights_tree.read_buffer(
+                    "incoherence_signs.output_signs",
+                    &[1, output_dim],
+                    DataType::I32,
+                )?)
+            } else {
+                None
+            };
+
+            if input_signs.is_some() {
+                let _ = shared_weights_tree
+                    .read_slice::<i32>("incoherence_signs.input_signs", &[1, input_dim])
+                    .or_else(|_| shared_weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[input_dim]));
+            }
+
+            (Some(shared_w), shared_s, shared_zp, shared_b, shared_out_bias, shared_out_hadamard)
+        } else {
+            (None, None, None, None, None, None)
+        };
+
         let block_size = if bits == 0 {
             FP_K_BLOCK
         } else if bits == 4 {
@@ -325,6 +411,7 @@ impl<B: Backend> RoutedProjection<B> {
         let input_aligned = input_dim.is_multiple_of(block_size);
         let full_tile = output_dim.is_multiple_of(MOE_GEMV_OUTPUT_ROW_TILE);
         let a_per_token = !fuse_input_rht_externally;
+        let has_shared = shared_weights.is_some();
 
         let kernel = <B::Kernels as Kernels>::MoeGemvKernel::new(
             context,
@@ -338,6 +425,7 @@ impl<B: Backend> RoutedProjection<B> {
             GemmBLayout::RowMajor,
             full_tile,
             a_per_token,
+            has_shared,
         )
         .map_err(MoeMlpNewError::Backend)?;
 
@@ -365,11 +453,18 @@ impl<B: Backend> RoutedProjection<B> {
                 scales,
                 zero_points,
                 biases,
+                shared_weights,
+                shared_scales,
+                shared_zero_points,
+                shared_biases,
                 output_bias,
                 output_hadamard_factors,
+                shared_output_bias,
+                shared_output_hadamard_factors,
                 input_dim,
                 output_dim,
                 data_type,
+                has_shared,
                 b_expert_stride_bytes,
                 scale_expert_stride,
                 zero_point_expert_stride,
@@ -401,7 +496,13 @@ impl<B: Backend> RoutedProjection<B> {
         active_experts_per_token: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let num_routes = batch_dim * active_experts_per_token;
+        let num_routed_routes = batch_dim * active_experts_per_token;
+        let num_routes = num_routed_routes
+            + if self.has_shared {
+                batch_dim
+            } else {
+                0
+            };
         let mut output = command_buffer.allocate_scratch_for_shape(&[num_routes, self.output_dim], self.data_type)?;
         let group_count_x = self.output_dim.div_ceil(MOE_GEMV_OUTPUT_ROW_TILE);
 
@@ -410,11 +511,17 @@ impl<B: Backend> RoutedProjection<B> {
             self.scales.as_ref(),
             self.zero_points.as_ref(),
             self.biases.as_ref(),
+            self.shared_weights.as_ref(),
+            self.shared_scales.as_ref(),
+            self.shared_zero_points.as_ref(),
+            self.shared_biases.as_ref(),
             input,
             expert_ids,
             &mut output,
             self.output_bias.as_ref(),
             self.output_hadamard_factors.as_ref(),
+            self.shared_output_bias.as_ref(),
+            self.shared_output_hadamard_factors.as_ref(),
             self.input_dim,
             self.output_dim,
             num_routes,
@@ -427,6 +534,7 @@ impl<B: Backend> RoutedProjection<B> {
             self.scale_group_stride,
             self.zero_point_output_stride,
             self.zero_point_group_stride,
+            num_routed_routes,
             command_buffer,
         );
 
@@ -528,7 +636,26 @@ impl<B: Backend> MoeMlp<B> {
 
         let routed_tree = parameter_tree.subtree("routed_experts");
         let routed_up_tree = routed_tree.subtree("up_projection");
-        let routed_signs = read_first_input_signs(&routed_up_tree, Some(config.num_routed_experts), model_dimension);
+        let routed_up_signs = read_first_input_signs(&routed_up_tree, Some(config.num_routed_experts), model_dimension);
+        let routed_down_tree = routed_tree.subtree("down_projection");
+        let routed_down_signs =
+            read_first_input_signs(&routed_down_tree, Some(config.num_routed_experts), config.expert_hidden_dim);
+
+        let shared_tree = parameter_tree.subtree("shared_experts").unit_mixture();
+        let shared_up_signs = (config.num_shared_experts == 1)
+            .then(|| read_first_input_signs(&shared_tree.subtree("up_projection"), None, model_dimension))
+            .flatten();
+        let shared_down_signs = (config.num_shared_experts == 1)
+            .then(|| read_first_input_signs(&shared_tree.subtree("down_projection"), None, config.expert_hidden_dim))
+            .flatten();
+
+        let shared_uses_routed_rht = (routed_up_signs.is_none() && shared_up_signs.is_none()
+            || (routed_up_signs.is_some() && routed_up_signs == shared_up_signs))
+            && (routed_down_signs.is_none() && shared_down_signs.is_none()
+                || (routed_down_signs.is_some() && routed_down_signs == shared_down_signs));
+
+        let can_fold_shared = config.num_shared_experts == 1 && shared_uses_routed_rht;
+        let shared_up_tree = can_fold_shared.then(|| shared_tree.subtree("up_projection"));
         let (routed_up, _) = RoutedProjection::load(
             config.num_routed_experts,
             model_dimension,
@@ -537,8 +664,11 @@ impl<B: Backend> MoeMlp<B> {
             config.expert_config.has_up_biases,
             false,
             &routed_up_tree,
+            shared_up_tree.as_ref(),
             context,
         )?;
+
+        let shared_down_tree = can_fold_shared.then(|| shared_tree.subtree("down_projection"));
         let (routed_down, down_input_prep) = RoutedProjection::load(
             config.num_routed_experts,
             config.expert_hidden_dim,
@@ -546,7 +676,8 @@ impl<B: Backend> MoeMlp<B> {
             data_type,
             config.expert_config.has_down_biases,
             true,
-            &routed_tree.subtree("down_projection"),
+            &routed_down_tree,
+            shared_down_tree.as_ref(),
             context,
         )?;
         let routed_gate = MlpGateActMulEncodable::new(
@@ -560,12 +691,7 @@ impl<B: Backend> MoeMlp<B> {
         )
         .map_err(MoeMlpNewError::Backend)?;
 
-        let shared_tree = parameter_tree.subtree("shared_experts").unit_mixture();
-        let shared_signs = (config.num_shared_experts == 1)
-            .then(|| read_first_input_signs(&shared_tree.subtree("up_projection"), None, model_dimension))
-            .flatten();
-        let shared_uses_routed_rht = routed_signs.is_some() && routed_signs == shared_signs;
-        let shared_expert = (config.num_shared_experts == 1)
+        let shared_expert = (config.num_shared_experts == 1 && !routed_up.has_shared)
             .then(|| {
                 DenseMlp::new_self_contained(
                     model_dimension,
@@ -582,7 +708,7 @@ impl<B: Backend> MoeMlp<B> {
         let gate_signs = (config.num_shared_experts > 0 && config.gate_config.is_some())
             .then(|| read_first_input_signs(&gate_tree, None, model_dimension))
             .flatten();
-        let gate_uses_routed_rht = routed_signs.is_some() && routed_signs == gate_signs;
+        let gate_uses_routed_rht = routed_up_signs.is_some() && routed_up_signs == gate_signs;
         let shared_gate = (config.num_shared_experts > 0 && config.gate_config.is_some())
             .then(|| <dyn Linear<B>>::new(model_dimension, 1, data_type, false, &gate_tree, context))
             .transpose()?;
@@ -590,7 +716,7 @@ impl<B: Backend> MoeMlp<B> {
         let combine = <B::Kernels as Kernels>::MoeCombineKernel::new(
             context,
             data_type,
-            shared_expert.is_some(),
+            routed_down.has_shared || shared_expert.is_some(),
             shared_gate.is_some(),
         )
         .map_err(MoeMlpNewError::Backend)?;
@@ -667,10 +793,17 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             .encode_prerotated(&input, &expert_ids, batch_dim, self.num_active_routed_experts, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
 
-        let num_routes = batch_dim * self.num_active_routed_experts;
+        let num_routed_routes = batch_dim * self.num_active_routed_experts;
+        let total_routes = num_routed_routes
+            + if self.routed_up.has_shared {
+                batch_dim
+            } else {
+                0
+            };
+
         let down_input = self
             .routed_gate
-            .encode_for_linear(&fused_up, num_routes, ActivationFormat::Bf16, command_buffer)
+            .encode_for_linear(&fused_up, total_routes, ActivationFormat::Bf16, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
         drop(fused_up);
         let LinearInput::FullPrecision(down_input) = down_input else {
@@ -699,17 +832,36 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)
             .map_err(MlpEncodeError::Backend)?;
-        self.combine.encode(
-            &routed_outputs,
-            &expert_weights,
-            shared_output.as_ref(),
-            shared_gate.as_ref(),
-            &mut output,
-            self.model_dimension,
-            self.num_active_routed_experts,
-            batch_dim,
-            command_buffer,
-        );
+
+        if self.routed_down.has_shared {
+            let elem_size = self.data_type.size_in_bytes();
+            let routed_bytes = (num_routed_routes * self.model_dimension) as usize * elem_size;
+            let total_bytes = (total_routes * self.model_dimension) as usize * elem_size;
+            let shared_slice = (&routed_outputs).subrange(routed_bytes..total_bytes);
+            self.combine.encode(
+                &routed_outputs,
+                &expert_weights,
+                Some(shared_slice),
+                shared_gate.as_ref(),
+                &mut output,
+                self.model_dimension,
+                self.num_active_routed_experts,
+                batch_dim,
+                command_buffer,
+            );
+        } else {
+            self.combine.encode(
+                &routed_outputs,
+                &expert_weights,
+                shared_output.as_ref(),
+                shared_gate.as_ref(),
+                &mut output,
+                self.model_dimension,
+                self.num_active_routed_experts,
+                batch_dim,
+                command_buffer,
+            );
+        }
 
         Ok(output)
     }
