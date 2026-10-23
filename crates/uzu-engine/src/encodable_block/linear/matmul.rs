@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             ActivationQuantization, Kernels,
             matmul::{
@@ -44,7 +44,7 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<B::GlobalBuffer>,
     output_hadamard_factors: Option<B::GlobalBuffer>,
     input_dim: u32,
-    output_dim: u32,
+    pub(super) output_dim: u32,
     output_data_type: DataType,
 }
 
@@ -139,6 +139,59 @@ impl<B: Backend> LinearMatmul<B> {
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)
             .map_err(LinearEncodeError::Backend)?;
+        self.encode_output(
+            a,
+            batch_dim,
+            output_dim,
+            gather_indices,
+            MatmulOutput::new(&mut output, self.d_ops()),
+            command_buffer,
+        )?;
+
+        Ok(output)
+    }
+
+    pub(super) fn encode_columns(
+        &self,
+        a: MatmulA<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        output: &mut B::ScratchBuffer,
+        column: u32,
+        row_stride: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), LinearEncodeError<B>> {
+        let element = self.output_data_type.size_in_bytes();
+        if !self.matmul_b().is_trellis() {
+            // Only the trellis GEMM writes strided rows: the others run contiguous, then copy into their columns.
+            let part = self.encode_with_a(a, batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)?;
+            let (row_bytes, stride_bytes) = (self.output_dim as usize * element, row_stride as usize * element);
+            for row in 0..batch_dim as usize {
+                let start = row * stride_bytes + column as usize * element;
+                command_buffer.encode_copy(
+                    (&part).subrange(row * row_bytes..(row + 1) * row_bytes),
+                    (&mut *output).subrange_mut(start..start + row_bytes),
+                );
+            }
+            return Ok(());
+        }
+        let values = output.subrange_mut(column as usize * element..);
+        let output = MatmulOutput {
+            values,
+            row_stride: Some(row_stride),
+            ops: self.d_ops(),
+        };
+        self.encode_output(a, batch_dim, self.output_dim, None::<&B::ScratchBuffer>, output, command_buffer)
+    }
+
+    fn encode_output(
+        &self,
+        a: MatmulA<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        output_dim: u32,
+        gather_indices: Option<impl BufferRef<Backend = B>>,
+        output: MatmulOutput<'_, B, impl BufferMut<Backend = B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), LinearEncodeError<B>> {
         self.kernel
             .lock()
             .encode(
@@ -147,7 +200,7 @@ impl<B: Backend> LinearMatmul<B> {
                     b: self.matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
-                    output: MatmulOutput::new(&mut output, self.d_ops()),
+                    output,
                     gather_indices,
                     m: batch_dim,
                     n: output_dim,
@@ -155,9 +208,7 @@ impl<B: Backend> LinearMatmul<B> {
                 },
                 command_buffer,
             )
-            .map_err(LinearEncodeError::Matmul)?;
-
-        Ok(output)
+            .map_err(LinearEncodeError::Matmul)
     }
 
     fn matmul_shape(

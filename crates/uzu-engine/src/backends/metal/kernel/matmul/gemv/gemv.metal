@@ -50,7 +50,9 @@ CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
+CONSTRAINT(
+    B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 ||
+    (INPUT_ROW_TILE == 1 && GROUP_SIZE == 64 && AT == "bfloat" && DT == "bfloat"))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
 CONSTRAINT(BITS == 0 || K_SPLIT == 1)
 CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))

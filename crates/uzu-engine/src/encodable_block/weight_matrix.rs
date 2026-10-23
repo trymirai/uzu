@@ -5,9 +5,12 @@ use crate::{
     backends::common::{
         Backend, BufferCpuAccessible, BufferMut,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
+        kernel::matmul::{
+            MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TRELLIS_CODES_TAIL_BYTES,
+            TrellisFormat, WeightsLayout,
+        },
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, qtip_gaussian::QtipGaussianSpec},
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -89,9 +92,16 @@ struct Quantized<B: Backend> {
     weights_layout: WeightsLayout<B>,
 }
 
+struct Trellis<B: Backend> {
+    row_scales: B::GlobalBuffer,
+    codebook: B::GlobalBuffer,
+    format: TrellisFormat,
+}
+
 pub struct WeightMatrix<B: Backend> {
     values: B::GlobalBuffer,
     quantized: Option<Quantized<B>>,
+    trellis: Option<Trellis<B>>,
 }
 
 impl<B: Backend> WeightMatrix<B> {
@@ -103,6 +113,9 @@ impl<B: Backend> WeightMatrix<B> {
         required_layout: Layout,
         tree: &ParameterTree<B>,
     ) -> Result<Self, WeightMatrixError<B>> {
+        if let AnyWeightMatrixSpec::QtipGaussianSpec(spec) = &spec {
+            return Self::load_trellis(output_dim, input_dim, spec, required_layout, tree);
+        }
         let ParsedWeightSpec {
             layout,
             quantization: quantization_info,
@@ -119,6 +132,7 @@ impl<B: Backend> WeightMatrix<B> {
             return Ok(Self {
                 values,
                 quantized: None,
+                trellis: None,
             });
         };
         // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
@@ -166,6 +180,46 @@ impl<B: Backend> WeightMatrix<B> {
                 signed_codes: false,
                 weights_layout: Default::default(),
             }),
+            trellis: None,
+        })
+    }
+
+    fn load_trellis(
+        output_dim: u32,
+        input_dim: u32,
+        spec: &QtipGaussianSpec,
+        required_layout: Layout,
+        tree: &ParameterTree<B>,
+    ) -> Result<Self, WeightMatrixError<B>> {
+        if required_layout != Layout::OutputInput {
+            return Err(WeightMatrixError::UnsupportedConfiguration(
+                "QTIP Gaussian requires OutputInput layout".into(),
+            ));
+        }
+        let format = TrellisFormat {
+            vector_width: spec.vector_width,
+            transition_bits: spec.transition_bits,
+            restart_columns: (spec.restart_columns != 0).then_some(spec.restart_columns),
+        };
+        let block_columns = format.restart_columns.unwrap_or(input_dim);
+        if !matches!(format.vector_width, 2 | 4)
+            || !(4..=8).contains(&format.transition_bits)
+            || !block_columns.is_multiple_of(2 * format.vector_width)
+            || !input_dim.is_multiple_of(block_columns)
+        {
+            return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                "trellis format {format:?} with {input_dim} columns"
+            )));
+        }
+        let code_shape = [output_dim, format.code_row_bytes(input_dim)];
+        Ok(Self {
+            values: tree.read_buffer_with_tail("codes", &code_shape, DataType::U8, TRELLIS_CODES_TAIL_BYTES)?,
+            quantized: None,
+            trellis: Some(Trellis {
+                row_scales: tree.read_buffer("scales", &[output_dim], DataType::F32)?,
+                codebook: tree.read_buffer("codebook", &[5], DataType::F32)?,
+                format,
+            }),
         })
     }
 
@@ -190,6 +244,14 @@ impl<B: Backend> WeightMatrix<B> {
     }
 
     pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
+        if let Some(trellis) = &self.trellis {
+            return MatmulB::Trellis {
+                codes: &self.values,
+                row_scales: &trellis.row_scales,
+                codebook: &trellis.codebook,
+                format: trellis.format,
+            };
+        }
         let Some(quantized) = self.quantized.as_ref() else {
             return MatmulB::FullPrecision {
                 b: &self.values,

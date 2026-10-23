@@ -7,7 +7,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
@@ -34,15 +34,17 @@ pub struct RHTLinearWrapper<B: Backend> {
     inner_linear: LinearMatmul<B>,
 }
 
-fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
-    matches!(
-        spec,
+fn input_rht_spec(spec: &AnyWeightMatrixSpec) -> Option<bool> {
+    match spec {
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            incoherence_block_size: Some(block_size),
-            incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+            incoherence_processing_mode:
+                mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
+            incoherence_kind: IncoherenceKind::Hadamard,
             ..
-        }) if *block_size == HADAMARD_TRANSFORM_BLOCK_SIZE
-    )
+        }) => Some(*mode == IncoherenceProcessingMode::InputOutput),
+        _ => None,
+    }
 }
 
 impl<B: Backend> RHTLinearWrapper<B> {
@@ -58,9 +60,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !has_input_output_rht(&spec) {
+        let Some(output_rht) = input_rht_spec(&spec) else {
             return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
-        }
+        };
 
         let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
             input_dimension,
@@ -69,6 +71,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             input_data_type,
             output_data_type,
             has_biases,
+            output_rht,
             parameter_tree,
             context,
         )?;
@@ -100,9 +103,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
     ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !has_input_output_rht(&spec) {
+        let Some(output_rht) = input_rht_spec(&spec) else {
             return Ok(None);
-        }
+        };
 
         let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
             input_dimension,
@@ -111,6 +114,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             input_data_type,
             output_data_type,
             has_biases,
+            output_rht,
             parameter_tree,
             context,
         )?;
@@ -136,6 +140,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
+        output_rht: bool,
         parameter_tree: &ParameterTree<B>,
         context: &B::Context,
     ) -> Result<(B::GlobalBuffer, LinearMatmul<B>), RHTLinearWrapperError<B>> {
@@ -143,8 +148,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let rht_signs = weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32)?;
-        let output_factors =
-            weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
+        let output_factors = output_rht
+            .then(|| weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32))
+            .transpose()?;
         let inner_linear = LinearMatmul::load(
             input_dimension,
             output_dimension,
@@ -152,7 +158,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             input_data_type,
             output_data_type,
             quantization_spec,
-            Some(output_factors),
+            output_factors,
             &quantized_weights_tree,
             has_biases.then_some(parameter_tree),
             context,

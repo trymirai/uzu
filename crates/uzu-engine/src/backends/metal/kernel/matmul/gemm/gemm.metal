@@ -85,7 +85,9 @@ CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
+CONSTRAINT(
+    B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 ||
+    (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && GROUP_SIZE == 64 && DT == "bfloat"))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
