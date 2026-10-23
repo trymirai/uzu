@@ -291,17 +291,15 @@ impl VkContext {
         Duration::from_nanos((ticks as f64 * period).round() as u64)
     }
 
-    /// One observation of the device clock: its value in timestamp ticks, the host instant halfway through reading it,
-    /// and how far apart the two may be: the driver's maximum deviation for this read plus half the read's host time.
-    /// Without calibrated timestamps the clock is unknown.
-    pub fn device_clock(&self) -> Result<(u64, Instant, Duration), Error> {
+    /// One observation of the device clock: its value in timestamp ticks and the host instant halfway through reading
+    /// it. Without calibrated timestamps the clock is unknown.
+    pub fn device_clock(&self) -> Result<(u64, Instant), Error> {
         let calibrated = self.calibrated_timestamps.as_ref().ok_or(VkCommandBufferError::UncalibratedTimestamps)?;
         let info = [vk::CalibratedTimestampInfoKHR::default().time_domain(vk::TimeDomainKHR::DEVICE)];
         let before = Instant::now();
-        let (ticks, max_deviation) =
+        let (ticks, _) =
             unsafe { calibrated.get_calibrated_timestamps(&info) }.map_err(VkCommandBufferError::DeviceClock)?;
-        let read = before.elapsed();
-        Ok((ticks[0], before + read / 2, Duration::from_nanos(max_deviation) + read / 2))
+        Ok((ticks[0], before + before.elapsed() / 2))
     }
 
     pub fn physical_device(&self) -> &VkPhysicalDevice {
