@@ -10,6 +10,14 @@ pub enum GemmBPrologueKind {
     ScaleSymmetricDequant,
 }
 
+#[repr(C)]
+#[derive(Debug, Display, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GemmBLayout {
+    #[default]
+    RowMajor,
+    MxuTiled,
+}
+
 bitflags! {
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
