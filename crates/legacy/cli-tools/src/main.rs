@@ -10,6 +10,7 @@ use cli_tools::{
     sync::run_sync,
     types::{Capability, Command, Configuration, Language},
 };
+use kiban::rt::RuntimeHandle;
 
 #[derive(Parser)]
 #[command(name = "uzu-tools", bin_name = "uzu-tools")]
@@ -110,7 +111,8 @@ fn language_backend(
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = PlatformsConfig::load()?;
     let host_target = config.host_target()?;
@@ -159,7 +161,7 @@ fn main() -> Result<()> {
             version,
             path,
         }) => run_release(&version, &path)?,
-        Some(Commands::HanashiTokenizers) => export_tokenizers()?,
+        Some(Commands::HanashiTokenizers) => export_tokenizers(RuntimeHandle::current()).await?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

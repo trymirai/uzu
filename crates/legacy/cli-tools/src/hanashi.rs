@@ -7,40 +7,37 @@ use futures_util::StreamExt;
 use kiban::rt::RuntimeHandle;
 use serde_json::Value;
 use tokenizers::{AddedToken, Tokenizer};
-use tokio::runtime::Runtime;
 
 use crate::configs::Paths;
 
-pub fn export_tokenizers() -> Result<()> {
+pub async fn export_tokenizers(runtime_handle: RuntimeHandle) -> Result<()> {
     let data_path = Paths::new()?.crate_path("hanashi").join("tests").join("data");
     let registry: Vec<Value> = serde_json::from_str(&fs::read_to_string(data_path.join("registry.json"))?)?;
-    Runtime::new()?.block_on(async {
-        let manager = DownloadManager::new(DownloadManagerType::Universal, RuntimeHandle::current());
-        let mut failed_repo_ids = Vec::new();
-        for model in &registry {
-            let repo_id = model["repo_id"].as_str().context("Registry model without repo_id")?;
-            let name = repo_id.replace('/', "_");
-            match export_tokenizer(
-                &manager,
-                repo_id,
-                model["harmony"]["tokenizer_url"].as_str(),
-                &data_path.join("configs").join(&name),
-                &data_path.join("tokenizers").join(&name),
-            )
-            .await
-            {
-                Ok(()) => println!("{} {repo_id}", "Exported".green()),
-                Err(error) => {
-                    eprintln!("{} {repo_id}: {error:#}", "Failed".red());
-                    failed_repo_ids.push(repo_id);
-                },
-            }
+    let manager = DownloadManager::new(DownloadManagerType::Universal, runtime_handle);
+    let mut failed_repo_ids = Vec::new();
+    for model in &registry {
+        let repo_id = model["repo_id"].as_str().context("Registry model without repo_id")?;
+        let name = repo_id.replace('/', "_");
+        match export_tokenizer(
+            &manager,
+            repo_id,
+            model["harmony"]["tokenizer_url"].as_str(),
+            &data_path.join("configs").join(&name),
+            &data_path.join("tokenizers").join(&name),
+        )
+        .await
+        {
+            Ok(()) => println!("{} {repo_id}", "Exported".green()),
+            Err(error) => {
+                eprintln!("{} {repo_id}: {error:#}", "Failed".red());
+                failed_repo_ids.push(repo_id);
+            },
         }
-        if !failed_repo_ids.is_empty() {
-            return Err(anyhow!("Failed to export tokenizers for {}", failed_repo_ids.join(", ")));
-        }
-        Ok(())
-    })
+    }
+    if !failed_repo_ids.is_empty() {
+        return Err(anyhow!("Failed to export tokenizers for {}", failed_repo_ids.join(", ")));
+    }
+    Ok(())
 }
 
 async fn export_tokenizer(

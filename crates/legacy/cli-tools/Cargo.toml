@@ -26,7 +26,7 @@ regex.workspace = true
 download-manager.workspace = true
 futures-util.workspace = true
 kiban.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokenizers.workspace = true
 serde_json.workspace = true
 minijinja.workspace = true
