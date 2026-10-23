@@ -129,20 +129,19 @@ impl ForeignExtensions {
     }
 }
 
-/// Spells a Rust type in a foreign language: `primitive` names its scalars, `optional` and `list` wrap a spelled type.
-/// Unknown paths keep their Rust name, which the bindings export under the same name.
+/// Spells a Rust type in a foreign language: `primitive` names its scalars, `list` wraps a spelled type, and an
+/// optional takes a `?` suffix. Unknown paths keep their Rust name, which the bindings export under the same name.
 pub fn foreign_type(
     ty: &syn::Type,
     self_type_name: &str,
     primitive: fn(&str) -> Option<&'static str>,
-    optional: fn(String) -> String,
     list: fn(String) -> String,
 ) -> Option<String> {
     if let Some(inner) = path_generic(ty, "Option") {
-        return foreign_type(inner, self_type_name, primitive, optional, list).map(optional);
+        return foreign_type(inner, self_type_name, primitive, list).map(|inner| format!("{inner}?"));
     }
     if let Some(inner) = path_generic(ty, "Vec") {
-        return foreign_type(inner, self_type_name, primitive, optional, list).map(list);
+        return foreign_type(inner, self_type_name, primitive, list).map(list);
     }
     let syn::Type::Path(type_path) = ty else {
         return None;
