@@ -218,7 +218,7 @@ impl<B: Backend> ConfidenceHead<B> {
 
         let vocab_size = embedding.vocab_size() as usize;
         let hidden_size = self.config.hidden as usize;
-        let table_chunk = 4096usize;
+        let table_chunk = 256usize;
         let table_buffer_size = vocab_size * hidden_size * DataType::F32.size_in_bytes();
         let row_bytes = hidden_size * DataType::F32.size_in_bytes();
 
