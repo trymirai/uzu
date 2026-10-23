@@ -256,6 +256,7 @@ impl VkMatmulKernel {
             k,
         } = arguments;
         let context = command_buffer.context().arc();
+        command_buffer.declare_work(2 * u64::from(m) * u64::from(n) * u64::from(k));
         let (d, ops, row_stride) = (output.values, output.ops, output.row_stride.unwrap_or(n));
         let (weights_type, input_type, output_type) =
             (self.weights_data_type, self.input_data_type, self.output_data_type);

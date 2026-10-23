@@ -114,6 +114,13 @@ impl AttentionKernel for VkAttentionKernel {
         let config = self.config;
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.cache.prefix_len() + suffix_length;
+        // Scores and the weighted sum of values, each a multiply-add per query, key and head dimension.
+        command_buffer.declare_work(
+            4 * u64::from(config.num_q_heads)
+                * u64::from(suffix_length)
+                * u64::from(sequence_length)
+                * u64::from(config.head_dim),
+        );
         let gqa_factor = config.num_q_heads / config.num_groups;
         let grouped = self.grouped.as_ref().filter(|_| {
             (2..=GROUPED_MAX_SUFFIX).contains(&suffix_length)

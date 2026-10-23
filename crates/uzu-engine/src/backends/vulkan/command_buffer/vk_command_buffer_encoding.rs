@@ -24,16 +24,24 @@ use crate::backends::{
 
 /// Smallest buffer that holds uploads, so small uploads of one command buffer share it.
 const UPLOAD_PAGE_SIZE: usize = 4096;
-/// Commands of the first segment; each later one holds twice as many as the one before.
+/// Commands of the first segment; each later one holds twice as many as the one before, for up to this many doublings.
 const FIRST_SEGMENT_COMMANDS: usize = 32;
+const SEGMENT_DOUBLINGS: usize = 10;
+/// Multiply-add FLOPs a segment may hold per compute unit. Even at one unit's scalar rate, a few hundred GFLOPS, a
+/// segment then runs for tens of milliseconds, far inside the two-second watchdogs that reset a GPU whose work cannot
+/// be preempted.
+const SEGMENT_WORK_PER_UNIT: u64 = 8_000_000_000;
+/// The units assumed where the device does not report them.
+const UNREPORTED_UNITS: u64 = 8;
 
 /// A recording primary command buffer that retains every buffer and pipeline it references and inserts barriers
 /// where accesses conflict. It records in segments, each submitted once full while recording goes on, so the GPU
 /// starts on a long recording instead of waiting for its end; segments growing twice as long keep the submissions
-/// few. Segments go early only while no other command buffer of the context is unsubmitted, so none passes one
-/// recorded or ended before it; a command buffer created after a segment went out runs after that segment, even if it
-/// is submitted before this one ends, and dropping the encoding does not recall it. A device error ends the recording:
-/// later commands are skipped and submission reports the error.
+/// few, and a work budget the heavy kernels draw on keeps each one short of the GPU watchdog. Segments go early only
+/// while no other command buffer of the context is unsubmitted, so none passes one recorded or ended before it; a
+/// command buffer created after a segment went out runs after that segment, even if it is submitted before this one
+/// ends, and dropping the encoding does not recall it. A device error ends the recording: later commands are skipped
+/// and submission reports the error.
 pub struct VkCommandBufferEncoding {
     context: Arc<VkContext>,
     resources: Option<VkCommandBufferResources>,
@@ -49,9 +57,13 @@ pub struct VkCommandBufferEncoding {
     uploads: BumpAllocator<Arc<VkBuffer>>,
     /// Scratch pages; a dispatch retains the pages it uses until the command buffer completes.
     allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
-    /// Completions of the segments submitted so far, and the commands recorded into the current one.
+    /// Completions of the segments submitted so far, and the commands and work recorded into the current one.
     segments: Vec<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>>,
     segment_commands: usize,
+    segment_work: u64,
+    /// The work the next command starts, declared by its kernel, and the work a segment may hold.
+    declared_work: u64,
+    work_budget: u64,
     /// Debug-group spans, when recording timestamps.
     timestamps: Option<VkTimestampRecorder>,
     /// The device error that ended the recording.
@@ -65,6 +77,7 @@ impl VkCommandBufferEncoding {
     ) -> Result<Self, Error> {
         let resources = context.acquire_command_buffer_resources()?;
         context.unsubmitted_command_buffers().fetch_add(1, Ordering::Relaxed);
+        let units = context.physical_device().compute_units.map_or(UNREPORTED_UNITS, u64::from);
         let encoding = Self {
             resources: Some(resources),
             context,
@@ -76,6 +89,9 @@ impl VkCommandBufferEncoding {
             allocation_pool,
             segments: Vec::new(),
             segment_commands: 0,
+            segment_work: 0,
+            declared_work: 0,
+            work_budget: units * SEGMENT_WORK_PER_UNIT,
             timestamps: None,
             failure: None,
         };
@@ -260,6 +276,15 @@ impl VkCommandBufferEncoding {
         self.resources.as_ref().expect("encoding owns resources until it ends")
     }
 
+    /// Declares the multiply-add FLOPs of the commands a heavy kernel records next, so a segment closes before they
+    /// would take it past its work budget.
+    pub fn declare_work(
+        &mut self,
+        flops: u64,
+    ) {
+        self.declared_work = self.declared_work.saturating_add(flops);
+    }
+
     /// Starts a span named `label` when recording timestamps.
     pub fn start_timestamp_span(
         &mut self,
@@ -292,9 +317,9 @@ impl VkCommandBufferEncoding {
         }
     }
 
-    /// Prepares for one more command, a transfer or a dispatch: submits a full segment, which the next begins after,
-    /// or otherwise orders the command after the accesses it conflicts with. False once a device error has ended the
-    /// recording, when the command is skipped.
+    /// Prepares for one more command, a transfer or a dispatch: submits a segment that is full or that the command's
+    /// declared work would take past its budget, which the next begins after, or otherwise orders the command after
+    /// the accesses it conflicts with. False once a device error has ended the recording, when the command is skipped.
     fn access(
         &mut self,
         transfer: bool,
@@ -307,9 +332,10 @@ impl VkCommandBufferEncoding {
         let overlaps = |tracked: &[Range<u64>], range: &Range<u64>| {
             tracked.iter().any(|other| other.start < range.end && range.start < other.end)
         };
-        if self.segment_commands >= FIRST_SEGMENT_COMMANDS << self.segments.len()
-            && self.context.unsubmitted_command_buffers().load(Ordering::Relaxed) == 1
-        {
+        let work = take(&mut self.declared_work);
+        let full = self.segment_commands >= FIRST_SEGMENT_COMMANDS << self.segments.len().min(SEGMENT_DOUBLINGS)
+            || (self.segment_work > 0 && self.segment_work.saturating_add(work) > self.work_budget);
+        if full && self.context.unsubmitted_command_buffers().load(Ordering::Relaxed) == 1 {
             if let Err(error) = self.submit_segment() {
                 self.failure = Some(error);
                 return false;
@@ -347,6 +373,7 @@ impl VkCommandBufferEncoding {
         self.reads.extend(reads);
         self.writes.extend(writes);
         self.segment_commands += 1;
+        self.segment_work = self.segment_work.saturating_add(work);
         true
     }
 
@@ -398,6 +425,7 @@ impl VkCommandBufferEncoding {
         self.writes.clear();
         self.compute_only_barrier = false;
         self.segment_commands = 0;
+        self.segment_work = 0;
         self.begin_segment()?;
         self.segments.push(submitted?);
         Ok(())
