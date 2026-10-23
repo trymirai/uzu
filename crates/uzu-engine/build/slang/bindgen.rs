@@ -545,22 +545,9 @@ pub fn bindgen(
     let block_size = abi.block_size;
     let block_size_u32 = u32::try_from(block_size)?;
     // A pinned subgroup size, which the workgroup must fill with whole subgroups within the device's subgroup limit.
-    let (required_subgroup_size, subgroup_check) = match info.required_subgroup_size()? {
-        Some(size) => {
-            let size = host_expression(size)?;
-            let condition = "a workgroup of whole subgroups of its required size, within maxComputeWorkgroupSubgroups";
-            let check = quote! {
-                let subgroup_size: u32 = #size;
-                let subgroups = context.physical_device().subgroup_properties.max_compute_workgroup_subgroups;
-                if !size[0].is_multiple_of(subgroup_size)
-                    || invocations.is_none_or(|count| count > subgroup_size.saturating_mul(subgroups))
-                {
-                    return Err(Error::KernelPrecondition { kernel: #kernel_name, condition: #condition });
-                }
-            };
-            (quote! { Some(#size) }, check)
-        },
-        None => (quote! { None }, quote! {}),
+    let required_subgroup_size = match info.required_subgroup_size()?.map(host_expression).transpose()? {
+        Some(size) => quote! { Some(#size) },
+        None => quote! { None },
     };
     let key = |variant: Option<TokenStream>| {
         quote! {
@@ -711,20 +698,7 @@ pub fn bindgen(
                 let (entry_point, spirv) = #entry_selection;
                 #(#specialization_conditions)*
                 #(#new_preconditions)*
-                let limits = &context.physical_device().properties.limits;
-                let size: [u32; 3] = [#group_x, #group_y, #group_z];
-                let invocations = size.into_iter().try_fold(1u32, u32::checked_mul);
-                if size.contains(&0)
-                    || size.iter().zip(limits.max_compute_work_group_size).any(|(&size, limit)| size > limit)
-                    || invocations.is_none_or(|count| count > limits.max_compute_work_group_invocations)
-                {
-                    return Err(Error::WorkGroupSize {
-                        size,
-                        limit: limits.max_compute_work_group_size,
-                        invocations: limits.max_compute_work_group_invocations,
-                    });
-                }
-                #subgroup_check
+                context.check_work_group(#kernel_name, [#group_x, #group_y, #group_z], #required_subgroup_size)?;
                 #pipelines
             }
 
