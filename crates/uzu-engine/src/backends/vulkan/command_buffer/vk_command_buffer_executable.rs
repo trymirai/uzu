@@ -1,7 +1,6 @@
 use std::{
     mem::take,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
 };
 
 use futures::channel::oneshot;
@@ -10,7 +9,7 @@ use crate::backends::{
     common::CommandBufferExecutable,
     vulkan::{
         Error, VkCommandBuffer, VkCommandBufferPending, VkCommandBufferResources, VkCommandBufferSubmission, VkContext,
-        VkTimestampRecorder,
+        VkSegmentResult, VkTimestampRecorder,
     },
 };
 
@@ -20,7 +19,7 @@ pub struct VkCommandBufferExecutable {
     context: Arc<VkContext>,
     resources: Option<VkCommandBufferResources>,
     retained: Vec<Arc<dyn Send + Sync>>,
-    segments: Vec<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>>,
+    segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     timestamps: Option<VkTimestampRecorder>,
     /// The device error that ended the recording, reported instead of submitting the last segment.
     failure: Option<Error>,
@@ -35,7 +34,7 @@ impl VkCommandBufferExecutable {
         context: Arc<VkContext>,
         resources: VkCommandBufferResources,
         retained: Vec<Arc<dyn Send + Sync>>,
-        segments: Vec<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>>,
+        segments: Vec<oneshot::Receiver<VkSegmentResult>>,
         timestamps: Option<VkTimestampRecorder>,
         failure: Option<Error>,
     ) -> Self {

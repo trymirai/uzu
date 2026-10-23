@@ -3,7 +3,6 @@ use std::{
     mem::take,
     ops::Range,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
 };
 
 use ash::vk;
@@ -18,7 +17,7 @@ use crate::backends::{
     vulkan::{
         Error, VkBuffer, VkBufferMemory, VkCommandBuffer, VkCommandBufferError, VkCommandBufferExecutable,
         VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline, VkContext, VkDebugGroupSpan,
-        VkTimestampRecorder, Vulkan,
+        VkSegmentResult, VkTimestampRecorder, Vulkan,
     },
 };
 
@@ -58,7 +57,7 @@ pub struct VkCommandBufferEncoding {
     /// Scratch pages; a dispatch retains the pages it uses until the command buffer completes.
     allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
     /// Completions of the segments submitted so far, and the commands and work recorded into the current one.
-    segments: Vec<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>>,
+    segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     segment_commands: usize,
     segment_work: u64,
     /// The work the next command starts, declared by its kernel, and the work a segment may hold.
@@ -107,14 +106,12 @@ impl VkCommandBufferEncoding {
         destination_offset: u64,
     ) -> Result<(), Error> {
         let size = source_range.end.saturating_sub(source_range.start);
-        let destination_end = destination_offset.checked_add(size).ok_or(VkCommandBufferError::BufferRange {
-            start: destination_offset,
-            end: u64::MAX,
-            size: destination.as_ref().size(),
-        })?;
-        let destination_range = destination_offset..destination_end;
-        let source_addresses = device_addresses(source, &source_range)?;
-        let destination_addresses = device_addresses(destination, &destination_range)?;
+        let destination_range = destination_offset..destination_offset.saturating_add(size);
+        let (Some(source_addresses), Some(destination_addresses)) =
+            (device_addresses(source, &source_range)?, device_addresses(destination, &destination_range)?)
+        else {
+            return Ok(());
+        };
         if source_addresses.start < destination_addresses.end && destination_addresses.start < source_addresses.end {
             return Err(VkCommandBufferError::CopyOverlap.into());
         }
@@ -147,10 +144,7 @@ impl VkCommandBufferEncoding {
         if size == 0 {
             return Ok(None);
         }
-        let context = &self.context;
-        let allocation = self.uploads.allocate(size, |size| {
-            Ok::<_, Error>(Arc::new(VkBuffer::new(context.clone(), size as u64, VkBufferMemory::Constants)?))
-        })?;
+        let allocation = self.allocate_constant(size)?;
         let (buffer, range) = (allocation.page().clone(), allocation.range());
         assert!(
             (buffer.device_address() + range.start as u64).is_multiple_of(align_of::<T>() as u64),
@@ -175,7 +169,9 @@ impl VkCommandBufferEncoding {
         range: Range<u64>,
         value: u8,
     ) -> Result<(), Error> {
-        let addresses = device_addresses(destination, &range)?;
+        let Some(addresses) = device_addresses(destination, &range)? else {
+            return Ok(());
+        };
         if !range.start.is_multiple_of(4) || !range.end.is_multiple_of(4) {
             return Err(VkCommandBufferError::FillAlignment {
                 start: range.start,
@@ -228,18 +224,10 @@ impl VkCommandBufferEncoding {
             .into());
         }
         for (buffer, range) in buffers.clone() {
-            if range.start > range.end || range.end > buffer.as_ref().size() {
-                return Err(VkCommandBufferError::BufferRange {
-                    start: range.start,
-                    end: range.end,
-                    size: buffer.as_ref().size(),
-                }
-                .into());
-            }
+            device_addresses(buffer, &range)?;
         }
-        let address = |(buffer, range): (&Arc<VkBuffer>, Range<u64>)| {
-            (!range.is_empty()).then(|| buffer.device_address() + range.start..buffer.device_address() + range.end)
-        };
+        // Checked above.
+        let address = |(buffer, range): (&Arc<VkBuffer>, Range<u64>)| device_addresses(buffer, &range).ok().flatten();
         if !self.access(false, reads.filter_map(address), writes.filter_map(address)) {
             return Ok(());
         }
@@ -559,11 +547,13 @@ fn shader_and_transfer_stages() -> vk::PipelineStageFlags2 {
     vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::ALL_TRANSFER
 }
 
+/// The device addresses of `range` in `buffer`, `None` for an empty range; a reversed range or one past the buffer's
+/// end is an error.
 fn device_addresses(
     buffer: &VkBuffer,
     range: &Range<u64>,
-) -> Result<Range<u64>, Error> {
-    if range.start >= range.end || range.end > buffer.size() {
+) -> Result<Option<Range<u64>>, Error> {
+    if range.start > range.end || range.end > buffer.size() {
         return Err(VkCommandBufferError::BufferRange {
             start: range.start,
             end: range.end,
@@ -571,5 +561,5 @@ fn device_addresses(
         }
         .into());
     }
-    Ok(buffer.device_address() + range.start..buffer.device_address() + range.end)
+    Ok((!range.is_empty()).then(|| buffer.device_address() + range.start..buffer.device_address() + range.end))
 }
