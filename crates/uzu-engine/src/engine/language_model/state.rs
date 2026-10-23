@@ -20,6 +20,18 @@ impl<B: Backend> LanguageModelState<B> {
     pub fn tokens(&self) -> &[u64] {
         &self.tokens
     }
+
+    pub fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        self.tokens.resize(context_length as usize, 0);
+        self.last_output_token = Some(0);
+        self.transformer_state.set_context_length(context_length);
+        if let Some(speculator_state) = &mut self.speculator_state {
+            speculator_state.set_context_length(context_length);
+        }
+    }
 }
 
 #[derive(Debug, Error)]

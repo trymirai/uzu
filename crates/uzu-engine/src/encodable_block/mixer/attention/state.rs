@@ -221,6 +221,27 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         self.kv.prepare(self.cache.required_prefix_len(context_length) + suffix_length)
     }
 
+    fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        self.cache = match self.cache {
+            KVCacheState::Full {
+                ..
+            } => KVCacheState::Full {
+                length: context_length,
+            },
+            KVCacheState::Ring {
+                capacity,
+                ..
+            } => KVCacheState::Ring {
+                offset: 0,
+                length: context_length.min(capacity),
+                capacity,
+            },
+        };
+    }
+
     fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
