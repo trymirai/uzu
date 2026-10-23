@@ -28,11 +28,12 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const constant uint& num_experts,
     const constant uint& top_k,
     const constant uint& batch_size,
+    const constant uint& logit_stride,
     const bool has_biases SPECIALIZE,
     const uint token_idx GROUPS(batch_size),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  const device T* row = logits + ulong(token_idx) * num_experts;
+  const device T* row = logits + ulong(token_idx) * logit_stride;
   float vals[MOE_ROUTER_MAX_PER_LANE];
   for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
     const uint e = lane + i * METAL_SIMD_SIZE;
@@ -120,11 +121,17 @@ PUBLIC KERNEL(MoeGemv)(
     const device T* scales OPTIONAL(b_prologue != GemmBPrologueKind::FullPrecision),
     const device uint8_t* zero_points OPTIONAL(b_prologue == GemmBPrologueKind::ScaleZeroPointDequant),
     const device T* biases OPTIONAL(b_prologue == GemmBPrologueKind::ScaleBiasDequant),
+    const device uint8_t* shared_b OPTIONAL(has_shared),
+    const device T* shared_scales OPTIONAL(has_shared && b_prologue != GemmBPrologueKind::FullPrecision),
+    const device uint8_t* shared_zero_points OPTIONAL(has_shared && b_prologue == GemmBPrologueKind::ScaleZeroPointDequant),
+    const device T* shared_biases OPTIONAL(has_shared && b_prologue == GemmBPrologueKind::ScaleBiasDequant),
     const device T* a,
     const device uint* expert_ids,
     device T* d,
     const device T* output_bias OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* hadamard_factors OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
+    const device T* shared_output_bias OPTIONAL(has_shared && output_transform.contains(GemmDTransform::BIAS)),
+    const device int32_t* shared_hadamard_factors OPTIONAL(has_shared && output_transform.contains(GemmDTransform::RHT)),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& num_routes,
@@ -137,6 +144,7 @@ PUBLIC KERNEL(MoeGemv)(
     const constant uint& scale_group_stride,
     const constant uint& zero_point_output_stride,
     const constant uint& zero_point_group_stride,
+    const constant uint& num_routed_routes,
     const GemmBPrologueKind b_prologue SPECIALIZE,
     const GemmDTransform output_transform SPECIALIZE,
     const bool input_aligned SPECIALIZE,
@@ -144,30 +152,41 @@ PUBLIC KERNEL(MoeGemv)(
     const GemmBLayout gemm_b_layout SPECIALIZE,
     const bool full_tile SPECIALIZE,
     const bool a_per_token SPECIALIZE,
+    const bool has_shared SPECIALIZE,
     threadgroup float shared_results[32],
     const uint route_idx GROUPS(num_routes),
     const uint output_tile_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(32),
     const uint simd_group THREADS(8)
 ) {
-  const uint expert_id = expert_ids[route_idx];
-  const uint a_row_idx = a_per_token ? (route_idx / active_experts_per_token) : route_idx;
+  const bool is_shared = has_shared && (route_idx >= num_routed_routes);
+  const uint expert_id = is_shared ? 0u : expert_ids[route_idx];
+  const uint a_row_idx =
+      a_per_token ? (is_shared ? (route_idx - num_routed_routes) : (route_idx / active_experts_per_token)) : route_idx;
 
   const device uint32_t* expert_b =
-      reinterpret_cast<const device uint32_t*>(b + ulong(expert_id) * b_expert_stride_bytes);
-  const device T* expert_scales =
-      (b_prologue != GemmBPrologueKind::FullPrecision) ? (scales + ulong(expert_id) * scale_expert_stride) : nullptr;
-  const device uint8_t* expert_zero_points = (b_prologue == GemmBPrologueKind::ScaleZeroPointDequant)
-                                                 ? (zero_points + ulong(expert_id) * zero_point_expert_stride)
-                                                 : nullptr;
-  const device T* expert_biases =
-      (b_prologue == GemmBPrologueKind::ScaleBiasDequant) ? (biases + ulong(expert_id) * scale_expert_stride) : nullptr;
+      is_shared ? reinterpret_cast<const device uint32_t*>(shared_b)
+                : reinterpret_cast<const device uint32_t*>(b + ulong(expert_id) * b_expert_stride_bytes);
+  const device T* expert_scales = (b_prologue != GemmBPrologueKind::FullPrecision)
+                                      ? (is_shared ? shared_scales : (scales + ulong(expert_id) * scale_expert_stride))
+                                      : nullptr;
+  const device uint8_t* expert_zero_points =
+      (b_prologue == GemmBPrologueKind::ScaleZeroPointDequant)
+          ? (is_shared ? shared_zero_points : (zero_points + ulong(expert_id) * zero_point_expert_stride))
+          : nullptr;
+  const device T* expert_biases = (b_prologue == GemmBPrologueKind::ScaleBiasDequant)
+                                      ? (is_shared ? shared_biases : (biases + ulong(expert_id) * scale_expert_stride))
+                                      : nullptr;
   const device T* route_a = a + ulong(a_row_idx) * in_vec_size;
   device T* route_d = d + ulong(route_idx) * out_vec_size;
   const device T* expert_output_bias =
-      output_transform.contains(GemmDTransform::BIAS) ? (output_bias + ulong(expert_id) * out_vec_size) : nullptr;
+      output_transform.contains(GemmDTransform::BIAS)
+          ? (is_shared ? shared_output_bias : (output_bias + ulong(expert_id) * out_vec_size))
+          : nullptr;
   const device int32_t* expert_hadamard =
-      output_transform.contains(GemmDTransform::RHT) ? (hadamard_factors + ulong(expert_id) * out_vec_size) : nullptr;
+      output_transform.contains(GemmDTransform::RHT)
+          ? (is_shared ? shared_hadamard_factors : (hadamard_factors + ulong(expert_id) * out_vec_size))
+          : nullptr;
 
   using Ops = GemvOperands<T, T, T>;
   const Ops ops = {
@@ -263,11 +282,12 @@ PUBLIC KERNEL(MoeCombine)(
     const device T* expert_outputs,
     const device float* expert_weights,
     const device T* shared_output OPTIONAL(has_shared),
-    const device T* shared_gate OPTIONAL(has_gate),
+    const device float* shared_gate OPTIONAL(has_gate),
     device T* output,
     const constant uint& model_dim,
     const constant uint& top_k,
     const constant uint& batch_size,
+    const constant uint& gate_stride,
     const bool has_shared SPECIALIZE,
     const bool has_gate SPECIALIZE,
     const uint col AXIS(model_dim, 256),
@@ -284,7 +304,7 @@ PUBLIC KERNEL(MoeCombine)(
   if (has_shared) {
     float shared_w = 1.0f;
     if (has_gate) {
-      const float g = float(shared_gate[token_idx]);
+      const float g = shared_gate[ulong(token_idx) * gate_stride];
       shared_w = 1.0f / (1.0f + fast::exp(-g));
     }
     const float s_val = float(shared_output[ulong(token_idx) * model_dim + col]);

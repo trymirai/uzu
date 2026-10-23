@@ -24,14 +24,16 @@ pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     num_experts: u32,
     top_k: u32,
     batch_size: u32,
+    logit_stride: u32,
     #[specialize] has_biases: bool,
 ) {
     let num_experts_usize = num_experts as usize;
+    let logit_stride_usize = logit_stride as usize;
     let top_k_usize = top_k as usize;
     for token_idx in 0..batch_size as usize {
         let mut pairs: Vec<(f32, u32)> = (0..num_experts_usize)
             .map(|e| {
-                let mut v = unsafe { *logits.add(token_idx * num_experts_usize + e) }.to_f32().unwrap();
+                let mut v = unsafe { *logits.add(token_idx * logit_stride_usize + e) }.to_f32().unwrap();
                 if has_biases {
                     v += unsafe { *biases.unwrap().add(e) }.to_f32().unwrap();
                 }
@@ -81,11 +83,21 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     #[optional(b_prologue != GemmBPrologueKind::FullPrecision)] scales: Option<*const T>,
     #[optional(b_prologue == GemmBPrologueKind::ScaleZeroPointDequant)] zero_points: Option<*const u8>,
     #[optional(b_prologue == GemmBPrologueKind::ScaleBiasDequant)] biases: Option<*const T>,
+    #[optional(has_shared)] shared_b: Option<*const u8>,
+    #[optional(has_shared && b_prologue != GemmBPrologueKind::FullPrecision)] shared_scales: Option<*const T>,
+    #[optional(has_shared && b_prologue == GemmBPrologueKind::ScaleZeroPointDequant)] shared_zero_points: Option<
+        *const u8,
+    >,
+    #[optional(has_shared && b_prologue == GemmBPrologueKind::ScaleBiasDequant)] shared_biases: Option<*const T>,
     a: *const T,
     expert_ids: *const u32,
     d: *mut T,
     #[optional(output_transform.contains(GemmDTransform::BIAS))] output_bias: Option<*const T>,
     #[optional(output_transform.contains(GemmDTransform::RHT))] hadamard_factors: Option<*const i32>,
+    #[optional(has_shared && output_transform.contains(GemmDTransform::BIAS))] shared_output_bias: Option<*const T>,
+    #[optional(has_shared && output_transform.contains(GemmDTransform::RHT))] shared_hadamard_factors: Option<
+        *const i32,
+    >,
     in_vec_size: u32,
     out_vec_size: u32,
     num_routes: u32,
@@ -98,6 +110,7 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     scale_group_stride: u32,
     zero_point_output_stride: u32,
     zero_point_group_stride: u32,
+    num_routed_routes: u32,
     #[specialize] b_prologue: GemmBPrologueKind,
     #[specialize] output_transform: GemmDTransform,
     #[allow(unused)]
@@ -111,6 +124,7 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     #[specialize]
     full_tile: bool,
     #[specialize] a_per_token: bool,
+    #[specialize] has_shared: bool,
 ) {
     let k_u = in_vec_size as usize;
     let n_u = out_vec_size as usize;
@@ -120,22 +134,54 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     let group_size = GROUP_SIZE as usize;
 
     for route_idx in 0..routes {
-        let expert_id = unsafe { *expert_ids.add(route_idx) } as usize;
+        let is_shared = has_shared && (route_idx >= num_routed_routes as usize);
+        let expert_id = if is_shared {
+            0
+        } else {
+            unsafe { *expert_ids.add(route_idx) as usize }
+        };
         let a_row_idx = if a_per_token {
-            route_idx / top_k
+            if is_shared {
+                route_idx - num_routed_routes as usize
+            } else {
+                route_idx / top_k
+            }
         } else {
             route_idx
         };
 
-        let expert_b = unsafe { b.add(expert_id * b_expert_stride_bytes as usize) };
-        let expert_scales = scales.map(|ptr| unsafe { ptr.add(expert_id * scale_expert_stride as usize) });
-        let expert_zero_points =
-            zero_points.map(|ptr| unsafe { ptr.add(expert_id * zero_point_expert_stride as usize) });
-        let expert_biases = biases.map(|ptr| unsafe { ptr.add(expert_id * scale_expert_stride as usize) });
+        let expert_b = if is_shared {
+            shared_b.unwrap()
+        } else {
+            unsafe { b.add(expert_id * b_expert_stride_bytes as usize) }
+        };
+        let expert_scales = if is_shared {
+            shared_scales
+        } else {
+            scales.map(|ptr| unsafe { ptr.add(expert_id * scale_expert_stride as usize) })
+        };
+        let expert_zero_points = if is_shared {
+            shared_zero_points
+        } else {
+            zero_points.map(|ptr| unsafe { ptr.add(expert_id * zero_point_expert_stride as usize) })
+        };
+        let expert_biases = if is_shared {
+            shared_biases
+        } else {
+            biases.map(|ptr| unsafe { ptr.add(expert_id * scale_expert_stride as usize) })
+        };
         let route_a = unsafe { a.add(a_row_idx * k_u) };
         let route_d = unsafe { d.add(route_idx * n_u) };
-        let expert_output_bias = output_bias.map(|ptr| unsafe { ptr.add(expert_id * n_u) });
-        let expert_hadamard = hadamard_factors.map(|ptr| unsafe { ptr.add(expert_id * n_u) });
+        let expert_output_bias = if is_shared {
+            shared_output_bias
+        } else {
+            output_bias.map(|ptr| unsafe { ptr.add(expert_id * n_u) })
+        };
+        let expert_hadamard = if is_shared {
+            shared_hadamard_factors
+        } else {
+            hadamard_factors.map(|ptr| unsafe { ptr.add(expert_id * n_u) })
+        };
 
         let mut row_out = vec![0.0f32; n_u];
         for (col, out_slot) in row_out.iter_mut().enumerate() {
@@ -233,20 +279,22 @@ pub fn moe_combine<T: DataTypeRepr + Float>(
     expert_outputs: *const T,
     expert_weights: *const f32,
     #[optional(has_shared)] shared_output: Option<*const T>,
-    #[optional(has_gate)] shared_gate: Option<*const T>,
+    #[optional(has_gate)] shared_gate: Option<*const f32>,
     output: *mut T,
     model_dim: u32,
     top_k: u32,
     batch_size: u32,
+    gate_stride: u32,
     #[specialize] has_shared: bool,
     #[specialize] has_gate: bool,
 ) {
     let model_dim_u = model_dim as usize;
     let top_k_u = top_k as usize;
+    let gate_stride_u = gate_stride as usize;
     for token_idx in 0..batch_size as usize {
         let shared_w = if has_shared {
             if has_gate {
-                let g = unsafe { *shared_gate.unwrap().add(token_idx) }.to_f32().unwrap();
+                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) };
                 1.0f32 / (1.0f32 + (-g).exp())
             } else {
                 1.0f32
