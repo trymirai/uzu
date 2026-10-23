@@ -52,31 +52,31 @@ capabilities_default = ["grammar"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-unknown-linux-gnu"]
-backend = "cpu"
+backend = "vulkan"
 aliases = ["linux"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
 [targets."x86_64-unknown-linux-gnu"]
-backend = "cpu"
+backend = "vulkan"
 aliases = ["linux"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
 [targets."aarch64-pc-windows-msvc"]
-backend = "cpu"
+backend = "vulkan"
 aliases = ["windows"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
 [targets."x86_64-pc-windows-msvc"]
-backend = "cpu"
+backend = "vulkan"
 aliases = ["windows"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
 [targets."aarch64-linux-android"]
-backend = "cpu"
+backend = "vulkan"
 aliases = ["android"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]

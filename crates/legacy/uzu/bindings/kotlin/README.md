@@ -42,7 +42,8 @@ dependencies {
 ```
 
 Building the module compiles the engine for arm64 with `cargo tools build kotlin`, which needs the Android NDK and
-cargo-ndk (`cargo tools install kotlin`). Call `Uzu.initialize(context)` once before creating the engine.
+cargo-ndk (`cargo tools install kotlin`). Set `minSdk = 31` and run on an arm64 device with Vulkan 1.4.
+Call `Uzu.initialize(context)` once before creating the engine.
 
 Run the code below:
 
