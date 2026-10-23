@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.trymirai.playground.ui.components.formatBytes
 import com.trymirai.uzu.shoji.ChatReplyStats
 import java.util.Locale
 
@@ -21,7 +22,7 @@ fun ReplyStatsView(stats: ChatReplyStats) {
         stats.generateTokensPerSecond?.takeIf { it > 0 }?.let {
             Metric("Tokens per second:", "%.3f t/s".format(Locale.ROOT, it))
         }
-        Metric("Memory used:", stats.memoryUsedBytes?.let(::formatMemory) ?: "—")
+        Metric("Memory used:", stats.memoryUsedBytes?.let(::formatBytes) ?: "—")
         Metric("Total time:", "%.3f s".format(Locale.ROOT, stats.duration))
     }
 }
@@ -32,9 +33,4 @@ private fun Metric(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
-}
-
-private fun formatMemory(bytes: Long): String {
-    val megabytes = bytes.coerceAtLeast(0) / (1024.0 * 1024.0)
-    return if (megabytes >= 1024) "%.2f GB".format(Locale.ROOT, megabytes / 1024) else "%.1f MB".format(Locale.ROOT, megabytes)
 }

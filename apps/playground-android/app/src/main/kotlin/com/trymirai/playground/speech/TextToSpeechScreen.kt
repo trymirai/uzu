@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trymirai.playground.audio.AudioPlayer
 import com.trymirai.playground.audio.AudioSource
 import com.trymirai.playground.session.SessionState
+import com.trymirai.playground.session.label
 import com.trymirai.playground.ui.components.ActionButton
 import com.trymirai.playground.ui.components.PlaygroundTopBar
 import com.trymirai.playground.ui.components.PromptField
@@ -46,12 +47,7 @@ fun TextToSpeechScreen(identifier: String, viewModel: TextToSpeechViewModel, aud
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(16.dp)) {
                 ActionButton(
-                    text = when (val current = state) {
-                        SessionState.Loading -> "Loading…"
-                        SessionState.Generating -> "GENERATING…"
-                        is SessionState.Failed -> "Error: ${current.message}"
-                        SessionState.Idle -> "GENERATE"
-                    },
+                    text = state.label(idle = "GENERATE", generating = "GENERATING…"),
                     enabled = state == SessionState.Idle && input.text.isNotBlank(),
                     onClick = {
                         // The new synthesis overwrites the file the player may hold open.

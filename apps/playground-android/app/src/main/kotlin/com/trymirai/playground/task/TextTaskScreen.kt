@@ -20,12 +20,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trymirai.playground.session.ReplyStatsView
 import com.trymirai.playground.session.SessionState
+import com.trymirai.playground.session.label
 import com.trymirai.playground.ui.components.ActionButton
 import com.trymirai.playground.ui.components.PlaygroundTopBar
 import com.trymirai.playground.ui.components.PromptField
 
 @Composable
-fun TextTaskScreen(identifier: String, task: TextTask, viewModel: TextTaskViewModel, onBack: () -> Unit) {
+fun TextTaskScreen(identifier: String, viewModel: TextTaskViewModel, onBack: () -> Unit) {
+    val task = viewModel.task
     val state by viewModel.state.collectAsStateWithLifecycle()
     val result by viewModel.result.collectAsStateWithLifecycle()
     val input = rememberTextFieldState(task.sample)
@@ -48,12 +50,7 @@ fun TextTaskScreen(identifier: String, task: TextTask, viewModel: TextTaskViewMo
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ActionButton(
-                text = when (val current = state) {
-                    SessionState.Loading -> "Loading…"
-                    SessionState.Generating -> "STOP"
-                    is SessionState.Failed -> "Error: ${current.message}"
-                    SessionState.Idle -> task.action
-                },
+                text = state.label(idle = task.action, generating = "STOP"),
                 enabled = generating || (state == SessionState.Idle && input.text.isNotBlank()),
                 onClick = { if (generating) viewModel.stop() else viewModel.run(input.text.toString()) },
                 modifier = Modifier.padding(16.dp),

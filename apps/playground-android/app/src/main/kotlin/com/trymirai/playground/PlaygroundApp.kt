@@ -18,7 +18,6 @@ import com.trymirai.playground.home.HomeScreen
 import com.trymirai.playground.models.ModelListScreen
 import com.trymirai.playground.speech.TextToSpeechScreen
 import com.trymirai.playground.speech.TextToSpeechViewModel
-import com.trymirai.playground.task.TextTask
 import com.trymirai.playground.task.TextTaskScreen
 import com.trymirai.playground.task.TextTaskViewModel
 
@@ -62,19 +61,10 @@ fun PlaygroundApp() {
                     onBack = back,
                 )
             }
-            entry<Route.Classification> { route ->
+            entry<Route.TextTask> { route ->
                 TextTaskScreen(
                     route.identifier,
-                    TextTask.Classification,
-                    viewModel { TextTaskViewModel(route.identifier, application.engine, TextTask.Classification) },
-                    back,
-                )
-            }
-            entry<Route.Summarization> { route ->
-                TextTaskScreen(
-                    route.identifier,
-                    TextTask.Summarization,
-                    viewModel { TextTaskViewModel(route.identifier, application.engine, TextTask.Summarization) },
+                    viewModel { TextTaskViewModel(route.identifier, application.engine, route.task) },
                     back,
                 )
             }
