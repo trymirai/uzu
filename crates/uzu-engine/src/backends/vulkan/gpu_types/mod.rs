@@ -1,5 +1,6 @@
 #![allow(dead_code, reason = "Used by Vulkan shaders.")]
 
+pub mod attention_gemm;
 pub mod attention_grouped;
 pub mod attention_two_pass;
 pub mod delta_net;
