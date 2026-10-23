@@ -31,73 +31,9 @@
         });
         craneLibNixCC = (crane.mkLib pkgs).overrideToolchain rustToolchainNixCC;
 
-        aar-extract = pkgs.ipsw.overrideAttrs (old: {
-          pname = "aar-extract";
-          postPatch =
-            (old.postPatch or "")
-            + ''
-              mkdir -p cmd/aar-extract
-              cat > cmd/aar-extract/main.go <<'EOF'
-              package main
-
-              import "io"
-              import "os"
-              import "path/filepath"
-              import "github.com/blacktop/ipsw/pkg/ota"
-
-              func main() {
-              	o, err := ota.Open(os.Args[1], &ota.Config{SymmetricKey: os.Getenv("AEA_KEY")})
-              	if err != nil {
-              		panic(err)
-              	}
-              	for _, f := range o.Files() {
-              		if f.IsDir() {
-              			continue
-              		}
-              		dst := filepath.Join(os.Args[2], f.Name())
-              		rc, err := f.Open(false)
-              		if err != nil {
-              			panic(err)
-              		}
-              		os.MkdirAll(filepath.Dir(dst), 0o755)
-              		out, _ := os.Create(dst)
-              		io.Copy(out, rc)
-              		rc.Close()
-              		out.Close()
-              	}
-              }
-              EOF
-            '';
-          subPackages = ["cmd/aar-extract"];
-          ldflags = [];
-        });
-
-        metal-toolchain = pkgs.stdenvNoCC.mkDerivation {
-          pname = "metal-toolchain";
-          version = "17F109";
-
-          src = pkgs.fetchurl {
-            url = "https://updates.cdn-apple.com/2026MobileAssets/mobileassets/022-22264/722AB304-567A-4611-A7CA-1A94FA951B0B/com_apple_MobileAsset_MetalToolchain/78ED9FD0-8B39-4EEF-B0EE-67013D77BE16.aar";
-            hash = "sha256-UraVdUkU0VDWMP4UnKzHam1yBS1qYtqx8rkvPmgmelY=";
-          };
-          dontUnpack = true;
-
-          nativeBuildInputs = with pkgs; [aar-extract _7zz];
-
-          buildPhase = ''
-            mkdir aar dmg
-            AEA_KEY='iOd2WvA6GXSJJrdQkp/vj1nP6FyjxkWe9JZwvJyG71E=' aar-extract "$src" aar
-            7zz x -y aar/AssetData/Restore/022-21788-058.dmg -odmg
-          '';
-
-          installPhase = ''
-            cp -r dmg/Metal.xctoolchain/ "$out"/
-            ln -s usr/bin "$out"/bin
-          '';
-
-          meta = {
-            platforms = ["aarch64-darwin"];
-          };
+        metal-toolchain = import ./scripts/metal-toolchain.nix pkgs {
+          build = "27A266a";
+          hash = "sha256-vpSn2ZVUo5tNRgJ89KMBCmPE4JFefP70DfCarVagniU=";
         };
 
         hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
