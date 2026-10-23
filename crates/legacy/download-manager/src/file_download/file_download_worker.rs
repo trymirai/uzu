@@ -166,7 +166,7 @@ impl FileDownloadWorker {
             },
             None => self.lock().await?,
         };
-        self.backend.remove_files(&self.config).await;
+        self.backend.remove_files(&self.config).await?;
         self.set(DownloadPhase::NotDownloaded {}, 0, None);
         Ok(())
     }
@@ -215,7 +215,7 @@ impl FileDownloadWorker {
                 self.set(DownloadPhase::Downloaded {}, total_bytes, Some(total_bytes));
             },
             Err(error) => {
-                self.backend.remove_files(&self.config).await;
+                let _ = self.backend.remove_files(&self.config).await;
                 self.set(
                     DownloadPhase::Error {
                         message: error.to_string(),

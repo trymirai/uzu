@@ -14,7 +14,7 @@ use uuid::Uuid;
 use uzu::{
     engine::Downloader,
     registry::mirai::HUGGING_FACE_URL,
-    storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage},
+    storage::{DownloadManagerType, DownloadPhase, DownloadState, Storage, StorageError},
     types::{
         basic::{File, Repository},
         model::{Model, ModelAccessibility, ModelIdentifier, ModelSource},
@@ -90,7 +90,7 @@ async fn model_lifecycle(#[case] kind: DownloadManagerType) -> Result<(), Box<dy
     )
     .await?;
     let refused = storage.delete(&identifier).await.expect_err("delete must be refused while locked");
-    assert!(refused.to_string().contains("foreign-manager"), "unexpected error: {refused}");
+    assert!(matches!(refused, StorageError::Locked {}), "unexpected error: {refused}");
     assert!(destination.exists());
 
     let mut changed = model.clone();

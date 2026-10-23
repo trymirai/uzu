@@ -2905,6 +2905,7 @@ public enum StorageError: Swift.Error, Equatable, Hashable, Codable, Foundation.
     )
     case DownloadManager(message: String
     )
+    case Locked
     case ModelNotFound(identifier: String
     )
     case UnsupportedModel(identifier: String
@@ -2944,10 +2945,11 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
         case 2: return .DownloadManager(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 3: return .ModelNotFound(
+        case 3: return .Locked
+        case 4: return .ModelNotFound(
             identifier: try FfiConverterString.read(from: &buf)
             )
-        case 4: return .UnsupportedModel(
+        case 5: return .UnsupportedModel(
             identifier: try FfiConverterString.read(from: &buf)
             )
 
@@ -2972,13 +2974,17 @@ public struct FfiConverterTypeStorageError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .ModelNotFound(identifier):
+        case .Locked:
             writeInt(&buf, Int32(3))
+        
+        
+        case let .ModelNotFound(identifier):
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(identifier, into: &buf)
             
         
         case let .UnsupportedModel(identifier):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(identifier, into: &buf)
             
         }

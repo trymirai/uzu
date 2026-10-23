@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 #[allow(unreachable_code)]
 pub fn home_path() -> Option<PathBuf> {
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", not(target_abi = "macabi")))]
     {
         use objc2::rc::autoreleasepool;
         use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};

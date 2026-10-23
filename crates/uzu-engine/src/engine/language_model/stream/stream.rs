@@ -906,6 +906,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
 impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
     fn drop(&mut self) {
-        block_on(self.close()).unwrap();
+        if !matches!(self.decoding_state, DecodingState::Closed) {
+            let _ = block_on(self.close());
+        }
     }
 }
