@@ -15,7 +15,9 @@ pub async fn export_tokenizers(runtime_handle: RuntimeHandle) -> Result<()> {
     let registry: Vec<Value> = serde_json::from_str(&fs::read_to_string(data_path.join("registry.json"))?)?;
     let manager = DownloadManager::new(DownloadManagerType::Universal, runtime_handle);
     let mut failed_repo_ids = Vec::new();
-    for model in &registry {
+    for model in
+        registry.iter().filter(|model| model["encodings"].as_array().is_some_and(|encodings| !encodings.is_empty()))
+    {
         let repo_id = model["repo_id"].as_str().context("Registry model without repo_id")?;
         let name = repo_id.replace('/', "_");
         match export_tokenizer(
