@@ -88,7 +88,7 @@ impl<B: Backend> Engine<B> {
 
         let speculator = speculator_path
             .as_deref()
-            .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, self.context.clone()))
+            .map(|speculator_path| DFlashTfmSpeculator::new(speculator_path, decoder.embedding(), self.context.clone()))
             .transpose()?
             .flatten();
 
