@@ -26,8 +26,8 @@ pub enum VkContextError {
     #[error("cannot enumerate Vulkan devices: {0}")]
     DeviceEnumeration(#[source] vk::Result),
 
-    #[error("cannot query device capabilities: {0}")]
-    CapabilityQuery(#[source] vk::Result),
+    #[error("cannot enumerate Vulkan layers: {0}")]
+    LayerEnumeration(#[source] vk::Result),
 
     #[error("cannot create the debug messenger: {0}")]
     DebugMessengerCreate(#[source] vk::Result),

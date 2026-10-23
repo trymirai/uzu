@@ -5,7 +5,7 @@ use crate::backends::{
     vulkan::{Error, VkBuffer, VkBufferMemory, VkContext, Vulkan},
 };
 
-/// A staging buffer the host fills, which ending initialization copies into a new device-local buffer.
+/// A staging buffer the host fills, which ending initialization copies into its device-local buffer.
 pub struct VkBufferInitializer {
     staging: Arc<VkBuffer>,
     buffer: Arc<VkBuffer>,

@@ -24,6 +24,8 @@ const _: () = {
 
 impl VkShaderBfloat16Features {
     pub const EXTENSION_NAME: &CStr = c"VK_KHR_shader_bfloat16";
+    /// VK_COMPONENT_TYPE_BFLOAT16_KHR, the extension's cooperative-matrix component type.
+    pub const COMPONENT_TYPE: vk::ComponentTypeKHR = vk::ComponentTypeKHR::from_raw(1_000_141_000);
 }
 
 impl Default for VkShaderBfloat16Features {

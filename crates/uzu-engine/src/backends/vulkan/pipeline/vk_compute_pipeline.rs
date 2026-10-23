@@ -56,16 +56,10 @@ impl VkComputePipeline {
             unsafe { device.create_compute_pipelines(context.pipeline_cache(), std::slice::from_ref(&info), None) };
         // The pipeline no longer needs its module.
         unsafe { device.destroy_shader_module(module, None) };
-        let pipeline = match created {
-            Ok(pipelines) => pipelines[0],
-            Err((pipelines, error)) => unsafe {
-                for pipeline in pipelines {
-                    device.destroy_pipeline(pipeline, None);
-                }
-                device.destroy_pipeline_layout(pipeline_layout, None);
-                return Err(error.into());
-            },
-        };
+        // A failed creation leaves the only pipeline null.
+        let pipeline = created
+            .map_err(|(_, error)| error)
+            .inspect_err(|_| unsafe { device.destroy_pipeline_layout(pipeline_layout, None) })?[0];
 
         Ok(Self {
             context,
