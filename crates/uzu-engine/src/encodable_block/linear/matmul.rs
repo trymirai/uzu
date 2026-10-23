@@ -16,7 +16,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::{Gather, Linear, LinearEncodeError, LinearInput},
+        linear::{Linear, LinearEncodeError, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -130,15 +130,14 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(self.prepared_activation_format)
     }
 
-    pub(super) fn encode_with_a(
+    pub(super) fn encode_readout(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,
-        gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        output_dim: u32,
+        gather_indices: Option<impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        let (output_dim, gather_indices) =
-            gather.map_or((self.output_dim, None), |gather| (gather.output_dim, Some(gather.indices)));
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)
             .map_err(LinearEncodeError::Backend)?;
@@ -187,6 +186,22 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
+    pub(super) fn select_readout_activation_format(
+        &self,
+        batch_dim: u32,
+        output_dim: u32,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        let mut shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
+        shape.n = output_dim;
+        self.kernel.lock().select_activation_format(
+            &shape,
+            self.matmul_b().weights_layout(),
+            self.prepared_activation_format,
+            context,
+        )
+    }
+
     fn matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
         self.matrix.matmul_b()
     }
@@ -207,7 +222,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        self.encode_with_a(input.as_ref(), batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)
+        self.encode_readout(input.as_ref(), batch_dim, self.output_dim, None::<&B::ScratchBuffer>, command_buffer)
     }
 
     fn select_activation_format(
@@ -215,12 +230,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        let shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
-        self.kernel.lock().select_activation_format(
-            &shape,
-            self.matmul_b().weights_layout(),
-            self.prepared_activation_format,
-            context,
-        )
+        self.select_readout_activation_format(batch_dim, self.output_dim, context)
     }
 }
