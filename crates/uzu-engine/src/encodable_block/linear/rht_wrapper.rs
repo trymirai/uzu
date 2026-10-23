@@ -11,7 +11,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
+        Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
         input_rht::InputRht,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -194,13 +194,6 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             .input_rht
             .prepare_in_place(input, batch_dim, format, command_buffer)
             .map_err(LinearEncodeError::Backend)?;
-        let output = self.inner_linear.encode_with_a(
-            input.as_matmul_a(),
-            batch_dim,
-            None::<Gather<&B::ScratchBuffer>>,
-            command_buffer,
-        )?;
-
-        Ok(output)
+        self.inner_linear.encode_input(input, batch_dim, command_buffer)
     }
 }

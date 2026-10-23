@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use derive_more::Debug;
 use parking_lot::Mutex;
 use thiserror::Error;
@@ -14,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{Gather, LinearEncodeError, LinearMatmulError, UntiedReadout},
+        linear::{LinearEncodeError, LinearMatmulError, UntiedReadout},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -49,6 +51,11 @@ enum EmbeddingTying<B: Backend> {
 }
 
 pub struct Embedding<B: Backend> {
+    storage: Arc<EmbeddingStorage<B>>,
+    vocab_size: u32,
+}
+
+struct EmbeddingStorage<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
@@ -68,8 +75,29 @@ impl<B: Backend> Embedding<B> {
         self.vocab_size
     }
 
+    pub fn lookup_vocab_size(&self) -> u32 {
+        self.storage.vocab_size
+    }
+
+    /// Shares matrix storage, restricting readout while retaining full token lookup.
+    pub fn prefix(
+        &self,
+        vocab_size: u32,
+    ) -> Result<Self, EmbeddingError<B>> {
+        if vocab_size == 0 || vocab_size > self.vocab_size {
+            return Err(EmbeddingError::UnsupportedConfiguration(format!(
+                "readout vocabulary {vocab_size} is outside 1..={}",
+                self.vocab_size
+            )));
+        }
+        Ok(Self {
+            storage: self.storage.clone(),
+            vocab_size,
+        })
+    }
+
     pub fn model_dim(&self) -> u32 {
-        self.model_dim
+        self.storage.model_dim
     }
 
     pub fn new(
@@ -144,12 +172,15 @@ impl<B: Backend> Embedding<B> {
 
         Ok((
             Self {
-                tying,
-                input_scale,
-                data_type,
-                logit_transform,
+                storage: Arc::new(EmbeddingStorage {
+                    tying,
+                    input_scale,
+                    data_type,
+                    logit_transform,
+                    vocab_size,
+                    model_dim,
+                }),
                 vocab_size,
-                model_dim,
             },
             readout_input_hadamard_factors,
         ))
@@ -162,10 +193,10 @@ impl<B: Backend> Embedding<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
         let mut output = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
+            .allocate_scratch_for_shape(&[batch_dim, self.storage.model_dim], self.storage.data_type)
             .map_err(EmbeddingError::BackendError)?;
 
-        let table = match &self.tying {
+        let table = match &self.storage.tying {
             EmbeddingTying::Tied {
                 table,
                 ..
@@ -175,7 +206,7 @@ impl<B: Backend> Embedding<B> {
                 ..
             } => input_table,
         };
-        table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
+        table.encode_lookup(token_ids, &mut output, batch_dim, self.storage.input_scale, command_buffer);
 
         Ok(output)
     }
@@ -191,24 +222,21 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("embedding readout");
 
-        assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
-        let mut output_buffer = match &self.tying {
+        assert!(
+            batch_dim > 0 && output_dim > 0 && (gather_indices.is_some() || output_dim <= self.vocab_size),
+            "invalid embedding readout dimensions"
+        );
+        let mut output_buffer = match &self.storage.tying {
             EmbeddingTying::Untied {
                 output,
                 ..
-            } => {
-                let gather = gather_indices.map(|indices| Gather {
-                    indices,
-                    output_dim,
-                });
-                output.encode(input_buffer, batch_dim, gather, command_buffer)?
-            },
+            } => output.encode(input_buffer, batch_dim, output_dim, gather_indices, command_buffer)?,
             EmbeddingTying::Tied {
                 table,
                 readout,
             } => {
                 let mut output = command_buffer
-                    .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
+                    .allocate_scratch_for_shape(&[batch_dim, output_dim], self.storage.data_type)
                     .map_err(EmbeddingError::BackendError)?;
                 let arguments = MatmulArguments {
                     a: MatmulA::FullPrecision {
@@ -222,14 +250,14 @@ impl<B: Backend> Embedding<B> {
                     gather_indices,
                     m: batch_dim,
                     n: output_dim,
-                    k: self.model_dim,
+                    k: self.storage.model_dim,
                 };
                 readout.lock().encode(arguments, command_buffer).map_err(EmbeddingError::Matmul)?;
                 output
             },
         };
 
-        if apply_logit_transform && let Some(logit_transform) = &self.logit_transform {
+        if apply_logit_transform && let Some(logit_transform) = &self.storage.logit_transform {
             let length = batch_dim * output_dim;
             logit_transform.kernel.encode(
                 &mut output_buffer,

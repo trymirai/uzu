@@ -571,7 +571,6 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     self.model_state.speculator_state.as_mut().unwrap(),
                     output_norm,
                     root_token as u32,
-                    self.model.decoder.embedding(),
                     shape,
                     &self.options.sampling_method,
                     #[cfg(grammar)]

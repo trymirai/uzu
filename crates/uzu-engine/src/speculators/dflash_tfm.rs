@@ -23,7 +23,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
-        embedding::Embedding,
+        embedding::{Embedding, EmbeddingError},
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
@@ -56,6 +56,10 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     DFlash(#[from] DFlashNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
+    #[error("Embedding error: {0}")]
+    Embedding(#[from] EmbeddingError<B>),
+    #[error("mask token {0} is outside the target vocabulary")]
+    InvalidMaskToken(u64),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -90,11 +94,13 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
+    embedding: Embedding<B>,
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub fn new(
         model_path: &Path,
+        target_embedding: &Embedding<B>,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
         let mut shapes = serde_json::from_reader::<_, HashMap<String, DFlashTfmTreeShape>>(BufReader::new(
@@ -114,6 +120,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let config: SpeculatorModelConfig =
             serde_json::from_reader(BufReader::new(File::open(model_path.join("config.json"))?))?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
+        let embedding = target_embedding.prefix(config.draft_config.vocab_size)?;
+        if config.draft_config.mask_token_id >= u64::from(embedding.lookup_vocab_size()) {
+            return Err(DFlashSpeculatorLoadError::InvalidMaskToken(config.draft_config.mask_token_id));
+        }
 
         let weights_file = File::open(model_path.join("model.safetensors"))?;
         let weight_loader = ParameterLoader::new(&weights_file, &*context)?;
@@ -124,18 +134,13 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             .weaver_config
             .as_ref()
             .map(|weaver_config| {
-                Weaver::new(
-                    config.draft_config.vocab_size,
-                    weaver_config,
-                    &speculator_tree.subtree("weaver"),
-                    &*context,
-                )
+                Weaver::new(embedding.vocab_size(), weaver_config, &speculator_tree.subtree("weaver"), &*context)
             })
             .transpose()?;
 
         weight_loader.assert_all_tensors_read()?;
 
-        let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
+        let sampling = Sampling::new(embedding.vocab_size(), data_type);
 
         Ok(Some(Self {
             context,
@@ -144,6 +149,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             sampling,
             config,
             shape,
+            embedding,
         }))
     }
 
@@ -200,7 +206,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         state: &mut DFlashState<B>,
         target_output_norm: impl BufferRef<Backend = B>,
         target_output_token: u32,
-        target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
         sampling_method: &SamplingMethod,
         #[cfg(grammar)] grammar: Option<&mut Grammar>,
@@ -209,6 +214,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         command_buffer_name: Option<&str>,
         timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
+        let target_embedding = &self.embedding;
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
         let block_size = self.dflash.block_size();

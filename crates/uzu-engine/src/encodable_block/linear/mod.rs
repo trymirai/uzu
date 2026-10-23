@@ -12,7 +12,7 @@ pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, Kernels,
+        Backend, CommandBuffer, Kernels,
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationQuantization,
@@ -70,11 +70,6 @@ pub enum LinearInput<B: Backend> {
         scale_group_size: u32,
         code_layout: Int8CodeLayout,
     },
-}
-
-pub struct Gather<T: BufferRef> {
-    pub indices: T,
-    pub output_dim: u32,
 }
 
 impl<B: Backend> LinearInput<B> {
