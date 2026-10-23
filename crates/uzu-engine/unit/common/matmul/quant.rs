@@ -66,15 +66,6 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
     }
 }
 
-/// The first `to` of `from` equal rows of `values`.
-fn first_rows<V: Clone>(
-    values: &[V],
-    from: u32,
-    to: u32,
-) -> Vec<V> {
-    values[..values.len() / from as usize * to as usize].to_vec()
-}
-
 fn pad<T: DataTypeRepr>(
     values: &[T],
     minimum_len: usize,
@@ -310,26 +301,6 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             quantization,
         });
         self
-    }
-
-    /// The first `n` output columns: their weight rows, metadata and output transform, with the same activations.
-    pub fn columns(
-        &self,
-        n: u32,
-    ) -> Self {
-        let rows = self.n;
-        Self {
-            w_packed: first_rows(&self.w_packed, rows, n),
-            scales: first_rows(&self.scales, rows, n),
-            zero_points: self.zero_points.as_deref().map(|zero_points| first_rows(zero_points, rows, n)),
-            biases: self.biases.as_deref().map(|biases| first_rows(biases, rows, n)),
-            x: self.x.clone(),
-            n,
-            prepared_a: self.prepared_a.clone(),
-            output_rht_factors: self.output_rht_factors.as_deref().map(|factors| first_rows(factors, rows, n)),
-            output_bias: self.output_bias.as_deref().map(|bias| first_rows(bias, rows, n)),
-            ..*self
-        }
     }
 
     pub fn weights_for_upload(&self) -> Vec<u32> {

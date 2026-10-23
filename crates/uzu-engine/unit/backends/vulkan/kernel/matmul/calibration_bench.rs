@@ -1,6 +1,4 @@
-use std::rc::Rc;
-#[cfg(backend = "vulkan")]
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc, time::Duration};
 
 use criterion::{BenchmarkId, Criterion};
 use futures::executor::block_on;
@@ -9,134 +7,87 @@ use num_traits::Float;
 use uzu_engine_macros::uzu_bench;
 
 use crate::{
-    backends::common::{
-        Backend, Context,
-        gpu_types::quantization_method::QuantizationMethod,
-        kernel::{Kernels, matmul::MatmulKernel},
-    },
-    data_type::DataTypeRepr,
-    tests::{
-        cold_pool::ColdPool,
-        helpers::{create_buffer, for_each_non_cpu_backend},
-        matmul::{
-            QuantInput, iter_encode_loop, production_quant_buffers, production_quant_input, quant_arguments,
-            qwen3_layer_shapes,
-        },
-        util::type_short_name,
-    },
-};
-#[cfg(backend = "vulkan")]
-use crate::{
     backends::{
         common::{
-            CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            kernel::matmul::{ActivationFormat, MatmulShape},
+            Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferPending, Context,
+            capture_matcher::CAPTURE_MATCHER,
+            gpu_types::quantization_method::QuantizationMethod,
+            kernel::matmul::{ActivationFormat, MatmulKernel, MatmulShape},
         },
         cpu::Cpu,
         vulkan::{VkContext, VkContextCreateInfo, VkMatmulKernel, VkMatmulPlan, Vulkan},
     },
-    data_type::DataType,
+    data_type::{DataType, DataTypeRepr},
     tests::{
-        assert::parity_mismatches,
-        helpers::buffer_to_vec,
-        matmul::{QuantBuffers, Shape, quant_tolerance, run_quant, time_encode_loop},
+        assert::check_tolerance,
+        cold_pool::ColdPool,
+        helpers::{buffer_to_vec, create_buffer},
+        matmul::{
+            QuantBuffers, QuantInput, Shape, iter_encode_loop, production_quant_buffers, production_quant_input,
+            quant_arguments, quant_tolerance, run_quant,
+        },
     },
 };
 
-/// Qwen3 linears as loaded models run them: the backend's weight layout, activation format and output transform. The
-/// weights rotate through cold copies while every product writes one output, so each waits for the last as in decoding.
-fn bench_qwen3_layers_typed<B: Backend, T: DataTypeRepr + Float>(
-    c: &mut Criterion,
-    context: &B::Context,
-    label: &str,
-    group_size: u32,
-    bits: u32,
-    quant_method: QuantizationMethod,
-) {
-    let new_matmul = || {
-        <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
-            .unwrap()
-    };
-    let mut group = c.benchmark_group(format!("{}/Kernel/Qwen3Layers/{}", type_short_name::<B>(), label));
-    for (layer, shape) in qwen3_layer_shapes(bits) {
-        let (m, k, n) = (shape.m, shape.k, shape.n);
-        let mut problem = None;
-        group.bench_function(BenchmarkId::from_parameter(format!("{layer}_{shape}")), |b| {
-            let (input, matmul, buffers, output) = problem.get_or_insert_with(|| {
-                let layout = new_matmul();
-                let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42)
-                    .with_group_output()
-                    .with_output_rht(true);
-                let input =
-                    production_quant_input::<B, T>(context, &layout, input.clone()).map_or(input, |(input, _)| input);
-                let input = Rc::new(input);
-                let pool_input = input.clone();
-                let buffers = ColdPool::new(input.weight_buffer_bytes(), move || {
-                    production_quant_buffers::<B, T>(context, &layout, &pool_input)
-                });
-                println!("{layer}_{shape}: {} weight bytes per product", input.weight_buffer_bytes());
-                (input, new_matmul(), buffers, create_buffer::<B, T>(context, (m as usize) * (n as usize)))
-            });
-            iter_encode_loop::<B, _>(context, b, |command_buffer| {
-                let mut arguments = quant_arguments(buffers.next_mut(), input);
-                arguments.output.values = &mut *output;
-                matmul.encode(arguments, command_buffer).expect("encode qwen3 layer");
-            });
-        });
-    }
-}
+/// Checkpoint products by label, K, N and quantization group, as the 0.8B, 4B and 27B checkpoint headers record them.
+/// Tied readouts multiply by the embedding table; the 27B readout is its own linear.
+const LAYERS: [(&str, u32, u32, u32); 18] = [
+    ("0.8b_qkvg", 1024, 5120, 32),
+    ("0.8b_o", 2048, 1024, 32),
+    ("0.8b_up", 1024, 7168, 32),
+    ("0.8b_down", 3584, 1024, 32),
+    ("0.8b_in", 1024, 8224, 32),
+    ("0.8b_tied_readout", 1024, 248320, 32),
+    ("4b_qkvg", 2560, 10240, 32),
+    ("4b_o", 4096, 2560, 32),
+    ("4b_up", 2560, 18432, 32),
+    ("4b_down", 9216, 2560, 32),
+    ("4b_in", 2560, 12352, 32),
+    ("4b_tied_readout", 2560, 248320, 32),
+    ("27b_qkvg", 5120, 14336, 64),
+    ("27b_o", 6144, 5120, 64),
+    ("27b_gate_up", 5120, 34816, 64),
+    ("27b_down", 17408, 5120, 64),
+    ("27b_in", 5120, 16480, 64),
+    ("27b_readout", 5120, 248320, 64),
+];
 
-#[uzu_bench]
-fn bench_qwen3_layers(c: &mut Criterion) {
-    for_each_non_cpu_backend!(|B| {
-        let context = block_on(<B as Backend>::Context::new()).unwrap();
-        bench_qwen3_layers_typed::<B, bf16>(
-            c,
-            &context,
-            "ScaleBias_BF16_gs64_4b",
-            64,
-            4,
-            QuantizationMethod::ScaleBias,
-        );
-        bench_qwen3_layers_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_4b", 64, 4, QuantizationMethod::ScaleZeroPoint);
-    });
-}
+/// Measured requests use 12/395 rows; the 27B verifier/readout also use 15/16.
+const ROWS: [u32; 13] = [1, 2, 4, 8, 12, 15, 16, 32, 64, 128, 256, 395, 512];
 
 /// Explicit calibration of the recorded checkpoints' products on Vulkan, each as its loaded model runs it. Every legal
 /// plan qualifies against the CPU's product of the same codes and the explicit default's full output before any
 /// timing; then the plans time against the default and Criterion samples the selected one, always by explicit plan. A
 /// problem calibrates once, only when its benchmark runs; a stable winner across devices belongs in the default rules.
-#[cfg(backend = "vulkan")]
 #[uzu_bench]
 fn bench_qwen3_calibration(c: &mut Criterion) {
-    // The quantization group of each checkpoint whose header is recorded, by label prefix; others are not calibrated.
-    const CHECKPOINT_GROUPS: [(&str, u32); 3] = [("0.8b_", 32), ("4b_", 32), ("27b_", 64)];
     let mut session = None;
     let mut group = c.benchmark_group("Vulkan/Calibration");
-    for (label, shape) in qwen3_layer_shapes(4) {
-        let Some(&(_, group_size)) = CHECKPOINT_GROUPS.iter().find(|(prefix, _)| label.starts_with(prefix)) else {
-            continue;
-        };
-        let id = format!("{label}_{shape}");
-        let mut problem = None;
-        group.bench_function(BenchmarkId::from_parameter(&id), |b| {
-            let context = session.get_or_insert_with(|| {
-                VkContext::with_create_info(VkContextCreateInfo {
-                    with_validation: false,
-                    ..Default::default()
-                })
-                .expect("calibration context")
+    for (label, k, n, group_size) in LAYERS {
+        for m in ROWS {
+            let shape = Shape::new(m, k, n);
+            let id = format!("{label}_{shape}");
+            let mut problem = None;
+            group.bench_function(BenchmarkId::from_parameter(&id), |b| {
+                let context = session.get_or_insert_with(|| {
+                    VkContext::with_create_info(VkContextCreateInfo {
+                        with_validation: false,
+                        ..Default::default()
+                    })
+                    .expect("calibration context")
+                });
+                let (input, kernel, buffers, output, plan) = problem.get_or_insert_with(|| {
+                    calibrate(context.clone(), &id, label, group_size, shape)
+                        .unwrap_or_else(|error| panic!("calibration {id} failed: {error}"))
+                });
+                iter_encode_loop::<Vulkan, _>(context, b, |command_buffer| {
+                    let mut arguments = quant_arguments(buffers.next_mut(), input);
+                    arguments.output.values = &mut *output;
+                    kernel.encode_plan(arguments, Some(*plan), command_buffer).expect("encode the selected plan");
+                });
             });
-            let (input, kernel, buffers, output, plan) = problem.get_or_insert_with(|| {
-                calibrate(context.clone(), &id, label, group_size, shape)
-                    .unwrap_or_else(|error| panic!("calibration {id} failed: {error}"))
-            });
-            iter_encode_loop::<Vulkan, _>(context, b, |command_buffer| {
-                let mut arguments = quant_arguments(buffers.next_mut(), input);
-                arguments.output.values = &mut *output;
-                kernel.encode_plan(arguments, Some(*plan), command_buffer).expect("encode the selected plan");
-            });
-        });
+        }
     }
     group.finish();
 }
@@ -144,7 +95,6 @@ fn bench_qwen3_calibration(c: &mut Criterion) {
 /// Sets up `label`'s product at `shape` with its checkpoint's contract, qualifies every plan and selects one, printing
 /// the evidence. Returns the input, the encoder, the cold weight copies, the one output every plan writes and the plan
 /// to sample: the winner, else the default.
-#[cfg(backend = "vulkan")]
 fn calibrate(
     context: Arc<VkContext>,
     id: &str,
@@ -210,7 +160,7 @@ fn calibrate(
     let mut rejected: Vec<(VkMatmulPlan, String)> = Vec::new();
     let mut untuned = None;
     for (fixture, x) in fixtures(&input.x, k) {
-        let mut bounded = input.columns(columns);
+        let mut bounded = input_columns(&input, columns);
         bounded.x = x;
         if let Some(quantization) = quantization {
             bounded = bounded.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size());
@@ -276,7 +226,6 @@ fn calibrate(
 /// screening pairs each plan's sample with an adjacent baseline sample, plans interleaved within each round, and the
 /// FINALISTS of lowest median ratio rerun so in the finals. The population of a finalist's statistics is its kept final
 /// pairs: its median and IQR of plan/baseline ratios and its p95 against the paired baseline samples' p95.
-#[cfg(backend = "vulkan")]
 fn select(
     context: &<Vulkan as Backend>::Context,
     id: &str,
@@ -294,7 +243,7 @@ fn select(
     // baseline drifting 3% between the finals' halves invalidates them.
     const MARGIN: f64 = 0.03;
     let mut measure = |plan: VkMatmulPlan, products| {
-        let time = time_encode_loop::<Vulkan, _>(context, id, products, |command_buffer| {
+        let time = time_encode_loop(context, id, products, |command_buffer| {
             let mut arguments = quant_arguments(buffers.next_mut(), input);
             arguments.output.values = &mut *output;
             kernel.encode_plan(arguments, Some(plan), command_buffer).expect("a qualified plan encodes");
@@ -373,9 +322,26 @@ fn select(
     None
 }
 
+/// The GPU time of `n_iters` encodes recorded into one command buffer, captured where the matcher selects the path.
+fn time_encode_loop(
+    context: &<Vulkan as Backend>::Context,
+    benchmark_path: &str,
+    n_iters: u64,
+    mut encode: impl FnMut(&mut <<Vulkan as Backend>::CommandBuffer as CommandBuffer>::Encoding),
+) -> Duration {
+    let _capture_span = CAPTURE_MATCHER
+        .capture::<Vulkan>(context, benchmark_path)
+        .unwrap_or_else(|error| panic!("failed to capture benchmark {benchmark_path}: {error}"));
+    let mut command_buffer = context.create_command_buffer(Some(benchmark_path), None).unwrap();
+    for _ in 0..n_iters {
+        encode(&mut command_buffer);
+    }
+    let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    completed.gpu_execution_time()
+}
+
 /// The activations every plan qualifies on: zeros, the seeded ones with one 32 a row, alternating +-4, then the seeded
 /// ones, which the qualifying weight copy keeps for timing.
-#[cfg(backend = "vulkan")]
 fn fixtures(
     seeded: &[bf16],
     k: u32,
@@ -391,8 +357,37 @@ fn fixtures(
     ]
 }
 
+/// The first `n` output columns of `input`: their weight rows, metadata and output transform, with the same
+/// activations.
+fn input_columns(
+    input: &QuantInput<bf16>,
+    n: u32,
+) -> QuantInput<bf16> {
+    let rows = input.n;
+    QuantInput {
+        w_packed: first_rows(&input.w_packed, rows, n),
+        scales: first_rows(&input.scales, rows, n),
+        zero_points: input.zero_points.as_deref().map(|zero_points| first_rows(zero_points, rows, n)),
+        biases: input.biases.as_deref().map(|biases| first_rows(biases, rows, n)),
+        x: input.x.clone(),
+        n,
+        prepared_a: input.prepared_a.clone(),
+        output_rht_factors: input.output_rht_factors.as_deref().map(|factors| first_rows(factors, rows, n)),
+        output_bias: input.output_bias.as_deref().map(|bias| first_rows(bias, rows, n)),
+        ..*input
+    }
+}
+
+/// The first `to` of `from` equal rows of `values`.
+fn first_rows<V: Clone>(
+    values: &[V],
+    from: u32,
+    to: u32,
+) -> Vec<V> {
+    values[..values.len() / from as usize * to as usize].to_vec()
+}
+
 /// The first `columns` of each of `output`'s rows of `n`.
-#[cfg(backend = "vulkan")]
 fn first_columns(
     output: &[bf16],
     n: u32,
@@ -402,7 +397,6 @@ fn first_columns(
 }
 
 /// Whether `actual` holds `expected` within the format's unchanged tolerance, else the mismatch count and the first.
-#[cfg(backend = "vulkan")]
 fn parity(
     what: &str,
     expected: &[bf16],
@@ -420,8 +414,28 @@ fn parity(
     }
 }
 
+/// Each index where `actual` leaves `reference`'s tolerance, with the expected and actual values.
+fn parity_mismatches<'a, T: DataTypeRepr + Float>(
+    reference: &'a [T],
+    actual: &'a [T],
+    rel_tol: f64,
+    abs_tol: f64,
+) -> impl Iterator<Item = (usize, f32, f32)> + 'a {
+    let shared = reference.iter().zip(actual).enumerate().filter_map(move |(i, (&exp, &got))| {
+        let (exp, got) = (exp.to_f32().unwrap(), got.to_f32().unwrap());
+        (!check_tolerance(exp, got, rel_tol, abs_tol)).then_some((i, exp, got))
+    });
+    let missing = (reference.len().min(actual.len())..reference.len().max(actual.len())).map(move |i| {
+        (
+            i,
+            reference.get(i).map_or(f32::NAN, |value| value.to_f32().unwrap()),
+            actual.get(i).map_or(f32::NAN, |value| value.to_f32().unwrap()),
+        )
+    });
+    shared.chain(missing)
+}
+
 /// The `q` quantile of `values` by nearest rank.
-#[cfg(backend = "vulkan")]
 fn quantile(
     values: &[f64],
     q: f64,
