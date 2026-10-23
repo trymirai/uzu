@@ -63,6 +63,36 @@ fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
+    pub fn new_full_precision(
+        values: B::GlobalBuffer,
+        input_dim: u32,
+        output_dim: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        context: &B::Context,
+    ) -> Result<Self, LinearMatmulError<B>> {
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+                return Err(LinearMatmulError::UnsupportedDataType(data_type));
+            }
+        }
+        let matrix = WeightMatrix::new_full_precision(values);
+        let kernel =
+            <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
+                .map_err(LinearMatmulError::Matmul)?;
+
+        Ok(Self {
+            kernel: Mutex::new(kernel),
+            matrix,
+            biases: None,
+            output_hadamard_factors: None,
+            input_dim,
+            output_dim,
+            output_data_type,
+        })
+    }
+
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
     pub fn load(

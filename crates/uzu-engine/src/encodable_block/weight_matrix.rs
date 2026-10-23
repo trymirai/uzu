@@ -95,6 +95,13 @@ pub struct WeightMatrix<B: Backend> {
 }
 
 impl<B: Backend> WeightMatrix<B> {
+    pub fn new_full_precision(values: B::GlobalBuffer) -> Self {
+        Self {
+            values,
+            quantized: None,
+        }
+    }
+
     pub fn load(
         output_dim: u32,
         input_dim: u32,

@@ -23,6 +23,7 @@ fn run_router_top_k<B: Backend>(
     num_experts: u32,
     k: u32,
     batch_dim: u32,
+    logit_stride: u32,
 ) -> (Vec<u32>, Vec<f32>) {
     let context = create_context::<B>();
     let logits_buf = create_buffer_with_data::<B, bf16>(&context, logits);
@@ -49,6 +50,7 @@ fn run_router_top_k<B: Backend>(
         num_experts,
         k,
         batch_dim,
+        logit_stride,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -57,17 +59,22 @@ fn run_router_top_k<B: Backend>(
 
 #[uzu_test]
 fn moe_router_top_k_matches_cpu() {
-    for (batch_dim, num_experts, k, has_biases) in [
-        (1u32, 256u32, 8u32, false),
-        (2u32, 256u32, 8u32, true),
-        (16u32, 256u32, 8u32, false),
-        (5u32, 64u32, 4u32, true),
-        (1u32, 512u32, 1u32, false),
-        (2u32, 512u32, 32u32, true),
+    for (batch_dim, num_experts, k, has_biases, logit_stride) in [
+        (1u32, 256u32, 8u32, false, 256u32),
+        (2u32, 256u32, 8u32, true, 256u32),
+        (16u32, 256u32, 8u32, false, 256u32),
+        (5u32, 64u32, 4u32, true, 64u32),
+        (1u32, 512u32, 1u32, false, 512u32),
+        (2u32, 512u32, 32u32, true, 512u32),
+        (2u32, 256u32, 8u32, false, 257u32),
     ] {
-        let mut logits: Vec<bf16> = (0..(batch_dim * num_experts) as usize)
-            .map(|i| bf16::from_f32((((i * 37 + 13) % 97) as f32 - 48.0) * 0.125))
-            .collect();
+        let total_logits = if logit_stride == num_experts {
+            (batch_dim * num_experts) as usize
+        } else {
+            (batch_dim * logit_stride) as usize
+        };
+        let mut logits: Vec<bf16> =
+            (0..total_logits).map(|i| bf16::from_f32((((i * 37 + 13) % 97) as f32 - 48.0) * 0.125)).collect();
         // Inject an exact tie to verify deterministic lowest-index tie-breaking
         if num_experts >= 16 {
             logits[3] = bf16::from_f32(10.0);
@@ -77,14 +84,14 @@ fn moe_router_top_k_matches_cpu() {
             (0..num_experts as usize).map(|i| bf16::from_f32((((i * 19 + 7) % 31) as f32 - 15.0) * 0.05)).collect()
         });
 
-        let expected = run_router_top_k::<Cpu>(&logits, biases.as_deref(), num_experts, k, batch_dim);
+        let expected = run_router_top_k::<Cpu>(&logits, biases.as_deref(), num_experts, k, batch_dim, logit_stride);
         for row in expected.1.chunks_exact(k as usize) {
             let sum: f32 = row.iter().sum();
             assert!((sum - 1.0).abs() < 1e-5, "softmax weights should sum to 1.0, got {sum}");
         }
 
         for_each_non_cpu_backend!(|B| {
-            let actual = run_router_top_k::<B>(&logits, biases.as_deref(), num_experts, k, batch_dim);
+            let actual = run_router_top_k::<B>(&logits, biases.as_deref(), num_experts, k, batch_dim, logit_stride);
             assert_eq!(
                 actual.0, expected.0,
                 "expert_ids mismatch for shape=({batch_dim}, {num_experts}, {k}, has_biases={has_biases})"
@@ -115,12 +122,12 @@ fn moe_router_top_k_nan_safety() {
         logits[i] = bf16::from_f32(f32::NAN);
     }
 
-    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim);
+    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim, num_experts);
     for &id in &expected.0 {
         assert!(id < num_experts, "CPU produced out-of-range expert id {id} >= {num_experts}");
     }
     for_each_non_cpu_backend!(|B| {
-        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim);
+        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim, num_experts);
         for &id in &actual.0 {
             assert!(id < num_experts, "Backend produced out-of-range expert id {id} >= {num_experts}");
         }
@@ -134,10 +141,10 @@ fn moe_router_top_k_jax_ties() {
     let num_experts = 5u32;
     let k = 2u32;
     let batch_dim = 1u32;
-    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim);
+    let expected = run_router_top_k::<Cpu>(&logits, None, num_experts, k, batch_dim, num_experts);
     assert_eq!(expected.0, vec![1, 2], "Tie breaking expects lowest indices first: [1, 2]");
     for_each_non_cpu_backend!(|B| {
-        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim);
+        let actual = run_router_top_k::<B>(&logits, None, num_experts, k, batch_dim, num_experts);
         assert_eq!(actual.0, vec![1, 2], "Backend tie breaking must match CPU and JAX: [1, 2]");
     });
 }
@@ -684,16 +691,17 @@ fn run_moe_combine<B: Backend>(
     routed_outputs: &[bf16],
     expert_weights: &[f32],
     shared_output: Option<&[bf16]>,
-    shared_gate: Option<&[bf16]>,
+    shared_gate: Option<&[f32]>,
     model_dim: u32,
     active_experts_per_token: u32,
     batch_dim: u32,
+    gate_stride: u32,
 ) -> Vec<bf16> {
     let context = create_context::<B>();
     let routed_buf = create_buffer_with_data::<B, bf16>(&context, routed_outputs);
     let weights_buf = create_buffer_with_data::<B, f32>(&context, expert_weights);
     let shared_out_buf = shared_output.map(|s| create_buffer_with_data::<B, bf16>(&context, s));
-    let shared_gate_buf = shared_gate.map(|g| create_buffer_with_data::<B, bf16>(&context, g));
+    let shared_gate_buf = shared_gate.map(|g| create_buffer_with_data::<B, f32>(&context, g));
     let mut output_buf = create_buffer::<B, bf16>(&context, (batch_dim * model_dim) as usize);
 
     let kernel = <B::Kernels as Kernels>::MoeCombineKernel::new(
@@ -713,6 +721,7 @@ fn run_moe_combine<B: Backend>(
         model_dim,
         active_experts_per_token,
         batch_dim,
+        gate_stride,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -723,9 +732,13 @@ fn run_moe_combine<B: Backend>(
 fn moe_combine_matches_cpu() {
     let (model_dim, active) = (128u32, 8u32);
 
-    for (batch_dim, has_shared, has_gate) in
-        [(1u32, false, false), (2u32, true, false), (4u32, true, true), (16u32, true, true)]
-    {
+    for (batch_dim, has_shared, has_gate, gate_stride) in [
+        (1u32, false, false, 1u32),
+        (2u32, true, false, 1u32),
+        (4u32, true, true, 1u32),
+        (16u32, true, true, 1u32),
+        (2u32, true, true, 257u32),
+    ] {
         let routed_outputs: Vec<bf16> = (0..(batch_dim * active * model_dim) as usize)
             .map(|i| bf16::from_f32((((i * 29 + 3) % 71) as f32 - 35.0) * 0.05))
             .collect();
@@ -735,8 +748,14 @@ fn moe_combine_matches_cpu() {
                 .map(|i| bf16::from_f32((((i * 17 + 11) % 43) as f32 - 21.0) * 0.05))
                 .collect()
         });
-        let shared_gate: Option<Vec<bf16>> =
-            has_gate.then(|| (0..batch_dim as usize).map(|i| bf16::from_f32((i as f32 - 1.5) * 0.7)).collect());
+        let shared_gate: Option<Vec<f32>> = has_gate.then(|| {
+            let total_len = (batch_dim * gate_stride) as usize;
+            let mut v = vec![0.0f32; total_len];
+            for i in 0..batch_dim as usize {
+                v[i * gate_stride as usize] = (i as f32 - 1.5) * 0.7;
+            }
+            v
+        });
 
         let expected = run_moe_combine::<Cpu>(
             &routed_outputs,
@@ -746,6 +765,7 @@ fn moe_combine_matches_cpu() {
             model_dim,
             active,
             batch_dim,
+            gate_stride,
         );
 
         for_each_non_cpu_backend!(|B| {
@@ -757,12 +777,13 @@ fn moe_combine_matches_cpu() {
                 model_dim,
                 active,
                 batch_dim,
+                gate_stride,
             );
             assert_vec_close(
                 &actual,
                 &expected,
                 1e-2,
-                &format!("MoeCombine (batch={batch_dim}, shared={has_shared}, gate={has_gate})"),
+                &format!("MoeCombine (batch={batch_dim}, shared={has_shared}, gate={has_gate}, stride={gate_stride})"),
             );
         });
     }
