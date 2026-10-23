@@ -30,8 +30,6 @@ result
 .idea/
 .vscode/
 
-tools/gpu_trace/*.json
-
 # Swift
 .build/
 .swiftpm/
