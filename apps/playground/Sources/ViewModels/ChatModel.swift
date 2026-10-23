@@ -35,10 +35,12 @@ final class ChatModel {
 
     @MainActor
     func loadSession(using engineWrapper: EngineObservableWrapper) {
+        // An identifier starting with "/" is a model folder on disk (see HomeView.localModelPaths).
+        let catalogModel = engineWrapper.models.first(where: { $0.identifier == identifier })
         guard
             case .idle = viewState,
             let engine = engineWrapper.engine,
-            let model = engineWrapper.models.first(where: { $0.identifier == identifier }) else {
+            catalogModel != nil || identifier.hasPrefix("/") else {
             return
         }
 
@@ -55,6 +57,10 @@ final class ChatModel {
             let newState: ViewState
             do {
                 let config = ChatConfig.create()
+                let diskModel = try await (catalogModel == nil ? engine.modelByPath(path: identifier) : nil)
+                guard let model = catalogModel ?? diskModel else {
+                    throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: identifier])
+                }
                 session = try await engine.chat(model: model, config: config)
                 newState = .idle
             } catch {
