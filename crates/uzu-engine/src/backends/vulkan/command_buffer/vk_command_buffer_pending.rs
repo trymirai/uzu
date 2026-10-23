@@ -40,13 +40,10 @@ impl CommandBufferPending for VkCommandBufferPending {
                 segment_timestamps.push(timestamps);
             }
         }
-        let (timestamps, timestamp_uncertainty) = match &self.timestamps {
-            Some((context, recorder)) => {
-                let (spans, uncertainty) = recorder.resolve(context, &segment_timestamps)?;
-                (spans, Some(uncertainty))
-            },
-            None => (Box::default(), None),
+        let timestamps = match &self.timestamps {
+            Some((context, recorder)) => recorder.resolve(context, &segment_timestamps)?,
+            None => Box::default(),
         };
-        Ok(VkCommandBufferCompleted::new(gpu_execution_time, timestamps, timestamp_uncertainty))
+        Ok(VkCommandBufferCompleted::new(gpu_execution_time, timestamps))
     }
 }

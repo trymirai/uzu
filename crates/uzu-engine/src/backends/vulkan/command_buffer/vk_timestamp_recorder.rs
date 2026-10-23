@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::backends::{
     common::TimestampSpan,
     vulkan::{Error, VkCommandBufferError, VkContext},
@@ -35,23 +33,22 @@ impl VkTimestampRecorder {
         self.spans[span].1[1] = timestamp;
     }
 
-    /// The spans in host time, from the span timestamps of each completed segment, and their uncertainty. A timestamp
-    /// is one device clock reading after completion, less the device time since the timestamp, so every instant shares
-    /// that reading's uncertainty while their differences are exact to a device tick.
+    /// The spans in host time, from the span timestamps of each completed segment. A timestamp is one device clock
+    /// reading after completion, less the device time since the timestamp, so their differences are exact to a device
+    /// tick.
     pub fn resolve(
         &self,
         context: &VkContext,
         segment_timestamps: &[Box<[u64]>],
-    ) -> Result<(Box<[TimestampSpan]>, Duration), Error> {
-        let (clock, now, uncertainty) = context.device_clock()?;
+    ) -> Result<Box<[TimestampSpan]>, Error> {
+        let (clock, now) = context.device_clock()?;
         let instant = |(segment, index): (usize, u32)| {
             let elapsed = context.timestamp_duration(clock.wrapping_sub(segment_timestamps[segment][index as usize]));
             now.checked_sub(elapsed).ok_or(VkCommandBufferError::UnrepresentableTimestamp {
                 elapsed,
             })
         };
-        let spans = self
-            .spans
+        self.spans
             .iter()
             .map(|(name, [start, end])| {
                 Ok(TimestampSpan {
@@ -60,7 +57,6 @@ impl VkTimestampRecorder {
                     end: instant(*end)?,
                 })
             })
-            .collect::<Result<_, Error>>()?;
-        Ok((spans, uncertainty))
+            .collect()
     }
 }

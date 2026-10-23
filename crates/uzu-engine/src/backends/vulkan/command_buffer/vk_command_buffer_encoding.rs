@@ -18,7 +18,7 @@ use crate::backends::{
     vulkan::{
         Error, VkBuffer, VkBufferMemory, VkCommandBuffer, VkCommandBufferError, VkCommandBufferExecutable,
         VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline, VkContext, VkDebugGroupSpan,
-        VkDeviceCapabilities, VkTimestampRecorder, Vulkan,
+        VkTimestampRecorder, Vulkan,
     },
 };
 
@@ -533,11 +533,8 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         }
     }
 
-    /// Timing debug groups needs the device clock, so without calibrated timestamps the command buffer fails.
+    /// Timing debug groups needs the device clock, so without calibrated timestamps waiting for completion fails.
     fn with_timestamps(mut self) -> Self {
-        if !self.context.physical_device().capabilities.contains(VkDeviceCapabilities::CALIBRATED_TIMESTAMPS) {
-            self.failure.get_or_insert(VkCommandBufferError::UncalibratedTimestamps.into());
-        }
         self.timestamps = Some(VkTimestampRecorder::default());
         self
     }
