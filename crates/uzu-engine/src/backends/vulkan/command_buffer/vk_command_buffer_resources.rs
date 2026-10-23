@@ -109,11 +109,9 @@ impl VkCommandBufferResources {
         &self,
         context: &VkContext,
     ) -> Result<Duration, Error> {
-        let mut results = [0u64; 2];
-        unsafe {
-            context.device().get_query_pool_results(self.timestamps, 0, &mut results, vk::QueryResultFlags::TYPE_64)
-        }?;
-        Ok(context.timestamp_duration(results[1].wrapping_sub(results[0])))
+        let mut results = [[0u64; 2]; 2];
+        read_timestamps(context.device(), self.timestamps, &mut results, 0)?;
+        Ok(context.timestamp_duration(results[1][0].wrapping_sub(results[0][0])))
     }
 
     /// The span timestamps of a completed command buffer in device ticks, by index; an unwritten one is an error.
@@ -121,11 +119,13 @@ impl VkCommandBufferResources {
         &self,
         context: &VkContext,
     ) -> Result<Box<[u64]>, Error> {
-        let mut ticks = vec![0u64; self.span_timestamp_count as usize];
-        for (pool, results) in self.span_timestamps.iter().zip(ticks.chunks_mut(SPAN_TIMESTAMPS_PER_POOL as usize)) {
-            unsafe { context.device().get_query_pool_results(*pool, 0, results, vk::QueryResultFlags::TYPE_64) }?;
+        let mut results = vec![[0u64; 2]; self.span_timestamp_count as usize];
+        for (index, (pool, results)) in
+            self.span_timestamps.iter().zip(results.chunks_mut(SPAN_TIMESTAMPS_PER_POOL as usize)).enumerate()
+        {
+            read_timestamps(context.device(), *pool, results, 2 + index as u32 * SPAN_TIMESTAMPS_PER_POOL)?;
         }
-        Ok(ticks.into())
+        Ok(results.into_iter().map(|[ticks, _]| ticks).collect())
     }
 
     /// Returns the command buffer to the initial state, the fence to unsignaled and the timestamps to unavailable. Only
@@ -161,6 +161,30 @@ impl VkCommandBufferResources {
             device.destroy_fence(self.fence, None);
             device.destroy_command_pool(self.command_pool, None);
         }
+    }
+}
+
+/// Reads the first `results.len()` timestamps of `pool` with their availability, after the submission that writes them
+/// completed. One it never wrote is an error naming it: the submission's span timestamps are numbered after its start
+/// and end, from `first_query`.
+fn read_timestamps(
+    device: &ash::Device,
+    pool: vk::QueryPool,
+    results: &mut [[u64; 2]],
+    first_query: u32,
+) -> Result<(), Error> {
+    let flags = vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WITH_AVAILABILITY;
+    // An unavailable timestamp makes the read NOT_READY, which still writes every availability.
+    match unsafe { device.get_query_pool_results(pool, 0, results, flags) } {
+        Ok(()) | Err(vk::Result::NOT_READY) => {},
+        Err(error) => return Err(error.into()),
+    }
+    match results.iter().position(|&[_, available]| available == 0) {
+        Some(missing) => Err(VkCommandBufferError::UnexecutedSubmission {
+            query: first_query + missing as u32,
+        }
+        .into()),
+        None => Ok(()),
     }
 }
 

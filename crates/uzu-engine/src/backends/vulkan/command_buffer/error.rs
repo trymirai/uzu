@@ -27,6 +27,13 @@ pub enum VkCommandBufferError {
     UnrepresentableTimestamp {
         elapsed: std::time::Duration,
     },
+    #[error(
+        "the GPU never wrote timestamp {query} of a completed submission, so it did not run it; a driver watchdog \
+         resetting work it could not preempt is the usual cause"
+    )]
+    UnexecutedSubmission {
+        query: u32,
+    },
     #[error("dispatch of {groups:?} groups exceeds the device limit {limit:?}")]
     DispatchGroups {
         groups: [u32; 3],
