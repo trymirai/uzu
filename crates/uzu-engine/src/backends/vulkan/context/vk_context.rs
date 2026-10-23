@@ -457,8 +457,9 @@ impl Context for VkContext {
         Err(Error::NotSupported)
     }
 
+    /// Tree shapes are tuned for few Vulkan devices, so the others speculate with a listed one.
     fn device_capabilities(&self) -> DeviceCapabilities {
-        DeviceCapabilities::empty()
+        DeviceCapabilities::UNTUNED_SPECULATION
     }
 }
 fn create_instance(

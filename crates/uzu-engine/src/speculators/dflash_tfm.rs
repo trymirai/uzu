@@ -15,8 +15,8 @@ pub use crate::encodable_block::dflash::DFlashState;
 use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
-        gpu_types::trie::TrieNode as GpuTrieNode,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, DeviceCapabilities,
+        TimestampSpan, gpu_types::trie::TrieNode as GpuTrieNode,
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
@@ -105,6 +105,17 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             .device_name()
             .and_then(|device_name| shapes.remove(device_name))
             .or_else(|| shapes.remove("default"))
+            .or_else(|| {
+                let untuned = context.device_capabilities().contains(DeviceCapabilities::UNTUNED_SPECULATION);
+                untuned
+                    .then(|| {
+                        shapes.into_iter().min_by(|(a, a_shape), (b, b_shape)| {
+                            a_shape.tree_budget.cmp(&b_shape.tree_budget).then_with(|| a.cmp(b))
+                        })
+                    })
+                    .flatten()
+                    .map(|(_, shape)| shape)
+            })
         else {
             return Ok(None);
         };
