@@ -48,11 +48,20 @@ pub fn get_grammar(
 /// The token sequence of the model's end-of-thinking tag. A reasoning model
 /// opens every reply with reasoning tokens that no grammar can accept, so the
 /// grammar must stay disengaged until this sequence has been generated.
+/// Leading whitespace is excluded because BPE can merge it with preceding
+/// whitespace in both the prompt and generated reasoning.
 #[cfg(feature = "capability-grammar")]
-pub fn grammar_trigger_token_sequence<B: Backend>(model: &LanguageModel<B>) -> Option<Vec<u64>> {
-    let tag = model.end_of_thinking_tag()?;
+pub fn grammar_trigger_token_sequence(
+    end_of_thinking_tag: Option<&str>,
+    tokenizer: &Tokenizer,
+) -> Option<Vec<u64>> {
+    let tag = end_of_thinking_tag?.trim_start();
+    if tag.is_empty() {
+        return None;
+    }
+
     let token_ids: Vec<u64> =
-        model.tokenizer().encode(tag, false).ok()?.get_ids().iter().map(|token_id| u64::from(*token_id)).collect();
+        tokenizer.encode(tag, false).ok()?.get_ids().iter().map(|token_id| u64::from(*token_id)).collect();
     (!token_ids.is_empty()).then_some(token_ids)
 }
 
@@ -160,9 +169,14 @@ fn get_custom_sampling_method(method: &ShojiSamplingMethod) -> Result<UzuSamplin
 
 #[cfg(all(test, feature = "capability-grammar"))]
 mod tests {
-    use tokenizers::{Tokenizer, decoders::fuse::Fuse, models::wordlevel::WordLevel};
+    use tokenizers::{
+        AddedToken, Tokenizer,
+        decoders::fuse::Fuse,
+        models::{bpe::BPE, wordlevel::WordLevel},
+        pre_tokenizers::byte_level::ByteLevel,
+    };
 
-    use super::grammar_trigger_token_sequence_for_prompt;
+    use super::{ShojiGrammar, get_grammar, grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt};
 
     fn tokenizer() -> Tokenizer {
         let model = WordLevel::builder()
@@ -195,6 +209,113 @@ mod tests {
         let tokenizer = tokenizer();
 
         assert_eq!(grammar_trigger_token_sequence_for_prompt(Some(&[1]), &[1, 2, 3], &tokenizer), Some(vec![1]));
+    }
+
+    // Like Qwen's tokenizer, merge adjacent newlines while keeping the thinking
+    // tags as special tokens. No model download is needed to reproduce the bug.
+    fn bpe_tokenizer() -> Tokenizer {
+        let vocab = [
+            ("<unk>", 0),
+            ("Ċ", 1),
+            ("ĊĊ", 2),
+            ("<think>", 3),
+            ("</think>", 4),
+            ("Y", 5),
+            ("E", 6),
+            ("S", 7),
+            ("N", 8),
+            ("O", 9),
+            ("{", 10),
+            ("}", 11),
+            ("<eos>", 12),
+        ]
+        .map(|(token, id)| (token.to_string(), id));
+        let model = BPE::builder().vocab_and_merges(vocab, vec![("Ċ".into(), "Ċ".into())]).build().unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Some(ByteLevel::new(false, false, true)));
+        tokenizer.with_decoder(Some(ByteLevel::default()));
+        tokenizer.add_special_tokens(&[
+            AddedToken::from("<think>", true),
+            AddedToken::from("</think>", true),
+            AddedToken::from("<eos>", true),
+        ]);
+        tokenizer
+    }
+
+    fn encode(
+        tokenizer: &Tokenizer,
+        text: &str,
+    ) -> Vec<u64> {
+        tokenizer.encode(text, false).unwrap().get_ids().iter().map(|id| u64::from(*id)).collect()
+    }
+
+    fn grammars() -> [ShojiGrammar; 3] {
+        [
+            ShojiGrammar::Regex {
+                pattern: "(YES|NO)".into(),
+            },
+            ShojiGrammar::JsonAny {},
+            ShojiGrammar::JsonSchema {
+                schema: r#"{"type":"object","additionalProperties":false}"#.into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn grammar_engages_when_prompt_closes_reasoning_with_merged_newlines() {
+        let tokenizer = bpe_tokenizer();
+        assert_eq!(encode(&tokenizer, "\n</think>"), [1, 4]);
+        let prompt = encode(&tokenizer, "<think>\n\n</think>\n\n");
+        assert_eq!(prompt, [3, 2, 4, 2]);
+        let trigger = grammar_trigger_token_sequence(Some("\n</think>"), &tokenizer);
+        let trigger = grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &prompt, &tokenizer);
+        assert_eq!(trigger, None);
+
+        for config in grammars() {
+            let mut grammar = get_grammar(config, &tokenizer, &[12], trigger.clone()).unwrap();
+            assert!(grammar.next_bitmask(&mut [0]));
+        }
+    }
+
+    #[test]
+    fn grammar_engages_after_generated_trigger_with_merged_newlines() {
+        let tokenizer = bpe_tokenizer();
+        let trigger = grammar_trigger_token_sequence(Some("\n</think>"), &tokenizer);
+        let prompt = encode(&tokenizer, "<think>\n");
+        let trigger = grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &prompt, &tokenizer);
+
+        for config in grammars() {
+            let mut grammar = get_grammar(config, &tokenizer, &[12], trigger.clone()).unwrap();
+            assert!(!grammar.next_bitmask(&mut [0]));
+            grammar.accept_token(2).unwrap(); // merged newlines during reasoning
+            assert!(!grammar.next_bitmask(&mut [0]));
+            grammar.accept_token(4).unwrap(); // </think>
+            assert!(grammar.next_bitmask(&mut [0]));
+            // Speculative rollback across the trigger must restore reasoning.
+            grammar.rollback(1);
+            assert!(!grammar.next_bitmask(&mut [0]));
+            grammar.accept_token(4).unwrap();
+            assert!(grammar.next_bitmask(&mut [0]));
+        }
+    }
+
+    #[test]
+    fn grammar_trigger_preserves_multi_token_tags() {
+        let tokenizer = bpe_tokenizer();
+        let trigger = grammar_trigger_token_sequence(Some("\n</think><think>"), &tokenizer);
+        assert_eq!(trigger, Some(vec![4, 3]));
+        let prompt = encode(&tokenizer, "<think>\n\n</think><think>\n\n");
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &prompt, &tokenizer), None);
+        let history = encode(&tokenizer, "</think><think>\nYES<think>\n");
+        assert_eq!(grammar_trigger_token_sequence_for_prompt(trigger.as_deref(), &history, &tokenizer), trigger);
+    }
+
+    #[test]
+    fn grammar_trigger_ignores_missing_or_whitespace_only_tags() {
+        let tokenizer = bpe_tokenizer();
+        for tag in [None, Some(""), Some("\n\n")] {
+            assert_eq!(grammar_trigger_token_sequence(tag, &tokenizer), None);
+        }
     }
 }
 

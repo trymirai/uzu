@@ -72,7 +72,8 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
         };
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
         #[cfg(feature = "capability-grammar")]
-        let grammar_trigger_token_sequence = grammar_trigger_token_sequence(&model);
+        let grammar_trigger_token_sequence =
+            grammar_trigger_token_sequence(model.end_of_thinking_tag(), model.tokenizer());
 
         Ok(Self {
             engine,
