@@ -107,32 +107,17 @@ impl MatmulKernel for VkMatmulKernel {
         VkMatmulPlan::a8_quantization(shape, self.data_types(), capabilities).filter(|_| !shape.a_full_precision)
     }
 
-    /// A8 from one row on unsigned-dot devices, otherwise from 2 to 8 rows and, on integer GEMM devices, beyond.
     fn select_activation_format(
         &self,
         bf16_shape: &MatmulShape,
         weights_layout: GemmBLayout,
         context: &VkContext,
     ) -> ActivationFormat {
-        let a8_shape = MatmulShape {
-            a_full_precision: false,
-            ..*bf16_shape
-        };
-        let physical_device = context.physical_device();
-        let rows = bf16_shape.m >= 1
-            && (physical_device.capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT)
-                || (bf16_shape.m >= 2 && (bf16_shape.m <= 8 || physical_device.capabilities.prefers_int8_gemm())));
-        let int8 = match weights_layout {
-            GemmBLayout::Tiled => bf16_shape.m >= 2,
-            GemmBLayout::RowMajor => rows && self.select_activation_quantization(&a8_shape, context).is_some(),
-        };
-        match int8 {
-            true => ActivationFormat::Int8,
-            false => ActivationFormat::Bf16,
-        }
+        let capabilities = context.physical_device().capabilities;
+        VkMatmulPlan::activation_format(bf16_shape, weights_layout, self.data_types(), capabilities)
     }
 
-    /// Packs codes into tiles for integer GEMM through one temporary copy; unsigned-dot devices keep rows for GEMV.
+    /// Packs codes into tiles for integer GEMM through one temporary copy.
     fn optimize_weights_layout(
         &self,
         a8_shape: &MatmulShape,
@@ -140,12 +125,10 @@ impl MatmulKernel for VkMatmulKernel {
         context: &VkContext,
     ) -> Result<GemmBLayout, Error> {
         let (n, k) = (a8_shape.n, a8_shape.k);
-        let Some(bits) = a8_shape.b_bits.filter(|_| {
-            context.physical_device().capabilities.prefers_int8_gemm()
-                && n.is_multiple_of(32)
-                && k.is_multiple_of(128)
-                && self.select_activation_quantization(a8_shape, context).is_some()
-        }) else {
+        let capabilities = context.physical_device().capabilities;
+        let Some(bits) =
+            a8_shape.b_bits.filter(|_| VkMatmulPlan::tiles_weights(a8_shape, self.data_types(), capabilities))
+        else {
             return Ok(GemmBLayout::RowMajor);
         };
         let bytes = u64::from(n) * u64::from(k) * u64::from(bits) / 8;

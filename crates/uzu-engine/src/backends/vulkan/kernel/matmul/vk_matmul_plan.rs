@@ -9,7 +9,7 @@ use crate::{
             kernel::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{Int8CodeLayout, MatmulShape, QuantParamsLayout},
+                matmul::{ActivationFormat, Int8CodeLayout, MatmulShape, QuantParamsLayout},
             },
         },
         vulkan::{
@@ -522,6 +522,42 @@ impl VkMatmulPlan {
         .then_some(quantization)
     }
 
+    /// The format callers give `bf16_shape`'s A from weights in `b_layout`: A8 within its contract from one row on
+    /// unsigned-dot devices, otherwise from 2 to 8 rows and, where the device prefers INT8 GEMM, beyond; tiled weights
+    /// take A8 from 2 rows.
+    pub fn activation_format(
+        bf16_shape: &MatmulShape,
+        b_layout: GemmBLayout,
+        data_types: [DataType; 3],
+        capabilities: Capability,
+    ) -> ActivationFormat {
+        let m = bf16_shape.m;
+        let rows = m >= 1
+            && (capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
+                || (m >= 2 && (m <= 8 || capabilities.prefers_int8_gemm())));
+        let int8 = match b_layout {
+            GemmBLayout::Tiled => m >= 2,
+            GemmBLayout::RowMajor => rows && Self::a8_quantization(bf16_shape, data_types, capabilities).is_some(),
+        };
+        match int8 {
+            true => ActivationFormat::Int8,
+            false => ActivationFormat::Bf16,
+        }
+    }
+
+    /// Whether loaded weights of the A8 `shape` are packed into tiles: whole 32 x 128 tiles of codes within the A8
+    /// contract, on devices that prefer INT8 GEMM; unsigned-dot devices keep rows for GEMV.
+    pub fn tiles_weights(
+        shape: &MatmulShape,
+        data_types: [DataType; 3],
+        capabilities: Capability,
+    ) -> bool {
+        capabilities.prefers_int8_gemm()
+            && shape.n.is_multiple_of(32)
+            && shape.k.is_multiple_of(128)
+            && Self::a8_quantization(shape, data_types, capabilities).is_some()
+    }
+
     /// GemvInt8 for m rows: more rows a simdgroup for fewer inputs, one input row a workgroup where `gathered`, on
     /// native 128-lane subgroups where the device has them.
     fn gemv_int8(
@@ -649,3 +685,7 @@ fn int8_splits(
     };
     [8, 4, 2].into_iter().find(|&splits| fits(splits)).unwrap_or(1)
 }
+
+#[cfg(test)]
+#[path = "../../../../../unit/backends/vulkan/kernel/matmul/vk_matmul_plan_test.rs"]
+mod tests;
