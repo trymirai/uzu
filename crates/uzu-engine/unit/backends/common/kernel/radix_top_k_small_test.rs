@@ -1,14 +1,17 @@
+#[cfg(backend = "metal")]
 use std::time::Instant;
 
 use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::{common::CommandBufferCompleted, metal::Metal};
 use crate::{
     backends::{
         common::{
-            Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context, Kernels, kernel::radix_top_k_small::RadixTopKSmall,
+            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            kernel::radix_top_k_small::RadixTopKSmall,
         },
         cpu::Cpu,
     },
@@ -110,25 +113,23 @@ fn radix_top_k_small_matches_cpu() {
     }
 }
 
+#[cfg(backend = "metal")]
 #[uzu_test]
 #[ignore]
 fn benchmark_radix_top_k_small() {
-    for_each_non_cpu_backend!(|B| benchmark_radix_top_k_small_impl::<B>());
-}
-
-fn benchmark_radix_top_k_small_impl<B: Backend>() {
     const ROWS: usize = 15;
     const SAMPLES: usize = 50;
     const BATCH: u32 = 16;
 
-    let context = create_context::<B>();
-    let input = create_buffer_with_data::<B, bf16>(
+    let context = create_context::<Metal>();
+    let input = create_buffer_with_data::<Metal, bf16>(
         &context,
         &values(ROWS, TARGET_COLUMNS).into_iter().map(bf16::from_f32).collect::<Vec<_>>(),
     );
-    let mut ids = create_buffer::<B, u32>(&context, ROWS * TARGET_K);
-    let mut scores = create_buffer::<B, f32>(&context, ROWS * TARGET_K);
-    let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, TARGET_COLUMNS as u32).unwrap();
+    let mut ids = create_buffer::<Metal, u32>(&context, ROWS * TARGET_K);
+    let mut scores = create_buffer::<Metal, f32>(&context, ROWS * TARGET_K);
+    let kernel =
+        <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context, TARGET_COLUMNS as u32).unwrap();
     let mut run = || {
         let start = Instant::now();
         let mut command_buffer = context.create_command_buffer(None, None).unwrap();
@@ -144,10 +145,5 @@ fn benchmark_radix_top_k_small_impl<B: Backend>() {
     let (mut gpu, mut wall): (Vec<_>, Vec<_>) = (0..SAMPLES).map(|_| run()).unzip();
     gpu.sort_unstable();
     wall.sort_unstable();
-    eprintln!(
-        "{} radix_top_k_small gpu={:?} wall={:?}",
-        std::any::type_name::<B>(),
-        gpu[SAMPLES / 2],
-        wall[SAMPLES / 2]
-    );
+    eprintln!("radix_top_k_small gpu={:?} wall={:?}", gpu[SAMPLES / 2], wall[SAMPLES / 2]);
 }

@@ -58,10 +58,9 @@ pub struct ProposalNode {
 }
 
 impl<B: Backend> EncodedWeaverTree<B> {
-    /// The proposed nodes, once the command buffer that encoded the tree completed.
     pub fn read_nodes(self) -> Vec<ProposalNode> {
-        let packed_tree = self.packed_tree.as_slice::<u32>();
-        let frontier = self.frontier.as_slice::<u32>();
+        let packed_tree = &self.packed_tree.copyout::<u32>();
+        let frontier = &self.frontier.copyout::<u32>();
 
         let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
         let frontier_capacity = frontier.len() / FrontierIdx::COUNT;

@@ -16,7 +16,9 @@ use crate::{
     data_type::{DataType, DataTypeRepr},
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
+        helpers::{
+            buffer_prefix_to_vec, buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend,
+        },
     },
 };
 
@@ -85,9 +87,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let mut suffix_state = buffer_to_vec(&context, &suffix_state);
-    suffix_state.truncate(suffix_state_size);
-    (buffer_to_vec(&context, &out), suffix_state)
+    (buffer_to_vec(&context, &out), buffer_prefix_to_vec(&context, &suffix_state, suffix_state_size))
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.

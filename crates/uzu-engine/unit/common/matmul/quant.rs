@@ -505,15 +505,15 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
 
 type BackendMatmul<B> = <<B as Backend>::Kernels as Kernels>::MatmulKernel;
 
-/// `input` as a linear loaded with A8 storage runs it: U8 codes signed, and the activations `select_activation_format`
-/// picks for the weights' layout, A8 prepared as the backend quantizes. `None` where the backend gives the weights no
-/// A8 storage, so they stay row-major with BF16 activations.
+/// `input` as a linear loaded with A8 storage runs it, with its buffers: U8 codes signed, and the activations
+/// `select_activation_format` picks for the weights' layout, A8 prepared as the backend quantizes. `None` where the
+/// backend gives the weights no A8 storage, so they stay row-major with BF16 activations.
 pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     matmul: &BackendMatmul<B>,
     input: QuantInput<T>,
-) -> Option<(QuantInput<T>, ActivationFormat)> {
-    let input = match input.mode {
+) -> Option<(QuantInput<T>, ActivationFormat, QuantBuffers<B, T>)> {
+    let mut input = match input.mode {
         QuantizationMode::U4 => input,
         _ => input.with_signed_weight_codes(),
     };
@@ -528,11 +528,11 @@ pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
         ..a8_shape
     };
     let format = matmul.select_activation_format(&bf16_shape, buffers.weights_layout, context);
-    let input = match format {
-        ActivationFormat::Int8 => input.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size()),
-        ActivationFormat::Bf16 => input,
-    };
-    Some((input, format))
+    if format == ActivationFormat::Int8 {
+        input = input.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size());
+        buffers.upload_activations(context, &input);
+    }
+    Some((input, format, buffers))
 }
 
 /// Buffers of `input` with its weights laid out by the backend's `optimize_weights_layout` where it takes A8, as a
@@ -568,9 +568,9 @@ pub fn quant_tolerance(
     (0.05, f64::from(abs_tol))
 }
 
-pub fn run_quant<B: Backend, T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
-    let context = block_on(B::Context::new()).expect("context");
-    let mut buffers = QuantBuffers::<B, T>::allocate(&context, input);
+pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
+    let context = block_on(<Cpu as Backend>::Context::new()).expect("Cpu context");
+    let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
     run_quant_with(&*context, &mut buffers, input)
 }
 
