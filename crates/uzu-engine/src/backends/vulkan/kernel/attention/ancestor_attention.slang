@@ -1,5 +1,5 @@
 import definitions;
-import common.attention;
+import attention.attention;
 import generated.weaver;
 
 static const uint ANCESTOR_ATTENTION_KEY = 1;

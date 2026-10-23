@@ -1,5 +1,5 @@
 import definitions;
-import common.matmul;
+import matmul.common.matmul;
 import matmul.common.simdgroup_multiply_accumulate;
 
 // A tile's device-to-threadgroup staging into S: load_unsafe for a whole tile, load_safe zeroing outside

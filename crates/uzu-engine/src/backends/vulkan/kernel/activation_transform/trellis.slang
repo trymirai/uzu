@@ -1,5 +1,6 @@
 import definitions;
 import common.activation_quantization;
+import common.hadamard;
 import common.workgroup_reduction;
 import generated.trellis;
 
@@ -29,12 +30,8 @@ void trellis_hadamard_transform<let H : uint, let VALUES : uint>(inout float val
     }
   }
   let lanes = min(WaveGetLaneCount(), H / VALUES);
-  for (uint stride = 1; stride < lanes; stride <<= 1) {
-    let high = (WaveGetLaneIndex() & stride) != 0;
-    for (uint k = 0; k < VALUES; k++) {
-      let partner = shuffle_xor(values[k], stride);
-      values[k] = high ? partner - values[k] : values[k] + partner;
-    }
+  for (uint k = 0; k < VALUES; k++) {
+    values[k] = hadamard_butterflies(values[k], lanes);
   }
   if (lanes < H / VALUES) {
     [ForceUnroll]

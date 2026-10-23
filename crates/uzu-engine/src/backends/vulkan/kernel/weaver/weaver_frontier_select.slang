@@ -84,28 +84,19 @@ func WeaverFrontierSelect(
     node_metadata[uint(MetadataIdx.AncestorCount) * node_count + tid] = depth;
     node_metadata[uint(MetadataIdx.TreeSlot) * node_count + tid] = tree_slot;
     node_valid[tid] = real && depth < lookahead_count ? 1 : 0;
-  }
-
-  // Each column's owner visits nodes in CPU order, including earlier, later and self parent/output overlaps.
-  // All storage dependencies stay in that invocation; the selection barriers protect only shared scratch.
-  for (uint column = tid; column < ancestor_stride; column += FRONTIER_SELECT_THREADS) {
-    for (uint node = 0; node < node_count; node++) {
-      let slot = weaver_select_winners[node];
-      let real = slot != FRONTIER_NO_WINNER;
-      let source = real ? slot : 0;
-      let depth = real ? frontier[uint(FrontierIdx.Depth) * frontier_capacity + source] : 0;
-      let parent = real ? frontier[uint(FrontierIdx.ParentSlot) * frontier_capacity + source] : FRONTIER_NO_WINNER;
-      let parent_slot = real && parent < tree_slot_count ? parent : 0;
+    let parent_slot = real && parent < tree_slot_count ? parent : 0;
+    for (uint column = 0; column < ancestor_stride; column++) {
       uint ancestor = 0;
       if (real && column + 1 < depth) {
         ancestor = slot_ancestors[parent_slot * ancestor_stride + column];
       } else if (real && column + 1 == depth) {
         ancestor = parent_slot;
       }
-      slot_ancestors[(batch_start_slot + node) * ancestor_stride + column] = ancestor;
-      node_ancestor_indices[node * ancestor_stride + column] = ancestor;
+      slot_ancestors[tree_slot * ancestor_stride + column] = ancestor;
+      node_ancestor_indices[tid * ancestor_stride + column] = ancestor;
     }
   }
+
   for (uint node = 0; node < node_count; node++) {
     let slot = weaver_select_winners[node];
     let depth = slot != FRONTIER_NO_WINNER ? frontier[uint(FrontierIdx.Depth) * frontier_capacity + slot] : 0;

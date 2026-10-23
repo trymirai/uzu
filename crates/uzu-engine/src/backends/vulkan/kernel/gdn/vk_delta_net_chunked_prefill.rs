@@ -36,7 +36,7 @@ impl DeltaNetChunkedPrefill for VkDeltaNetChunkedPrefill {
         head_dim: u32,
         groups_per_head: u32,
     ) -> Result<Option<Self>, Error> {
-        if !matches!(outer_data_type, DataType::F32 | DataType::F16 | DataType::BF16)
+        if !matches!(outer_data_type, DataType::F32 | DataType::BF16)
             || head_dim != DELTA_NET_CHUNKED_HEAD_K_DIM
             || groups_per_head > DELTA_NET_CHUNKED_MAX_GROUPS
         {
@@ -46,7 +46,7 @@ impl DeltaNetChunkedPrefill for VkDeltaNetChunkedPrefill {
         Ok(Some(Self {
             prep: DeltaNetPrefillPrepKernel::new(context, outer_data_type, INNER_DATA_TYPE, head_dim, true, false)?,
             precompute: DeltaNetChunkedPrecomputeVulkanKernel::new(&arc)?,
-            output_and_state: DeltaNetChunkedOutputAndStateVulkanKernel::new(&arc, outer_data_type, outer_data_type)?,
+            output_and_state: DeltaNetChunkedOutputAndStateVulkanKernel::new(&arc, outer_data_type)?,
         }))
     }
 

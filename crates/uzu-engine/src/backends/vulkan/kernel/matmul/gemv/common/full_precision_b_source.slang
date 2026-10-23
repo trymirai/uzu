@@ -13,7 +13,7 @@ float4 gemv_load4<T : IModelFloat>(Ptr<T, Access.Read> source, uint offset, bool
     return float4(T.fromStorageBits(packed.x).toFloat(), T.fromStorageBits(packed.x >> 16).toFloat(),
                   T.fromStorageBits(packed.y).toFloat(), T.fromStorageBits(packed.y >> 16).toFloat());
   }
-  return float4(source[offset].toFloat(), source[offset + 1].toFloat(), source[offset + 2].toFloat(), source[offset + 3].toFloat());
+  return load_float4(source, offset);
 }
 
 public struct FullPrecisionBSource {

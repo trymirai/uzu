@@ -1,5 +1,5 @@
 import definitions;
-import common.attention;
+import attention.attention;
 
 static const uint ATTENTION_PREPARE_TILE = 128;
 
@@ -7,7 +7,6 @@ static const uint ATTENTION_PREPARE_TILE = 128;
 // [kv_token_offset + token, head, head_dim]; any trailing gate is unread. The first rope_dim elements of query and key
 // heads are rotated (rope_rotated) and rounded to ElementT; every other element is copied bit for bit.
 [[Kernel]] [[Public]]
-[[Precondition("encode", "num_q_heads > 0 || has_kv")]]
 [[Precondition("encode", "head_dim > 0")]]
 [[Precondition("encode", "num_kv_heads.unwrap_or(1) > 0")]]
 [[Precondition("encode", "rope_dim.unwrap_or(2) > 0")]]

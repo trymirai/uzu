@@ -12,8 +12,6 @@ use crate::{
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
 
-const MAX_TREE_SIZE: u32 = 2 * TREE_VERIFY_TOKEN_BLOCK;
-
 pub struct VkDeltaNetTreeVerify {
     arguments: TreeVerifyNewArguments,
     /// For trees of up to one and two token blocks.
@@ -45,7 +43,6 @@ impl DeltaNetTreeVerify for VkDeltaNetTreeVerify {
         arguments: TreeVerifyEncodeArguments<'_, Vulkan>,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<<Vulkan as Backend>::ScratchBuffer, Error> {
-        assert!(arguments.tree_size <= MAX_TREE_SIZE, "GDN tree verification supports at most {MAX_TREE_SIZE} nodes");
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.tree_size, self.arguments.num_v_heads, self.arguments.head_v_dim],
             self.arguments.data_type,

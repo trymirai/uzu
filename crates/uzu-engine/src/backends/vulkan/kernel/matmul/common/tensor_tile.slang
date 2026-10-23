@@ -1,6 +1,6 @@
 import definitions;
 import common.hadamard;
-import common.matmul;
+import matmul.common.matmul;
 import common.quantized_value;
 import generated.gemm;
 import generated.quantization_method;

@@ -1,5 +1,5 @@
 import definitions;
-import common.matmul;
+import matmul.common.matmul;
 import matmul.gemv.common.arguments;
 import matmul.gemv.common.tile;
 

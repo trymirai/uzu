@@ -1,5 +1,5 @@
 import definitions;
-import common.attention;
+import attention.attention;
 import attention.mask;
 import generated.ring;
 import generated.trie;

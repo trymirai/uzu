@@ -8,7 +8,7 @@ public float hadamard_factor(float value, int factor) {
 }
 
 // The unnormalized Hadamard butterflies over each aligned run of `lanes` lanes, a power of two no wider than the subgroup.
-float hadamard_butterflies(float value, uint lanes) {
+public float hadamard_butterflies(float value, uint lanes) {
   var transformed = value;
   for (uint stride = 1; stride < lanes; stride <<= 1) {
     let partner = shuffle_xor(transformed, stride);

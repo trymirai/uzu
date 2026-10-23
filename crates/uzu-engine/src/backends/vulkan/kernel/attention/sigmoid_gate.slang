@@ -3,8 +3,6 @@ import common.activation;
 
 // Multiplies each output element in place by the sigmoid of its gate, read from rows of gate_row_stride.
 [[Kernel]] [[Public]]
-[[Precondition("encode", "gate_dim > 0")]]
-[[Precondition("encode", "gate_row_stride >= gate_dim")]]
 func SigmoidGate<T: IModelFloat>(
   Ptr<T, Access.Read> gate,
   Ptr<T, Access.ReadWrite> output,

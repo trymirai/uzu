@@ -10,7 +10,6 @@ import generated.activation_transform;
 [[Precondition("new", "!in_place || ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht")]]
 [[Precondition("new", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "ops != ActivationTransformOp::QuantizeWithGroupSums || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
-[[Precondition("new", "ops != ActivationTransformOp::Quantize || sum_group_size > 0")]]
 [[Precondition("encode", "element_count.is_multiple_of(32)")]]
 [[Precondition("encode", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || element_count.is_multiple_of(activation_scale_group_size)")]]
 [[Precondition("encode", "ops != ActivationTransformOp::QuantizeWithGroupSums || element_count.is_multiple_of(sum_group_size)")]]

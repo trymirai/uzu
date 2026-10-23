@@ -3,8 +3,8 @@ import common.activation;
 import generated.activation_type;
 
 // One token in place: channel c accumulates in FP32 from the bias (or +0) over its state taps then the input, stores
-// SiLU as T once, then shifts its state row down one tap and appends the input. The first precondition reproduces the
-// CPU's own failures (kernel_size - 1 underflows for 0, and so does channel 0's last tap for 1).
+// SiLU as T once, then shifts its state row down one tap and appends the input. The first precondition keeps the tap
+// count from underflowing (kernel_size 0) and channel 0's last tap in bounds (kernel_size 1).
 
 static const uint DELTA_NET_CONV_UPDATE_THREADS = 64;
 

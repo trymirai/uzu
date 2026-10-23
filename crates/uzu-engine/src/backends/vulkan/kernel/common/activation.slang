@@ -16,16 +16,13 @@ public float accurate_tanh(float x) {
 }
 
 public float apply_soft_cap(float x, float cap) {
-  return cap * accurate_tanh(x / cap);
+  return cap * tanh(x / cap);
 }
 
-// Norbert Juffa's faithfully rounded erff, exactly ±1 (the correctly rounded value) from |a| = 4 on.
+// Norbert Juffa's faithfully rounded erff, as MLX and Metal compute it.
 public float erf_precise(float a) {
   let t = abs(a);
   let s = a * a;
-  if (t >= 4.0) {
-    return copysign(1.0, a);
-  }
   if (t > 0.927734375) {
     var r = fma(-1.72853470e-5, t, 3.83197126e-4);
     let u = fma(-3.88396438e-3, t, 2.42546219e-2);

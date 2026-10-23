@@ -1,7 +1,7 @@
 import definitions;
 
 // Per (v head, 16-value slice), with the state held as S^T[key, value], per 64-token chunk (padded tokens +0, unstored):
-// R = beta (V - e^g (K S^T)); Vnew = T R over each token's causal 16-block; out = O(e^g (Q S^T) + qk_scaled Vnew);
+// R = beta (V - e^g (K S^T)); Vnew = T R over each token's causal 16-block; out = T(e^g (Q S^T) + qk_scaled Vnew);
 // S^T = e^g_last S^T + (K e^(g_last - g))^T Vnew.
 //
 // The first 128 invocations work on the K side (K S^T, R, Vnew), the others on the Q side (Q S^T, out), each owning a
@@ -37,7 +37,7 @@ groupshared float chunked_row_decay[CHUNKED_OUTPUT_CHUNK];
 [[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]
 [[Precondition("encode", "head_v_dim.is_multiple_of(16)")]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || num_v_heads <= value_dim / head_v_dim")]]
-func DeltaNetChunkedOutputAndState<T: IModelFloat, O: IModelFloat>(
+func DeltaNetChunkedOutputAndState<T: IModelFloat>(
   Ptr<float, Access.Read> q_norm,
   Ptr<float, Access.Read> k_norm,
   Ptr<T, Access.Read> in_proj,
@@ -46,14 +46,14 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat, O: IModelFloat>(
   Ptr<float, Access.Read> g,
   Ptr<float, Access.Read> beta,
   Ptr<float, Access.ReadWrite> state,
-  Ptr<O, Access.ReadWrite> out,
+  Ptr<T, Access.ReadWrite> out,
   uint num_v_heads,
   uint num_k_heads,
   uint head_v_dim,
   uint key_dim,
   uint value_dim,
   uint suffix_len,
-  [[Groups("if suffix_len == 0 { 0 } else { num_v_heads }")]] uint hv_group,
+  [[Groups("num_v_heads")]] uint hv_group,
   [[Groups("head_v_dim / 16")]] uint value_tile_group,
   [[Threads("256")]] uint thread_idx,
 ) {
@@ -144,12 +144,7 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat, O: IModelFloat>(
         var residual = float4(0.0);
         if (t < valid_tokens) {
           let source = (token_base + t) * total_proj_dim + 2 * key_dim + hv * head_v_dim + value_base + value_group * 4;
-          let value_input = float4(
-            in_proj[source].toFloat(),
-            in_proj[source + 1].toFloat(),
-            in_proj[source + 2].toFloat(),
-            in_proj[source + 3].toFloat()
-          );
+          let value_input = load_float4(in_proj, source);
           residual = chunked_row_beta[t] * (value_input - chunked_row_exp_g[t] * projection[i]);
         }
         chunked_new_value[t * 4 + value_group] = residual;
@@ -221,7 +216,7 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat, O: IModelFloat>(
           let destination = (token_base + t) * value_dim + hv * head_v_dim + value_base + value_group * 4;
           [unroll]
           for (uint j = 0; j < 4; j++) {
-            out[destination + j] = O.fromFloat(output[i][j]);
+            out[destination + j] = T.fromFloat(output[i][j]);
           }
         }
       }
