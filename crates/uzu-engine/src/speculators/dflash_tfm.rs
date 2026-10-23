@@ -351,6 +351,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         dflash_depth
                     )));
                 }
+                let confidence_head =
+                    self.confidence_head.as_ref().filter(|_| ConfidenceHead::<B>::applies_to(sampling_method));
                 let dflash_output = self.dflash.encode_draft(
                     target_embedding,
                     target_output_token,
@@ -367,24 +369,28 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         ..
                     } => prune_sigma,
                 };
-                let tree = weaver.encode_tree(
-                    target_output_norm,
-                    &dflash_output.draft_hidden,
-                    target_embedding,
-                    &dflash_output.logits,
-                    &depth_seeds,
-                    target_output_token,
-                    WeaverTreeShape {
-                        tree_budget: shape.tree_budget,
-                        max_depth: shape.max_tree_depth,
-                        dflash_depth,
-                        rounds,
-                        expand_per_round,
-                        expand_width,
-                        prune_noise_scale: prune_sigma.map(f32::recip),
-                    },
-                    &mut command_buffer,
-                )?;
+                let tree_shape = WeaverTreeShape {
+                    tree_budget: shape.tree_budget,
+                    max_depth: shape.max_tree_depth,
+                    dflash_depth,
+                    rounds,
+                    expand_per_round,
+                    expand_width,
+                    prune_noise_scale: prune_sigma.filter(|_| confidence_head.is_none()).map(f32::recip),
+                };
+                let tree = weaver
+                    .encode_tree(
+                        target_output_norm,
+                        &dflash_output.draft_hidden,
+                        target_embedding,
+                        &dflash_output.logits,
+                        &depth_seeds,
+                        target_output_token,
+                        tree_shape,
+                        confidence_head,
+                        &mut command_buffer,
+                    )
+                    .await?;
                 let completed =
                     wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
                 let nodes = tree.read_nodes();

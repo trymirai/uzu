@@ -15,6 +15,10 @@ use crate::{
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
     data_type::DataType,
     encodable_block::{
+        conf_head::{
+            ConfidenceHead, ConfidenceHeadError, ConfidenceHeadStep, ConfidenceHeadTreeParameters,
+            get_conf_head_mismatch,
+        },
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
@@ -164,6 +168,8 @@ pub enum WeaverNewError<B: Backend> {
 pub enum WeaverEncodeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("confidence head error: {0}")]
+    ConfidenceHead(#[from] ConfidenceHeadError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearEncodeError<B>),
     #[error("MLP error: {0}")]
@@ -366,7 +372,7 @@ impl<B: Backend> Weaver<B> {
         Ok(prefix_kv_layers)
     }
 
-    fn encode_step<Ids: BufferRef<Backend = B>, Logits: BufferRef<Backend = B>>(
+    async fn encode_step<Ids: BufferRef<Backend = B>, Logits: BufferRef<Backend = B>>(
         &self,
         target_embedding: &Embedding<B>,
         mut prefix_kv_layers: impl Iterator<Item = impl BufferRef<Backend = B>>,
@@ -387,6 +393,7 @@ impl<B: Backend> Weaver<B> {
         shape: &WeaverTreeShape,
         batch_node_count: u32,
         batch_start_slot: u32,
+        head: Option<(&ConfidenceHead<B>, &mut ConfidenceHeadStep<B>)>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
         let tree_slot_count = shape.slot_count();
@@ -483,7 +490,9 @@ impl<B: Backend> Weaver<B> {
             false,
             command_buffer,
         )?;
-        let top_children = if shape.prune_noise_scale.is_some() {
+        // The confidence head supplies edge and path scores, so Weaver's pruning noise is unused.
+        let prune_noise_scale = shape.prune_noise_scale.filter(|_| head.is_none());
+        let top_children = if prune_noise_scale.is_some() {
             &self.top_children_with_prune_noise
         } else {
             &self.top_children
@@ -503,14 +512,33 @@ impl<B: Backend> Weaver<B> {
             target_embedding.vocab_size(),
             frontier_capacity,
             tree_slot_count,
-            shape.prune_noise_scale,
+            prune_noise_scale,
             command_buffer,
         );
+
+        if let Some((head, step)) = head {
+            head.encode_round(
+                target_embedding,
+                &logit_residuals,
+                batch_candidate_logits,
+                batch_candidate_ids,
+                node_metadata,
+                node_valid.as_ref(),
+                packed_tree.as_ref(),
+                batch_node_count,
+                frontier_capacity,
+                tree_slot_count,
+                frontier.reborrow(),
+                step,
+                command_buffer,
+            )
+            .await?;
+        }
 
         Ok(())
     }
 
-    pub fn encode_tree(
+    pub async fn encode_tree(
         &self,
         target_hidden: impl BufferRef<Backend = B>,
         draft_hidden: impl BufferRef<Backend = B>,
@@ -519,6 +547,7 @@ impl<B: Backend> Weaver<B> {
         depth_seeds: &[u64],
         root_token_id: u32,
         shape: WeaverTreeShape,
+        confidence_head: Option<&ConfidenceHead<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
         let (packed_tree, frontier) = {
@@ -542,6 +571,20 @@ impl<B: Backend> Weaver<B> {
             {
                 return Err(WeaverEncodeError::InvalidTreeInput);
             }
+
+            if let Some(head) = confidence_head {
+                let params = ConfidenceHeadTreeParameters {
+                    rounds: shape.rounds,
+                    expand_per_round: shape.expand_per_round,
+                    expand_width: shape.expand_width,
+                    max_depth: self.max_depth,
+                    pool: self.candidate_pool_size,
+                };
+                if let Some(mismatch) = get_conf_head_mismatch(head.config(), &params) {
+                    return Err(ConfidenceHeadError::TreeMismatch(mismatch).into());
+                }
+            }
+
             let frontier_capacity = tree_slot_count * shape.expand_width;
             let pool_depth_count = shape.dflash_depth - 1;
 
@@ -641,6 +684,21 @@ impl<B: Backend> Weaver<B> {
             let depth_seeds_buffer =
                 command_buffer.allocate_constant_from_slice(depth_seeds).map_err(WeaverEncodeError::Backend)?;
 
+            let mut head_step = confidence_head
+                .map(|head| {
+                    head.encode_step(
+                        draft_hidden,
+                        &candidate_ids,
+                        &depth_seeds_buffer,
+                        pool_depth_count,
+                        tree_slot_count,
+                        shape.expand_per_round,
+                        vocab_size,
+                        command_buffer,
+                    )
+                })
+                .transpose()?;
+
             let mut batch_start_slot = 0;
             for round in 0..shape.rounds {
                 let batch_node_count = if round == 0 {
@@ -669,9 +727,15 @@ impl<B: Backend> Weaver<B> {
                     &shape,
                     batch_node_count,
                     batch_start_slot,
+                    confidence_head.zip(head_step.as_mut()),
                     command_buffer,
-                )?;
+                )
+                .await?;
                 batch_start_slot += batch_node_count;
+            }
+
+            if let (Some(head), Some(step)) = (confidence_head, &head_step) {
+                head.encode_prune(step, &mut packed_tree, &mut frontier, command_buffer)?;
             }
 
             (packed_tree, frontier)

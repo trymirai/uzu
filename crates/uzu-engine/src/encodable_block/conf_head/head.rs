@@ -24,6 +24,7 @@ use crate::{
         embedding::Embedding,
         linear::Linear,
         normalization::{Normalization, PostLayerScalar, ShortcutMode},
+        sampling::SamplingMethod,
     },
     safetensors::ParameterLoader,
     utils,
@@ -176,6 +177,19 @@ impl<B: Backend> ConfidenceHead<B> {
         &self.config
     }
 
+    /// The head predicts a sampled target choice.
+    /// Deterministic sampling uses Weaver's original scores.
+    pub fn applies_to(sampling_method: &SamplingMethod) -> bool {
+        match sampling_method {
+            SamplingMethod::Greedy => false,
+            SamplingMethod::Stochastic {
+                temperature,
+                top_k,
+                ..
+            } => *top_k != Some(1) && *temperature != Some(0.0),
+        }
+    }
+
     /// Builds and caches an float32 [vocab_size, hidden] table from the target model's bfloat16 input embedding
     /// and the confidence head's learned projection:
     ///
@@ -309,9 +323,9 @@ impl<B: Backend> ConfidenceHead<B> {
 
     /// Scores the children just selected by Weaver and updates their frontier edges, path scores and priorities.
     /// Saves local node and child features by tree slot for the final tree-wide refinement.
-    pub fn encode_round(
+    pub async fn encode_round(
         &self,
-        token_table: &B::GlobalBuffer,
+        target_embedding: &Embedding<B>,
         residual_logits: impl BufferRef<Backend = B>,
         candidate_logits: impl BufferRef<Backend = B>,
         candidate_ids: impl BufferRef<Backend = B>,
@@ -324,7 +338,8 @@ impl<B: Backend> ConfidenceHead<B> {
         frontier: impl BufferMut<Backend = B>,
         step: &mut ConfidenceHeadStep<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) {
+    ) -> Result<(), ConfidenceHeadError<B>> {
+        let token_table = self.token_table(command_buffer.context(), target_embedding).await?;
         self.round.encode(
             residual_logits,
             candidate_logits,
@@ -351,6 +366,7 @@ impl<B: Backend> ConfidenceHead<B> {
             tree_slot_count,
             command_buffer,
         );
+        Ok(())
     }
 
     /// Refines the grown tree's features and rewrites edge scores for the subsequent budget prune.

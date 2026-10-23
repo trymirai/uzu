@@ -6,10 +6,10 @@ mod tree;
 mod util;
 mod weights;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub use error::ConfidenceHeadError;
-pub use head::ConfidenceHead;
+pub use head::{ConfidenceHead, ConfidenceHeadStep};
 
 use crate::{backends::Backend, encodable_block::conf_head::config::ConfidenceHeadConfig};
 
@@ -37,9 +37,7 @@ pub fn get_conf_head<B: Backend>(
     speculator_dir: &Path,
     params: &ConfidenceHeadTreeParameters,
 ) -> Option<Result<ConfidenceHead<B>, ConfidenceHeadError<B>>> {
-    // TODO agolokoz: use actual path
-    // let conf_head_dir = speculator_dir.join(CONF_HEAD_DIR);
-    let conf_head_dir = PathBuf::from("/Users/glk/src/rust/uzu/workspace/confidence_head");
+    let conf_head_dir = speculator_dir.join(CONF_HEAD_DIR);
     if !conf_head_dir.is_dir() {
         return None;
     }

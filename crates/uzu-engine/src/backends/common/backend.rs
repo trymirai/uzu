@@ -5,7 +5,7 @@ use super::{CommandBuffer, ConstantBuffer, Context, GlobalBuffer, Kernels, Scrat
 pub trait Backend: Clone + Send + Sync + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
-    type DebugGroupSpan<'a>: DerefMut<Target = <Self::CommandBuffer as CommandBuffer>::Encoding> + 'a;
+    type DebugGroupSpan<'a>: DerefMut<Target = <Self::CommandBuffer as CommandBuffer>::Encoding> + Send + 'a;
     type GlobalBuffer: GlobalBuffer<Backend = Self>;
     type ConstantBuffer: ConstantBuffer<Backend = Self>;
     type ScratchBuffer: ScratchBuffer<Backend = Self>;
