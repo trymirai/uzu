@@ -16,7 +16,6 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-# The crate is empty on non-Apple targets, so every dependency is Apple-only.
 [target.'cfg(target_vendor = "apple")'.dependencies]
 bitflags.workspace = true
 serde = { workspace = true, features = ["derive"] }

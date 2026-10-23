@@ -6,7 +6,6 @@ package_name = "com.trymirai.uzu.shoji"
 android = true
 generate_immutable_records = true
 
-# Kotlin exceptions already have a `message`, so error fields with that name take another one there. UniFFI 0.31
-# skips renames outside crate roots; `cargo tools build kotlin` applies these until UniFFI does.
+# Applied by cargo tools build kotlin (kotlin_error_renames.rs) until UniFFI 0.32.
 [bindings.kotlin.rename]
 "PcmBatchError.UnableToSaveAsWav.message" = "reason"

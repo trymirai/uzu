@@ -1,5 +1,4 @@
 fn main() {
-    // The memory counters read mach task info, which only Apple platforms have.
     if std::env::var("CARGO_CFG_TARGET_VENDOR").as_deref() != Ok("apple") {
         return;
     }
