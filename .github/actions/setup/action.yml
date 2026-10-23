@@ -79,16 +79,13 @@ runs:
     - if: inputs.nextest == 'true'
       uses: taiki-e/install-action@nextest
 
-    - if: inputs.test_data == 'true' || inputs.bindings == 'true'
+    - if: inputs.bindings == 'true'
       uses: astral-sh/setup-uv@v10.3.0
       with:
         enable-cache: true
 
     - if: inputs.test_data == 'true'
-      run: |
-        cd ./tools/
-        uv run export configs
-        uv run export tokenizers
+      run: cargo tools hanashi-tokenizers
       shell: bash
 
     - if: inputs.bindings == 'true'
