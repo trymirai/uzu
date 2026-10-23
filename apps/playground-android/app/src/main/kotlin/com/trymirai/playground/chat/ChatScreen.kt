@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trymirai.playground.R
 import com.trymirai.playground.session.ReplyStatsView
 import com.trymirai.playground.session.SessionState
+import com.trymirai.playground.session.label
 import com.trymirai.playground.ui.components.PlaygroundTopBar
 import com.trymirai.playground.ui.components.PromptField
 
@@ -78,12 +79,6 @@ fun ChatScreen(identifier: String, viewModel: ChatViewModel, onSend: () -> Unit,
 private fun Composer(state: SessionState, onSend: (String) -> Unit, onStop: () -> Unit) {
     val input = rememberTextFieldState()
     val canSend = state == SessionState.Idle && input.text.isNotBlank()
-    val placeholder = when (state) {
-        SessionState.Loading -> "Loading..."
-        SessionState.Generating -> "Generating..."
-        is SessionState.Failed -> "Error: ${state.message}"
-        SessionState.Idle -> "Message..."
-    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -95,7 +90,7 @@ private fun Composer(state: SessionState, onSend: (String) -> Unit, onStop: () -
         PromptField(
             input,
             enabled = state == SessionState.Idle,
-            placeholder = placeholder,
+            placeholder = state.label(idle = "Message…", generating = "Generating…"),
             modifier = Modifier.weight(1f),
             container = Color.Transparent,
         )

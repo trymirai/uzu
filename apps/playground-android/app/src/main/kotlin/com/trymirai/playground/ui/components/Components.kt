@@ -1,6 +1,5 @@
 package com.trymirai.playground.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.trymirai.playground.R
+import java.util.Locale
 
 /** The top bar every screen shares: the Mirai logo, plus the model a feature screen runs. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,18 +90,6 @@ fun ActionButton(text: String, enabled: Boolean, onClick: () -> Unit, modifier: 
 }
 
 @Composable
-fun Badge(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
-}
-
-@Composable
 fun PromptField(
     state: TextFieldState,
     enabled: Boolean,
@@ -127,4 +115,15 @@ fun PromptField(
         ),
         modifier = modifier.fillMaxWidth(),
     )
+}
+
+fun formatBytes(bytes: Long): String {
+    val kilobyte = 1024.0
+    val value = bytes.toDouble()
+    return when {
+        value >= kilobyte * kilobyte * kilobyte -> "%.1f GB".format(Locale.ROOT, value / (kilobyte * kilobyte * kilobyte))
+        value >= kilobyte * kilobyte -> "%.1f MB".format(Locale.ROOT, value / (kilobyte * kilobyte))
+        value >= kilobyte -> "%.0f KB".format(Locale.ROOT, value / kilobyte)
+        else -> "$bytes B"
+    }
 }

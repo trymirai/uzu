@@ -1,7 +1,7 @@
 # Mirai Playground for Android
 
 The Android counterpart of [the iOS playground](../playground): chat, classification, summarization and text to
-speech on models that run on the device, plus a catalog to download and delete them. It uses the Kotlin SDK in
+speech on on-device (and, for chat, cloud) models, plus a catalog to download and delete them. It uses the Kotlin SDK in
 [`crates/legacy/uzu/bindings/kotlin`](../../crates/legacy/uzu/bindings/kotlin) as a Gradle module.
 
 ## Requirements

@@ -1,8 +1,11 @@
 package com.trymirai.playground.task
 
+import kotlinx.serialization.Serializable
+
 private val sentiments = listOf("Happy", "Sad", "Angry", "Fearful", "Surprised", "Disgusted")
 
 /** A one-shot prompt over a piece of text, answered greedily without reasoning. */
+@Serializable
 enum class TextTask(val placeholder: String, val action: String, val sample: String, val tokenLimit: UInt) {
     Classification(
         placeholder = "Enter text to classify…",

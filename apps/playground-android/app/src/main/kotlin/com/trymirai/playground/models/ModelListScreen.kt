@@ -35,14 +35,13 @@ import com.trymirai.playground.Feature
 import com.trymirai.playground.R
 import com.trymirai.playground.engine.EngineRepository
 import com.trymirai.playground.ui.components.ActionButton
-import com.trymirai.playground.ui.components.Badge
 import com.trymirai.playground.ui.components.PlaygroundTopBar
 import com.trymirai.playground.ui.components.ScreenHeader
+import com.trymirai.playground.ui.components.formatBytes
 import com.trymirai.uzu.downloadmanager.DownloadPhase
 import com.trymirai.uzu.downloadmanager.DownloadState
 import com.trymirai.uzu.shoji.Model
 import com.trymirai.uzu.shoji.ModelSpecialization
-import java.util.Locale
 
 private enum class Section(val title: String) {
     Installed("Installed"),
@@ -147,7 +146,7 @@ private fun BottomAction(
             ActionButton("PAUSE", enabled = true, onClick = { engine.pause(model) })
         phase == DownloadPhase.Downloading || phase == DownloadPhase.Initializing || phase is DownloadPhase.Locked ->
             Text(
-                "Wait for the models to be installed...",
+                "Wait for the models to be installed…",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -247,13 +246,14 @@ private fun CloudModelRow(model: Model, selected: Boolean, modifier: Modifier, o
     }
 }
 
-private fun formatBytes(bytes: Long): String {
-    val kilobyte = 1024.0
-    val value = bytes.toDouble()
-    return when {
-        value >= kilobyte * kilobyte * kilobyte -> "%.1f GB".format(Locale.ROOT, value / (kilobyte * kilobyte * kilobyte))
-        value >= kilobyte * kilobyte -> "%.1f MB".format(Locale.ROOT, value / (kilobyte * kilobyte))
-        value >= kilobyte -> "%.0f KB".format(Locale.ROOT, value / kilobyte)
-        else -> "$bytes B"
-    }
+@Composable
+private fun Badge(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }

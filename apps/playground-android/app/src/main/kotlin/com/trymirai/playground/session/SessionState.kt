@@ -1,7 +1,5 @@
 package com.trymirai.playground.session
 
-import kotlinx.coroutines.CancellationException
-
 sealed interface SessionState {
     data object Loading : SessionState
 
@@ -12,12 +10,10 @@ sealed interface SessionState {
     data class Failed(val message: String) : SessionState
 }
 
-/** Runs [block], turning an engine failure into [SessionState.Failed]; cancellation still propagates. */
-suspend fun sessionStateOf(block: suspend () -> SessionState): SessionState =
-    try {
-        block()
-    } catch (error: CancellationException) {
-        throw error
-    } catch (error: Exception) {
-        SessionState.Failed(error.message ?: error.toString())
-    }
+/** What a screen shows for this state, given its own words for [idle] and [generating]. */
+fun SessionState.label(idle: String, generating: String): String = when (this) {
+    SessionState.Loading -> "Loading…"
+    SessionState.Generating -> generating
+    is SessionState.Failed -> "Error: $message"
+    SessionState.Idle -> idle
+}

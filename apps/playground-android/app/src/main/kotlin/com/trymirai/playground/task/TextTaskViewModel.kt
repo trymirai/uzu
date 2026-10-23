@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class TextTaskViewModel(
     identifier: String,
     engine: EngineRepository,
-    private val task: TextTask,
+    val task: TextTask,
 ) : ChatSessionViewModel(identifier, engine) {
     private val _result = MutableStateFlow<ChatReply?>(null)
     val result: StateFlow<ChatReply?> = _result.asStateFlow()
