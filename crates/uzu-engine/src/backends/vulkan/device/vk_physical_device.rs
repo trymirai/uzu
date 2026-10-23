@@ -22,13 +22,11 @@ pub struct VkPhysicalDevice {
     pub max_memory_allocation_size: u64,
 }
 impl VkPhysicalDevice {
-    /// The first compute queue family whose command buffers time themselves.
+    /// The first compute queue family; Vulkan 1.4's timestampComputeAndGraphics gives each one timestamps.
     pub fn compute_queue_family(&self) -> Option<u32> {
         self.queue_families
             .iter()
-            .position(|properties| {
-                properties.queue_flags.contains(vk::QueueFlags::COMPUTE) && properties.timestamp_valid_bits > 0
-            })
+            .position(|properties| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
             .map(|index| index as u32)
     }
 
@@ -37,16 +35,14 @@ impl VkPhysicalDevice {
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
     ) -> Result<Self, VkDeviceError> {
-        let mut extensions = Vec::new();
-        let ext_prop_vec = unsafe { instance.enumerate_device_extension_properties(physical_device) }
+        let extensions = unsafe { instance.enumerate_device_extension_properties(physical_device) }
             .map_err(VkDeviceError::CapabilityQuery)?;
-        for ext_prop in &ext_prop_vec {
-            let cow_ext_name = unsafe { CStr::from_ptr(ext_prop.extension_name.as_ptr()) }.to_string_lossy();
-            extensions.push(cow_ext_name.to_string());
-        }
-        let has_extension = |name: &CStr| extensions.iter().any(|extension| extension.as_bytes() == name.to_bytes());
+        let has_extension = |name: &CStr| {
+            extensions
+                .iter()
+                .any(|extension| extension.extension_name_as_c_str().is_ok_and(|extension| extension == name))
+        };
 
-        // properties
         let mut device_subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
         let mut float_controls = vk::PhysicalDeviceFloatControlsProperties::default();
         let mut vk13properties = vk::PhysicalDeviceVulkan13Properties::default();
@@ -84,10 +80,8 @@ impl VkPhysicalDevice {
             ])
             .find_map(|(present, units)| (present && units > 0).then_some(units));
 
-        // memory properties
         let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
-        // features
         let mut vk11features = vk::PhysicalDeviceVulkan11Features::default();
         let mut vk12features = vk::PhysicalDeviceVulkan12Features::default();
         let mut matrix_features = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default();
@@ -166,9 +160,8 @@ impl VkPhysicalDevice {
                 VkDeviceCapabilities::BF16_TENSOR_CORES,
                 bf16_type
                     && bfloat16_features.shader_bfloat16_cooperative_matrix == vk::TRUE
-                    && supports(16, vk::ComponentTypeKHR::from_raw(1_000_141_000), vk::ComponentTypeKHR::FLOAT32),
+                    && supports(16, VkShaderBfloat16Features::COMPONENT_TYPE, vk::ComponentTypeKHR::FLOAT32),
             ),
-            // Reported support; defaults also need VkContext::qualified_float_tensor_cores.
             (
                 VkDeviceCapabilities::FP16_TENSOR_CORES,
                 supports(16, vk::ComponentTypeKHR::FLOAT16, vk::ComponentTypeKHR::FLOAT32),

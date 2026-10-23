@@ -83,10 +83,9 @@ impl VkContext {
             pipeline_cache_path,
         } = create_info;
         let debug_messages = Box::new(VkDebugMessages::default());
-        let api_version = API_VERSION_1_4;
 
         let entry = unsafe { ash::Entry::load() }.map_err(VkContextError::EntryLoad)?;
-        let instance = create_instance(&entry, api_version, with_validation.then_some(&*debug_messages))?;
+        let instance = create_instance(&entry, with_validation.then_some(&*debug_messages))?;
         let debug_utils = ext::debug_utils::Instance::new(&entry, &instance);
         let debug_messenger = if with_validation {
             Some(
@@ -155,7 +154,7 @@ impl VkContext {
         }))
     }
 
-    /// The `Arc` that `new` created and that owns this context; it is alive while `&self` is.
+    /// The `Arc` that `with_create_info` created and that owns this context; it is alive while `&self` is.
     pub fn arc(&self) -> Arc<Self> {
         self.weak_self.upgrade().expect("a VkContext is always owned by the Arc that created it")
     }
@@ -285,7 +284,7 @@ impl VkContext {
         &self,
         ticks: u64,
     ) -> Duration {
-        // The queue family was chosen for 1 to 64 valid bits.
+        // Vulkan 1.4's timestampComputeAndGraphics gives compute queues 36 to 64 valid bits.
         let ticks = ticks & (u64::MAX >> (64 - self.timestamp_valid_bits));
         let period = f64::from(self.physical_device.properties.limits.timestamp_period);
         Duration::from_nanos((ticks as f64 * period).round() as u64)
@@ -436,19 +435,17 @@ impl Context for VkContext {
         Err(Error::NotSupported)
     }
 
-    /// Copies `buffer` into host-cached memory after the work submitted before it, and reads it once the copy completes.
+    /// Copies `buffer` into host-visible memory after the work submitted before it, and reads it once the copy completes.
     fn copyout<T: AnyBitPattern>(
         &self,
         buffer: impl BufferRef<Backend = Vulkan, Buffer = Arc<VkBuffer>>,
     ) -> impl Future<Output = Result<Vec<T>, Error>> + Send {
         let (source, range) = VkBuffer::resolve_ref(buffer);
-        let submitted =
-            VkBuffer::new(self.arc(), range.end - range.start, VkBufferMemory::Readback).and_then(|readback| {
-                let readback = Arc::new(readback);
-                let mut encoding = self.create_command_buffer(None, None)?;
-                encoding.encode_copy(source, range, &readback, 0)?;
-                Ok((encoding.end_encoding().try_submit()?, readback))
-            });
+        let submitted = self.create_readback_buffer((range.end - range.start) as usize).and_then(|readback| {
+            let mut encoding = self.create_command_buffer(None, None)?;
+            encoding.encode_copy(source, range, &readback, 0)?;
+            Ok((encoding.end_encoding().try_submit()?, readback))
+        });
         async move {
             let (pending, readback) = submitted?;
             pending.wait_until_completed().await?;
@@ -484,13 +481,12 @@ impl Context for VkContext {
 }
 fn create_instance(
     entry: &ash::Entry,
-    api_version: u32,
     validation: Option<&VkDebugMessages>,
 ) -> Result<ash::Instance, VkContextError> {
     let mut instance_extensions: Vec<*const c_char> = Vec::new();
 
     let mut instance_layers: Vec<*const c_char> = Vec::new();
-    let mut instance_nexts = Vec::new();
+    let mut messenger_info = None;
 
     if let Some(messages) = validation {
         if !is_layer_supported(entry, VK_LAYER_KHRONOS_VALIDATION)? {
@@ -498,18 +494,16 @@ fn create_instance(
         }
         instance_extensions.push(vk::EXT_DEBUG_UTILS_NAME.as_ptr());
         instance_layers.push(VK_LAYER_KHRONOS_VALIDATION.as_ptr());
-
-        let msg_create_info = debug_messenger_info(messages);
-        instance_nexts.push(msg_create_info);
+        messenger_info = Some(debug_messenger_info(messages));
     }
 
-    let app_info = vk::ApplicationInfo::default().api_version(api_version);
+    let app_info = vk::ApplicationInfo::default().api_version(API_VERSION_1_4);
 
     let mut instance_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
         .enabled_extension_names(&instance_extensions)
         .enabled_layer_names(&instance_layers);
-    for next in instance_nexts.iter_mut() {
+    if let Some(next) = &mut messenger_info {
         instance_info = instance_info.push_next(next);
     }
 
@@ -688,8 +682,8 @@ fn is_layer_supported(
     layer: &CStr,
 ) -> Result<bool, VkContextError> {
     let layer_properties =
-        unsafe { entry.enumerate_instance_layer_properties() }.map_err(VkContextError::CapabilityQuery)?;
-    Ok(layer_properties.iter().any(|properties| unsafe { CStr::from_ptr(properties.layer_name.as_ptr()) } == layer))
+        unsafe { entry.enumerate_instance_layer_properties() }.map_err(VkContextError::LayerEnumeration)?;
+    Ok(layer_properties.iter().any(|properties| properties.layer_name_as_c_str().is_ok_and(|name| name == layer)))
 }
 
 fn debug_messenger_info(messages: &VkDebugMessages) -> vk::DebugUtilsMessengerCreateInfoEXT<'_> {
@@ -710,10 +704,6 @@ unsafe extern "system" fn debug_message_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     p_user_data: *mut c_void,
 ) -> vk::Bool32 {
-    if p_user_data.is_null() {
-        return vk::FALSE;
-    }
-
     let messages = unsafe { &*(p_user_data as *const VkDebugMessages) };
     messages.receive(message_severity, message_type, unsafe { CStr::from_ptr((*p_callback_data).p_message) });
     vk::FALSE
