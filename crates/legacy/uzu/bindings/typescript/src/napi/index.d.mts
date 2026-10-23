@@ -1076,5 +1076,6 @@ export type SettingsError =
 export type StorageError =
   | { type: 'UnableToCreateDirectory'; path: string }
   | { type: 'DownloadManager'; message: string }
+  | { type: 'Locked' }
   | { type: 'ModelNotFound'; identifier: ModelIdentifier }
   | { type: 'UnsupportedModel'; identifier: ModelIdentifier }
