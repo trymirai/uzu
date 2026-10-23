@@ -15,3 +15,13 @@ fn assert_vec_close(
         assert!((af - ef).abs() <= tol, "{desc} mismatch at idx={idx}: actual={af}, expected={ef}");
     }
 }
+
+struct SharedGemv<'a, W, Z> {
+    weights: &'a [W],
+    scales: Option<&'a [bf16]>,
+    zero_points: Option<&'a [Z]>,
+    biases: Option<&'a [bf16]>,
+    output_bias: Option<&'a [bf16]>,
+    hadamard: Option<&'a [i32]>,
+    num_routed_routes: u32,
+}
