@@ -262,7 +262,7 @@ fn calculate_numthreads(
     kernel_name: &str,
     arguments: &[(String, SlangArgumentType, String)],
 ) -> Result<String, Error> {
-    let threads = arguments
+    let mut threads = arguments
         .iter()
         .filter_map(|(_, arg_type, _)| match arg_type {
             SlangArgumentType::Axis(_, threads_per_group) => Some(threads_per_group.as_ref()),
@@ -287,13 +287,8 @@ fn calculate_numthreads(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    if threads.is_empty() {
-        Ok("1, 1, 1".to_string())
-    } else {
-        let mut result = threads;
-        while result.len() < 3 {
-            result.push("1".to_owned());
-        }
-        Ok(result.join(", "))
+    while threads.len() < 3 {
+        threads.push("1".to_owned());
     }
+    Ok(threads.join(", "))
 }

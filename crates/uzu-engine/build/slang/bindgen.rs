@@ -79,6 +79,19 @@ pub fn bindgen(
     // Vulkan 1.4 guarantees every device 256 bytes of push constants.
     ensure!(abi.block_size <= 256, "{kernel_name}: push-constant block of {} bytes exceeds 256", abi.block_size);
     let canonical_types = || gpu_types.iter().flat_map(|types| types.files.iter()).flat_map(|file| &file.types);
+    let canonical_enum = |short: &str| {
+        canonical_types().find_map(|candidate| match candidate {
+            GpuType::Enum(candidate) if candidate.name.as_ref() == short => Some(candidate),
+            _ => None,
+        })
+    };
+    let specialization_id = |argument: &str| {
+        let constant = specialization_name(kernel_name, argument);
+        abi.specialization_ids
+            .iter()
+            .find_map(|(name, id)| (*name == constant).then_some(*id))
+            .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))
+    };
 
     let type_parameters = kernel
         .parameters
@@ -89,12 +102,8 @@ pub fn bindgen(
     // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
     let word = |name: &Ident, ty: &Type, scalars: &[&str]| -> Result<TokenStream, Error> {
         let text = ty.to_token_stream().to_string().replace(" :: ", "::");
-        let canonical_enum = text.rsplit_once("::").is_some_and(|(_, short)| {
-            gpu_type_paths.full_path_for(short) == Some(text.as_str())
-                && gpu_type_paths.kind_for(short) == Some(GpuTypeKind::Enum)
-        });
         match text.as_str() {
-            _ if canonical_enum => Ok(quote! { (#name as u32) }),
+            _ if canonical_enum_name(gpu_type_paths, &text).is_some() => Ok(quote! { (#name as u32) }),
             "bool" if scalars.contains(&"bool") => Ok(quote! { u32::from(#name) }),
             scalar if scalars.contains(&scalar) => Ok(quote! { #name }),
             other => bail!("{kernel_name}: unsupported type '{other}' for '{name}'"),
@@ -118,13 +127,7 @@ pub fn bindgen(
             },
             None => word(&name, &ty, &["u32", "bool"])?,
         };
-        let constant = specialization_name(kernel_name, &parameter.name);
-        let (_, id) = abi
-            .specialization_ids
-            .iter()
-            .find(|(name, _)| *name == constant)
-            .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))?;
-        specializations.push((name, ty, value, *id));
+        specializations.push((name, ty, value, specialization_id(&parameter.name)?));
     }
 
     // `(argument, variant paths, specialization constant id)` of the `[[PipelineVariants]]` argument.
@@ -140,18 +143,10 @@ pub fn bindgen(
             bail!("{kernel_name}: PipelineVariants argument '{name}' is not a uniform");
         };
         let ty: Type = syn::parse_str(text)?;
-        let short = text.rsplit_once("::").map_or(text.as_ref(), |(_, short)| short);
-        ensure!(
-            gpu_type_paths.full_path_for(short) == Some(text.as_ref())
-                && gpu_type_paths.kind_for(short) == Some(GpuTypeKind::Enum),
-            "{kernel_name}: PipelineVariants argument '{name}' has type '{text}', not a canonical GPU enum"
-        );
-        let canonical = canonical_types()
-            .find_map(|candidate| match candidate {
-                GpuType::Enum(candidate) if candidate.name.as_ref() == short => Some(candidate),
-                _ => None,
-            })
-            .with_context(|| format!("{kernel_name}: no canonical enum '{short}'"))?;
+        let short = canonical_enum_name(gpu_type_paths, text).with_context(|| {
+            format!("{kernel_name}: PipelineVariants argument '{name}' has type '{text}', not a canonical GPU enum")
+        })?;
+        let canonical = canonical_enum(short).with_context(|| format!("{kernel_name}: no canonical enum '{short}'"))?;
         let paths = canonical
             .variants
             .iter()
@@ -160,13 +155,7 @@ pub fn bindgen(
                 quote! { #ty::#variant }
             })
             .collect::<Vec<_>>();
-        let constant = specialization_name(kernel_name, name);
-        let (_, id) = abi
-            .specialization_ids
-            .iter()
-            .find(|(name, _)| *name == constant)
-            .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))?;
-        pipeline_variants = Some((format_ident!("{name}"), paths, *id));
+        pipeline_variants = Some((format_ident!("{name}"), paths, specialization_id(name)?));
     }
 
     // Buffers of canonical structs are checked by `canonical_struct`, those of primitives by their data type's size.
@@ -398,14 +387,10 @@ pub fn bindgen(
         parameters.chain(uniforms.map(|argument| argument.name.as_ref())).map(str::to_string).collect::<BTreeSet<_>>()
     };
     let is_variant = |path: &syn::Path| {
-        let [head, variant] = [0, 1].map(|index| path.segments.get(index).map(|segment| segment.ident.to_string()));
-        canonical_types().any(|candidate| match candidate {
-            GpuType::Enum(candidate) => {
-                path.segments.len() == 2
-                    && Some(candidate.name.as_ref()) == head.as_deref()
-                    && candidate.variants.iter().any(|known| Some(known.name.as_ref()) == variant.as_deref())
-            },
-            _ => false,
+        let segments = path.segments.iter().map(|segment| segment.ident.to_string());
+        segments.collect_tuple().is_some_and(|(head, variant): (String, String)| {
+            canonical_enum(&head)
+                .is_some_and(|candidate| candidate.variants.iter().any(|known| *known.name == *variant))
         })
     };
     let capability = |path: &syn::Path| path.segments.len() == 2 && path.segments[0].ident == "VkDeviceCapabilities";
@@ -498,13 +483,11 @@ pub fn bindgen(
     let axis_sizes = axis.then(|| quote! { #(#group_sizes)* });
     let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* #axis_sizes };
     // Host expressions may read the command buffer's context.
-    let encoding_trait = references(host_expressions.clone(), &format_ident!("command_buffer"))
+    let references = |name: &Ident| find_ident(host_expressions.clone(), &|ident| ident == name).is_some();
+    let encoding_trait = references(&format_ident!("command_buffer"))
         .then(|| quote! { use crate::backends::common::CommandBufferEncoding as _; });
-    let (referenced, referenced_types): (Vec<_>, Vec<_>) = specializations
-        .iter()
-        .filter(|(name, ..)| references(host_expressions.clone(), name))
-        .map(|(name, ty, ..)| (name, ty))
-        .unzip();
+    let (referenced, referenced_types): (Vec<_>, Vec<_>) =
+        specializations.iter().filter(|(name, ..)| references(name)).map(|(name, ty, ..)| (name, ty)).unzip();
 
     // The native-BF16 SPIR-V on devices with the BF16 type.
     let spirv = |(object, native): &(String, Option<(SlangEntryPointAbi, String)>)| match native {
@@ -777,13 +760,24 @@ fn option_inner(ty: &Type) -> Option<&Type> {
     }
 }
 
-fn references(
+/// The short name of `path` when it is the full path of a canonical GPU enum.
+fn canonical_enum_name<'a>(
+    gpu_type_paths: &GpuTypePaths,
+    path: &'a str,
+) -> Option<&'a str> {
+    let (_, short) = path.rsplit_once("::")?;
+    (gpu_type_paths.full_path_for(short) == Some(path) && gpu_type_paths.kind_for(short) == Some(GpuTypeKind::Enum))
+        .then_some(short)
+}
+
+/// The first identifier among `tokens`, groups included, that satisfies `predicate`.
+pub fn find_ident(
     tokens: TokenStream,
-    name: &Ident,
-) -> bool {
-    tokens.into_iter().any(|token| match token {
-        TokenTree::Ident(ident) => ident == *name,
-        TokenTree::Group(group) => references(group.stream(), name),
-        _ => false,
+    predicate: &impl Fn(&Ident) -> bool,
+) -> Option<Ident> {
+    tokens.into_iter().find_map(|token| match token {
+        TokenTree::Ident(ident) => Some(ident).filter(predicate),
+        TokenTree::Group(group) => find_ident(group.stream(), predicate),
+        _ => None,
     })
 }

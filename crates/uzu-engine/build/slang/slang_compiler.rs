@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::Context;
 use itertools::Itertools;
-use proc_macro2::{TokenStream, TokenTree};
+use proc_macro2::Ident;
 use quote::ToTokens;
 use shader_slang::{
     Blob, CompileTarget, CompilerOptions, ComponentType, DeclKind, GlobalSession, OptimizationLevel, ScalarType,
@@ -309,7 +309,8 @@ impl Compiler for SlangCompiler {
         for selector in SELECTORS {
             let source = fs::read_to_string(self.src_dir.join(selector))?;
             let file = syn::parse_file(&source).with_context(|| format!("cannot parse {selector}"))?;
-            if let Some(name) = identity_name(file.into_token_stream()) {
+            let identity = |ident: &Ident| IDENTITY_NAMES.iter().any(|name| ident == name);
+            if let Some(name) = bindgen::find_ident(file.into_token_stream(), &identity) {
                 anyhow::bail!("{selector} names the device identity `{name}`; selectors read capabilities");
             }
         }
@@ -317,17 +318,6 @@ impl Compiler for SlangCompiler {
     }
 }
 
-/// The first identifier of IDENTITY_NAMES among `tokens`, groups included.
-fn identity_name(tokens: TokenStream) -> Option<String> {
-    tokens.into_iter().find_map(|token| match token {
-        TokenTree::Ident(ident) => Some(ident.to_string()).filter(|name| IDENTITY_NAMES.contains(&name.as_str())),
-        TokenTree::Group(group) => identity_name(group.stream()),
-        _ => None,
-    })
-}
-
-/// A SPIR-V session over the kernel sources and the generated GPU type modules that compiles `bf16` as
-/// VK_KHR_shader_bfloat16's type if `native_bf16`.
 /// Fails unless each capability `spirv` declares is in DEVICE_CAPABILITIES or gated: a GATED_CAPABILITIES entry one
 /// of whose device capabilities a `new` precondition of the kernel tests; the native BF16 build, which only devices with
 /// the BF16 type load, may also declare BFloat16TypeKHR.
@@ -365,6 +355,8 @@ fn check_capabilities(
     Ok(())
 }
 
+/// A SPIR-V session over the kernel sources and the generated GPU type modules that compiles `bf16` as
+/// VK_KHR_shader_bfloat16's type if `native_bf16`.
 fn session(
     global_session: &GlobalSession,
     src_dir: &Path,

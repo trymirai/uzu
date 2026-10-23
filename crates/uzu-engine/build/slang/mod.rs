@@ -10,7 +10,6 @@ mod slang_compiler;
 mod slang_entry_point_abi;
 mod slang_field_abi;
 mod slang_kernel_info;
-mod type_parameter_info;
 mod wrapper;
 
 pub use data_type::data_type;
@@ -23,4 +22,3 @@ pub use slang_compiler::SlangCompiler;
 pub use slang_entry_point_abi::SlangEntryPointAbi;
 pub use slang_field_abi::SlangFieldAbi;
 pub use slang_kernel_info::SlangKernelInfo;
-pub use type_parameter_info::TypeParameterInfo;

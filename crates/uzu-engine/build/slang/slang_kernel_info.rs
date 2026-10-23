@@ -48,17 +48,15 @@ impl<'a> SlangKernelInfo<'a> {
         let public = function.user_attributes().any(|attribute| attribute.name() == Some("Public"));
         let mut type_parameters = Vec::new();
         if let Some(generic) = generic_decl {
-            for parameter in slang_api::get_generic_type_parameters(generic)? {
-                let Some(variants) =
-                    parameter.constraints.iter().find_map(|constraint| variants_for_constraint(constraint))
+            for (parameter, constraints) in slang_api::get_generic_type_parameters(generic)? {
+                let Some(variants) = constraints.iter().find_map(|constraint| variants_for_constraint(constraint))
                 else {
                     bail!(
-                        "generic kernel '{name}': type parameter '{}' has no known constraint mapping (constraints: {:?})",
-                        parameter.name,
-                        parameter.constraints
+                        "generic kernel '{name}': type parameter '{parameter}' has no known constraint mapping \
+                         (constraints: {constraints:?})"
                     );
                 };
-                type_parameters.push((parameter.name, variants));
+                type_parameters.push((parameter, variants));
             }
         }
         Ok(Some(Self {
@@ -123,13 +121,11 @@ impl<'a> SlangKernelInfo<'a> {
         let mut parameters = self
             .type_parameters
             .iter()
-            .map(|(name, _)| {
-                Ok(KernelParameter {
-                    name: name.as_str().into(),
-                    ty: KernelParameterType::Type,
-                })
+            .map(|(name, _)| KernelParameter {
+                name: name.as_str().into(),
+                ty: KernelParameterType::Type,
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<Vec<_>>();
         let mut arguments = Vec::new();
         for argument in self.arguments() {
             let name = argument.name()?;
