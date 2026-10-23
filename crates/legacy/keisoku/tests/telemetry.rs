@@ -1,3 +1,5 @@
+#![cfg(target_vendor = "apple")]
+
 #[test]
 fn available_telemetry() {
     use keisoku::Device;

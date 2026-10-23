@@ -12,7 +12,8 @@ publish = false
 [lints]
 workspace = true
 
-[dependencies]
+# The binary is empty off Apple (see src/main.rs), so every dependency is Apple-only.
+[target.'cfg(target_vendor = "apple")'.dependencies]
 anyhow.workspace = true
 clap.workspace = true
 futures.workspace = true

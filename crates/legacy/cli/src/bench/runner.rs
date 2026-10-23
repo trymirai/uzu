@@ -44,8 +44,8 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
-        let model_path = Path::new(&self.model_path)
-            .canonicalize()
+        // Absolute, not canonical: Windows canonical paths carry a verbatim prefix no cached model path has.
+        let model_path = std::path::absolute(&self.model_path)
             .with_context(|| format!("Can not open model path: {}", self.model_path))?;
         let model_path_string = model_path.to_string_lossy().into_owned();
         // Path lookup already handles unregistered directories. Registering the
