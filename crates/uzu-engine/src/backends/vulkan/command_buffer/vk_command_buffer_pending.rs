@@ -4,18 +4,21 @@ use futures::channel::oneshot;
 
 use crate::backends::{
     common::CommandBufferPending,
-    vulkan::{Error, VkCommandBuffer, VkCommandBufferCompleted, VkCommandBufferError, VkContext, VkTimestampRecorder},
+    vulkan::{
+        Error, VkCommandBuffer, VkCommandBufferCompleted, VkCommandBufferError, VkContext, VkSegmentResult,
+        VkTimestampRecorder,
+    },
 };
 
 /// A submitted command buffer; the context's completion thread reports when the GPU finishes each of its segments.
 pub struct VkCommandBufferPending {
-    segments: Vec<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>>,
+    segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     timestamps: Option<(Arc<VkContext>, VkTimestampRecorder)>,
 }
 
 impl VkCommandBufferPending {
     pub fn new(
-        segments: Vec<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>>,
+        segments: Vec<oneshot::Receiver<VkSegmentResult>>,
         timestamps: Option<(Arc<VkContext>, VkTimestampRecorder)>,
     ) -> Self {
         Self {

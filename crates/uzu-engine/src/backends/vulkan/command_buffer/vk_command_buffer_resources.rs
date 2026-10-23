@@ -7,7 +7,7 @@ use crate::backends::vulkan::{Error, VkCommandBufferError, VkContext};
 /// Timestamps per pool of span timestamps.
 const SPAN_TIMESTAMPS_PER_POOL: u32 = 256;
 
-/// Raw per-encoding command pool, primary command buffer, fence, start and end timestamps and the timestamps of
+/// Raw per-segment command pool, primary command buffer, fence, start and end timestamps and the timestamps of
 /// recorded spans. They hold no context reference, so the context can cache idle sets without an `Arc` cycle and
 /// destroys them before the device.
 pub struct VkCommandBufferResources {
@@ -28,8 +28,7 @@ impl VkCommandBufferResources {
         let pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(queue_family_index)
             .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-        let command_pool =
-            unsafe { device.create_command_pool(&pool_info, None) }.map_err(VkCommandBufferError::PoolCreate)?;
+        let command_pool = unsafe { device.create_command_pool(&pool_info, None) }?;
         let buffer_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)

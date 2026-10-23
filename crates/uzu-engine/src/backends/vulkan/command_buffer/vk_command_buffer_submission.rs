@@ -2,13 +2,12 @@ use std::{
     mem::forget,
     sync::{Arc, mpsc},
     thread,
-    time::Duration,
 };
 
 use ash::vk;
 use futures::channel::oneshot;
 
-use crate::backends::vulkan::{Error, VkCommandBufferResources, VkContext};
+use crate::backends::vulkan::{Error, VkCommandBufferResources, VkContext, VkSegmentResult};
 
 /// A submitted command buffer, which the context's completion thread waits for, in submission order, to recycle its
 /// resources, release what it retained and report its GPU time and span timestamps.
@@ -16,7 +15,7 @@ pub struct VkCommandBufferSubmission {
     context: Arc<VkContext>,
     resources: VkCommandBufferResources,
     retained: Vec<Arc<dyn Send + Sync>>,
-    sender: oneshot::Sender<Result<(Duration, Box<[u64]>), Error>>,
+    sender: oneshot::Sender<VkSegmentResult>,
 }
 
 impl VkCommandBufferSubmission {
@@ -39,7 +38,7 @@ impl VkCommandBufferSubmission {
         context: Arc<VkContext>,
         resources: VkCommandBufferResources,
         retained: Vec<Arc<dyn Send + Sync>>,
-    ) -> Result<oneshot::Receiver<Result<(Duration, Box<[u64]>), Error>>, Error> {
+    ) -> Result<oneshot::Receiver<VkSegmentResult>, Error> {
         let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(resources.command_buffer())];
         let submits = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffers)];
         let (sender, receiver) = oneshot::channel();

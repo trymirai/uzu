@@ -19,3 +19,6 @@ pub use vk_command_buffer_resources::VkCommandBufferResources;
 pub use vk_command_buffer_submission::VkCommandBufferSubmission;
 pub use vk_debug_group_span::VkDebugGroupSpan;
 pub use vk_timestamp_recorder::VkTimestampRecorder;
+
+/// A completed segment's GPU time and span timestamps.
+pub type VkSegmentResult = Result<(std::time::Duration, Box<[u64]>), crate::backends::vulkan::Error>;

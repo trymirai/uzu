@@ -2,11 +2,9 @@ use ash::vk;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VkCommandBufferError {
-    #[error("cannot create a command pool: {0}")]
-    PoolCreate(#[source] vk::Result),
     #[error("the completion thread stopped before the command buffer completed")]
     Wait,
-    #[error("buffer range {start}..{end} is empty or exceeds a buffer of {size} bytes")]
+    #[error("buffer range {start}..{end} is reversed or exceeds a buffer of {size} bytes")]
     BufferRange {
         start: u64,
         end: u64,
