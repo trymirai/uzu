@@ -140,9 +140,16 @@ pub trait Backend: Send + Sync {
     async fn remove_files(
         &self,
         config: &DownloadConfig,
-    ) {
-        let _ = fs::asyn::remove_file(&config.resume_artifact_path).await;
-        let _ = fs::asyn::remove_file(&config.destination).await;
+    ) -> Result<(), BackendError> {
+        let mut result = Ok(());
+        for path in [&config.resume_artifact_path, &config.destination] {
+            if let Err(error) = fs::asyn::remove_file(path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                result = result.and(Err(error.into()));
+            }
+        }
+        result
     }
 }
 

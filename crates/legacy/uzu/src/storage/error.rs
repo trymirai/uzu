@@ -1,4 +1,4 @@
-use download_manager::DownloadError;
+use download_manager::{BackendError, DownloadError, FileDownloadError, LockError};
 use shoji::types::model::ModelIdentifier;
 
 #[bindings::export(Error)]
@@ -13,6 +13,8 @@ pub enum StorageError {
     DownloadManager {
         message: String,
     },
+    #[error("Model is locked by another manager")]
+    Locked {},
     #[error("Model not found: {identifier}")]
     ModelNotFound {
         identifier: ModelIdentifier,
@@ -25,8 +27,22 @@ pub enum StorageError {
 
 impl From<DownloadError> for StorageError {
     fn from(error: DownloadError) -> Self {
-        Self::DownloadManager {
-            message: error.to_string(),
+        match error {
+            DownloadError::Lock(LockError::LockedByOther {
+                ..
+            })
+            | DownloadError::Backend(BackendError::Lock(LockError::LockedByOther {
+                ..
+            }))
+            | DownloadError::FileDownload(FileDownloadError::Lock(LockError::LockedByOther {
+                ..
+            }))
+            | DownloadError::FileDownload(FileDownloadError::Backend(BackendError::Lock(LockError::LockedByOther {
+                ..
+            }))) => Self::Locked {},
+            error => Self::DownloadManager {
+                message: error.to_string(),
+            },
         }
     }
 }
