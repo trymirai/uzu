@@ -53,8 +53,9 @@ const INT8_FOLD_BYTES: u32 = 4 * (2 * INT8_FOLD_ENTRIES + INT8_FOLD_PADDING);
 pub enum VkMatmulPlan {
     /// Gemv on full-precision A, with its tile.
     Gemv(VkGemvTile),
-    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of eight 32-lane simdgroups, held by full
-    /// native 128-lane subgroups where `native_128`.
+    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations, held by full native
+    /// 128-lane subgroups where `native_128`. One input row gives each output 32 / rows invocations, more input rows give
+    /// each 32-lane simdgroup `rows` outputs.
     GemvInt8 {
         native_128: bool,
         rows: u32,
@@ -236,8 +237,9 @@ impl VkMatmulPlan {
                 input_rows,
             } => {
                 require(
-                    [1, 2, 4].contains(&rows) && (1..=8).contains(&input_rows),
-                    "GemvInt8 takes 1, 2 or 4 by 1 to 8",
+                    [1, 2, 4].contains(&rows) && (1..=8).contains(&input_rows)
+                        || [8, 16].contains(&rows) && input_rows == 1,
+                    "GemvInt8 takes 1, 2 or 4 rows by 1 to 8 inputs, or 8 or 16 by 1",
                 )?;
                 require(!shape.gathered || input_rows == 1, "gathered GemvInt8 takes one input row a workgroup")?;
                 require(
@@ -382,7 +384,7 @@ impl VkMatmulPlan {
         // The bounded search omits tiles of more rows than the next power of two of the problem's, not measured slower.
         let omitted = |rows: u32, least: u32| rows > m.checked_next_power_of_two().unwrap_or(u32::MAX).max(least);
         let gemv_int8 = [false, true].map(|native_128| {
-            let grid = iproduct!([1, 2, 4], [1, 2, 4, 8]);
+            let grid = iproduct!([1, 2, 4, 8, 16], [1, 2, 4, 8]);
             grid.map(|(rows, input_rows)| {
                 let plan = Self::GemvInt8 {
                     native_128,
@@ -558,7 +560,7 @@ impl VkMatmulPlan {
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
     }
 
-    /// GemvInt8 for m rows: more rows a simdgroup for fewer inputs, one input row a workgroup where `gathered`, on
+    /// GemvInt8 for m rows: more outputs a workgroup for fewer inputs, one input row a workgroup where `gathered`, on
     /// native 128-lane subgroups where the device has them.
     fn gemv_int8(
         m: u32,
@@ -568,7 +570,8 @@ impl VkMatmulPlan {
         Self::GemvInt8 {
             native_128: capabilities.contains(Capability::GEMV_INT8_NATIVE_128),
             rows: match m {
-                0..=2 => 4,
+                0..=1 => 8,
+                2 => 4,
                 3..=4 => 2,
                 _ => 1,
             },

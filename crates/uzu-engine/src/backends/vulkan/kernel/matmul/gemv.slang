@@ -174,8 +174,8 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
 }
 
 // A8 activations (MatmulA::Int8Symmetric) against U4 codes or U8 symmetric codes, its own entry point so the integer
-// dot product capability stays out of the float modules. Each of 8 simdgroups computes ROWS rows for INPUT_ROWS inputs;
-// a lane takes every 32nd 32-value run, one weight group's, and folds its exact integer dots as int8_fold does.
+// dot product capability stays out of the float modules. A workgroup computes 8 ROWS rows for INPUT_ROWS inputs; a lane
+// folds the exact integer dots of its 32-value runs, each in one weight group, as int8_fold does.
 static const uint GEMV_INT8_SIMDGROUPS = 8;
 static const uint GEMV_INT8_RUN = 32;
 // Outputs a simdgroup reduces through shared memory at a time, on native 128-lane subgroups.
@@ -211,8 +211,91 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
   }
 }
 
-// The GemvInt8 entry points' algorithm for simdgroup `simd_group` of 8, lane `simd_lane` of 32: segment_reduce sums its
-// lanes, or through shared memory where CLUSTERED: shuffles on wide subgroups cost more than its stores and reads.
+// GemvInt8 of one input row: output row r of the workgroup's 8 ROWS takes the 32 / ROWS consecutive invocations (in
+// subgroup order) from r 32 / ROWS, which split its runs and sum their partials through shared memory. Consecutive
+// invocations so read consecutive rows' group metadata, and each holds one row.
+void gemv_int8_rows<B : IModelFloat, D : IModelFloat>(
+  QuantizedWeights<B> weights,
+  Ptr<int8_t, Access.Read> a,
+  Ptr<float, Access.Read> a_scales,
+  Ptr<int, Access.Read> a_group_sums,
+  Ptr<D, Access.ReadWrite> d,
+  Ptr<B, Access.Read> bias,
+  Ptr<uint, Access.Read> gather,
+  GemmParams params,
+  uint output_tile,
+  uint input,
+  uint invocation,
+  bool scale_bias,
+  bool u4,
+  bool signed_codes,
+  uint group_size,
+  uint ROWS,
+  bool unsigned_dot,
+  bool gathered,
+) {
+  let k = params.K;
+  let n = params.N;
+  let parts = SIMD_SIZE / ROWS;
+  let row_local = invocation / parts;
+  let part = invocation % parts;
+  let output_row = output_tile * GEMV_INT8_SIMDGROUPS * ROWS + row_local;
+  let clamped_row = min(output_row, n - 1);
+  let row = gathered ? gather[input * n + clamped_row] : clamped_row;
+  let run_bytes = u4 ? GEMV_INT8_RUN / 2 : GEMV_INT8_RUN;
+  let codes = Ptr<uint8_t, Access.Read>(a);
+  var sum = 0.0;
+  for (uint run = part; run < k / GEMV_INT8_RUN; run += parts) {
+    let column = run * GEMV_INT8_RUN;
+    let group = column / group_size;
+    // A group's first run adds its ScaleBias correction.
+    let head = scale_bias && column % group_size == 0;
+    let metadata = weights.metadata(row, group);
+    uint words[8];
+    gemv_int8_words(weights.codes, weights.code_byte(row, column), run_bytes, words);
+    let code_sum = unsigned_dot ? unsigned_codes(words, u4, signed_codes) : 0u;
+    uint activation[8];
+    gemv_int8_words(codes, input * k + column, GEMV_INT8_RUN, activation);
+    let scale = a_scales[input * (k / INT8_SCALE_GROUP) + column / INT8_SCALE_GROUP];
+    let group_sum = head ? a_group_sums[input * (k / group_size) + group] : 0;
+    var dot = 0;
+    if (unsigned_dot) {
+      let activation_sum = int(biased_activations(activation)) - 128 * int(GEMV_INT8_RUN);
+      var products = 0u;
+      [unroll]
+      for (uint word = 0; word < 8; word++) {
+        products = udot_u8x4(activation[word], words[word], products);
+      }
+      dot = int(products) - 128 * int(code_sum) - int(metadata.zero_point) * activation_sum;
+    } else {
+      [unroll]
+      for (uint word = 0; word < 4; word++) {
+        if (u4) {
+          let centered = centered_u4(words[word], metadata.zero_point, signed_codes);
+          dot += dot_i8x4(activation[2 * word], centered.x) + dot_i8x4(activation[2 * word + 1], centered.y);
+        } else {
+          dot += dot_i8x4(activation[word], centered_u8(words[word], signed_codes))
+            + dot_i8x4(activation[4 + word], centered_u8(words[4 + word], signed_codes));
+        }
+      }
+    }
+    sum = int8_fold(sum, scale, metadata, dot, head, group_sum);
+  }
+  gemv_int8_partials[invocation] = sum;
+  GroupMemoryBarrierWithGroupSync();
+  if (part == 0 && output_row < n) {
+    var total = 0.0;
+    for (uint other = 0; other < parts; other++) {
+      total += gemv_int8_partials[invocation + other];
+    }
+    let bias_value = params.has_bias ? bias[output_row].toFloat() : 0.0;
+    d[input * n + output_row] = D.fromFloat(gemm_output(total, bias_value, params));
+  }
+}
+
+// The GemvInt8 entry points' algorithm for simdgroup `simd_group` of 8, lane `simd_lane` of 32: one input row takes
+// gemv_int8_rows; more give each simdgroup ROWS rows of every input, its lanes every 32nd run, which segment_reduce
+// sums, or shared memory where CLUSTERED: shuffles on wide subgroups cost more than its stores and reads.
 void gemv_int8<B : IModelFloat, D : IModelFloat, let CLUSTERED : bool>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
@@ -256,6 +339,13 @@ void gemv_int8<B : IModelFloat, D : IModelFloat, let CLUSTERED : bool>(
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
   GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, 0 };
+  if (INPUT_ROWS == 1) {
+    gemv_int8_rows<B, D>(
+      weights, a, a_scales, a_group_sums, d, bias, gather, params, output_tile, input_tile,
+      simd_group * SIMD_SIZE + simd_lane, scale_bias, u4, signed_codes, group_size, ROWS, unsigned_dot, gathered
+    );
+    return;
+  }
   let first_row = (output_tile * GEMV_INT8_SIMDGROUPS + simd_group) * ROWS;
   let first_input = input_tile * INPUT_ROWS;
   let run_bytes = u4 ? GEMV_INT8_RUN / 2 : GEMV_INT8_RUN;
@@ -373,7 +463,7 @@ void gemv_int8<B : IModelFloat, D : IModelFloat, let CLUSTERED : bool>(
 [[Kernel]]
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
 [[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
-[[Precondition("new", "[1, 2, 4].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) && (!gathered || INPUT_ROWS == 1)")]]
+[[Precondition("new", "([1, 2, 4].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) || [8, 16].contains(&ROWS) && INPUT_ROWS == 1) && (!gathered || INPUT_ROWS == 1)")]]
 [[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
 func GemvInt8<B: IModelFloat, D: IModelFloat>(
   Ptr<uint, Access.Read> b,
@@ -426,7 +516,7 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
 [[RequiredSubgroupSize("128")]]
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
 [[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
-[[Precondition("new", "[1, 2, 4].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) && (!gathered || INPUT_ROWS == 1)")]]
+[[Precondition("new", "([1, 2, 4].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) || [8, 16].contains(&ROWS) && INPUT_ROWS == 1) && (!gathered || INPUT_ROWS == 1)")]]
 [[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
 func GemvInt8Native128<B: IModelFloat, D: IModelFloat>(
   Ptr<uint, Access.Read> b,
