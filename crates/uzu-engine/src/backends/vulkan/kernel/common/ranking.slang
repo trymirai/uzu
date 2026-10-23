@@ -18,21 +18,6 @@ public struct WeaverRank : IReduction {
   }
 }
 
-// The FP32 bits of a stored 16-bit score as the CPU widens it, whatever the device's widening keeps of NaNs: BF16 by
-// its bits, F16 NaNs quieted with their payload.
-public uint score_bits<T : IModelFloat16>(T value) {
-  let stored = value.storageBits();
-  if (T.FRACTION_BITS == 7) {
-    return stored << 16;
-  }
-  let bits = asuint(value.toFloat());
-  if ((bits & 0x7fffffffu) <= 0x7f800000u) {
-    return bits;
-  }
-  let payload = (stored & ((1u << T.FRACTION_BITS) - 1u)) << (23 - T.FRACTION_BITS);
-  return ((stored & 0x8000u) << 16) | 0x7fc00000u | payload;
-}
-
 // The monotone key of f32::total_cmp, including signed zeros and signed NaN payloads.
 public uint float_order_key(uint bits) {
   return (bits & 0x80000000u) != 0 ? ~bits : bits ^ 0x80000000u;

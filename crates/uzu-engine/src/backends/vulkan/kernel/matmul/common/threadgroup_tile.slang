@@ -1,5 +1,5 @@
 import definitions;
-import common.matmul;
+import matmul.common.matmul;
 import matmul.common.fragment;
 import matmul.common.loader;
 import matmul.common.simdgroup_fragment_ops;

@@ -247,8 +247,8 @@ struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
     let quad = i % TREE_VERIFY_QUADS;
     if (i < TOKEN_QUADS && row < tree_size) {
       let at = qk_base + row * qk_stride + depth + quad * 4;
-      next_k = float4(k[at].toFloat(), k[at + 1].toFloat(), k[at + 2].toFloat(), k[at + 3].toFloat());
-      next_q = float4(q[at].toFloat(), q[at + 1].toFloat(), q[at + 2].toFloat(), q[at + 3].toFloat());
+      next_k = load_float4(k, at);
+      next_q = load_float4(q, at);
     }
     if (i < H0_QUADS) {
       next_h0 = h0_quads[h0_base + (row * TREE_VERIFY_DIM + depth) / 4 + quad];

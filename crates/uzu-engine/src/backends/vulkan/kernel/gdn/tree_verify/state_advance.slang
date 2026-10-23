@@ -48,8 +48,7 @@ func StateAdvance<T: IModelFloat>(
     let lane = t * num_v_heads + hv;
     let decay = exp(log_decay_buf[lane]);
     let k_offset = t * key_dim + hk * STATE_ADVANCE_DIM + dk;
-    let k = float4(k_norm[k_offset].toFloat(), k_norm[k_offset + 1].toFloat(), k_norm[k_offset + 2].toFloat(),
-                   k_norm[k_offset + 3].toFloat());
+    let k = load_float4(k_norm, k_offset);
     var kv = float4(0.0);
     for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
       rows[r] *= decay;
@@ -57,7 +56,7 @@ func StateAdvance<T: IModelFloat>(
     }
     kv = segment_reduce<VectorSum<4>, STATE_ADVANCE_THREADS>(kv, SIMD_SIZE);
     let v_row = t * value_dim + hv * STATE_ADVANCE_DIM + dv;
-    let value = float4(v[v_row].toFloat(), v[v_row + 1].toFloat(), v[v_row + 2].toFloat(), v[v_row + 3].toFloat());
+    let value = load_float4(v, v_row);
     let delta = beta_buf[lane] * (value - kv);
     for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
       rows[r] += k * delta[r];

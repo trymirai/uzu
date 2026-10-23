@@ -2,7 +2,7 @@ import definitions;
 
 // The KERNEL_SIZE - 1 rows before each token tile, which the in-place DeltaNetConvScan overwrites: packed[tile, tap, c]
 // is row tile tile_tokens - (KERNEL_SIZE - 1) + tap of [conv state ++ x], so tile 0 copies the state row of channel c
-// and later tiles convert x through FP32. The precondition reproduces the CPU's failure when a tile spans fewer rows.
+// and later tiles convert x through FP32. The precondition keeps row tile tile_tokens - (KERNEL_SIZE - 1) in bounds.
 
 static const uint DELTA_NET_CONV_PACK_THREADS = 128;
 

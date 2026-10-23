@@ -8,21 +8,6 @@ import common.workgroup_reduction;
 
 static const uint NORMALIZATION_THREADS = 1024;
 
-// The stored value of a row element after step 1: the shortcut after a residual add, otherwise the input.
-float normalization_stored<InputT: IStorageFloat, OutputT: IStorageFloat>(
-  Ptr<InputT, Access.Read> input,
-  Ptr<OutputT, Access.ReadWrite> output,
-  Ptr<InputT, Access.ReadWrite> shortcut,
-  uint index,
-  bool in_place,
-  bool residual_add
-) {
-  if (residual_add) {
-    return shortcut[index].toFloat();
-  }
-  return in_place_load(input, output, index, in_place);
-}
-
 [[Kernel]] [[Public]]
 [[Precondition("new", "copy_to_shortcut || !residual_add")]]
 func Normalization<
@@ -99,7 +84,7 @@ func Normalization<
     let active = i < element_count;
     OutputT value = OutputT.fromFloat(0.0);
     if (active) {
-      let x = normalization_stored(input, output, shortcut, row + i, in_place, residual_add);
+      let x = residual_add ? shortcut[row + i].toFloat() : in_place_load(input, output, row + i, in_place);
       let normalized = (x - mean) * rms_inv;
       if (has_scales) {
         let scale = scales[i].toFloat() + scale_offset;

@@ -5,15 +5,6 @@ import common.hadamard;
 import generated.activation_type;
 import generated.gated_act_mul;
 
-// `value` clamped to [low, high] like the CPU's f32::clamp, which keeps NaN.
-T clamped<T : IModelFloat>(T value, float low, float high) {
-  let x = value.toFloat();
-  if ((asuint(x) & 0x7fffffffu) > 0x7f800000u) {
-    return value;
-  }
-  return T.fromFloat(x < low ? low : x > high ? high : x);
-}
-
 // One workgroup per tile of a row. The clipped gate, its activation, the clipped value and their product are each
 // rounded to T; the Hadamard transform and quantization run in FP32. Tiles past the row hold zeros so every invocation
 // reaches every barrier.
@@ -75,7 +66,7 @@ func GatedActMul<T: IModelFloat>(
       gate = act_operand[batch * gated_dim + column];
     }
     if (clip_gate) {
-      gate = clamped(gate, gate_clip_min, gate_clip_max);
+      gate = T.fromFloat(clamp(gate.toFloat(), gate_clip_min, gate_clip_max));
     }
     // A custom alpha applies only to SiLU.
     T activated;
@@ -85,7 +76,7 @@ func GatedActMul<T: IModelFloat>(
       activated = T.fromFloat(activate(gate.toFloat(), act_type));
     }
     if (clip_value) {
-      value = clamped(value, value_clip_min, value_clip_max);
+      value = T.fromFloat(clamp(value.toFloat(), value_clip_min, value_clip_max));
     }
     result = T.fromFloat(value.toFloat() * activated.toFloat()).toFloat();
     if (use_hadamard) {

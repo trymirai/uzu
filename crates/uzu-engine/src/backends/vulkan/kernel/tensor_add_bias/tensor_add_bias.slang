@@ -9,11 +9,6 @@ import definitions;
   [[Axis("length", "32")]] uint position,
   [[Specialize]] bool in_place,
 ) {
-  T value;
-  if (in_place) {
-    value = output[position];
-  } else {
-    value = input[position];
-  }
-  output[position] = T.fromFloat(value.toFloat() + bias[position % num_cols].toFloat());
+  let value = in_place_load(input, output, position, in_place);
+  output[position] = T.fromFloat(value + bias[position % num_cols].toFloat());
 }

@@ -10,7 +10,7 @@ import generated.radix_top_k;
 // prefix, and Sort orders them.
 
 static const uint RADIX_TOP_K_THREADS = 256;
-static const uint RADIX_TOP_K_SCORE_PASSES = (bf16.FRACTION_BITS + 16) / 8;
+static const uint RADIX_TOP_K_SCORE_PASSES = 2;
 
 groupshared uint radix_top_k_histogram[RADIX_TOP_K_BUCKETS];
 groupshared uint2 radix_top_k_keys[512];
@@ -22,7 +22,7 @@ groupshared uint radix_top_k_done;
 // The unique descending key of a column: x the f32::total_cmp key of its widened BF16, y the inverted column, so a lower
 // column ranks higher on equal scores. Every valid x is nonzero, so uint2(0, 0) is below all keys.
 uint2 radix_top_k_key(Ptr<bf16, Access.Read> input, uint row_offset, uint column) {
-  return uint2(float_order_key(score_bits(input[row_offset + column])), ~column);
+  return uint2(float_order_key(input[row_offset + column].storageBits() << 16), ~column);
 }
 
 bool radix_top_k_above(uint2 a, uint2 b) {

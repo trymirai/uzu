@@ -1,5 +1,5 @@
 import definitions;
-import common.matmul;
+import matmul.common.matmul;
 import generated.gemm_b_layout;
 import generated.quantization_method;
 import matmul.gemv.common.arguments;

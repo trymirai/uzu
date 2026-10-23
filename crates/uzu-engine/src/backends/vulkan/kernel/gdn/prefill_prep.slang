@@ -19,15 +19,11 @@ public float delta_net_query(float v, float inv) {
   return v * inv * rsqrt(128.0);
 }
 
-// 1 / sqrt(sum + 1e-6) for the sum of squares of the 128 values at source[offset], one per invocation below 128 of a
-// workgroup of at most THREADS. Every invocation must call it.
-public float delta_net_inverse<T: IModelFloat, let THREADS : uint>(Ptr<T, Access.Read> source, uint offset, uint tid) {
-  var square = 0.0;
-  if (tid < DELTA_NET_PREP_THREADS) {
-    let x = source[offset + tid].toFloat();
-    square = x * x;
-  }
-  return rms_inverse<THREADS>(square, 1, 1e-6);
+// 1 / sqrt(sum + 1e-6) for the sum of squares of the 128 values at source[offset], one per invocation of the
+// workgroup. Every invocation must call it.
+float delta_net_inverse<T: IModelFloat>(Ptr<T, Access.Read> source, uint offset, uint tid) {
+  let x = source[offset + tid].toFloat();
+  return rms_inverse<DELTA_NET_PREP_THREADS>(x * x, 1, 1e-6);
 }
 
 [[Kernel]] [[Public]]
@@ -68,8 +64,8 @@ public func DeltaNetPrefillPrep<T: IModelFloat, QKT: IModelFloat>(
   }
   let q_base = tok_offset + hk * DELTA_NET_PREP_THREADS;
   let k_base = tok_offset + key_dim + hk * DELTA_NET_PREP_THREADS;
-  let q_inv = delta_net_inverse<T, DELTA_NET_PREP_THREADS>(in_proj, q_base, tid);
-  let k_inv = delta_net_inverse<T, DELTA_NET_PREP_THREADS>(in_proj, k_base, tid);
+  let q_inv = delta_net_inverse<T>(in_proj, q_base, tid);
+  let k_inv = delta_net_inverse<T>(in_proj, k_base, tid);
   let out_base = token * key_dim + hk * DELTA_NET_PREP_THREADS;
   q_norm_out[out_base + tid] = QKT.fromFloat(delta_net_query(in_proj[q_base + tid].toFloat(), q_inv));
   k_norm_out[out_base + tid] = QKT.fromFloat(in_proj[k_base + tid].toFloat() * k_inv);
