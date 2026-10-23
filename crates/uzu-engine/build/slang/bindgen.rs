@@ -109,7 +109,6 @@ pub fn bindgen(
         let name = format_ident!("{}", parameter.name.as_ref());
         let ty: Type = syn::parse_str(text)?;
         let value = match option_inner(&ty) {
-            _ if text.as_ref() == "bool" => quote! { vk::Bool32::from(#name) },
             Some(inner) => match syn::parse2(word(&name, inner, &["u32"])?)? {
                 Expr::Paren(inner) => {
                     let inner = inner.expr;
@@ -117,7 +116,7 @@ pub fn bindgen(
                 },
                 _ => quote! { #name.unwrap_or(0) },
             },
-            None => word(&name, &ty, &["u32"])?,
+            None => word(&name, &ty, &["u32", "bool"])?,
         };
         let constant = specialization_name(kernel_name, &parameter.name);
         let (_, id) = abi
@@ -539,13 +538,10 @@ pub fn bindgen(
         },
     };
 
-    let specialization_count = specializations.len();
-    let (specialization_names, specialization_types, specialization_values) =
-        specializations.iter().map(|(name, ty, value, _)| (name, ty, value)).multiunzip::<(Vec<_>, Vec<_>, Vec<_>)>();
-    let specialization_entries = specializations.iter().enumerate().map(|(index, (.., id))| {
-        let offset = 4 * index as u32;
-        quote! { vk::SpecializationMapEntry::default().constant_id(#id).offset(#offset).size(4) }
-    });
+    let (specialization_names, specialization_types, specialization) = specializations
+        .iter()
+        .map(|(name, ty, value, id)| (name, ty, quote! { (#id, #value) }))
+        .multiunzip::<(Vec<_>, Vec<_>, Vec<_>)>();
     let block_size = abi.block_size;
     let block_size_u32 = u32::try_from(block_size)?;
     // A pinned subgroup size, which the workgroup must fill with whole subgroups within the device's subgroup limit.
@@ -566,43 +562,40 @@ pub fn bindgen(
         },
         None => (quote! { None }, quote! {}),
     };
+    let key = |variant: Option<TokenStream>| {
+        quote! {
+            VkComputePipelineKey {
+                spirv,
+                entry_point,
+                specialization: vec![#(#specialization,)* #variant],
+                push_constant_size: #block_size_u32,
+                required_subgroup_size: #required_subgroup_size,
+            }
+        }
+    };
     // One pipeline, or one per `[[PipelineVariants]]` value with its constant in the last specialization slot.
     let (pipeline_field, pipelines, pipeline) = match &pipeline_variants {
-        None => (
-            quote! { pipeline: std::sync::Arc<VkComputePipeline> },
-            quote! {
-                let specialization_data: [[u8; 4]; #specialization_count] =
-                    [#(#specialization_values.to_ne_bytes()),*];
-                let specialization_entries: [vk::SpecializationMapEntry; #specialization_count] = [#(#specialization_entries),*];
-                let pipeline = context.compute_pipeline(
-                    spirv, entry_point, &specialization_entries, specialization_data.as_flattened(), #block_size_u32,
-                    #required_subgroup_size,
-                )?;
-                Ok(Self {
-                    pipeline,
-                    #(#referenced,)*
-                })
-            },
-            quote! { &self.pipeline },
-        ),
+        None => {
+            let key = key(None);
+            (
+                quote! { pipeline: std::sync::Arc<VkComputePipeline> },
+                quote! {
+                    let pipeline = context.compute_pipeline(#key)?;
+                    Ok(Self {
+                        pipeline,
+                        #(#referenced,)*
+                    })
+                },
+                quote! { &self.pipeline },
+            )
+        },
         Some((selector, paths, id)) => {
-            let (count, offset, indices) = (paths.len(), 4 * specialization_count as u32, 0..paths.len());
+            let (count, indices) = (paths.len(), 0..paths.len());
+            let keys = paths.iter().map(|path| key(Some(quote! { (#id, #path as u32) })));
             (
                 quote! { pipelines: [std::sync::Arc<VkComputePipeline>; #count] },
                 quote! {
-                    let mut specialization_data: [[u8; 4]; #specialization_count + 1] =
-                        [#(#specialization_values.to_ne_bytes(),)* [0; 4]];
-                    let specialization_entries: [vk::SpecializationMapEntry; #specialization_count + 1] = [
-                        #(#specialization_entries,)*
-                        vk::SpecializationMapEntry::default().constant_id(#id).offset(#offset).size(4)
-                    ];
-                    let pipelines = [#({
-                        specialization_data[#specialization_count] = (#paths as u32).to_ne_bytes();
-                        context.compute_pipeline(
-                            spirv, entry_point, &specialization_entries, specialization_data.as_flattened(),
-                            #block_size_u32, #required_subgroup_size,
-                        )?
-                    }),*];
+                    let pipelines = [#(context.compute_pipeline(#keys)?),*];
                     Ok(Self {
                         pipelines,
                         #(#referenced,)*
@@ -694,9 +687,9 @@ pub fn bindgen(
     };
 
     Ok(quote! {
-        use ash::vk;
-
-        use crate::backends::vulkan::{Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkContext};
+        use crate::backends::vulkan::{
+            Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkComputePipelineKey, VkContext,
+        };
 
 
         #(#stride_checks)*

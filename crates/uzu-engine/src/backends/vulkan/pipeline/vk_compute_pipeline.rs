@@ -34,12 +34,12 @@ impl VkComputePipeline {
         let module = unsafe { device.create_shader_module(&module_info, None) }
             .inspect_err(|_| unsafe { device.destroy_pipeline_layout(pipeline_layout, None) })?;
 
-        let entries = key
-            .specialization_entries
-            .iter()
-            .map(|&(id, offset, size)| vk::SpecializationMapEntry::default().constant_id(id).offset(offset).size(size))
+        let entries = (0..)
+            .zip(&key.specialization)
+            .map(|(index, &(id, _))| vk::SpecializationMapEntry::default().constant_id(id).offset(4 * index).size(4))
             .collect::<Vec<_>>();
-        let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&key.specialization_data);
+        let data = key.specialization.iter().map(|&(_, value)| value).collect::<Vec<_>>();
+        let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(bytemuck::cast_slice(&data));
         let mut subgroup_size = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default();
         let mut stage = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::COMPUTE)

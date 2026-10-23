@@ -188,21 +188,8 @@ impl VkContext {
     /// The live pipeline of this recipe or a new one; concurrent first requests may each compile, the first one wins.
     pub fn compute_pipeline(
         &self,
-        spirv: &'static [u8],
-        entry_point: &'static str,
-        specialization_entries: &[vk::SpecializationMapEntry],
-        specialization_data: &[u8],
-        push_constant_size: u32,
-        required_subgroup_size: Option<u32>,
+        key: VkComputePipelineKey,
     ) -> Result<Arc<VkComputePipeline>, Error> {
-        let key = VkComputePipelineKey::new(
-            spirv,
-            entry_point,
-            specialization_entries,
-            specialization_data,
-            push_constant_size,
-            required_subgroup_size,
-        );
         let live = self.compute_pipelines.lock().get(&key).and_then(Weak::upgrade);
         if let Some(pipeline) = live {
             return Ok(pipeline);
