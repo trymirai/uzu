@@ -7,12 +7,18 @@ use crate::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, FullPrecisionInput, SigmoidGateKernel},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, FullPrecisionInput,
+                Int8Input, KVFormat, SigmoidGateKernel,
+            },
         },
         cpu::Cpu,
     },
-    data_type::DataTypeRepr,
-    encodable_block::{mixer::attention::KVCacheView, sampling::PRng},
+    data_type::{DataType, DataTypeRepr},
+    encodable_block::{
+        mixer::attention::{KVCacheView, kv_storage::KVStorage},
+        sampling::PRng,
+    },
     tests::{
         assert::assert_eq_float,
         helpers::{
@@ -25,21 +31,21 @@ use crate::{
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
-pub fn attention_data(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>) {
+fn attention_data(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>) {
     let (head_dim, _, num_groups, suffix_length, prefix_length, _) = shape;
     let row = num_groups * head_dim;
     let count = (prefix_length + suffix_length) * row;
     (fill_attention(count, 1.0), fill_attention(count, 2.0))
 }
 
-pub fn fill_attention(
+fn fill_attention(
     count: usize,
     phase: f32,
 ) -> Vec<bf16> {
     (0..count).map(|i| bf16::from_f32(((i as f32) * 0.017 + phase).sin() * 0.5)).collect()
 }
 
-pub fn run_attention<B: Backend>(
+fn run_attention<B: Backend>(
     context: &B::Context,
     shape: AttentionShape,
     trie_nodes: Option<&[GpuTrieNode]>,
@@ -285,4 +291,144 @@ fn attention_gate_matches_standalone_gate_on_gpu() {
             check_attention_gate::<B>(context.as_ref(), suffix_length, prefix_length);
         }
     });
+}
+
+#[uzu_test]
+fn int8_attention_matches_cpu() {
+    for_each_non_cpu_backend!(|B| int8_attention_matches_cpu_impl::<B>());
+}
+
+fn int8_attention_matches_cpu_impl<B: Backend>() {
+    let (context, cpu) = (create_context::<B>(), block_on(<Cpu as Backend>::Context::new()).unwrap());
+    let trie: [GpuTrieNode; 3] = bytemuck::cast([0u32, 2, 0, 1, 1, 1, 2, 2, 1]); // (start, end, height) per token
+    // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)
+    const NAN: u16 = bf16::NAN.to_bits();
+    const DENORMAL: u16 = 1; // 1 / scale overflows to inf
+    for (q_heads, suffix, prefix, use_trie, reader, poison) in [
+        (24, 1, 1024, false, false, NAN),
+        (16, 16, 1024, false, false, DENORMAL),
+        (24, 80, 16, false, false, NAN),
+        (24, 3, 16, true, true, NAN),
+        (24, 8, 32, false, false, DENORMAL),
+        (16, 3, 37, true, false, DENORMAL),
+        (32, 1, 1024, false, false, NAN),
+        (32, 1024, 24, false, false, bf16::MAX.to_bits()),
+        (32, 3, 1024, true, false, bf16::INFINITY.to_bits()),
+    ] {
+        let (head_dim, kv_heads) = if q_heads == 32 {
+            (128, 2)
+        } else {
+            (256, 4)
+        };
+        let (shape, nodes) = ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
+        let config = default_attention_config::<bf16>(head_dim, q_heads, kv_heads, true);
+        let kernel = <B::Kernels as Kernels>::AttentionKernel::new(&context, config).unwrap();
+        if !kernel.supports_int8() {
+            return;
+        }
+        // Fused QKV rows over the data `run_attention` uses; its queries are head-major.
+        let ((keys, values), stride) = (attention_data(shape), (q_heads + 2 * kv_heads) * head_dim);
+        let mut rows = vec![bf16::ZERO; (prefix + suffix) * stride];
+        for (row, (k, v)) in
+            rows.chunks_mut(stride).zip(keys.chunks(kv_heads * head_dim).zip(values.chunks(kv_heads * head_dim)))
+        {
+            let (key_row, value_row) = row[q_heads * head_dim..].split_at_mut(kv_heads * head_dim);
+            key_row.copy_from_slice(k);
+            value_row.copy_from_slice(v);
+        }
+        for (index, query) in fill_attention(q_heads * suffix * head_dim, 0.5).chunks(head_dim).enumerate() {
+            rows[(prefix + index % suffix) * stride + index / suffix * head_dim..][..head_dim].copy_from_slice(query);
+        }
+        let mut cache = KVStorage::<B>::create_empty(
+            KVFormat::INT8,
+            kv_heads as u32,
+            head_dim as u32,
+            2048,
+            DataType::BF16,
+            &context,
+        )
+        .unwrap();
+        cache.prepare(2048).unwrap();
+        let KVStorage::Int8(kv, _) = &mut cache else {
+            unreachable!()
+        };
+        let mut fill = context.create_command_buffer(None, None).unwrap();
+        let pattern =
+            create_buffer_with_data::<B, u16>(&context, &vec![poison; kv.k_scales.size() / size_of::<bf16>()]);
+        for buffer in [&mut kv.k_codes, &mut kv.v_codes] {
+            fill.encode_fill(buffer.as_mut(), poison as u8);
+        }
+        for buffer in [&mut kv.k_scales, &mut kv.v_scales] {
+            fill.encode_copy(&pattern, buffer.as_mut());
+        }
+        submit_command_buffer(fill);
+        let mut step = |rows: &[bf16], prefix: usize, trie: Option<&[GpuTrieNode]>, append_kv: bool| {
+            let suffix = rows.len() / stride;
+            let query_rows = q_heads / kv_heads * suffix;
+            let prepare = <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+                &context,
+                DataType::BF16,
+                DataType::F32,
+                head_dim as u32,
+                false,
+                true,
+                kv_heads as u32,
+                append_kv,
+            )
+            .unwrap();
+            let mut query_codes = create_buffer::<B, i8>(&context, kv_heads * query_rows * head_dim);
+            let mut query_scales = create_buffer::<B, bf16>(&context, kv_heads * query_rows);
+            let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+            let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
+            prepare.encode(
+                &create_buffer_with_data::<B, bf16>(&context, rows),
+                None::<&mut B::GlobalBuffer>,
+                Some(&mut query_codes),
+                Some(&mut query_scales),
+                append_kv.then_some(kv.k_codes.as_mut()),
+                append_kv.then_some(kv.k_scales.as_mut()),
+                append_kv.then_some(kv.v_codes.as_mut()),
+                append_kv.then_some(kv.v_scales.as_mut()),
+                None::<&B::GlobalBuffer>,
+                None::<&B::GlobalBuffer>,
+                q_heads as u32,
+                None,
+                prefix as u32,
+                stride as u32,
+                suffix as u32,
+                query_rows as u32,
+                &mut command_buffer,
+            );
+            let input = AttentionInput::Int8(Int8Input {
+                query_codes: &query_codes,
+                query_scales: &query_scales,
+                k_codes: kv.k_codes.as_ref(),
+                k_scales: kv.k_scales.as_ref(),
+                v_codes: kv.v_codes.as_ref(),
+                v_scales: kv.v_scales.as_ref(),
+            });
+            let arguments = AttentionArguments {
+                sinks: None,
+                suffix_length: suffix as u32,
+                trie: trie.as_ref(),
+                cache: KVCacheView::full(prefix as u32),
+                gate: None::<&B::GlobalBuffer>,
+            };
+            let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
+            let mut output = create_buffer::<B, bf16>(&context, suffix * q_heads * head_dim);
+            command_buffer.encode_copy(&pooled, &mut output);
+            drop((pooled, trie));
+            submit_command_buffer(command_buffer);
+            buffer_to_vec::<B, bf16>(&context, &output)
+        };
+        step(&rows[..prefix * stride], 0, None, true);
+        let mut actual = step(&rows[prefix * stride..], prefix, nodes, true);
+        if reader {
+            // The reader's own K/V rows are junk: appending them would change the output.
+            rows[prefix * stride..].chunks_mut(stride).for_each(|row| row[q_heads * head_dim..].fill(bf16::ONE));
+            actual = step(&rows[prefix * stride..], prefix, nodes, false);
+        }
+        let label = format!("int8 attention q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}");
+        assert_eq_float::<bf16>(&run_attention::<Cpu>(cpu.as_ref(), shape, nodes, None), &actual, 1e-2, &label);
+    }
 }
