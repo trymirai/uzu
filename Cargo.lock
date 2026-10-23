@@ -6240,6 +6240,16 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "prettyplease"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
@@ -10071,6 +10081,7 @@ dependencies = [
  "criterion",
  "depfile",
  "derive_more",
+ "dirs",
  "futures",
  "half",
  "is_close",
@@ -10113,6 +10124,7 @@ dependencies = [
  "tokio",
  "uzu",
  "uzu-engine-macros",
+ "vk-mem",
  "walkdir",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -10158,6 +10170,17 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vk-mem"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d7ba61d9155d2a6eb77693f6e83953c392cda219d2882fb0a95f781c5eb06ec"
+dependencies = [
+ "ash",
+ "bitflags 2.13.2",
+ "cc",
+]
 
 [[package]]
 name = "vsimd"

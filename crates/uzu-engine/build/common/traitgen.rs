@@ -94,7 +94,7 @@ pub fn traitgen_all(
 ) -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
-    let mut kernels: HashMap<KernelPath, Box<[Kernel]>> = HashMap::new();
+    let mut kernels: HashMap<KernelPath, Vec<Kernel>> = HashMap::new();
 
     let mut mismatches = Vec::new();
 
@@ -107,8 +107,6 @@ pub fn traitgen_all(
                         file_path.join("::")
                     ));
                 }
-            } else {
-                kernels.insert(file_path, file_kernels);
             }
         }
     }

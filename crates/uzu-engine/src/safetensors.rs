@@ -14,6 +14,11 @@ use crate::{
     utils::{file::File, size_for_shape::size_for_shape, strict_serde::DeserializeStrictOwned},
 };
 
+#[cfg(windows)]
+mod windows_file_ext;
+#[cfg(windows)]
+use windows_file_ext::WindowsFileExt;
+
 #[derive(Debug, Error)]
 pub enum ParameterLoaderError<B: Backend> {
     #[error("IO error: {0}")]

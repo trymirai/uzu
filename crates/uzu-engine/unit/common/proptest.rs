@@ -5,6 +5,8 @@ use proptest::prelude::*;
 
 #[cfg(backend = "metal")]
 use crate::backends::metal::Metal;
+#[cfg(backend = "vulkan")]
+use crate::backends::vulkan::Vulkan;
 use crate::{
     backends::{
         common::{Backend, Context},
@@ -70,6 +72,8 @@ impl<T: ComparableTestResults> TestResults<T> {
     pub fn compare_results(&self) -> Result<(), TestCaseError> {
         #[cfg(backend = "metal")]
         T::compare("metal", &self.metal, &self.cpu)?;
+        #[cfg(backend = "vulkan")]
+        T::compare("vulkan", &self.vulkan, &self.cpu)?;
 
         Ok(())
     }

@@ -2,30 +2,25 @@ use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-use super::super::FullPrecisionInput;
 use crate::{
     backends::{
         common::{
-            Backend, BufferRef, CommandBufferEncoding, Context, Kernels,
+            Backend, CommandBufferEncoding, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareInt8Kernel, Int8Input, KVFormat,
-                SigmoidGateKernel,
+                tests::attention::attention_kernel_test::{attention_data, fill_attention, run_attention},
             },
         },
         cpu::Cpu,
         metal::Metal,
     },
-    data_type::{DataType, DataTypeRepr},
-    encodable_block::{
-        mixer::attention::{KVCacheView, kv_storage::KVStorage},
-        sampling::PRng,
-    },
+    data_type::DataType,
+    encodable_block::mixer::attention::{KVCacheView, kv_storage::KVStorage},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
-    trie::TrieNode,
 };
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);

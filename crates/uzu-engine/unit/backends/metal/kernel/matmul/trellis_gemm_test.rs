@@ -1,66 +1,23 @@
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{
-            Backend, Context, Kernels,
-            kernel::matmul::{
-                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape,
-                TRELLIS_CODES_TAIL_BYTES, TrellisFormat,
-            },
+        common::kernel::{
+            matmul::{MatmulShape, TRELLIS_CODES_TAIL_BYTES, TrellisFormat},
+            tests::trellis_test::projection::{CODES_TAIL_BYTES, check_projection, format, whole_blocks},
         },
         metal::{
             Metal,
-            context::MetalContext,
             gpu_types::gemm::GemmTiling,
             kernel::matmul::{GemmKernel, MatmulOutputWork, gemm::GemmEngine},
         },
     },
     data_type::DataType,
-    tests::{
-        helpers::{buffer_to_vec, create_buffer_with_data, submit_command_buffer},
-        util::shared_metal_context,
-    },
+    tests::util::shared_metal_context,
 };
 
-const V4_T8: TrellisFormat = TrellisFormat {
-    vector_width: 4,
-    transition_bits: 8,
-    restart_columns: Some(64),
-};
-const V2_T6: TrellisFormat = TrellisFormat {
-    vector_width: 2,
-    transition_bits: 6,
-    restart_columns: None,
-};
-const V2_T4: TrellisFormat = TrellisFormat {
-    vector_width: 2,
-    transition_bits: 4,
-    restart_columns: None,
-};
-const V4_T6: TrellisFormat = TrellisFormat {
-    vector_width: 4,
-    transition_bits: 6,
-    restart_columns: Some(64),
-};
-const V4_T7: TrellisFormat = TrellisFormat {
-    vector_width: 4,
-    transition_bits: 7,
-    restart_columns: Some(64),
-};
-const V4_T6_R40: TrellisFormat = TrellisFormat {
-    vector_width: 4,
-    transition_bits: 6,
-    restart_columns: Some(40),
-};
-const V4_T8_NO_RESTART: TrellisFormat = TrellisFormat {
-    vector_width: 4,
-    transition_bits: 8,
-    restart_columns: None,
-};
+const _: () = assert!(CODES_TAIL_BYTES >= TRELLIS_CODES_TAIL_BYTES, "the shared projection check pads too little");
 
 // Tape 2: each block's bits reversed, LSB first; state i is the LE 16-bit field at bit B - 16 - i*T.
 fn decode_state(
@@ -224,29 +181,27 @@ fn run_projection(
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::v4_t8(V4_T8)]
-#[case::v2_t6(V2_T6)]
-#[case::v2_t4(V2_T4)]
-#[case::v4_t6(V4_T6)]
-#[case::v4_t7(V4_T7)]
-#[case::v4_t6_r40(V4_T6_R40)]
-#[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
-fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
+#[case::v4_t8(format(4, 8, Some(64)))]
+#[case::v2_t6(format(2, 6, None))]
+#[case::v2_t4(format(2, 4, None))]
+#[case::v4_t6(format(4, 6, Some(64)))]
+#[case::v4_t7(format(4, 7, Some(64)))]
+#[case::v4_t6_r40(format(4, 6, Some(40)))]
+#[case::v4_t8_no_restart(format(4, 8, None))]
+fn trellis_forced_plans_match_tape_levels(#[case] format: TrellisFormat) {
     let context = shared_metal_context();
-    if !context.supports_mxu {
+    if !context.supports_mxu || !whole_blocks(format, 64) {
         return;
     }
-    // A projection's K is a whole number of restart blocks.
-    let whole_blocks = |k: usize| k.is_multiple_of(format.restart_columns.unwrap_or(1) as usize);
-    for dimensions in CASES.into_iter().filter(|&(_, _, k)| whole_blocks(k)) {
-        run_projection(&context, format, dimensions, None);
-    }
-    // The forced plans' K are whole 64-column blocks.
-    if whole_blocks(64) {
-        run_projection(&context, format, (129, 132, 1024), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
-        run_projection(&context, format, (129, 132, 64), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
-        run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile32x64x256_Simdgroups2x2, 1)));
-        run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
-        run_projection(&context, format, (7, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
+    for (m, n, k, tiling) in FORCED_PLANS {
+        check_projection::<Metal>(&context, format, (m, n, k), |arguments, command_buffer| {
+            let shape = MatmulShape::from_arguments(&arguments);
+            let mut gemm = GemmKernel::new(DataType::BF16, DataType::BF16, DataType::BF16);
+            let mut plan = gemm.select_plan_for_engine(&shape, GemmEngine::Mxu, &context).unwrap();
+            plan.tiling = tiling;
+            plan.split_k = 1;
+            let output_work = MatmulOutputWork::new(&context, DataType::BF16, DataType::BF16).unwrap();
+            gemm.encode_plan(arguments, plan, &output_work, command_buffer).unwrap();
+        });
     }
 }

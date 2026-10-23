@@ -7,7 +7,7 @@ use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
-use crate::{backends::metal::Metal, tests::matmul::run_quant_cpu};
+use crate::{backends::metal::Metal, tests::matmul::run_quant};
 use crate::{
     backends::{
         common::{
@@ -165,7 +165,7 @@ fn group_major_gemv_bf16(
 ) {
     let context = block_on(<Metal as Backend>::Context::new()).expect("Metal context");
     let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
-    let reference = run_quant_cpu::<bf16>(&input);
+    let reference = run_quant::<Cpu, bf16>(&input);
 
     let buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let actual = run_gemv::<Metal, bf16>(

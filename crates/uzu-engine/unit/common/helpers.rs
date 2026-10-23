@@ -1,4 +1,4 @@
-use std::{mem::size_of, sync::Arc};
+use std::{mem::size_of, ops::Deref, sync::Arc};
 
 use futures::executor::block_on;
 
@@ -33,6 +33,11 @@ macro_rules! for_each_non_cpu_backend {
             type $B = crate::backends::metal::Metal;
             $body
         }
+        #[cfg(backend = "vulkan")]
+        {
+            type $B = crate::backends::vulkan::Vulkan;
+            $body
+        }
         {
             if false {
                 type $B = crate::backends::cpu::Cpu;
@@ -42,6 +47,26 @@ macro_rules! for_each_non_cpu_backend {
     }};
 }
 pub(crate) use for_each_non_cpu_backend;
+
+pub fn default_attention_config<T: DataTypeRepr>(
+    head_dim: usize,
+    num_q_heads: usize,
+    num_groups: usize,
+    is_causal: bool,
+) -> AttentionKernelConfig {
+    AttentionKernelConfig {
+        head_dim: head_dim as u32,
+        num_groups: num_groups as u32,
+        num_q_heads: num_q_heads as u32,
+        has_sinks: false,
+        gate_row_stride: None,
+        is_kv_cache_ring: false,
+        is_causal,
+        sliding_window_size: None,
+        scale: Some(1.0 / (head_dim as f32).sqrt()),
+        data_type: T::data_type(),
+    }
+}
 
 pub fn buffer_size_bytes<T>(elements_count: usize) -> usize {
     elements_count * size_of::<T>()

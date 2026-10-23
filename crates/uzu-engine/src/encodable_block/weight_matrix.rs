@@ -1,4 +1,5 @@
 use derive_more::Debug;
+use futures::executor::block_on;
 use thiserror::Error;
 
 use crate::{
@@ -222,6 +223,16 @@ impl<B: Backend> WeightMatrix<B> {
         (quantized.weights_layout, quantized.signed_codes) = optimize(&mut self.values)?;
         Ok(())
     }
+}
+
+fn flip_sign_bits(
+    codes: &mut [u8],
+    sign_flip_mask: u8,
+) {
+    let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+    let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(codes);
+    words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+    prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
 }
 
 fn physical_shape(

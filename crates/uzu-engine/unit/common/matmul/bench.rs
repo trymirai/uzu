@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::Bencher;
 use futures::executor::block_on;
 

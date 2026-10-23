@@ -1,6 +1,7 @@
 use std::mem::{size_of, size_of_val};
 
 use futures::executor::block_on;
+use half::bf16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
@@ -12,8 +13,9 @@ use crate::{
             kernel::{
                 ActivationFormat, ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
-                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
+                    MatmulOutput, MatmulShape, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    WeightsLayout,
                 },
             },
         },
@@ -51,6 +53,9 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
+    /// Output random Hadamard factors, then an output bias after them, as RHT-wrapped linears finish.
+    pub output_rht_factors: Option<Vec<i32>>,
+    pub output_bias: Option<Vec<T>>,
 }
 
 fn mode_for_bits(bits: u32) -> QuantizationMode {
@@ -59,6 +64,15 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
         8 => QuantizationMode::U8,
         _ => unreachable!("unsupported bits: {bits}"),
     }
+}
+
+/// The first `to` of `from` equal rows of `values`.
+fn first_rows<V: Clone>(
+    values: &[V],
+    from: u32,
+    to: u32,
+) -> Vec<V> {
+    values[..values.len() / from as usize * to as usize].to_vec()
 }
 
 fn pad<T: DataTypeRepr>(
@@ -182,7 +196,31 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
             prepared_a: None,
+            output_rht_factors: None,
+            output_bias: None,
         }
+    }
+
+    /// Output RHT over n's 32-column blocks with sign factors, and with `bias` an output bias after it.
+    pub fn with_output_rht(
+        mut self,
+        bias: bool,
+    ) -> Self {
+        assert!(self.n.is_multiple_of(32), "output RHT needs whole 32-column blocks");
+        self.output_rht_factors = Some(
+            (0..self.n)
+                .map(|column| {
+                    if column * 7 % 3 == 0 {
+                        -1
+                    } else {
+                        1
+                    }
+                })
+                .collect(),
+        );
+        self.output_bias =
+            bias.then(|| (0..self.n).map(|column| T::from(0.3 + 0.05 * (column % 4) as f32).unwrap()).collect());
+        self
     }
 
     pub fn with_signed_weight_codes(mut self) -> Self {
@@ -274,6 +312,26 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
         self
     }
 
+    /// The first `n` output columns: their weight rows, metadata and output transform, with the same activations.
+    pub fn columns(
+        &self,
+        n: u32,
+    ) -> Self {
+        let rows = self.n;
+        Self {
+            w_packed: first_rows(&self.w_packed, rows, n),
+            scales: first_rows(&self.scales, rows, n),
+            zero_points: self.zero_points.as_deref().map(|zero_points| first_rows(zero_points, rows, n)),
+            biases: self.biases.as_deref().map(|biases| first_rows(biases, rows, n)),
+            x: self.x.clone(),
+            n,
+            prepared_a: self.prepared_a.clone(),
+            output_rht_factors: self.output_rht_factors.as_deref().map(|factors| first_rows(factors, rows, n)),
+            output_bias: self.output_bias.as_deref().map(|bias| first_rows(bias, rows, n)),
+            ..*self
+        }
+    }
+
     pub fn weights_for_upload(&self) -> Vec<u32> {
         let mut words = self.w_packed.clone();
         let sign_flip_mask = self.signed_codes.then(|| self.mode.weight_codes_sign_flip_mask()).flatten();
@@ -356,6 +414,11 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
                 .as_ref()
                 .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
+            output_rht_factors: input
+                .output_rht_factors
+                .as_ref()
+                .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
+            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
             weights_layout: Default::default(),
             _t: std::marker::PhantomData,
         }
@@ -427,6 +490,8 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         output_bias,
         output_rht_factors,
         y,
+        output_rht_factors,
+        output_bias,
         weights_layout,
         ..
     } = buffers;
