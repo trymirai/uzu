@@ -3,7 +3,7 @@ pub mod harness;
 pub mod quant;
 pub mod shape;
 
-pub use bench::{iter_encode_loop, iter_encode_loop_named, time_encode_loop};
+pub use bench::{iter_encode_loop, iter_encode_loop_named};
 pub use harness::{Case, Input, cpu_reference, deterministic_input, run};
 pub use quant::{
     QuantBuffers, QuantInput, production_quant_buffers, production_quant_input, quant_arguments, quant_tolerance,

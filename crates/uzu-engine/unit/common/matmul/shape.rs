@@ -79,32 +79,24 @@ pub fn bench_quant_gemv_shapes(bits: u32) -> impl Iterator<Item = Shape> {
         .flat_map(move |&(n, k)| ms.iter().map(move |&m| Shape::new(m, k, n)))
 }
 
-/// Checkpoint products by label, K and N, as the 0.8B, 4B and 27B checkpoint headers record them. Tied readouts multiply
-/// by the embedding table; the 27B readout is its own linear.
 const QWEN3_LAYERS: &[(&str, u32, u32)] = &[
-    ("0.8b_qkvg", 1024, 5120),
+    ("0.8b_qkv", 1024, 3072),
     ("0.8b_o", 2048, 1024),
+    ("0.8b_gate", 1024, 2048),
     ("0.8b_up", 1024, 7168),
     ("0.8b_down", 3584, 1024),
     ("0.8b_in", 1024, 8224),
-    ("0.8b_tied_readout", 1024, 248320),
     ("2b_qkv", 2048, 3072),
     ("2b_o", 2048, 2048),
     ("2b_up", 2048, 12288),
     ("2b_down", 6144, 2048),
     ("2b_in", 2048, 8224),
-    ("4b_qkvg", 2560, 10240),
+    ("4b_qkv", 2560, 6144),
     ("4b_o", 4096, 2560),
+    ("4b_gate", 2560, 4096),
     ("4b_up", 2560, 18432),
     ("4b_down", 9216, 2560),
     ("4b_in", 2560, 12352),
-    ("4b_tied_readout", 2560, 248320),
-    ("27b_qkvg", 5120, 14336),
-    ("27b_o", 6144, 5120),
-    ("27b_gate_up", 5120, 34816),
-    ("27b_down", 17408, 5120),
-    ("27b_in", 5120, 16480),
-    ("27b_readout", 5120, 248320),
 ];
 
 pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shape)> {
@@ -113,8 +105,7 @@ pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shap
     } else {
         256
     };
-    // Measured requests use 12/395 rows; the 27B verifier/readout also use 15/16.
-    let ms = &[1u32, 2, 4, 8, 12, 15, 16, 32, 64, 128, 256, 395, 512];
+    let ms = &[1u32, 2, 4, 8, 16, 32, 64];
     QWEN3_LAYERS
         .iter()
         .filter(move |&&(_, k, _)| k.is_multiple_of(block_size))
