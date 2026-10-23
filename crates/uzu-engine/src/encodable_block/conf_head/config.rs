@@ -11,14 +11,6 @@ pub struct ConfidenceHeadTreeConfig {
     pub relations: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct ConfidenceHeadSampling {
-    pub temperature: f32,
-    pub top_k: Option<u32>,
-    pub top_p: Option<f32>,
-    pub min_p: Option<f32>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(from = "ConfidenceHeadFile")]
 pub struct ConfidenceHeadConfig {
@@ -95,7 +87,6 @@ struct ConfidenceHeadFile {
 struct TrainedWith {
     speculator_sha256: String,
     tree: TrainedTree,
-    // sampling: ConfidenceHeadSampling,
 }
 
 #[derive(Deserialize)]

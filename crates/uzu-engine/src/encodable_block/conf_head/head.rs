@@ -253,6 +253,8 @@ impl<B: Backend> ConfidenceHead<B> {
             let end_byte = start_byte + count as usize * row_bytes;
             command_buffer.encode_copy(&projected, (&mut table_buffer).subrange_mut(start_byte..end_byte));
         }
+
+        drop(ids_buf);
         command_buffer.end_encoding().submit().wait_until_completed().await.map_err(ConfidenceHeadError::Backend)?;
 
         Ok(self.token_features.get_or_init(|| table_buffer))

@@ -10,6 +10,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
 
+    // TODO agolokoz:
+    // let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let model = engine.model("alibaba:qwen3.8:27b:mirai:mirai-m:4".to_string()).await?.ok_or("Model not found")?;
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
