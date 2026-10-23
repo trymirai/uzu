@@ -164,6 +164,34 @@ impl Storage {
         Ok(self.model(identifier).await?.state())
     }
 
+    pub async fn refresh_state(
+        &self,
+        identifier: &ModelIdentifier,
+    ) -> Result<DownloadState, StorageError> {
+        let _refresh = self.refresh_lock.lock().await;
+        {
+            let mut tasks = self.tasks.lock().await;
+            let task = tasks.get(identifier).ok_or_else(|| StorageError::ModelNotFound {
+                identifier: identifier.clone(),
+            })?;
+            if !task.state().is_in_progress() {
+                if let Ok(native) = task.ready().await {
+                    native.pause().await?;
+                }
+                let replacement = Arc::new(ModelTask::new(
+                    identifier.clone(),
+                    task.request.clone(),
+                    task.state().total_bytes,
+                    Arc::clone(&self.download_manager),
+                    self.events.clone(),
+                    Some(Arc::clone(task)),
+                ));
+                tasks.insert(identifier.clone(), replacement);
+            }
+        }
+        self.ready_state(identifier).await
+    }
+
     pub async fn states(&self) -> HashMap<ModelIdentifier, DownloadState> {
         self.tasks.lock().await.iter().map(|(identifier, task)| (identifier.clone(), task.state())).collect()
     }
