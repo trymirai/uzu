@@ -44,4 +44,4 @@ pub struct Unsupported<B: Backend> {
 
 #[cfg(test)]
 #[path = "../../../../unit/backends/common/kernel/mod.rs"]
-mod tests;
+pub mod tests;

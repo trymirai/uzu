@@ -11,7 +11,7 @@ use crate::backends::common::{Backend, Buffer, BufferCpuAccessible};
 // TODO: also I'm not a big fan of this implementation. The implementation can be clean when BufferRef is on T
 // TODO: but then &(impl BufferRef + ?Sized) everywhere it's used is much worse than a slightly messy trait system
 
-pub trait BufferRef: Copy {
+pub trait BufferRef: Copy + Send {
     type Backend: Backend;
     type Buffer: Buffer<Backend = Self::Backend> + ?Sized;
 

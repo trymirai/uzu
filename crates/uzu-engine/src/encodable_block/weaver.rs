@@ -58,9 +58,10 @@ pub struct ProposalNode {
 }
 
 impl<B: Backend> EncodedWeaverTree<B> {
+    /// The proposed nodes, once the command buffer that encoded the tree completed.
     pub fn read_nodes(self) -> Vec<ProposalNode> {
-        let packed_tree = &self.packed_tree.copyout::<u32>();
-        let frontier = &self.frontier.copyout::<u32>();
+        let packed_tree = self.packed_tree.as_slice::<u32>();
+        let frontier = self.frontier.as_slice::<u32>();
 
         let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
         let frontier_capacity = frontier.len() / FrontierIdx::COUNT;
@@ -674,10 +675,10 @@ impl<B: Backend> Weaver<B> {
         };
 
         let mut packed_tree_readback =
-            command_buffer.context().create_buffer(packed_tree.size()).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.context().create_readback_buffer(packed_tree.size()).map_err(WeaverEncodeError::Backend)?;
         command_buffer.encode_copy(&packed_tree, &mut packed_tree_readback);
         let mut frontier_readback =
-            command_buffer.context().create_buffer(frontier.size()).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.context().create_readback_buffer(frontier.size()).map_err(WeaverEncodeError::Backend)?;
         command_buffer.encode_copy(&frontier, &mut frontier_readback);
 
         Ok(EncodedWeaverTree {

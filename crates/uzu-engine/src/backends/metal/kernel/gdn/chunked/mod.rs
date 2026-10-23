@@ -7,7 +7,7 @@ use crate::{
             Backend, CommandBufferEncoding,
             kernel::{
                 DeltaNetPrefillPrepKernel,
-                delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
+                delta_net_chunked_prefill::{CHUNK_SIZE, DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
             },
         },
         metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext},
@@ -16,7 +16,6 @@ use crate::{
 };
 
 const MXU_MIN_T: u32 = 256;
-const CHUNK_SIZE: u32 = 64;
 const VT: u32 = 32;
 const INNER_DATA_TYPE: DataType = DataType::F32;
 
@@ -155,7 +154,3 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../../unit/backends/metal/kernel/gdn/chunked_test.rs"]
-mod tests;

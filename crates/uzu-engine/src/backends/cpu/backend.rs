@@ -25,6 +25,7 @@ impl Backend for Cpu {
     type CommandBuffer = CpuCommandBuffer;
     type DebugGroupSpan<'a> = &'a mut CpuCommandBufferEncoding;
     type GlobalBuffer = CpuBuffer;
+    type GlobalBufferInitializer = CpuBuffer;
     type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
     type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
     type SparseBuffer = CpuSparseBuffer;

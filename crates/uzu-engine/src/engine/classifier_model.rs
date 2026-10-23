@@ -17,9 +17,7 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 
 use crate::{
-    backends::common::{
-        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-    },
+    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
     config::{model::classifier_model::ClassifierModelConfig, token_codec::AnyTokenCodecConfig},
     data_type::DataType,
     encodable_block::classifier::{Classifier as ClassifierEncodable, ClassifierError as ClassifierEncodableError},
@@ -173,7 +171,8 @@ impl<B: Backend> ClassifierModel<B> {
 
         assert!(self.data_type == DataType::BF16);
 
-        let logits_bf16: Vec<bf16> = output_buffer.copyout::<bf16>();
+        let logits_bf16 =
+            self.context.read_completed::<bf16>(&output_buffer).await.map_err(ClassifierModelClassifyError::Backend)?;
         let count = min(self.output_labels.len(), logits_bf16.len());
 
         let mut logits: Vec<f32> = vec![0.0f32; count];

@@ -13,7 +13,7 @@ use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
-        TimestampSpan,
+        GlobalBufferInitializer, TimestampSpan,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
         gpu_types::trie::TrieNode as GpuTrieNode,
         kernel::ContextRingUpdateKernel,
@@ -172,7 +172,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let mut context_ring = model
                 .engine
                 .context
-                .create_buffer(size_for_shape(&[2 + suffix_repetition_length], DataType::U32))
+                .create_buffer_initializer(size_for_shape(&[2 + suffix_repetition_length], DataType::U32))
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let state_tokens_range = Range::from(
@@ -188,7 +188,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .collect::<Box<[_]>>(),
             );
 
-            Some(context_ring)
+            Some(context_ring.end_initialization().map_err(LanguageModelStreamError::Backend)?)
         } else {
             None
         };

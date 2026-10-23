@@ -1,12 +1,15 @@
 use std::{error::Error, ops::DerefMut};
 
-use super::{CommandBuffer, ConstantBuffer, Context, GlobalBuffer, Kernels, ScratchBuffer, SparseBuffer};
+use super::{
+    CommandBuffer, ConstantBuffer, Context, GlobalBuffer, GlobalBufferInitializer, Kernels, ScratchBuffer, SparseBuffer,
+};
 
 pub trait Backend: Clone + Send + Sync + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
     type DebugGroupSpan<'a>: DerefMut<Target = <Self::CommandBuffer as CommandBuffer>::Encoding> + 'a;
     type GlobalBuffer: GlobalBuffer<Backend = Self>;
+    type GlobalBufferInitializer: GlobalBufferInitializer<Backend = Self>;
     type ConstantBuffer: ConstantBuffer<Backend = Self>;
     type ScratchBuffer: ScratchBuffer<Backend = Self>;
     type SparseBuffer: SparseBuffer<Backend = Self>;

@@ -76,7 +76,7 @@ fn run_key_value_row_stride_test<B: Backend>() {
     norm.encode_key_value(&mut key_value, BATCH_SIZE, &mut command_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("failed to execute key/value norm");
 
-    let output = buffer_to_vec::<B, f32>(&key_value);
+    let output = buffer_to_vec::<B, f32>(&context, &key_value);
     assert_eq_float(&expected, &output, 1e-5, "key/value norm row stride mismatch");
 }
 

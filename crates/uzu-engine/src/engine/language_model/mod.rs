@@ -175,3 +175,7 @@ impl<B: Backend> LanguageModel<B> {
         &self.tokenizer
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/engine/language_model/logits_test.rs"]
+mod tests;

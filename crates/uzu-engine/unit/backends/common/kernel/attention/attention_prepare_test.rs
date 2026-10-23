@@ -2,11 +2,13 @@ use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::common::kernel::AttentionPrepareInt8Kernel;
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::{AttentionPrepareInt8Kernel, AttentionPrepareKernel},
+            kernel::AttentionPrepareKernel,
         },
         cpu::Cpu,
     },
@@ -60,9 +62,9 @@ fn run<B: Backend>() -> Output {
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     Output {
-        queries: buffer_to_vec(&queries),
-        keys: buffer_to_vec(&keys),
-        values: buffer_to_vec(&values),
+        queries: buffer_to_vec(&context, &queries),
+        keys: buffer_to_vec(&context, &keys),
+        values: buffer_to_vec(&context, &values),
     }
 }
 
@@ -113,7 +115,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
-    buffer_to_vec(&queries)
+    buffer_to_vec(&context, &queries)
 }
 
 #[uzu_test]
@@ -133,12 +135,14 @@ fn test_attention_prepare_uses_query_gate_row_stride() {
     });
 }
 
+#[cfg(backend = "metal")]
 #[derive(Debug, PartialEq)]
 struct Int8Output {
     codes: [Vec<u8>; 3],
     scales: [Vec<bf16>; 3],
 }
 
+#[cfg(backend = "metal")]
 fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     const DIM: usize = 256;
     const CACHE_TOKENS: usize = 64;
@@ -186,11 +190,12 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     Int8Output {
-        codes: [&q_codes, &k_codes, &v_codes].map(buffer_to_vec::<B, u8>),
-        scales: [&q_scales, &k_scales, &v_scales].map(buffer_to_vec::<B, bf16>),
+        codes: [&q_codes, &k_codes, &v_codes].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
+        scales: [&q_scales, &k_scales, &v_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
     }
 }
 
+#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_attention_prepare_int8() {
     for num_q_heads in [0, 1] {

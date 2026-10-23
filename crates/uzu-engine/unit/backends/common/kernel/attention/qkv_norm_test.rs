@@ -156,7 +156,7 @@ fn get_output<
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
-    buffer_to_vec(&qkvg)
+    buffer_to_vec(&context, &qkvg)
 }
 
 fn test_internal<

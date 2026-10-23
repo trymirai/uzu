@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::Bencher;
 use futures::executor::block_on;
 
@@ -24,15 +26,26 @@ pub fn iter_encode_loop_named<B: Backend, F>(
 ) where
     F: FnMut(&mut <B::CommandBuffer as CommandBuffer>::Encoding),
 {
-    bencher.iter_custom(|n_iters| {
-        let _capture_span = CAPTURE_MATCHER
-            .capture::<B>(context, benchmark_path)
-            .unwrap_or_else(|error| panic!("failed to capture benchmark {benchmark_path}: {error}"));
-        let mut command_buffer = context.create_command_buffer(Some(benchmark_path), None).unwrap();
-        for _ in 0..n_iters {
-            encode(&mut command_buffer);
-        }
-        let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-        completed.gpu_execution_time()
-    });
+    bencher.iter_custom(|n_iters| time_encode_loop::<B, _>(context, benchmark_path, n_iters, &mut encode));
+}
+
+/// The GPU time of `n_iters` encodes recorded into one command buffer, captured where the matcher selects the path.
+pub fn time_encode_loop<B: Backend, F>(
+    context: &B::Context,
+    benchmark_path: &str,
+    n_iters: u64,
+    mut encode: F,
+) -> Duration
+where
+    F: FnMut(&mut <B::CommandBuffer as CommandBuffer>::Encoding),
+{
+    let _capture_span = CAPTURE_MATCHER
+        .capture::<B>(context, benchmark_path)
+        .unwrap_or_else(|error| panic!("failed to capture benchmark {benchmark_path}: {error}"));
+    let mut command_buffer = context.create_command_buffer(Some(benchmark_path), None).unwrap();
+    for _ in 0..n_iters {
+        encode(&mut command_buffer);
+    }
+    let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    completed.gpu_execution_time()
 }

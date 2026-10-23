@@ -1,0 +1,66 @@
+import definitions;
+import common.attention;
+
+static const uint ATTENTION_PREPARE_TILE = 128;
+
+// Splits packed qkvg rows into queries [head, token, head_dim] and, with has_kv, keys and values
+// [kv_token_offset + token, head, head_dim]; any trailing gate is unread. The first rope_dim elements of query and key
+// heads are rotated (rope_rotated) and rounded to ElementT; every other element is copied bit for bit.
+[[Kernel]] [[Public]]
+[[Precondition("encode", "num_q_heads > 0 || has_kv")]]
+[[Precondition("encode", "head_dim > 0")]]
+[[Precondition("encode", "num_kv_heads.unwrap_or(1) > 0")]]
+[[Precondition("encode", "rope_dim.unwrap_or(2) > 0")]]
+[[Precondition("encode", "rope_dim.unwrap_or(0) <= head_dim")]]
+[[Precondition("encode", "rope_dim.unwrap_or(0).is_multiple_of(2)")]]
+[[Precondition("encode", "num_q_heads <= input_row_stride / head_dim && num_kv_heads.unwrap_or(0) <= (input_row_stride / head_dim - num_q_heads) / 2")]]
+func AttentionPrepare<ElementT: IModelFloat16, RopeT: IFloat32>(
+  Ptr<ElementT, Access.Read> qkvg,
+  Ptr<ElementT, Access.ReadWrite> queries,
+  [[Optional("has_kv")]] Ptr<ElementT, Access.ReadWrite> keys,
+  [[Optional("has_kv")]] Ptr<ElementT, Access.ReadWrite> values,
+  [[Optional("has_rope")]] Ptr<RopeT, Access.Read> cosines,
+  [[Optional("has_rope")]] Ptr<RopeT, Access.Read> sines,
+  uint num_q_heads,
+  [[Optional("has_kv")]] uint num_kv_heads,
+  uint head_dim,
+  [[Optional("has_rope")]] uint rope_dim,
+  [[Optional("has_kv")]] uint kv_token_offset,
+  uint input_row_stride,
+  uint batch_dim,
+  [[Groups("head_dim.div_ceil(128)")]] uint tile,
+  [[Groups("num_q_heads + 2 * num_kv_heads.unwrap_or(0)")]] uint head,
+  [[Groups("batch_dim")]] uint batch,
+  [[Threads("128")]] uint tid,
+  [[Specialize]] bool has_kv,
+  [[Specialize]] bool has_rope,
+) {
+  static_assert(ATTENTION_PREPARE_TILE == 128, "one tile of Threads(128) per workgroup, Groups(div_ceil(128))");
+  let element = tile * ATTENTION_PREPARE_TILE + tid;
+  if (element >= head_dim) {
+    return;
+  }
+  let row = batch * input_row_stride + head * head_dim;
+  let is_query = !has_kv || head < num_q_heads;
+  let is_key = !is_query && head < num_q_heads + num_kv_heads;
+  var value = qkvg[row + element];
+  if (has_rope && element < rope_dim && (is_query || is_key)) {
+    let half = rope_dim / 2;
+    let first = element < half;
+    let paired = qkvg[row + (first ? element + half : element - half)].toFloat();
+    let table = batch * rope_dim + element;
+    let rotated = rope_rotated(value.toFloat(), paired, first, cosines[table].toFloat(), sines[table].toFloat());
+    value = ElementT.fromFloat(rotated);
+  }
+  if (is_query) {
+    queries[(head * batch_dim + batch) * head_dim + element] = value;
+    return;
+  }
+  let kv_head = head - num_q_heads - (is_key ? 0 : num_kv_heads);
+  let index = ((kv_token_offset + batch) * num_kv_heads + kv_head) * head_dim + element;
+  if (is_key) {
+    keys[index] = value;
+  } else {
+    values[index] = value;
+  }
+}

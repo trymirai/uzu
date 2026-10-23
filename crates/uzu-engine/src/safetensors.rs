@@ -9,10 +9,15 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BufferMut, Context},
+    backends::common::{Backend, BufferMut, Context, GlobalBufferInitializer},
     data_type::{DataType, DataTypeRepr},
     utils::{size_for_shape::size_for_shape, strict_serde::DeserializeStrictOwned},
 };
+
+#[cfg(windows)]
+mod windows_file_ext;
+#[cfg(windows)]
+use windows_file_ext::WindowsFileExt;
 
 #[derive(Debug, Error)]
 pub enum ParameterLoaderError<B: Backend> {
@@ -194,11 +199,14 @@ impl<B: Backend> ParameterTree<'_, B> {
     ) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
         let tensor = self.tensor(name, shape, dtype)?;
         let (start, end) = tensor.data_offsets;
-        let mut buffer =
-            self.loader.context.create_buffer((end - start) as usize).map_err(ParameterLoaderError::BackendError)?;
+        let mut buffer = self
+            .loader
+            .context
+            .create_buffer_initializer((end - start) as usize)
+            .map_err(ParameterLoaderError::BackendError)?;
         self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.loader.data_offset + start)?;
         tensor.read.set(true);
-        Ok(buffer)
+        buffer.end_initialization().map_err(ParameterLoaderError::BackendError)
     }
 
     pub fn read_slice<T: DataTypeRepr>(

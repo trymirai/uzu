@@ -68,7 +68,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&output_buffer)
+    buffer_to_vec::<B, T>(&context, &output_buffer)
 }
 
 fn get_test_data_basic<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
@@ -102,6 +102,20 @@ fn get_test_data_large<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
     };
 
     let expected = get_output::<T, Cpu>(&input, false);
+    (input, expected)
+}
+
+/// More workgroups than Vulkan's minimum maxComputeWorkGroupCount, which some devices fold into rows.
+fn get_test_data_wide() -> (Input<f32>, Vec<f32>) {
+    let (num_rows, num_cols) = (1024usize, 5120usize);
+    let input = Input {
+        input: (0..num_rows * num_cols).map(|i| (i % 97) as f32 * 0.3 - 5.0).collect(),
+        bias: (0..num_cols).map(|i| (i % 13) as f32 * 0.1).collect(),
+        num_cols: num_cols as u32,
+        length: (num_rows * num_cols) as u32,
+        scale: 2.0,
+    };
+    let expected = get_output::<f32, Cpu>(&input, false);
     (input, expected)
 }
 
@@ -226,6 +240,20 @@ fn test_large_f16() {
 #[uzu_test]
 fn test_large_bf16() {
     test_large::<bf16>();
+}
+
+#[uzu_test]
+fn test_wide_f32() {
+    let (input, expected) = get_test_data_wide();
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<f32, B>(&input, false);
+        assert_eq_float::<f32>(
+            &expected,
+            &output,
+            1e-5,
+            &format!("TensorAddScale wide test failed for backend {}", std::any::type_name::<B>()),
+        );
+    });
 }
 
 // edge tests

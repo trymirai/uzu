@@ -62,7 +62,7 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, bf16>(&output)
+    buffer_to_vec::<B, bf16>(&context, &output)
 }
 
 #[uzu_test]

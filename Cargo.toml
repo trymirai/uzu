@@ -216,6 +216,10 @@ tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-updater = "2.14.0"
 plist = "1.10.1"
+ash = "0.38.0"
+shader-slang = { git = "https://github.com/FloatyMonkey/slang-rs", rev = "341fbb033a72f75193a63a38e1689b8a2361b1d8" }
+shader-slang-sys = { git = "https://github.com/FloatyMonkey/slang-rs", rev = "341fbb033a72f75193a63a38e1689b8a2361b1d8" }
+vk-mem = "0.5.0"
 
 [workspace.lints.clippy]
 # TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal

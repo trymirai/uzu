@@ -2,6 +2,8 @@ use std::{collections::VecDeque, mem::ManuallyDrop, range::Range, sync::Arc};
 
 use parking_lot::Mutex;
 
+pub const MAX_ALLOCATION_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
 pub struct PoolAllocator<T> {
     pages: [Mutex<VecDeque<T>>; 32],
 }
@@ -18,7 +20,7 @@ impl<T> PoolAllocator<T> {
         size: usize,
         upstream: impl FnOnce(usize) -> Result<T, E>,
     ) -> Result<PoolAllocation<T>, E> {
-        assert!(size > 0 && size <= 2 * 1024 * 1024 * 1024);
+        assert!(size > 0 && size <= MAX_ALLOCATION_SIZE);
 
         let page = if let Some(page) = self.pages[(size - 1).bit_width() as usize].lock().pop_front() {
             page

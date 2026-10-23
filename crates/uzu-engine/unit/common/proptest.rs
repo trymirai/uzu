@@ -5,6 +5,8 @@ use proptest::prelude::*;
 
 #[cfg(backend = "metal")]
 use crate::backends::metal::Metal;
+#[cfg(backend = "vulkan")]
+use crate::backends::vulkan::Vulkan;
 use crate::{
     backends::{
         common::{Backend, Context},
@@ -21,6 +23,8 @@ pub struct TestContextes {
     pub cpu: Arc<<Cpu as Backend>::Context>,
     #[cfg(backend = "metal")]
     pub metal: Arc<<Metal as Backend>::Context>,
+    #[cfg(backend = "vulkan")]
+    pub vulkan: Arc<<Vulkan as Backend>::Context>,
 }
 
 impl TestContextes {
@@ -29,6 +33,8 @@ impl TestContextes {
             cpu: block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Cpu context"),
             #[cfg(backend = "metal")]
             metal: block_on(<Metal as Backend>::Context::new()).expect("Failed to create Metal context"),
+            #[cfg(backend = "vulkan")]
+            vulkan: block_on(<Vulkan as Backend>::Context::new()).expect("Failed to create Vulkan context"),
         }
     }
 }
@@ -37,6 +43,8 @@ pub struct TestResults<T> {
     pub cpu: T,
     #[cfg(backend = "metal")]
     pub metal: T,
+    #[cfg(backend = "vulkan")]
+    pub vulkan: T,
 }
 
 macro_rules! for_each_context {
@@ -51,6 +59,12 @@ macro_rules! for_each_context {
             metal: ({
                 type $CONTEXT_TYPE = <crate::backends::metal::Metal as crate::backends::common::Backend>::Context;
                 let $CONTEXT_NAME = $CONTEXTES.metal.as_ref();
+                $body
+            })?,
+            #[cfg(backend = "vulkan")]
+            vulkan: ({
+                type $CONTEXT_TYPE = <crate::backends::vulkan::Vulkan as crate::backends::common::Backend>::Context;
+                let $CONTEXT_NAME = $CONTEXTES.vulkan.as_ref();
                 $body
             })?,
         }
@@ -70,6 +84,8 @@ impl<T: ComparableTestResults> TestResults<T> {
     pub fn compare_results(&self) -> Result<(), TestCaseError> {
         #[cfg(backend = "metal")]
         T::compare("metal", &self.metal, &self.cpu)?;
+        #[cfg(backend = "vulkan")]
+        T::compare("vulkan", &self.vulkan, &self.cpu)?;
 
         Ok(())
     }

@@ -153,7 +153,7 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, T>(&d_buffer)
+    buffer_to_vec::<B, T>(&context, &d_buffer)
 }
 
 pub fn cpu_reference<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {

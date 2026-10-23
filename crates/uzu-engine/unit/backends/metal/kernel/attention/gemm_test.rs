@@ -114,7 +114,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T>
     drop(pooled_output);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&output_buffer)
+    buffer_to_vec::<B, T>(&context, &output_buffer)
 }
 
 fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
@@ -147,7 +147,7 @@ fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
     command_buffer.encode_copy(&pooled, &mut output);
     drop(pooled);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Metal, T>(&output)
+    buffer_to_vec::<Metal, T>(&context, &output)
 }
 
 fn test_internal<T: DataTypeRepr + Float + Debug + Display>(

@@ -4,19 +4,20 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
 use uzu_engine_macros::uzu_test;
 
-use super::*;
 use crate::{
-    backends::{
-        common::{
-            Backend, BufferMut, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::{DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        kernel::{
+            DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel,
+            delta_net_chunked_prefill::{CHUNK_SIZE, DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
         },
-        metal::Metal,
     },
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
+    data_type::DataType,
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
 };
 
 type BackendKernels<B> = <B as Backend>::Kernels;
+type ChunkedPrefill<B> = <BackendKernels<B> as Kernels>::DeltaNetChunkedPrefill;
 
 const NUM_V_HEADS: usize = 6;
 const NUM_K_HEADS: usize = 2;
@@ -47,11 +48,11 @@ fn random_in_proj(tokens: usize) -> Vec<bf16> {
 }
 
 /// `None` runs the recurrent kernels. The output is NaN-filled first so unwritten elements fail the comparison.
-fn run_prefill(
-    context: &MetalContext,
+fn run_prefill<B: Backend>(
+    context: &B::Context,
     in_proj_data: &[bf16],
-    chunked: Option<&MetalDeltaNetChunkedPrefill>,
-    state: &mut <Metal as Backend>::GlobalBuffer,
+    chunked: Option<&ChunkedPrefill<B>>,
+    state: &mut B::GlobalBuffer,
 ) -> Vec<f32> {
     let suffix_len = in_proj_data.len() / TOTAL_PROJ_DIM;
     // a_log = ln U(1, 16) and dt_bias = softplus^-1(logU(1e-3, 1e-1)) as in Qwen3-Next
@@ -60,10 +61,11 @@ fn run_prefill(
     let dt_bias: Vec<f32> =
         (0..NUM_V_HEADS).map(|i| (1e-3f32.ln() + 100f32.ln() * spread(i)).exp().exp_m1().ln()).collect();
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
+    let in_proj_source = create_buffer_with_data::<B, bf16>(context, in_proj_data);
     let mut in_proj = command_buffer.allocate_scratch(size_of_val(in_proj_data)).unwrap();
-    in_proj.copyin(in_proj_data);
-    let a_log = create_buffer_with_data::<Metal, f32>(context, &a_log);
-    let dt_bias = create_buffer_with_data::<Metal, f32>(context, &dt_bias);
+    command_buffer.encode_copy(&in_proj_source, &mut in_proj);
+    let a_log = create_buffer_with_data::<B, f32>(context, &a_log);
+    let dt_bias = create_buffer_with_data::<B, f32>(context, &dt_bias);
     let mut out = command_buffer.allocate_scratch(suffix_len * VALUE_DIM * size_of::<bf16>()).unwrap();
     command_buffer.encode_fill(&mut out, 0xFF);
 
@@ -87,11 +89,11 @@ fn run_prefill(
             )
             .expect("chunked encode");
     } else {
-        let mut q = create_buffer::<Metal, f32>(context, suffix_len * KEY_DIM);
-        let mut k = create_buffer::<Metal, f32>(context, suffix_len * KEY_DIM);
-        let mut beta = create_buffer::<Metal, f32>(context, suffix_len * NUM_V_HEADS);
-        let mut decay = create_buffer::<Metal, f32>(context, suffix_len * NUM_V_HEADS);
-        <BackendKernels<Metal> as Kernels>::DeltaNetPrefillPrepKernel::new(
+        let mut q = create_buffer::<B, f32>(context, suffix_len * KEY_DIM);
+        let mut k = create_buffer::<B, f32>(context, suffix_len * KEY_DIM);
+        let mut beta = create_buffer::<B, f32>(context, suffix_len * NUM_V_HEADS);
+        let mut decay = create_buffer::<B, f32>(context, suffix_len * NUM_V_HEADS);
+        <BackendKernels<B> as Kernels>::DeltaNetPrefillPrepKernel::new(
             context,
             DataType::BF16,
             DataType::F32,
@@ -106,7 +108,7 @@ fn run_prefill(
             &dt_bias,
             &mut q,
             &mut k,
-            None::<&mut <Metal as Backend>::GlobalBuffer>,
+            None::<&mut B::GlobalBuffer>,
             &mut beta,
             &mut decay,
             NUM_V_HEADS as u32,
@@ -116,7 +118,7 @@ fn run_prefill(
             suffix_len as u32,
             &mut command_buffer,
         );
-        <BackendKernels<Metal> as Kernels>::DeltaNetPrefillKernel::new(context, DataType::BF16, HEAD_K_DIM as u32)
+        <BackendKernels<B> as Kernels>::DeltaNetPrefillKernel::new(context, DataType::BF16, HEAD_K_DIM as u32)
             .expect("prefill")
             .encode(
                 &q,
@@ -136,27 +138,29 @@ fn run_prefill(
                 &mut command_buffer,
             );
     }
+    let mut output = create_buffer::<B, bf16>(context, suffix_len * VALUE_DIM);
+    command_buffer.encode_copy(&out, &mut output);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Metal, bf16>(&out).into_iter().map(f32::from).collect()
+    buffer_to_vec::<B, bf16>(&context, &output).into_iter().map(f32::from).collect()
 }
 
-fn check(
-    context: &MetalContext,
-    chunked: &MetalDeltaNetChunkedPrefill,
+fn check<B: Backend>(
+    context: &B::Context,
+    chunked: &ChunkedPrefill<B>,
     state0: &[f32],
     in_proj: &[bf16],
     calls: usize,
     label: &str,
 ) {
-    let mut chunked_state = create_buffer_with_data::<Metal, f32>(context, state0);
-    let mut recurrent_state = create_buffer_with_data::<Metal, f32>(context, state0);
+    let mut chunked_state = create_buffer_with_data::<B, f32>(context, state0);
+    let mut recurrent_state = create_buffer_with_data::<B, f32>(context, state0);
     let chunked_out: Vec<f32> = in_proj
         .chunks(in_proj.len() / calls)
-        .flat_map(|tokens| run_prefill(context, tokens, Some(chunked), &mut chunked_state))
+        .flat_map(|tokens| run_prefill::<B>(context, tokens, Some(chunked), &mut chunked_state))
         .collect();
-    let recurrent_out = run_prefill(context, in_proj, None, &mut recurrent_state);
+    let recurrent_out = run_prefill::<B>(context, in_proj, None, &mut recurrent_state);
     let (chunked_state, recurrent_state) =
-        (buffer_to_vec::<Metal, f32>(&chunked_state), buffer_to_vec::<Metal, f32>(&recurrent_state));
+        (buffer_to_vec::<B, f32>(&context, &chunked_state), buffer_to_vec::<B, f32>(&context, &recurrent_state));
 
     assert!(
         is_close::default().abs_tol(5e-3).rel_tol(1e-3).all_close(chunked_out, recurrent_out),
@@ -168,29 +172,30 @@ fn check(
     );
 }
 
-#[uzu_test]
-fn chunked_prefill_matches_recurrent_prefill() {
-    let context = block_on(<Metal as Backend>::Context::new()).expect("metal context");
-    let Some(chunked) = MetalDeltaNetChunkedPrefill::new(
-        &context,
-        DataType::BF16,
-        HEAD_K_DIM as u32,
-        (NUM_V_HEADS / NUM_K_HEADS) as u32,
-    )
-    .unwrap() else {
-        eprintln!("chunked prefill unsupported on this Metal device");
+fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>() {
+    let context = block_on(B::Context::new()).expect("context");
+    let Some(chunked) =
+        ChunkedPrefill::<B>::new(&context, DataType::BF16, HEAD_K_DIM as u32, (NUM_V_HEADS / NUM_K_HEADS) as u32)
+            .unwrap()
+    else {
+        eprintln!("{} has no chunked prefill on this device", std::any::type_name::<B>());
         return;
     };
     let in_proj = random_in_proj(WARMUP_TOKENS + 4096);
     let (warmup, tokens) = in_proj.split_at(WARMUP_TOKENS * TOTAL_PROJ_DIM);
-    let mut state = create_buffer_with_data::<Metal, f32>(&context, &vec![0.0; NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM]);
-    run_prefill(&context, warmup, None, &mut state);
-    let state0 = buffer_to_vec::<Metal, f32>(&state);
+    let mut state = create_buffer_with_data::<B, f32>(&context, &vec![0.0; NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM]);
+    run_prefill::<B>(&context, warmup, None, &mut state);
+    let state0 = buffer_to_vec::<B, f32>(&context, &state);
     assert!(state0.iter().any(|value| *value != 0.0), "initial state is zero");
 
     for suffix_len in [2 * CHUNK_SIZE as usize + 1, 512, 1024] {
         let label = format!("T={suffix_len}");
-        check(&context, &chunked, &state0, &tokens[..suffix_len * TOTAL_PROJ_DIM], 1, &label);
+        check::<B>(&context, &chunked, &state0, &tokens[..suffix_len * TOTAL_PROJ_DIM], 1, &label);
     }
-    check(&context, &chunked, &state0, tokens, 4, "carried 4x1024");
+    check::<B>(&context, &chunked, &state0, tokens, 4, "carried 4x1024");
+}
+
+#[uzu_test]
+fn chunked_prefill_matches_recurrent_prefill() {
+    for_each_non_cpu_backend!(|B| chunked_prefill_matches_recurrent_prefill_impl::<B>());
 }
