@@ -43,7 +43,6 @@ fn swift_type(
                 _ => return None,
             })
         },
-        |inner| format!("{inner}?"),
         |inner| format!("[{inner}]"),
     )
 }
@@ -134,7 +133,7 @@ fn render_callback_factory(factory: &CallbackFactory) -> String {
     let closure_args_forward_positional =
         callback_arg_types.iter().enumerate().map(|(index, _)| format!("arg{index}")).collect::<Vec<_>>().join(", ");
 
-    let closure_type_signature = format!("({}) -> Void", callback_arg_types.join(", "),);
+    let closure_type_signature = format!("({}) -> Void", callback_arg_types.join(", "));
 
     format!(
         r#"extension {type_name} {{
@@ -157,17 +156,11 @@ fn render_callback_factory(factory: &CallbackFactory) -> String {
     }}
 }}
 "#,
-        closure_type_signature = closure_type_signature,
-        wrapper_class = wrapper_class,
-        handler_protocol = handler_protocol,
-        closure_args_signature = closure_args_signature,
-        closure_args_forward_positional = closure_args_forward_positional,
-        type_name = type_name,
-        swift_method = swift_method,
     )
 }
 
 fn render_factory(factory: &Factory) -> Option<String> {
+    let type_name = &factory.type_name;
     let swift_method = AsLowerCamelCase(&factory.method_name).to_string();
     let free_function = factory.free_function_name();
 
@@ -175,7 +168,7 @@ fn render_factory(factory: &Factory) -> Option<String> {
         .arguments
         .iter()
         .map(|arg| {
-            let ty = swift_type(&arg.ty, &factory.type_name)?;
+            let ty = swift_type(&arg.ty, type_name)?;
             Some(format!("{label}: {ty}", label = AsLowerCamelCase(&arg.name)))
         })
         .collect::<Option<Vec<_>>>()?
@@ -191,7 +184,7 @@ fn render_factory(factory: &Factory) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
 
-    let mut return_type = factory.type_name.clone();
+    let mut return_type = type_name.clone();
     if factory.optional {
         return_type.push('?');
     }
@@ -214,12 +207,6 @@ fn render_factory(factory: &Factory) -> Option<String> {
     invocation.push_str(&format!("{free_function}({args_forward})"));
 
     Some(format!(
-        "extension {type_name} {{\n    public static func {method}({args}) {modifiers}-> {ret} {{\n        {invocation}\n    }}\n}}\n",
-        type_name = factory.type_name,
-        method = swift_method,
-        args = args_signature,
-        modifiers = modifiers,
-        ret = return_type,
-        invocation = invocation,
+        "extension {type_name} {{\n    public static func {swift_method}({args_signature}) {modifiers}-> {return_type} {{\n        {invocation}\n    }}\n}}\n",
     ))
 }

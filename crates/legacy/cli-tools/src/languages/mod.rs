@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use colored::Colorize;
-pub use foreign_extensions::{generate_kotlin_extensions, generate_swift_extensions};
+use foreign_extensions::{generate_kotlin_extensions, generate_swift_extensions};
 pub use kotlin::KotlinLanguageBackend;
 pub use python::PythonLanguageBackend;
 pub use rust::RustLanguageBackend;

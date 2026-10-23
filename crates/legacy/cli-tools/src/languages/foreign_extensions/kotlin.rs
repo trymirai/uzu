@@ -69,7 +69,6 @@ fn kotlin_type(
                 _ => return None,
             })
         },
-        |inner| format!("{inner}?"),
         |inner| format!("List<{inner}>"),
     )
 }
@@ -104,11 +103,7 @@ fn render_extensions_file(
             output.push_str(&rendered);
         }
     }
-    format!(
-        "{}
-",
-        output.trim_end()
-    )
+    format!("{}\n", output.trim_end())
 }
 
 fn render_factory(factory: &Factory) -> Option<String> {
