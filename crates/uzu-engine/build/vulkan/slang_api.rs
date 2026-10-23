@@ -12,7 +12,7 @@ use shader_slang_sys::{
     spReflectionType_GetName, spReflectionVariable_GetName,
 };
 
-use super::{Error, TypeParameterInfo};
+use super::Error;
 
 unsafe fn blob_to_string(blob: *mut ISlangBlob) -> String {
     unsafe {
@@ -87,7 +87,8 @@ pub fn create_specialized_generic<'a>(
 
     layout.specialize_generic(generic, &arg_types, &args).ok_or_else(|| anyhow::anyhow!("failed to specialize generic"))
 }
-pub fn get_generic_type_parameters(decl: &Decl) -> Result<Vec<TypeParameterInfo>, Error> {
+/// The name and constraint type names of each type parameter of the generic `decl`.
+pub fn get_generic_type_parameters(decl: &Decl) -> Result<Vec<(String, Vec<String>)>, Error> {
     unsafe {
         let generic_ptr = spReflectionDecl_castToGeneric(decl as *const _ as *mut _);
         let generic_ptr =
@@ -118,10 +119,7 @@ pub fn get_generic_type_parameters(decl: &Decl) -> Result<Vec<TypeParameterInfo>
                     })
                     .collect::<Result<_, Error>>()?;
 
-                Ok(TypeParameterInfo {
-                    name,
-                    constraints,
-                })
+                Ok((name, constraints))
             })
             .collect()
     }
