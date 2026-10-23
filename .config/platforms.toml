@@ -4,6 +4,7 @@ IPHONEOS_DEPLOYMENT_TARGET = "26.4"
 XROS_DEPLOYMENT_TARGET = "26.4"
 TVOS_DEPLOYMENT_TARGET = "26.4"
 WATCHOS_DEPLOYMENT_TARGET = "26.4"
+CARGO_NDK_PLATFORM = "31"
 
 [tools]
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
@@ -13,6 +14,7 @@ zigbuild = { provider = "cargo", version = "0.23.4" }
 xwin = { provider = "cargo", version = "0.23.1" }
 ziglang = { provider = "uv", version = "0.17.0" }
 maturin = { provider = "uv", version = "1.15.0" }
+ndk = { provider = "cargo", version = "4.1.2" }
 
 [targets."aarch64-apple-darwin"]
 backend = "metal"
@@ -73,6 +75,13 @@ aliases = ["windows"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
+[targets."aarch64-linux-android"]
+backend = "cpu"
+aliases = ["android"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
+required_envs = ["CARGO_NDK_PLATFORM"]
+
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"
 aliases = ["wasi"]
@@ -107,6 +116,7 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-heade
     "swift_spm",
     "swift_platforms",
     "swift_version",
+    "kotlin",
 ] }
 
 [languages.python]
@@ -163,6 +173,20 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-types
     "typescript_downloads",
 ] }
 
+[languages.kotlin]
+targets = ["aarch64-linux-android"]
+tools = ["ndk"]
+bindings = ["uniffi"]
+examples_path = "crates/legacy/uzu/bindings/kotlin/src/androidTest/kotlin/com/trymirai/uzu/examples"
+metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-header.jpg", badges = [
+    "discord",
+    "email",
+    "docs",
+    "license",
+    "build",
+    "kotlin",
+] }
+
 [binaries.mirai]
 crate = "cli"
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
@@ -183,6 +207,7 @@ swift = '[![Swift](https://img.shields.io/badge/Swift-blue)](crates/legacy/uzu/b
 swift_platforms = '[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20Mac%20Catalyst-blue)](Package.swift)'
 swift_spm = '[![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift)'
 swift_version = '[![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org)'
+kotlin = '[![Kotlin](https://img.shields.io/badge/Kotlin-purple)](crates/legacy/uzu/bindings/kotlin)'
 
 [examples]
 quick-start = { title = "Quick Start", description = "Minimal snippet that downloads a model and generates a single reply" }

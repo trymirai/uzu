@@ -41,6 +41,8 @@ inventory::submit! {
     }
 }
 
+#[cfg(target_os = "android")]
+mod android;
 #[cfg(not(target_family = "wasm"))]
 pub mod device;
 #[cfg(not(target_family = "wasm"))]

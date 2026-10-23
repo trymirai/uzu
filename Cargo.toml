@@ -141,6 +141,8 @@ futures-util = "0.3.34"
 http = "1.5.0"
 httparse = "1.10.1"
 stream_throttle = "0.5.1"
+rustls-platform-verifier = "0.7.1"
+jni = "0.22.4"
 reqwest = { version = "0.13.5", features = [
     "json",
     "stream",

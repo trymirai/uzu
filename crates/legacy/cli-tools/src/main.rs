@@ -3,9 +3,6 @@ use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
     configs::{HOST_TARGET, PlatformsConfig},
     hanashi::export_tokenizers,
-    languages::{
-        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
-    },
     release::run_release,
     sync::run_sync,
     types::{Capability, Command, Configuration, Language},
@@ -87,9 +84,14 @@ fn run_setup(include_platform_specific: bool) -> Result<()> {
 }
 
 fn run_verify(config: &PlatformsConfig) -> Result<()> {
+    let host_target = config.host_target()?;
     for language in config.languages.keys() {
-        let backend = language_backend(*language, config.clone())?;
-        backend.build(Configuration::Release, vec![config.host_target()?], vec![])?;
+        // Device-only bindings, like Kotlin for Android, have no host build to verify.
+        if config.targets_for_language(*language, vec![host_target.clone()])?.is_empty() {
+            println!("Skipping {}: it has no {host_target} build", language.name());
+            continue;
+        }
+        language.backend(config.clone()).build(Configuration::Release, vec![host_target.clone()], vec![])?;
     }
     let (output, _) = Command::git_status_porcelain().output()?;
     if !output.is_empty() {
@@ -97,18 +99,6 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
         return Err(anyhow!("The repository has uncommitted changes after building all languages"));
     }
     Ok(())
-}
-
-fn language_backend(
-    language: Language,
-    config: PlatformsConfig,
-) -> Result<Box<dyn LanguageBackend>> {
-    match language {
-        Language::Rust => Ok(Box::new(RustLanguageBackend::new(config))),
-        Language::Python => Ok(Box::new(PythonLanguageBackend::new(config))),
-        Language::Swift => Ok(Box::new(SwiftLanguageBackend::new(config))),
-        Language::TypeScript => Ok(Box::new(TypeScriptLanguageBackend::new(config))),
-    }
 }
 
 #[tokio::main]
@@ -123,19 +113,19 @@ async fn main() -> Result<()> {
         }) => run_setup(include_platform_specific)?,
         Some(Commands::Install {
             language,
-        }) => language_backend(language, config)?.install()?,
+        }) => language.backend(config).install()?,
         Some(Commands::Build {
             language,
             configuration,
             targets,
             capabilities,
-        }) => language_backend(language, config)?.build(configuration, targets, capabilities)?,
+        }) => language.backend(config).build(configuration, targets, capabilities)?,
         Some(Commands::Test {
             language,
         }) => {
             let configuration = Configuration::Release;
             let capabilities = vec![];
-            let backend = language_backend(language, config.clone())?;
+            let backend = language.backend(config.clone());
             if backend.expects_prebuild_for_run() {
                 backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
             }
@@ -147,7 +137,7 @@ async fn main() -> Result<()> {
         }) => {
             let configuration = Configuration::Release;
             let capabilities = vec![];
-            let backend = language_backend(language, config.clone())?;
+            let backend = language.backend(config.clone());
             if backend.expects_prebuild_for_run() {
                 backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
             }

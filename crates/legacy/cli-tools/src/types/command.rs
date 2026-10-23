@@ -421,6 +421,47 @@ impl Command {
         ])
     }
 
+    pub fn cargo_ndk_build(
+        name: String,
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
+        output_path: PathBuf,
+    ) -> Self {
+        let command = Self::new("cargo")
+            .with_argument("ndk")
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--link-libcxx-shared")
+            .with_arguments(vec!["--output-dir".to_string(), output_path.to_string_lossy().to_string()])
+            // `rustc` lets the build skip the crate's static library, which Android never loads.
+            .with_argument("rustc")
+            .with_arguments(vec!["-p".to_string(), name])
+            .with_argument("--lib")
+            .with_arguments(vec!["--crate-type".to_string(), "cdylib".to_string()])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")]);
+        match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        }
+    }
+
+    pub fn gradle_connected_android_test(
+        project_path: &Path,
+        module: &str,
+        test_filter: &str,
+    ) -> Self {
+        let wrapper = if cfg!(windows) {
+            "gradlew.bat"
+        } else {
+            "gradlew"
+        };
+        Self::new(&project_path.join(wrapper).to_string_lossy())
+            .with_current_path(project_path)
+            .with_argument(&format!("{module}:connectedDebugAndroidTest"))
+            .with_argument(&format!("-Pandroid.testInstrumentationRunnerArguments.class={test_filter}"))
+    }
+
     pub fn xcodebuild() -> Self {
         Self::new("xcodebuild")
     }
