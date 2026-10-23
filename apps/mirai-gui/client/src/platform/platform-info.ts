@@ -1,3 +1,5 @@
+import { isMacPlatform } from "@/utils/platform";
+
 export const platformInfo = {
   isWeb: __PLATFORM__ === "web",
   isTauri: __PLATFORM__ === "tauri",
@@ -10,6 +12,6 @@ export const platformInfo = {
     cliInstall: __PLATFORM__ === "tauri",
     // Overlay title bar with in-content macOS traffic lights: UI must reserve
     // space on the top-left so controls don't sit under the traffic lights.
-    nativeTitleBar: __PLATFORM__ === "tauri",
+    nativeTitleBar: __PLATFORM__ === "tauri" && isMacPlatform(),
   },
 } as const;

@@ -6,7 +6,7 @@
   "packageManager": "pnpm@12.9.0",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build --target aarch64-apple-darwin",
+    "build": "tauri build",
     "client:dev": "vite",
     "client:build": "vite build",
     "web:dev": "vite --mode web",
