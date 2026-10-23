@@ -4,10 +4,10 @@ pub mod quant;
 pub mod shape;
 
 pub use bench::{iter_encode_loop, iter_encode_loop_named};
-pub use harness::{Case, Input, cpu_reference, deterministic_input, run};
+pub use harness::{Case, cpu_reference, deterministic_input};
 pub use quant::{
     QuantBuffers, QuantInput, production_quant_buffers, production_quant_input, quant_arguments, quant_tolerance,
-    run_quant, run_quant_with, transpose_metadata,
+    run_quant_cpu, run_quant_with, transpose_metadata,
 };
 pub use shape::{
     Shape, a8_format, all_correctness_shapes, bench_fp_gemm_shapes, bench_quant_gemm_shapes, bench_quant_gemv_shapes,

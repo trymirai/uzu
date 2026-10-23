@@ -58,7 +58,7 @@ fn radeon_890m() -> VkDeviceFacts<'static> {
     facts(capabilities, 32768, workgroups, (64, 32..=64, u32::MAX), Some(16), [1 << 31; 2])
 }
 
-/// The RTX 4090 on NVIDIA's Windows driver 617.42, as the backend derived it on 2026-10-23.
+/// The RTX 4090 on NVIDIA's Windows driver 617.42.
 fn rtx_4090() -> VkDeviceFacts<'static> {
     let capabilities = Capability::FLOAT_CONTROLS
         | Capability::SUBGROUP_SIZE_32
@@ -73,7 +73,7 @@ fn rtx_4090() -> VkDeviceFacts<'static> {
     facts(capabilities, 49152, workgroups, (32, 32..=32, 32), Some(128), [1 << 40, u64::MAX])
 }
 
-/// The Pixel 10 Pro XL's PowerVR DXT-48-1536 on driver 25.3, as the backend derived it on 2026-10-23.
+/// The Pixel 10 Pro XL's PowerVR DXT-48-1536 on driver 25.3.
 fn pixel_10() -> VkDeviceFacts<'static> {
     let capabilities = Capability::FLOAT_CONTROLS
         | Capability::SUBGROUP_SIZE_32

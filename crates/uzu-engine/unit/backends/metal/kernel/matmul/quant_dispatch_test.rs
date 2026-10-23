@@ -167,7 +167,7 @@ fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
     let context = block_on(MetalContext::new()).expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
     let unified = run_quant_metal::<T>(&context, &input, GemmBLayout::RowMajor, dispatch);
-    let reference = run_quant::<Cpu, T>(&input);
+    let reference = run_quant_cpu::<T>(&input);
 
     assert_parity::<T>(
         &format!(
@@ -358,8 +358,8 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
             [QuantizationMethod::ScaleBias, QuantizationMethod::ScaleZeroPoint, QuantizationMethod::ScaleSymmetric]
         {
             let input = QuantInput::<bf16>::new(4, 128, 12, 32, bits, method, 0);
-            let expected = run_quant::<Cpu, _>(&input);
-            let actual = run_quant::<Cpu, _>(&input.with_group_output());
+            let expected = run_quant_cpu(&input);
+            let actual = run_quant_cpu(&input.with_group_output());
             assert_parity("CPU GroupOutput", &expected, &actual, 0.05, 0.5);
         }
     }
@@ -396,7 +396,7 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu(
     } else {
         input
     };
-    let reference = run_quant::<Cpu, _>(&input);
+    let reference = run_quant_cpu(&input);
     for engine in [GemmEngine::Simdgroup, GemmEngine::Mxu] {
         if engine == GemmEngine::Mxu && !context.supports_mxu {
             continue;
@@ -438,7 +438,7 @@ fn mxu_quant_parity_bf16(
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
     let actual = run_quant_metal::<bf16>(&context, &input, GemmBLayout::RowMajor, Some(GemmEngine::Mxu));
-    let reference = run_quant::<Cpu, bf16>(&input);
+    let reference = run_quant_cpu::<bf16>(&input);
     assert_parity::<bf16>(
         &format!("MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"),
         &reference,
@@ -482,7 +482,7 @@ fn a8w_mxu_parity_bf16(
             (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
         );
     let actual = run_quant_metal(&context, &input.with_group_output(), gemm_b_layout, Some(GemmEngine::Mxu));
-    let reference = run_quant::<Cpu, bf16>(&reference_input);
+    let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
         &format!(
             "A8W{bits} MXU m={m} k={k} n={n} weight_gs={weight_gs} method={method:?} gemm_b_layout={gemm_b_layout:?}"
@@ -517,7 +517,7 @@ fn a8w_independent_activation_group_parity_bf16(#[case] m: u32) {
                 );
             let actual =
                 run_quant_metal(&context, &input.with_group_output(), GemmBLayout::RowMajor, Some(GemmEngine::Mxu));
-            let reference = run_quant::<Cpu, bf16>(&reference_input);
+            let reference = run_quant_cpu::<bf16>(&reference_input);
             assert_parity::<bf16>(
                 &format!("A8W{bits} act{activation_group_size} weight{weight_group_size} m={m} method={method:?}"),
                 &reference,
@@ -541,7 +541,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
     }
     let input = QuantInput::<bf16>::new(m, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint, 0)
         .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, Some(32));
-    let reference = run_quant::<Cpu, bf16>(&input);
+    let reference = run_quant_cpu::<bf16>(&input);
     let actual = run_quant_metal(&context, &input.with_group_output(), GemmBLayout::RowMajor, Some(GemmEngine::Mxu));
     assert_parity::<bf16>(&format!("A8W4 ZP N-tail m={m}"), &reference, &actual, 0.08, 0.8);
 }
@@ -563,7 +563,7 @@ fn signed_weights_full_precision_activations_parity_bf16(
     let n = 128;
     let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_signed_weight_codes();
     let reference_input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
-    let reference = run_quant::<Cpu, bf16>(&reference_input);
+    let reference = run_quant_cpu::<bf16>(&reference_input);
 
     for (label, dispatch) in [("auto", None), ("simdgroup", Some(GemmEngine::Simdgroup))] {
         let actual = run_quant_metal::<bf16>(&context, &input, GemmBLayout::RowMajor, dispatch);
@@ -707,7 +707,7 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         input
     };
     let ids: Vec<u32> = (0..gathered_rows).map(|row| (row * 37 + 11) % vocab).collect();
-    let dense = run_quant::<Cpu, bf16>(&input);
+    let dense = run_quant_cpu::<bf16>(&input);
     let expected: Vec<bf16> = ids.iter().map(|&id| dense[id as usize]).collect();
 
     let ids_buffer = crate::tests::helpers::create_buffer_with_data::<Metal, u32>(&context, &ids);

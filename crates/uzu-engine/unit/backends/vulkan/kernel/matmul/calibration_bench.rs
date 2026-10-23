@@ -15,7 +15,6 @@ use crate::{
             gpu_types::quantization_method::QuantizationMethod,
             kernel::matmul::{ActivationFormat, MatmulKernel, MatmulShape},
         },
-        cpu::Cpu,
         vulkan::{VkContext, VkContextCreateInfo, VkMatmulKernel, VkMatmulPlan, Vulkan},
     },
     data_type::{DataType, DataTypeRepr},
@@ -25,7 +24,7 @@ use crate::{
         helpers::{buffer_to_vec, create_buffer},
         matmul::{
             QuantBuffers, QuantInput, Shape, iter_encode_loop, production_quant_buffers, production_quant_input,
-            quant_arguments, quant_tolerance, run_quant,
+            quant_arguments, quant_tolerance, run_quant_cpu,
         },
     },
 };
@@ -127,6 +126,7 @@ fn calibrate(
     let (input, format) = match tied {
         true => (input, ActivationFormat::Bf16),
         false => production_quant_input::<Vulkan, bf16>(&context, &layout, input)
+            .map(|(input, format, _)| (input, format))
             .ok_or("the checkpoint linear's activation format is unsupported")?,
     };
     let input = Rc::new(input);
@@ -165,7 +165,7 @@ fn calibrate(
         if let Some(quantization) = quantization {
             bounded = bounded.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size());
         }
-        let reference = run_quant::<Cpu, bf16>(&bounded);
+        let reference = run_quant_cpu(&bounded);
         qualifying.upload_activations(&context, &bounded);
         // NaN-filled first, so an output a plan leaves unwritten fails.
         let mut run = |plan: VkMatmulPlan| {

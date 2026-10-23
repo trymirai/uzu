@@ -3,21 +3,16 @@ use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::{
-        common::{
-            Backend, Kernels,
-            gpu_types::quantization_method::QuantizationMethod,
-            kernel::matmul::{ActivationFormat, MatmulKernel},
-        },
-        cpu::Cpu,
+    backends::common::{
+        Backend, Kernels,
+        gpu_types::quantization_method::QuantizationMethod,
+        kernel::matmul::{ActivationFormat, MatmulKernel},
     },
     data_type::DataType,
     tests::{
         assert::assert_parity,
         helpers::{create_context, for_each_non_cpu_backend},
-        matmul::{
-            QuantInput, production_quant_buffers, production_quant_input, quant_tolerance, run_quant, run_quant_with,
-        },
+        matmul::{QuantBuffers, QuantInput, production_quant_input, quant_tolerance, run_quant_cpu, run_quant_with},
     },
 };
 
@@ -36,19 +31,21 @@ fn quant_matmul_bf16(
     #[values((256, 64), (256, 72), (1024, 200))] k_n: (u32, u32),
 ) {
     let (k, n) = k_n;
-    for group_size in [32, 64, 128] {
-        for (bits, method) in SCHEMES {
-            let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
-            let expected = run_quant::<Cpu, bf16>(&input);
-            let (rel_tol, abs_tol) = quant_tolerance(ActivationFormat::Bf16, bits, &expected);
-            for_each_non_cpu_backend!(|B| {
-                let actual = run_quant::<B, bf16>(&input);
+    for_each_non_cpu_backend!(|B| {
+        let context = create_context::<B>();
+        for group_size in [32, 64, 128] {
+            for (bits, method) in SCHEMES {
+                let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
+                let expected = run_quant_cpu(&input);
+                let (rel_tol, abs_tol) = quant_tolerance(ActivationFormat::Bf16, bits, &expected);
+                let mut buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
+                let actual = run_quant_with::<B, bf16>(&context, &mut buffers, &input);
                 let backend = std::any::type_name::<B>();
                 let label = format!("{backend} m={m} k={k} n={n} gs={group_size} bits={bits} {method:?}");
                 assert_parity(&label, &expected, &actual, rel_tol, abs_tol);
-            });
+            }
         }
-    }
+    });
 }
 
 /// What a linear loaded with A8 storage runs: weights laid out by `optimize_weights_layout`, then the activation format
@@ -87,12 +84,11 @@ fn quant_matmul_a8_bf16_impl<B: Backend>(
                 true => input.with_output_rht(method == QuantizationMethod::ScaleZeroPoint),
                 false => input,
             };
-            let Some((input, format)) = production_quant_input::<B, bf16>(&context, &matmul, input) else {
+            let Some((input, format, mut buffers)) = production_quant_input::<B, bf16>(&context, &matmul, input) else {
                 continue;
             };
-            let expected = run_quant::<Cpu, bf16>(&input);
+            let expected = run_quant_cpu(&input);
             let (rel_tol, abs_tol) = quant_tolerance(format, bits, &expected);
-            let mut buffers = production_quant_buffers::<B, bf16>(&context, &matmul, &input);
             let actual = run_quant_with::<B, bf16>(&context, &mut buffers, &input);
             let backend = std::any::type_name::<B>();
             let label = format!("{format:?} {backend} m={m} k={k} n={n} gs={group_size} bits={bits} {method:?}");
