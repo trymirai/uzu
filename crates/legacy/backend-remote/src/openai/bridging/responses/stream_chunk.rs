@@ -49,7 +49,7 @@ pub fn build(event: ResponseStreamEvent) -> Option<StreamChunk> {
             let (tokens_input, tokens_input_cached, tokens_output) =
                 event.response.usage.as_ref().map(usage_parts).unwrap_or_default();
             Some(StreamChunk {
-                finish_reason: finish_reason::build(&event.response.status),
+                finish_reason: finish_reason::build(&event.response),
                 tokens_input,
                 tokens_input_cached,
                 tokens_output,
@@ -60,7 +60,7 @@ pub fn build(event: ResponseStreamEvent) -> Option<StreamChunk> {
             let (tokens_input, tokens_input_cached, tokens_output) =
                 event.response.usage.as_ref().map(usage_parts).unwrap_or_default();
             Some(StreamChunk {
-                finish_reason: finish_reason::build(&event.response.status),
+                finish_reason: finish_reason::build(&event.response),
                 tokens_input,
                 tokens_input_cached,
                 tokens_output,
@@ -71,7 +71,7 @@ pub fn build(event: ResponseStreamEvent) -> Option<StreamChunk> {
             let (tokens_input, tokens_input_cached, tokens_output) =
                 event.response.usage.as_ref().map(usage_parts).unwrap_or_default();
             Some(StreamChunk {
-                finish_reason: finish_reason::build(&event.response.status),
+                finish_reason: finish_reason::build(&event.response),
                 tokens_input,
                 tokens_input_cached,
                 tokens_output,
