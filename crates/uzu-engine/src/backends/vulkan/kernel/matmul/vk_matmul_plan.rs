@@ -54,8 +54,8 @@ pub enum VkMatmulPlan {
     /// Gemv on full-precision A, with its tile.
     Gemv(VkGemvTile),
     /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations, held by full native
-    /// 128-lane subgroups where `native_128`. One input row gives each output 32 / rows invocations, more input rows give
-    /// each 32-lane simdgroup `rows` outputs.
+    /// 128-lane subgroups where `native_128`. One input row or 8 or more rows give each output 32 / rows invocations,
+    /// which split its runs for every input; fewer rows by more inputs give each 32-lane simdgroup `rows` outputs.
     GemvInt8 {
         native_128: bool,
         rows: u32,
@@ -237,9 +237,8 @@ impl VkMatmulPlan {
                 input_rows,
             } => {
                 require(
-                    [1, 2, 4].contains(&rows) && (1..=8).contains(&input_rows)
-                        || [8, 16].contains(&rows) && input_rows == 1,
-                    "GemvInt8 takes 1, 2 or 4 rows by 1 to 8 inputs, or 8 or 16 by 1",
+                    [1, 2, 4, 8, 16].contains(&rows) && (1..=8).contains(&input_rows),
+                    "GemvInt8 takes 1, 2, 4, 8 or 16 rows by 1 to 8 inputs",
                 )?;
                 require(!shape.gathered || input_rows == 1, "gathered GemvInt8 takes one input row a workgroup")?;
                 require(
@@ -580,15 +579,18 @@ impl VkMatmulPlan {
     }
 
     /// GemvInt8 for m rows: more outputs a workgroup for fewer inputs, one input row a workgroup where `gathered`, on
-    /// native 128-lane subgroups where the device has them.
+    /// native 128-lane subgroups where the device has them. Those take 8 rows for every input count: their subgroups'
+    /// reductions run through shared memory, where split rows measured faster.
     fn gemv_int8(
         m: u32,
         gathered: bool,
         capabilities: Capability,
     ) -> Self {
+        let native_128 = capabilities.contains(Capability::GEMV_INT8_NATIVE_128);
         Self::GemvInt8 {
-            native_128: capabilities.contains(Capability::GEMV_INT8_NATIVE_128),
+            native_128,
             rows: match m {
+                _ if native_128 => 8,
                 0..=1 => 8,
                 2 => 4,
                 3..=4 => 2,
