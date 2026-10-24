@@ -358,7 +358,7 @@ impl VkMatmulPlan {
                 rows,
                 input_rows,
                 ..
-            } => [n.div_ceil(8 * rows), m.div_ceil(input_rows), 1],
+            } => [m.div_ceil(input_rows), n.div_ceil(8 * rows), 1],
             Self::GemmInt8 {
                 row_block,
                 splits,
