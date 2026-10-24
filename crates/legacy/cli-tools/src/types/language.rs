@@ -2,6 +2,14 @@ use clap::ValueEnum;
 use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
 use serde::{Deserialize, Serialize};
 
+use crate::{
+    configs::PlatformsConfig,
+    languages::{
+        KotlinLanguageBackend, LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend,
+        TypeScriptLanguageBackend,
+    },
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Language {
@@ -11,6 +19,7 @@ pub enum Language {
     #[serde(rename = "typescript")]
     #[value(name = "typescript")]
     TypeScript,
+    Kotlin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +37,7 @@ impl Language {
             Language::Python => "python".to_string(),
             Language::Swift => "swift".to_string(),
             Language::TypeScript => "typescript".to_string(),
+            Language::Kotlin => "kotlin".to_string(),
         }
     }
 
@@ -37,6 +47,7 @@ impl Language {
             Language::Python => "Python".to_string(),
             Language::Swift => "Swift".to_string(),
             Language::TypeScript => "TypeScript".to_string(),
+            Language::Kotlin => "Kotlin".to_string(),
         }
     }
 
@@ -46,20 +57,21 @@ impl Language {
             Language::Python => "python",
             Language::Swift => "swift",
             Language::TypeScript => "ts",
+            Language::Kotlin => "kotlin",
         }
     }
 
     pub fn command_argument_case(&self) -> Case {
         match self {
             Language::Rust | Language::Python => Case::Snake,
-            Language::TypeScript => Case::LowerCamel,
+            Language::TypeScript | Language::Kotlin => Case::LowerCamel,
             Language::Swift => Case::Kebab,
         }
     }
 
     pub fn file_case(&self) -> Case {
         match self {
-            Language::Swift => Case::UpperCamel,
+            Language::Swift | Language::Kotlin => Case::UpperCamel,
             _ => self.command_argument_case(),
         }
     }
@@ -70,6 +82,20 @@ impl Language {
             Language::Python => "py",
             Language::Swift => "swift",
             Language::TypeScript => "ts",
+            Language::Kotlin => "kt",
+        }
+    }
+
+    pub fn backend(
+        &self,
+        config: PlatformsConfig,
+    ) -> Box<dyn LanguageBackend> {
+        match self {
+            Language::Rust => Box::new(RustLanguageBackend::new(config)),
+            Language::Python => Box::new(PythonLanguageBackend::new(config)),
+            Language::Swift => Box::new(SwiftLanguageBackend::new(config)),
+            Language::TypeScript => Box::new(TypeScriptLanguageBackend::new(config)),
+            Language::Kotlin => Box::new(KotlinLanguageBackend::new(config)),
         }
     }
 

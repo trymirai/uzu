@@ -59,7 +59,7 @@ impl<B: Backend> UntiedReadout<B> {
         let rht_signs = tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32)?;
         let preparation = LinearInputPreparation {
             rht_signs,
-            activation_quantization: linear.prepare_a8(context),
+            activation_quantization: linear.prepare_a8(context).map_err(LinearMatmulError::BackendError)?,
         };
         let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)
             .map_err(LinearMatmulError::BackendError)?;

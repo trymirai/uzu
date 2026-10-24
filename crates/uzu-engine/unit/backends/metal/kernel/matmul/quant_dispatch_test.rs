@@ -32,6 +32,7 @@ use crate::{
     },
     data_type::DataTypeRepr,
     tests::{
+        assert::assert_parity,
         helpers::buffer_to_vec,
         matmul::{QuantBuffers, QuantInput, quant::run_quant_cpu, quant_arguments},
     },
@@ -77,18 +78,7 @@ fn run_quant_metal<T: DataTypeRepr + Float>(
         matmul.encode(args, &mut command_buffer).expect("matmul encode failed");
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Metal, T>(&buffers.y)
-}
-
-fn check_tolerance(
-    expected: f32,
-    actual: f32,
-    rel_tol: f64,
-    abs_tol: f64,
-) -> bool {
-    let diff = (expected - actual).abs() as f64;
-    let tol = abs_tol.max(expected.abs() as f64 * rel_tol);
-    diff <= tol
+    buffer_to_vec::<Metal, T>(&context, &buffers.y)
 }
 
 #[uzu_test]
@@ -108,28 +98,6 @@ fn quant_params_layout_table() {
         assert_eq!(params.zero_point_shape(QuantizationMode::U4), u4_shape);
         assert_eq!(strides(params.zero_point_strides(QuantizationMode::U4)), u4_strides);
     }
-}
-
-fn assert_parity<T: DataTypeRepr + Float + Debug + Display>(
-    label: &str,
-    reference: &[T],
-    actual: &[T],
-    rel_tol: f64,
-    abs_tol: f64,
-) {
-    assert_eq!(reference.len(), actual.len(), "{label}: length mismatch");
-    let mut errors = 0usize;
-    for (i, (&exp, &got)) in reference.iter().zip(actual.iter()).enumerate() {
-        let exp_f32 = exp.to_f32().unwrap();
-        let got_f32 = got.to_f32().unwrap();
-        if !check_tolerance(exp_f32, got_f32, rel_tol, abs_tol) {
-            if errors < 5 {
-                eprintln!("  {label} idx={i} expected={exp_f32} got={got_f32} diff={}", (exp_f32 - got_f32).abs());
-            }
-            errors += 1;
-        }
-    }
-    assert_eq!(errors, 0, "{label}: {errors} mismatches");
 }
 
 fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
@@ -244,7 +212,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     };
     matmul.encode_with_gemm_engine(args, GemmEngine::Simdgroup, &mut command_buffer).expect("encode quant with bias");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y);
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
 
     let mut reference = run_quant_cpu::<bf16>(&input);
     for i in 0..(input.m as usize) {
@@ -295,7 +263,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
     };
     matmul.encode(args, &mut command_buffer).expect("encode quant gemv with scale+bias");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y);
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
 
     assert_parity::<bf16>("gemv_qmv_scale_bias", &reference, &actual, 0.05, 0.4);
 }
@@ -399,7 +367,7 @@ fn parity_bf16_quant_rht(
     };
     cpu_matmul.encode(cpu_args, &mut cpu_command_buffer).expect("cpu encode quant+rht");
     block_on(cpu_command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let reference = buffer_to_vec::<Cpu, bf16>(&cpu_buffers.y);
+    let reference = buffer_to_vec::<Cpu, bf16>(&cpu_context, &cpu_buffers.y);
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let metal_rht = crate::tests::helpers::create_buffer_with_data::<Metal, i32>(&context, &rht);
@@ -420,7 +388,7 @@ fn parity_bf16_quant_rht(
     };
     matmul.encode(args, &mut command_buffer).expect("encode quant matmul with rht");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y);
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
 
     assert_parity::<bf16>(
         if with_bias {
@@ -491,7 +459,7 @@ fn quant_gemm_parameter_layout_prefix_matches_cpu(
         args.n = logical_n;
         matmul.encode_with_gemm_engine(args, engine, &mut command_buffer).unwrap();
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-        let actual = buffer_to_vec::<Metal, bf16>(&buffers.y);
+        let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
         let expected: Vec<_> = reference
             .chunks_exact(input.n as usize)
             .flat_map(|row| row[..logical_n as usize].iter().copied())
@@ -716,7 +684,7 @@ fn a8w_mxu_output_bias_parity_bf16(
     };
     cpu_matmul.encode(cpu_arguments, &mut cpu_command_buffer).expect("CPU A8W matmul");
     block_on(cpu_command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let mut reference = buffer_to_vec::<Cpu, bf16>(&cpu_buffers.y);
+    let mut reference = buffer_to_vec::<Cpu, bf16>(&cpu_context, &cpu_buffers.y);
     for row in reference.chunks_exact_mut(n as usize) {
         for (value, bias) in row.iter_mut().zip(&output_bias) {
             *value = bf16::from_f32(value.to_f32() + bias.to_f32());
@@ -746,7 +714,7 @@ fn a8w_mxu_output_bias_parity_bf16(
         .encode_with_gemm_engine(metal_arguments, GemmEngine::Mxu, &mut metal_command_buffer)
         .expect("Metal A8W MXU matmul with output bias");
     block_on(metal_command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&metal_buffers.y);
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &metal_buffers.y);
 
     assert_parity::<bf16>(
         &format!("A8W{bits} MXU output bias, output Hadamard={with_output_hadamard}"),
@@ -789,7 +757,7 @@ fn run_widened_f32<B: Backend>(
         )
         .expect("widened encode failed");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, f32>(&y)
+    buffer_to_vec::<B, f32>(&context, &y)
 }
 
 #[rstest]
@@ -864,7 +832,7 @@ fn gemv_reads_mxu_tiled_layout_bf16(
     };
     cpu_matmul.encode(cpu_arguments, &mut cpu_command_buffer).expect("CPU matmul");
     block_on(cpu_command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let reference = buffer_to_vec::<Cpu, bf16>(&cpu_buffers.y);
+    let reference = buffer_to_vec::<Cpu, bf16>(&cpu_context, &cpu_buffers.y);
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let metal_factors = crate::tests::helpers::create_buffer_with_data::<Metal, i32>(&context, &factors);
@@ -884,7 +852,7 @@ fn gemv_reads_mxu_tiled_layout_bf16(
     };
     matmul.encode(arguments, &mut command_buffer).expect("Metal matmul");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y);
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
 
     assert_parity::<bf16>(
         &format!("MxuTiled GEMV k={k} n={n} gs={group_size} bits={bits} method={method:?} hadamard={output_hadamard}"),
@@ -935,7 +903,7 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
     arguments.n = gathered_rows;
     matmul.encode(arguments, &mut command_buffer).expect("gathered GEMV");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y)[..gathered_rows as usize].to_vec();
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y)[..gathered_rows as usize].to_vec();
 
     assert_parity::<bf16>(
         &format!("gathered MxuTiled GEMV bits={bits} gs={group_size} method={method:?}"),

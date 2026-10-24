@@ -1,2 +1,15 @@
 [bindings.swift]
 generate_codable_conformance = true
+
+[bindings.kotlin]
+package_name = "com.trymirai.uzu.nagare"
+android = true
+generate_immutable_records = true
+
+# Applied by cargo tools build kotlin (kotlin_error_renames.rs) until UniFFI 0.32.
+[bindings.kotlin.rename]
+"ChatSessionError.Backend.message" = "reason"
+"ChatSessionError.Loading.message" = "reason"
+"ClassificationSessionError.Backend.message" = "reason"
+"ForeignToolError.Invocation.message" = "reason"
+"TextToSpeechSessionError.Backend.message" = "reason"

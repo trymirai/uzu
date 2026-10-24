@@ -102,7 +102,7 @@ fn run_gemv<B: Backend, T: DataTypeRepr + Float>(
         )
         .expect("encode failed");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, T>(&d)
+    buffer_to_vec::<B, T>(&context, &d)
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {

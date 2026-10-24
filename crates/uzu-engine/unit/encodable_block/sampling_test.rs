@@ -9,7 +9,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
         gpu_types::trie::TrieNode,
     },
     data_type::{DataType, DataTypeRepr},
@@ -78,7 +78,7 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     drop(bitmask_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let sampled = sampled_buffer.copyout::<u32>();
+    let sampled = block_on(context.read_completed::<u32>(&sampled_buffer)).unwrap();
 
     Ok(SamplingTestResults(sampled))
 }
@@ -157,6 +157,43 @@ fn sampling_case() -> impl Strategy<Value = SamplingCase> {
             })
         },
     )
+}
+
+#[uzu_test]
+fn sampling_largest_uniform_has_finite_noise() {
+    let contextes = TestContextes::new();
+    let vocab_size = 104260;
+    let mut logits = vec![half::bf16::from_f32(-1000.0); vocab_size];
+    logits[29708] = half::bf16::from_f32(0.0);
+    logits[86947] = half::bf16::from_f32(256.0);
+    // This key gives token 29708 the largest 24-bit uniform, 1-2^-24. Its finite noise cannot bridge this logit gap.
+    let seeds = [8854322454206676223];
+    let method = SamplingMethod::Stochastic {
+        temperature: None,
+        top_k: None,
+        top_p: None,
+        min_p: None,
+        repetition_penalty: None,
+        suffix_repetition_length: None,
+    };
+    (|| {
+        for_each_context!(contextes, |context: C| {
+            let sampled = do_sampling_backend::<<C as Context>::Backend, half::bf16>(
+                context,
+                &logits,
+                Some(&seeds),
+                None,
+                vocab_size,
+                &method,
+                1,
+            )
+            .unwrap();
+            assert_eq!(sampled.0, vec![86947], "finite Gumbel noise must preserve the large logit gap");
+            Ok::<_, TestCaseError>(sampled)
+        })
+        .compare_results()
+    })()
+    .unwrap();
 }
 
 #[uzu_test]

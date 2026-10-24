@@ -1,9 +1,10 @@
 use derive_more::Debug;
+use futures::executor::block_on;
 use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferCpuAccessible, BufferMut,
+        Backend, BufferMut, Context, DeviceCapabilities, GlobalBufferInitializer,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
     },
@@ -223,11 +224,14 @@ impl<B: Backend> WeightMatrix<B> {
         Ok(())
     }
 
-    pub fn try_prepare_a8_storage(&mut self) -> bool {
+    pub fn try_prepare_a8_storage(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<bool, B::Error> {
         let Some(quantized) = self.quantized.as_mut() else {
-            return false;
+            return Ok(false);
         };
-        quantized.prepare_a8_storage(&mut self.values)
+        quantized.prepare_a8_storage(&mut self.values, context)
     }
 
     pub fn a8_signed_codes(&self) -> Option<bool> {
@@ -238,24 +242,41 @@ impl<B: Backend> WeightMatrix<B> {
 impl<B: Backend> Quantized<B> {
     fn prepare_a8_storage(
         &mut self,
-        values: impl BufferMut<Buffer: BufferCpuAccessible>,
-    ) -> bool {
+        values: &mut B::GlobalBuffer,
+        context: &B::Context,
+    ) -> Result<bool, B::Error> {
         if self.params.layout() != QuantParamsLayout::GroupOutput {
-            return false;
+            return Ok(false);
         }
         if self.info.mode != QuantizationMode::U4 {
             if !self.signed_codes
                 && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
             {
-                let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
-                words.iter_mut().for_each(|word| *word ^= broadcast_mask);
-                prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
+                if context.device_capabilities().contains(DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE) {
+                    flip_sign_bits(values.as_slice_mut(), sign_flip_mask);
+                } else {
+                    // The host cannot write the codes in place, so it flips a copy and uploads that.
+                    let mut codes = block_on(context.copyout::<u8>(&*values))?;
+                    flip_sign_bits(&mut codes, sign_flip_mask);
+                    let mut initializer = context.create_buffer_initializer(codes.len())?;
+                    initializer.copyin(&codes);
+                    *values = initializer.end_initialization()?;
+                }
             }
             self.signed_codes = true;
         }
-        true
+        Ok(true)
     }
+}
+
+fn flip_sign_bits(
+    codes: &mut [u8],
+    sign_flip_mask: u8,
+) {
+    let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
+    let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(codes);
+    words.iter_mut().for_each(|word| *word ^= broadcast_mask);
+    prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
 }
 
 fn physical_shape(

@@ -6,3 +6,7 @@ pub struct TimestampSpan {
     pub start: Instant,
     pub end: Instant,
 }
+
+#[cfg(test)]
+#[path = "../../../unit/backends/common/timestamp_test.rs"]
+mod tests;

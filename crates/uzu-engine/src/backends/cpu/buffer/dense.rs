@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::backends::{
-    common::{Buffer, BufferCpuAccessible, GlobalBuffer},
-    cpu::Cpu,
+    common::{Buffer, BufferCpuAccessible, GlobalBuffer, GlobalBufferInitializer},
+    cpu::{Cpu, error::CpuError},
 };
 
 #[derive(Debug)]
@@ -52,3 +52,9 @@ impl BufferCpuAccessible for CpuBuffer {
 }
 
 impl GlobalBuffer for CpuBuffer {}
+
+impl GlobalBufferInitializer for CpuBuffer {
+    fn end_initialization(self) -> Result<CpuBuffer, CpuError> {
+        Ok(self)
+    }
+}

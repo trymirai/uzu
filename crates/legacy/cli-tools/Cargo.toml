@@ -33,6 +33,7 @@ minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true
+uniffi = { workspace = true, features = ["bindgen"] }
 
 [lints]
 workspace = true

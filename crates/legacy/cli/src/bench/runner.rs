@@ -44,9 +44,13 @@ impl BenchRunner {
         &self,
         mut progress: Option<F>,
     ) -> Result<Vec<BenchResult>> {
-        let model_path = Path::new(&self.model_path)
-            .canonicalize()
-            .with_context(|| format!("Can not open model path: {}", self.model_path))?;
+        // Windows canonical paths carry a verbatim prefix no cached model path has, so there the path is only absolute.
+        let model_path = if cfg!(windows) {
+            std::path::absolute(&self.model_path)
+        } else {
+            Path::new(&self.model_path).canonicalize()
+        }
+        .with_context(|| format!("Can not resolve model path: {}", self.model_path))?;
         let model_path_string = model_path.to_string_lossy().into_owned();
         // Path lookup already handles unregistered directories. Registering the
         // parent would duplicate models that are also in the download cache.

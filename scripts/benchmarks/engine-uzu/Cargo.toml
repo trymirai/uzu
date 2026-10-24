@@ -12,7 +12,7 @@ publish = false
 [lints]
 workspace = true
 
-[dependencies]
+[target.'cfg(target_vendor = "apple")'.dependencies]
 anyhow.workspace = true
 clap.workspace = true
 futures.workspace = true

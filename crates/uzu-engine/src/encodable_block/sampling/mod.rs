@@ -178,7 +178,8 @@ impl<B: Backend> Sampling<B> {
             },
         };
 
-        let mut output = command_buffer.context().create_buffer(sampling_length as usize * size_of::<u32>())?;
+        let mut output =
+            command_buffer.context().create_readback_buffer(sampling_length as usize * size_of::<u32>())?;
 
         kernel.encode(
             logits,

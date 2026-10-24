@@ -5,6 +5,7 @@ use crate::backends::common::{Backend, BufferMut, BufferRef};
 pub mod constant;
 pub mod cpu_accessible;
 pub mod global;
+pub mod global_initializer;
 pub mod scratch;
 pub mod sparse;
 

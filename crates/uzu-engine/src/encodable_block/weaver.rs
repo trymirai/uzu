@@ -674,10 +674,10 @@ impl<B: Backend> Weaver<B> {
         };
 
         let mut packed_tree_readback =
-            command_buffer.context().create_buffer(packed_tree.size()).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.context().create_readback_buffer(packed_tree.size()).map_err(WeaverEncodeError::Backend)?;
         command_buffer.encode_copy(&packed_tree, &mut packed_tree_readback);
         let mut frontier_readback =
-            command_buffer.context().create_buffer(frontier.size()).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.context().create_readback_buffer(frontier.size()).map_err(WeaverEncodeError::Backend)?;
         command_buffer.encode_copy(&frontier, &mut frontier_readback);
 
         Ok(EncodedWeaverTree {

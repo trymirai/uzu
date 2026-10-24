@@ -1,2 +1,18 @@
 [bindings.swift]
 generate_codable_conformance = true
+
+[bindings.kotlin]
+package_name = "com.trymirai.uzu"
+android = true
+generate_immutable_records = true
+
+# Applied by cargo tools build kotlin (kotlin_error_renames.rs) until UniFFI 0.32.
+[bindings.kotlin.rename]
+"EngineError.TokioError.message" = "reason"
+"EngineError.ModelConfig.message" = "reason"
+"PlayerError.RodioError.message" = "reason"
+"PlayerError.InvalidPcmBatch.message" = "reason"
+"RegistryError.UnableToCreate.message" = "reason"
+"RegistryError.UnableToGetModels.message" = "reason"
+"SettingsError.BackendError.message" = "reason"
+"StorageError.DownloadManager.message" = "reason"

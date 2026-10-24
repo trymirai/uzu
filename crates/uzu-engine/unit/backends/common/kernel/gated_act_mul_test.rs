@@ -77,7 +77,7 @@ fn run_interleaved<T: DataTypeRepr + Float, B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&output)
+    buffer_to_vec::<B, T>(&context, &output)
 }
 
 fn interleaved_test<T: DataTypeRepr + Float + Debug + Display>(act_type: ActivationType) {
@@ -143,7 +143,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    (buffer_to_vec(&values), buffer_to_vec(&scales))
+    (buffer_to_vec(&context, &values), buffer_to_vec(&context, &scales))
 }
 
 #[uzu_test]
@@ -242,7 +242,7 @@ fn run_separate<T: DataTypeRepr + Float, B: Backend>(input: &SeparateInput<T>) -
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&output)
+    buffer_to_vec::<B, T>(&context, &output)
 }
 
 fn separate_test<T: DataTypeRepr + Float + Debug>() {
@@ -317,7 +317,7 @@ fn transformed_interleaved_test<T: DataTypeRepr + Float + Debug + Display>(
         );
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-        let output = buffer_to_vec::<B, T>(&output);
+        let output = buffer_to_vec::<B, T>(&context, &output);
         assert_eq_float(
             &expected,
             &output,

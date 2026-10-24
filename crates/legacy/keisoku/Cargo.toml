@@ -16,12 +16,10 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
+[target.'cfg(target_vendor = "apple")'.dependencies]
 bitflags.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
-
-[target.'cfg(target_vendor = "apple")'.dependencies]
 kanka.workspace = true
 objc2-core-foundation.workspace = true
 obfstr.workspace = true
@@ -33,5 +31,5 @@ objc2-io-kit.workspace = true
 serde_json.workspace = true
 
 # Memory stats on non-macOS Apple (iOS) come from sysinfo.
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dependencies]
 sysinfo.workspace = true

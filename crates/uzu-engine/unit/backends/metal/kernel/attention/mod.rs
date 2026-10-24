@@ -1,27 +1,6 @@
 #![cfg(backend = "metal")]
 
 use super::gemm;
-use crate::{backends::common::kernel::AttentionKernelConfig, data_type::DataTypeRepr};
+use crate::tests::helpers::default_attention_config;
 
 mod gemm_test;
-mod kernel_test;
-
-fn default_attention_config<T: DataTypeRepr>(
-    head_dim: usize,
-    num_q_heads: usize,
-    num_groups: usize,
-    is_causal: bool,
-) -> AttentionKernelConfig {
-    AttentionKernelConfig {
-        head_dim: head_dim as u32,
-        num_groups: num_groups as u32,
-        num_q_heads: num_q_heads as u32,
-        has_sinks: false,
-        gate_row_stride: None,
-        is_kv_cache_ring: false,
-        is_causal,
-        sliding_window_size: None,
-        scale: Some(1.0 / (head_dim as f32).sqrt()),
-        data_type: T::data_type(),
-    }
-}

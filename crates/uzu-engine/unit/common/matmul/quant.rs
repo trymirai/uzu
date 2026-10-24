@@ -1,20 +1,21 @@
 use std::mem::{size_of, size_of_val};
 
 use futures::executor::block_on;
+use half::bf16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context,
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
-                    Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                    QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
+                    MatmulOutput, MatmulShape, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
+                    WeightsLayout,
                 },
             },
         },
@@ -48,6 +49,9 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
+    /// Output random Hadamard factors, then an output bias after them, as RHT-wrapped linears finish.
+    pub output_rht_factors: Option<Vec<i32>>,
+    pub output_bias: Option<Vec<T>>,
 }
 
 fn mode_for_bits(bits: u32) -> QuantizationMode {
@@ -175,7 +179,31 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
             prepared_a: None,
+            output_rht_factors: None,
+            output_bias: None,
         }
+    }
+
+    /// Output RHT over n's 32-column blocks with sign factors, and with `bias` an output bias after it.
+    pub fn with_output_rht(
+        mut self,
+        bias: bool,
+    ) -> Self {
+        assert!(self.n.is_multiple_of(32), "output RHT needs whole 32-column blocks");
+        self.output_rht_factors = Some(
+            (0..self.n)
+                .map(|column| {
+                    if column * 7 % 3 == 0 {
+                        -1
+                    } else {
+                        1
+                    }
+                })
+                .collect(),
+        );
+        self.output_bias =
+            bias.then(|| (0..self.n).map(|column| T::from(0.3 + 0.05 * (column % 4) as f32).unwrap()).collect());
+        self
     }
 
     pub fn with_signed_weight_codes(mut self) -> Self {
@@ -258,9 +286,9 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {
-            values: buffer_to_vec(&values),
-            scales: buffer_to_vec(&scales),
-            group_sums: group_sums.map_or_else(Vec::new, |sums| buffer_to_vec(&sums)),
+            values: buffer_to_vec(&context, &values),
+            scales: buffer_to_vec(&context, &scales),
+            group_sums: group_sums.map_or_else(Vec::new, |sums| buffer_to_vec(&context, &sums)),
             quantization,
         });
         self
@@ -294,6 +322,8 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub prepared_a_scales: Option<B::GlobalBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalBuffer>,
     pub y: B::GlobalBuffer,
+    pub output_rht_factors: Option<B::GlobalBuffer>,
+    pub output_bias: Option<B::GlobalBuffer>,
     pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -308,39 +338,57 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         let params = QuantParams::new(params_layout, input.n, groups);
         let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
         let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
-        let mut buffers = Self {
+        // Group-output metadata planes are transposed on the host before upload.
+        let group_output = params_layout == QuantParamsLayout::GroupOutput;
+        let metadata = |values: &[T], transposed: bool| {
+            let mut plane = pad(values, metadata_elements);
+            if group_output && transposed {
+                let value_bits = size_of::<T>() as u32 * u8::BITS;
+                transpose_metadata(bytemuck::cast_slice_mut(&mut plane), input.n, groups, value_bits);
+            }
+            plane
+        };
+        let (x, prepared_a, prepared_a_scales, prepared_a_group_sums) = activations::<B, T>(context, input);
+        Self {
             w: create_buffer_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: create_buffer_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
-            zp: input
-                .zero_points
-                .as_ref()
-                .map(|zero_points| create_buffer_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
-            bias: input
-                .biases
-                .as_ref()
-                .map(|biases| create_buffer_with_data::<B, T>(context, &pad(biases, metadata_elements))),
-            x: create_buffer_with_data::<B, T>(context, &input.x),
-            prepared_a: input
-                .prepared_a
-                .as_ref()
-                .map(|prepared| create_buffer_with_data::<B, i8>(context, &prepared.values)),
-            prepared_a_scales: input
-                .prepared_a
-                .as_ref()
-                .map(|prepared| create_buffer_with_data::<B, f32>(context, &prepared.scales)),
-            prepared_a_group_sums: input
-                .prepared_a
-                .as_ref()
-                .filter(|prepared| !prepared.group_sums.is_empty())
-                .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
+            scales: create_buffer_with_data::<B, T>(context, &metadata(&input.scales, true)),
+            zp: input.zero_points.as_ref().map(|zero_points| {
+                let mut plane = pad(zero_points, zero_point_bytes);
+                if group_output && input.quant_method == QuantizationMethod::ScaleZeroPoint {
+                    let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
+                    transpose_metadata(&mut plane, input.n, groups, correction_bits);
+                }
+                create_buffer_with_data::<B, u8>(context, &plane)
+            }),
+            bias: input.biases.as_ref().map(|biases| {
+                create_buffer_with_data::<B, T>(
+                    context,
+                    &metadata(biases, input.quant_method == QuantizationMethod::ScaleBias),
+                )
+            }),
+            x,
+            prepared_a,
+            prepared_a_scales,
+            prepared_a_group_sums,
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
+            output_rht_factors: input
+                .output_rht_factors
+                .as_ref()
+                .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
+            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
             weights_layout: Default::default(),
             _t: std::marker::PhantomData,
-        };
-        if params_layout == QuantParamsLayout::GroupOutput {
-            buffers.transpose_quant_params(input);
         }
-        buffers
+    }
+
+    /// Replaces the activations, A8 included, with `input`'s, keeping the weights and their layout.
+    pub fn upload_activations(
+        &mut self,
+        context: &B::Context,
+        input: &QuantInput<T>,
+    ) {
+        (self.x, self.prepared_a, self.prepared_a_scales, self.prepared_a_group_sums) =
+            activations::<B, T>(context, input);
     }
 
     pub fn matmul_b<'a>(
@@ -357,36 +405,22 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
             input,
         )
     }
+}
 
-    fn transpose_quant_params(
-        &mut self,
-        input: &QuantInput<T>,
-    ) {
-        let columns = input.n;
-        let groups = input.k.div_ceil(input.group_size);
-        let value_bits = size_of::<T>() as u32 * u8::BITS;
-        transpose_metadata(self.scales.as_slice_mut(), columns, groups, value_bits);
-        match input.quant_method {
-            QuantizationMethod::ScaleBias => {
-                transpose_metadata(
-                    self.bias.as_mut().expect("bias buffer").as_slice_mut(),
-                    columns,
-                    groups,
-                    value_bits,
-                );
-            },
-            QuantizationMethod::ScaleZeroPoint => {
-                let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
-                transpose_metadata(
-                    self.zp.as_mut().expect("zp buffer").as_slice_mut(),
-                    columns,
-                    groups,
-                    correction_bits,
-                );
-            },
-            QuantizationMethod::ScaleSymmetric => {},
-        }
-    }
+/// `input`'s activations: full precision, then its prepared A8 codes, scales and group sums where it has them.
+fn activations<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    input: &QuantInput<T>,
+) -> (B::GlobalBuffer, Option<B::GlobalBuffer>, Option<B::GlobalBuffer>, Option<B::GlobalBuffer>) {
+    let prepared = input.prepared_a.as_ref();
+    (
+        create_buffer_with_data::<B, T>(context, &input.x),
+        prepared.map(|prepared| create_buffer_with_data::<B, i8>(context, &prepared.values)),
+        prepared.map(|prepared| create_buffer_with_data::<B, f32>(context, &prepared.scales)),
+        prepared
+            .filter(|prepared| !prepared.group_sums.is_empty())
+            .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
+    )
 }
 
 fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
@@ -430,6 +464,8 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         prepared_a_scales,
         prepared_a_group_sums,
         y,
+        output_rht_factors,
+        output_bias,
         weights_layout,
         ..
     } = buffers;
@@ -438,9 +474,7 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),
             scales: prepared_a_scales.as_ref().expect("prepared activation scales"),
-            // Symmetric weights carry no correction term, so the GEMM never reads these.
-            group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
-                .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
+            group_sums: prepared_a_group_sums.as_ref(),
             scale_group_size: prepared.quantization.scale_group_size(),
             code_layout: prepared.quantization.code_layout(),
         },
@@ -454,7 +488,14 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         b,
         b_leading_dimension: None,
         b_transpose: true,
-        output: MatmulOutput::new(y, MatmulDOps::none()),
+        output: MatmulOutput::new(
+            y,
+            MatmulDOps {
+                bias: output_bias.as_ref(),
+                rht_factors: output_rht_factors.as_ref(),
+                ..MatmulDOps::none()
+            },
+        ),
         gather_indices: None,
         m: input.m,
         n: input.n,
@@ -462,18 +503,88 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
     }
 }
 
+type BackendMatmul<B> = <<B as Backend>::Kernels as Kernels>::MatmulKernel;
+
+/// `input` as a linear loaded with A8 storage runs it, with its buffers: U8 codes signed, and the activations
+/// `select_activation_format` picks for the weights' layout, A8 prepared as the backend quantizes. `None` where the
+/// backend gives the weights no A8 storage, so they stay row-major with BF16 activations.
+pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    matmul: &BackendMatmul<B>,
+    input: QuantInput<T>,
+) -> Option<(QuantInput<T>, ActivationFormat, QuantBuffers<B, T>)> {
+    let mut input = match input.mode {
+        QuantizationMode::U4 => input,
+        _ => input.with_signed_weight_codes(),
+    };
+    let mut buffers = production_quant_buffers::<B, T>(context, matmul, &input);
+    let a8_shape = MatmulShape {
+        a_full_precision: false,
+        ..MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input))
+    };
+    let quantization = matmul.select_activation_quantization(&a8_shape, context)?;
+    let bf16_shape = MatmulShape {
+        a_full_precision: true,
+        ..a8_shape
+    };
+    let format = matmul.select_activation_format(&bf16_shape, buffers.weights_layout, context);
+    if format == ActivationFormat::Int8 {
+        input = input.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size());
+        buffers.upload_activations(context, &input);
+    }
+    Some((input, format, buffers))
+}
+
+/// Buffers of `input` with its weights laid out by the backend's `optimize_weights_layout` where it takes A8, as a
+/// loaded linear's.
+pub fn production_quant_buffers<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    matmul: &BackendMatmul<B>,
+    input: &QuantInput<T>,
+) -> QuantBuffers<B, T> {
+    let mut buffers = QuantBuffers::<B, T>::allocate(context, input);
+    let a8_shape = MatmulShape {
+        a_full_precision: false,
+        ..MatmulShape::from_arguments(&quant_arguments(&mut buffers, input))
+    };
+    if matmul.select_activation_quantization(&a8_shape, context).is_some() {
+        buffers.weights_layout =
+            matmul.optimize_weights_layout(&a8_shape, &mut buffers.w, context).expect("weights layout");
+    }
+    buffers
+}
+
+/// A quantized product's (relative, absolute) tolerance against the CPU's product of the same codes. GEMM stages
+/// dequantized B as BF16, as Metal does: over 256 U8 levels it errs with the outputs' size.
+pub fn quant_tolerance(
+    format: ActivationFormat,
+    bits: u32,
+    expected: &[bf16],
+) -> (f64, f64) {
+    let abs_tol = match (format, bits) {
+        (ActivationFormat::Bf16, 8) => expected.iter().fold(0.4f32, |tol, value| tol.max(0.02 * value.to_f32().abs())),
+        _ => 0.4,
+    };
+    (0.05, f64::from(abs_tol))
+}
+
 pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = block_on(<Cpu as Backend>::Context::new()).expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
-    let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        &context,
-        T::data_type(),
-        T::data_type(),
-        T::data_type(),
-    )
-    .expect("MatmulCpuKernel");
+    run_quant_with(&*context, &mut buffers, input)
+}
+
+/// Runs `input` on `buffers`, whose weights a test may have laid out for the backend first.
+pub fn run_quant_with<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    buffers: &mut QuantBuffers<B, T>,
+    input: &QuantInput<T>,
+) -> Vec<T> {
+    let mut matmul =
+        <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
+            .expect("MatmulKernel");
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
+    matmul.encode(quant_arguments(buffers, input), &mut command_buffer).expect("encode quant");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Cpu, T>(&buffers.y)
+    buffer_to_vec::<B, T>(&context, &buffers.y)
 }
