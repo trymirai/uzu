@@ -180,7 +180,8 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
 static const uint GEMV_INT8_SIMDGROUPS = 8;
 static const uint GEMV_INT8_RUN = 32;
 
-groupshared float gemv_int8_partials[GEMV_THREADS];
+// Split rows' partials: 256 for each row an invocation holds.
+groupshared float gemv_int8_partials[2 * GEMV_THREADS];
 
 // Eight words of the `count` bytes (16 or 32) at byte `start` of `source`, one 16-byte load per 4, +0 past `count`.
 void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, out uint words[8]) {
@@ -201,144 +202,14 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
   }
 }
 
-// GemvInt8 where output row r of the workgroup's 8 ROWS takes the 32 / ROWS consecutive invocations (in subgroup order)
-// from r 32 / ROWS, which split its runs, fold them for each of the INPUT_ROWS inputs, and sum their partials through
-// shared memory an input at a time. Consecutive invocations so read consecutive rows' group metadata, and each reads its
-// row's codes once for every input. `has_rht`, of one input, finishes with ActivationTransform's output transform of the
-// workgroup's whole 32-row blocks, then `rht_bias`: the outputs, rounded as stored, pass through shared memory to the
-// transform's invocations.
-void gemv_int8_rows<B : IModelFloat, D : IModelFloat>(
-  QuantizedWeights<B> weights,
-  Ptr<int8_t, Access.Read> a,
-  Ptr<float, Access.Read> a_scales,
-  Ptr<int, Access.Read> a_group_sums,
-  Ptr<D, Access.ReadWrite> d,
-  Ptr<B, Access.Read> bias,
-  Ptr<uint, Access.Read> gather,
-  GemmParams params,
-  uint output_tile,
-  uint input_tile,
-  uint invocation,
-  bool scale_bias,
-  bool u4,
-  bool signed_codes,
-  uint group_size,
-  uint ROWS,
-  uint INPUT_ROWS,
-  bool unsigned_dot,
-  bool gathered,
-  Ptr<int, Access.Read> rht_factors,
-  bool has_rht,
-  bool rht_bias,
-) {
-  let k = params.K;
-  let n = params.N;
-  let m = params.M;
-  let parts = SIMD_SIZE / ROWS;
-  let row_local = invocation / parts;
-  let part = invocation % parts;
-  let output_row = output_tile * GEMV_INT8_SIMDGROUPS * ROWS + row_local;
-  let first_input = input_tile * INPUT_ROWS;
-  let clamped_row = min(output_row, n - 1);
-  let row = gathered ? gather[first_input * n + clamped_row] : clamped_row;
-  let run_bytes = u4 ? GEMV_INT8_RUN / 2 : GEMV_INT8_RUN;
-  let codes = Ptr<uint8_t, Access.Read>(a);
-  float sums[GEMV_MAX_INPUT_ROWS];
-  [ForceUnroll]
-  for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
-    sums[I] = 0.0;
-  }
-  for (uint run = part; run < k / GEMV_INT8_RUN; run += parts) {
-    let column = run * GEMV_INT8_RUN;
-    let group = column / group_size;
-    // A group's first run adds its ScaleBias correction.
-    let head = scale_bias && column % group_size == 0;
-    let metadata = weights.metadata(row, group);
-    uint words[8];
-    gemv_int8_words(weights.codes, weights.code_byte(row, column), run_bytes, words);
-    let code_sum = unsigned_dot ? unsigned_codes(words, u4, signed_codes) : 0u;
-    [ForceUnroll]
-    for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
-      let input = first_input + I;
-      // A tile's first input is below m.
-      if (I < INPUT_ROWS && (I == 0 || input < m)) {
-        uint activation[8];
-        gemv_int8_words(codes, input * k + column, GEMV_INT8_RUN, activation);
-        let scale = a_scales[input * (k / INT8_SCALE_GROUP) + column / INT8_SCALE_GROUP];
-        let group_sum = head ? a_group_sums[input * (k / group_size) + group] : 0;
-        var dot = 0;
-        if (unsigned_dot) {
-          let activation_sum = int(biased_activations(activation)) - 128 * int(GEMV_INT8_RUN);
-          var products = 0u;
-          [unroll]
-          for (uint word = 0; word < 8; word++) {
-            products = udot_u8x4(activation[word], words[word], products);
-          }
-          dot = int(products) - 128 * int(code_sum) - int(metadata.zero_point) * activation_sum;
-        } else {
-          [unroll]
-          for (uint word = 0; word < 4; word++) {
-            if (u4) {
-              let centered = centered_u4(words[word], metadata.zero_point, signed_codes);
-              dot += dot_i8x4(activation[2 * word], centered.x) + dot_i8x4(activation[2 * word + 1], centered.y);
-            } else {
-              dot += dot_i8x4(activation[word], centered_u8(words[word], signed_codes))
-                + dot_i8x4(activation[4 + word], centered_u8(words[4 + word], signed_codes));
-            }
-          }
-        }
-        sums[I] = int8_fold(sums[I], scale, metadata, dot, head, group_sum);
-      }
-    }
-  }
-  [ForceUnroll]
-  for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
-    if (I < INPUT_ROWS) {
-      let input = first_input + I;
-      gemv_int8_partials[invocation] = sums[I];
-      GroupMemoryBarrierWithGroupSync();
-      var stored = 0.0;
-      if (part == 0 && output_row < n && (I == 0 || input < m)) {
-        var total = 0.0;
-        for (uint other = 0; other < parts; other++) {
-          total += gemv_int8_partials[invocation + other];
-        }
-        let bias_value = params.has_bias ? bias[output_row].toFloat() : 0.0;
-        let output = D.fromFloat(gemm_output(total, bias_value, params));
-        if (!has_rht) {
-          d[input * n + output_row] = output;
-        }
-        stored = output.toFloat();
-      }
-      if (has_rht) {
-        // Every invocation has read its row's partials before the stored outputs overwrite them.
-        GroupMemoryBarrierWithGroupSync();
-        if (part == 0) {
-          gemv_int8_partials[row_local] = stored;
-        }
-        GroupMemoryBarrierWithGroupSync();
-        let rows = GEMV_INT8_SIMDGROUPS * ROWS;
-        let column = output_tile * rows + invocation;
-        let value = hadamard_transform<GEMV_THREADS>(invocation < rows ? gemv_int8_partials[invocation] : 0.0);
-        // n is whole blocks, so a block lies wholly in or past it.
-        if (invocation < rows && column < n) {
-          var output = hadamard_factor(value, rht_factors[column]);
-          if (rht_bias) {
-            output = D.fromFloat(output).toFloat() + bias[column].toFloat();
-          }
-          d[input * n + column] = D.fromFloat(output);
-        }
-      } else if (I + 1 < INPUT_ROWS) {
-        // Every invocation has read its row's partials before the next input's overwrite them.
-        GroupMemoryBarrierWithGroupSync();
-      }
-    }
-  }
-}
-
-// The GemvInt8 entry points' algorithm for simdgroup `simd_group` of 8, lane `simd_lane` of 32: one input row or 8 or
-// more rows take gemv_int8_rows; fewer rows by more inputs give each simdgroup ROWS rows of every input, its lanes every
-// 32nd run, which segment_reduce sums.
+// The GemvInt8 entry points' algorithm for invocation `invocation` of 256, in subgroup order. Each output row of the
+// workgroup's 8 ROWS lies in a slot of `held` rows taken by `parts` consecutive invocations, which split its runs and fold
+// them for each of the INPUT_ROWS inputs; each invocation reads its rows' codes once for every input and each input's
+// activations once for its rows. Split rows, of one input or 8 or more a simdgroup, hold one row, or two under several
+// inputs, and sum their partials through shared memory an input at a time; consecutive invocations so read consecutive
+// rows' group metadata. Otherwise a simdgroup holds its ROWS rows, its lanes every 32nd run, which segment_reduce sums.
+// `has_rht`, of one input, finishes with ActivationTransform's output transform of the workgroup's whole 32-row blocks,
+// then the bias: the outputs, rounded as stored, pass through shared memory to the transform's invocations.
 void gemv_int8<B : IModelFloat, D : IModelFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
@@ -361,8 +232,7 @@ void gemv_int8<B : IModelFloat, D : IModelFloat>(
   float soft_cap,
   uint output_tile,
   uint input_tile,
-  uint simd_lane,
-  uint simd_group,
+  uint invocation,
   bool has_scale,
   bool has_bias,
   bool has_soft_cap,
@@ -385,100 +255,156 @@ void gemv_int8<B : IModelFloat, D : IModelFloat>(
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
   // Under the output transform the bias adds after it.
   GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
-  if (INPUT_ROWS == 1 || ROWS >= 8) {
-    gemv_int8_rows<B, D>(
-      weights, a, a_scales, a_group_sums, d, bias, gather, params, output_tile, input_tile,
-      simd_group * SIMD_SIZE + simd_lane, scale_bias, u4, signed_codes, group_size, ROWS, INPUT_ROWS, unsigned_dot,
-      gathered, rht_factors, has_rht, has_bias
-    );
-    return;
-  }
-  let first_row = (output_tile * GEMV_INT8_SIMDGROUPS + simd_group) * ROWS;
+  let split = INPUT_ROWS == 1 || ROWS >= 8;
+  let held = split ? (INPUT_ROWS > 1 ? 2u : 1u) : ROWS;
+  let parts = held * SIMD_SIZE / ROWS;
+  let slot = invocation / parts;
+  let part = invocation % parts;
+  let first_row = output_tile * GEMV_INT8_SIMDGROUPS * ROWS + slot * held;
   let first_input = input_tile * INPUT_ROWS;
+  uint rows[4];
+  [ForceUnroll]
+  for (uint R = 0; R < 4; R++) {
+    // Gathered outputs of the one input row read the B rows its indices name.
+    let clamped_row = min(first_row + R, n - 1);
+    rows[R] = gathered && R < held ? gather[first_input * n + clamped_row] : clamped_row;
+  }
   let run_bytes = u4 ? GEMV_INT8_RUN / 2 : GEMV_INT8_RUN;
   let codes = Ptr<uint8_t, Access.Read>(a);
-
-  float sums[GEMV_MAX_INPUT_ROWS][4];
-  [unroll]
-  for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
-    [unroll]
-    for (uint R = 0; R < 4; R++) {
-      sums[I][R] = 0.0;
+  float sums[4][GEMV_MAX_INPUT_ROWS];
+  [ForceUnroll]
+  for (uint R = 0; R < 4; R++) {
+    [ForceUnroll]
+    for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
+      sums[R][I] = 0.0;
     }
   }
-  for (uint run = simd_lane; run < k / GEMV_INT8_RUN; run += SIMD_SIZE) {
+  for (uint run = part; run < k / GEMV_INT8_RUN; run += parts) {
     let column = run * GEMV_INT8_RUN;
     let group = column / group_size;
     // A group's first run adds its ScaleBias correction.
     let head = scale_bias && column % group_size == 0;
-    uint words[4][8];
     WeightGroup metadata[4];
+    uint words[4][8];
     uint code_sums[4];
-    [unroll]
-    for (uint R = 0; R < ROWS; R++) {
-      // Gathered outputs of the one input row read the B rows its indices name.
-      let output_row = min(first_row + R, n - 1);
-      let row = gathered ? gather[first_input * n + output_row] : output_row;
-      metadata[R] = weights.metadata(row, group);
-      gemv_int8_words(weights.codes, weights.code_byte(row, column), run_bytes, words[R]);
-      if (unsigned_dot) {
-        code_sums[R] = unsigned_codes(words[R], u4, signed_codes);
+    [ForceUnroll]
+    for (uint R = 0; R < 4; R++) {
+      if (R < held) {
+        metadata[R] = weights.metadata(rows[R], group);
+        gemv_int8_words(weights.codes, weights.code_byte(rows[R], column), run_bytes, words[R]);
+        code_sums[R] = unsigned_dot ? unsigned_codes(words[R], u4, signed_codes) : 0u;
       }
     }
-    [unroll]
-    for (uint I = 0; I < INPUT_ROWS; I++) {
+    [ForceUnroll]
+    for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
       let input = first_input + I;
-      if (input < m) {
+      // A tile's first input is below m.
+      if (I < INPUT_ROWS && (I == 0 || input < m)) {
         uint activation[8];
         gemv_int8_words(codes, input * k + column, GEMV_INT8_RUN, activation);
         let scale = a_scales[input * (k / INT8_SCALE_GROUP) + column / INT8_SCALE_GROUP];
         let group_sum = head ? a_group_sums[input * (k / group_size) + group] : 0;
         let activation_sum = unsigned_dot ? int(biased_activations(activation)) - 128 * int(GEMV_INT8_RUN) : 0;
-        [unroll]
-        for (uint R = 0; R < ROWS; R++) {
-          var dot = 0;
-          if (unsigned_dot) {
-            var products = 0u;
-            [unroll]
-            for (uint word = 0; word < 8; word++) {
-              products = udot_u8x4(activation[word], words[R][word], products);
-            }
-            dot = int(products) - 128 * int(code_sums[R]) - int(metadata[R].zero_point) * activation_sum;
-          } else {
-            [unroll]
-            for (uint word = 0; word < 4; word++) {
-              if (u4) {
-                let centered = centered_u4(words[R][word], metadata[R].zero_point, signed_codes);
-                dot += dot_i8x4(activation[2 * word], centered.x) + dot_i8x4(activation[2 * word + 1], centered.y);
-              } else {
-                dot += dot_i8x4(activation[word], centered_u8(words[R][word], signed_codes))
-                  + dot_i8x4(activation[4 + word], centered_u8(words[R][4 + word], signed_codes));
+        [ForceUnroll]
+        for (uint R = 0; R < 4; R++) {
+          if (R < held) {
+            var dot = 0;
+            if (unsigned_dot) {
+              var products = 0u;
+              [unroll]
+              for (uint word = 0; word < 8; word++) {
+                products = udot_u8x4(activation[word], words[R][word], products);
+              }
+              dot = int(products) - 128 * int(code_sums[R]) - int(metadata[R].zero_point) * activation_sum;
+            } else {
+              [unroll]
+              for (uint word = 0; word < 4; word++) {
+                if (u4) {
+                  let centered = centered_u4(words[R][word], metadata[R].zero_point, signed_codes);
+                  dot += dot_i8x4(activation[2 * word], centered.x) + dot_i8x4(activation[2 * word + 1], centered.y);
+                } else {
+                  dot += dot_i8x4(activation[word], centered_u8(words[R][word], signed_codes))
+                    + dot_i8x4(activation[4 + word], centered_u8(words[R][4 + word], signed_codes));
+                }
               }
             }
+            sums[R][I] = int8_fold(sums[R][I], scale, metadata[R], dot, head, group_sum);
           }
-          sums[I][R] = int8_fold(sums[I][R], scale, metadata[R], dot, head, group_sum);
         }
       }
     }
   }
-  // Each lane finishes one of its simdgroup's INPUT_ROWS x ROWS outputs, output I ROWS + R in lane I ROWS + R.
-  var value = 0.0;
-  [unroll]
-  for (uint I = 0; I < INPUT_ROWS; I++) {
+  if (!split) {
+    // Lane I ROWS + R of each simdgroup finishes output row R of input I.
+    var value = 0.0;
     [unroll]
-    for (uint R = 0; R < ROWS; R++) {
-      let total = segment_reduce<Sum<float>, GEMV_THREADS>(sums[I][R], SIMD_SIZE);
-      if (simd_lane == I * ROWS + R) {
-        value = total;
+    for (uint I = 0; I < INPUT_ROWS; I++) {
+      [unroll]
+      for (uint R = 0; R < ROWS; R++) {
+        let total = segment_reduce<Sum<float>, GEMV_THREADS>(sums[R][I], SIMD_SIZE);
+        if (part == I * ROWS + R) {
+          value = total;
+        }
       }
     }
+    let input = first_input + part / ROWS;
+    let row = first_row + part % ROWS;
+    if (part < INPUT_ROWS * ROWS && input < m && row < n) {
+      let bias_value = has_bias ? bias[row].toFloat() : 0.0;
+      d[input * n + row] = D.fromFloat(gemm_output(value, bias_value, params));
+    }
+    return;
   }
-  let input = first_input + simd_lane / ROWS;
-  let row = first_row + simd_lane % ROWS;
-  if (simd_lane < INPUT_ROWS * ROWS && input < m && row < n) {
-    let bias_value = has_bias ? bias[row].toFloat() : 0.0;
-    let output = gemm_output(value, bias_value, params);
-    d[input * n + row] = D.fromFloat(output);
+  // Invocation `part` < held of a slot finishes the slot's row `part`.
+  let row_local = slot * held + part;
+  let output_row = first_row + part;
+  [ForceUnroll]
+  for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
+    if (I < INPUT_ROWS) {
+      let input = first_input + I;
+      [ForceUnroll]
+      for (uint R = 0; R < 4; R++) {
+        if (R < held) {
+          gemv_int8_partials[(slot * held + R) * parts + part] = sums[R][I];
+        }
+      }
+      GroupMemoryBarrierWithGroupSync();
+      var stored = 0.0;
+      if (part < held && output_row < n && (I == 0 || input < m)) {
+        var total = 0.0;
+        for (uint other = 0; other < parts; other++) {
+          total += gemv_int8_partials[row_local * parts + other];
+        }
+        let bias_value = params.has_bias ? bias[output_row].toFloat() : 0.0;
+        let output = D.fromFloat(gemm_output(total, bias_value, params));
+        if (!has_rht) {
+          d[input * n + output_row] = output;
+        }
+        stored = output.toFloat();
+      }
+      if (has_rht) {
+        // Every invocation has read its row's partials before the stored outputs overwrite them.
+        GroupMemoryBarrierWithGroupSync();
+        if (part < held) {
+          gemv_int8_partials[row_local] = stored;
+        }
+        GroupMemoryBarrierWithGroupSync();
+        let rows = GEMV_INT8_SIMDGROUPS * ROWS;
+        let column = output_tile * rows + invocation;
+        let value = hadamard_transform<GEMV_THREADS>(invocation < rows ? gemv_int8_partials[invocation] : 0.0);
+        // n is whole blocks, so a block lies wholly in or past it.
+        if (invocation < rows && column < n) {
+          var output = hadamard_factor(value, rht_factors[column]);
+          if (has_bias) {
+            output = D.fromFloat(output).toFloat() + bias[column].toFloat();
+          }
+          d[input * n + column] = D.fromFloat(output);
+        }
+      } else if (I + 1 < INPUT_ROWS) {
+        // Every invocation has read its row's partials before the next input's overwrite them.
+        GroupMemoryBarrierWithGroupSync();
+      }
+    }
   }
 }
 
@@ -531,8 +457,8 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
   gemv_int8<B, D>(
     b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, gather, k, n, m, scale_output_stride,
     scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, output_tile, input_tile,
-    invocation % 32, invocation / 32, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes,
-    group_size, ROWS, INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
+    invocation, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes, group_size, ROWS,
+    INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
 }
 
 // GemvInt8 on native subgroups of 128 lanes, where the device requires them for this pipeline in full subgroups:
@@ -588,6 +514,6 @@ func GemvInt8Native128<B: IModelFloat, D: IModelFloat>(
   gemv_int8<B, D>(
     b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, gather, k, n, m, scale_output_stride,
     scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, output_tile, input_tile,
-    invocation % 32, invocation / 32, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes,
-    group_size, ROWS, INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
+    invocation, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes, group_size, ROWS,
+    INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
 }
