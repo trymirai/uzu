@@ -174,30 +174,35 @@ func DeltaNetChunkedPrecompute(
     if (group < groups_per_head) {
       let head = (chunk * num_v_heads + hk * groups_per_head + group) * CHUNKED_PRECOMPUTE_CHUNK * CHUNKED_PRECOMPUTE_CHUNK;
       let triangle = thread_idx / CHUNKED_PRECOMPUTE_CHUNK * CHUNKED_PRECOMPUTE_TRIANGLE;
-      float x[CHUNKED_PRECOMPUTE_CHUNK];
-      [unroll]
-      for (uint row = 0; row < CHUNKED_PRECOMPUTE_CHUNK; row++) {
-        x[row] = 0.0;
-      }
-      // Rows stay a loop and k unrolls 64 steps, so x indexes statically and stays in registers; unrolling all 2016
-      // steps of the triangle fails pipeline creation on PowerVR D-Series.
-      for (uint row = 0; row < CHUNKED_PRECOMPUTE_CHUNK; row++) {
-        var sum = 0.0;
+      // A block's rows read the earlier rows of the column back from t_out, which this invocation stored: T is lower
+      // triangular, so each is either +0 above the column or stored. Rows past the suffix have no A and stay unstored.
+      let first_block = column / CHUNKED_PRECOMPUTE_BLOCK;
+      let blocks = (valid_tokens + CHUNKED_PRECOMPUTE_BLOCK - 1) / CHUNKED_PRECOMPUTE_BLOCK;
+      for (uint block = first_block; block < blocks; block++) {
+        let base = block * CHUNKED_PRECOMPUTE_BLOCK;
+        float y[CHUNKED_PRECOMPUTE_BLOCK];
         [unroll]
-        for (uint k = 0; k < CHUNKED_PRECOMPUTE_CHUNK; k++) {
-          if (k < row) {
-            sum = fma(chunked_precompute_shared[triangle + row * (row - 1) / 2 + k], x[k], sum);
+        for (uint i = 0; i < CHUNKED_PRECOMPUTE_BLOCK; i++) {
+          y[i] = base + i == column ? 1.0 : 0.0;
+        }
+        for (uint k = first_block * CHUNKED_PRECOMPUTE_BLOCK; k < base; k++) {
+          let earlier = t_out[head + k * CHUNKED_PRECOMPUTE_CHUNK + column];
+          [unroll]
+          for (uint i = 0; i < CHUNKED_PRECOMPUTE_BLOCK; i++) {
+            let row = base + i;
+            y[i] = fma(-chunked_precompute_shared[triangle + row * (row - 1) / 2 + k], earlier, y[i]);
           }
         }
-        let value = (row == column ? 1.0 : 0.0) - sum;
         [unroll]
-        for (uint k = 0; k < CHUNKED_PRECOMPUTE_CHUNK; k++) {
-          if (k == row) {
-            x[k] = value;
+        for (uint i = 0; i < CHUNKED_PRECOMPUTE_BLOCK; i++) {
+          let row = base + i;
+          [unroll]
+          for (uint j = 0; j < i; j++) {
+            y[i] = fma(-chunked_precompute_shared[triangle + row * (row - 1) / 2 + base + j], y[j], y[i]);
           }
-        }
-        if (row < valid_tokens && column < (row / CHUNKED_PRECOMPUTE_BLOCK + 1) * CHUNKED_PRECOMPUTE_BLOCK) {
-          t_out[head + row * CHUNKED_PRECOMPUTE_CHUNK + column] = value;
+          if (row < valid_tokens) {
+            t_out[head + row * CHUNKED_PRECOMPUTE_CHUNK + column] = y[i];
+          }
         }
       }
     }
