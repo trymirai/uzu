@@ -54,11 +54,8 @@ func AttentionTwoPass1<T: IModelFloat>(
   let lane = invocation % SIMD_SIZE;
   let elements = HEAD_DIM / SIMD_SIZE;
   let head = head_group * TWO_PASS_SIMDGROUPS + simdgroup;
-  // Simdgroups past the last head take every barrier of narrower subgroups.
+  // Simdgroups past the last head take every barrier the reductions need.
   let active = head < num_heads;
-  if (!active && WaveGetLaneCount() >= SIMD_SIZE) {
-    return;
-  }
   let kv_head = (active ? head : 0) / gqa_factor;
   let q_offset = head * suffix_length + query;
   let prefix_length = sequence_length - suffix_length;

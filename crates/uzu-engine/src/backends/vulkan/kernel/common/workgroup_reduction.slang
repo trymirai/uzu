@@ -37,6 +37,26 @@ public struct WorkgroupScratch<T, let THREADS : uint> {
 public R.Value workgroup_reduce<R : IReduction, let THREADS : uint>(R.Value value) {
   static_assert(THREADS <= 1024, "a workgroup bound");
   typealias S = WorkgroupScratch<R.Value, THREADS>;
+  if (WaveGetLaneCount() > 64) {
+    // Subgroup operations of wider subgroups cost more than a tree of shared stages.
+    let index = subgroup_invocation();
+    let threads = WaveGetNumWaves() * WaveGetLaneCount();
+    var span = 1u;
+    while (span < threads) {
+      span <<= 1;
+    }
+    S.data[index] = value;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint stride = span / 2; stride > 0; stride >>= 1) {
+      if (index < stride && index + stride < threads) {
+        S.data[index] = R.combine(S.data[index], S.data[index + stride]);
+      }
+      GroupMemoryBarrierWithGroupSync();
+    }
+    let total = S.data[0];
+    GroupMemoryBarrierWithGroupSync();
+    return total;
+  }
   let partial = R.subgroup(value);
   if (WaveIsFirstLane()) {
     S.data[subgroup_id()] = partial;
@@ -69,6 +89,22 @@ public R.Value workgroup_reduce<R : IReduction, let THREADS : uint>(R.Value valu
 public R.Value segment_reduce<R : IReduction, let THREADS : uint>(R.Value value, uint size) {
   static_assert(THREADS <= 1024, "a workgroup bound");
   let width = WaveGetLaneCount();
+  if (width > 64) {
+    // As workgroup_reduce: a tree of shared stages within each run.
+    typealias S = WorkgroupScratch<R.Value, THREADS>;
+    let index = subgroup_invocation();
+    S.data[index] = value;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint stride = size / 2; stride > 0; stride >>= 1) {
+      if ((index & (size - 1)) < stride) {
+        S.data[index] = R.combine(S.data[index], S.data[index + stride]);
+      }
+      GroupMemoryBarrierWithGroupSync();
+    }
+    let total = S.data[index & ~(size - 1)];
+    GroupMemoryBarrierWithGroupSync();
+    return total;
+  }
   if (size == width) {
     return R.subgroup(value);
   }
