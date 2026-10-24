@@ -28,12 +28,10 @@ bitflags! {
         const INT8_ELEMENT_FOLD = 1 << 7;
         /// Only unsigned packed dot products are accelerated.
         const UNSIGNED_DOT_PRODUCT = 1 << 8;
-        /// Unsigned dot products on full native 128-lane subgroups, two per workgroup, reduced through shared memory.
-        const GEMV_INT8_NATIVE_128 = 1 << 9;
         /// VK_KHR_shader_bfloat16's BF16 type, which kernels that store BF16 load, store and convert natively.
-        const BF16_TYPE = 1 << 10;
+        const BF16_TYPE = 1 << 9;
         /// VK_KHR_calibrated_timestamps with the device time domain, which reads the clock of recorded timestamps.
-        const CALIBRATED_TIMESTAMPS = 1 << 11;
+        const CALIBRATED_TIMESTAMPS = 1 << 10;
     }
 }
 

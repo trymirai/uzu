@@ -175,13 +175,6 @@ impl VkPhysicalDevice {
                     && matrix2_features.cooperative_matrix_per_element_operations == vk::TRUE,
             ),
             (VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT, unsigned_dot_product),
-            (
-                VkDeviceCapabilities::GEMV_INT8_NATIVE_128,
-                unsigned_dot_product
-                    && subgroup_properties.size == 128
-                    && subgroup_properties.requirable(128)
-                    && vk13properties.max_compute_workgroup_subgroups >= 2,
-            ),
         ]
         .into_iter()
         .filter_map(|(capability, supported)| supported.then_some(capability))

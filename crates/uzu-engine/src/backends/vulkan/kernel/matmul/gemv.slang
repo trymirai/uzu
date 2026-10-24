@@ -202,52 +202,60 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
   }
 }
 
-// The GemvInt8 entry points' algorithm for invocation `invocation` of 256, in subgroup order. Each output row of the
-// workgroup's 8 ROWS lies in a slot of `held` rows taken by `parts` consecutive invocations, which split its runs and fold
-// them for each of the INPUT_ROWS inputs; each invocation reads its rows' codes once for every input and each input's
-// activations once for its rows. Split rows, of one input or 8 or more a simdgroup, hold one row, or two under several
-// inputs, and sum their partials through shared memory an input at a time; consecutive invocations so read consecutive
-// rows' group metadata. Otherwise a simdgroup holds its ROWS rows, its lanes every 32nd run, which segment_reduce sums.
-// `has_rht`, of one input, finishes with ActivationTransform's output transform of the workgroup's whole 32-row blocks,
-// then the bias: the outputs, rounded as stored, pass through shared memory to the transform's invocations.
-void gemv_int8<B : IModelFloat, D : IModelFloat>(
+// GemvInt8, invocation `invocation` of 256 in subgroup order: each output row of the workgroup's 8 ROWS lies in a slot
+// of `held` rows taken by `parts` consecutive invocations, which split its runs and fold them for each of the
+// INPUT_ROWS inputs; each invocation reads its rows' codes once for every input and each input's activations once for
+// its rows. Split rows, of one input or 8 or more a simdgroup, hold one row, or two under several inputs, and sum their
+// partials through shared memory an input at a time; consecutive invocations so read consecutive rows' group metadata.
+// Otherwise a simdgroup holds its ROWS rows, its lanes every 32nd run, which segment_reduce sums. `has_rht`, of one
+// input, finishes with ActivationTransform's output transform of the workgroup's whole 32-row blocks, then the bias:
+// the outputs, rounded as stored, pass through shared memory to the transform's invocations.
+[[Kernel]]
+[[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
+[[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
+[[Precondition("new", "[1, 2, 4, 8, 16].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) && (!gathered || INPUT_ROWS == 1)")]]
+[[Precondition("new", "!has_rht || INPUT_ROWS == 1 && ROWS >= 4")]]
+[[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
+[[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
+func GemvInt8<B: IModelFloat, D: IModelFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
-  Ptr<B, Access.Read> biases,
-  Ptr<uint8_t, Access.Read> zero_points,
+  [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
+  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] Ptr<uint8_t, Access.Read> zero_points,
   Ptr<int8_t, Access.Read> a,
   Ptr<float, Access.Read> a_scales,
-  Ptr<int, Access.Read> a_group_sums,
+  [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<int, Access.Read> a_group_sums,
   Ptr<D, Access.ReadWrite> d,
-  Ptr<B, Access.Read> bias,
-  Ptr<uint, Access.Read> gather,
+  [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
+  [[Optional("gathered")]] Ptr<uint, Access.Read> gather,
+  [[Optional("has_rht")]] Ptr<int, Access.Read> rht_factors,
   uint k,
   uint n,
   uint m,
   uint scale_output_stride,
   uint scale_group_stride,
-  uint zero_point_output_stride,
-  uint zero_point_group_stride,
-  float ab_scale,
-  float soft_cap,
-  uint output_tile,
-  uint input_tile,
-  uint invocation,
-  bool has_scale,
-  bool has_bias,
-  bool has_soft_cap,
-  GemmBPrologueKind b_prologue,
-  QuantizationMode quantization_mode,
-  bool signed_codes,
-  uint group_size,
-  uint ROWS,
-  uint INPUT_ROWS,
-  GemmBLayout b_layout,
-  bool unsigned_dot,
-  bool gathered,
-  Ptr<int, Access.Read> rht_factors,
-  bool has_rht,
+  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] uint zero_point_output_stride,
+  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] uint zero_point_group_stride,
+  [[Optional("has_scale")]] float ab_scale,
+  [[Optional("has_soft_cap")]] float soft_cap,
+  [[Groups("m.div_ceil(INPUT_ROWS)")]] uint input_tile,
+  [[Groups("n.div_ceil(8 * ROWS)")]] uint output_tile,
+  [[Threads("256")]] uint tid,
+  [[Specialize]] bool has_scale,
+  [[Specialize]] bool has_bias,
+  [[Specialize]] bool has_soft_cap,
+  [[Specialize]] GemmBPrologueKind b_prologue,
+  [[Specialize]] QuantizationMode quantization_mode,
+  [[Specialize]] bool signed_codes,
+  [[Specialize]] uint group_size,
+  [[Specialize]] uint ROWS,
+  [[Specialize]] uint INPUT_ROWS,
+  [[Specialize]] GemmBLayout b_layout,
+  [[Specialize]] bool unsigned_dot,
+  [[Specialize]] bool gathered,
+  [[Specialize]] bool has_rht,
 ) {
+  let invocation = subgroup_invocation();
   let u4 = quantization_mode == QuantizationMode.U4;
   let method = gemm_quantization_method(b_prologue);
   let scale_bias = method == QuantizationMethod.ScaleBias;
@@ -406,114 +414,4 @@ void gemv_int8<B : IModelFloat, D : IModelFloat>(
       }
     }
   }
-}
-
-[[Kernel]]
-[[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
-[[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
-[[Precondition("new", "[1, 2, 4, 8, 16].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) && (!gathered || INPUT_ROWS == 1)")]]
-[[Precondition("new", "!has_rht || INPUT_ROWS == 1 && ROWS >= 4")]]
-[[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
-[[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
-func GemvInt8<B: IModelFloat, D: IModelFloat>(
-  Ptr<uint, Access.Read> b,
-  Ptr<B, Access.Read> scales,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] Ptr<uint8_t, Access.Read> zero_points,
-  Ptr<int8_t, Access.Read> a,
-  Ptr<float, Access.Read> a_scales,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<int, Access.Read> a_group_sums,
-  Ptr<D, Access.ReadWrite> d,
-  [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
-  [[Optional("gathered")]] Ptr<uint, Access.Read> gather,
-  [[Optional("has_rht")]] Ptr<int, Access.Read> rht_factors,
-  uint k,
-  uint n,
-  uint m,
-  uint scale_output_stride,
-  uint scale_group_stride,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] uint zero_point_output_stride,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] uint zero_point_group_stride,
-  [[Optional("has_scale")]] float ab_scale,
-  [[Optional("has_soft_cap")]] float soft_cap,
-  [[Groups("m.div_ceil(INPUT_ROWS)")]] uint input_tile,
-  [[Groups("n.div_ceil(8 * ROWS)")]] uint output_tile,
-  [[Threads("256")]] uint tid,
-  [[Specialize]] bool has_scale,
-  [[Specialize]] bool has_bias,
-  [[Specialize]] bool has_soft_cap,
-  [[Specialize]] GemmBPrologueKind b_prologue,
-  [[Specialize]] QuantizationMode quantization_mode,
-  [[Specialize]] bool signed_codes,
-  [[Specialize]] uint group_size,
-  [[Specialize]] uint ROWS,
-  [[Specialize]] uint INPUT_ROWS,
-  [[Specialize]] GemmBLayout b_layout,
-  [[Specialize]] bool unsigned_dot,
-  [[Specialize]] bool gathered,
-  [[Specialize]] bool has_rht,
-) {
-  let invocation = subgroup_invocation();
-  gemv_int8<B, D>(
-    b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, gather, k, n, m, scale_output_stride,
-    scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, output_tile, input_tile,
-    invocation, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes, group_size, ROWS,
-    INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
-}
-
-// GemvInt8 on native subgroups of 128 lanes, where the device requires them for this pipeline in full subgroups:
-// each subgroup holds four of the workgroup's simdgroups as 32-lane clusters, in subgroup order.
-[[Kernel]]
-[[Precondition("new", "context.physical_device().capabilities.contains(VkDeviceCapabilities::GEMV_INT8_NATIVE_128)")]]
-[[RequiredSubgroupSize("128")]]
-[[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
-[[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
-[[Precondition("new", "[1, 2, 4, 8, 16].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) && (!gathered || INPUT_ROWS == 1)")]]
-[[Precondition("new", "!has_rht || INPUT_ROWS == 1 && ROWS >= 4")]]
-[[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
-[[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
-func GemvInt8Native128<B: IModelFloat, D: IModelFloat>(
-  Ptr<uint, Access.Read> b,
-  Ptr<B, Access.Read> scales,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] Ptr<uint8_t, Access.Read> zero_points,
-  Ptr<int8_t, Access.Read> a,
-  Ptr<float, Access.Read> a_scales,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<int, Access.Read> a_group_sums,
-  Ptr<D, Access.ReadWrite> d,
-  [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
-  [[Optional("gathered")]] Ptr<uint, Access.Read> gather,
-  [[Optional("has_rht")]] Ptr<int, Access.Read> rht_factors,
-  uint k,
-  uint n,
-  uint m,
-  uint scale_output_stride,
-  uint scale_group_stride,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] uint zero_point_output_stride,
-  [[Optional("b_prologue == GemmBPrologueKind::ScaleZeroPointDequant")]] uint zero_point_group_stride,
-  [[Optional("has_scale")]] float ab_scale,
-  [[Optional("has_soft_cap")]] float soft_cap,
-  [[Groups("m.div_ceil(INPUT_ROWS)")]] uint input_tile,
-  [[Groups("n.div_ceil(8 * ROWS)")]] uint output_tile,
-  [[Threads("256")]] uint tid,
-  [[Specialize]] bool has_scale,
-  [[Specialize]] bool has_bias,
-  [[Specialize]] bool has_soft_cap,
-  [[Specialize]] GemmBPrologueKind b_prologue,
-  [[Specialize]] QuantizationMode quantization_mode,
-  [[Specialize]] bool signed_codes,
-  [[Specialize]] uint group_size,
-  [[Specialize]] uint ROWS,
-  [[Specialize]] uint INPUT_ROWS,
-  [[Specialize]] GemmBLayout b_layout,
-  [[Specialize]] bool unsigned_dot,
-  [[Specialize]] bool gathered,
-  [[Specialize]] bool has_rht,
-) {
-  let invocation = subgroup_invocation();
-  gemv_int8<B, D>(
-    b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, gather, k, n, m, scale_output_stride,
-    scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, output_tile, input_tile,
-    invocation, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes, group_size, ROWS,
-    INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
 }

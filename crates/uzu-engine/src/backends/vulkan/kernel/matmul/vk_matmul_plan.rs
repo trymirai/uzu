@@ -53,11 +53,10 @@ const INT8_FOLD_BYTES: u32 = 4 * (2 * INT8_FOLD_ENTRIES + INT8_FOLD_PADDING);
 pub enum VkMatmulPlan {
     /// Gemv on full-precision A, with its tile.
     Gemv(VkGemvTile),
-    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations, held by full native
-    /// 128-lane subgroups where `native_128`. One input row or 8 or more rows give each output 32 / rows invocations,
-    /// which split its runs for every input; fewer rows by more inputs give each 32-lane simdgroup `rows` outputs.
+    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations. One input row or 8 or
+    /// more rows give each output 32 / rows invocations, which split its runs for every input; fewer rows by more inputs
+    /// give each 32-lane simdgroup `rows` outputs.
     GemvInt8 {
-        native_128: bool,
         rows: u32,
         input_rows: u32,
     },
@@ -97,7 +96,7 @@ impl VkMatmulPlan {
             && capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
         {
-            return Self::gemv_int8(m, shape.gathered, capabilities);
+            return Self::gemv_int8(m, shape.gathered, device.subgroups.size);
         }
         if shape.a_full_precision {
             return if shape.gathered || m <= 8 || !Self::gemm_rows(shape) {
@@ -120,9 +119,9 @@ impl VkMatmulPlan {
             };
         }
         // Up to 8 rows, and on devices without INT8 tensor cores or whose unsigned dot products are the fast ones,
-        // GemvInt8, on native 128-lane subgroups where the device has them.
+        // GemvInt8.
         if m <= 8 || !capabilities.prefers_int8_gemm() {
-            return Self::gemv_int8(m, shape.gathered, capabilities);
+            return Self::gemv_int8(m, shape.gathered, device.subgroups.size);
         }
         // The element fold, else 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both.
         let element_fold = capabilities.contains(Capability::INT8_ELEMENT_FOLD);
@@ -232,7 +231,6 @@ impl VkMatmulPlan {
                 )?;
             },
             Self::GemvInt8 {
-                native_128,
                 rows,
                 input_rows,
             } => {
@@ -241,11 +239,6 @@ impl VkMatmulPlan {
                     "GemvInt8 takes 1, 2, 4, 8 or 16 rows by 1 to 8 inputs",
                 )?;
                 require(!shape.gathered || input_rows == 1, "gathered GemvInt8 takes one input row a workgroup")?;
-                require(
-                    !native_128 || capabilities.contains(Capability::GEMV_INT8_NATIVE_128),
-                    "native GemvInt8 needs two requirable full 128-lane subgroups, clustered operations and \
-                     unsigned-only dot products",
-                )?;
             },
             Self::GemmInt8 {
                 matrices,
@@ -372,7 +365,7 @@ impl VkMatmulPlan {
 
     /// The baseline, then the other legal plans of the activation format's families, taken from each family in turn up
     /// to MAX_CANDIDATES; every tuple left out comes back with its reason: illegal, a bounded-search omission of row
-    /// tiles past the problem's rows, or past the cap. A8 searches both GemvInt8 paths and every INT8 GEMM core the
+    /// tiles past the problem's rows, or past the cap. A8 searches GemvInt8's tiles and every INT8 GEMM core the
     /// device's matrices allow, whatever the committed routing prefers; full precision searches Gemv's existing tiles,
     /// Gemm's tilings and GemvInt8 on the A it quantizes. Only this explicit search allocates.
     pub fn candidates(
@@ -385,18 +378,16 @@ impl VkMatmulPlan {
         let (m, n, k) = (shape.m, shape.n, shape.k);
         // The bounded search omits tiles of more rows than the next power of two of the problem's, not measured slower.
         let omitted = |rows: u32, least: u32| rows > m.checked_next_power_of_two().unwrap_or(u32::MAX).max(least);
-        let gemv_int8 = [false, true].map(|native_128| {
-            let grid = iproduct!([1, 2, 4, 8, 16], [1, 2, 4, 8]);
-            grid.map(|(rows, input_rows)| {
+        let grid = iproduct!([1, 2, 4, 8, 16], [1, 2, 4, 8]);
+        let gemv_int8 = grid
+            .map(|(rows, input_rows)| {
                 let plan = Self::GemvInt8 {
-                    native_128,
                     rows,
                     input_rows,
                 };
                 (plan, omitted(input_rows, 1))
             })
-            .collect::<Vec<_>>()
-        });
+            .collect::<Vec<_>>();
         let families: Vec<Vec<(Self, bool)>> = if shape.a_full_precision {
             let gemv: Vec<VkGemvTile> = match (shape.is_quant(), Self::gemm_rows(shape)) {
                 (false, true) => vec![VkGemvTile::dense(n, k), VkGemvTile::reader()],
@@ -409,7 +400,7 @@ impl VkMatmulPlan {
                 tensor.iter().map(|&tiling| (Self::GemmTensor(tiling), false)).collect(),
                 scalar.iter().map(|&tiling| (Self::Gemm(tiling), false)).collect(),
             ];
-            families.into_iter().chain(gemv_int8).collect()
+            families.into_iter().chain([gemv_int8]).collect()
         } else {
             let gemm = INT8_CORES.map(|matrices| {
                 let grid = iproduct!([16, 32, 64], [4, 8], [64, 128], [1, 2, 4, 8]);
@@ -425,7 +416,7 @@ impl VkMatmulPlan {
                 })
                 .collect::<Vec<_>>()
             });
-            gemv_int8.into_iter().chain(gemm).collect()
+            [gemv_int8].into_iter().chain(gemm).collect()
         };
         let mut excluded = Vec::new();
         let mut candidates = Vec::new();
@@ -466,9 +457,8 @@ impl VkMatmulPlan {
         match *self {
             Self::Gemv(tile) => ([32, tile.num_simdgroups], None),
             Self::GemvInt8 {
-                native_128,
                 ..
-            } => ([256, 1], native_128.then_some(128)),
+            } => ([256, 1], None),
             Self::GemmInt8 {
                 simdgroups,
                 ..
@@ -578,19 +568,17 @@ impl VkMatmulPlan {
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
     }
 
-    /// GemvInt8 for m rows: more outputs a workgroup for fewer inputs, one input row a workgroup where `gathered`, on
-    /// native 128-lane subgroups where the device has them. Those take 8 rows for every input count: their subgroups'
-    /// reductions run through shared memory, where split rows measured faster.
+    /// GemvInt8 for m rows: more outputs a workgroup for fewer inputs, one input row a workgroup where `gathered`.
+    /// Subgroups wider than 64 lanes take 8 rows for every input count: their reductions run through shared memory,
+    /// where split rows measured faster.
     fn gemv_int8(
         m: u32,
         gathered: bool,
-        capabilities: Capability,
+        subgroup_size: u32,
     ) -> Self {
-        let native_128 = capabilities.contains(Capability::GEMV_INT8_NATIVE_128);
         Self::GemvInt8 {
-            native_128,
             rows: match m {
-                _ if native_128 => 8,
+                _ if subgroup_size > 64 => 8,
                 0..=1 => 8,
                 2 => 4,
                 3..=4 => 2,
