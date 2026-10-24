@@ -279,7 +279,9 @@ fn bench_a8w(c: &mut Criterion) {
     if !context.supports_mxu {
         return;
     }
-    let hadamard = ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, true).expect("hadamard kernel");
+    let hadamard =
+        ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, HADAMARD_TRANSFORM_BLOCK_SIZE, true)
+            .expect("hadamard kernel");
 
     let bits = 8;
     let prepare = ActivationTransform::<Metal>::quantize(

@@ -19,6 +19,7 @@ impl<B: Backend> InputRht<B> {
     pub(super) fn new(
         data_type: DataType,
         preparation: LinearInputPreparation<B>,
+        block_size: u32,
         in_place: bool,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
@@ -26,7 +27,7 @@ impl<B: Backend> InputRht<B> {
             rht_signs,
             activation_quantization,
         } = preparation;
-        let rht = ActivationTransform::input_rht(context, data_type, in_place)?;
+        let rht = ActivationTransform::input_rht(context, data_type, block_size, in_place)?;
         let quantizer = activation_quantization
             .map(|quantization| ActivationTransform::quantize(context, data_type, quantization))
             .transpose()?;

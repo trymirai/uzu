@@ -9,7 +9,8 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, kernel::ActivationTransform,
+            gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
+            kernel::{ActivationTransform, DASH_HADAMARD_BLOCK_SIZE},
         },
         cpu::Cpu,
     },
@@ -29,10 +30,13 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
     channel_count: usize,
     order: TransformOrder,
     in_place: bool,
+    input_block_size: u32,
 ) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("context");
     let kernel = match order {
-        TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), in_place),
+        TransformOrder::Input => {
+            ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), input_block_size, in_place)
+        },
         TransformOrder::Output => {
             ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), None, in_place)
         },
@@ -80,10 +84,10 @@ fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
                 })
                 .collect();
             let data: Vec<T> = data_f64.iter().map(|&value| T::from(value).unwrap()).collect();
-            let expected = run::<T, Cpu>(&data, &factors, channel_count, order, in_place);
+            let expected = run::<T, Cpu>(&data, &factors, channel_count, order, in_place, BLOCK_SIZE);
 
             for_each_backend!(|B| {
-                let actual = run::<T, B>(&data, &factors, channel_count, order, in_place);
+                let actual = run::<T, B>(&data, &factors, channel_count, order, in_place, BLOCK_SIZE);
                 for (index, (actual_value, expected_value)) in actual.iter().zip(&expected).enumerate() {
                     let actual_value = actual_value.to_f64().unwrap();
                     let expected_value = expected_value.to_f64().unwrap();
@@ -125,7 +129,7 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
                 }
             })
             .collect();
-        let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output, true)
+        let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output, true, BLOCK_SIZE)
             .into_iter()
             .enumerate()
             .map(|(i, value)| bf16::from_f32(value.to_f32() + bias_data[i % channels]))
@@ -141,6 +145,65 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         assert_eq!(buffer_to_vec::<B, bf16>(&fused), expected);
     });
+}
+
+/// Dash: the block-128 input RHT on every backend (CPU reference included) against an explicit
+/// blockwise normalized Sylvester H128 applied to signs * x.
+#[uzu_test]
+fn input_rht_block_128_matches_sylvester() {
+    let block_size = DASH_HADAMARD_BLOCK_SIZE as usize;
+    for (batch_count, channel_count) in [(1, 128), (3, 512), (2, 2048)] {
+        let data: Vec<f32> =
+            (0..batch_count * channel_count).map(|index| ((index as f32) * 0.37).sin() * 2.0).collect();
+        let signs: Vec<i32> = (0..channel_count)
+            .map(|index| {
+                if (index * 7 + index / 5) % 3 == 0 {
+                    -1
+                } else {
+                    1
+                }
+            })
+            .collect();
+        let expected: Vec<f64> = (0..batch_count * channel_count)
+            .map(|index| {
+                let block_start = index - index % block_size;
+                let row = index % block_size;
+                let sum: f64 = (0..block_size)
+                    .map(|column| {
+                        let sylvester_sign = if (row & column).count_ones() % 2 == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        let channel = (block_start + column) % channel_count;
+                        sylvester_sign * f64::from(signs[channel]) * f64::from(data[block_start + column])
+                    })
+                    .sum();
+                sum / (block_size as f64).sqrt()
+            })
+            .collect();
+
+        for in_place in [false, true] {
+            for_each_backend!(|B| {
+                let actual = run::<f32, B>(
+                    &data,
+                    &signs,
+                    channel_count,
+                    TransformOrder::Input,
+                    in_place,
+                    DASH_HADAMARD_BLOCK_SIZE,
+                );
+                for (index, (&actual_value, &expected_value)) in actual.iter().zip(&expected).enumerate() {
+                    let error = (f64::from(actual_value) - expected_value).abs();
+                    assert!(
+                        error <= 1e-4 * expected_value.abs().max(1.0),
+                        "block-128 RHT (in_place={in_place}) mismatch at {index} for batch={batch_count}, \
+                         channels={channel_count}: actual={actual_value}, expected={expected_value}"
+                    );
+                }
+            });
+        }
+    }
 }
 
 mod quantize {

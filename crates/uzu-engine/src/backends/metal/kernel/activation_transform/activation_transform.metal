@@ -36,6 +36,7 @@ PUBLIC KERNEL(ActivationTransform)(
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
     const bool has_bias SPECIALIZE,
+    const uint hadamard_block_size SPECIALIZE,
     uint activation_tile_index GROUPS(element_count.div_ceil(TILE_ELEMENTS)),
     uint batch_index GROUPS(batch_size),
     uint thread_index THREADS(NUM_THREADS),
@@ -60,7 +61,16 @@ PUBLIC KERNEL(ActivationTransform)(
       values *= float4(factors);
     }
   }
-  values = simdgroup_hadamard_transform_vector(lane_index, values);
+  // Dash stopgap: block 128 is one whole simdgroup (32 lanes x 4 values) in this separate pass;
+  // replace with an H128 fused into the producing norm/act kernel or the matmul prologue.
+  if (hadamard_block_size == METAL_SIMD_SIZE * HADAMARD_VECTOR_SIZE) {
+    simdgroup_hadamard_transform<HADAMARD_VECTOR_SIZE, METAL_SIMD_SIZE>(
+        lane_index,
+        reinterpret_cast<thread float*>(&values)
+    );
+  } else {
+    values = simdgroup_hadamard_transform_vector(lane_index, values);
+  }
   if (!input_rht) {
     values *= float4(factors);
   }
