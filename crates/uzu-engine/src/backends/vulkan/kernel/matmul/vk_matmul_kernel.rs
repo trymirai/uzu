@@ -49,8 +49,8 @@ pub struct VkMatmulKernel {
     gemv: HashMap<([bool; 4], GemmBPrologue, VkGemvTile, GemmBLayout), GemvVulkanKernel>,
     gemm: HashMap<([bool; 3], GemmBPrologue, GemmTiling, u32), GemmVulkanKernel>,
     gemm_tensor: HashMap<([bool; 3], GemmBPrologue, GemmTiling), GemmTensorVulkanKernel>,
-    gemv_int8: HashMap<([bool; 4], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8VulkanKernel>,
-    gemv_int8_native_128: HashMap<([bool; 4], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8Native128VulkanKernel>,
+    gemv_int8: HashMap<([bool; 5], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8VulkanKernel>,
+    gemv_int8_native_128: HashMap<([bool; 5], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8Native128VulkanKernel>,
     /// INT8 GEMM pipelines by flags, prologue, plan, split phase and weight layout.
     gemm_int8: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8VulkanKernel>,
     gemm_int8_nv: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8NvVulkanKernel>,
@@ -512,10 +512,16 @@ impl VkMatmulKernel {
                 input_rows,
             } = plan
             {
+                // The output transform, and the bias after it, finish in the epilogue where it fuses them.
+                let rht = rht_factors.filter(|_| plan.fuses_output_rht()).map(VkBuffer::resolve_ref);
+                let (has_bias, bias_range) = match rht {
+                    Some(_) => (bias.is_some(), bias.map(VkBuffer::resolve_ref)),
+                    None => (has_bias, bias_range),
+                };
                 // The same arguments for both entry points: subgroups of 32, or native subgroups of 128 lanes.
                 macro_rules! gemv_int8 {
                     ($cache:expr, $kernel:ident) => {
-                        let gemv_flags = [has_scale, has_bias, has_soft_cap, gathered];
+                        let gemv_flags = [has_scale, has_bias, has_soft_cap, gathered, rht.is_some()];
                         let kernel = cached(&mut $cache, (gemv_flags, prologue, rows, input_rows, b_layout), || {
                             $kernel::new(
                                 &context,
@@ -533,6 +539,7 @@ impl VkMatmulKernel {
                                 b_layout,
                                 capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT),
                                 gathered,
+                                rht.is_some(),
                             )
                         })?;
                         unsafe {
@@ -547,6 +554,7 @@ impl VkMatmulKernel {
                                 d_range,
                                 bias_range,
                                 gather,
+                                rht.clone(),
                                 k,
                                 n,
                                 m,
@@ -565,6 +573,9 @@ impl VkMatmulKernel {
                     gemv_int8!(self.gemv_int8_native_128, GemvInt8Native128VulkanKernel);
                 } else {
                     gemv_int8!(self.gemv_int8, GemvInt8VulkanKernel);
+                }
+                if rht.is_some() {
+                    return Ok(());
                 }
             } else {
                 let VkMatmulPlan::GemmInt8 {

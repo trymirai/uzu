@@ -329,10 +329,13 @@ impl VkMatmulPlan {
             }),
             "the workgroup is not whole required subgroups within maxComputeWorkgroupSubgroups",
         )?;
-        // The family's dispatches, then the output transform the encoder appends outside GemmInt8's epilogue:
+        // The family's dispatches, then the output transform the encoder appends where the epilogue does not fuse it:
         // ActivationTransform's 128-value tiles by rows.
-        let transform = (shape.d_transform.contains(GemmDTransform::RHT) && !matches!(self, Self::GemmInt8 { .. }))
-            .then_some([n.div_ceil(128), m, 1]);
+        let transform = (shape.d_transform.contains(GemmDTransform::RHT) && !self.fuses_output_rht()).then_some([
+            n.div_ceil(128),
+            m,
+            1,
+        ]);
         let counts = limits.max_compute_work_group_count;
         require(
             [Some(self.groups(m, n)), transform]
@@ -473,6 +476,22 @@ impl VkMatmulPlan {
             } => ([32, simdgroups], Some(32)),
             Self::GemmTensor(tiling) => ([32, tiling.simdgroups()], Some(32)),
             Self::Gemm(tiling) => ([32, tiling.simdgroups()], None),
+        }
+    }
+
+    /// Whether the plan's epilogue applies the output transform: every INT8 GEMM core, and GemvInt8 of one input row
+    /// whose workgroups hold whole 32-row blocks.
+    pub fn fuses_output_rht(&self) -> bool {
+        match *self {
+            Self::GemmInt8 {
+                ..
+            } => true,
+            Self::GemvInt8 {
+                rows,
+                input_rows,
+                ..
+            } => input_rows == 1 && rows >= 4,
+            _ => false,
         }
     }
 

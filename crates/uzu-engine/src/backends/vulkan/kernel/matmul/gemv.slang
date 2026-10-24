@@ -1,5 +1,6 @@
 import definitions;
 import matmul.common.matmul;
+import common.hadamard;
 import common.workgroup_reduction;
 import generated.gemm;
 import generated.gemm_b_layout;
@@ -213,7 +214,9 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
 
 // GemvInt8 of one input row: output row r of the workgroup's 8 ROWS takes the 32 / ROWS consecutive invocations (in
 // subgroup order) from r 32 / ROWS, which split its runs and sum their partials through shared memory. Consecutive
-// invocations so read consecutive rows' group metadata, and each holds one row.
+// invocations so read consecutive rows' group metadata, and each holds one row. `has_rht` finishes with ActivationTransform's
+// output transform of the workgroup's whole 32-row blocks, then `rht_bias`: the outputs, rounded as stored, pass through
+// shared memory to the transform's invocations.
 void gemv_int8_rows<B : IModelFloat, D : IModelFloat>(
   QuantizedWeights<B> weights,
   Ptr<int8_t, Access.Read> a,
@@ -233,6 +236,9 @@ void gemv_int8_rows<B : IModelFloat, D : IModelFloat>(
   uint ROWS,
   bool unsigned_dot,
   bool gathered,
+  Ptr<int, Access.Read> rht_factors,
+  bool has_rht,
+  bool rht_bias,
 ) {
   let k = params.K;
   let n = params.N;
@@ -283,13 +289,37 @@ void gemv_int8_rows<B : IModelFloat, D : IModelFloat>(
   }
   gemv_int8_partials[invocation] = sum;
   GroupMemoryBarrierWithGroupSync();
+  var stored = 0.0;
   if (part == 0 && output_row < n) {
     var total = 0.0;
     for (uint other = 0; other < parts; other++) {
       total += gemv_int8_partials[invocation + other];
     }
     let bias_value = params.has_bias ? bias[output_row].toFloat() : 0.0;
-    d[input * n + output_row] = D.fromFloat(gemm_output(total, bias_value, params));
+    let output = D.fromFloat(gemm_output(total, bias_value, params));
+    if (!has_rht) {
+      d[input * n + output_row] = output;
+    }
+    stored = output.toFloat();
+  }
+  if (has_rht) {
+    // Every invocation has read its row's partials before the stored outputs overwrite them.
+    GroupMemoryBarrierWithGroupSync();
+    if (part == 0) {
+      gemv_int8_partials[row_local] = stored;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    let rows = GEMV_INT8_SIMDGROUPS * ROWS;
+    let column = output_tile * rows + invocation;
+    let value = hadamard_transform<GEMV_THREADS>(invocation < rows ? gemv_int8_partials[invocation] : 0.0);
+    // n is whole blocks, so a block lies wholly in or past it.
+    if (invocation < rows && column < n) {
+      var output = hadamard_factor(value, rht_factors[column]);
+      if (rht_bias) {
+        output = D.fromFloat(output).toFloat() + bias[column].toFloat();
+      }
+      d[input * n + column] = D.fromFloat(output);
+    }
   }
 }
 
@@ -332,17 +362,21 @@ void gemv_int8<B : IModelFloat, D : IModelFloat, let CLUSTERED : bool>(
   GemmBLayout b_layout,
   bool unsigned_dot,
   bool gathered,
+  Ptr<int, Access.Read> rht_factors,
+  bool has_rht,
 ) {
   let u4 = quantization_mode == QuantizationMode.U4;
   let method = gemm_quantization_method(b_prologue);
   let scale_bias = method == QuantizationMethod.ScaleBias;
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
-  GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, 0 };
+  // Under the output transform the bias adds after it.
+  GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
   if (INPUT_ROWS == 1) {
     gemv_int8_rows<B, D>(
       weights, a, a_scales, a_group_sums, d, bias, gather, params, output_tile, input_tile,
-      simd_group * SIMD_SIZE + simd_lane, scale_bias, u4, signed_codes, group_size, ROWS, unsigned_dot, gathered
+      simd_group * SIMD_SIZE + simd_lane, scale_bias, u4, signed_codes, group_size, ROWS, unsigned_dot, gathered,
+      rht_factors, has_rht, has_bias
     );
     return;
   }
@@ -464,7 +498,9 @@ void gemv_int8<B : IModelFloat, D : IModelFloat, let CLUSTERED : bool>(
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
 [[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
 [[Precondition("new", "([1, 2, 4].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) || [8, 16].contains(&ROWS) && INPUT_ROWS == 1) && (!gathered || INPUT_ROWS == 1)")]]
+[[Precondition("new", "!has_rht || INPUT_ROWS == 1 && ROWS >= 4")]]
 [[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
+[[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
 func GemvInt8<B: IModelFloat, D: IModelFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
@@ -476,6 +512,7 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
   Ptr<D, Access.ReadWrite> d,
   [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
   [[Optional("gathered")]] Ptr<uint, Access.Read> gather,
+  [[Optional("has_rht")]] Ptr<int, Access.Read> rht_factors,
   uint k,
   uint n,
   uint m,
@@ -500,13 +537,14 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
   [[Specialize]] GemmBLayout b_layout,
   [[Specialize]] bool unsigned_dot,
   [[Specialize]] bool gathered,
+  [[Specialize]] bool has_rht,
 ) {
   let invocation = subgroup_invocation();
   gemv_int8<B, D, false>(
     b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, gather, k, n, m, scale_output_stride,
     scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, output_tile, input_tile,
     invocation % 32, invocation / 32, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes,
-    group_size, ROWS, INPUT_ROWS, b_layout, unsigned_dot, gathered);
+    group_size, ROWS, INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
 }
 
 // GemvInt8 on native subgroups of 128 lanes, where the device requires them for this pipeline in full subgroups:
@@ -517,7 +555,9 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
 [[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]
 [[Precondition("new", "([1, 2, 4].contains(&ROWS) && (1..=8).contains(&INPUT_ROWS) || [8, 16].contains(&ROWS) && INPUT_ROWS == 1) && (!gathered || INPUT_ROWS == 1)")]]
+[[Precondition("new", "!has_rht || INPUT_ROWS == 1 && ROWS >= 4")]]
 [[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
+[[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
 func GemvInt8Native128<B: IModelFloat, D: IModelFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
@@ -529,6 +569,7 @@ func GemvInt8Native128<B: IModelFloat, D: IModelFloat>(
   Ptr<D, Access.ReadWrite> d,
   [[Optional("has_bias")]] Ptr<B, Access.Read> bias,
   [[Optional("gathered")]] Ptr<uint, Access.Read> gather,
+  [[Optional("has_rht")]] Ptr<int, Access.Read> rht_factors,
   uint k,
   uint n,
   uint m,
@@ -553,11 +594,12 @@ func GemvInt8Native128<B: IModelFloat, D: IModelFloat>(
   [[Specialize]] GemmBLayout b_layout,
   [[Specialize]] bool unsigned_dot,
   [[Specialize]] bool gathered,
+  [[Specialize]] bool has_rht,
 ) {
   let invocation = subgroup_invocation();
   gemv_int8<B, D, true>(
     b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, gather, k, n, m, scale_output_stride,
     scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, output_tile, input_tile,
     invocation % 32, invocation / 32, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes,
-    group_size, ROWS, INPUT_ROWS, b_layout, unsigned_dot, gathered);
+    group_size, ROWS, INPUT_ROWS, b_layout, unsigned_dot, gathered, rht_factors, has_rht);
 }
