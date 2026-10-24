@@ -29,8 +29,8 @@ use crate::{
         vulkan::{
             ActivationQuantizeVulkanKernel, Error, GemmInt8K16VulkanKernel, GemmInt8NvVulkanKernel,
             GemmInt8VulkanKernel, GemmPrepareBLayoutVulkanKernel, GemmTensorVulkanKernel, GemmVulkanKernel,
-            GemvInt8Native128VulkanKernel, GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer,
-            VkCommandBufferEncoding, VkContext, VkDeviceCapabilities, VkDeviceFacts, VkKernelError, Vulkan,
+            GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer, VkCommandBufferEncoding,
+            VkContext, VkDeviceCapabilities, VkDeviceFacts, VkKernelError, Vulkan,
             gpu_types::{gemm::GemmTiling, gemm_b_layout::GemmBLayout},
         },
     },
@@ -50,7 +50,6 @@ pub struct VkMatmulKernel {
     gemm: HashMap<([bool; 3], GemmBPrologue, GemmTiling, u32), GemmVulkanKernel>,
     gemm_tensor: HashMap<([bool; 3], GemmBPrologue, GemmTiling), GemmTensorVulkanKernel>,
     gemv_int8: HashMap<([bool; 5], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8VulkanKernel>,
-    gemv_int8_native_128: HashMap<([bool; 5], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8Native128VulkanKernel>,
     /// INT8 GEMM pipelines by flags, prologue, plan, split phase and weight layout.
     gemm_int8: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8VulkanKernel>,
     gemm_int8_nv: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8NvVulkanKernel>,
@@ -88,7 +87,6 @@ impl MatmulKernel for VkMatmulKernel {
             gemm: HashMap::new(),
             gemm_tensor: HashMap::new(),
             gemv_int8: HashMap::new(),
-            gemv_int8_native_128: HashMap::new(),
             gemm_int8: HashMap::new(),
             gemm_int8_nv: HashMap::new(),
             gemm_int8_k16: HashMap::new(),
@@ -507,7 +505,6 @@ impl VkMatmulKernel {
             let (scales, (scale_output, scale_group)) =
                 (scales.expect("quantized B has scales"), scale_strides.expect("quantized B has scale strides"));
             if let VkMatmulPlan::GemvInt8 {
-                native_128,
                 rows,
                 input_rows,
             } = plan
@@ -518,62 +515,52 @@ impl VkMatmulKernel {
                     Some(_) => (bias.is_some(), bias.map(VkBuffer::resolve_ref)),
                     None => (has_bias, bias_range),
                 };
-                // The same arguments for both entry points: subgroups of 32, or native subgroups of 128 lanes.
-                macro_rules! gemv_int8 {
-                    ($cache:expr, $kernel:ident) => {
-                        let gemv_flags = [has_scale, has_bias, has_soft_cap, gathered, rht.is_some()];
-                        let kernel = cached(&mut $cache, (gemv_flags, prologue, rows, input_rows, b_layout), || {
-                            $kernel::new(
-                                &context,
-                                weights_type,
-                                output_type,
-                                has_scale,
-                                has_bias,
-                                has_soft_cap,
-                                scheme,
-                                mode,
-                                signed_codes,
-                                group_size,
-                                rows,
-                                input_rows,
-                                b_layout,
-                                capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT),
-                                gathered,
-                                rht.is_some(),
-                            )
-                        })?;
-                        unsafe {
-                            kernel.encode(
-                                b_range,
-                                scales,
-                                biases,
-                                zero_points,
-                                codes,
-                                a_scales,
-                                group_sums,
-                                d_range,
-                                bias_range,
-                                gather,
-                                rht.clone(),
-                                k,
-                                n,
-                                m,
-                                scale_output,
-                                scale_group,
-                                zero_point_output,
-                                zero_point_group,
-                                ab_scale,
-                                soft_cap,
-                                command_buffer,
-                            )
-                        };
-                    };
-                }
-                if native_128 {
-                    gemv_int8!(self.gemv_int8_native_128, GemvInt8Native128VulkanKernel);
-                } else {
-                    gemv_int8!(self.gemv_int8, GemvInt8VulkanKernel);
-                }
+                let gemv_flags = [has_scale, has_bias, has_soft_cap, gathered, rht.is_some()];
+                let kernel = cached(&mut self.gemv_int8, (gemv_flags, prologue, rows, input_rows, b_layout), || {
+                    GemvInt8VulkanKernel::new(
+                        &context,
+                        weights_type,
+                        output_type,
+                        has_scale,
+                        has_bias,
+                        has_soft_cap,
+                        scheme,
+                        mode,
+                        signed_codes,
+                        group_size,
+                        rows,
+                        input_rows,
+                        b_layout,
+                        capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT),
+                        gathered,
+                        rht.is_some(),
+                    )
+                })?;
+                unsafe {
+                    kernel.encode(
+                        b_range,
+                        scales,
+                        biases,
+                        zero_points,
+                        codes,
+                        a_scales,
+                        group_sums,
+                        d_range,
+                        bias_range,
+                        gather,
+                        rht.clone(),
+                        k,
+                        n,
+                        m,
+                        scale_output,
+                        scale_group,
+                        zero_point_output,
+                        zero_point_group,
+                        ab_scale,
+                        soft_cap,
+                        command_buffer,
+                    )
+                };
                 if rht.is_some() {
                     return Ok(());
                 }

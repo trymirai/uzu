@@ -80,8 +80,7 @@ fn pixel_10() -> VkDeviceFacts<'static> {
         | Capability::CALIBRATED_TIMESTAMPS
         | Capability::FP16_TENSOR_CORES
         | Capability::INT8_TENSOR_CORES_K16
-        | Capability::UNSIGNED_DOT_PRODUCT
-        | Capability::GEMV_INT8_NATIVE_128;
+        | Capability::UNSIGNED_DOT_PRODUCT;
     let workgroups = ([65536; 3], [1024, 1024, 64]);
     facts(capabilities, 32768, workgroups, (128, 32..=128, 32), None, [u32::MAX.into(), 1 << 33])
 }
@@ -156,13 +155,13 @@ fn routed_baselines_pass_their_checks() {
 fn decode_and_prefill_take_each_device_s_paths() {
     let [up, ..] = linears();
     let plan = |device, rows| routed(device, up, rows).2;
-    // Signed-dot devices decode full-precision A; unsigned-dot ones take A8 on native 128-lane subgroups throughout.
+    // Signed-dot devices decode full-precision A; unsigned-dot ones take A8 throughout, 8 rows on 128-lane subgroups.
     assert!(matches!(plan(radeon_890m(), 1), VkMatmulPlan::Gemv(_)));
     assert!(matches!(plan(rtx_4090(), 1), VkMatmulPlan::Gemv(_)));
     assert!(matches!(
         plan(pixel_10(), 1),
         VkMatmulPlan::GemvInt8 {
-            native_128: true,
+            rows: 8,
             ..
         }
     ));
@@ -182,7 +181,7 @@ fn decode_and_prefill_take_each_device_s_paths() {
     assert!(matches!(
         plan(pixel_10(), 1024),
         VkMatmulPlan::GemvInt8 {
-            native_128: true,
+            rows: 8,
             ..
         }
     ));
