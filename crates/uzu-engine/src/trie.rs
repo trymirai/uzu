@@ -137,29 +137,6 @@ impl TrieNode {
         prune(self, &kept, &mut 0);
     }
 
-    pub fn branching(
-        token: u64,
-        size: usize,
-        seed: u64,
-    ) -> Self {
-        assert!(size > 0, "need a root node");
-
-        const WIDTH: usize = 4;
-        fn build(
-            index: usize,
-            token: u64,
-            size: usize,
-            seed: u64,
-        ) -> TrieNode {
-            let mut node = TrieNode::new(token, seed, 0.0);
-            node.next = (WIDTH * index + 1..size.min(WIDTH * index + WIDTH + 1))
-                .map(|child| build(child, child as u64, size, seed))
-                .collect();
-            node
-        }
-        build(0, token, size, seed)
-    }
-
     pub fn flat(
         prefix_length: usize,
         tokens: &[u64],

@@ -43,6 +43,10 @@ impl<B: Backend> Engine<B> {
     pub fn peak_memory_usage(&self) -> Option<usize> {
         self.context.peak_memory_usage()
     }
+
+    pub fn device_name(&self) -> Option<&str> {
+        self.context.device_name()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

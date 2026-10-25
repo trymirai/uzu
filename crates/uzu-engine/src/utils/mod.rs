@@ -7,7 +7,7 @@ pub mod maybe_mut;
 pub mod pointers;
 pub mod size_for_shape;
 pub mod strict_serde;
-pub mod timestamps;
+pub mod timings;
 pub mod version;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm_future;

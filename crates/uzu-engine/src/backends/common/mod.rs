@@ -3,6 +3,7 @@ mod backend;
 mod buffer;
 pub mod capture_matcher;
 mod command_buffer;
+mod command_buffer_timing;
 mod context;
 mod device_capabilities;
 pub mod gpu_types;
@@ -19,6 +20,7 @@ pub use buffer::{
 pub use command_buffer::{
     CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
 };
+pub use command_buffer_timing::CommandBufferTiming;
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
 pub use kernel::Kernels;

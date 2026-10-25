@@ -3,7 +3,6 @@ use clap::{Parser, Subcommand};
 use shoji::types::basic::ReasoningEffort;
 
 mod bench;
-mod collect_gpu_timestamps;
 mod common;
 mod interactive;
 mod server;
@@ -38,15 +37,6 @@ enum Commands {
         model_path: String,
         task_path: String,
         output_path: String,
-    },
-    CollectGpuTimestamps {
-        /// Local model directory.
-        model_path: std::path::PathBuf,
-        /// Directory to write the CSV files to.
-        output_dir: std::path::PathBuf,
-        /// Also record per-block GPU spans (slows small passes down).
-        #[arg(long)]
-        spans: bool,
     },
     ListCheckpoints {
         /// Model ID shown by `list-models`.
@@ -88,11 +78,6 @@ async fn main() -> Result<()> {
             task_path,
             output_path,
         }) => bench::run_bench(model_path, task_path, output_path).await?,
-        Some(Commands::CollectGpuTimestamps {
-            model_path,
-            output_dir,
-            spans,
-        }) => collect_gpu_timestamps::run(model_path, output_dir, spans).await?,
         Some(Commands::ListCheckpoints {
             model_id,
         }) => interactive::run_list_checkpoints(model_id).await?,

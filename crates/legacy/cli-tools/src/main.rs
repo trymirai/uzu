@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
+    collect_gpu_timestamps,
     configs::{HOST_TARGET, PlatformsConfig},
     hanashi::export_tokenizers,
     languages::{
@@ -67,6 +68,16 @@ enum Commands {
         path: std::path::PathBuf,
     },
     HanashiTokenizers,
+    /// Measure forward-pass GPU time over a grid of KV-cache and suffix lengths
+    CollectGpuTimestamps {
+        /// Local model directory.
+        model_path: std::path::PathBuf,
+        /// Directory to write the Parquet files to.
+        output_dir: std::path::PathBuf,
+        /// Also record per-block GPU spans (slows small passes down).
+        #[arg(long)]
+        spans: bool,
+    },
 }
 
 fn run_setup(include_platform_specific: bool) -> Result<()> {
@@ -161,6 +172,11 @@ async fn main() -> Result<()> {
             path,
         }) => run_release(&version, &path)?,
         Some(Commands::HanashiTokenizers) => export_tokenizers(RuntimeHandle::current()).await?,
+        Some(Commands::CollectGpuTimestamps {
+            model_path,
+            output_dir,
+            spans,
+        }) => collect_gpu_timestamps::run(model_path, output_dir, spans).await?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

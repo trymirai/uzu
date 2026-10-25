@@ -115,6 +115,7 @@ shader-slang-sys = { git = "https://github.com/trymirai/slang-rs.git", branch = 
 naga = { git = "https://github.com/gfx-rs/wgpu", branch = "v30" }
 rangemap = "1.8.0"
 parking_lot = "0.12.5"
+parquet = { version = "60", default-features = false, features = ["zstd"] }
 futures = "0.3.34"
 tokio = "1.53.3"
 tokio-stream = { version = "0.1.19", features = ["sync"] }
