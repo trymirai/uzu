@@ -17,80 +17,115 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const constant uint& batch_size,
     const constant uint& logit_stride,
     const bool has_biases SPECIALIZE,
+    threadgroup float shared_best_vals[MOE_ROUTER_NUM_SIMDGROUPS],
+    threadgroup uint shared_best_idxs[MOE_ROUTER_NUM_SIMDGROUPS],
     const uint token_idx GROUPS(batch_size),
-    const uint lane THREADS(METAL_SIMD_SIZE)
+    const uint lane THREADS(METAL_SIMD_SIZE),
+    const uint simd_group THREADS(MOE_ROUTER_NUM_SIMDGROUPS)
 ) {
+  const uint tid = lane + simd_group * METAL_SIMD_SIZE;
   const device T* row = logits + token_idx * logit_stride;
-  float vals[MOE_ROUTER_MAX_PER_LANE];
-  for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
-    const uint e = lane + i * METAL_SIMD_SIZE;
+
+  const uint slots = (num_experts + 255) / 256;
+  float my_vals[MOE_ROUTER_MAX_PER_THREAD];
+  uint my_ids[MOE_ROUTER_MAX_PER_THREAD];
+  for (uint s = 0; s < MOE_ROUTER_MAX_PER_THREAD; ++s) {
+    const uint e = tid + s * 256;
     if (e < num_experts) {
       float v = float(row[e]);
       if (has_biases) {
         v += float(biases[e]);
       }
-      vals[i] = isnan(v) ? -INFINITY : v;
+      my_vals[s] = isnan(v) ? -INFINITY : v;
+      my_ids[s] = e;
     } else {
-      vals[i] = -INFINITY;
+      my_vals[s] = -INFINITY;
+      my_ids[s] = 0xFFFFFFFFu;
     }
   }
 
-  float chosen_vals[MAX_TOP_K];
-  uint chosen_ids[MAX_TOP_K];
-  float max_chosen = -INFINITY;
+  float my_chosen_val = -INFINITY;
+  uint my_chosen_id = 0xFFFFFFFFu;
 
   for (uint k = 0; k < top_k; ++k) {
-    float best_val = -INFINITY;
-    uint best_idx = 0xFFFFFFFFu;
-    for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
-      const uint e = lane + i * METAL_SIMD_SIZE;
-      if (e < num_experts) {
-        const float v = vals[i];
-        if (v > best_val || (v == best_val && e < best_idx)) {
-          best_val = v;
-          best_idx = e;
+    float thread_best_val = my_vals[0];
+    uint thread_best_idx = my_ids[0];
+    for (uint s = 1; s < MOE_ROUTER_MAX_PER_THREAD; ++s) {
+      if (s < slots) {
+        const float v = my_vals[s];
+        const uint id = my_ids[s];
+        if (is_better_candidate(v, id, thread_best_val, thread_best_idx, num_experts)) {
+          thread_best_val = v;
+          thread_best_idx = id;
         }
       }
     }
 
     for (ushort offset = METAL_SIMD_SIZE / 2; offset > 0; offset >>= 1) {
-      const float other_val = simd_shuffle_xor(best_val, offset);
-      const uint other_idx = simd_shuffle_xor(best_idx, offset);
-      if (other_val > best_val || (other_val == best_val && other_idx < best_idx)) {
-        best_val = other_val;
-        best_idx = other_idx;
+      const float other_val = simd_shuffle_xor(thread_best_val, offset);
+      const uint other_idx = simd_shuffle_xor(thread_best_idx, offset);
+      if (is_better_candidate(other_val, other_idx, thread_best_val, thread_best_idx, num_experts)) {
+        thread_best_val = other_val;
+        thread_best_idx = other_idx;
       }
     }
 
-    if (best_idx >= num_experts) {
-      best_idx = min(k, num_experts - 1);
+    if (lane == 0) {
+      shared_best_vals[simd_group] = thread_best_val;
+      shared_best_idxs[simd_group] = thread_best_idx;
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    if ((best_idx & (METAL_SIMD_SIZE - 1)) == lane) {
-      const uint slot = best_idx / METAL_SIMD_SIZE;
-      if (slot < MOE_ROUTER_MAX_PER_LANE) {
-        vals[slot] = -INFINITY;
+    if (simd_group == 0) {
+      float v = (lane < MOE_ROUTER_NUM_SIMDGROUPS) ? shared_best_vals[lane] : -INFINITY;
+      uint id = (lane < MOE_ROUTER_NUM_SIMDGROUPS) ? shared_best_idxs[lane] : 0xFFFFFFFFu;
+      for (ushort offset = 4; offset > 0; offset >>= 1) {
+        const float other_val = simd_shuffle_xor(v, offset);
+        const uint other_id = simd_shuffle_xor(id, offset);
+        if (is_better_candidate(other_val, other_id, v, id, num_experts)) {
+          v = other_val;
+          id = other_id;
+        }
+      }
+      if (lane == k) {
+        my_chosen_val = (id < num_experts) ? v : -INFINITY;
+        my_chosen_id = (id < num_experts) ? id : min(k, num_experts - 1);
+      }
+      if (lane == 0) {
+        shared_best_idxs[0] = (id < num_experts) ? id : min(k, num_experts - 1);
       }
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    chosen_vals[k] = best_val;
-    chosen_ids[k] = best_idx;
-    max_chosen = (k == 0) ? best_val : max(max_chosen, best_val);
+    const uint winner_id = shared_best_idxs[0];
+    if (winner_id % 256 == tid) {
+      const uint s = winner_id / 256;
+      if (s < MOE_ROUTER_MAX_PER_THREAD) {
+        my_vals[s] = -INFINITY;
+        my_ids[s] = 0xFFFFFFFFu;
+      }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
-  if (lane == 0) {
+  if (simd_group == 0) {
+    const float max_chosen = simd_shuffle(my_chosen_val, 0);
+
+    const float e_val =
+        (lane < top_k) ? ((max_chosen == -INFINITY) ? (1.0f / float(top_k)) : fast::exp(my_chosen_val - max_chosen))
+                       : 0.0f;
+
     float sum_exp = 0.0f;
-    for (uint k = 0; k < top_k; ++k) {
-      const float e_val = (max_chosen == -INFINITY) ? (1.0f / float(top_k)) : fast::exp(chosen_vals[k] - max_chosen);
-      chosen_vals[k] = e_val;
-      sum_exp += e_val;
+    for (uint i = 0; i < top_k; ++i) {
+      sum_exp += simd_shuffle(e_val, i);
     }
-    const float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
-    device uint* out_ids = expert_ids + token_idx * top_k;
-    device float* out_weights = expert_weights + token_idx * top_k;
-    for (uint k = 0; k < top_k; ++k) {
-      out_ids[k] = (chosen_ids[k] < num_experts) ? chosen_ids[k] : min(k, num_experts - 1);
-      out_weights[k] = chosen_vals[k] * inv_sum;
+
+    if (lane < top_k) {
+      const float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
+      device uint* out_ids = expert_ids + token_idx * top_k;
+      device float* out_weights = expert_weights + token_idx * top_k;
+      out_ids[lane] = my_chosen_id;
+      out_weights[lane] = e_val * inv_sum;
     }
   }
 }
