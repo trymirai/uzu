@@ -108,6 +108,10 @@ struct ModelRowView: View, Equatable {
             Text("installing elsewhere…")
                 .font(statusFont)
                 .foregroundColor(MiraiAsset.secondary.swiftUIColor)
+        case .initializing:
+            Text("initializing…")
+                .font(statusFont)
+                .foregroundColor(MiraiAsset.secondary.swiftUIColor)
         }
     }
 

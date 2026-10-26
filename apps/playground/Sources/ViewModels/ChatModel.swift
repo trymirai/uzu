@@ -118,6 +118,8 @@ final class ChatModel {
                     case .error(let error):
                         stream.cancelToken().cancel()
                         throw error
+                    case .toolResults:
+                        break
                     }
                 }
                 
