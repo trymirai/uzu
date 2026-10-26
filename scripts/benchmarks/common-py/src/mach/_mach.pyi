@@ -1,1 +1,3 @@
-__file__: str
+from importlib.machinery import ModuleSpec
+
+__spec__: ModuleSpec
