@@ -29,6 +29,13 @@ pub struct ConfidenceHeadTreeLayer<B: Backend> {
     down: Box<dyn Linear<B>>,
 }
 
+pub(super) struct ConfidenceHeadTreeOutput<B: Backend> {
+    pub node_shifts: B::ScratchBuffer,
+    pub child_shifts: B::ScratchBuffer,
+    pub slot_tokens: B::ScratchBuffer,
+    pub token_slots: B::ScratchBuffer,
+}
+
 pub struct ConfidenceHeadTree<B: Backend> {
     config: ConfidenceHeadTreeConfig,
     max_depth: u32,
@@ -43,13 +50,6 @@ pub struct ConfidenceHeadTree<B: Backend> {
     tree_tokens: <B::Kernels as Kernels>::ConfidenceHeadTreeTokensKernel,
     tree_attention: <B::Kernels as Kernels>::ConfidenceHeadTreeAttentionKernel,
     activation: <B::Kernels as Kernels>::ActivationKernel,
-}
-
-pub(super) struct ConfidenceHeadTreeOutput<B: Backend> {
-    pub node_shifts: B::ScratchBuffer,
-    pub child_shifts: B::ScratchBuffer,
-    pub slot_tokens: B::ScratchBuffer,
-    pub token_slots: B::ScratchBuffer,
 }
 
 impl<B: Backend> ConfidenceHeadTree<B> {
@@ -127,10 +127,11 @@ impl<B: Backend> ConfidenceHeadTree<B> {
     ) -> Result<ConfidenceHeadTreeOutput<B>, ConfidenceHeadError<B>> {
         let token_count = 1 + slots * children;
         let width = self.config.width;
-        // Linear consumes its scratch input; retain the local features for final edge scoring.
+
         let mut nodes_copy = command_buffer.allocate_scratch(nodes.size()).map_err(ConfidenceHeadError::Backend)?;
         command_buffer.encode_copy(nodes, &mut nodes_copy);
         let node_inputs = self.node_in.encode(nodes_copy, slots, command_buffer)?;
+
         let mut children_copy =
             command_buffer.allocate_scratch(child_inputs.size()).map_err(ConfidenceHeadError::Backend)?;
         command_buffer.encode_copy(child_inputs, &mut children_copy);
@@ -157,6 +158,7 @@ impl<B: Backend> ConfidenceHeadTree<B> {
         let mut slot_tokens =
             command_buffer.allocate_scratch_for_shape(&[slots], DataType::U32).map_err(ConfidenceHeadError::Backend)?;
         command_buffer.encode_fill(&mut slot_tokens, 0);
+
         self.tree_tokens.encode(
             packed_tree,
             frontier,

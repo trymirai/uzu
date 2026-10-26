@@ -1,8 +1,8 @@
 /// Offsets, in f32 elements, of the local part's weights inside the head's packed buffer.
 ///
-/// The local part of a slot reads its pool set encoder, the standardisation of the slot numbers, the edge MLP and
+/// The local part of a slot reads its pool set encoder, the standardization of the slot numbers, the edge MLP and
 /// the alpha/beta outputs; all of them are small, so the head packs them into one buffer at load and the kernels
-/// index it with these offsets. The Metal kernels compute the same layout in `confidence_head_round.metal`; the two must stay
+/// index it with these offsets. The Metal kernels compute the same layout in `confidence_head_layout.h`; the two must stay
 /// in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalLayout {

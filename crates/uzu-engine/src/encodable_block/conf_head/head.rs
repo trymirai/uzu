@@ -190,7 +190,7 @@ impl<B: Backend> ConfidenceHead<B> {
         }
     }
 
-    /// Builds and caches an float32 [vocab_size, hidden] table from the target model's bfloat16 input embedding
+    /// Builds and caches float32 [vocab_size, hidden] table from the target model's bfloat16 input embedding
     /// and the confidence head's learned projection:
     ///
     /// E_t       = target input embedding lookup(t)       // model_width values
@@ -272,10 +272,13 @@ impl<B: Backend> ConfidenceHead<B> {
         vocab_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<ConfidenceHeadStep<B>, ConfidenceHeadError<B>> {
+        // row_offset == 1, because 0th element is tree root and skipped
         let normalized = self
             .draft_norm
             .encode(draft_hidden, 1, pool_rows, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(ConfidenceHeadError::Backend)?;
+
+        // projection to ConfidenceHead space: [pool_rows, config.model_width] -> [pool_rows, config.hidden]
         let draft_rows =
             self.draft_proj.encode(normalized, pool_rows, command_buffer).map_err(ConfidenceHeadError::LinearEncode)?;
 
@@ -310,6 +313,7 @@ impl<B: Backend> ConfidenceHead<B> {
         };
         command_buffer.encode_fill(&mut step.child_real, 0);
 
+        // fill noise
         self.pool_noise.encode(
             candidate_ids,
             depth_seeds,
@@ -323,7 +327,8 @@ impl<B: Backend> ConfidenceHead<B> {
         Ok(step)
     }
 
-    /// Scores the children just selected by Weaver and updates their frontier edges, path scores and priorities.
+    /// Rescores the children Weaver has already selected for the nodes being expanded.
+    /// The updated frontier edges, path scores and priorities determine which branches are expanded in subsequent rounds.
     /// Saves local node and child features by tree slot for the final tree-wide refinement.
     pub async fn encode_round(
         &self,
@@ -371,8 +376,8 @@ impl<B: Backend> ConfidenceHead<B> {
         Ok(())
     }
 
-    /// Refines the grown tree's features and rewrites edge scores for the subsequent budget prune.
-    /// Without tree attention, the local scores written by `encode_round` remain unchanged.
+    /// Refines the edge scores once the tree is fully built.
+    /// At this point the confidence head can take into account the relations between nodes across the whole built tree.
     pub fn encode_prune(
         &self,
         step: &ConfidenceHeadStep<B>,
@@ -383,6 +388,7 @@ impl<B: Backend> ConfidenceHead<B> {
         let Some(tree) = &self.tree else {
             return Ok(());
         };
+
         // The Metal token kernel gathers metadata for up to 512 slots in threadgroup memory.
         if step.slot_count == 0 || step.slot_count > 512 {
             return Err(ConfidenceHeadError::Unsupported(format!(
@@ -390,6 +396,7 @@ impl<B: Backend> ConfidenceHead<B> {
                 step.slot_count
             )));
         }
+
         let command_buffer = &mut *command_buffer.debug_group("confidence head prune");
         let output = tree.encode(
             &step.nodes,
@@ -401,6 +408,7 @@ impl<B: Backend> ConfidenceHead<B> {
             self.config.children,
             command_buffer,
         )?;
+
         self.prune.encode(
             &step.nodes,
             &step.child_inputs,

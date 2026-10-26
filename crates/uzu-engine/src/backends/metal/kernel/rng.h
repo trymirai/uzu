@@ -2,6 +2,9 @@
 
 #include <metal_stdlib>
 
+#define GUMBEL_THREADGROUP_SIZE 1024u
+#define GUMBEL_WORDS_PER_OFFSET 4u
+
 /* ───────────── Philox4x32-10 RNG ───────────── */
 
 #define PHILOX_W32_0 0x9E3779B9u
@@ -115,6 +118,31 @@ inline uint philox_next(thread PhiloxState* state) {
 
 /* Uniform in [2^-24, 1-2^-24]: -log(-log(u)) needs (0,1) — u == 1 gives +inf and wins
  * every argmax. 24 bits only; the full 32 rounds the top 128 values up to 2^32. */
-inline float uniform_float(thread PhiloxState* state) {
-  return float(metal::max(philox_next(state) >> 8, 1u)) * (1.0f / 16777216.0f);
+inline float uniform_float(uint word) { return float(metal::max(word >> 8, 1u)) * (1.0f / 16777216.0f); }
+
+inline float uniform_float(thread PhiloxState* state) { return uniform_float(philox_next(state)); }
+
+inline metal::uint2 gumbel_revidx(uint logit_idx, uint vocab_size) {
+  const uint thread_idx = logit_idx % GUMBEL_THREADGROUP_SIZE;
+  const uint words_per_batch = GUMBEL_THREADGROUP_SIZE * GUMBEL_WORDS_PER_OFFSET;
+  const uint thread_offset = ((vocab_size + words_per_batch - 1u) / words_per_batch) * thread_idx;
+  const uint block_idx = logit_idx / GUMBEL_THREADGROUP_SIZE;
+  return metal::uint2(thread_offset + block_idx / GUMBEL_WORDS_PER_OFFSET, block_idx % GUMBEL_WORDS_PER_OFFSET);
+}
+
+inline float gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
+  const metal::uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
+  PhiloxState rng;
+  philox_init(&rng, seed, offset_word.x);
+  const float uniform = float(rng.output[offset_word.y]) * (1.0f / 4294967296.0f);
+  return -metal::log(-metal::log(uniform));
+}
+
+// The noise the target sampler adds for this token: the 24-bit uniform of `uniform_float` in rng.h keeps it finite.
+inline float target_gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
+  const metal::uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
+  PhiloxState rng;
+  philox_init(&rng, seed, offset_word.x);
+  const float uniform = uniform_float(rng.output[offset_word.y]);
+  return -metal::log(-metal::log(uniform));
 }

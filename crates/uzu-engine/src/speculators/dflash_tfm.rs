@@ -167,9 +167,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             },
             _ => None,
         };
-        if let Some(ref _head) = confidence_head {
-            println!("Confidence head loaded!")
-        }
 
         let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
 
