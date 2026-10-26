@@ -162,7 +162,7 @@ struct ModelListView: View {
             switch state.phase {
             case .notDownloaded, .paused:
                 downloadButton
-            case .downloading, .locked:
+            case .downloading, .locked, .initializing:
                 waitingText
             case .error:
                 retryButton
@@ -201,7 +201,7 @@ struct ModelListView: View {
                 downloadButton
             case .downloading:
                 pauseButton
-            case .locked:
+            case .locked, .initializing:
                 waitingText
             case .paused:
                 resumeButton
@@ -510,7 +510,7 @@ struct ModelListView: View {
         case .paused: return .paused
         case .notDownloaded: return .notInstalled
         case .error: return .notInstalled
-        case .locked: return .installing
+        case .locked, .initializing: return .installing
         }
     }
 
