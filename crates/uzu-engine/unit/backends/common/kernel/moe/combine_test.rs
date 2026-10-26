@@ -17,7 +17,7 @@ use crate::{
 
 const MOE_COMBINE_BLOCK_DIM: u32 = 256;
 
-fn run_moe_combine<B: Backend>(
+pub(super) fn run_moe_combine<B: Backend>(
     routed_outputs: &[bf16],
     expert_weights: &[f32],
     shared_output: Option<&[bf16]>,

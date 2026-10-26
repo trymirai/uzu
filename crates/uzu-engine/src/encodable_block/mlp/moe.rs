@@ -11,7 +11,7 @@ use crate::{
             quantization_method::QuantizationMethod,
         },
         kernel::{
-            ActivationTransform, Kernels, MoeCombineKernel, MoeGemvKernel, MoeRouterTopKKernel,
+            ActivationTransform, Kernels, MoeCombineKernel, MoeDownCombineKernel, MoeGemvKernel, MoeRouterTopKKernel,
             matmul::{ActivationFormat, QuantParams, QuantParamsLayout},
         },
     },
@@ -75,6 +75,7 @@ pub enum MoeMlpNewError<B: Backend> {
 
 struct RoutedProjection<B: Backend> {
     kernel: <B::Kernels as Kernels>::MoeGemvKernel,
+    down_combine_kernel: Option<<B::Kernels as Kernels>::MoeDownCombineKernel>,
     input_rht: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
     weights: B::GlobalGpuBuffer,
     scales: Option<B::GlobalGpuBuffer>,
@@ -109,6 +110,8 @@ impl<B: Backend> RoutedProjection<B> {
         data_type: DataType,
         has_biases: bool,
         fuse_input_rht_externally: bool,
+        is_down: bool,
+        has_gate: bool,
         proj_tree: &ParameterTree<'_, B>,
         shared_proj_tree: Option<&ParameterTree<'_, B>>,
         context: &B::Context,
@@ -438,6 +441,27 @@ impl<B: Backend> RoutedProjection<B> {
         )
         .map_err(MoeMlpNewError::Backend)?;
 
+        let down_combine_kernel = if is_down && data_type == DataType::BF16 {
+            Some(
+                <B::Kernels as Kernels>::MoeDownCombineKernel::new(
+                    context,
+                    data_type,
+                    group_size,
+                    bits,
+                    b_prologue,
+                    output_transform,
+                    input_aligned,
+                    false,
+                    full_tile,
+                    has_shared,
+                    has_gate,
+                )
+                .map_err(MoeMlpNewError::Backend)?,
+            )
+        } else {
+            None
+        };
+
         let (input_rht, external_prep) = match input_signs {
             Some(signs) if fuse_input_rht_externally => (
                 None,
@@ -465,6 +489,7 @@ impl<B: Backend> RoutedProjection<B> {
         Ok((
             Self {
                 kernel,
+                down_combine_kernel,
                 input_rht,
                 weights,
                 scales,
@@ -552,6 +577,66 @@ impl<B: Backend> RoutedProjection<B> {
             self.zero_point_output_stride,
             self.zero_point_group_stride,
             num_routed_routes,
+            command_buffer,
+        );
+
+        Ok(output)
+    }
+
+    fn has_down_combine(&self) -> bool {
+        self.down_combine_kernel.is_some()
+    }
+
+    fn encode_down_combine(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        expert_ids: impl BufferRef<Backend = B>,
+        expert_weights: impl BufferRef<Backend = B>,
+        shared_gate: Option<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        active_experts_per_token: u32,
+        gate_stride: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        let kernel = self
+            .down_combine_kernel
+            .as_ref()
+            .expect("encode_down_combine called on projection without down_combine_kernel");
+
+        let mut output = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.data_type)?;
+        let group_count_x = self.output_dim.div_ceil(MOE_GEMV_OUTPUT_ROW_TILE);
+
+        kernel.encode(
+            &self.weights,
+            self.scales.as_ref(),
+            self.zero_points.as_ref(),
+            self.biases.as_ref(),
+            self.shared_weights.as_ref(),
+            self.shared_scales.as_ref(),
+            self.shared_zero_points.as_ref(),
+            self.shared_biases.as_ref(),
+            input,
+            expert_ids,
+            expert_weights,
+            shared_gate,
+            &mut output,
+            self.output_bias.as_ref(),
+            self.output_hadamard_factors.as_ref(),
+            self.shared_output_bias.as_ref(),
+            self.shared_output_hadamard_factors.as_ref(),
+            self.input_dim,
+            self.output_dim,
+            active_experts_per_token,
+            group_count_x,
+            self.b_expert_stride_bytes,
+            self.scale_expert_stride,
+            self.zero_point_expert_stride,
+            self.scale_output_stride,
+            self.scale_group_stride,
+            self.zero_point_output_stride,
+            self.zero_point_group_stride,
+            batch_dim,
+            gate_stride,
             command_buffer,
         );
 
@@ -823,6 +908,8 @@ impl<B: Backend> MoeMlp<B> {
             data_type,
             config.expert_config.has_up_biases,
             false,
+            false,
+            false,
             &routed_up_tree,
             shared_up_tree.as_ref(),
             context,
@@ -830,6 +917,7 @@ impl<B: Backend> MoeMlp<B> {
         .await?;
 
         let shared_down_tree = can_fold_shared.then(|| shared_tree.subtree("down_projection"));
+        let has_down_gate = has_folded_gate || (config.num_shared_experts > 0 && config.gate_config.is_some());
         let (routed_down, down_input_prep) = RoutedProjection::load(
             config.num_routed_experts,
             config.expert_hidden_dim,
@@ -837,6 +925,8 @@ impl<B: Backend> MoeMlp<B> {
             data_type,
             config.expert_config.has_down_biases,
             true,
+            true,
+            has_down_gate,
             &routed_down_tree,
             shared_down_tree.as_ref(),
             context,
@@ -1000,13 +1090,6 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             unreachable!("ActivationFormat::Bf16 always produces FullPrecision LinearInput");
         };
 
-        let routed_outputs = self
-            .routed_down
-            .encode_prerotated(&down_input, &expert_ids, batch_dim, self.num_active_routed_experts, command_buffer)
-            .map_err(MlpEncodeError::Backend)?;
-        drop(down_input);
-        drop(expert_ids);
-
         if shared_output.is_none()
             && let Some(shared) = &self.shared_expert
         {
@@ -1020,10 +1103,6 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         }
         drop(input);
 
-        let mut output = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)
-            .map_err(MlpEncodeError::Backend)?;
-
         let (gate_buf, gate_stride) = if self.has_folded_gate {
             let gate_offset = (self.num_routed_experts as usize) * self.data_type.size_in_bytes();
             let gate_slice = (&router_logits).subrange(gate_offset..);
@@ -1032,37 +1111,69 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             (shared_gate.as_ref().map(|g| g.subrange(0..)), 1)
         };
 
-        if self.routed_down.has_shared {
-            let elem_size = self.data_type.size_in_bytes();
-            let routed_bytes = (num_routed_routes * self.model_dimension) as usize * elem_size;
-            let total_bytes = (total_routes * self.model_dimension) as usize * elem_size;
-            let shared_slice = (&routed_outputs).subrange(routed_bytes..total_bytes);
-            self.combine.encode(
-                &routed_outputs,
-                &expert_weights,
-                Some(shared_slice),
-                gate_buf,
-                &mut output,
-                self.model_dimension,
-                self.num_active_routed_experts,
-                batch_dim,
-                gate_stride,
-                command_buffer,
-            );
+        let output = if batch_dim >= 2 && self.routed_down.has_down_combine() && self.shared_expert.is_none() {
+            let out = self
+                .routed_down
+                .encode_down_combine(
+                    &down_input,
+                    &expert_ids,
+                    &expert_weights,
+                    gate_buf,
+                    batch_dim,
+                    self.num_active_routed_experts,
+                    gate_stride,
+                    command_buffer,
+                )
+                .map_err(MlpEncodeError::Backend)?;
+            drop(down_input);
+            drop(expert_ids);
+            drop(expert_weights);
+            out
         } else {
-            self.combine.encode(
-                &routed_outputs,
-                &expert_weights,
-                shared_output.as_ref(),
-                gate_buf,
-                &mut output,
-                self.model_dimension,
-                self.num_active_routed_experts,
-                batch_dim,
-                gate_stride,
-                command_buffer,
-            );
-        }
+            let routed_outputs = self
+                .routed_down
+                .encode_prerotated(&down_input, &expert_ids, batch_dim, self.num_active_routed_experts, command_buffer)
+                .map_err(MlpEncodeError::Backend)?;
+            drop(down_input);
+            drop(expert_ids);
+
+            let mut output = command_buffer
+                .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)
+                .map_err(MlpEncodeError::Backend)?;
+
+            if self.routed_down.has_shared {
+                let elem_size = self.data_type.size_in_bytes();
+                let routed_bytes = (num_routed_routes * self.model_dimension) as usize * elem_size;
+                let total_bytes = (total_routes * self.model_dimension) as usize * elem_size;
+                let shared_slice = (&routed_outputs).subrange(routed_bytes..total_bytes);
+                self.combine.encode(
+                    &routed_outputs,
+                    &expert_weights,
+                    Some(shared_slice),
+                    gate_buf,
+                    &mut output,
+                    self.model_dimension,
+                    self.num_active_routed_experts,
+                    batch_dim,
+                    gate_stride,
+                    command_buffer,
+                );
+            } else {
+                self.combine.encode(
+                    &routed_outputs,
+                    &expert_weights,
+                    shared_output.as_ref(),
+                    gate_buf,
+                    &mut output,
+                    self.model_dimension,
+                    self.num_active_routed_experts,
+                    batch_dim,
+                    gate_stride,
+                    command_buffer,
+                );
+            }
+            output
+        };
 
         drop(router_logits);
 

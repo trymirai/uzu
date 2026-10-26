@@ -1,4 +1,5 @@
 mod combine_test;
+mod down_combine_test;
 mod gemv_test;
 mod router_top_k_test;
 
@@ -25,3 +26,5 @@ struct SharedGemv<'a, W, Z> {
     hadamard: Option<&'a [i32]>,
     num_routed_routes: u32,
 }
+
+const MOE_GEMV_OUTPUT_ROW_TILE: u32 = 32;
