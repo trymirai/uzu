@@ -1,0 +1,75 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 01b329b..7ff60b8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -182,8 +182,6 @@ if(MLX_BUILD_METAL)
+     add_compile_definitions(MLX_METAL_DEBUG)
+   endif()
+ 
+-  # Probe the macOS SDK only on Darwin. On iOS the caller selects the SDK, so
+-  # version detection is deferred and the baseline Metal feature set is used.
+   if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+     # Get the host macOS version.
+     execute_process(
+@@ -214,6 +212,7 @@ if(MLX_BUILD_METAL)
+     message(STATUS "Building for macOS ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+ 
+     # Get Metal version.
++    set(MLX_METAL_SDK macosx)
+     set(XCRUN_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+     execute_process(
+       COMMAND
+@@ -222,6 +221,21 @@ if(MLX_BUILD_METAL)
+       OUTPUT_VARIABLE MLX_METAL_VERSION
+       OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+     message(STATUS "Metal version: ${MLX_METAL_VERSION}")
++  elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    set(MLX_METAL_SDK iphoneos)
++    set(XCRUN_FLAGS "-mios-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
++    execute_process(
++      COMMAND xcrun -sdk iphoneos --show-sdk-version
++      OUTPUT_VARIABLE MACOS_SDK_VERSION
++      OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
++    message(STATUS "Building with iOS ${MACOS_SDK_VERSION} SDK")
++    execute_process(
++      COMMAND
++        zsh "-c"
++        "echo \"__METAL_VERSION__\" | xcrun -sdk iphoneos metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1"
++      OUTPUT_VARIABLE MLX_METAL_VERSION
++      OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
++    message(STATUS "Metal version: ${MLX_METAL_VERSION}")
+   else()
+     set(MLX_METAL_VERSION 0)
+   endif()
+diff --git a/mlx/backend/metal/kernels/CMakeLists.txt b/mlx/backend/metal/kernels/CMakeLists.txt
+index d5513dd..49503fb 100644
+--- a/mlx/backend/metal/kernels/CMakeLists.txt
++++ b/mlx/backend/metal/kernels/CMakeLists.txt
+@@ -27,10 +27,10 @@ function(build_kernel_base TARGET SRCFILE DEPS)
+   endif()
+   if(NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
+     set(METAL_FLAGS ${METAL_FLAGS}
+-                    "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
++                    ${XCRUN_FLAGS})
+   endif()
+   add_custom_command(
+-    COMMAND xcrun -sdk macosx metal ${METAL_FLAGS} -c ${SRCFILE}
++    COMMAND xcrun -sdk ${MLX_METAL_SDK} metal ${METAL_FLAGS} -c ${SRCFILE}
+             -I${PROJECT_SOURCE_DIR} -o ${TARGET}.air
+     DEPENDS ${SRCFILE} ${DEPS} ${BASE_HEADERS}
+     OUTPUT ${TARGET}.air
+@@ -193,12 +193,12 @@ endif()
+ 
+ set(METAL_LINK_FLAGS)
+ if(NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
+-  set(METAL_LINK_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
++  set(METAL_LINK_FLAGS ${XCRUN_FLAGS})
+ endif()
+ 
+ add_custom_command(
+   OUTPUT ${MLX_METAL_PATH}/mlx.metallib
+-  COMMAND xcrun -sdk macosx metal ${METAL_LINK_FLAGS} ${KERNEL_AIR} -o
++  COMMAND xcrun -sdk ${MLX_METAL_SDK} metal ${METAL_LINK_FLAGS} ${KERNEL_AIR} -o
+           ${MLX_METAL_PATH}/mlx.metallib
+   DEPENDS ${KERNEL_AIR}
+   COMMENT "Building mlx.metallib"

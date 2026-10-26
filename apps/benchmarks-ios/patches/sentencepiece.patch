@@ -1,0 +1,15 @@
+--- a/setup.py
++++ b/setup.py
+@@ -116,7 +116,11 @@
+ 
+     # Fix compile on some versions of Mac OSX
+     # See: https://github.com/neulab/xnmt/issues/199
+-    if sys.platform == 'darwin':
++    if sys.platform == 'ios':
++      libs.extend(abseil_libs)
++      libs.append('-Wl,-dead_strip')
++      libs.append('-Wl,-exported_symbols_list,exports_mac.txt')
++    elif sys.platform == 'darwin':
+       #  non GNU linker
+       cflags.append('-mmacosx-version-min=10.9')
+       # get correct SDK path by xcrun
