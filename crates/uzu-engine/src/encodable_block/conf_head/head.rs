@@ -312,6 +312,10 @@ impl<B: Backend> ConfidenceHead<B> {
             pool_rows,
         };
         command_buffer.encode_fill(&mut step.child_real, 0);
+        if self.tree.is_some() {
+            command_buffer.encode_fill(&mut step.nodes, 0);
+            command_buffer.encode_fill(&mut step.child_inputs, 0);
+        }
 
         // fill noise
         self.pool_noise.encode(

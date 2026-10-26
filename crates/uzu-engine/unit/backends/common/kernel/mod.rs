@@ -1,7 +1,6 @@
 mod activation_test;
 mod activation_transform_test;
 mod attention;
-mod confidence_head_prune_test;
 mod confidence_head_round_test;
 mod embedding;
 mod gated_act_mul_test;

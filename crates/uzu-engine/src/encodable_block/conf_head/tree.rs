@@ -219,12 +219,19 @@ impl<B: Backend> ConfidenceHeadTree<B> {
             );
             layer_input = layer.down.encode(raised, token_count, command_buffer)?;
         }
+
+        let shortcut = if self.layers.is_empty() {
+            None
+        } else {
+            Some(&mut residual)
+        };
         let normed = self
             .final_norm
-            .encode(&layer_input, 0, token_count, Some(&mut residual), command_buffer)
+            .encode(&layer_input, 0, token_count, shortcut, command_buffer)
             .map_err(ConfidenceHeadError::Backend)?;
         let mut normed_copy = command_buffer.allocate_scratch(normed.size()).map_err(ConfidenceHeadError::Backend)?;
         command_buffer.encode_copy(&normed, &mut normed_copy);
+
         Ok(ConfidenceHeadTreeOutput {
             node_shifts: self.couple_node.encode(normed, token_count, command_buffer)?,
             child_shifts: self.couple_child.encode(normed_copy, token_count, command_buffer)?,

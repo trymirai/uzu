@@ -26,7 +26,7 @@ result
 .claude/settings.local.json
 
 # Local-only dev tools
-.env/
+.env
 .idea/
 .vscode/
 
