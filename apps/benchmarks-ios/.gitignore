@@ -1,1 +1,4 @@
 /deps/
+*.xcodeproj
+*.xcworkspace
+Derived/
