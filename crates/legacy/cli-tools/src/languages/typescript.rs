@@ -39,7 +39,6 @@ impl LanguageBackend for TypeScriptLanguageBackend {
         let manifest_path = paths.crate_manifest_path(&paths.main_crate);
         let bindings_path = paths.bindings_for_language_path(self.language());
         let output_path = paths.napi_output_path();
-        let (zig_path, _) = Command::which("python-zig".to_string()).output()?;
 
         Command::pnpm_install().with_current_path(&bindings_path).run()?;
 
@@ -52,7 +51,6 @@ impl LanguageBackend for TypeScriptLanguageBackend {
                 output_path.clone(),
             )
             .with_current_path(&bindings_path)
-            .with_env("CARGO_ZIGBUILD_ZIG_PATH", &zig_path)
             .with_envs(self.config.required_envs_for_target(target.name.clone())?)
             .run()?;
             Command::pnpm_run("fix").with_current_path(&bindings_path).run()?;

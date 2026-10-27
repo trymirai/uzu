@@ -1,0 +1,22 @@
+name: setup-nix
+description: Load the Nix development environment
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix
+      if: runner.os == 'Linux'
+      uses: NixOS/nix-installer-action@v1
+
+    - name: Locate Nix
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        if ! command -v nix >/dev/null 2>&1; then
+          /nix/var/nix/profiles/default/bin/nix --version
+          echo /nix/var/nix/profiles/default/bin >> "$GITHUB_PATH"
+        fi
+
+    - uses: nicknovitski/nix-develop@9be7cfb4b10451d3390a75dc18ad0465bed4932a # v1.2.1
+      with:
+        arguments: ${{ runner.os == 'macOS' && '.#host-xcode' || '.#default' }}

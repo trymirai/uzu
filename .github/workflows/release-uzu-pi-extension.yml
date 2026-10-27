@@ -66,11 +66,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup
-        with:
-          metal: true
-          bindings: true
-          node-version: '26'
+      - uses: ./.github/actions/setup-legacy
 
       - name: Wait for matching npm release
         if: ${{ github.event_name == 'release' }}
