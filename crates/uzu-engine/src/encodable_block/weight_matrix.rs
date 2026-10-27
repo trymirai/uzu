@@ -3,11 +3,11 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferCpuAccessible, BufferMut,
+        Backend, BufferCpuAccessible, BufferMut, BufferRef, Context,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, mlx_spec::MLXSpec},
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -103,6 +103,16 @@ impl<B: Backend> WeightMatrix<B> {
         required_layout: Layout,
         tree: &ParameterTree<B>,
     ) -> Result<Self, WeightMatrixError<B>> {
+        if let AnyWeightMatrixSpec::MLXSpec(MLXSpec {
+            bits: 2,
+            group_size,
+            layout: Layout::OutputInput,
+            ..
+        }) = spec
+            && required_layout == Layout::OutputInput
+        {
+            return Self::load_mlx_2bit_as_int4(output_dim, input_dim, group_size, data_type, tree);
+        }
         let ParsedWeightSpec {
             layout,
             quantization: quantization_info,
@@ -163,6 +173,70 @@ impl<B: Backend> WeightMatrix<B> {
                 correction,
                 params,
                 info,
+                signed_codes: false,
+                weights_layout: Default::default(),
+            }),
+        })
+    }
+
+    /// Dash stopgap: 2-bit -> int4 repack at load; replace with a native 2-bit kernel.
+    /// MLX 2-bit codes (4 per byte, LSB first) become int4 nibbles (2 per byte, low first) with the same values 0..3,
+    /// and each source group's scale/bias is copied into every int4 group it covers, so the int4 kernels run as is.
+    fn load_mlx_2bit_as_int4(
+        rows: u32,
+        columns: u32,
+        group_size: u32,
+        data_type: DataType,
+        tree: &ParameterTree<B>,
+    ) -> Result<Self, WeightMatrixError<B>> {
+        let int4_group_size = if group_size.is_multiple_of(64) {
+            64
+        } else {
+            32
+        };
+        if !group_size.is_multiple_of(int4_group_size) || !columns.is_multiple_of(group_size) {
+            return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                "MLX bits=2 needs group_size ({group_size}) to be a multiple of 32 dividing columns ({columns})"
+            )));
+        }
+        let context = tree.context();
+
+        let codes = tree.read_buffer("weights", &[rows, columns / 4], DataType::U8)?;
+        let mut nibbles =
+            context.create_buffer((rows * columns / 2) as usize).map_err(ParameterLoaderError::BackendError)?;
+        for (pair, &byte) in nibbles.as_slice_mut::<u8>().chunks_exact_mut(2).zip(codes.as_slice::<u8>()) {
+            let code = |index: u8| (byte >> (2 * index)) & 0b11;
+            pair[0] = code(0) | (code(1) << 4);
+            pair[1] = code(2) | (code(3) << 4);
+        }
+
+        let source_params = QuantParams::new(QuantParamsLayout::GroupOutput, rows, columns / group_size);
+        let params = QuantParams::new(QuantParamsLayout::GroupOutput, rows, columns / int4_group_size);
+        let replicate_groups = |name: &str| -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
+            let source = tree.read_buffer(name, &source_params.scale_shape(), data_type)?;
+            let source = source.as_slice::<u8>();
+            let group_bytes = source.len() / (columns / group_size) as usize;
+            let mut target = context
+                .create_buffer(group_bytes * (columns / int4_group_size) as usize)
+                .map_err(ParameterLoaderError::BackendError)?;
+            for (group, target_group) in target.as_slice_mut::<u8>().chunks_exact_mut(group_bytes).enumerate() {
+                let source_group = group * int4_group_size as usize / group_size as usize;
+                target_group.copy_from_slice(&source[source_group * group_bytes..][..group_bytes]);
+            }
+            Ok(target)
+        };
+
+        Ok(Self {
+            values: nibbles,
+            quantized: Some(Quantized {
+                scales: replicate_groups("scales")?,
+                correction: QuantizedCorrection::Biases(replicate_groups("biases")?),
+                params,
+                info: QuantizationInfo {
+                    mode: QuantizationMode::U4,
+                    method: QuantizationMethod::ScaleBias,
+                    group_size: int4_group_size,
+                },
                 signed_codes: false,
                 weights_layout: Default::default(),
             }),

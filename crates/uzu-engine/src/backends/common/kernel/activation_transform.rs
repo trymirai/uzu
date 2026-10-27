@@ -7,12 +7,18 @@ use crate::{
     data_type::DataType,
 };
 
-fn assert_row_width(element_count: u32) {
+fn assert_row_width(
+    element_count: u32,
+    block_size: u32,
+) {
     assert!(
-        element_count.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE),
-        "activation transform requires element_count ({element_count}) to be a multiple of {HADAMARD_TRANSFORM_BLOCK_SIZE}"
+        element_count.is_multiple_of(block_size),
+        "activation transform requires element_count ({element_count}) to be a multiple of {block_size}"
     );
 }
+
+/// Dash input-RHT block: one simdgroup of 32 lanes x 4 values. Only the plain input RHT runs at this size.
+pub const DASH_HADAMARD_BLOCK_SIZE: u32 = 128;
 
 pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 
@@ -56,6 +62,7 @@ pub struct ActivationTransform<B: Backend> {
     in_place: bool,
     has_bias: bool,
     quantization: Option<ActivationQuantization>,
+    block_size: u32,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -66,7 +73,13 @@ impl<B: Backend> ActivationTransform<B> {
         ops: ActivationTransformOp,
         in_place: bool,
         quantization: Option<ActivationQuantization>,
+        block_size: u32,
     ) -> Result<Self, B::Error> {
+        assert!(
+            block_size == HADAMARD_TRANSFORM_BLOCK_SIZE
+                || (block_size == DASH_HADAMARD_BLOCK_SIZE && ops == ActivationTransformOp::InputRht),
+            "unsupported activation transform block size {block_size} for {ops:?}"
+        );
         let has_bias = bias_data_type.is_some();
         let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
             Some(q) => (q.code_layout.is_grouped_by_nibble(), q.scale_group_size, q.sum_group_size),
@@ -82,21 +95,24 @@ impl<B: Backend> ActivationTransform<B> {
             scale_group_size,
             sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
             has_bias,
+            block_size,
         )?;
         Ok(Self {
             kernel,
             in_place,
             has_bias,
             quantization,
+            block_size,
         })
     }
 
     pub fn input_rht(
         context: &B::Context,
         data_type: DataType,
+        block_size: u32,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, None)
+        Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, None, block_size)
     }
 
     pub fn output_rht(
@@ -105,7 +121,15 @@ impl<B: Backend> ActivationTransform<B> {
         bias_data_type: Option<DataType>,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, bias_data_type, ActivationTransformOp::OutputRht, in_place, None)
+        Self::new(
+            context,
+            data_type,
+            bias_data_type,
+            ActivationTransformOp::OutputRht,
+            in_place,
+            None,
+            HADAMARD_TRANSFORM_BLOCK_SIZE,
+        )
     }
 
     pub fn quantize(
@@ -116,7 +140,7 @@ impl<B: Backend> ActivationTransform<B> {
         let op = quantization
             .sum_group_size()
             .map_or(ActivationTransformOp::Quantize, |_| ActivationTransformOp::QuantizeWithGroupSums);
-        Self::new(context, data_type, None, op, false, Some(quantization))
+        Self::new(context, data_type, None, op, false, Some(quantization), HADAMARD_TRANSFORM_BLOCK_SIZE)
     }
 
     pub fn scale_group_size(&self) -> u32 {
@@ -142,7 +166,7 @@ impl<B: Backend> ActivationTransform<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(self.quantization.is_none() && !self.in_place && !self.has_bias);
-        assert_row_width(element_count);
+        assert_row_width(element_count, self.block_size);
         self.kernel.encode(
             Some(input),
             Some(output),
@@ -167,7 +191,7 @@ impl<B: Backend> ActivationTransform<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         assert!(self.quantization.is_none() && self.in_place && self.has_bias == bias.is_some());
-        assert_row_width(element_count);
+        assert_row_width(element_count, self.block_size);
         self.kernel.encode(
             None::<&B::ScratchBuffer>,
             Some(data),
@@ -194,7 +218,7 @@ impl<B: Backend> ActivationTransform<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         let quantization = self.quantization.expect("quantized activation transform required");
-        assert_row_width(element_count);
+        assert_row_width(element_count, self.block_size);
         assert!(
             element_count.is_multiple_of(quantization.scale_group_size()),
             "quantized activation row ({element_count}) must be a multiple of scale group ({})",

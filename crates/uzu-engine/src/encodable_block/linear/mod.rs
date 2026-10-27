@@ -15,7 +15,7 @@ use crate::{
         Backend, BufferRef, CommandBuffer, Kernels,
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
-            ActivationQuantization,
+            ActivationQuantization, DASH_HADAMARD_BLOCK_SIZE,
             matmul::{ActivationFormat, Int8CodeLayout, MatmulA, MatmulKernel},
         },
     },
@@ -163,6 +163,20 @@ impl<B: Backend> dyn Linear<B> {
                 parameter_tree,
                 context,
             )?)),
+            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                incoherence_block_size: Some(DASH_HADAMARD_BLOCK_SIZE),
+                incoherence_processing_mode: IncoherenceProcessingMode::Input,
+                ..
+            }) => Ok(Box::new(RHTLinearWrapper::new_input_only_dash(
+                input_dimension,
+                output_dimension,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+                has_biases,
+                parameter_tree,
+                context,
+            )?)),
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
@@ -279,3 +293,7 @@ impl<B: Backend> dyn Linear<B> {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/encodable_block/linear/dash_linear_test.rs"]
+mod dash_linear_test;

@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        kernel::DASH_HADAMARD_BLOCK_SIZE,
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -87,6 +88,46 @@ impl<B: Backend> RHTLinearWrapper<B> {
         )
     }
 
+    /// Dash: input-only RHT at block 128, no output signs. The H128 runs as its own activation-transform pass,
+    /// so this skips the fused norm/gated_act_mul input paths and int8 activations.
+    pub(super) fn new_input_only_dash(
+        input_dimension: u32,
+        output_dimension: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        has_biases: bool,
+        parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
+    ) -> Result<Self, RHTLinearWrapperError<B>> {
+        let weights_tree = parameter_tree.subtree("weights");
+        let quantized_weights_tree = weights_tree.subtree("quantized");
+        let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        let rht_signs = weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32)?;
+        let inner_linear = LinearMatmul::load(
+            input_dimension,
+            output_dimension,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            quantization_spec,
+            None,
+            &quantized_weights_tree,
+            has_biases.then_some(parameter_tree),
+            context,
+        )?;
+        let preparation = LinearInputPreparation {
+            rht_signs,
+            activation_quantization: None,
+        };
+        let input_rht = InputRht::new(input_data_type, preparation, DASH_HADAMARD_BLOCK_SIZE, true, context)
+            .map_err(RHTLinearWrapperError::BackendError)?;
+        Ok(Self {
+            input_rht,
+            inner_linear,
+        })
+    }
+
     pub(super) fn try_new_with_input_preparation(
         input_dimension: u32,
         output_dimension: u32,
@@ -166,7 +207,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         inner_linear: LinearMatmul<B>,
         context: &B::Context,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
-        let input_rht = InputRht::new(input_data_type, input_preparation, true, context)
+        let input_rht = InputRht::new(input_data_type, input_preparation, HADAMARD_TRANSFORM_BLOCK_SIZE, true, context)
             .map_err(RHTLinearWrapperError::BackendError)?;
 
         Ok(Self {

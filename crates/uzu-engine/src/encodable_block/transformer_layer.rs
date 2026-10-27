@@ -4,7 +4,8 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, kernel::ActivationTransform,
     },
     config::transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
     data_type::DataType,
@@ -118,7 +119,10 @@ impl<B: Backend> TransformerLayerConv<B> {
         )?;
 
         let input_rht = input_hadamard_factors
-            .map(|factors| ActivationTransform::input_rht(context, data_type, true).map(|kernel| (kernel, factors)))
+            .map(|factors| {
+                ActivationTransform::input_rht(context, data_type, HADAMARD_TRANSFORM_BLOCK_SIZE, true)
+                    .map(|kernel| (kernel, factors))
+            })
             .transpose()
             .map_err(TransformerLayerError::Backend)?;
 

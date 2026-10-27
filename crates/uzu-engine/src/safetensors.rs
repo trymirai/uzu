@@ -139,6 +139,10 @@ impl<B: Backend> ParameterTree<'_, B> {
         }
     }
 
+    pub fn context(&self) -> &B::Context {
+        self.loader.context
+    }
+
     pub fn metadata<T: DeserializeStrictOwned>(
         &self,
         name: &str,

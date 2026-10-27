@@ -61,8 +61,9 @@ impl<B: Backend> UntiedReadout<B> {
             rht_signs,
             activation_quantization: linear.prepare_a8(context),
         };
-        let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)
-            .map_err(LinearMatmulError::BackendError)?;
+        let input_rht =
+            InputRht::new(data_type, preparation, HADAMARD_TRANSFORM_BLOCK_SIZE, /* in_place */ false, context)
+                .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             linear,

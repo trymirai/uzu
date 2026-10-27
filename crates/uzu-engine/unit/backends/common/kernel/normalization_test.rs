@@ -9,6 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             kernel::{ActivationTransform, NormalizationKernel},
         },
         cpu::Cpu,
@@ -171,8 +172,9 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
     let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), batch_size, element_count, epsilon, true, None);
 
     let context = block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Context");
-    let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
-        .expect("Failed to create ActivationTransform");
+    let input_rht =
+        ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), HADAMARD_TRANSFORM_BLOCK_SIZE, false)
+            .expect("Failed to create ActivationTransform");
     let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
     let hadamard_factors_buffer = create_buffer_with_data::<Cpu, i32>(&context, &hadamard_factors);
     let mut expected_buffer = create_buffer::<Cpu, T>(&context, plain.len());
