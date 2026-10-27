@@ -209,10 +209,8 @@ struct MxuMmaCore {
     }
 
     if (output_transform.contains(GemmDTransform::RHT)) {
-      if constexpr (
-          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
-          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
-      ) {
+      if constexpr (schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+                    SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE) {
         if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
           if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
             return;

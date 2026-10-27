@@ -37,7 +37,7 @@ runs:
     - if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libasound2-dev build-essential pkg-config cmake
+        sudo apt-get install -y libasound2-dev build-essential pkg-config
       shell: bash
 
     # - if: runner.os == 'Linux'
@@ -66,18 +66,16 @@ runs:
         version: "36.0.18"
 
     - if: inputs.linters == 'true'
-      run: |
-        arch -arm64 brew install clang-format cargo-deny
+      run: cargo install --locked cargo-deny
       shell: bash
 
     - if: inputs.metal == 'true'
-      run: |
-        arch -arm64 brew install cmake
-        xcodebuild -downloadComponent MetalToolchain
+      run: xcodebuild -downloadComponent MetalToolchain
       shell: bash
 
     - if: inputs.nextest == 'true'
-      uses: taiki-e/install-action@nextest
+      run: cargo install --locked cargo-nextest
+      shell: bash
 
     - if: inputs.bindings == 'true'
       uses: astral-sh/setup-uv@v10.3.0
