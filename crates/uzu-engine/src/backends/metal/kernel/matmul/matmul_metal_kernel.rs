@@ -223,9 +223,25 @@ impl MatmulKernel for MatmulMetalKernel {
     ) -> ActivationFormat {
         if bf16_shape.params_layout != Some(QuantParamsLayout::GroupOutput)
             || !supports_integer_right_operand(bf16_shape)
-            || matches!(self.select_dispatch(bf16_shape, weights_layout, context), MatmulDispatch::Gemv(_))
         {
             return ActivationFormat::Bf16;
+        }
+        if matches!(self.select_dispatch(bf16_shape, weights_layout, context), MatmulDispatch::Gemv(_)) {
+            // The four-row Weaver linears benefit from int8 MXU GEMM when that route is available.
+            let a8_shape = MatmulShape {
+                a_full_precision: false,
+                ..*bf16_shape
+            };
+            let small_m_a8 = bf16_shape.m == 4
+                && weights_layout == GemmBLayout::MxuTiled
+                && std::env::var("UZU_SPEC_WEAVER_A8").is_ok_and(|value| value == "1")
+                && matches!(
+                    self.select_dispatch(&a8_shape, weights_layout, context),
+                    MatmulDispatch::Gemm(plan) if plan.engine == gemm::GemmEngine::Mxu
+                );
+            if !small_m_a8 {
+                return ActivationFormat::Bf16;
+            }
         }
         if weights_layout == GemmBLayout::MxuTiled {
             return ActivationFormat::Int8;
