@@ -5,8 +5,8 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::weaver::{FrontierIdx, TreeIdx},
-            kernel::WeaverFrontierSelectKernel,
+            gpu_types::weaver::{FrontierIdx, TreeIdx, WeaverSelectionMode},
+            kernel::WeaverSelectKernel,
         },
         cpu::Cpu,
     },
@@ -45,29 +45,36 @@ fn select<B: Backend>() -> Vec<u32> {
         create_buffer_with_data::<B, f32>(&context, &(0..12).map(|value| value as f32).collect::<Vec<_>>());
     let mut candidate_ids = create_buffer_with_data::<B, u32>(&context, &[0; 4 * 3]);
     let mut candidate_scores = create_buffer_with_data::<B, f32>(&context, &[0.0; 4 * 3]);
-    let kernel = <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(&context).unwrap();
+    let kernel =
+        <B::Kernels as Kernels>::WeaverSelectKernel::new(&context, 256, WeaverSelectionMode::Frontier, false).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
+        None::<&B::ScratchBuffer>,
+        None::<&B::ScratchBuffer>,
         &mut frontier,
         &mut tree,
-        &mut slot_ancestors,
-        &mut token,
+        Some(&mut slot_ancestors),
+        Some(&mut token),
         &mut metadata,
-        &mut ancestors,
+        Some(&mut ancestors),
         &mut valid,
         &candidate_pool_ids,
         &candidate_pool_scores,
         &mut candidate_ids,
         &mut candidate_scores,
+        0,
+        0,
+        3,
+        0,
+        0,
         8,
         7,
         4,
         2,
         3,
-        4,
         3,
         4,
-        3,
+        None,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

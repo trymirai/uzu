@@ -7,6 +7,12 @@ using namespace metal;
 namespace uzu::weaver {
 static constant constexpr uint32_t CANDIDATES_MAX = 512;
 
+enum class WeaverSelectionMode : uint32_t {
+  Children = 0,
+  Frontier = 1,
+  Fused = 2,
+};
+
 enum class FrontierIdx : uint32_t {
   TokenId = 0,
   ParentSlot = 1,

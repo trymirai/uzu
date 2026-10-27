@@ -1,6 +1,14 @@
 pub const CANDIDATES_MAX: u32 = 512;
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaverSelectionMode {
+    Children,
+    Frontier,
+    Fused,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub enum FrontierIdx {
     TokenId,

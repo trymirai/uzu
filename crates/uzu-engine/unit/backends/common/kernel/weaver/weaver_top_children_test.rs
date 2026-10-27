@@ -6,8 +6,8 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx},
-            kernel::WeaverTopChildrenKernel,
+            gpu_types::weaver::{FrontierIdx, MetadataIdx, TreeIdx, WeaverSelectionMode::Children},
+            kernel::WeaverSelectKernel,
         },
         cpu::Cpu,
     },
@@ -53,35 +53,49 @@ fn run_top_children<B: Backend>(
     let (residual, candidate_logits, ids) = inputs();
     let context = create_context::<B>();
     let residual = create_buffer_with_data::<B, bf16>(&context, &residual);
-    let candidate_logits = create_buffer_with_data::<B, f32>(&context, &candidate_logits);
-    let ids = create_buffer_with_data::<B, u32>(&context, &ids);
+    let pool_logits = create_buffer_with_data::<B, f32>(&context, &candidate_logits);
+    let mut candidate_logits = create_buffer_with_data::<B, f32>(&context, &candidate_logits);
+    let pool_ids = create_buffer_with_data::<B, u32>(&context, &ids);
+    let mut ids = create_buffer_with_data::<B, u32>(&context, &ids);
     let depth_seeds = create_buffer_with_data::<B, u64>(&context, &DEPTH_SEEDS);
     let mut metadata_values = vec![0u32; ROWS * MetadataIdx::COUNT];
     for row in 0..ROWS {
         metadata_values[MetadataIdx::Depth as usize * ROWS + row] = DEPTHS[row];
         metadata_values[MetadataIdx::TreeSlot as usize * ROWS + row] = row as u32 + 1;
     }
-    let node_metadata = create_buffer_with_data::<B, u32>(&context, &metadata_values);
-    let tree = create_buffer_with_data::<B, u32>(&context, tree_values);
-    let valid = create_buffer_with_data::<B, u32>(&context, node_valid);
+    let mut node_metadata = create_buffer_with_data::<B, u32>(&context, &metadata_values);
+    let mut tree = create_buffer_with_data::<B, u32>(&context, tree_values);
+    let mut valid = create_buffer_with_data::<B, u32>(&context, node_valid);
     let mut frontier = create_buffer_with_data::<B, u32>(&context, &vec![42; FrontierIdx::COUNT * FRONTIER_CAPACITY]);
-    let kernel = <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(&context, prune_noise_scale.is_some()).unwrap();
+    let kernel =
+        <B::Kernels as Kernels>::WeaverSelectKernel::new(&context, 256, Children, prune_noise_scale.is_some()).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
-        &residual,
-        &candidate_logits,
-        &ids,
-        &depth_seeds,
-        &node_metadata,
-        &tree,
-        &valid,
+        Some(&residual),
+        Some(&depth_seeds),
         &mut frontier,
+        &mut tree,
+        None::<&mut B::ScratchBuffer>,
+        None::<&mut B::ScratchBuffer>,
+        &mut node_metadata,
+        None::<&mut B::ScratchBuffer>,
+        &mut valid,
+        &pool_ids,
+        &pool_logits,
+        &mut ids,
+        &mut candidate_logits,
         ROWS as u32,
+        1,
         CANDIDATES as u32,
         CHILDREN as u32,
         VOCAB_SIZE,
         FRONTIER_CAPACITY as u32,
         TREE_SLOT_COUNT as u32,
+        0,
+        0,
+        0,
+        0,
+        0,
         prune_noise_scale,
         &mut command_buffer,
     );
