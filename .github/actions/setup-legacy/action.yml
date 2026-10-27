@@ -1,0 +1,30 @@
+name: setup-legacy
+description: Set up dependencies for macOS release workflows
+
+inputs:
+  python:
+    description: "Install uv for Python builds and scripts"
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@nightly
+
+    - run: xcodebuild -downloadComponent MetalToolchain
+      shell: bash
+
+    - if: inputs.python == 'true'
+      uses: astral-sh/setup-uv@v10.3.0
+      with:
+        enable-cache: true
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '26'
+        registry-url: "https://registry.npmjs.org"
+
+    - uses: pnpm/action-setup@v6
+      with:
+        version: 12.9.0

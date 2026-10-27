@@ -28,40 +28,37 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: setup
-        uses: ./.github/actions/setup
-        with:
-          linters: true
-          metal: true
+        uses: ./.github/actions/setup-nix
 
       - name: Check uzu-engine rustfmt discovery
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RUSTUP_TOOLCHAIN=nightly ./scripts/check-rustfmt-discovery.sh
 
       - name: Check Rust formatting
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo +nightly fmt --check
 
       - name: Check Metal formatting
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: ./scripts/clang-format.sh --check
 
       - name: Lint with clippy
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo +nightly clippy --workspace --all-targets -- -D warnings
 
       - name: Check that Cargo.lock is consistent with Cargo.toml
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           cargo metadata --locked --format-version=1 > /dev/null
           git diff --exit-code -- Cargo.lock
 
       - name: Check with cargo-deny
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         # The GUI has a separate audit for its supported macOS target.
         run: cargo deny --exclude mirai-gui check -D warnings
 
       - name: Check sync
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo tools sync --check
 
   tests:
@@ -92,12 +89,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          metal: ${{ matrix.host == 'macos' && 'true' || 'false' }}
-          test_data: ${{ matrix.tests == true && 'true' || 'false' }}
-          nextest: ${{ matrix.tests && 'true' || 'false' }}
-          target: ${{ matrix.target }}
+      - uses: ./.github/actions/setup-nix
+
+      - name: Download test data
+        if: ${{ matrix.tests == true }}
+        run: cargo tools hanashi-tokenizers
 
       - name: Build crates
         run: |
@@ -126,18 +122,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          metal: true
-          bindings: true
-
-      - name: "Setup"
-        run: |
-          cargo tools setup
-          cargo tools install rust
-          cargo tools install python
-          cargo tools install swift
-          cargo tools install typescript
+      - uses: ./.github/actions/setup-nix
 
       - name: "Verify"
         id: verify
@@ -165,30 +150,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          linters: true
-          metal: true
-          bindings: true
+      - uses: ./.github/actions/setup-nix
 
       - id: install
         name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        if: ${{ always() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm typecheck
 
       - name: Lint
-        if: ${{ always() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm lint
 
       - name: Check formatting
-        if: ${{ always() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm format:check
 
       - name: Check with cargo-deny
-        if: ${{ always() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: apps/mirai-gui/desktop
         run: cargo deny check -D warnings
 
@@ -206,10 +187,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          metal: true
-          bindings: true
+      - uses: ./.github/actions/setup-nix
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -228,10 +206,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          metal: true
-          bindings: true
+      - uses: ./.github/actions/setup-nix
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -257,11 +232,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          metal: true
-          bindings: true
-          node-version: '26'
+      - uses: ./.github/actions/setup-nix
 
       - name: Build monorepo bindings
         working-directory: crates/legacy/uzu/bindings/typescript

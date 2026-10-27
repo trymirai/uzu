@@ -92,10 +92,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/setup-legacy
         with:
-          metal: true
-          bindings: true
+          python: ${{ github.event_name == 'workflow_dispatch' }}
 
       # Fail here, not after the twenty-minute build.
       - name: Verify secrets and variables are configured

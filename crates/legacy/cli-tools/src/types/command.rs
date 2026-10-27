@@ -368,11 +368,6 @@ impl Command {
         configuration: Configuration,
         output_path: PathBuf,
     ) -> Self {
-        let cross_flag = if target.contains("linux-gnu") {
-            "--use-napi-cross"
-        } else {
-            "-x"
-        };
         let mut command = Self::pnpm_exec()
             .with_argument("napi")
             .with_argument("build")
@@ -382,8 +377,7 @@ impl Command {
             .with_arguments(vec!["--features".to_string(), features.join(",")])
             .with_argument("--platform")
             .with_argument("--output-dir")
-            .with_argument(&output_path.to_string_lossy())
-            .with_argument(cross_flag);
+            .with_argument(&output_path.to_string_lossy());
         command = match configuration {
             Configuration::Debug => command,
             Configuration::Release => command.with_argument("--release"),
@@ -474,10 +468,6 @@ impl Command {
 }
 
 impl Command {
-    pub fn which(name: String) -> Self {
-        Self::new("which").with_argument(&name)
-    }
-
     pub fn git_status_porcelain() -> Self {
         Self::new("git").with_argument("status").with_argument("--porcelain")
     }

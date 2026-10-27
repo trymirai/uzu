@@ -62,10 +62,9 @@ jobs:
           jq -er '"message_id=" + (.id | strings | select(test("^[0-9]+$")))' >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/setup-legacy
         with:
-          metal: true
-          bindings: true
+          python: true
 
       - name: "Release: Checkout main"
         uses: actions/checkout@v7
@@ -194,11 +193,8 @@ jobs:
 
       - name: "Release: Install tools"
         run: |
-          cargo tools setup
-          cargo tools install rust
           cargo tools install python
           cargo tools install swift
-          cargo tools install typescript
 
       - name: "Release: Sync"
         run: cargo tools sync

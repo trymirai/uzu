@@ -9,9 +9,6 @@ WATCHOS_DEPLOYMENT_TARGET = "26.4"
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
 # See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
 swift = { provider = "cargo", version = "0.11.1" }
-zigbuild = { provider = "cargo", version = "0.23.4" }
-xwin = { provider = "cargo", version = "0.23.1" }
-ziglang = { provider = "uv", version = "0.17.0" }
 maturin = { provider = "uv", version = "1.15.0" }
 
 [targets."aarch64-apple-darwin"]
@@ -73,6 +70,12 @@ aliases = ["windows"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
+[targets."wasm32-unknown-unknown"]
+backend = "cpu"
+aliases = ["wasm"]
+capabilities_supported = []
+capabilities_default = []
+
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"
 aliases = ["wasi"]
@@ -88,7 +91,7 @@ targets = [
     "aarch64-apple-ios-macabi",
     "wasm32-wasip1-threads",
 ]
-tools = ["ziglang", "zigbuild", "xwin"]
+tools = []
 bindings = []
 examples_path = "crates/legacy/uzu/examples"
 metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-header.jpg", badges = [
@@ -111,7 +114,7 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-heade
 
 [languages.python]
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
-tools = ["ziglang", "zigbuild", "xwin", "maturin"]
+tools = ["maturin"]
 bindings = ["pyo3"]
 examples_path = "crates/legacy/uzu/bindings/python/examples"
 metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-python.jpg", badges = [
@@ -149,7 +152,7 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-swift
 
 [languages.typescript]
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
-tools = ["ziglang", "zigbuild", "xwin"]
+tools = []
 bindings = ["napi"]
 examples_path = "crates/legacy/uzu/bindings/typescript/examples"
 metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-typescript.jpg", badges = [

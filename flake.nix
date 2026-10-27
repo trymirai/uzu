@@ -24,11 +24,22 @@
         };
 
         rustToolchainNixCC = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        rustToolchainHostCC = rustToolchainNixCC.overrideAttrs (_: {
-          depsHostHostPropagated = [];
-          propagatedBuildInputs = [];
-          depsTargetTargetPropagated = [];
-        });
+        rustToolchainStableNixCC = pkgs.rust-bin.fromRustupToolchain (
+          (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain // {channel = "stable";}
+        );
+        rustToolchainsNixCC = {
+          nightly = rustToolchainNixCC;
+          stable = rustToolchainStableNixCC;
+        };
+        withoutNixCC = toolchain:
+          toolchain.overrideAttrs (_: {
+            depsHostHostPropagated = [];
+            propagatedBuildInputs = [];
+            depsTargetTargetPropagated = [];
+          });
+        rustupShim = import ./scripts/rustup-shim.nix pkgs;
+        rustShimNixCC = rustupShim (rustToolchainsNixCC // {default = "nightly";});
+        rustShimHostCC = rustupShim ((pkgs.lib.mapAttrs (_: withoutNixCC) rustToolchainsNixCC) // {default = "nightly";});
         craneLibNixCC = (crane.mkLib pkgs).overrideToolchain rustToolchainNixCC;
 
         metal-toolchain = import ./scripts/metal-toolchain.nix pkgs {
@@ -46,6 +57,7 @@
           [
             nil
             uv
+            maturin
             nodejs_26
             pnpm_12
             wasmtime_36
@@ -60,8 +72,8 @@
             critcmp
           ]
           ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [cargo-swift tuist]);
-        hostToolchainDevshellPackages = commonDevshellPackages ++ [rustToolchainHostCC];
-        nixToolchainDevshellPackages = commonDevshellPackages ++ [rustToolchainNixCC];
+        hostToolchainDevshellPackages = commonDevshellPackages ++ [rustShimHostCC];
+        nixToolchainDevshellPackages = commonDevshellPackages ++ [rustShimNixCC];
 
         mirai = craneLibNixCC.buildPackage {
           pname = "mirai";
