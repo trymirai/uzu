@@ -6,10 +6,11 @@ use crate::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         gpu_types::weaver::{
             CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
+            WeaverSelectionMode::{Children, Frontier, Fused},
         },
         kernel::{
             AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel, FullPrecisionInput,
-            WeaverFrontierSelectKernel, WeaverTopChildrenKernel, radix_top_k_small::RadixTopKSmall,
+            WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
@@ -121,9 +122,10 @@ pub struct Weaver<B: Backend> {
     readout_query_projection: Box<dyn Linear<B>>,
     rope_config: AnyRoPEConfig,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
-    top_children: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
-    top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverTopChildrenKernel,
-    frontier_select: <B::Kernels as Kernels>::WeaverFrontierSelectKernel,
+    top_children: <B::Kernels as Kernels>::WeaverSelectKernel,
+    top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverSelectKernel,
+    frontier_select: <B::Kernels as Kernels>::WeaverSelectKernel,
+    expand_select: <B::Kernels as Kernels>::WeaverSelectKernel,
     model_dim: u32,
     target_model_dim: u32,
     max_depth: u32,
@@ -265,12 +267,15 @@ impl<B: Backend> Weaver<B> {
         )?;
         let top_k =
             <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
-        let top_children =
-            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, false).map_err(WeaverNewError::Backend)?;
+        let top_children = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 256, Children, false)
+            .map_err(WeaverNewError::Backend)?;
         let top_children_with_prune_noise =
-            <B::Kernels as Kernels>::WeaverTopChildrenKernel::new(context, true).map_err(WeaverNewError::Backend)?;
-        let frontier_select =
-            <B::Kernels as Kernels>::WeaverFrontierSelectKernel::new(context).map_err(WeaverNewError::Backend)?;
+            <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 256, Children, true)
+                .map_err(WeaverNewError::Backend)?;
+        let frontier_select = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 256, Frontier, false)
+            .map_err(WeaverNewError::Backend)?;
+        let expand_select = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 1024, Fused, false)
+            .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             token_embedding_norm,
             token_embedding_projection,
@@ -284,6 +289,7 @@ impl<B: Backend> Weaver<B> {
             top_children,
             top_children_with_prune_noise,
             frontier_select,
+            expand_select,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
@@ -370,7 +376,7 @@ impl<B: Backend> Weaver<B> {
         mut node_kv_layers: impl Iterator<Item = impl BufferMut<Backend = B>>,
         mut packed_tree: impl BufferMut<Backend = B>,
         mut frontier: impl BufferMut<Backend = B>,
-        slot_ancestors: impl BufferMut<Backend = B>,
+        mut slot_ancestors: impl BufferMut<Backend = B>,
         mut node_token_ids: impl BufferMut<Backend = B>,
         mut node_metadata: impl BufferMut<Backend = B>,
         mut node_ancestor_indices: impl BufferMut<Backend = B>,
@@ -389,35 +395,42 @@ impl<B: Backend> Weaver<B> {
         let ancestor_stride = self.max_depth;
         let frontier_capacity = tree_slot_count * shape.expand_width;
 
-        if batch_start_slot > 0 {
+        let fuse_select = shape.expand_per_round <= 4 && shape.prune_noise_scale.is_none();
+        if batch_start_slot > 0 && !fuse_select {
             self.frontier_select.encode(
+                None::<&B::ScratchBuffer>,
+                None::<&B::ScratchBuffer>,
                 frontier.reborrow(),
                 packed_tree.reborrow(),
-                slot_ancestors,
-                node_token_ids.reborrow(),
+                Some(slot_ancestors.reborrow()),
+                Some(node_token_ids.reborrow()),
                 node_metadata.reborrow(),
-                node_ancestor_indices.reborrow(),
+                Some(node_ancestor_indices.reborrow()),
                 node_valid.reborrow(),
                 candidate_ids,
                 candidate_logits,
                 node_candidate_ids.reborrow(),
                 node_candidate_logits.reborrow(),
+                0,
+                0,
+                self.candidate_pool_size,
+                shape.expand_width,
+                target_embedding.vocab_size(),
                 frontier_capacity,
                 tree_slot_count,
                 batch_node_count,
                 batch_start_slot,
                 ancestor_stride,
-                self.max_depth,
                 shape.max_depth - 1,
                 shape.dflash_depth - 1,
-                self.candidate_pool_size,
+                None,
                 command_buffer,
             );
         }
-        let (batch_candidate_ids, batch_candidate_logits) = if batch_start_slot == 0 {
-            (candidate_ids.subrange(..), candidate_logits.subrange(..))
+        let batch_candidate_ids = if batch_start_slot == 0 {
+            candidate_ids.subrange(..)
         } else {
-            (node_candidate_ids.as_ref().subrange(..), node_candidate_logits.as_ref().subrange(..))
+            node_candidate_ids.as_ref().subrange(..)
         };
 
         // Node expansion: embed the batch's tokens, run every layer against
@@ -432,7 +445,7 @@ impl<B: Backend> Weaver<B> {
             self.token_embedding_projection.encode(normalized_embedding, batch_node_count, command_buffer)?;
         let mut residual_state =
             command_buffer.allocate_scratch(residual_input.size()).map_err(WeaverEncodeError::Backend)?;
-        let node_metadata = node_metadata.as_ref();
+        let node_metadata_ref = node_metadata.as_ref();
         let metadata_field_bytes = size_for_shape(&[batch_node_count], DataType::U32);
         for layer in &self.layers {
             let input = layer
@@ -449,10 +462,10 @@ impl<B: Backend> Weaver<B> {
                 &current_qkv,
                 &rope.cosines,
                 &rope.sines,
-                node_metadata,
+                node_metadata_ref,
                 node_ancestor_indices.as_ref(),
-                node_metadata.subrange(MetadataIdx::AncestorCount as usize * metadata_field_bytes..),
-                node_metadata.subrange(MetadataIdx::TreeSlot as usize * metadata_field_bytes..),
+                node_metadata_ref.subrange(MetadataIdx::AncestorCount as usize * metadata_field_bytes..),
+                node_metadata_ref.subrange(MetadataIdx::TreeSlot as usize * metadata_field_bytes..),
                 &mut attention_output,
                 batch_node_count,
                 shape.dflash_depth,
@@ -479,26 +492,45 @@ impl<B: Backend> Weaver<B> {
             false,
             command_buffer,
         )?;
-        let top_children = if shape.prune_noise_scale.is_some() {
+        let next_batch_start = batch_start_slot + batch_node_count;
+        let fuse_next = fuse_select && next_batch_start < tree_slot_count;
+        let select = if fuse_next {
+            &self.expand_select
+        } else if shape.prune_noise_scale.is_some() {
             &self.top_children_with_prune_noise
         } else {
             &self.top_children
         };
-        top_children.encode(
-            &logit_residuals,
-            batch_candidate_logits,
-            batch_candidate_ids,
-            depth_seeds_buffer,
-            node_metadata,
-            packed_tree.as_ref(),
-            node_valid.as_ref(),
+        select.encode(
+            Some(&logit_residuals),
+            Some(depth_seeds_buffer),
             frontier.reborrow(),
+            packed_tree.reborrow(),
+            fuse_next.then_some(slot_ancestors.reborrow()),
+            fuse_next.then_some(node_token_ids.reborrow()),
+            node_metadata.reborrow(),
+            fuse_next.then_some(node_ancestor_indices.reborrow()),
+            node_valid.reborrow(),
+            candidate_ids,
+            candidate_logits,
+            node_candidate_ids.reborrow(),
+            node_candidate_logits.reborrow(),
             batch_node_count,
+            u32::from(batch_start_slot == 0),
             self.candidate_pool_size,
             shape.expand_width,
             target_embedding.vocab_size(),
             frontier_capacity,
             tree_slot_count,
+            if fuse_next {
+                shape.expand_per_round
+            } else {
+                0
+            },
+            next_batch_start,
+            ancestor_stride,
+            shape.max_depth - 1,
+            shape.dflash_depth - 1,
             shape.prune_noise_scale,
             command_buffer,
         );

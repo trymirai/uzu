@@ -1,2 +1,1 @@
-pub mod weaver_frontier_select;
-pub mod weaver_top_children;
+pub mod weaver_selection;
