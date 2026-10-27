@@ -1,6 +1,8 @@
 #pragma once
 
 #include "arguments.h"
+#include "epilogue.h"
+#include "quant_chunk.h"
 #include "quant_slice.h"
 #include "tile.h"
 

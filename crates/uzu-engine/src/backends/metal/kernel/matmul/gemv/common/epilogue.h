@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../../common/soft_cap.h"
-#include "../../../hadamard_transform/hadamard_transform.h"
+#include "../../gemm/common/gemm_rht.h"
 #include "arguments.h"
 #include "tile.h"
 
@@ -34,29 +34,41 @@ struct Epilogue {
       write_results<true>(result, ops, params, tile, shared_results);
     }
 
+    hadamard_from_shared(ops, params, tile, shared_results);
+  }
+
+  static METAL_FUNC void hadamard_from_shared(
+      const thread GemvOperands<AT, BT, DT>& ops,
+      const thread GemvParams& params,
+      const thread OutputTile<Tile, FULL_TILE>& tile,
+      threadgroup U* shared_results
+  ) {
     if constexpr (Tile::OUTPUT_ROWS >= METAL_SIMD_SIZE) {
-      static_assert(Tile::K_SPLIT == 1, "RHT reuses shared results after Reduce");
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      constexpr uint OUTPUT_BLOCKS = Tile::OUTPUT_ROWS / METAL_SIMD_SIZE;
-      for (uint job = tile.simd_group; job < Tile::INPUT_ROWS * OUTPUT_BLOCKS; job += Tile::NUM_SIMDGROUPS) {
-        const uint input_index = job / OUTPUT_BLOCKS;
-        const uint output_block = job % OUTPUT_BLOCKS;
-        const uint input_row = tile.input_row + input_index;
-        const uint global_row = tile.tile_row + output_block * METAL_SIMD_SIZE + tile.simd_lane;
-        if ((FULL_TILE || input_row < params.batch_size) && (FULL_TILE || global_row < params.out_vec_size)) {
-          DT value = simdgroup_output_random_hadamard_transform(
-              static_cast<ushort>(tile.simd_lane),
-              static_cast<DT>(
-                  shared_results[input_index * Tile::OUTPUT_ROWS + output_block * METAL_SIMD_SIZE + tile.simd_lane]
-              ),
-              ops.hadamard_factors[global_row]
-          );
-          if (params.output_transform.contains(GemmDTransform::BIAS)) {
-            value += static_cast<DT>(ops.output_bias[global_row]);
-          }
-          ops.d[input_row * params.out_vec_size + global_row] = value;
-        }
+      const ushort rows =
+          FULL_TILE ? ushort(Tile::INPUT_ROWS) : ushort(min(Tile::INPUT_ROWS, params.batch_size - tile.input_row));
+      const ushort cols =
+          FULL_TILE ? ushort(Tile::OUTPUT_ROWS) : ushort(min(Tile::OUTPUT_ROWS, params.out_vec_size - tile.tile_row));
+      const device BT* bias_block = ops.output_bias;
+      if (params.output_transform.contains(GemmDTransform::BIAS)) {
+        bias_block += tile.tile_row;
       }
+      ThreadContext rht_context{};
+      rht_context.simd_lane_id = tile.simd_lane;
+      rht_context.simdgroup_index = tile.simd_group;
+      apply_output_random_hadamard_transform(
+          shared_results,
+          ops.d + tile.input_row * params.out_vec_size + tile.tile_row,
+          ops.hadamard_factors + tile.tile_row,
+          bias_block,
+          params.output_transform.contains(GemmDTransform::BIAS),
+          rows,
+          cols,
+          Tile::OUTPUT_ROWS,
+          params.out_vec_size,
+          Tile::NUM_SIMDGROUPS,
+          rht_context
+      );
     }
   }
 
@@ -92,6 +104,7 @@ private:
     });
   }
 
+public:
   template <bool APPLY_BIAS>
   static METAL_FUNC U
   transform(U value, uint global_row, const thread GemvOperands<AT, BT, DT>& ops, const thread GemvParams& params) {

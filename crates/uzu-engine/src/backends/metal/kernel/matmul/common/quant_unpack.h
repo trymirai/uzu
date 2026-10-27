@@ -31,6 +31,15 @@ UZU_CONST ushort W4_BITS = 4;
 UZU_CONST uint W4_SIGN_MASK = symmetric_zero_point<W4_BITS>() * 0x11111111u;
 UZU_CONST uint W8_SIGN_MASK = symmetric_zero_point<8>() * 0x01010101u;
 UZU_CONST uint W4_NIBBLE_MASK = 0x0F0F0F0Fu;
+UZU_CONST uint ZERO_POINTS_PER_BYTE = 2;
+UZU_CONST uint W8_MAGIC_FLOAT_OFFSET = 0x4B400000u;
+
+template <uint ORIGIN>
+METAL_FUNC float magic_code_float(uint code) {
+  return as_type<float>(code + W8_MAGIC_FLOAT_OFFSET - ORIGIN);
+}
+
+METAL_FUNC float magic_dequant_bias(float scale) { return -12582912.0f * scale; }
 
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, const bool signed_codes) {

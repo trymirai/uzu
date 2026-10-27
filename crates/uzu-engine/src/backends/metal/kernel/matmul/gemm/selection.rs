@@ -4,11 +4,14 @@ use thiserror::Error;
 use crate::{
     backends::{
         common::{
-            gpu_types::gemm::GemmBPrologueKind,
+            gpu_types::{
+                gemm::{GemmBPrologueKind, GemmDTransform},
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            },
             kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
         },
         metal::{
-            gpu_types::gemm::GemmTiling,
+            gpu_types::gemm::{GemmBLayout, GemmTiling},
             kernel::matmul::gemm::{GemmEngine, GemmPlan, policy},
         },
     },
@@ -32,6 +35,50 @@ pub enum GemmPlanError {
     MxuUnavailable,
     #[error("GEMM input layout is unsupported: {0}")]
     UnsupportedLayout(&'static str),
+}
+
+fn register_quant_tiling(shape: MatmulShape) -> Option<GemmTiling> {
+    match (shape.b_prologue, shape.b_bits, shape.b_group_size) {
+        (GemmBPrologueKind::ScaleZeroPointDequant, Some(4), Some(32 | 64)) => {
+            Some(GemmTiling::Tile8x32x64_Simdgroups1x2x4)
+        },
+        (GemmBPrologueKind::ScaleSymmetricDequant, Some(8), Some(64)) => Some(GemmTiling::Tile8x32x128_Simdgroups1x2x4),
+        _ => None,
+    }
+}
+
+pub(super) fn register_quant_plan_supported(
+    shape: MatmulShape,
+    gemm_b_layout: GemmBLayout,
+    plan: GemmPlan,
+) -> bool {
+    let Some(tiling) = register_quant_tiling(shape) else {
+        return false;
+    };
+    let is_w4 = tiling == GemmTiling::Tile8x32x64_Simdgroups1x2x4;
+    let k_alignment = if is_w4 {
+        512
+    } else {
+        256
+    };
+    let partition_alignment: u32 = if is_w4 || plan.split_k == 1 {
+        256
+    } else {
+        512
+    };
+    let split_alignment = partition_alignment.checked_mul(plan.split_k);
+    let split_is_valid = plan.split_k > 0 && split_alignment.is_some_and(|alignment| shape.k.is_multiple_of(alignment));
+
+    (4..=8).contains(&shape.m)
+        && shape.a_full_precision
+        && shape.b_transpose
+        && !shape.gathered
+        && gemm_b_layout == GemmBLayout::RowMajor
+        && shape.b_leading_dimension.is_none()
+        && plan.engine == GemmEngine::Simdgroup
+        && plan.tiling == tiling
+        && shape.k.is_multiple_of(k_alignment)
+        && split_is_valid
 }
 
 impl GemmProblem {
@@ -61,6 +108,22 @@ impl GemmProblem {
             GemmEngine::Simdgroup
         };
         self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family))
+    }
+
+    pub fn register_quant_plan(
+        self,
+        gemm_b_layout: GemmBLayout,
+    ) -> Option<GemmPlan> {
+        let shape = self.shape;
+        if (self.supports_mxu && shape.m < 5)
+            || (shape.d_transform.contains(GemmDTransform::RHT)
+                && !shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE))
+        {
+            return None;
+        }
+        let tiling = register_quant_tiling(shape)?;
+        let plan = self.finish_plan(GemmEngine::Simdgroup, tiling);
+        register_quant_plan_supported(shape, gemm_b_layout, plan).then_some(plan)
     }
 
     #[cfg(test)]

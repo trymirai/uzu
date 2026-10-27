@@ -1,4 +1,4 @@
-use super::{GemmEngine, GemmPlan, error::GemmSpecializationError};
+use super::{GemmEngine, GemmPlan, error::GemmSpecializationError, selection::register_quant_plan_supported};
 use crate::{
     backends::{
         common::{
@@ -25,6 +25,7 @@ pub(super) struct GemmSpecialization {
     pub(super) signed_codes: bool,
     pub(super) gemm_b_layout: GemmBLayout,
     pub(super) a_group_size: Option<u32>,
+    pub(super) float_partials: bool,
 }
 
 impl GemmSpecialization {
@@ -38,6 +39,9 @@ impl GemmSpecialization {
         a_prologue: GemmAPrologueKind,
         a_group_size: Option<u32>,
     ) -> Result<Self, GemmSpecializationError> {
+        if plan.tiling.is_register_quant_variant() && !register_quant_plan_supported(shape, gemm_b_layout, plan) {
+            return Err(GemmSpecializationError::UnsupportedRegisterQuant);
+        }
         let specialization = Self {
             weights_data_type,
             tiling: plan.tiling,
@@ -52,6 +56,7 @@ impl GemmSpecialization {
             signed_codes: shape.signed_codes,
             gemm_b_layout,
             a_group_size,
+            float_partials: false,
         };
         specialization.validate()?;
         Ok(specialization)

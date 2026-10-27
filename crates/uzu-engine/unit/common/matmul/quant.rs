@@ -38,6 +38,9 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub zero_points: Option<Vec<u8>>,
     pub biases: Option<Vec<T>>,
     pub x: Vec<T>,
+    pub ab_scale: f32,
+    pub output_bias: Option<Vec<T>>,
+    pub output_rht_factors: Option<Vec<i32>>,
     pub k: u32,
     pub n: u32,
     pub m: u32,
@@ -165,6 +168,9 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             zero_points,
             biases,
             x,
+            ab_scale: 1.0,
+            output_bias: None,
+            output_rht_factors: None,
             k,
             n,
             m,
@@ -292,6 +298,8 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub prepared_a: Option<B::GlobalGpuBuffer>,
     pub prepared_a_scales: Option<B::GlobalGpuBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalGpuBuffer>,
+    pub output_bias: Option<B::GlobalGpuBuffer>,
+    pub output_rht_factors: Option<B::GlobalGpuBuffer>,
     pub y: B::GlobalGpuBuffer,
     pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
@@ -339,6 +347,11 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
                 .as_ref()
                 .filter(|prepared| !prepared.group_sums.is_empty())
                 .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
+            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
+            output_rht_factors: input
+                .output_rht_factors
+                .as_ref()
+                .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
             weights_layout: Default::default(),
             _t: std::marker::PhantomData,
@@ -408,6 +421,8 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         prepared_a,
         prepared_a_scales,
         prepared_a_group_sums,
+        output_bias,
+        output_rht_factors,
         y,
         weights_layout,
         ..
@@ -433,7 +448,15 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         b,
         b_leading_dimension: None,
         b_transpose: true,
-        output: MatmulOutput::new(y, MatmulDOps::none()),
+        output: MatmulOutput::new(
+            y,
+            MatmulDOps {
+                ab_scale: input.ab_scale,
+                bias: output_bias.as_ref(),
+                rht_factors: output_rht_factors.as_ref(),
+                soft_cap: None,
+            },
+        ),
         gather_indices: None,
         m: input.m,
         n: input.n,

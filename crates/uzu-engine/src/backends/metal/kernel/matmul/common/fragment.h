@@ -303,20 +303,22 @@ struct Fragment {
       bool ALIGNED_N = false,
       class Ptr,
       class FragmentRowStride = Int<1>,
-      class FragmentColStride = Int<1>>
+      class FragmentColStride = Int<1>,
+      class ColStride = Int<1>>
   METAL_FUNC void store_safe(
       const ushort simd_lane_id,
       Ptr destination,
-      const int leading_dimension,
+      const int row_stride,
       const short2 tile_dimensions,
       FragmentRowStride fragment_row_stride = {},
-      FragmentColStride fragment_col_stride = {}
+      FragmentColStride fragment_col_stride = {},
+      ColStride col_stride = {}
   ) thread {
     transfer<STORE, SAFE, ALIGNED_M, ALIGNED_N>(
         simd_lane_id,
         destination,
-        leading_dimension,
-        Int<1>{},
+        row_stride,
+        col_stride,
         tile_dimensions.y,
         tile_dimensions.x,
         fragment_row_stride,
@@ -357,6 +359,39 @@ struct Fragment {
       store_safe(simd_lane_id, destination, leading_dimension, tile_dimensions);
     } else {
       store(simd_lane_id, destination, leading_dimension);
+    }
+  }
+
+  template <ushort K_SLICES, ushort OUTPUT_GROUPS>
+  METAL_FUNC bool reduce_k_slices(
+      threadgroup ElementType* partials,
+      const thread ThreadContext& thread_context
+  ) thread {
+    static_assert(K_SLICES > 0 && OUTPUT_GROUPS > 0, "slice and output group counts must be positive");
+    if constexpr (K_SLICES == 1) {
+      return true;
+    } else {
+      const ushort k_slice = ushort(thread_context.simdgroup_index) / OUTPUT_GROUPS;
+      const ushort output_group = ushort(thread_context.simdgroup_index) % OUTPUT_GROUPS;
+      const ushort lane = ushort(thread_context.simd_lane_id);
+      thread ElementType* values = elements();
+      constexpr ushort ELEMENTS = ELEMENTS_PER_FRAGMENT;
+      constexpr ushort GROUP_STRIDE = (K_SLICES - 1) * ELEMENTS * METAL_SIMD_SIZE;
+      if (k_slice != 0) {
+        for (ushort e = 0; e < ELEMENTS; ++e) {
+          partials[output_group * GROUP_STRIDE + ((k_slice - 1) * ELEMENTS + e) * METAL_SIMD_SIZE + lane] = values[e];
+        }
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      if (k_slice != 0) {
+        return false;
+      }
+      for (ushort slice = 1; slice < K_SLICES; ++slice) {
+        for (ushort e = 0; e < ELEMENTS; ++e) {
+          values[e] += partials[output_group * GROUP_STRIDE + ((slice - 1) * ELEMENTS + e) * METAL_SIMD_SIZE + lane];
+        }
+      }
+      return true;
     }
   }
 
@@ -432,6 +467,21 @@ private:
         }
       }
     });
+  }
+};
+
+template <typename T, ushort ROWS, ushort COLS, class Ops, class Generator>
+struct GeneratedFragment {
+  using ElementType = T;
+  using FragmentOpsType = Ops;
+  using ThreadVectorType = typename Ops::template ThreadVector<T>;
+  UZU_CONST ushort ROW_FRAGMENTS = ROWS;
+  UZU_CONST ushort COL_FRAGMENTS = COLS;
+  UZU_CONST bool MMA_TRANSPOSE = false;
+  Generator generator;
+
+  METAL_FUNC ThreadVectorType fragment_at(const ushort row, const ushort col) const thread {
+    return generator(row, col);
   }
 };
 

@@ -3,6 +3,8 @@
 #include <metal_stdlib>
 
 #include "../../../generated/gemm.h"
+#include "../../../generated/matmul.h"
+#include "../../common/quant_unpack.h"
 
 using namespace metal;
 
@@ -101,6 +103,31 @@ struct RightStorage {
         "zp is only valid for ScaleZeroPointDequant"
     );
     return zero_points;
+  }
+
+  template <typename Index>
+  METAL_FUNC Index
+  scale_index(const Index row, const Index group, const constant uzu::matmul::GemmParams* params) const thread {
+    return row * Index(params->scale_output_stride) + group * Index(params->scale_group_stride);
+  }
+
+  METAL_FUNC typename Right::ScaleElement scale(
+      const uint row,
+      const uint group,
+      const constant uzu::matmul::GemmParams* params
+  ) const thread {
+    return scales[scale_index(row, group, params)];
+  }
+
+  METAL_FUNC uint
+  zero_point_index(const uint row, const uint group, const constant uzu::matmul::GemmParams* params) const thread {
+    return row * params->zero_point_output_stride + group * params->zero_point_group_stride;
+  }
+
+  METAL_FUNC uint
+  zero_point(const uint row, const uint group, const constant uzu::matmul::GemmParams* params) const thread {
+    const uint index = zero_point_index(row, group, params);
+    return decode_zero_point<Right::BITS>(zp() + index / ZERO_POINTS_PER_BYTE, index % ZERO_POINTS_PER_BYTE);
   }
 };
 

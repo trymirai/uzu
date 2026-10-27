@@ -135,14 +135,6 @@ fn selection_fallbacks_and_split_k_are_preserved() {
         assert_eq!(plan.split_k, expected_split_k);
     }
 
-    let mut biased = quant(shape(16, 4096, 4096));
-    biased.a_full_precision = false;
-    biased.d_transform = GemmDTransform::BIAS;
-    assert_eq!(
-        GemmProblem::new(biased, DataType::BF16, DataType::F32, true, MTLGPUFamily::Apple7).select_plan().split_k,
-        1
-    );
-
     let mut zero = quant(shape(0, 1, 1));
     zero.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
     zero.b_group_size = Some(u32::MAX);
