@@ -4,6 +4,41 @@ use std::io;
 struct SpacedJsonFormatter;
 
 impl serde_json::ser::Formatter for SpacedJsonFormatter {
+    fn write_f64<W: ?Sized + io::Write>(
+        &mut self,
+        writer: &mut W,
+        value: f64,
+    ) -> io::Result<()> {
+        // Keep serde_json's correctly rounded digits; adapt only notation to
+        // Python's exponent threshold, explicit sign and two-digit minimum.
+        let mut bytes = Vec::new();
+        serde_json::ser::CompactFormatter.write_f64(&mut bytes, value)?;
+        let text = std::str::from_utf8(&bytes).expect("JSON floats are ASCII");
+        if let Some((mantissa, exponent)) = text.split_once('e') {
+            let exponent: i32 = exponent.parse().expect("float exponent is an integer");
+            write!(writer, "{mantissa}e{exponent:+03}")
+        } else {
+            let unsigned = text.strip_prefix('-').unwrap_or(text);
+            if unsigned.starts_with("0.0000") {
+                let fraction = &unsigned[2..];
+                let digits = fraction.trim_start_matches('0');
+                let exponent = fraction.len() - digits.len() + 1;
+                let sign = if value.is_sign_negative() {
+                    "-"
+                } else {
+                    ""
+                };
+                write!(writer, "{sign}{}", &digits[..1])?;
+                if digits.len() > 1 {
+                    write!(writer, ".{}", &digits[1..])?;
+                }
+                write!(writer, "e-{exponent:02}")
+            } else {
+                writer.write_all(&bytes)
+            }
+        }
+    }
+
     fn begin_object_value<W: ?Sized + io::Write>(
         &mut self,
         writer: &mut W,
@@ -70,4 +105,28 @@ pub fn to_json(
         minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, "cannot serialize to JSON").with_source(err)
     })
     .map(minijinja::Value::from_safe_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_json_matches_python_float_notation() {
+        let mut environment = minijinja::Environment::new();
+        environment.add_filter("tojson", to_json);
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{"z": [1e-7, 1e-5, 0.0001, -0.0, 1e15, 1e16, 1e100, -1.739269179332728e61, -2065594985630696.2], "a": "é<>&"}"#,
+        )
+        .unwrap();
+        let rendered = environment
+            .template_from_str("{{ values | tojson }}")
+            .unwrap()
+            .render(minijinja::context!(values => minijinja::value::Serde(&value)))
+            .unwrap();
+        assert_eq!(
+            rendered,
+            "{\"z\": [1e-07, 1e-05, 0.0001, -0.0, 1000000000000000.0, 1e+16, 1e+100, -1.739269179332728e+61, -2065594985630696.2], \"a\": \"é<>&\"}"
+        );
+    }
 }
