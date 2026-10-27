@@ -226,25 +226,12 @@ impl MatmulKernel for MatmulMetalKernel {
         {
             return ActivationFormat::Bf16;
         }
-        if matches!(self.select_dispatch(bf16_shape, weights_layout, context), MatmulDispatch::Gemv(_)) {
-            // The four-row Weaver linears benefit from int8 MXU GEMM when that route is available.
-            let a8_shape = MatmulShape {
-                a_full_precision: false,
-                ..*bf16_shape
-            };
-            let small_m_a8 = bf16_shape.m == 4
-                && weights_layout == GemmBLayout::MxuTiled
-                && std::env::var("UZU_SPEC_WEAVER_A8").is_ok_and(|value| value == "1")
-                && matches!(
-                    self.select_dispatch(&a8_shape, weights_layout, context),
-                    MatmulDispatch::Gemm(plan) if plan.engine == gemm::GemmEngine::Mxu
-                );
-            if !small_m_a8 {
-                return ActivationFormat::Bf16;
-            }
-        }
-        if weights_layout == GemmBLayout::MxuTiled {
-            return ActivationFormat::Int8;
+        let tiled_weights = weights_layout == GemmBLayout::MxuTiled;
+        let try_small_m_int8 = bf16_shape.m == 4 && tiled_weights;
+        match self.select_dispatch(bf16_shape, weights_layout, context) {
+            MatmulDispatch::Gemv(_) if !try_small_m_int8 => return ActivationFormat::Bf16,
+            MatmulDispatch::Gemm(_) if tiled_weights => return ActivationFormat::Int8,
+            _ => {},
         }
 
         let a8_shape = MatmulShape {

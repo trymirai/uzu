@@ -7,9 +7,9 @@ use crate::backends::{
     common::{
         Context,
         gpu_types::gemm::GemmDTransform,
-        kernel::matmul::{MatmulKernel, QuantParamsLayout},
+        kernel::matmul::{ActivationFormat, MatmulKernel, QuantParamsLayout},
     },
-    metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
+    metal::{context::MetalContext, gpu_types::gemm::GemmBLayout, kernel::matmul::MatmulMetalKernel},
 };
 
 fn shape(
@@ -206,6 +206,29 @@ fn gemv_gemm_route_boundaries_are_preserved() {
     gathered.gathered = true;
     let plan = problem(gathered, DataType::BF16).select_plan();
     assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+}
+
+#[uzu_test]
+fn four_row_tiled_weights_use_int8_activations() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let kernel =
+        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
+    for (m, layout, expected) in [
+        (1, GemmBLayout::MxuTiled, ActivationFormat::Bf16),
+        (4, GemmBLayout::MxuTiled, ActivationFormat::Int8),
+        (4, GemmBLayout::RowMajor, ActivationFormat::Bf16),
+    ] {
+        let shape = MatmulShape {
+            b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
+            signed_codes: false,
+            params_layout: Some(QuantParamsLayout::GroupOutput),
+            ..quant(shape(m, 2048, 2048))
+        };
+        assert_eq!(kernel.select_activation_format(&shape, layout, &context), expected, "m={m} layout={layout:?}");
+    }
 }
 
 #[uzu_test]
