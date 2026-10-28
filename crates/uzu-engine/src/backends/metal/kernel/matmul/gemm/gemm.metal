@@ -39,10 +39,10 @@ template <
     uint GROUP_SIZE,
     GemmAPrologueKind A_PROLOGUE,
     uint A_GROUP_SIZE>
-VARIANTS(AT, bfloat, float)
-VARIANTS(BT, bfloat, float)
+VARIANTS(AT, bfloat)
+VARIANTS(BT, bfloat)
 VARIANTS(DT, bfloat, float)
-CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
+CONSTRAINT(DT != "float" || A_IS_INT8)
 VARIANTS(
     GEMM_TILING,
     GemmTiling::Tile8x32x32_Simdgroups1x1,
@@ -83,7 +83,6 @@ CONSTRAINT(
      GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
-CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
@@ -111,7 +110,6 @@ CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || AT == "bfloat")
 CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),

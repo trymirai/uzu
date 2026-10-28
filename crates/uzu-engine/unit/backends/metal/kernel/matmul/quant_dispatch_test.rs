@@ -16,10 +16,7 @@ use crate::{
             kernel::{
                 Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{
-                    MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape, QuantParams, QuantParamsLayout,
-                    QuantParamsStrides,
-                },
+                matmul::{MatmulDOps, MatmulKernel, MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides},
             },
         },
         cpu::Cpu,
@@ -755,58 +752,6 @@ fn a8w_mxu_output_bias_parity_bf16(
         0.08,
         0.8,
     );
-}
-
-fn run_widened_f32<B: Backend>(
-    context: &B::Context,
-    input: &QuantInput<bf16>,
-) -> Vec<f32> {
-    use crate::{backends::common::kernel::matmul::MatmulA, data_type::DataType, tests::helpers::create_buffer};
-    let buffers = QuantBuffers::<B, bf16>::allocate(context, input);
-    let mut y = create_buffer::<B, f32>(context, (input.m as usize) * (input.n as usize));
-    let mut matmul =
-        <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, DataType::BF16, DataType::BF16, DataType::F32)
-            .expect("MatmulKernel widened");
-    let b = buffers.matmul_b(input);
-    let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    matmul
-        .encode(
-            crate::backends::common::kernel::matmul::MatmulArguments {
-                a: MatmulA::FullPrecision {
-                    values: &buffers.x,
-                    offset: 0,
-                },
-                b,
-                b_leading_dimension: None,
-                b_transpose: true,
-                output: MatmulOutput::new(&mut y, MatmulDOps::none()),
-                gather_indices: None::<&B::GlobalBuffer>,
-                m: input.m,
-                n: input.n,
-                k: input.k,
-            },
-            &mut command_buffer,
-        )
-        .expect("widened encode failed");
-    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, f32>(&y)
-}
-
-#[rstest]
-#[test_attr(uzu_test)]
-#[case::gemv_m1(1)]
-#[case::gemv_m4(4)]
-#[case::gemm_m31(31)]
-fn parity_widened_f32_output(#[case] m: u32) {
-    // Mirrors the dflash draft-chain readout: quantized LM head (4-bit ZP,
-    // group 32), BF16 input, widened F32 output.
-    let (k, n, gs) = (5120u32, 32768u32, 32u32);
-    let context = block_on(MetalContext::new()).expect("Metal context");
-    let input = QuantInput::<bf16>::new(m, k, n, gs, 4, QuantizationMethod::ScaleZeroPoint, 0);
-    let cpu_context = block_on(<Cpu as Backend>::Context::new()).expect("Cpu context");
-    let reference = run_widened_f32::<Cpu>(&cpu_context, &input);
-    let actual = run_widened_f32::<Metal>(&context, &input);
-    assert_parity::<f32>(&format!("widened f32 m={m}"), &reference, &actual, 0.05, 0.4);
 }
 
 #[rstest]

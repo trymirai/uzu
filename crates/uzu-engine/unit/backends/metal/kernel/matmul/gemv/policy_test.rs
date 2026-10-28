@@ -101,15 +101,6 @@ fn quantized_policy_edges() {
     );
 }
 
-#[uzu_test]
-fn untuned_quantized_io_uses_only_the_generated_fallback() {
-    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 3, 4096, false), None);
-    let tile = quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 4096, 4096, false)
-        .expect("mixed-IO fallback");
-    assert_eq!(tile, GemvTile::quantized(8, 4, 1, 32, 2));
-    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 5, 4096, 4096, false), None);
-}
-
 fn quant_shape(
     m: u32,
     n: u32,
