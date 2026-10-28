@@ -26,10 +26,9 @@ template <
     uint REDUCTION_LANES,
     uint GROUP_LANES,
     uint NUM_SIMDGROUPS>
-VARIANTS(AT, bfloat, float)
-VARIANTS(BT, bfloat, float)
-VARIANTS(DT, bfloat, float)
-CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
+VARIANTS(AT, bfloat)
+VARIANTS(BT, bfloat)
+VARIANTS(DT, bfloat)
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
@@ -48,7 +47,6 @@ VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
-CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
