@@ -55,9 +55,11 @@ impl MatmulMetalKernel {
         if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
             return false;
         }
-        match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
-            (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
-            _ => {},
+        if shape.m == 5
+            && (weights_data_type, input_data_type, output_data_type)
+                == (DataType::BF16, DataType::BF16, DataType::BF16)
+        {
+            return false;
         }
         match shape.m {
             0..=3 => return false,
