@@ -1,15 +1,15 @@
 use crate::backends::common::gpu_types::trie::TrieNode;
 
-pub struct BatchTopology<'a> {
-    nodes: &'a [TrieNode],
+pub struct BatchTopology {
+    nodes: Box<[TrieNode]>,
     parents: Box<[i32]>,
     is_flat: bool,
     full_accept: bool,
 }
 
-impl<'a> BatchTopology<'a> {
+impl BatchTopology {
     pub fn new(
-        nodes: &'a [TrieNode],
+        nodes: Box<[TrieNode]>,
         full_accept: bool,
     ) -> Self {
         let mut stack: Vec<usize> = Vec::new();
@@ -25,7 +25,6 @@ impl<'a> BatchTopology<'a> {
             is_flat &= node.height == index;
         }
         let parents = unsafe { parents.assume_init() };
-
         assert!(is_flat || !full_accept, "full_accept requires trie to be flat");
 
         Self {
@@ -36,8 +35,19 @@ impl<'a> BatchTopology<'a> {
         }
     }
 
-    pub fn nodes(&self) -> &'a [TrieNode] {
-        self.nodes
+    pub fn flat(
+        size: u32,
+        full_accept: bool,
+    ) -> Self {
+        let nodes = (0..size)
+            .map(|index| TrieNode {
+                trie_start: index,
+                trie_end: size - 1,
+                height: index,
+            })
+            .collect::<Box<[_]>>();
+
+        Self::new(nodes, full_accept)
     }
 
     pub fn size(&self) -> u32 {
@@ -52,11 +62,15 @@ impl<'a> BatchTopology<'a> {
         self.full_accept
     }
 
-    pub fn heights(&self) -> impl Iterator<Item = u32> + 'a {
-        self.nodes.iter().map(|trie| trie.height)
+    pub fn nodes(&self) -> &[TrieNode] {
+        &self.nodes
     }
 
     pub fn parents(&self) -> &[i32] {
         &self.parents
+    }
+
+    pub fn heights(&self) -> impl Iterator<Item = u32> {
+        self.nodes().iter().map(|t| t.height)
     }
 }
