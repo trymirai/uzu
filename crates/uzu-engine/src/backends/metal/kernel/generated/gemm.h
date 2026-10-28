@@ -29,6 +29,7 @@ struct GemmDTransform {
 enum class GemmAPrologueKind : uint32_t {
   FullPrecision = 0,
   Int8Symmetric = 1,
+  PackedHalf = 2,
 };
 
 enum class GemmBLayout : uint32_t {

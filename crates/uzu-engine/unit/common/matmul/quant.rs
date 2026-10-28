@@ -10,7 +10,7 @@ use crate::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
-                ActivationQuantization, ActivationTransform, Kernels,
+                ActivationFormat, ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
                     QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout,
@@ -247,8 +247,9 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             code_layout,
         )
         .expect("supported activation quantization");
-        let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
-            .expect("CPU activation quantization transform");
+        let transform =
+            ActivationTransform::<Cpu>::quantize(&context, T::data_type(), ActivationFormat::Int8(quantization))
+                .expect("CPU activation quantization transform");
         let mut command_buffer = context.create_command_buffer(None, None).expect("CPU command buffer");
         transform.encode_quantize(
             &input,
@@ -435,13 +436,9 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
-            scale_group_size: prepared.quantization.scale_group_size(),
-            code_layout: prepared.quantization.code_layout(),
+            quantization: prepared.quantization,
         },
-        None => MatmulA::FullPrecision {
-            values: &*x,
-            offset: 0,
-        },
+        None => MatmulA::full_precision(&*x),
     };
     MatmulArguments {
         a,

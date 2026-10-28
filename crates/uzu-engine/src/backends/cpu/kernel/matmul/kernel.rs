@@ -121,9 +121,10 @@ impl MatmulKernel for MatmulCpuKernel {
                 values,
                 scales,
                 group_sums: _,
-                scale_group_size: a_group_size,
-                code_layout,
+                quantization,
             } => {
+                let a_group_size = quantization.scale_group_size();
+                let code_layout = quantization.code_layout();
                 let compatible = matches!(a_group_size, 32 | 64 | 128)
                     && k.is_multiple_of(a_group_size)
                     && matches!(b.group_size(), Some(32 | 64 | 128))
@@ -148,7 +149,10 @@ impl MatmulKernel for MatmulCpuKernel {
                     code_layout,
                 }
             },
-            MatmulA::Trellis {
+            MatmulA::PackedHalf {
+                ..
+            }
+            | MatmulA::Trellis {
                 ..
             } => {
                 return Err(MatmulCpuError::UnsupportedLayout {

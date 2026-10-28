@@ -13,7 +13,7 @@ use crate::{
                 quantization_method::QuantizationMethod,
             },
             kernel::{
-                ActivationQuantization, ActivationTransform, Kernels,
+                ActivationFormat, ActivationQuantization, ActivationTransform, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
@@ -135,10 +135,7 @@ impl BenchmarkData {
         &'a <Metal as Backend>::GlobalGpuBuffer,
     > {
         MatmulArguments {
-            a: MatmulA::FullPrecision {
-                values: &self.a_working,
-                offset: 0,
-            },
+            a: MatmulA::full_precision(&self.a_working),
             b: MatmulB::Quantized(QuantizedB {
                 codes: &self.unsigned_weights,
                 scales: &self.weight_scales,
@@ -171,6 +168,9 @@ fn encode_step(
 ) {
     match path {
         BenchPath::A8GemmMxu => {
+            let ActivationFormat::Int8(quantization) = prepare.format() else {
+                unreachable!("A8 benchmark requires Int8 activation preparation")
+            };
             prepare.encode_quantize(
                 &data.activations,
                 &mut data.a_int8,
@@ -192,9 +192,7 @@ fn encode_step(
                     values: &data.a_int8,
                     scales: &data.a_scales,
                     group_sums: None,
-                    scale_group_size: 128,
-                    code_layout: Int8CodeLayout::for_right_bits(DataType::from(data.mode).size_in_bits() as u32)
-                        .expect("W4/W8 benchmark"),
+                    quantization,
                 },
                 b: MatmulB::Quantized(QuantizedB {
                     codes: &data.a8_weights,
@@ -287,8 +285,10 @@ fn bench_a8w(c: &mut Criterion) {
     let prepare = ActivationTransform::<Metal>::quantize(
         &context,
         DataType::BF16,
-        ActivationQuantization::new(128, 128, false, Int8CodeLayout::for_right_bits(bits).expect("W8 benchmark"))
-            .expect("supported activation quantization"),
+        ActivationFormat::Int8(
+            ActivationQuantization::new(128, 128, false, Int8CodeLayout::for_right_bits(bits).expect("W8 benchmark"))
+                .expect("supported activation quantization"),
+        ),
     )
     .expect("prepare kernel");
     bench_bits(c, &context, &prepare, &hadamard, bits);

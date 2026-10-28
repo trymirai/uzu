@@ -264,7 +264,7 @@ impl GemmKernel {
                 path: "Gemm register quant",
             });
         }
-        if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
+        if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision()) {
             return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
                 reason: "MxuTiled GEMM B layout requires int8 activations on the MXU",
@@ -288,23 +288,6 @@ impl GemmKernel {
                 quantized.zero_point_strides(),
             ),
         };
-        let w4_tiling = plan.tiling.is_packed_w4();
-        let prepared_group_size = match a {
-            MatmulA::PackedHalf {
-                group_size,
-                ..
-            } => Some(group_size),
-            _ => None,
-        };
-        if w4_tiling != prepared_group_size.is_some()
-            || prepared_group_size.is_some_and(|group_size| Some(group_size) != shape.b_group_size)
-        {
-            return Err(MatmulMetalError::IncompatibleA {
-                path: "Gemm register W4",
-                reason: "packed activation buffer does not match the selected W4 group",
-            });
-        }
-
         let (a_full_precision, a_packed_half, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
             MatmulA::FullPrecision {
                 values,
@@ -318,10 +301,15 @@ impl GemmKernel {
                 values,
                 scales,
                 group_sums,
-                scale_group_size,
-                code_layout,
+                quantization,
             } => {
-                validate_int8_left_operand(use_mxu, shape, scale_group_size, code_layout, group_sums.is_some())?;
+                validate_int8_left_operand(
+                    use_mxu,
+                    shape,
+                    quantization.scale_group_size(),
+                    quantization.code_layout(),
+                    group_sums.is_some(),
+                )?;
                 if output_transform.contains(GemmDTransform::SOFT_CAP) {
                     return Err(MatmulMetalError::UnsupportedDOp {
                         bit: GemmDTransform::SOFT_CAP,
@@ -335,7 +323,7 @@ impl GemmKernel {
                     Some(scales),
                     group_sums.filter(|_| Self::requires_activation_group_sums(&shape)),
                     GemmAPrologueKind::Int8Symmetric,
-                    Some(scale_group_size),
+                    Some(quantization.scale_group_size()),
                 )
             },
             MatmulA::Trellis {

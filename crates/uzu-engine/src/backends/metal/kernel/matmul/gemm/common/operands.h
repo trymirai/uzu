@@ -15,6 +15,7 @@ namespace operands {
 template <GemmAPrologueKind PROLOGUE, typename Element, ushort ACTIVATION_GROUP_SIZE, bool CODES_GROUPED_BY_NIBBLE>
 struct LeftOperand {
   UZU_CONST bool QUANTIZED = PROLOGUE == GemmAPrologueKind::Int8Symmetric;
+  UZU_CONST bool PACKED_HALF = PROLOGUE == GemmAPrologueKind::PackedHalf;
   UZU_CONST ushort BITS = QUANTIZED ? 8 : 0;
   UZU_CONST ushort GROUP_SIZE = QUANTIZED ? ACTIVATION_GROUP_SIZE : 0;
   UZU_CONST bool GROUPED_BY_NIBBLE = CODES_GROUPED_BY_NIBBLE;
@@ -75,6 +76,7 @@ struct LeftStorage {
   const device int8_t* codes;
   const device float* scales;
   const device int32_t* group_sums;
+  const device uint* packed_half;
 
   METAL_FUNC const device int32_t* correction_sums() const thread {
     static_assert(Left::QUANTIZED, "correction_sums is only valid for int8 activations");
@@ -91,6 +93,15 @@ struct RightStorage {
   const device uint8_t* zero_points;
   bool signed_codes;
   GemmBLayout gemm_b_layout;
+
+  template <typename Index>
+  METAL_FUNC const device uint8_t* row_codes(
+      const Index row,
+      const constant uzu::matmul::GemmParams* params
+  ) const thread {
+    const Index row_stride = Index(params->K) / (8 / Right::BITS);
+    return codes + row * row_stride;
+  }
 
   METAL_FUNC const device typename Right::ScaleElement* bias() const thread {
     static_assert(Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant, "bias is only valid for ScaleBiasDequant");
@@ -136,12 +147,15 @@ METAL_FUNC LeftStorage<Left> pack_left(
     const device Element* a,
     const device int8_t* codes,
     const device float* scales,
-    const device int32_t* group_sums
+    const device int32_t* group_sums,
+    const device uint* packed_half
 ) {
-  if constexpr (Left::QUANTIZED) {
-    return {nullptr, codes, scales, group_sums};
+  if constexpr (Left::PACKED_HALF) {
+    return {nullptr, nullptr, nullptr, nullptr, packed_half};
+  } else if constexpr (Left::QUANTIZED) {
+    return {nullptr, codes, scales, group_sums, nullptr};
   } else {
-    return {a, nullptr, nullptr, nullptr};
+    return {a, nullptr, nullptr, nullptr, nullptr};
   }
 }
 

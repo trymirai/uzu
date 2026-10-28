@@ -2,7 +2,10 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::activation_type::ActivationType,
-        kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::ActivationFormat},
+        kernel::{
+            GatedActMul, GatedActMulSettings,
+            matmul::{ActivationFormat, MatmulA, packed_half_bytes},
+        },
     },
     config::{activation::AnyActivation, clipping::ClippingBounds},
     data_type::DataType,
@@ -15,8 +18,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     hidden_dim: u32,
     data_type: DataType,
     hadamard_factors: Option<B::GlobalGpuBuffer>,
-    activation_quantization: Option<ActivationQuantization>,
-    quantized_kernel: Option<GatedActMul<B>>,
+    encoder: Option<GatedActMul<B>>,
 }
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
@@ -29,16 +31,17 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         input_preparation: Option<LinearInputPreparation<B>>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let (hadamard_factors, activation_quantization) = input_preparation
-            .map_or((None, None), |preparation| (Some(preparation.rht_signs), preparation.activation_quantization));
+        let (hadamard_factors, format) = input_preparation.map_or((None, ActivationFormat::Bf16), |preparation| {
+            (Some(preparation.rht_signs), preparation.activation_format)
+        });
         let settings = GatedActMulSettings {
             activation_alpha: activation.custom_alpha(),
             gate_clipping,
             value_clipping,
         };
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
-        let quantized_kernel = activation_quantization
-            .map(|quantization| GatedActMul::quantized(context, data_type, quantization, settings))
+        let encoder = (format != ActivationFormat::Bf16)
+            .then(|| GatedActMul::quantize(context, data_type, format, settings))
             .transpose()?;
         Ok(Self {
             fp_kernel,
@@ -46,8 +49,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             hidden_dim,
             data_type,
             hadamard_factors,
-            activation_quantization,
-            quantized_kernel,
+            encoder,
         })
     }
 
@@ -61,10 +63,36 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
-        let input = if act_format == ActivationFormat::Int8
-            && let Some(quantization) = self.activation_quantization
+
+        let encoder = self.encoder.as_ref().filter(|kernel| kernel.format() == act_format);
+        assert!(
+            act_format == ActivationFormat::Bf16 || encoder.is_some(),
+            "requested activation format was not prepared"
+        );
+        if let (
+            ActivationFormat::PackedHalf {
+                group_size,
+            },
+            Some(kernel),
+        ) = (act_format, encoder)
         {
-            let kernel = self.quantized_kernel.as_ref().expect("INT8 input requires a quantized gate kernel");
+            let mut values = command_buffer.allocate_scratch(packed_half_bytes(self.hidden_dim, group_size))?;
+            kernel.encode_packed_half(
+                fused_up,
+                &mut values,
+                self.hadamard_factors.as_ref().expect("packed half requires RHT factors"),
+                self.hidden_dim,
+                batch_dim,
+                self.activation.act_type(),
+                command_buffer,
+            );
+            return Ok(MatmulA::PackedHalf {
+                values,
+                group_size,
+            });
+        }
+
+        if let (ActivationFormat::Int8(quantization), Some(kernel)) = (act_format, encoder) {
             let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], DataType::I8)?;
             let mut scales = command_buffer.allocate_scratch_for_shape(
                 &[batch_dim, self.hidden_dim.div_ceil(quantization.scale_group_size())],
@@ -77,42 +105,38 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                         .allocate_scratch_for_shape(&[batch_dim, self.hidden_dim.div_ceil(group_size)], DataType::I32)
                 })
                 .transpose()?;
-            kernel.encode_quantized(
+            kernel.encode_quantize(
                 fused_up,
                 &mut values,
                 &mut scales,
                 group_sums.as_mut(),
-                self.hadamard_factors.as_ref().expect("INT8 input requires RHT factors"),
+                self.hadamard_factors.as_ref().expect("INT8 requires RHT factors"),
                 self.hidden_dim,
                 batch_dim,
                 self.activation.act_type(),
                 command_buffer,
             );
-            LinearInput::Int8Symmetric {
+            return Ok(MatmulA::Int8Symmetric {
                 values,
                 scales,
                 group_sums,
-                scale_group_size: quantization.scale_group_size(),
-                code_layout: quantization.code_layout(),
-            }
-        } else {
-            let mut hidden =
-                command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
-            self.fp_kernel.encode_fp(
-                fused_up,
-                None::<&B::ScratchBuffer>,
-                &mut hidden,
-                self.hadamard_factors.as_ref(),
-                self.hidden_dim,
-                batch_dim,
-                0,
-                0,
-                self.activation.act_type(),
-                command_buffer,
-            );
-            LinearInput::FullPrecision(hidden)
-        };
+                quantization,
+            });
+        }
 
-        Ok(input)
+        let mut hidden = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], self.data_type)?;
+        self.fp_kernel.encode_fp(
+            fused_up,
+            None::<&B::ScratchBuffer>,
+            &mut hidden,
+            self.hadamard_factors.as_ref(),
+            self.hidden_dim,
+            batch_dim,
+            0,
+            0,
+            self.activation.act_type(),
+            command_buffer,
+        );
+        Ok(MatmulA::full_precision(hidden))
     }
 }

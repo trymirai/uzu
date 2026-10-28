@@ -6,6 +6,7 @@ use derive_more::Display;
 pub enum GemmAPrologueKind {
     FullPrecision,
     Int8Symmetric,
+    PackedHalf,
 }
 
 #[repr(C)]
@@ -39,6 +40,10 @@ pub enum GemmTiling {
 pub const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
 
 impl GemmTiling {
+    pub const fn is_packed_w4(self) -> bool {
+        matches!(self, Self::Tile8x32x64_Simdgroups1x2x4)
+    }
+
     pub const fn block_m(self) -> u32 {
         match self {
             Self::Tile8x32x32_Simdgroups1x1 => 8,

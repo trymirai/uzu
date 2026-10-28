@@ -157,7 +157,7 @@ mod quantize {
         backends::{
             common::{
                 Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-                kernel::{ActivationEncoding, ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
+                kernel::{ActivationFormat, ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
             },
             cpu::Cpu,
         },
@@ -187,7 +187,7 @@ mod quantize {
         let kernel = ActivationTransform::<B>::quantize(
             context.as_ref(),
             DataType::F32,
-            ActivationEncoding::Int8(
+            ActivationFormat::Int8(
                 ActivationQuantization::new(
                     scale_group_size,
                     sum_group_size.unwrap_or(scale_group_size),

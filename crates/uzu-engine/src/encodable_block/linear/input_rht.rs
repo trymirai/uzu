@@ -4,7 +4,10 @@ use super::{LinearInput, LinearInputPreparation};
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding,
-        kernel::{ActivationTransform, matmul::ActivationFormat},
+        kernel::{
+            ActivationTransform,
+            matmul::{ActivationFormat, MatmulA, packed_half_bytes},
+        },
     },
     data_type::DataType,
 };
@@ -12,7 +15,7 @@ use crate::{
 pub(super) struct InputRht<B: Backend> {
     rht_signs: B::GlobalGpuBuffer,
     rht: ActivationTransform<B>,
-    quantizer: Option<ActivationTransform<B>>,
+    encoder: Option<ActivationTransform<B>>,
 }
 
 impl<B: Backend> InputRht<B> {
@@ -24,17 +27,17 @@ impl<B: Backend> InputRht<B> {
     ) -> Result<Self, B::Error> {
         let LinearInputPreparation {
             rht_signs,
-            activation_quantization,
+            activation_format,
         } = preparation;
         let rht = ActivationTransform::input_rht(context, data_type, in_place)?;
-        let quantizer = activation_quantization
-            .map(|quantization| ActivationTransform::quantize(context, data_type, quantization))
+        let encoder = (activation_format != ActivationFormat::Bf16)
+            .then(|| ActivationTransform::quantize(context, data_type, activation_format))
             .transpose()?;
 
         Ok(Self {
             rht_signs,
             rht,
-            quantizer,
+            encoder,
         })
     }
 
@@ -45,21 +48,36 @@ impl<B: Backend> InputRht<B> {
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        if format == ActivationFormat::Int8
-            && let Some(quantizer) = &self.quantizer
+        let input_dim = self.input_dim();
+        let encoder = self.encoder.as_ref().filter(|kernel| kernel.format() == format);
+        assert!(format == ActivationFormat::Bf16 || encoder.is_some(), "requested activation format was not prepared");
+        if let (
+            ActivationFormat::PackedHalf {
+                group_size,
+            },
+            Some(kernel),
+        ) = (format, encoder)
         {
-            let input_dim = self.input_dim();
-            let groups_per_row = input_dim.div_ceil(quantizer.scale_group_size());
+            let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, group_size))?;
+            kernel.encode_packed_half(input, &mut values, &self.rht_signs, batch_dim, input_dim, command_buffer);
+            return Ok(MatmulA::PackedHalf {
+                values,
+                group_size,
+            });
+        }
+
+        if let (ActivationFormat::Int8(quantization), Some(kernel)) = (format, encoder) {
+            let groups_per_row = input_dim.div_ceil(quantization.scale_group_size());
             let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, input_dim], DataType::I8)?;
             let mut scales = command_buffer.allocate_scratch_for_shape(&[batch_dim, groups_per_row], DataType::F32)?;
-            let mut group_sums = quantizer
+            let mut group_sums = quantization
                 .sum_group_size()
                 .map(|group_size| {
                     command_buffer
                         .allocate_scratch_for_shape(&[batch_dim, input_dim.div_ceil(group_size)], DataType::I32)
                 })
                 .transpose()?;
-            quantizer.encode_quantize(
+            kernel.encode_quantize(
                 input,
                 &mut values,
                 &mut scales,
@@ -69,20 +87,17 @@ impl<B: Backend> InputRht<B> {
                 input_dim,
                 command_buffer,
             );
-
-            return Ok(LinearInput::Int8Symmetric {
+            return Ok(MatmulA::Int8Symmetric {
                 values,
                 scales,
                 group_sums,
-                scale_group_size: quantizer.scale_group_size(),
-                code_layout: quantizer.code_layout(),
+                quantization,
             });
         }
 
-        let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
         self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
-        Ok(LinearInput::FullPrecision(transformed))
+        Ok(MatmulA::full_precision(transformed))
     }
 
     pub(super) fn prepare_in_place(
@@ -92,13 +107,14 @@ impl<B: Backend> InputRht<B> {
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        if format == ActivationFormat::Int8 && self.quantizer.is_some() {
+        if self.encoder.as_ref().is_some_and(|kernel| kernel.format() == format) {
             return self.prepare(&input, batch_dim, format, command_buffer);
         }
+        assert_eq!(format, ActivationFormat::Bf16, "requested activation format was not prepared");
 
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
-        Ok(LinearInput::FullPrecision(input))
+        Ok(MatmulA::full_precision(input))
     }
 
     fn input_dim(&self) -> u32 {

@@ -60,11 +60,10 @@ impl<B: Backend> UntiedReadout<B> {
         .await?;
         let rht_signs =
             tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32).await?;
+        let activation_format = linear.prepare_activation(context).map_err(LinearMatmulError::BackendError)?;
         let preparation = LinearInputPreparation {
             rht_signs,
-            activation_quantization: linear
-                .optimize_weights_layout(context)
-                .map_err(LinearMatmulError::BackendError)?,
+            activation_format,
         };
         let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)
             .map_err(LinearMatmulError::BackendError)?;
@@ -83,10 +82,7 @@ impl<B: Backend> UntiedReadout<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let Some(input_rht) = &self.input_rht else {
-            let a = MatmulA::FullPrecision {
-                values: input,
-                offset: 0,
-            };
+            let a = MatmulA::full_precision(input);
             return self.linear.encode_with_a(a, batch_dim, gather, command_buffer);
         };
 
@@ -96,6 +92,6 @@ impl<B: Backend> UntiedReadout<B> {
             self.linear.select_activation_format(batch_dim, command_buffer.context())
         };
         let input = input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
-        self.linear.encode_with_a(input.as_matmul_a(), batch_dim, gather, command_buffer)
+        self.linear.encode_with_a(input.as_ref(), batch_dim, gather, command_buffer)
     }
 }

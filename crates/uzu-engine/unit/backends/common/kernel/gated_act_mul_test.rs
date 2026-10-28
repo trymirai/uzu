@@ -11,7 +11,7 @@ use crate::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::activation_type::ActivationType,
             kernel::{
-                ActivationEncoding, ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout,
+                ActivationFormat, ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout,
             },
         },
         cpu::Cpu,
@@ -127,7 +127,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     let kernel = GatedActMul::<B>::quantize(
         &context,
         DataType::BF16,
-        ActivationEncoding::Int8(
+        ActivationFormat::Int8(
             ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
                 .expect("supported activation quantization"),
         ),

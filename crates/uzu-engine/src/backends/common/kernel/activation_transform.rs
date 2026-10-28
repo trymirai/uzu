@@ -2,7 +2,10 @@ use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::{ActivationTransformKernel, matmul::Int8CodeLayout},
+        kernel::{
+            ActivationTransformKernel,
+            matmul::{ActivationFormat, Int8CodeLayout},
+        },
     },
     data_type::DataType,
 };
@@ -16,7 +19,7 @@ fn assert_row_width(element_count: u32) {
 
 pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationQuantization {
     scale_group_size: u32,
     sum_group_size: Option<u32>,
@@ -51,19 +54,11 @@ impl ActivationQuantization {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum ActivationEncoding {
-    Int8(ActivationQuantization),
-    PackedHalf {
-        group_size: u32,
-    },
-}
-
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     in_place: bool,
     has_bias: bool,
-    encoding: Option<ActivationEncoding>,
+    format: ActivationFormat,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -73,19 +68,20 @@ impl<B: Backend> ActivationTransform<B> {
         bias_data_type: Option<DataType>,
         ops: ActivationTransformOp,
         in_place: bool,
-        encoding: Option<ActivationEncoding>,
+        format: ActivationFormat,
     ) -> Result<Self, B::Error> {
         let has_bias = bias_data_type.is_some();
-        let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match encoding {
-            Some(ActivationEncoding::Int8(q)) => (
+        let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match format {
+            ActivationFormat::Int8(q) => (
                 q.code_layout().is_grouped_by_nibble(),
                 q.scale_group_size(),
                 q.sum_group_size().unwrap_or(q.scale_group_size()),
             ),
-            Some(ActivationEncoding::PackedHalf {
+            ActivationFormat::PackedHalf {
                 group_size,
-            }) => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
-            None => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
+            } => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
+            ActivationFormat::Bf16 => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
+            ActivationFormat::Trellis => unreachable!(),
         };
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
             context,
@@ -102,7 +98,7 @@ impl<B: Backend> ActivationTransform<B> {
             kernel,
             in_place,
             has_bias,
-            encoding,
+            format,
         })
     }
 
@@ -111,7 +107,7 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, None)
+        Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, ActivationFormat::Bf16)
     }
 
     pub fn output_rht(
@@ -120,22 +116,34 @@ impl<B: Backend> ActivationTransform<B> {
         bias_data_type: Option<DataType>,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, bias_data_type, ActivationTransformOp::OutputRht, in_place, None)
+        Self::new(
+            context,
+            data_type,
+            bias_data_type,
+            ActivationTransformOp::OutputRht,
+            in_place,
+            ActivationFormat::Bf16,
+        )
     }
 
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        encoding: ActivationEncoding,
+        encoding: ActivationFormat,
     ) -> Result<Self, B::Error> {
         let op = match encoding {
-            ActivationEncoding::Int8(q) if q.sum_group_size().is_some() => ActivationTransformOp::QuantizeWithGroupSums,
-            ActivationEncoding::Int8(_) => ActivationTransformOp::Quantize,
-            ActivationEncoding::PackedHalf {
+            ActivationFormat::Int8(q) if q.sum_group_size().is_some() => ActivationTransformOp::QuantizeWithGroupSums,
+            ActivationFormat::Int8(_) => ActivationTransformOp::Quantize,
+            ActivationFormat::PackedHalf {
                 ..
             } => ActivationTransformOp::PackHalf,
+            ActivationFormat::Bf16 | ActivationFormat::Trellis => unreachable!(),
         };
-        Self::new(context, data_type, None, op, false, Some(encoding))
+        Self::new(context, data_type, None, op, false, encoding)
+    }
+
+    pub fn format(&self) -> ActivationFormat {
+        self.format
     }
 
     /// `input` and `output` must be distinct buffers.
@@ -148,7 +156,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(self.encoding.is_none() && !self.in_place && !self.has_bias);
+        assert!(self.format == ActivationFormat::Bf16 && !self.in_place && !self.has_bias);
         assert_row_width(element_count);
         self.kernel.encode(
             Some(input),
@@ -174,7 +182,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(self.encoding.is_none() && self.in_place && self.has_bias == bias.is_some());
+        assert!(self.format == ActivationFormat::Bf16 && self.in_place && self.has_bias == bias.is_some());
         assert_row_width(element_count);
         self.kernel.encode(
             None::<&B::ScratchBuffer>,
@@ -202,7 +210,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let Some(ActivationEncoding::Int8(q)) = self.encoding else {
+        let ActivationFormat::Int8(q) = self.format else {
             panic!("INT8 activation transform required")
         };
         assert_row_width(element_count);
@@ -235,9 +243,9 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let Some(ActivationEncoding::PackedHalf {
+        let ActivationFormat::PackedHalf {
             group_size,
-        }) = self.encoding
+        } = self.format
         else {
             panic!("packed-half activation transform required")
         };

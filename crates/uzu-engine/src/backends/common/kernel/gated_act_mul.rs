@@ -7,7 +7,7 @@ use crate::{
             activation_type::ActivationType, gated_act_mul::GatedActMulOp,
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         },
-        kernel::{ActivationEncoding, GatedActMulKernel},
+        kernel::{ActivationFormat, GatedActMulKernel},
     },
     config::clipping::ClippingBounds,
     data_type::DataType,
@@ -33,7 +33,7 @@ pub struct GatedActMul<B: Backend> {
     kernel: <B::Kernels as Kernels>::GatedActMulKernel,
     options: GatedActMulOptions,
     settings: GatedActMulSettings,
-    encoding: Option<ActivationEncoding>,
+    format: ActivationFormat,
 }
 
 impl<B: Backend> GatedActMul<B> {
@@ -47,17 +47,17 @@ impl<B: Backend> GatedActMul<B> {
         let mut options = GatedActMulOptions::empty();
         options.set(GatedActMulOptions::INTERLEAVED, interleaved);
         options.set(GatedActMulOptions::HADAMARD, use_hadamard);
-        Self::new(context, data_type, options, settings, None)
+        Self::new(context, data_type, options, settings, ActivationFormat::Bf16)
     }
 
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        encoding: ActivationEncoding,
+        encoding: ActivationFormat,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let options = GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD;
-        Self::new(context, data_type, options, settings, Some(encoding))
+        Self::new(context, data_type, options, settings, encoding)
     }
 
     fn new(
@@ -65,10 +65,10 @@ impl<B: Backend> GatedActMul<B> {
         data_type: DataType,
         options: GatedActMulOptions,
         settings: GatedActMulSettings,
-        encoding: Option<ActivationEncoding>,
+        format: ActivationFormat,
     ) -> Result<Self, B::Error> {
-        let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match encoding {
-            Some(ActivationEncoding::Int8(q)) => (
+        let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match format {
+            ActivationFormat::Int8(q) => (
                 if q.sum_group_size().is_some() {
                     GatedActMulOp::QuantizeWithGroupSums
                 } else {
@@ -78,10 +78,13 @@ impl<B: Backend> GatedActMul<B> {
                 q.scale_group_size(),
                 q.sum_group_size().unwrap_or(q.scale_group_size()),
             ),
-            Some(ActivationEncoding::PackedHalf {
+            ActivationFormat::PackedHalf {
                 group_size,
-            }) => (GatedActMulOp::PackHalf, false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
-            None => (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
+            } => (GatedActMulOp::PackHalf, false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
+            ActivationFormat::Bf16 => {
+                (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE)
+            },
+            ActivationFormat::Trellis => unreachable!(),
         };
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
             context,
@@ -100,8 +103,12 @@ impl<B: Backend> GatedActMul<B> {
             kernel,
             options,
             settings,
-            encoding,
+            format,
         })
+    }
+
+    pub fn format(&self) -> ActivationFormat {
+        self.format
     }
 
     pub fn encode_fp(
@@ -117,7 +124,7 @@ impl<B: Backend> GatedActMul<B> {
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(self.encoding.is_none());
+        assert_eq!(self.format, ActivationFormat::Bf16);
         assert_eq!(self.options.contains(GatedActMulOptions::INTERLEAVED), value_operand.is_none());
         assert_eq!(self.options.contains(GatedActMulOptions::HADAMARD), hadamard_factors.is_some());
         assert!(
@@ -161,7 +168,7 @@ impl<B: Backend> GatedActMul<B> {
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let Some(ActivationEncoding::Int8(q)) = self.encoding else {
+        let ActivationFormat::Int8(q) = self.format else {
             panic!("INT8 gated activation required")
         };
         assert!(self.options.contains(GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD));
@@ -206,9 +213,9 @@ impl<B: Backend> GatedActMul<B> {
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let Some(ActivationEncoding::PackedHalf {
+        let ActivationFormat::PackedHalf {
             group_size,
-        }) = self.encoding
+        } = self.format
         else {
             panic!("packed-half gated activation required")
         };

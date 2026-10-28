@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    mem::size_of,
+};
 
 use QuantParamsLayout::{GroupOutput, OutputGroup};
 use QuantizationMethod::{ScaleBias, ScaleZeroPoint};
@@ -12,11 +15,17 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+            gpu_types::{
+                activation_type::ActivationType, quantization::QuantizationMode,
+                quantization_method::QuantizationMethod,
+            },
             kernel::{
-                Kernels,
+                ActivationEncoding, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{MatmulKernel, MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides},
+                matmul::{
+                    MatmulA, MatmulKernel, MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides,
+                    packed_half_bytes,
+                },
             },
         },
         metal::{
@@ -26,9 +35,9 @@ use crate::{
             kernel::matmul::{MatmulMetalKernel, gemm::GemmEngine},
         },
     },
-    data_type::DataTypeRepr,
+    data_type::{DataType, DataTypeRepr},
     tests::{
-        helpers::buffer_to_vec,
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
         matmul::{QuantBuffers, QuantInput, quant::run_quant_cpu, quant_arguments},
     },
 };
@@ -826,4 +835,143 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         0.05,
         0.5,
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PackedHalfProducer {
+    InputRht,
+    GatedRht,
+}
+
+fn run_packed_half_pipeline(
+    group_size: u32,
+    producer: PackedHalfProducer,
+) {
+    let batch = 5;
+    let k = 512;
+    let n = 64;
+    let source: Vec<bf16> = (0..batch * k).map(|index| bf16::from_f32(((index as f32 * 0.013).sin()) * 0.2)).collect();
+    let gated_source: Vec<bf16> =
+        (0..batch * 2 * k).map(|index| bf16::from_f32(((index as f32 * 0.017).cos()) * 0.3)).collect();
+    let factors: Vec<i32> = (0..k)
+        .map(|index| {
+            if index % 3 == 0 {
+                -1
+            } else {
+                1
+            }
+        })
+        .collect();
+    let source_data = match producer {
+        PackedHalfProducer::InputRht => &source,
+        PackedHalfProducer::GatedRht => &gated_source,
+    };
+    let mut input =
+        QuantInput::<bf16>::new(batch, k, n, group_size, 4, QuantizationMethod::ScaleZeroPoint, 19).with_group_output();
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let source_buffer = create_buffer_with_data::<Metal, bf16>(&context, source_data);
+    let factors_buffer = create_buffer_with_data::<Metal, i32>(&context, &factors);
+    let mut reference_a = create_buffer::<Metal, bf16>(&context, (batch * k) as usize);
+    let mut packed = create_buffer_with_data::<Metal, u32>(
+        &context,
+        &vec![u32::MAX; packed_half_bytes(k, group_size) / size_of::<u32>()],
+    );
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+    )
+    .expect("Metal matmul");
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Metal command buffer");
+    match producer {
+        PackedHalfProducer::InputRht => {
+            ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, false).expect("RHT reference").encode_fp(
+                &source_buffer,
+                &mut reference_a,
+                &factors_buffer,
+                batch,
+                k,
+                &mut command_buffer,
+            );
+            ActivationTransform::<Metal>::quantize(
+                &context,
+                DataType::BF16,
+                ActivationEncoding::PackedHalf {
+                    group_size,
+                },
+            )
+            .expect("Metal RHT PackedHalf pack")
+            .encode_packed_half(
+                &source_buffer,
+                &mut packed,
+                &factors_buffer,
+                batch,
+                k,
+                &mut command_buffer,
+            );
+        },
+        PackedHalfProducer::GatedRht => {
+            GatedActMul::<Metal>::full_precision(&context, DataType::BF16, true, true, GatedActMulSettings::default())
+                .expect("gate reference")
+                .encode_fp(
+                    &source_buffer,
+                    None::<&<Metal as Backend>::GlobalBuffer>,
+                    &mut reference_a,
+                    Some(&factors_buffer),
+                    k,
+                    batch,
+                    0,
+                    0,
+                    ActivationType::SILU,
+                    &mut command_buffer,
+                );
+            GatedActMul::<Metal>::quantize(
+                &context,
+                DataType::BF16,
+                ActivationEncoding::PackedHalf {
+                    group_size,
+                },
+                GatedActMulSettings::default(),
+            )
+            .expect("Metal PackedHalf gated activation")
+            .encode_packed_half(
+                &source_buffer,
+                &mut packed,
+                &factors_buffer,
+                k,
+                batch,
+                ActivationType::SILU,
+                &mut command_buffer,
+            );
+        },
+    }
+    let mut arguments = quant_arguments(&mut buffers, &input);
+    arguments.a = MatmulA::PackedHalf {
+        values: &packed,
+        group_size,
+    };
+    matmul.encode(arguments, &mut command_buffer).expect("prepared W4 GEMM");
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    input.x = buffer_to_vec::<Metal, bf16>(&reference_a);
+    let reference = run_quant_cpu::<bf16>(&input);
+    let actual = buffer_to_vec::<Metal, bf16>(&buffers.y);
+    assert_parity::<bf16>(
+        &format!("producer={producer:?} G{group_size} M{batch} K{k}"),
+        &reference,
+        &actual,
+        0.05,
+        0.4,
+    );
+}
+
+#[uzu_test]
+fn packed_half_producers_match_bf16_reference() {
+    // Fused RHT rounds its float result directly to half; standalone RHT stores BF16 first.
+    for group_size in [32, 64] {
+        for producer in [PackedHalfProducer::InputRht, PackedHalfProducer::GatedRht] {
+            run_packed_half_pipeline(group_size, producer);
+        }
+    }
 }
