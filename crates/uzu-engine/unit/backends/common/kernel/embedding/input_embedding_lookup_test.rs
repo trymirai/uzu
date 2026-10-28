@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, io::Write};
 
 use futures::executor::block_on;
 use half::{bf16, f16};
@@ -20,14 +20,103 @@ use crate::{
         },
         cpu::Cpu,
     },
-    data_type::DataTypeRepr,
+    data_type::{DataType, DataTypeRepr},
+    encodable_block::embedding::Embedding,
+    safetensors::ParameterLoader,
     tests::{
         assert::assert_eq_float,
         helpers::{
-            buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend, submit_command_buffer,
+            buffer_readback, buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend,
+            for_each_non_cpu_backend, submit_command_buffer,
         },
     },
 };
+
+#[uzu_test]
+fn embedding_prefix_preserves_full_lookup() {
+    for_each_backend!(|B| {
+        for tied in [true, false] {
+            let context = block_on(<B as Backend>::Context::new()).unwrap();
+            let weights = floats::<f32>(VOCAB_SIZE * MODEL_DIM, |index| (index as f32 * 0.37).sin() * 0.1);
+            let bytes: &[u8] = bytemuck::cast_slice(&weights);
+            let names: &[&str] = if tied {
+                &["embedding"]
+            } else {
+                &["input_embedding", "output_embedding"]
+            };
+            let mut header = serde_json::json!({"__metadata__": {}});
+            for (index, name) in names.iter().enumerate() {
+                let layout = if *name == "output_embedding" {
+                    "output_input"
+                } else {
+                    "input_output"
+                };
+                header["__metadata__"][format!("{name}.spec")] =
+                    serde_json::json!(serde_json::json!({"type":"FullPrecisionSpec", "layout":layout}).to_string());
+                header[format!("{name}.weights")] = serde_json::json!({
+                    "dtype":"F32", "shape":[VOCAB_SIZE, MODEL_DIM],
+                    "data_offsets":[index * bytes.len(), (index + 1) * bytes.len()]
+                });
+            }
+            let header = serde_json::to_vec(&header).unwrap();
+            let path = std::env::temp_dir().join(format!("uzu-embedding-view-{}", std::process::id()));
+            let mut file = std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            file.write_all(&(header.len() as u64).to_le_bytes()).unwrap();
+            file.write_all(&header).unwrap();
+            for _ in names {
+                file.write_all(bytes).unwrap();
+            }
+            let loader = ParameterLoader::<B>::new(&file, &context).unwrap();
+            let config = serde_json::from_value(serde_json::json!({
+                "type":if tied { "TiedEmbeddingConfig" } else { "UntiedEmbeddingConfig" },
+                "input_scale":null, "logit_scale":0.75, "logit_soft_cap":3.0
+            }))
+            .unwrap();
+            let (target, _) =
+                Embedding::new(VOCAB_SIZE, MODEL_DIM, DataType::F32, &config, &loader.tree(), &context).unwrap();
+            assert!(target.prefix(0).is_err());
+            assert!(target.prefix(VOCAB_SIZE + 1).is_err());
+            let draft = target.prefix(3).unwrap();
+            assert_eq!(target.vocab_size(), VOCAB_SIZE);
+            assert_eq!(draft.vocab_size(), 3);
+            assert_eq!(draft.lookup_vocab_size(), VOCAB_SIZE);
+            let ids = create_buffer_with_data::<B, u32>(&context, &[3, 0]);
+            let mut commands = context.create_command_buffer(None, None).unwrap();
+            let full_lookup = target.encode_lookup(&ids, 2, &mut commands).unwrap();
+            let draft_lookup = draft.encode_lookup(&ids, 2, &mut commands).unwrap();
+            let full = target
+                .encode_readout(
+                    &full_lookup,
+                    2,
+                    target.vocab_size(),
+                    None::<&<B as Backend>::ScratchBuffer>,
+                    true,
+                    &mut commands,
+                )
+                .unwrap();
+            let prefix = draft
+                .encode_readout(
+                    &draft_lookup,
+                    2,
+                    draft.vocab_size(),
+                    None::<&<B as Backend>::ScratchBuffer>,
+                    true,
+                    &mut commands,
+                )
+                .unwrap();
+            submit_command_buffer(commands);
+            let read = |buffer: &<B as Backend>::ScratchBuffer| {
+                buffer_to_vec::<B, f32>(&buffer_readback::<B>(&context, buffer))
+            };
+            assert_eq_float(&read(&full_lookup), &read(&draft_lookup), 0.0, "full lookup through prefix");
+            let full = read(&full);
+            let expected: Vec<_> =
+                full.chunks_exact(VOCAB_SIZE as usize).flat_map(|row| row[..3].iter().copied()).collect();
+            assert_eq_float(&expected, &read(&prefix), 0.001, "prefix readout");
+        }
+    });
+}
 
 const VOCAB_SIZE: u32 = 4;
 const MODEL_DIM: u32 = 128;

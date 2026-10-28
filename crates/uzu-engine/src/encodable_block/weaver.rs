@@ -148,7 +148,7 @@ pub enum WeaverNewError<B: Backend> {
     InvalidLayerCount,
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
-    #[error("candidate_pool_size must be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
+    #[error("candidate_pool_size must fit the vocabulary and be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
     InvalidCandidatePoolSize(u32),
     #[error("rope head_dim {actual} does not match model_dim / num_heads = {expected}")]
     InvalidRopeHeadDim {
@@ -191,7 +191,10 @@ impl<B: Backend> Weaver<B> {
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
-        if config.candidate_pool_size == 0 || config.candidate_pool_size > CANDIDATES_MAX {
+        if config.candidate_pool_size == 0
+            || config.candidate_pool_size > CANDIDATES_MAX
+            || config.candidate_pool_size > vocab_size
+        {
             return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
         let head_dim = config.model_dim / config.num_heads;
@@ -519,7 +522,7 @@ impl<B: Backend> Weaver<B> {
             u32::from(batch_start_slot == 0),
             self.candidate_pool_size,
             shape.expand_width,
-            target_embedding.vocab_size(),
+            target_embedding.lookup_vocab_size(),
             frontier_capacity,
             tree_slot_count,
             if fuse_next {

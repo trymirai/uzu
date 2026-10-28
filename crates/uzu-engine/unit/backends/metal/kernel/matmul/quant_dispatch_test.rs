@@ -456,6 +456,8 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
 #[case::group_output_padded_n(GroupOutput, 192, 66, 64, 4, ScaleZeroPoint, 66)]
 #[case::output_group_bias_prefix(OutputGroup, 128, 12, 32, 4, ScaleBias, 4)]
 #[case::group_output_bias_prefix(GroupOutput, 128, 12, 32, 4, ScaleBias, 4)]
+#[case::output_group_zero_point_odd_prefix(OutputGroup, 128, 64, 64, 4, ScaleZeroPoint, 19)]
+#[case::group_output_zero_point_odd_prefix(GroupOutput, 128, 64, 64, 4, ScaleZeroPoint, 19)]
 fn quant_gemm_parameter_layout_prefix_matches_cpu(
     #[case] params_layout: QuantParamsLayout,
     #[case] k: u32,
