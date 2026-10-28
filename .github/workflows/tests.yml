@@ -19,11 +19,12 @@ defaults:
     # For pipefail - https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#exit-codes-and-error-action-preference
     shell: bash
 
+# GitHub starts cancellation at 110 minutes. Mac supervisors force cleanup at 120 minutes.
 jobs:
   linters:
     name: linters
     runs-on: prefect-github-actions
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     steps:
       - uses: actions/checkout@v7
@@ -64,7 +65,7 @@ jobs:
   tests:
     name: ${{ matrix.host }}${{ matrix.backend && format(' ({0})', matrix.backend) }}${{ matrix.target && format(' ({0})', matrix.target) }}
     runs-on: ${{ matrix.host == 'linux' && 'uzu-n4std16' || 'prefect-github-actions' }}
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     strategy:
       matrix:
@@ -133,7 +134,7 @@ jobs:
   validate-bindings:
     name: validate-bindings
     runs-on: prefect-github-actions
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     steps:
       - uses: actions/checkout@v7
@@ -157,7 +158,7 @@ jobs:
   linters-mirai-gui:
     name: linters (mirai-gui)
     runs-on: prefect-github-actions
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     defaults:
       run:
@@ -191,7 +192,7 @@ jobs:
   tests-mirai-gui:
     name: tests (mirai-gui)
     runs-on: prefect-github-actions
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     defaults:
       run:
@@ -213,7 +214,7 @@ jobs:
   build-mirai-gui:
     name: build (mirai-gui)
     runs-on: prefect-github-actions
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     defaults:
       run:
@@ -239,7 +240,7 @@ jobs:
   build-uzu-pi-extension:
     name: check and build (uzu-pi-extension)
     runs-on: prefect-github-actions
-    timeout-minutes: 120
+    timeout-minutes: 110
 
     defaults:
       run:
@@ -279,7 +280,7 @@ jobs:
   completed:
     name: completed
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 110
     needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-uzu-pi-extension]
     if: ${{ always() }}
 
