@@ -153,21 +153,21 @@ PUBLIC KERNEL(MoeGemv)(
   const uint expert_id = expert_ids[route_idx];
   const uint a_row_idx = a_per_token ? (route_idx / active_experts_per_token) : route_idx;
 
-  const device uint32_t* expert_b =
-      reinterpret_cast<const device uint32_t*>(b + ulong(expert_id) * b_expert_stride_bytes);
+  // Offsets are 32-bit: the MoE block checks at load that every expert plane fits in uint.
+  const device uint32_t* expert_b = reinterpret_cast<const device uint32_t*>(b + expert_id * b_expert_stride_bytes);
   const device T* expert_scales =
-      (b_prologue != GemmBPrologueKind::FullPrecision) ? (scales + ulong(expert_id) * scale_expert_stride) : nullptr;
+      (b_prologue != GemmBPrologueKind::FullPrecision) ? (scales + expert_id * scale_expert_stride) : nullptr;
   const device uint8_t* expert_zero_points = (b_prologue == GemmBPrologueKind::ScaleZeroPointDequant)
-                                                 ? (zero_points + ulong(expert_id) * zero_point_expert_stride)
+                                                 ? (zero_points + expert_id * zero_point_expert_stride)
                                                  : nullptr;
   const device T* expert_biases =
-      (b_prologue == GemmBPrologueKind::ScaleBiasDequant) ? (biases + ulong(expert_id) * scale_expert_stride) : nullptr;
-  const device T* route_a = a + ulong(a_row_idx) * in_vec_size;
-  device T* route_d = d + ulong(route_idx) * out_vec_size;
+      (b_prologue == GemmBPrologueKind::ScaleBiasDequant) ? (biases + expert_id * scale_expert_stride) : nullptr;
+  const device T* route_a = a + a_row_idx * in_vec_size;
+  device T* route_d = d + route_idx * out_vec_size;
   const device T* expert_output_bias =
-      output_transform.contains(GemmDTransform::BIAS) ? (output_bias + ulong(expert_id) * out_vec_size) : nullptr;
+      output_transform.contains(GemmDTransform::BIAS) ? (output_bias + expert_id * out_vec_size) : nullptr;
   const device int32_t* expert_hadamard =
-      output_transform.contains(GemmDTransform::RHT) ? (hadamard_factors + ulong(expert_id) * out_vec_size) : nullptr;
+      output_transform.contains(GemmDTransform::RHT) ? (hadamard_factors + expert_id * out_vec_size) : nullptr;
 
   using Ops = GemvOperands<T, T, T>;
   const Ops ops = {
@@ -257,8 +257,9 @@ PUBLIC KERNEL(MoeGemv)(
   });
 }
 
-template <typename T>
+template <typename T, uint BD>
 VARIANTS(T, bfloat)
+VARIANTS(BD, 256)
 PUBLIC KERNEL(MoeCombine)(
     const device T* expert_outputs,
     const device float* expert_weights,
@@ -270,7 +271,7 @@ PUBLIC KERNEL(MoeCombine)(
     const constant uint& batch_size,
     const bool has_shared SPECIALIZE,
     const bool has_gate SPECIALIZE,
-    const uint col AXIS(model_dim, 256),
+    const uint col AXIS(model_dim, BD),
     const uint token_idx AXIS(batch_size, 1)
 ) {
   float acc = 0.0f;

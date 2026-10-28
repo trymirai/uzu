@@ -16,6 +16,7 @@ use crate::{
 };
 
 const MOE_GEMV_OUTPUT_ROW_TILE: u32 = 32;
+const MOE_COMBINE_BLOCK_DIM: u32 = 256;
 
 fn run_router_top_k<B: Backend>(
     logits: &[f32],
@@ -147,7 +148,6 @@ fn assert_vec_close(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
     weights: &[W],
     scales: Option<&[bf16]>,
@@ -244,7 +244,6 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
     buffer_to_vec(&output_buf)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn compare_moe_gemv<W: DataTypeRepr, Z: DataTypeRepr>(
     weights: &[W],
     scales: Option<&[bf16]>,
@@ -580,6 +579,7 @@ fn run_moe_combine<B: Backend>(
     let kernel = <B::Kernels as Kernels>::MoeCombineKernel::new(
         &context,
         DataType::BF16,
+        MOE_COMBINE_BLOCK_DIM,
         shared_output.is_some(),
         shared_gate.is_some(),
     )

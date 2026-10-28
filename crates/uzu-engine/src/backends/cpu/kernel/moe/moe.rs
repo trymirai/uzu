@@ -225,7 +225,8 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
 
 #[kernel(MoeCombine)]
 #[variants(T, bf16)]
-pub fn moe_combine<T: DataTypeRepr + Float>(
+#[variants(BD, 256)]
+pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     expert_outputs: *const T,
     expert_weights: *const f32,
     #[optional(has_shared)] shared_output: Option<*const T>,
