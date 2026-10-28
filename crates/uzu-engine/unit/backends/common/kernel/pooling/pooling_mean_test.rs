@@ -61,7 +61,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     kernel.encode(&input_buffer, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut command_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec(&output)
+    buffer_to_vec(&*context, &output)
 }
 
 fn test_internal<T: DataTypeRepr + Float + Debug + Display>(

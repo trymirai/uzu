@@ -21,12 +21,12 @@ pub struct UntiedReadout<B: Backend> {
 }
 
 impl<B: Backend> UntiedReadout<B> {
-    pub fn load(
+    pub async fn load(
         vocab_size: u32,
         model_dim: u32,
         data_type: DataType,
         spec: AnyWeightMatrixSpec,
-        tree: &ParameterTree<B>,
+        tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
@@ -39,7 +39,8 @@ impl<B: Backend> UntiedReadout<B> {
             return Ok(Self {
                 linear: LinearMatmul::load(
                     model_dim, vocab_size, data_type, data_type, data_type, spec, None, tree, None, context,
-                )?,
+                )
+                .await?,
                 input_rht: None,
             });
         };
@@ -55,11 +56,15 @@ impl<B: Backend> UntiedReadout<B> {
             &tree.subtree("quantized"),
             None,
             context,
-        )?;
-        let rht_signs = tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32)?;
+        )
+        .await?;
+        let rht_signs =
+            tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32).await?;
         let preparation = LinearInputPreparation {
             rht_signs,
-            activation_quantization: linear.prepare_a8_matmul(context).map_err(LinearMatmulError::BackendError)?,
+            activation_quantization: linear
+                .optimize_weights_layout(context)
+                .map_err(LinearMatmulError::BackendError)?,
         };
         let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)
             .map_err(LinearMatmulError::BackendError)?;

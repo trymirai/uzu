@@ -1,6 +1,8 @@
-use std::{collections::VecDeque, mem::ManuallyDrop, range::Range, sync::Arc};
+use std::{collections::VecDeque, mem::ManuallyDrop, os::raw::c_void, ptr::NonNull, range::Range, sync::Arc};
 
 use parking_lot::Mutex;
+
+use crate::backends::common::{Buffer, CpuBuffer, GpuBuffer};
 
 pub struct PoolAllocator<T> {
     pages: [Mutex<VecDeque<T>>; 32],
@@ -55,6 +57,22 @@ impl<T> PoolAllocation<T> {
 
     pub fn range(&self) -> Range<usize> {
         self.range
+    }
+}
+
+impl<T: Buffer> Buffer for PoolAllocation<T> {
+    type Backend = T::Backend;
+
+    fn size(&self) -> usize {
+        self.range().iter().len()
+    }
+}
+
+impl<T: GpuBuffer> GpuBuffer for PoolAllocation<T> {}
+
+impl<T: CpuBuffer> CpuBuffer for PoolAllocation<T> {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        unsafe { self.page().cpu_ptr().byte_add(self.range().start) }
     }
 }
 

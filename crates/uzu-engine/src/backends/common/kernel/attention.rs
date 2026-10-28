@@ -59,7 +59,7 @@ pub struct AttentionKernelConfig {
 pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
     pub suffix_length: u32,
     pub trie: Option<TT>,
-    pub sinks: Option<&'a B::GlobalBuffer>,
+    pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
 }

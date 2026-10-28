@@ -68,7 +68,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&output_buffer)
+    buffer_to_vec::<B, T>(&context, &output_buffer)
 }
 
 fn get_test_data_basic<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {

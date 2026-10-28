@@ -91,10 +91,10 @@ pub enum DFlashEncodeError<B: Backend> {
 }
 
 impl<B: Backend> DFlash<B> {
-    pub fn new(
+    pub async fn new(
         data_type: DataType,
         config: &DFlashDraftConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, DFlashNewError<B>> {
         let mask_token_id = config.mask_token_id as u32;
@@ -106,7 +106,8 @@ impl<B: Backend> DFlash<B> {
             false,
             &parameter_tree.subtree("context_projection"),
             context,
-        )?;
+        )
+        .await?;
         let projected_feature_norm = Normalization::new(
             config.model_dim,
             data_type,
@@ -116,7 +117,8 @@ impl<B: Backend> DFlash<B> {
             &config.context_norm_config,
             &parameter_tree.subtree("context_norm"),
             context,
-        )?;
+        )
+        .await?;
         let layers_tree = parameter_tree.subtree("layers");
         let first_layer_config = config.layer_configs.first().expect("DFlash draft model must have at least one layer");
         let AnyTokenMixerConfig::AttentionConfig(attention_config) = &first_layer_config.mixer_config else {
@@ -131,12 +133,11 @@ impl<B: Backend> DFlash<B> {
             false,
             &parameter_tree.subtree("state_kv_projection"),
             context,
-        )?;
-        let layers = config
-            .layer_configs
-            .iter()
-            .zip(0u32..)
-            .map(|(layer_config, index)| {
+        )
+        .await?;
+        let mut layers = Vec::with_capacity(num_layers as usize);
+        for (layer_config, index) in config.layer_configs.iter().zip(0u32..) {
+            layers.push(
                 TransformerLayer::new(
                     config.model_dim,
                     config.hidden_dim,
@@ -147,8 +148,9 @@ impl<B: Backend> DFlash<B> {
                     &layers_tree.subtree(&index.to_string()),
                     context,
                 )
-            })
-            .collect::<Result<Box<[_]>, TransformerLayerError<B>>>()?;
+                .await?,
+            );
+        }
         let output_norm = Normalization::new(
             config.model_dim,
             data_type,
@@ -158,14 +160,15 @@ impl<B: Backend> DFlash<B> {
             &config.output_norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
-        )?;
+        )
+        .await?;
 
         Ok(Self {
             target_feature_projection,
             projected_feature_norm,
             state_kv_projection,
             layer_kv_dim,
-            layers,
+            layers: layers.into_boxed_slice(),
             output_norm,
             rope_config: config.rope_config.clone(),
             model_dim: config.model_dim,

@@ -77,7 +77,7 @@ fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec(&o)
+    buffer_to_vec(&*context, &o)
 }
 
 #[uzu_test]

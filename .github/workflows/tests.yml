@@ -44,7 +44,7 @@ jobs:
 
       - name: Lint with clippy
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: cargo +nightly clippy --workspace --all-targets -- -D warnings
+        run: cargo +nightly clippy --workspace --all-targets --features uzu-engine/webgpu -- -D warnings
 
       - name: Check that Cargo.lock is consistent with Cargo.toml
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
@@ -62,7 +62,7 @@ jobs:
         run: cargo tools sync --check
 
   tests:
-    name: ${{ matrix.host }}${{ matrix.target && format(' ({0})', matrix.target) }}
+    name: ${{ matrix.host }}${{ matrix.backend && format(' ({0})', matrix.backend) }}${{ matrix.target && format(' ({0})', matrix.target) }}
     runs-on: ${{ matrix.host == 'linux' && 'uzu-n4std16' || 'prefect-github-actions' }}
     timeout-minutes: 120
 
@@ -70,8 +70,16 @@ jobs:
       matrix:
         include:
           - host: 'macos'
+            backend: 'metal'
             tests: true
             benches: true
+          - host: 'macos'
+            backend: 'webgpu'
+            tests: true
+            benches: true
+            crates: ['uzu-engine']
+            no-default-features: true
+            features: ['uzu-engine/webgpu', 'uzu-engine/cpu', 'uzu-engine/grammar']
           - host: 'linux'
             crates: ['cli']
           - host: 'linux'
@@ -99,6 +107,8 @@ jobs:
         run: |
           cargo +${{ matrix.nightly && 'nightly' || 'stable' }} build \
             ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            ${{ matrix.no-default-features && '--no-default-features' || '' }} \
+            ${{ matrix.features && format('--features {0}', join(matrix.features, ',')) || '' }} \
             ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
 
       - name: Build benches
@@ -106,6 +116,8 @@ jobs:
         run: |
           cargo +nightly bench --no-run \
             ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            ${{ matrix.no-default-features && '--no-default-features' || '' }} \
+            ${{ matrix.features && format('--features {0}', join(matrix.features, ',')) || '' }} \
             ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
 
       - name: Run tests
@@ -113,6 +125,9 @@ jobs:
         run: |
           cargo +nightly nextest run --profile=ci \
             ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            ${{ matrix.no-default-features && '--no-default-features' || '' }} \
+            ${{ matrix.features && format('--features {0}', join(matrix.features, ',')) || '' }} \
+            ${{ matrix.tests != 'kernels' && matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }} \
             ${{ matrix.tests == 'kernels' && '-p uzu-engine backends::common::kernel::tests --lib' || '' }}
 
   validate-bindings:

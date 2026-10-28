@@ -137,7 +137,7 @@ fn lookup<B: Backend, T: DataTypeRepr + Float>(
         &mut command_buffer,
     );
     submit_command_buffer(command_buffer);
-    buffer_to_vec::<B, T>(&output)
+    buffer_to_vec::<B, T>(context, &output)
 }
 
 fn check<T: DataTypeRepr + Float + Display>(

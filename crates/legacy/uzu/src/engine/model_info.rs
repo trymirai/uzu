@@ -3,7 +3,7 @@ use std::path::Path;
 use hanashi::chat::EncodingConfig;
 use shoji::types::{basic::ReasoningEffort, model::Model, session::chat::ChatModelCapabilities};
 
-use super::{Engine, EngineError};
+use crate::engine::{Engine, EngineError};
 
 /// Chat metadata available without loading model weights or allocating a session.
 #[bindings::export(Structure(Class))]
@@ -33,26 +33,20 @@ impl Engine {
         }
         let path = self.model_path(model).await;
         let encoding = model.encoding.clone();
-        tokio::task::spawn_blocking(move || {
-            let encoding = encoding.ok_or_else(|| EngineError::ModelConfig {
-                message: "Chat model has no supported encoding".into(),
-            })?;
-            let config: EncodingConfig = serde_json::from_str(&encoding.json).map_err(config_error)?;
-            Ok(Some(ChatModelInfo {
-                context_length: match path {
-                    Some(path) => {
-                        uzu_engine::engine::resolve_model_context_length(Path::new(&path)).map_err(config_error)?
-                    },
-                    None => None,
+        let encoding = encoding.ok_or_else(|| EngineError::ModelConfig {
+            message: "Chat model has no supported encoding".into(),
+        })?;
+        let config: EncodingConfig = serde_json::from_str(&encoding.json).map_err(config_error)?;
+        Ok(Some(ChatModelInfo {
+            context_length: match path {
+                Some(path) => {
+                    uzu_engine::engine::resolve_model_context_length(Path::new(&path)).await.map_err(config_error)?
                 },
-                capabilities: config.capabilities().map_err(config_error)?,
-                default_reasoning_effort: config.default_reasoning_effort().map_err(config_error)?,
-            }))
-        })
-        .await
-        .map_err(|error| EngineError::TokioError {
-            message: error.to_string(),
-        })?
+                None => None,
+            },
+            capabilities: config.capabilities().map_err(config_error)?,
+            default_reasoning_effort: config.default_reasoning_effort().map_err(config_error)?,
+        }))
     }
 }
 

@@ -1,6 +1,8 @@
-use std::{collections::HashMap, mem::ManuallyDrop, range::Range, sync::Arc};
+use std::{collections::HashMap, mem::ManuallyDrop, os::raw::c_void, ptr::NonNull, range::Range, sync::Arc};
 
 use parking_lot::Mutex;
+
+use crate::backends::common::{Buffer, CpuBuffer, GpuBuffer};
 
 // TODO: this is a stub, real block allocator should suballocate from large pages
 
@@ -62,6 +64,22 @@ impl<T> BlockAllocation<T> {
 
     pub fn range(&self) -> Range<usize> {
         self.range
+    }
+}
+
+impl<T: Buffer> Buffer for BlockAllocation<T> {
+    type Backend = T::Backend;
+
+    fn size(&self) -> usize {
+        self.range().iter().len()
+    }
+}
+
+impl<T: GpuBuffer> GpuBuffer for BlockAllocation<T> {}
+
+impl<T: CpuBuffer> CpuBuffer for BlockAllocation<T> {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        unsafe { self.page().cpu_ptr().byte_add(self.range().start) }
     }
 }
 

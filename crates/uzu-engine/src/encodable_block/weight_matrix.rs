@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferCpuAccessible, BufferMut,
+        Backend,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
     },
@@ -81,8 +81,8 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
 }
 
 struct Quantized<B: Backend> {
-    scales: B::GlobalBuffer,
-    correction: QuantizedCorrection<B::GlobalBuffer>,
+    scales: B::GlobalGpuBuffer,
+    correction: QuantizedCorrection<B::GlobalGpuBuffer>,
     params: QuantParams,
     info: QuantizationInfo,
     signed_codes: bool,
@@ -90,18 +90,18 @@ struct Quantized<B: Backend> {
 }
 
 pub struct WeightMatrix<B: Backend> {
-    values: B::GlobalBuffer,
+    values: B::GlobalGpuBuffer,
     quantized: Option<Quantized<B>>,
 }
 
 impl<B: Backend> WeightMatrix<B> {
-    pub fn load(
+    pub async fn load(
         output_dim: u32,
         input_dim: u32,
         data_type: DataType,
         spec: AnyWeightMatrixSpec,
         required_layout: Layout,
-        tree: &ParameterTree<B>,
+        tree: &ParameterTree<'_, B>,
     ) -> Result<Self, WeightMatrixError<B>> {
         let ParsedWeightSpec {
             layout,
@@ -115,7 +115,7 @@ impl<B: Backend> WeightMatrix<B> {
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
         let Some(info) = quantization_info else {
-            let values = tree.read_buffer("weights", &[rows, columns], data_type)?;
+            let values = tree.read_buffer("weights", &[rows, columns], data_type).await?;
             return Ok(Self {
                 values,
                 quantized: None,
@@ -137,22 +137,22 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let groups = columns.div_ceil(group_size);
 
-        let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type)?;
+        let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type).await?;
         let params = QuantParams::new(params_layout, rows, groups);
-        let load_plane =
-            |name: &str, shape: [u32; 2], storage_type: DataType| -> Result<B::GlobalBuffer, WeightMatrixError<B>> {
-                Ok(tree.read_buffer(name, &shape, storage_type)?)
-            };
-        let scales = load_plane("scales", params.scale_shape(), data_type)?;
+        let load_plane = async |name: &str,
+                                shape: [u32; 2],
+                                storage_type: DataType|
+               -> Result<B::GlobalGpuBuffer, WeightMatrixError<B>> {
+            Ok(tree.read_buffer(name, &shape, storage_type).await?)
+        };
+        let scales = load_plane("scales", params.scale_shape(), data_type).await?;
         let correction = match info.method {
             QuantizationMethod::ScaleBias => {
-                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type)?)
+                QuantizedCorrection::Biases(load_plane("biases", params.scale_shape(), data_type).await?)
             },
-            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(load_plane(
-                "zero_points",
-                params.zero_point_shape(info.mode),
-                info.mode.storage_type(),
-            )?),
+            QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(
+                load_plane("zero_points", params.zero_point_shape(info.mode), info.mode.storage_type()).await?,
+            ),
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
 
@@ -169,7 +169,7 @@ impl<B: Backend> WeightMatrix<B> {
         })
     }
 
-    pub fn values(&self) -> &B::GlobalBuffer {
+    pub fn values(&self) -> &B::GlobalGpuBuffer {
         &self.values
     }
 
@@ -177,19 +177,19 @@ impl<B: Backend> WeightMatrix<B> {
         self.quantized.as_ref().map(|quantized| quantized.info)
     }
 
-    pub fn scales(&self) -> Option<&B::GlobalBuffer> {
+    pub fn scales(&self) -> Option<&B::GlobalGpuBuffer> {
         self.quantized.as_ref().map(|quantized| &quantized.scales)
     }
 
-    pub fn zero_points(&self) -> Option<&B::GlobalBuffer> {
+    pub fn zero_points(&self) -> Option<&B::GlobalGpuBuffer> {
         self.quantized.as_ref()?.correction.zero_points()
     }
 
-    pub fn biases(&self) -> Option<&B::GlobalBuffer> {
+    pub fn biases(&self) -> Option<&B::GlobalGpuBuffer> {
         self.quantized.as_ref()?.correction.biases()
     }
 
-    pub fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
+    pub fn matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
         let Some(quantized) = self.quantized.as_ref() else {
             return MatmulB::FullPrecision {
                 b: &self.values,
@@ -212,49 +212,15 @@ impl<B: Backend> WeightMatrix<B> {
 
     pub fn optimize_weights_layout<E>(
         &mut self,
-        optimize: impl FnOnce(&mut B::GlobalBuffer) -> Result<WeightsLayout<B>, E>,
+        optimize: impl FnOnce(&mut B::GlobalGpuBuffer) -> Result<(WeightsLayout<B>, bool), E>,
     ) -> Result<(), E> {
         let Some(quantized) =
             self.quantized.as_mut().filter(|quantized| quantized.weights_layout == WeightsLayout::<B>::default())
         else {
             return Ok(());
         };
-        quantized.weights_layout = optimize(&mut self.values)?;
+        (quantized.weights_layout, quantized.signed_codes) = optimize(&mut self.values)?;
         Ok(())
-    }
-
-    pub fn try_prepare_a8_storage(&mut self) -> bool {
-        let Some(quantized) = self.quantized.as_mut() else {
-            return false;
-        };
-        quantized.prepare_a8_storage(&mut self.values)
-    }
-
-    pub fn a8_signed_codes(&self) -> Option<bool> {
-        self.quantized.as_ref().map(|quantized| quantized.info.mode != QuantizationMode::U4)
-    }
-}
-
-impl<B: Backend> Quantized<B> {
-    fn prepare_a8_storage(
-        &mut self,
-        values: impl BufferMut<Buffer: BufferCpuAccessible>,
-    ) -> bool {
-        if self.params.layout() != QuantParamsLayout::GroupOutput {
-            return false;
-        }
-        if self.info.mode != QuantizationMode::U4 {
-            if !self.signed_codes
-                && let Some(sign_flip_mask) = self.info.mode.weight_codes_sign_flip_mask()
-            {
-                let broadcast_mask = u64::from(sign_flip_mask) * 0x0101_0101_0101_0101;
-                let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(values.as_slice_mut());
-                words.iter_mut().for_each(|word| *word ^= broadcast_mask);
-                prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= sign_flip_mask);
-            }
-            self.signed_codes = true;
-        }
-        true
     }
 }
 

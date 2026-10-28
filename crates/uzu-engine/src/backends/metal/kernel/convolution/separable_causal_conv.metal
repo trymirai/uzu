@@ -23,7 +23,7 @@ PUBLIC KERNEL(SeparableCausalConv)(
     const uint group_size SPECIALIZE,
     const bool has_bias SPECIALIZE,
     uint token AXIS(sequence_length, TOKENS_PER_THREADGROUP),
-    uint channel_block_index AXIS((model_dim + CHANNELS_PER_BLOCK - 1u) / CHANNELS_PER_BLOCK, CHANNEL_BLOCKS_PER_THREADGROUP)
+    uint channel_block_index AXIS(model_dim.div_ceil(CHANNELS_PER_BLOCK), CHANNEL_BLOCKS_PER_THREADGROUP)
 ){
   using ValueBlock = vec<T, CHANNELS_PER_BLOCK>;
   using AccumulatorBlock = vec<float, CHANNELS_PER_BLOCK>;

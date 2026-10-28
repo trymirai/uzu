@@ -3,7 +3,7 @@ use metal::MTLGPUFamily;
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding, CpuBuffer,
             kernel::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
@@ -245,11 +245,26 @@ impl MatmulKernel for MatmulMetalKernel {
     fn optimize_weights_layout(
         &self,
         a8_shape: &MatmulShape,
-        weights: &mut <Metal as Backend>::GlobalBuffer,
+        weights: &mut <Metal as Backend>::GlobalGpuBuffer,
         context: &MetalContext,
-    ) -> Result<GemmBLayout, MetalError> {
-        if self.select_activation_quantization(a8_shape, context).is_none() {
-            return Ok(GemmBLayout::RowMajor);
+    ) -> Result<(GemmBLayout, bool), MetalError> {
+        let prepared_shape = MatmulShape {
+            signed_codes: a8_shape.signed_codes || a8_shape.b_bits == Some(8),
+            ..*a8_shape
+        };
+        if self.select_activation_quantization(&prepared_shape, context).is_none() {
+            return Ok((GemmBLayout::RowMajor, a8_shape.signed_codes));
+        }
+        if !a8_shape.signed_codes && prepared_shape.signed_codes {
+            let bytes = unsafe {
+                std::slice::from_raw_parts_mut(
+                    weights.cpu_ptr().as_ptr().cast::<u8>(),
+                    crate::backends::common::Buffer::size(weights),
+                )
+            };
+            let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(bytes);
+            words.iter_mut().for_each(|word| *word ^= 0x8080_8080_8080_8080);
+            prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= 0x80);
         }
         GemmKernel::prepare_gemm_b_layout(
             weights,
@@ -258,7 +273,7 @@ impl MatmulKernel for MatmulMetalKernel {
             a8_shape.b_bits.expect("quantized weights"),
             context,
         )?;
-        Ok(GemmBLayout::MxuTiled)
+        Ok((GemmBLayout::MxuTiled, prepared_shape.signed_codes))
     }
 
     fn encode(

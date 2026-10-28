@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub(super) struct InputRht<B: Backend> {
-    rht_signs: B::GlobalBuffer,
+    rht_signs: B::GlobalGpuBuffer,
     rht: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,
 }

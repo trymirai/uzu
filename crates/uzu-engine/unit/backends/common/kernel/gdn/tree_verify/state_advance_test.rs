@@ -77,7 +77,7 @@ fn run<B: Backend, T: DataTypeRepr + Float>(accepted_indices: &[u32]) -> Vec<f32
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec(&committed_state)
+    buffer_to_vec(&*context, &committed_state)
 }
 
 #[uzu_test]

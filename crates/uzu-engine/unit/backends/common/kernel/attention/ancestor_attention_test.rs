@@ -28,16 +28,16 @@ const MAX_DEPTH: u32 = 8;
 struct Runner<B: Backend> {
     context: Arc<B::Context>,
     kernel: <B::Kernels as Kernels>::AncestorAttentionKernel,
-    prefix_kv: B::GlobalBuffer,
-    node_kv: B::GlobalBuffer,
-    current_qkv: B::GlobalBuffer,
-    cosines: B::GlobalBuffer,
-    sines: B::GlobalBuffer,
-    node_metadata: B::GlobalBuffer,
-    ancestor_indices: B::GlobalBuffer,
-    ancestor_counts: B::GlobalBuffer,
-    node_indices: B::GlobalBuffer,
-    output: B::GlobalBuffer,
+    prefix_kv: B::GlobalGpuBuffer,
+    node_kv: B::GlobalGpuBuffer,
+    current_qkv: B::GlobalGpuBuffer,
+    cosines: B::GlobalGpuBuffer,
+    sines: B::GlobalGpuBuffer,
+    node_metadata: B::GlobalGpuBuffer,
+    ancestor_indices: B::GlobalGpuBuffer,
+    ancestor_counts: B::GlobalGpuBuffer,
+    node_indices: B::GlobalGpuBuffer,
+    output: B::GlobalGpuBuffer,
     rows: u32,
     prefix_length: u32,
     ancestor_stride: u32,
@@ -139,7 +139,7 @@ impl<B: Backend> Runner<B> {
                 &mut command_buffer,
             );
         }
-        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time()
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time().unwrap()
     }
 }
 
@@ -147,13 +147,13 @@ impl<B: Backend> Runner<B> {
 fn ancestor_attention_matches_cpu() {
     let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
     cpu.encode(1);
-    let expected_output = buffer_to_vec::<Cpu, bf16>(&cpu.output);
-    let expected_node_kv = buffer_to_vec::<Cpu, bf16>(&cpu.node_kv);
+    let expected_output = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+    let expected_node_kv = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.node_kv);
 
     let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
     metal.encode(1);
-    let actual_output = buffer_to_vec::<Metal, bf16>(&metal.output);
-    let actual_node_kv = buffer_to_vec::<Metal, bf16>(&metal.node_kv);
+    let actual_output = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.output);
+    let actual_node_kv = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.node_kv);
 
     assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
     assert_eq!(actual_node_kv, expected_node_kv);

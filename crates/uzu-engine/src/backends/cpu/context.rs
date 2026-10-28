@@ -7,10 +7,10 @@ use std::{
 
 use crate::backends::{
     common::{
-        Backend, Context, DeviceCapabilities,
+        Backend, BufferRef, Context, CpuBuffer, DeviceCapabilities,
         allocator::{bump::BumpAllocator, pool::PoolAllocator},
     },
-    cpu::{Cpu, buffer::dense::CpuBuffer, command_buffer::CpuCommandBufferEncoding, error::CpuError},
+    cpu::{Cpu, buffer::dense::CpuDenseBuffer, command_buffer::CpuCommandBufferEncoding, error::CpuError},
 };
 
 pub struct CpuContext {
@@ -45,16 +45,23 @@ impl Context for CpuContext {
         _name: Option<&str>,
         allocation_pool: Option<Arc<<Cpu as Backend>::AllocationPool>>,
     ) -> Result<CpuCommandBufferEncoding, CpuError> {
-        let constant_allocator = BumpAllocator::new(256 * 1024);
+        let constant_allocator = BumpAllocator::new(256 * 1024, 1);
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
-        Ok(CpuCommandBufferEncoding::new(constant_allocator, allocation_pool, self.weak_self.upgrade().unwrap()))
+        Ok(CpuCommandBufferEncoding::new(self.weak_self.upgrade().unwrap(), constant_allocator, allocation_pool))
     }
 
-    fn create_buffer(
+    fn create_buffer_gpu(
         &self,
         size: usize,
-    ) -> Result<<Cpu as Backend>::GlobalBuffer, CpuError> {
-        Ok(CpuBuffer::new(size))
+    ) -> Result<<Cpu as Backend>::GlobalGpuBuffer, CpuError> {
+        Ok(CpuDenseBuffer::new(size))
+    }
+
+    fn create_buffer_cpu_gpu(
+        &self,
+        size: usize,
+    ) -> Result<<Cpu as Backend>::GlobalBufferCpuGpu, CpuError> {
+        Ok(CpuDenseBuffer::new(size))
     }
 
     fn create_sparse_buffer(
@@ -62,6 +69,17 @@ impl Context for CpuContext {
         _capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         Err(CpuError::NotSupported)
+    }
+
+    async fn copyout<T: bytemuck::AnyBitPattern>(
+        &self,
+        buffer: impl BufferRef<Backend = Cpu, Buffer = CpuDenseBuffer>,
+    ) -> Result<Vec<T>, CpuError> {
+        let (buffer, range) = buffer.parts();
+        let bytes = unsafe {
+            std::slice::from_raw_parts(buffer.cpu_ptr().as_ptr().cast::<u8>().add(range.start), range.iter().len())
+        };
+        Ok(bytemuck::cast_slice(bytes).to_vec())
     }
 
     fn create_allocation_pool(&self) -> Arc<<Cpu as Backend>::AllocationPool> {
@@ -80,6 +98,6 @@ impl Context for CpuContext {
     }
 
     fn device_capabilities(&self) -> DeviceCapabilities {
-        DeviceCapabilities::empty()
+        DeviceCapabilities::GLOBAL_BUFFERS_CPU_ACCESSIBLE
     }
 }

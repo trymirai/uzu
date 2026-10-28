@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use anyhow::{Context, Result, anyhow};
 use minijinja::{Environment, context, value::Serde};
@@ -89,7 +93,7 @@ impl SyncTask for ReadmeSyncTask {
             })
             .collect();
 
-        let mut binding_targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut binding_targets: BTreeSet<String> = BTreeSet::new();
         for language_config in platforms.languages.values() {
             if !language_config.bindings.is_empty() {
                 binding_targets.extend(language_config.targets.iter().cloned());
@@ -104,13 +108,14 @@ impl SyncTask for ReadmeSyncTask {
             })
             .collect();
 
-        let mut backends: Vec<String> = Vec::new();
-        for target_config in platforms.targets.values() {
-            let name = target_config.backend.name();
-            if !backends.contains(&name) {
-                backends.push(name);
-            }
-        }
+        let backends: Vec<String> = platforms
+            .targets
+            .values()
+            .map(|target| target.backend)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|backend| backend.name())
+            .collect();
 
         let rendered = template.render(context! {
             title => "uzu",

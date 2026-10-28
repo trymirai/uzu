@@ -55,7 +55,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec(&padded)
+    buffer_to_vec(&*context, &padded)
 }
 
 /// Build test input for ShortConvPack.

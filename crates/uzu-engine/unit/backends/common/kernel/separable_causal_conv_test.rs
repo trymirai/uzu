@@ -54,7 +54,7 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
         &input,
         &coefficient_deltas,
         &weights,
-        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         &mut output,
         SEQUENCE_LENGTH,
         COEFFICIENT_ROW_STRIDE,
@@ -62,7 +62,7 @@ fn run_kernel<B: Backend>() -> Vec<bf16> {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, bf16>(&output)
+    buffer_to_vec::<B, bf16>(&context, &output)
 }
 
 #[uzu_test]

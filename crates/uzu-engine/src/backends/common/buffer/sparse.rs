@@ -1,6 +1,6 @@
-use crate::backends::common::{Backend, Buffer};
+use crate::backends::common::{Backend, GpuBuffer};
 
-pub trait SparseBuffer: Buffer<Backend: Backend<SparseBuffer = Self>> {
+pub trait SparseBuffer: GpuBuffer<Backend: Backend<SparseBuffer = Self>> {
     fn map(
         &mut self,
         until: usize,

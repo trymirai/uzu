@@ -9,7 +9,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
         gpu_types::trie::TrieNode,
     },
     data_type::{DataType, DataTypeRepr},
@@ -65,8 +65,8 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
             &logits_buffer,
             seeds_buffer.as_ref(),
             bitmask_buffer.as_ref(),
-            None::<&B::GlobalBuffer>,   // TODO
-            None::<&B::ConstantBuffer>, // TODO
+            None::<&B::GlobalGpuBuffer>, // TODO
+            None::<&B::ConstantBuffer>,  // TODO
             &batch_topology,
             (0..batch_size).into(),
             method,
@@ -78,7 +78,7 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     drop(bitmask_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let sampled = sampled_buffer.copyout::<u32>();
+    let sampled = block_on(context.copyout::<u32>(&sampled_buffer)).unwrap();
 
     Ok(SamplingTestResults(sampled))
 }

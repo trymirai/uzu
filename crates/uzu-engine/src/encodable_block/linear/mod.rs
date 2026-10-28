@@ -102,7 +102,7 @@ impl<B: Backend> LinearInput<B> {
 }
 
 pub struct LinearInputPreparation<B: Backend> {
-    pub rht_signs: B::GlobalBuffer,
+    pub rht_signs: B::GlobalGpuBuffer,
     pub activation_quantization: Option<ActivationQuantization>,
 }
 
@@ -119,14 +119,14 @@ pub enum LinearBlockError<B: Backend> {
 }
 
 impl<B: Backend> dyn Linear<B> {
-    pub fn new_mixed_precision(
+    pub async fn new_mixed_precision(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
@@ -146,33 +146,37 @@ impl<B: Backend> dyn Linear<B> {
                     &weights_tree,
                     has_biases.then_some(parameter_tree),
                     context,
-                )?;
+                )
+                .await?;
                 Ok(Box::new(block))
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 incoherence_block_size: Some(block_size),
                 incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
                 ..
-            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
-                input_dimension,
-                output_dimension,
-                weights_data_type,
-                input_data_type,
-                output_data_type,
-                has_biases,
-                parameter_tree,
-                context,
-            )?)),
+            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(
+                RHTLinearWrapper::new(
+                    input_dimension,
+                    output_dimension,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    has_biases,
+                    parameter_tree,
+                    context,
+                )
+                .await?,
+            )),
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
 
-    pub fn new(
+    pub async fn new(
         input_dimension: u32,
         output_dimension: u32,
         data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         Self::new_mixed_precision(
@@ -185,18 +189,19 @@ impl<B: Backend> dyn Linear<B> {
             parameter_tree,
             context,
         )
+        .await
     }
 
-    pub fn new_with_input_rht_mixed_precision(
+    pub async fn new_with_input_rht_mixed_precision(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalGpuBuffer>), LinearBlockError<B>> {
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
             input_dimension,
             output_dimension,
@@ -207,7 +212,9 @@ impl<B: Backend> dyn Linear<B> {
             false,
             parameter_tree,
             context,
-        )? {
+        )
+        .await?
+        {
             return Ok((linear.0, linear.1.map(|preparation| preparation.rht_signs)));
         }
 
@@ -220,16 +227,17 @@ impl<B: Backend> dyn Linear<B> {
             has_biases,
             parameter_tree,
             context,
-        )?;
+        )
+        .await?;
         Ok((linear, None))
     }
 
-    pub fn new_for_fused_input(
+    pub async fn new_for_fused_input(
         input_dimension: u32,
         output_dimension: u32,
         data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
         if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
@@ -242,7 +250,9 @@ impl<B: Backend> dyn Linear<B> {
             true,
             parameter_tree,
             context,
-        )? {
+        )
+        .await?
+        {
             return Ok(linear);
         }
 
@@ -255,18 +265,19 @@ impl<B: Backend> dyn Linear<B> {
             has_biases,
             parameter_tree,
             context,
-        )?;
+        )
+        .await?;
         Ok((linear, None))
     }
 
-    pub fn new_with_input_rht(
+    pub async fn new_with_input_rht(
         input_dimension: u32,
         output_dimension: u32,
         data_type: DataType,
         has_biases: bool,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalBuffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalGpuBuffer>), LinearBlockError<B>> {
         Self::new_with_input_rht_mixed_precision(
             input_dimension,
             output_dimension,
@@ -277,5 +288,6 @@ impl<B: Backend> dyn Linear<B> {
             parameter_tree,
             context,
         )
+        .await
     }
 }

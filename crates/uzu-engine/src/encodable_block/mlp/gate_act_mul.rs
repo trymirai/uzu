@@ -14,7 +14,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     activation: AnyActivation,
     hidden_dim: u32,
     data_type: DataType,
-    hadamard_factors: Option<B::GlobalBuffer>,
+    hadamard_factors: Option<B::GlobalGpuBuffer>,
     activation_quantization: Option<ActivationQuantization>,
     quantized_kernel: Option<GatedActMul<B>>,
 }

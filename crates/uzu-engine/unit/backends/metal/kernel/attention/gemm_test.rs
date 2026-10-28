@@ -98,10 +98,10 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T>
     });
     let args = AttentionArguments {
         suffix_length: fixture.suffix_length as u32,
-        trie: None::<&B::GlobalBuffer>,
+        trie: None::<&B::GlobalGpuBuffer>,
         sinks: None,
         cache: KVCacheView::full(segment_prefix_length as u32),
-        gate: None::<&B::GlobalBuffer>,
+        gate: None::<&B::GlobalGpuBuffer>,
     };
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
@@ -114,7 +114,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(fixture: &Input<T>) -> Vec<T>
     drop(pooled_output);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    buffer_to_vec::<B, T>(&output_buffer)
+    buffer_to_vec::<B, T>(&context, &output_buffer)
 }
 
 fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
@@ -134,10 +134,10 @@ fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
             },
             AttentionArguments {
                 suffix_length: input.suffix_length as u32,
-                trie: None::<&<Metal as Backend>::GlobalBuffer>,
+                trie: None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 sinks: None,
                 cache,
-                gate: None::<&<Metal as Backend>::GlobalBuffer>,
+                gate: None::<&<Metal as Backend>::GlobalGpuBuffer>,
             },
             &mut command_buffer,
         )
@@ -147,7 +147,7 @@ fn get_gemm_output<T: DataTypeRepr + Float>(input: &Input<T>) -> Vec<T> {
     command_buffer.encode_copy(&pooled, &mut output);
     drop(pooled);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Metal, T>(&output)
+    buffer_to_vec::<Metal, T>(&context, &output)
 }
 
 fn test_internal<T: DataTypeRepr + Float + Debug + Display>(

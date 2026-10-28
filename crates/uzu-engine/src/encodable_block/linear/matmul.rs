@@ -41,40 +41,44 @@ pub enum LinearMatmulError<B: Backend> {
 pub struct LinearMatmul<B: Backend> {
     kernel: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     matrix: WeightMatrix<B>,
-    biases: Option<B::GlobalBuffer>,
-    output_hadamard_factors: Option<B::GlobalBuffer>,
+    biases: Option<B::GlobalGpuBuffer>,
+    output_hadamard_factors: Option<B::GlobalGpuBuffer>,
     input_dim: u32,
     output_dim: u32,
     output_data_type: DataType,
 }
 
-fn load_biases<B: Backend>(
+async fn load_biases<B: Backend>(
     weights_data_type: DataType,
     output_data_type: DataType,
     output_dim: u32,
-    parameter_tree: Option<&ParameterTree<B>>,
-) -> Result<Option<B::GlobalBuffer>, LinearMatmulError<B>> {
+    parameter_tree: Option<&ParameterTree<'_, B>>,
+) -> Result<Option<B::GlobalGpuBuffer>, LinearMatmulError<B>> {
     if parameter_tree.is_some() && weights_data_type != output_data_type {
         return Err(LinearMatmulError::UnsupportedConfiguration(format!(
             "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
         )));
     }
-    Ok(parameter_tree.map(|tree| tree.read_buffer("biases", &[output_dim], weights_data_type)).transpose()?)
+    Ok(if let Some(tree) = parameter_tree {
+        Some(tree.read_buffer("biases", &[output_dim], weights_data_type).await?)
+    } else {
+        None
+    })
 }
 
 impl<B: Backend> LinearMatmul<B> {
     /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
     /// compositions live in the wrappers, not here.
-    pub fn load(
+    pub async fn load(
         input_dim: u32,
         output_dim: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         spec: AnyWeightMatrixSpec,
-        output_hadamard_factors: Option<B::GlobalBuffer>,
-        weights_tree: &ParameterTree<B>,
-        bias_tree: Option<&ParameterTree<B>>,
+        output_hadamard_factors: Option<B::GlobalGpuBuffer>,
+        weights_tree: &ParameterTree<'_, B>,
+        bias_tree: Option<&ParameterTree<'_, B>>,
         context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
@@ -84,14 +88,15 @@ impl<B: Backend> LinearMatmul<B> {
         }
 
         let matrix =
-            WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)?;
+            WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)
+                .await?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
             ));
         }
 
-        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
+        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree).await?;
 
         let kernel =
             <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
@@ -108,22 +113,14 @@ impl<B: Backend> LinearMatmul<B> {
         })
     }
 
-    pub(super) fn prepare_a8_matmul(
+    pub(super) fn optimize_weights_layout(
         &mut self,
         context: &B::Context,
     ) -> Result<Option<ActivationQuantization>, B::Error> {
-        let mut candidate = self.matmul_shape(1, false);
-        let Some(signed_codes) = self.matrix.a8_signed_codes() else {
-            return Ok(None);
-        };
-        candidate.signed_codes = signed_codes;
+        let shape = self.matmul_shape(1, false);
         let kernel = self.kernel.lock();
-        let quantization = kernel.select_activation_quantization(&candidate, context);
-        if quantization.is_none() || !self.matrix.try_prepare_a8_storage() {
-            return Ok(None);
-        }
-        self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&candidate, weights, context))?;
-        Ok(quantization)
+        self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&shape, weights, context))?;
+        Ok(kernel.select_activation_quantization(&self.matmul_shape(1, false), context))
     }
 
     pub(super) fn encode_with_a(
@@ -183,7 +180,7 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
-    fn matmul_b(&self) -> MatmulB<&B::GlobalBuffer> {
+    fn matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
         self.matrix.matmul_b()
     }
 

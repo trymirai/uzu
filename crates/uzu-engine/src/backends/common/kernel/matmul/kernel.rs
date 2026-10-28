@@ -58,10 +58,10 @@ pub trait MatmulKernel: Sized + Send + Sync {
 
     fn optimize_weights_layout(
         &self,
-        _a8_shape: &MatmulShape,
-        _weights: &mut <Self::Backend as Backend>::GlobalBuffer,
+        a8_shape: &MatmulShape,
+        _weights: &mut <Self::Backend as Backend>::GlobalGpuBuffer,
         _context: &<Self::Backend as Backend>::Context,
-    ) -> Result<Self::WeightsLayout, <Self::Backend as Backend>::Error> {
-        Ok(Self::WeightsLayout::default())
+    ) -> Result<(Self::WeightsLayout, bool), <Self::Backend as Backend>::Error> {
+        Ok((Self::WeightsLayout::default(), a8_shape.signed_codes))
     }
 }

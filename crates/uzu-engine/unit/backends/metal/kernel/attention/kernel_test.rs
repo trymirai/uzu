@@ -94,14 +94,14 @@ fn run_attention_with_kernel<B: Backend>(
         trie: trie.as_ref(),
         sinks: sinks.as_ref(),
         cache,
-        gate: None::<&B::GlobalBuffer>,
+        gate: None::<&B::GlobalGpuBuffer>,
     };
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let pooled = kernel.encode(input, arguments, &mut command_buffer).expect("encode");
     let mut output = create_buffer::<B, bf16>(context, suffix_length * num_q_heads * head_dim);
     command_buffer.encode_copy(&pooled, &mut output);
     submit_command_buffer(command_buffer);
-    buffer_to_vec::<B, bf16>(&output)
+    buffer_to_vec::<B, bf16>(context, &output)
 }
 
 #[uzu_test]
@@ -237,7 +237,7 @@ fn check_attention_gate<B: Backend>(
     });
     let arguments = |gate| AttentionArguments {
         suffix_length: suffix_length as u32,
-        trie: None::<&B::GlobalBuffer>,
+        trie: None::<&B::GlobalGpuBuffer>,
         sinks: None,
         cache: KVCacheView::full(prefix_length as u32),
         gate,
@@ -259,8 +259,8 @@ fn check_attention_gate<B: Backend>(
     command_buffer.encode_copy(&expected, &mut expected_out);
     command_buffer.encode_copy(&fused, &mut fused_out);
     submit_command_buffer(command_buffer);
-    let expected = buffer_to_vec::<B, bf16>(&expected_out);
-    let fused = buffer_to_vec::<B, bf16>(&fused_out);
+    let expected = buffer_to_vec::<B, bf16>(context, &expected_out);
+    let fused = buffer_to_vec::<B, bf16>(context, &fused_out);
     assert_eq!(expected, fused, "gated attention differs at S{suffix_length} L{prefix_length}");
 }
 
@@ -367,15 +367,15 @@ fn int8_attention_matches_cpu() {
             let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
             prepare.encode(
                 &create_buffer_with_data::<Metal, bf16>(&metal, rows),
-                None::<&mut <Metal as Backend>::GlobalBuffer>,
+                None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
                 Some(&mut query_codes),
                 Some(&mut query_scales),
                 append_kv.then_some(kv.k_codes.as_mut()),
                 append_kv.then_some(kv.k_scales.as_mut()),
                 append_kv.then_some(kv.v_codes.as_mut()),
                 append_kv.then_some(kv.v_scales.as_mut()),
-                None::<&<Metal as Backend>::GlobalBuffer>,
-                None::<&<Metal as Backend>::GlobalBuffer>,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 q_heads as u32,
                 None,
                 prefix as u32,
@@ -397,14 +397,14 @@ fn int8_attention_matches_cpu() {
                 suffix_length: suffix as u32,
                 trie: trie.as_ref(),
                 cache: KVCacheView::full(prefix as u32),
-                gate: None::<&<Metal as Backend>::GlobalBuffer>,
+                gate: None::<&<Metal as Backend>::GlobalGpuBuffer>,
             };
             let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
             let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * head_dim);
             command_buffer.encode_copy(&pooled, &mut output);
             drop((pooled, trie));
             submit_command_buffer(command_buffer);
-            buffer_to_vec::<Metal, bf16>(&output)
+            buffer_to_vec::<Metal, bf16>(&metal, &output)
         };
         step(&rows[..prefix * stride], 0, None, true);
         let mut actual = step(&rows[prefix * stride..], prefix, nodes, true);

@@ -72,28 +72,28 @@ impl<B: Backend> Embedding<B> {
         self.model_dim
     }
 
-    pub fn new(
+    pub async fn new(
         vocab_size: u32,
         model_dim: u32,
         data_type: DataType,
         config: &AnyEmbeddingConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<B::GlobalBuffer>), EmbeddingError<B>> {
+    ) -> Result<(Self, Option<B::GlobalGpuBuffer>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context)?;
+                let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context).await?;
                 if table.as_matrix().is_none() {
                     return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
                 }
                 // The output norm fuses the readout's input rotation, so it needs its own copy of the factors.
-                let readout_input_hadamard_factors =
-                    if let AnyWeightMatrixSpec::HybridSpec(_) = embedding_tree.metadata("spec")? {
-                        Some(read_output_signs(&embedding_tree, model_dim)?)
-                    } else {
-                        None
-                    };
+                let spec = embedding_tree.metadata("spec")?;
+                let readout_input_hadamard_factors = if let AnyWeightMatrixSpec::HybridSpec(_) = spec {
+                    Some(read_output_signs(&embedding_tree, model_dim).await?)
+                } else {
+                    None
+                };
                 (
                     EmbeddingTying::Tied {
                         table,
@@ -105,7 +105,7 @@ impl<B: Backend> Embedding<B> {
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
                 let input_table =
-                    EmbeddingTable::load(vocab_size, model_dim, data_type, &input_embedding_tree, context)?;
+                    EmbeddingTable::load(vocab_size, model_dim, data_type, &input_embedding_tree, context).await?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 let output = UntiedReadout::load(
@@ -115,7 +115,8 @@ impl<B: Backend> Embedding<B> {
                     output_embedding_spec,
                     &output_embedding_tree,
                     context,
-                )?;
+                )
+                .await?;
                 (
                     EmbeddingTying::Untied {
                         input_table,

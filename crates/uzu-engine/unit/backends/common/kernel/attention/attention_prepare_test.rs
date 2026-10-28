@@ -46,8 +46,8 @@ fn run<B: Backend>() -> Output {
         &mut queries,
         Some(&mut keys),
         Some(&mut values),
-        None::<&B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         2,
         Some(1),
         2,
@@ -60,9 +60,9 @@ fn run<B: Backend>() -> Output {
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
     Output {
-        queries: buffer_to_vec(&queries),
-        keys: buffer_to_vec(&keys),
-        values: buffer_to_vec(&values),
+        queries: buffer_to_vec(&*context, &queries),
+        keys: buffer_to_vec(&*context, &keys),
+        values: buffer_to_vec(&*context, &values),
     }
 }
 
@@ -98,10 +98,10 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
     kernel.encode(
         &qg,
         &mut queries,
-        None::<&mut B::GlobalBuffer>,
-        None::<&mut B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         2,
         None,
         2,
@@ -113,7 +113,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
-    buffer_to_vec(&queries)
+    buffer_to_vec(&*context, &queries)
 }
 
 #[uzu_test]
@@ -166,15 +166,15 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &qkvg,
-        None::<&mut B::GlobalBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
         Some(&mut q_codes),
         Some(&mut q_scales),
         Some(&mut k_codes),
         Some(&mut k_scales),
         Some(&mut v_codes),
         Some(&mut v_scales),
-        None::<&B::GlobalBuffer>,
-        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         num_q_heads,
         None,
         33,
@@ -186,8 +186,8 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
     Int8Output {
-        codes: [&q_codes, &k_codes, &v_codes].map(buffer_to_vec::<B, u8>),
-        scales: [&q_scales, &k_scales, &v_scales].map(buffer_to_vec::<B, bf16>),
+        codes: [&q_codes, &k_codes, &v_codes].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
+        scales: [&q_scales, &k_scales, &v_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
     }
 }
 

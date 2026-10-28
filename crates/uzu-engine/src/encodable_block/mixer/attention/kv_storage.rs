@@ -2,7 +2,7 @@ use std::any::Any;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, CommandBuffer, Context, DeviceCapabilities, Kernels, SparseBuffer,
+        Backend, CommandBuffer, Context, DeviceCapabilities, GpuBuffer, Kernels, SparseBuffer,
         gpu_types::kv_cache_update::Copy,
         kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, KVFormat, kv_layout::Int8KVLayout},
     },
@@ -16,28 +16,28 @@ pub enum KVStorage<B: Backend> {
 }
 
 pub struct BF16KV<B: Backend> {
-    pub keys: Box<dyn Buffer<Backend = B>>,
-    pub values: Box<dyn Buffer<Backend = B>>,
+    pub keys: Box<dyn GpuBuffer<Backend = B>>,
+    pub values: Box<dyn GpuBuffer<Backend = B>>,
     pub element_dim: u32,
     pub data_type: DataType,
 }
 
 pub struct Int8KV<B: Backend> {
     pub layout: Int8KVLayout,
-    pub k_codes: Box<dyn Buffer<Backend = B>>,
-    pub v_codes: Box<dyn Buffer<Backend = B>>,
-    pub k_scales: Box<dyn Buffer<Backend = B>>,
-    pub v_scales: Box<dyn Buffer<Backend = B>>,
+    pub k_codes: Box<dyn GpuBuffer<Backend = B>>,
+    pub v_codes: Box<dyn GpuBuffer<Backend = B>>,
+    pub k_scales: Box<dyn GpuBuffer<Backend = B>>,
+    pub v_scales: Box<dyn GpuBuffer<Backend = B>>,
 }
 
 fn create_kv_buffer<B: Backend>(
     context: &B::Context,
     bytes: usize,
-) -> Result<Box<dyn Buffer<Backend = B>>, B::Error> {
+) -> Result<Box<dyn GpuBuffer<Backend = B>>, B::Error> {
     Ok(if context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
         Box::new(context.create_sparse_buffer(bytes)?)
     } else {
-        Box::new(context.create_buffer(bytes)?)
+        Box::new(context.create_buffer_gpu(bytes)?)
     })
 }
 
@@ -82,7 +82,7 @@ impl<B: Backend> KVStorage<B> {
         &mut self,
         elements_required: u32,
     ) -> Result<(), B::Error> {
-        let map = |buffer: &mut dyn Buffer<Backend = B>, bytes: usize| -> Result<(), B::Error> {
+        let map = |buffer: &mut dyn GpuBuffer<Backend = B>, bytes: usize| -> Result<(), B::Error> {
             match (buffer as &mut dyn Any).downcast_mut::<B::SparseBuffer>() {
                 Some(sparse) => sparse.map(bytes),
                 None => Ok(()),

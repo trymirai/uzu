@@ -53,7 +53,7 @@ pub struct MetalCommandBufferEncoding {
     pub(super) argument_table: Retained<ProtocolObject<dyn MTL4ArgumentTable>>,
     reads: RangeSet<u64>,
     writes: RangeSet<u64>,
-    constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalBuffer>>,
+    constant_allocator: Option<BumpAllocator<<Metal as Backend>::GlobalGpuBuffer>>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
     timestamps: Option<MetalTimestampRecorder>,
@@ -96,7 +96,7 @@ impl MetalCommandBufferEncoding {
             .map_err(|error| MetalError::CannotCreateArgumentTable(error.to_string()))?;
         compute_encoder.set_argument_table(Some(&argument_table));
 
-        let constant_allocator = BumpAllocator::new(256 * 1024);
+        let constant_allocator = BumpAllocator::new(256 * 1024, 1);
 
         let allocation_pool = allocation_pool.unwrap_or_else(|| context.create_allocation_pool());
 
@@ -152,14 +152,15 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         &mut self,
         size: usize,
     ) -> Result<<Metal as Backend>::ConstantBuffer, MetalError> {
-        self.constant_allocator.as_mut().unwrap().allocate(size, |size| self.context.create_buffer(size))
+        let alignment = usize::min(size, 64).next_power_of_two();
+        self.constant_allocator.as_mut().unwrap().allocate(size, alignment, |size| self.context.create_buffer_gpu(size))
     }
 
     fn allocate_scratch(
         &mut self,
         size: usize,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        self.allocation_pool.allocate(size, |size| self.context.create_buffer(size))
+        self.allocation_pool.allocate(size, |size| self.context.create_buffer_gpu(size))
     }
 
     fn encode_copy(
@@ -286,7 +287,7 @@ impl Drop for MetalDebugGroupSpan<'_> {
 pub struct MetalCommandBufferExecutable {
     command_allocator: Retained<ProtocolObject<dyn MTL4CommandAllocator>>,
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
-    constant_allocator: BumpAllocator<<Metal as Backend>::GlobalBuffer>,
+    constant_allocator: BumpAllocator<<Metal as Backend>::GlobalGpuBuffer>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
     timestamps: Option<MetalTimestampRecorder>,
@@ -364,8 +365,8 @@ pub struct MetalCommandBufferCompleted {
 impl CommandBufferCompleted for MetalCommandBufferCompleted {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn gpu_execution_time(&self) -> Duration {
-        self.gpu_execution_time
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        Some(self.gpu_execution_time)
     }
 
     fn timestamps(&self) -> &[TimestampSpan] {

@@ -102,7 +102,7 @@ fn run_gemv<B: Backend, T: DataTypeRepr + Float>(
         )
         .expect("encode failed");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, T>(&d)
+    buffer_to_vec::<B, T>(context, &d)
 }
 
 fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
@@ -172,7 +172,7 @@ fn group_major_gemv_bf16(
         &context,
         &buffers.x,
         buffers.matmul_b(&input),
-        None::<&<Metal as Backend>::GlobalBuffer>,
+        None::<&<Metal as Backend>::GlobalGpuBuffer>,
         1,
         input.n as usize,
         input.k as usize,
@@ -256,7 +256,7 @@ fn quant_gather_case(
         let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
         let b = || buffers.matmul_b(&input);
         (
-            run_gemv::<B, bf16>(&context, &buffers.x, b(), None::<&<B as Backend>::GlobalBuffer>, m, vocab, k, None),
+            run_gemv::<B, bf16>(&context, &buffers.x, b(), None::<&<B as Backend>::GlobalGpuBuffer>, m, vocab, k, None),
             run_gemv::<B, bf16>(&context, &buffers.x, b(), Some(&ids_alloc), m, ids_per_row, k, None),
         )
     });

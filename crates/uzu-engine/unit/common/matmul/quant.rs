@@ -7,8 +7,7 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context,
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
                 ActivationQuantization, ActivationTransform, Kernels,
@@ -258,9 +257,9 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("CPU activation quantization");
 
         self.prepared_a = Some(PreparedInt8A {
-            values: buffer_to_vec(&values),
-            scales: buffer_to_vec(&scales),
-            group_sums: group_sums.map_or_else(Vec::new, |sums| buffer_to_vec(&sums)),
+            values: buffer_to_vec(&*context, &values),
+            scales: buffer_to_vec(&*context, &scales),
+            group_sums: group_sums.map_or_else(Vec::new, |sums| buffer_to_vec(&*context, &sums)),
             quantization,
         });
         self
@@ -285,15 +284,15 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
 }
 
 pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
-    pub w: B::GlobalBuffer,
-    pub scales: B::GlobalBuffer,
-    pub zp: Option<B::GlobalBuffer>,
-    pub bias: Option<B::GlobalBuffer>,
-    pub x: B::GlobalBuffer,
-    pub prepared_a: Option<B::GlobalBuffer>,
-    pub prepared_a_scales: Option<B::GlobalBuffer>,
-    pub prepared_a_group_sums: Option<B::GlobalBuffer>,
-    pub y: B::GlobalBuffer,
+    pub w: B::GlobalGpuBuffer,
+    pub scales: B::GlobalGpuBuffer,
+    pub zp: Option<B::GlobalGpuBuffer>,
+    pub bias: Option<B::GlobalGpuBuffer>,
+    pub x: B::GlobalGpuBuffer,
+    pub prepared_a: Option<B::GlobalGpuBuffer>,
+    pub prepared_a_scales: Option<B::GlobalGpuBuffer>,
+    pub prepared_a_group_sums: Option<B::GlobalGpuBuffer>,
+    pub y: B::GlobalGpuBuffer,
     pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -308,17 +307,24 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         let params = QuantParams::new(params_layout, input.n, groups);
         let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
         let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
-        let mut buffers = Self {
+        let mut scales = pad(&input.scales, metadata_elements);
+        let mut zp = input.zero_points.as_ref().map(|values| pad(values, zero_point_bytes));
+        let mut bias = input.biases.as_ref().map(|values| pad(values, metadata_elements));
+        if params_layout == QuantParamsLayout::GroupOutput {
+            let value_bits = size_of::<T>() as u32 * u8::BITS;
+            transpose_metadata(bytemuck::cast_slice_mut(&mut scales), input.n, groups, value_bits);
+            if let Some(bias) = &mut bias {
+                transpose_metadata(bytemuck::cast_slice_mut(bias), input.n, groups, value_bits);
+            }
+            if let Some(zp) = &mut zp {
+                transpose_metadata(zp, input.n, groups, DataType::from(input.mode).size_in_bits() as u32);
+            }
+        }
+        Self {
             w: create_buffer_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: create_buffer_with_data::<B, T>(context, &pad(&input.scales, metadata_elements)),
-            zp: input
-                .zero_points
-                .as_ref()
-                .map(|zero_points| create_buffer_with_data::<B, u8>(context, &pad(zero_points, zero_point_bytes))),
-            bias: input
-                .biases
-                .as_ref()
-                .map(|biases| create_buffer_with_data::<B, T>(context, &pad(biases, metadata_elements))),
+            scales: create_buffer_with_data::<B, T>(context, &scales),
+            zp: zp.as_ref().map(|values| create_buffer_with_data::<B, u8>(context, values)),
+            bias: bias.as_ref().map(|values| create_buffer_with_data::<B, T>(context, values)),
             x: create_buffer_with_data::<B, T>(context, &input.x),
             prepared_a: input
                 .prepared_a
@@ -336,17 +342,13 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
             weights_layout: Default::default(),
             _t: std::marker::PhantomData,
-        };
-        if params_layout == QuantParamsLayout::GroupOutput {
-            buffers.transpose_quant_params(input);
         }
-        buffers
     }
 
     pub fn matmul_b<'a>(
         &'a self,
         input: &QuantInput<T>,
-    ) -> MatmulB<&'a B::GlobalBuffer> {
+    ) -> MatmulB<&'a B::GlobalGpuBuffer> {
         quant_b_variant(
             &self.w,
             &self.scales,
@@ -356,36 +358,6 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
             self.weights_layout,
             input,
         )
-    }
-
-    fn transpose_quant_params(
-        &mut self,
-        input: &QuantInput<T>,
-    ) {
-        let columns = input.n;
-        let groups = input.k.div_ceil(input.group_size);
-        let value_bits = size_of::<T>() as u32 * u8::BITS;
-        transpose_metadata(self.scales.as_slice_mut(), columns, groups, value_bits);
-        match input.quant_method {
-            QuantizationMethod::ScaleBias => {
-                transpose_metadata(
-                    self.bias.as_mut().expect("bias buffer").as_slice_mut(),
-                    columns,
-                    groups,
-                    value_bits,
-                );
-            },
-            QuantizationMethod::ScaleZeroPoint => {
-                let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
-                transpose_metadata(
-                    self.zp.as_mut().expect("zp buffer").as_slice_mut(),
-                    columns,
-                    groups,
-                    correction_bits,
-                );
-            },
-            QuantizationMethod::ScaleSymmetric => {},
-        }
     }
 }
 
@@ -419,7 +391,14 @@ fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
 pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
-) -> MatmulArguments<'a, B, &'a B::GlobalBuffer, &'a B::GlobalBuffer, &'a mut B::GlobalBuffer, &'a B::GlobalBuffer> {
+) -> MatmulArguments<
+    'a,
+    B,
+    &'a B::GlobalGpuBuffer,
+    &'a B::GlobalGpuBuffer,
+    &'a mut B::GlobalGpuBuffer,
+    &'a B::GlobalGpuBuffer,
+> {
     let QuantBuffers {
         w,
         scales,
@@ -475,5 +454,5 @@ pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Cpu, T>(&buffers.y)
+    buffer_to_vec::<Cpu, T>(&context, &buffers.y)
 }

@@ -1,4 +1,4 @@
-#[cfg(backend = "cpu")]
+#[cfg(any(backend = "webgpu", backend = "cpu"))]
 use crate::backends::common::kernel::Unsupported;
 use crate::{
     backends::common::{Backend, CommandBuffer, Kernels},
@@ -7,9 +7,9 @@ use crate::{
 
 pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub in_projected: &'a B::ScratchBuffer,
-    pub a_log: &'a B::GlobalBuffer,
-    pub dt_bias: &'a B::GlobalBuffer,
-    pub ssm_state: &'a mut B::GlobalBuffer,
+    pub a_log: &'a B::GlobalGpuBuffer,
+    pub dt_bias: &'a B::GlobalGpuBuffer,
+    pub ssm_state: &'a mut B::GlobalGpuBuffer,
     pub delta_output: &'a mut B::ScratchBuffer,
     pub num_heads: u32,
     pub num_groups: u32,
@@ -41,7 +41,7 @@ pub trait DeltaNetChunkedPrefill: Sized + Send + Sync {
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }
 
-#[cfg(backend = "cpu")]
+#[cfg(any(backend = "webgpu", backend = "cpu"))]
 impl<B: Backend<Kernels: Kernels<DeltaNetChunkedPrefill = Unsupported<B>>>> DeltaNetChunkedPrefill for Unsupported<B> {
     type Backend = B;
 

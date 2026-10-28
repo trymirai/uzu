@@ -101,8 +101,13 @@ fn run<B: Backend>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    assert_eq_float(&base_state, &buffer_to_vec(&base_state_buffer), 0.0, &format!("base state {shape} T={tree_size}"));
-    (buffer_to_vec(&output), buffer_to_vec(&suffix_state))
+    assert_eq_float(
+        &base_state,
+        &buffer_to_vec(&*context, &base_state_buffer),
+        0.0,
+        &format!("base state {shape} T={tree_size}"),
+    );
+    (buffer_to_vec(&*context, &output), buffer_to_vec(&*context, &suffix_state))
 }
 
 #[uzu_test]
@@ -129,9 +134,9 @@ fn test_conv_tree_scan() {
 
 #[cfg(backend = "metal")]
 struct Buffers {
-    input: <Metal as Backend>::GlobalBuffer,
-    output: <Metal as Backend>::GlobalBuffer,
-    suffix_state: <Metal as Backend>::GlobalBuffer,
+    input: <Metal as Backend>::GlobalGpuBuffer,
+    output: <Metal as Backend>::GlobalGpuBuffer,
+    suffix_state: <Metal as Backend>::GlobalGpuBuffer,
 }
 
 #[cfg(backend = "metal")]

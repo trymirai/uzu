@@ -1,6 +1,8 @@
 use std::{path::Path, sync::Arc};
 
-use crate::backends::common::{Backend, CommandBuffer, DeviceCapabilities};
+use bytemuck::AnyBitPattern;
+
+use crate::backends::common::{Backend, BufferRef, CommandBuffer, DeviceCapabilities};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -15,15 +17,25 @@ pub trait Context: Sized + Send + Sync {
         allocation_pool: Option<Arc<<Self::Backend as Backend>::AllocationPool>>,
     ) -> Result<<<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding, <Self::Backend as Backend>::Error>;
 
-    fn create_buffer(
+    fn create_buffer_gpu(
         &self,
         size: usize,
-    ) -> Result<<Self::Backend as Backend>::GlobalBuffer, <Self::Backend as Backend>::Error>;
+    ) -> Result<<Self::Backend as Backend>::GlobalGpuBuffer, <Self::Backend as Backend>::Error>;
+
+    fn create_buffer_cpu_gpu(
+        &self,
+        size: usize,
+    ) -> Result<<Self::Backend as Backend>::GlobalBufferCpuGpu, <Self::Backend as Backend>::Error>;
 
     fn create_sparse_buffer(
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
+
+    fn copyout<T: AnyBitPattern>(
+        &self,
+        buffer: impl BufferRef<Backend = Self::Backend, Buffer = <Self::Backend as Backend>::GlobalGpuBuffer>,
+    ) -> impl Future<Output = Result<Vec<T>, <Self::Backend as Backend>::Error>> + Send;
 
     fn create_allocation_pool(&self) -> Arc<<Self::Backend as Backend>::AllocationPool>;
 

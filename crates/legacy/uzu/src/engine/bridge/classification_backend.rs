@@ -30,7 +30,7 @@ impl<B: Backend> UzuClassificationBackendInstance<B> {
     pub async fn new(model_path: String) -> Result<Self, BackendError> {
         let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
-        let model = engine.load_classifier_model(&model_path).map_err(|err| err.to_string())?;
+        let model = engine.load_classifier_model(&model_path).await.map_err(|err| err.to_string())?;
         Ok(Self {
             model: Arc::new(model),
         })

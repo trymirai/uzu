@@ -51,13 +51,16 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     if !in_place {
-        assert_eq!(buffer_to_vec::<B, T>(&input), data);
+        assert_eq!(buffer_to_vec::<B, T>(&context, &input), data);
     }
-    buffer_to_vec(if in_place {
-        &input
-    } else {
-        &output
-    })
+    buffer_to_vec(
+        &*context,
+        if in_place {
+            &input
+        } else {
+            &output
+        },
+    )
 }
 
 fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
@@ -139,7 +142,7 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
             .expect("fused transform")
             .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-        assert_eq!(buffer_to_vec::<B, bf16>(&fused), expected);
+        assert_eq!(buffer_to_vec::<B, bf16>(&context, &fused), expected);
     });
 }
 
@@ -206,7 +209,11 @@ mod quantize {
         );
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-        (buffer_to_vec(&values), buffer_to_vec(&scales), group_sums.as_ref().map(buffer_to_vec))
+        (
+            buffer_to_vec(&*context, &values),
+            buffer_to_vec(&*context, &scales),
+            group_sums.as_ref().map(|buffer| buffer_to_vec(&*context, buffer)),
+        )
     }
 
     fn check_quantize(

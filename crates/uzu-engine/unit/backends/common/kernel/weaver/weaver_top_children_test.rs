@@ -100,7 +100,7 @@ fn run_top_children<B: Backend>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec(&frontier)
+    buffer_to_vec(&*context, &frontier)
 }
 
 fn top_children<B: Backend>(prune_noise_scale: Option<f32>) -> (Vec<u32>, Vec<f32>, Option<Vec<f32>>) {

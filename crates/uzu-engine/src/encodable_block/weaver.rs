@@ -47,8 +47,8 @@ impl WeaverTreeShape {
 }
 
 pub struct EncodedWeaverTree<B: Backend> {
-    packed_tree: B::GlobalBuffer,
-    frontier: B::GlobalBuffer,
+    packed_tree: B::GlobalGpuBuffer,
+    frontier: B::GlobalGpuBuffer,
 }
 
 pub struct ProposalNode {
@@ -59,9 +59,15 @@ pub struct ProposalNode {
 }
 
 impl<B: Backend> EncodedWeaverTree<B> {
-    pub fn read_nodes(self) -> Vec<ProposalNode> {
-        let packed_tree = &self.packed_tree.copyout::<u32>();
-        let frontier = &self.frontier.copyout::<u32>();
+    pub async fn read_nodes(
+        self,
+        context: &B::Context,
+    ) -> Result<Vec<ProposalNode>, B::Error> {
+        let (packed_tree, frontier) = futures::future::try_join(
+            context.copyout::<u32>(&self.packed_tree),
+            context.copyout::<u32>(&self.frontier),
+        )
+        .await?;
 
         let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
         let frontier_capacity = frontier.len() / FrontierIdx::COUNT;
@@ -108,7 +114,7 @@ impl<B: Backend> EncodedWeaverTree<B> {
                 child_indices: Vec::new(),
             });
         }
-        nodes
+        Ok(nodes)
     }
 }
 
@@ -179,10 +185,10 @@ pub enum WeaverEncodeError<B: Backend> {
 }
 
 impl<B: Backend> Weaver<B> {
-    pub fn new(
+    pub async fn new(
         vocab_size: u32,
         config: &WeaverConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, WeaverNewError<B>> {
         if config.num_layers == 0 {
@@ -216,7 +222,8 @@ impl<B: Backend> Weaver<B> {
             &config.norm_config,
             &parameter_tree.subtree("embedding_norm"),
             context,
-        )?;
+        )
+        .await?;
         let hidden_state_norm = Normalization::new(
             config.target_model_dim,
             DATA_TYPE,
@@ -226,7 +233,8 @@ impl<B: Backend> Weaver<B> {
             &config.norm_config,
             &parameter_tree.subtree("hidden_state_norm"),
             context,
-        )?;
+        )
+        .await?;
         let token_embedding_projection = <dyn Linear<B>>::new(
             config.target_embedding_dim,
             config.model_dim,
@@ -234,11 +242,15 @@ impl<B: Backend> Weaver<B> {
             true,
             &parameter_tree.subtree("embedding_projection"),
             context,
-        )?;
+        )
+        .await?;
         let layer_parameters = parameter_tree.subtree("blocks");
-        let layers = (0..config.num_layers)
-            .map(|index| WeaverLayer::new(index > 0, config, &layer_parameters.subtree(&index.to_string()), context))
-            .collect::<Result<Box<[_]>, WeaverNewError<B>>>()?;
+        let mut layers = Vec::with_capacity(config.num_layers as usize);
+        for index in 0..config.num_layers {
+            layers.push(
+                WeaverLayer::new(index > 0, config, &layer_parameters.subtree(&index.to_string()), context).await?,
+            );
+        }
         let readout_norm = Normalization::new(
             config.model_dim,
             DATA_TYPE,
@@ -248,7 +260,8 @@ impl<B: Backend> Weaver<B> {
             &config.norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
-        )?;
+        )
+        .await?;
         let hidden_state_projection = <dyn Linear<B>>::new(
             config.target_model_dim,
             config.model_dim,
@@ -256,7 +269,8 @@ impl<B: Backend> Weaver<B> {
             true,
             &parameter_tree.subtree("hidden_state_projection"),
             context,
-        )?;
+        )
+        .await?;
         let readout_query_projection = <dyn Linear<B>>::new(
             config.model_dim,
             config.target_model_dim,
@@ -264,7 +278,8 @@ impl<B: Backend> Weaver<B> {
             false,
             &parameter_tree.subtree("query_projection"),
             context,
-        )?;
+        )
+        .await?;
         let top_k =
             <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
         let top_children = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 256, Children, false)
@@ -281,7 +296,7 @@ impl<B: Backend> Weaver<B> {
             token_embedding_projection,
             hidden_state_norm,
             hidden_state_projection,
-            layers,
+            layers: layers.into_boxed_slice(),
             readout_norm,
             readout_query_projection,
             rope_config: config.rope_config.clone(),
@@ -706,10 +721,10 @@ impl<B: Backend> Weaver<B> {
         };
 
         let mut packed_tree_readback =
-            command_buffer.context().create_buffer(packed_tree.size()).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.context().create_buffer_gpu(packed_tree.size()).map_err(WeaverEncodeError::Backend)?;
         command_buffer.encode_copy(&packed_tree, &mut packed_tree_readback);
         let mut frontier_readback =
-            command_buffer.context().create_buffer(frontier.size()).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.context().create_buffer_gpu(frontier.size()).map_err(WeaverEncodeError::Backend)?;
         command_buffer.encode_copy(&frontier, &mut frontier_readback);
 
         Ok(EncodedWeaverTree {

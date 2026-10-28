@@ -55,8 +55,8 @@ fn run_conv_update<B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let out = buffer_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
-    let new_state = buffer_to_vec::<B, f32>(&state_buffer);
+    let out = buffer_prefix_to_vec::<B, f32>(&context, &in_out, conv_dim as usize);
+    let new_state = buffer_to_vec::<B, f32>(&context, &state_buffer);
     (out, new_state)
 }
 
@@ -103,8 +103,9 @@ fn run_delta_net_update<B: Backend, T: DataTypeRepr>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let out = buffer_to_vec::<B, T>(&out).into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
-    let new_state = buffer_to_vec::<B, f32>(&state_buffer);
+    let out =
+        buffer_to_vec::<B, T>(&context, &out).into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
+    let new_state = buffer_to_vec::<B, f32>(&context, &state_buffer);
     (out, new_state)
 }
 
@@ -234,7 +235,7 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let in_proj_result: Vec<bf16> = buffer_to_vec(&in_proj_array);
+    let in_proj_result: Vec<bf16> = buffer_to_vec(&*context, &in_proj_array);
     let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
     let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
@@ -246,7 +247,7 @@ fn test_delta_net_conv_scan_impl<B: Backend>(
             in_proj_f32[t * total_proj_dim + conv_dim..(t + 1) * total_proj_dim],
         );
     }
-    let scan_state: Vec<f32> = buffer_to_vec(&state_array);
+    let scan_state: Vec<f32> = buffer_to_vec(&*context, &state_array);
 
     assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
     assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
@@ -386,7 +387,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: DataTypeRepr>(
         &dt_bias_array,
         &mut q_norm_array,
         &mut k_norm_array,
-        None::<&mut B::GlobalBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
         &mut beta_array,
         &mut decay_array,
         num_v_heads as u32,
@@ -428,9 +429,9 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: DataTypeRepr>(
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let out: Vec<T> = buffer_to_vec(&out_array);
+    let out: Vec<T> = buffer_to_vec(&*context, &out_array);
     let out = out.into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
-    let state = buffer_to_vec(&state_array);
+    let state = buffer_to_vec(&*context, &state_array);
     (out, state)
 }
 
@@ -576,11 +577,11 @@ fn test_delta_net_prefill_prep() {
     );
     block_on(cpu_enc.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let ref_q = buffer_to_vec::<Cpu, bf16>(&cpu_q).into_iter().map(f32::from).collect::<Vec<_>>();
-    let ref_k = buffer_to_vec::<Cpu, bf16>(&cpu_k).into_iter().map(f32::from).collect::<Vec<_>>();
-    let ref_v: Vec<bf16> = buffer_to_vec(&cpu_v);
-    let ref_beta: Vec<f32> = buffer_to_vec(&cpu_beta);
-    let ref_decay: Vec<f32> = buffer_to_vec(&cpu_decay);
+    let ref_q = buffer_to_vec::<Cpu, bf16>(&cpu_ctx, &cpu_q).into_iter().map(f32::from).collect::<Vec<_>>();
+    let ref_k = buffer_to_vec::<Cpu, bf16>(&cpu_ctx, &cpu_k).into_iter().map(f32::from).collect::<Vec<_>>();
+    let ref_v: Vec<bf16> = buffer_to_vec(&*cpu_ctx, &cpu_v);
+    let ref_beta: Vec<f32> = buffer_to_vec(&*cpu_ctx, &cpu_beta);
+    let ref_decay: Vec<f32> = buffer_to_vec(&*cpu_ctx, &cpu_decay);
     let expected_v = in_proj
         .chunks_exact(total_proj_dim)
         .flat_map(|row| row[2 * key_dim..2 * key_dim + value_dim].iter().copied())
@@ -628,11 +629,11 @@ fn test_delta_net_prefill_prep() {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let gpu_q = buffer_to_vec::<Metal, bf16>(&q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
-    let gpu_k = buffer_to_vec::<Metal, bf16>(&k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
-    let gpu_v: Vec<bf16> = buffer_to_vec(&compact_v_array);
-    let gpu_beta: Vec<f32> = buffer_to_vec(&beta_array);
-    let gpu_decay: Vec<f32> = buffer_to_vec(&decay_array);
+    let gpu_q = buffer_to_vec::<Metal, bf16>(&context, &q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+    let gpu_k = buffer_to_vec::<Metal, bf16>(&context, &k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+    let gpu_v: Vec<bf16> = buffer_to_vec(&*context, &compact_v_array);
+    let gpu_beta: Vec<f32> = buffer_to_vec(&*context, &beta_array);
+    let gpu_decay: Vec<f32> = buffer_to_vec(&*context, &decay_array);
 
     assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
     assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");
@@ -710,7 +711,7 @@ fn bench_delta_net_prefill() {
             &dt_bias_array,
             &mut q_norm_array,
             &mut k_norm_array,
-            None::<&mut <Metal as Backend>::GlobalBuffer>,
+            None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
             &mut beta_array,
             &mut decay_array,
             num_v_heads as u32,
@@ -736,7 +737,7 @@ fn bench_delta_net_prefill() {
             &dt_bias_array,
             &mut q_norm_array,
             &mut k_norm_array,
-            None::<&mut <Metal as Backend>::GlobalBuffer>,
+            None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
             &mut beta_array,
             &mut decay_array,
             num_v_heads as u32,

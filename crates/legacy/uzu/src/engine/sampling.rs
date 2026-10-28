@@ -3,7 +3,7 @@ use std::path::Path;
 use shoji::types::{basic::SamplingMethod, model::Model};
 use uzu_engine::engine::{language_model::stream::SamplingMethod as UzuSamplingMethod, resolve_model_sampling_method};
 
-use super::{Engine, EngineError};
+use crate::engine::{Engine, EngineError};
 
 impl Engine {
     /// Read a local model's sampling defaults without loading its weights or creating a session.
@@ -14,16 +14,12 @@ impl Engine {
         let Some(path) = self.model_path(model).await else {
             return Ok(None);
         };
-        tokio::task::spawn_blocking(move || read_sampling_defaults(Path::new(&path))).await.map_err(|error| {
-            EngineError::TokioError {
-                message: error.to_string(),
-            }
-        })?
+        read_sampling_defaults(Path::new(&path)).await
     }
 }
 
-fn read_sampling_defaults(model_path: &Path) -> Result<Option<SamplingMethod>, EngineError> {
-    resolve_model_sampling_method(model_path).map(|method| method.map(sampling_method)).map_err(|error| {
+async fn read_sampling_defaults(model_path: &Path) -> Result<Option<SamplingMethod>, EngineError> {
+    resolve_model_sampling_method(model_path).await.map(|method| method.map(sampling_method)).map_err(|error| {
         EngineError::ModelConfig {
             message: error.to_string(),
         }
@@ -90,7 +86,7 @@ mod tests {
         });
         std::fs::write(directory.path().join("config.json"), serde_json::to_vec(&config).unwrap()).unwrap();
         assert_eq!(
-            read_sampling_defaults(directory.path()).unwrap(),
+            futures::executor::block_on(read_sampling_defaults(directory.path())).unwrap(),
             Some(SamplingMethod::Stochastic {
                 temperature: None,
                 top_k: Some(20),

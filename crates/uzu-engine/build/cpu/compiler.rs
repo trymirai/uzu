@@ -44,7 +44,7 @@ impl FunctionArgument {
             name: ArgumentName::from(self.name.to_string()),
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
-                FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
+                FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(*access),
                 FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
                     format!("&[{}]", canonicalize_type_text(ty, gpu_type_paths)).into_boxed_str(),
                 ),

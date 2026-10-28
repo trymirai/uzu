@@ -21,7 +21,7 @@ pub enum QKVNormError<B: Backend> {
 
 struct Head<B: Backend> {
     kernel: <B::Kernels as Kernels>::QKVNormKernel,
-    scales: Option<B::GlobalBuffer>,
+    scales: Option<B::GlobalGpuBuffer>,
     config: NormalizationConfig,
 }
 
@@ -36,7 +36,7 @@ pub struct QKVNorm<B: Backend> {
 }
 
 impl<B: Backend> QKVNorm<B> {
-    pub fn new(
+    pub async fn new(
         num_q_heads: u32,
         num_kv_heads: Option<u32>,
         projection_row_stride: u32,
@@ -45,22 +45,23 @@ impl<B: Backend> QKVNorm<B> {
         query_config: Option<NormalizationConfig>,
         key_config: Option<NormalizationConfig>,
         value_config: Option<NormalizationConfig>,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, QKVNormError<B>> {
-        let build_head = |config: Option<NormalizationConfig>, parameter_name: Option<&str>| {
+        let build_head = async |config: Option<NormalizationConfig>, parameter_name: Option<&str>| {
             let Some(config) = config else {
                 return Ok::<_, QKVNormError<B>>(None);
             };
-            let scales =
-                config
-                    .has_scale
-                    .then(|| {
-                        parameter_tree
-                            .subtree(parameter_name.expect("scaled norm requires parameter tree"))
-                            .read_buffer("scales", &[head_dim], DataType::F32)
-                    })
-                    .transpose()?;
+            let scales = if config.has_scale {
+                Some(
+                    parameter_tree
+                        .subtree(parameter_name.expect("scaled norm requires parameter tree"))
+                        .read_buffer("scales", &[head_dim], DataType::F32)
+                        .await?,
+                )
+            } else {
+                None
+            };
             let kernel = <B::Kernels as Kernels>::QKVNormKernel::new(
                 context,
                 intermediate_data_type,
@@ -78,10 +79,13 @@ impl<B: Backend> QKVNorm<B> {
             }))
         };
 
+        let query = build_head(query_config, Some("query_norm")).await?;
+        let key = build_head(key_config, Some("key_norm")).await?;
+        let value = build_head(value_config, None).await?;
         Ok(Self {
-            query: build_head(query_config, Some("query_norm"))?,
-            key: build_head(key_config, Some("key_norm"))?,
-            value: build_head(value_config, None)?,
+            query,
+            key,
+            value,
             num_q_heads,
             num_kv_heads,
             projection_row_stride,

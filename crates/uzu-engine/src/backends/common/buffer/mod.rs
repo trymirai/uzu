@@ -1,11 +1,10 @@
-use std::{any::Any, range::Range};
+use std::{any::Any, os::raw::c_void, ptr::NonNull, range::Range};
+
+use bytemuck::{AnyBitPattern, NoUninit};
 
 use crate::backends::common::{Backend, BufferMut, BufferRef};
 
-pub mod constant;
-pub mod cpu_accessible;
 pub mod global;
-pub mod scratch;
 pub mod sparse;
 
 pub mod reference;
@@ -16,7 +15,34 @@ pub trait Buffer: Any + Send + Sync + Unpin {
     fn size(&self) -> usize;
 }
 
-impl<B: Buffer + ?Sized> BufferRef for &B {
+pub trait GpuBuffer: Buffer {}
+
+pub trait CpuBuffer: Buffer {
+    fn cpu_ptr(&self) -> NonNull<c_void>;
+
+    fn as_slice<T: AnyBitPattern>(&self) -> &[T] {
+        let bytes = unsafe { std::slice::from_raw_parts(self.cpu_ptr().as_ptr().cast::<u8>(), self.size()) };
+        bytemuck::cast_slice(bytes)
+    }
+
+    fn as_slice_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] {
+        let bytes = unsafe { std::slice::from_raw_parts_mut(self.cpu_ptr().as_ptr().cast::<u8>(), self.size()) };
+        bytemuck::cast_slice_mut(bytes)
+    }
+
+    fn copyin(
+        &mut self,
+        data: &[impl NoUninit + AnyBitPattern],
+    ) {
+        self.as_slice_mut().copy_from_slice(data);
+    }
+
+    fn copyout<T: AnyBitPattern>(&self) -> Vec<T> {
+        self.as_slice().to_vec()
+    }
+}
+
+impl<B: GpuBuffer + ?Sized> BufferRef for &B {
     type Backend = B::Backend;
     type Buffer = B;
 
@@ -32,7 +58,7 @@ impl<B: Buffer + ?Sized> BufferRef for &B {
     }
 }
 
-impl<B: Buffer + ?Sized> BufferMut for &mut B {
+impl<B: GpuBuffer + ?Sized> BufferMut for &mut B {
     type Backend = B::Backend;
     type Buffer = B;
 

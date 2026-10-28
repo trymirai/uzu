@@ -1420,6 +1420,7 @@ It supports:
 
 - Backends:
     - `metal`
+    - `webgpu`
     - `cpu`
 - Targets:
     - `aarch64-apple-darwin`

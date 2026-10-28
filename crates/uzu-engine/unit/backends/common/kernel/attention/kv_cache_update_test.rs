@@ -61,7 +61,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    (buffer_to_vec(&keys), buffer_to_vec(&values))
+    (buffer_to_vec(&*context, &keys), buffer_to_vec(&*context, &values))
 }
 
 /// Single copy between two different positions.
@@ -279,5 +279,8 @@ fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    ([&keys, &values].map(buffer_to_vec::<B, u8>), [&key_scales, &value_scales].map(buffer_to_vec::<B, bf16>))
+    (
+        [&keys, &values].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
+        [&key_scales, &value_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
+    )
 }

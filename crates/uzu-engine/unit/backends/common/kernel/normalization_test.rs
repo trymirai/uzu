@@ -64,9 +64,9 @@ fn get_output<
     kernel.encode(
         Some(&input_buffer),
         scales_buffer.as_ref(),
-        None::<&B::GlobalBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         &mut output_buffer,
-        None::<&mut B::GlobalBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
         hadamard_factors_buffer.as_ref(),
         batch_size,
         element_count,
@@ -77,7 +77,7 @@ fn get_output<
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
 
-    buffer_to_vec::<B, OutputT>(&output_buffer)
+    buffer_to_vec::<B, OutputT>(&context, &output_buffer)
 }
 
 fn test_internal<
@@ -186,7 +186,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
-    let expected = buffer_to_vec::<Cpu, T>(&expected_buffer);
+    let expected = buffer_to_vec::<Cpu, T>(&context, &expected_buffer);
 
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
         1e-2

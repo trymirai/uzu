@@ -80,8 +80,8 @@ fn select<B: Backend>() -> Vec<u32> {
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     [frontier, tree, slot_ancestors, token, metadata, ancestors, valid, candidate_ids]
         .iter()
-        .flat_map(buffer_to_vec)
-        .chain(buffer_to_vec::<B, f32>(&candidate_scores).into_iter().map(f32::to_bits))
+        .flat_map(|buffer| buffer_to_vec(&*context, buffer))
+        .chain(buffer_to_vec::<B, f32>(&context, &candidate_scores).into_iter().map(f32::to_bits))
         .collect()
 }
 
