@@ -229,6 +229,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         self
     }
 
+    #[track_caller]
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");

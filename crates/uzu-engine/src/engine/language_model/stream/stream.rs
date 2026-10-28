@@ -1,8 +1,8 @@
 use std::{
     iter::{once, repeat_n},
-    mem::replace,
+    mem,
     range::Range,
-    sync::{Arc, mpsc::Sender},
+    sync::Arc,
 };
 
 use futures::executor::block_on;
@@ -10,17 +10,14 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, CpuBuffer,
-        DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer, TimestampSpan,
-        capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
-        gpu_types::trie::TrieNode as GpuTrieNode,
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
+        CpuBuffer as _, DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer, capture_matcher::CAPTURE_MATCHER,
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
     engine::language_model::{
         LanguageModel,
-        grammar::Grammar,
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
@@ -31,130 +28,65 @@ use crate::{
     },
 };
 
-enum ForwardPassChaining<B: Backend> {
-    Constant {
-        token: u64,
-        output_norm: Option<B::ScratchBuffer>,
-    },
-    InFlight(DecodingStatePending<B>),
-}
-
-impl<B: Backend> ForwardPassChaining<B> {
-    async fn resolve<'a>(
-        &'a mut self,
-        readback: &mut Option<impl Future<Output = Result<Vec<u32>, B::Error>> + Send>,
-        tokens: &mut Vec<u64>,
-        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
-        grammar: Option<&mut Grammar>,
-    ) -> Result<(u64, Option<&'a B::ScratchBuffer>), LanguageModelStreamError<B>> {
-        match self {
-            Self::Constant {
-                token,
-                output_norm,
-            } => Ok((*token, output_norm.as_ref())),
-            Self::InFlight(in_flight) => {
-                assert!(in_flight.full_accept);
-                for pending in replace(&mut in_flight.pending, Box::new([])) {
-                    wait(pending, timestamps).await.map_err(LanguageModelStreamError::Backend)?;
-                }
-                let output_tokens = readback
-                    .take()
-                    .expect("in-flight output readback")
-                    .await
-                    .map_err(LanguageModelStreamError::Backend)?;
-                assert_eq!(output_tokens.len(), 1);
-                let token_id = output_tokens[0] as u64;
-                let output_norm = in_flight.output_norm.take();
-                *self = Self::Constant {
-                    token: token_id,
-                    output_norm,
-                };
-                tokens.push(token_id);
-                if let Some(grammar) = grammar {
-                    grammar.accept_token(token_id)?;
-                }
-                let Self::Constant {
-                    output_norm,
-                    ..
-                } = self
-                else {
-                    unreachable!()
-                };
-                Ok((token_id, output_norm.as_ref()))
-            },
-        }
-    }
-
-    fn drop_output_norm(&mut self) {
-        match self {
-            Self::Constant {
-                output_norm,
-                ..
-            } => drop(output_norm.take()),
-            Self::InFlight(pending) => drop(pending.output_norm.take()),
-        }
-    }
-}
-
-struct DecodingStatePending<B: Backend> {
-    input_trie: TrieNode,
-    full_accept: bool,
-    pending: Box<[<B::CommandBuffer as CommandBuffer>::Pending]>,
-    capture_span: Option<CaptureMatcherSpan>,
-    hidden_features: Option<Box<[B::ScratchBuffer]>>,
-    output_norm: Option<B::ScratchBuffer>,
-    output_tokens: Arc<B::GlobalGpuBuffer>,
-    _input_token_source: Option<Arc<B::GlobalGpuBuffer>>,
-}
-
-enum DecodingState<B: Backend> {
-    Seeded {
-        seed_token: u64,
-    },
-    ForwardPassPending(DecodingStatePending<B>),
-    Accepting {
-        full: Box<[(usize, u64, u64)]>,
-        num_accepted: usize,
-        hidden_features: Option<Box<[B::ScratchBuffer]>>,
-        output_norm: Option<(B::ScratchBuffer, usize)>,
-        capture_span: Option<CaptureMatcherSpan>,
-    },
-    Halted,
-    Invalid,
-    Closed,
-}
-
-fn prefill_chunk_parts(
-    input_chunk: &[u64],
-    last_batch: bool,
-    split_logits_row: bool,
-) -> [Option<(&[u64], bool)>; 2] {
-    if last_batch && split_logits_row && input_chunk.len() > 1 {
-        let (prompt_chunk, sample_chunk) = input_chunk.split_at(input_chunk.len() - 1);
-        [Some((prompt_chunk, false)), Some((sample_chunk, true))]
-    } else {
-        [Some((input_chunk, last_batch)), None]
-    }
-}
+type Pending<B> = <<B as Backend>::CommandBuffer as CommandBuffer>::Pending;
 
 pub struct LanguageModelStream<'a, B: Backend> {
+    submitter: StreamEnqueuer<'a, B>,
+    queued_tokens: Vec<u64>,
+    job: Option<GenerationJob<B>>,
+}
+
+struct StreamEnqueuer<'a, B: Backend> {
     model: &'a LanguageModel<B>,
     model_state: &'a mut LanguageModelState<B>,
     options: LanguageModelStreamOptions,
     allocation_pool: Arc<B::AllocationPool>,
     context_ring: Option<B::GlobalGpuBuffer>,
-    decoding_state: DecodingState<B>,
     metrics: TokenStreamMetrics,
 }
 
-impl<'a, B: Backend> LanguageModelStream<'a, B> {
-    pub fn new(
+enum GenerationJob<B: Backend> {
+    Pending {
+        output_norm: Option<B::ScratchBuffer>,
+        output_tokens: B::GlobalGpuBuffer,
+        batch_dim: BatchTopology,
+        trie: Option<TrieNode>,
+        hidden_features: Option<Box<[B::ScratchBuffer]>>,
+        pending: Pending<B>,
+    },
+    Resolved(ResolvedJob<B>),
+    Invalid,
+}
+
+struct ResolvedJob<B: Backend> {
+    output_tokens: Box<[u64]>,
+    output_norm_buffer: Option<B::ScratchBuffer>,
+    output_tokens_buffer: B::GlobalGpuBuffer,
+    batch_dim: BatchTopology,
+    hidden_features: Option<Box<[B::ScratchBuffer]>>,
+    accepted_indices_and_input_tokens: Option<(Box<[u32]>, Box<[u64]>)>,
+}
+
+impl<B: Backend> GenerationJob<B> {
+    fn output_tokens_buffer(&self) -> &B::GlobalGpuBuffer {
+        match self {
+            Self::Pending {
+                output_tokens,
+                ..
+            } => output_tokens,
+            Self::Resolved(resolved) => &resolved.output_tokens_buffer,
+            Self::Invalid => unreachable!(),
+        }
+    }
+}
+
+impl<'a, B: Backend> StreamEnqueuer<'a, B> {
+    fn new(
         model: &'a LanguageModel<B>,
         input: &[u64],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
-        let mut options = options;
         if model_state.tokens.is_empty() && input.is_empty() {
             return Err(LanguageModelStreamError::NoSeedToken);
         };
@@ -168,9 +100,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         let allocation_pool = model.engine.context.create_allocation_pool();
 
-        let mut context_ring = if let Some(suffix_repetition_length) =
-            options.sampling_method.suffix_repetition_length()
-        {
+        let context_ring = if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
             let mut context_ring = model
                 .engine
                 .context
@@ -195,386 +125,319 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             None
         };
 
-        let mut metrics = TokenStreamMetrics::default();
+        let metrics = TokenStreamMetrics::default();
 
-        let decoding_state = if !input.is_empty() {
-            let _capture_span = CAPTURE_MATCHER.capture::<B>(&model.engine.context, "prefill")?;
-            model_state.last_output_token.take();
-
-            // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
-            let max_batch_size = 1024;
-            let number_of_batches = input.len().div_ceil(max_batch_size);
-
-            model_state
-                .transformer_state
-                .prepare(
-                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
-                    usize::min(max_batch_size, input.len()) as u32,
-                )
-                .map_err(LanguageModelStreamError::Backend)?;
-
-            let command_buffer = model
-                .engine
-                .context
-                .create_command_buffer(Some("prefill"), Some(allocation_pool.clone()))
-                .map_err(LanguageModelStreamError::Backend)?;
-            let mut command_buffer = record(command_buffer, options.timestamps.as_ref());
-
-            command_buffer.debug_point(&format!(
-                "prefill at context {}, suffix {} ({} batches)",
-                model_state.transformer_state.context_length(),
-                input.len(),
-                number_of_batches
-            ));
-
-            let mut output_tokens = None;
-            let mut output_norm = None;
-            let split_logits_row = model.decoder.prefill_cache_skips_trailing_layers();
-            let hidden_feature_layer_indices =
-                model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
-
-            for (input_chunk, sample_last) in input
-                .chunks(max_batch_size)
-                .enumerate()
-                .flat_map(|(batch_idx, input_chunk)| {
-                    prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_logits_row)
-                })
-                .flatten()
-            {
-                let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
-                let input_flat_trie = input_trie.linearize();
-
-                let token_ids = command_buffer
-                    .allocate_constant_from_slice(
-                        &input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
-
-                let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-                // TODO: This is techicallty wrong because it doesn't
-                // do `full_accept`, but really it should just be
-                // `BatchTopology::flat`, which I will do in the following
-                // commits
-                let batch_dim = BatchTopology::new(input_flat_trie_nodes);
-
-                let decoder_output = model.decoder.encode(
-                    &token_ids,
-                    &batch_dim,
-                    sample_last.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
-                    hidden_feature_layer_indices,
-                    &mut model_state.transformer_state,
-                    &mut command_buffer,
-                )?;
-                let logits = decoder_output.logits;
-
-                if sample_last {
-                    let logits = logits.unwrap();
-
-                    let seeds = if matches!(options.sampling_method, SamplingMethod::Stochastic { .. }) {
-                        Some(
-                            command_buffer
-                                .allocate_constant_from_slice(&[model_state
-                                    .prng
-                                    .derive((model_state.tokens.len() + input_chunk.len() - 1) as u64)])
-                                .map_err(LanguageModelStreamError::Backend)?,
-                        )
-                    } else {
-                        None
-                    };
-
-                    let bitmask = if let Some(grammar) = options.grammar.as_mut() {
-                        let mut bitmask = command_buffer
-                            .allocate_constant(
-                                model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
-                            )
-                            .map_err(LanguageModelStreamError::Backend)?;
-
-                        if grammar.next_bitmask(bitmask.as_slice_mut()) {
-                            Some(bitmask)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                    output_norm = decoder_output.final_hidden;
-                    let sampled_row = batch_dim.size() - 1;
-                    output_tokens = Some(
-                        model
-                            .sampling
-                            .encode(
-                                &logits,
-                                seeds.as_ref(),
-                                bitmask.as_ref(),
-                                context_ring.as_ref(),
-                                Some(&token_ids),
-                                &batch_dim,
-                                (sampled_row..sampled_row + 1).into(),
-                                &options.sampling_method,
-                                &mut command_buffer,
-                            )
-                            .map_err(LanguageModelStreamError::Backend)?,
-                    );
-                }
-
-                model_state
-                    .transformer_state
-                    .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
-                    .map_err(LanguageModelStreamError::Backend)?;
-
-                if let Some(speculator) = model.speculator.as_ref() {
-                    let speculator_state = model_state.speculator_state.as_mut().unwrap();
-                    speculator.encode_accept(
-                        speculator_state,
-                        decoder_output.hidden_features.as_ref().unwrap().iter(),
-                        &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
-                        &mut command_buffer,
-                    )?;
-                }
-
-                if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
-                    model.context_ring_update.encode(
-                        &token_ids,
-                        context_ring.as_mut().unwrap(),
-                        suffix_repetition_length,
-                        input_chunk.len() as u32,
-                        &mut command_buffer,
-                    );
-                }
-
-                model_state.tokens.extend(input_chunk);
-            }
-
-            let pending = Box::new([command_buffer.end_encoding().submit()]);
-
-            metrics.num_prefill_forward_passes += 1;
-            metrics.num_tokens_prefilled += input.len();
-            metrics.num_tokens_proposed += 1;
-            metrics.num_tokens_accepted += 1;
-
-            DecodingState::ForwardPassPending(DecodingStatePending {
-                input_trie: TrieNode::new(0, 0, 0.0),
-                full_accept: true,
-                pending,
-                capture_span: None,
-                hidden_features: None,
-                output_norm,
-                output_tokens: Arc::new(output_tokens.unwrap()),
-                _input_token_source: None,
-            })
-        } else {
-            // TODO: this leaks previous LanguageModelStreamOptions
-            DecodingState::Seeded {
-                seed_token: model_state.last_output_token.take().unwrap(),
-            }
-        };
-
-        Ok(LanguageModelStream {
+        Ok(StreamEnqueuer {
             model,
             model_state,
             options,
             allocation_pool,
             context_ring,
-            decoding_state,
             metrics,
         })
     }
 
-    pub async fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
-        let context = &self.model.engine.context;
-        let (mut prev_output, acceptance): (
-            ForwardPassChaining<B>,
-            Option<(<B::CommandBuffer as CommandBuffer>::Encoding, Option<CaptureMatcherSpan>)>,
-        ) = match replace(&mut self.decoding_state, DecodingState::Invalid) {
-            DecodingState::Seeded {
-                seed_token,
-            } => {
-                self.model_state.tokens.push(seed_token);
-                if let Some(grammar) = self.options.grammar.as_mut() {
-                    let _ = grammar.accept_token(seed_token); // TODO: this should not be ignored
-                }
-                self.metrics.num_tokens_returned += 1;
-                (
-                    ForwardPassChaining::Constant {
-                        token: seed_token,
-                        output_norm: None,
-                    },
-                    None,
-                )
-            },
-            DecodingState::ForwardPassPending(forward_pass_pending) => {
-                if forward_pass_pending.full_accept {
-                    self.metrics.num_tokens_returned += 1;
-                    (ForwardPassChaining::InFlight(forward_pass_pending), None)
-                } else {
-                    for pending in forward_pass_pending.pending {
-                        wait(pending, self.options.timestamps.as_ref())
-                            .await
-                            .map_err(LanguageModelStreamError::Backend)?;
-                    }
-                    let sampled_tokens = context
-                        .copyout::<u32>(&*forward_pass_pending.output_tokens)
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    let sampled_tokens = sampled_tokens.iter().map(|token| u64::from(*token)).collect::<Box<[u64]>>();
-                    let flat_trie = forward_pass_pending.input_trie.linearize();
-                    let full = flat_trie.accept(&sampled_tokens, self.options.grammar.as_mut())?;
-                    let output_norm = forward_pass_pending.output_norm.map(|norm| {
-                        let row_bytes = norm.size() / flat_trie.len();
-                        (norm, row_bytes)
-                    });
-                    self.metrics.num_tokens_accepted += full.len();
-                    self.decoding_state = DecodingState::Accepting {
-                        full,
-                        num_accepted: 0,
-                        hidden_features: forward_pass_pending.hidden_features,
-                        output_norm,
-                        capture_span: forward_pass_pending.capture_span,
-                    };
-                    return Box::pin(self.generate()).await;
-                }
-            },
-            DecodingState::Accepting {
-                full,
-                num_accepted,
+    async fn resolve<'b>(
+        &mut self,
+        job: &'b mut GenerationJob<B>,
+    ) -> Result<&'b ResolvedJob<B>, LanguageModelStreamError<B>> {
+        let owned = mem::replace(job, GenerationJob::Invalid);
+        let resolved = match owned {
+            GenerationJob::Pending {
+                output_norm: output_norm_buffer,
+                output_tokens: output_tokens_buffer,
+                batch_dim,
+                trie,
                 hidden_features,
-                output_norm,
-                capture_span,
+                pending,
             } => {
-                let output_token_id = full[num_accepted].2;
+                wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
+                let gpu_tokens = self
+                    .model
+                    .engine
+                    .context
+                    .copyout::<u32>(&output_tokens_buffer)
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
 
-                self.metrics.num_tokens_returned += 1;
+                let mut output_tokens = gpu_tokens.into_iter().map(|t| t as u64).collect::<Box<[_]>>();
 
-                if num_accepted < full.len() - 1 {
-                    self.decoding_state = DecodingState::Accepting {
-                        full,
-                        num_accepted: num_accepted + 1,
-                        hidden_features,
-                        output_norm,
-                        capture_span,
-                    };
-                    return Ok(Some(output_token_id));
-                } else {
+                let accepted_indices_and_input_tokens = if let Some(trie) = trie {
+                    let flat = trie.linearize();
+                    let full = flat.accept(
+                        &output_tokens,
+                        self.options.grammar.as_mut(),
+                    )?;
+
                     let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                     let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                     let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                    let command_buffer = self
-                        .model
-                        .engine
-                        .context
-                        .create_command_buffer(
-                            Some(&format!("decode {} (accept)", self.metrics.num_decode_forward_passes - 1)),
-                            Some(self.allocation_pool.clone()),
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
-                    self.model_state
-                        .transformer_state
-                        .encode_accept(&accepted_token_indicies, &mut command_buffer)
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    if let Some(speculator) = self.model.speculator.as_ref() {
-                        speculator.encode_accept(
-                            self.model_state.speculator_state.as_mut().unwrap(),
-                            hidden_features.as_ref().unwrap().iter(),
-                            &accepted_token_indicies,
-                            &mut command_buffer,
-                        )?;
-                    }
-                    let output_norm = if let Some((final_hidden, row_bytes)) = output_norm {
-                        let row = full.last().unwrap().0;
-                        let mut norm =
-                            command_buffer.allocate_scratch(row_bytes).map_err(LanguageModelStreamError::Backend)?;
-                        command_buffer
-                            .encode_copy(final_hidden.subrange(row * row_bytes..(row + 1) * row_bytes), &mut norm);
-                        Some(norm)
-                    } else {
-                        None
-                    };
-                    if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-                        let accepted_input_token_ids_const = command_buffer
-                            .allocate_constant_from_slice(
-                                &accepted_input_token_ids
-                                    .iter()
-                                    .map(|token_id| *token_id as u32)
-                                    .collect::<Box<[u32]>>(),
-                            )
-                            .map_err(LanguageModelStreamError::Backend)?;
-                        self.model.context_ring_update.encode(
-                            &accepted_input_token_ids_const,
-                            self.context_ring.as_mut().unwrap(),
-                            suffix_repetition_length,
-                            full.len() as u32,
-                            &mut command_buffer,
-                        );
-                    }
-                    self.model_state.tokens.extend(accepted_output_token_ids);
-                    (
-                        ForwardPassChaining::Constant {
-                            token: output_token_id,
-                            output_norm,
-                        },
-                        Some((command_buffer, capture_span)),
-                    )
+                    output_tokens = accepted_output_token_ids;
+
+                    Some((accepted_token_indicies, accepted_input_token_ids))
+                } else {
+                    None
+                };
+
+                ResolvedJob {
+                    output_tokens,
+                    output_norm_buffer,
+                    output_tokens_buffer,
+                    batch_dim,
+                    hidden_features,
+                    accepted_indices_and_input_tokens,
                 }
             },
-            DecodingState::Halted => return Ok(None),
-            DecodingState::Invalid => unreachable!(),
-            DecodingState::Closed => return Ok(None),
+            GenerationJob::Resolved(resolved) => resolved,
+            GenerationJob::Invalid => unreachable!(),
         };
 
-        let readback_buffer = match &prev_output {
-            ForwardPassChaining::InFlight(pending) => Some(pending.output_tokens.clone()),
-            _ => None,
+        *job = GenerationJob::Resolved(resolved);
+        let GenerationJob::Resolved(resolved) = &*job else {
+            unreachable!()
         };
-        let mut output_readback = readback_buffer.as_deref().map(|buffer| context.copyout::<u32>(buffer));
 
-        let context_length = self.model_state.transformer_state.context_length();
+        Ok(resolved)
+    }
 
-        if self.model_state.max_context_length.is_some_and(|max_context_length| context_length >= max_context_length) {
-            self.decoding_state = DecodingState::Halted;
-            return Ok(Some(
-                prev_output
-                    .resolve(
-                        &mut output_readback,
-                        &mut self.model_state.tokens,
-                        self.options.timestamps.as_ref(),
-                        self.options.grammar.as_mut(),
-                    )
-                    .await?
-                    .0,
-            ));
+    fn context_full(&self) -> bool {
+        self.model_state
+            .max_context_length
+            .is_some_and(|max_context_length| self.model_state.transformer_state.context_length() >= max_context_length)
+    }
+
+    async fn resolve_take(
+        &mut self,
+        mut job: GenerationJob<B>,
+    ) -> Result<ResolvedJob<B>, LanguageModelStreamError<B>> {
+        self.resolve(&mut job).await?;
+        let GenerationJob::Resolved(resolved) = job else {
+            unreachable!()
+        };
+
+        Ok(resolved)
+    }
+
+    pub fn prefill(
+        &mut self,
+        input: &[u64],
+    ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
+        // NOTE: this is required for attention correctness (hardcoded suffix
+        // 1024). This is really bad design, attention should be rewritten to
+        // allow on-demand suffix length
+        let max_batch_size = 1024;
+        let number_of_batches = input.len().div_ceil(max_batch_size);
+
+        self.model_state
+            .transformer_state
+            .prepare(
+                self.model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
+                usize::min(max_batch_size, input.len()) as u32,
+            )
+            .map_err(LanguageModelStreamError::Backend)?;
+
+        let command_buffer = self
+            .model
+            .engine
+            .context
+            .create_command_buffer(Some("prefill"), Some(self.allocation_pool.clone()))
+            .map_err(LanguageModelStreamError::Backend)?;
+        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+
+        command_buffer.debug_point(&format!(
+            "prefill at context {}, suffix {} ({} batches)",
+            self.model_state.transformer_state.context_length(),
+            input.len(),
+            number_of_batches
+        ));
+
+        let hidden_feature_layer_indices =
+            self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+
+        let mut schedule_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
+            let token_ids = command_buffer
+                .allocate_constant_from_slice(
+                    &input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            let batch_dim = BatchTopology::flat(input_chunk.len() as u32);
+
+            let decoder_output = self.model.decoder.encode(
+                &token_ids,
+                &batch_dim,
+                sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
+                hidden_feature_layer_indices,
+                &mut self.model_state.transformer_state,
+                &mut command_buffer,
+            )?;
+
+            self.model_state
+                .transformer_state
+                .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            if let Some(speculator) = self.model.speculator.as_ref() {
+                let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
+                speculator.encode_accept(
+                    speculator_state,
+                    decoder_output.hidden_features.as_ref().unwrap().iter(),
+                    &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
+                    &mut command_buffer,
+                )?;
+            }
+
+            if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
+                self.model.context_ring_update.encode(
+                    &token_ids,
+                    self.context_ring.as_mut().unwrap(),
+                    suffix_repetition_length,
+                    input_chunk.len() as u32,
+                    &mut command_buffer,
+                );
+            }
+
+            self.model_state.tokens.extend(input_chunk);
+
+            Ok((decoder_output, token_ids, batch_dim))
+        };
+
+        let mut token_chunks = input.chunks(max_batch_size);
+        for input_chunk in token_chunks.by_ref().take(number_of_batches - 1) {
+            schedule_batch(input_chunk, false)?;
         }
 
-        let mut pending = Vec::new();
-        if let Some((accept_command_buffer, _capture_span)) = acceptance {
-            pending.push(accept_command_buffer.end_encoding().submit());
-        }
+        // `token_chunks` should have exactly one element left.
+        let final_chunk = token_chunks.next().unwrap();
 
+        let split_last_logits_row = self.model.decoder.prefill_cache_skips_trailing_layers();
+        let (decoder_output, token_ids, batch_dim) = if split_last_logits_row && final_chunk.len() > 1 {
+            let (start, end) = final_chunk.split_at(final_chunk.len() - 1);
+            schedule_batch(start, false)?;
+            schedule_batch(end, true)?
+        } else {
+            schedule_batch(final_chunk, true)?
+        };
+
+        let logits = decoder_output.logits.unwrap();
+
+        let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
+            Some(
+                command_buffer
+                    .allocate_constant_from_slice(&[self
+                        .model_state
+                        .prng
+                        .derive(self.model_state.tokens.len() as u64 - 1)])
+                    .map_err(LanguageModelStreamError::Backend)?,
+            )
+        } else {
+            None
+        };
+
+        let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
+            use crate::backends::common::CpuBuffer as _;
+
+            let mut bitmask = command_buffer
+                .allocate_constant(
+                    self.model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            if grammar.next_bitmask(bitmask.as_slice_mut()) {
+                Some(bitmask)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let output_norm = decoder_output.final_hidden;
+        let sampled_row = batch_dim.size() - 1;
+        let output_token = Some(
+            self.model
+                .sampling
+                .encode(
+                    &logits,
+                    seeds.as_ref(),
+                    bitmask.as_ref(),
+                    self.context_ring.as_ref(),
+                    Some(&token_ids),
+                    &batch_dim,
+                    (sampled_row..sampled_row + 1).into(),
+                    &self.options.sampling_method,
+                    &mut command_buffer,
+                )
+                .map_err(LanguageModelStreamError::Backend)?,
+        );
+
+        drop(seeds);
+        drop(bitmask);
+        drop(token_ids);
+
+        self.metrics.num_prefill_forward_passes += 1;
+        self.metrics.num_tokens_prefilled += input.len();
+        self.metrics.num_tokens_proposed += 1;
+        self.metrics.num_tokens_accepted += 1;
+
+        Ok(GenerationJob::Pending {
+            output_norm,
+            output_tokens: output_token.unwrap(),
+            batch_dim,
+            trie: None,
+            hidden_features: None,
+            pending: command_buffer.end_encoding().submit(),
+        })
+    }
+
+    pub async fn get_and_queue_pass(
+        &mut self,
+        mut last_job: GenerationJob<B>,
+    ) -> Result<(ResolvedJob<B>, GenerationJob<B>), LanguageModelStreamError<B>> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
-        #[allow(clippy::let_and_return)]
-        let (input_trie, chain_copy, full_accept) = if let Some(speculator) = &self.model.speculator
+        let command_buffer = self
+            .model
+            .engine
+            .context
+            .create_command_buffer(
+                Some(&format!("decode {}", self.metrics.num_decode_forward_passes)),
+                Some(self.allocation_pool.clone()),
+            )
+            .map_err(LanguageModelStreamError::Backend)?;
+
+        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+
+        // Speculator pass
+        let context_length = self.model_state.transformer_state.context_length();
+        let trie = if let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
-            )
-            && let (root_token, Some(output_norm)) = {
-                let resolved = prev_output
-                    .resolve(
-                        &mut output_readback,
-                        &mut self.model_state.tokens,
-                        self.options.timestamps.as_ref(),
-                        self.options.grammar.as_mut(),
-                    )
-                    .await?;
-                resolved
-            } {
+            ) {
+            // TODO: CPU-bubble
+            let resolved = self.resolve(&mut last_job).await?;
+            let tokens = &resolved.output_tokens;
+            let batch_dim = &resolved.batch_dim;
+            let final_hidden = resolved.output_norm_buffer.as_ref().unwrap();
+
+            let last_norm_buffer =
+                if let Some((accepted_indices, _)) = resolved.accepted_indices_and_input_tokens.as_ref() {
+                    let row = (*accepted_indices.last().unwrap()) as usize;
+                    let row_bytes = final_hidden.size() / batch_dim.size() as usize;
+                    final_hidden.subrange(row * row_bytes..(row + 1) * row_bytes)
+                } else {
+                    final_hidden.subrange(..)
+                };
+
+            // TODO: CPU-bubble: for next `batch_dim`. To remove we need to
+            // contruct the trie nodes GPU-side and have `batch_dim` carry a
+            // GPU representation.
             let trie = speculator
                 .propose_tree(
                     self.model_state.speculator_state.as_mut().unwrap(),
-                    output_norm,
-                    root_token as u32,
+                    last_norm_buffer,
+                    tokens[tokens.len() - 1] as u32,
                     self.model.decoder.embedding(),
                     shape,
                     &self.options.sampling_method,
@@ -585,67 +448,50 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     self.options.timestamps.as_ref(),
                 )
                 .await?;
-            prev_output.drop_output_norm();
-            (trie, None, false)
+            Some(trie)
         } else {
-            prev_output.drop_output_norm();
-            let (token, chain_copy) = match &prev_output {
-                ForwardPassChaining::Constant {
-                    token,
-                    ..
-                } => (*token, None),
-                ForwardPassChaining::InFlight(pending) => (0, Some(pending.output_tokens.clone())),
-            };
-            (TrieNode::new(token, self.model_state.prng.derive(context_length as u64), 0.0), chain_copy, true)
+            None
         };
-        let input_flat_trie = input_trie.linearize();
 
-        self.allocation_pool = self.model.engine.context.create_allocation_pool();
+        let scratch_token_ids;
+        let mut constant_token_ids = None;
+        let flat_trie = trie.as_ref().map(|trie| trie.linearize());
+        let (token_ids, batch_dim): (&dyn GpuBuffer<Backend = B>, _) = if let Some(flat_trie) = flat_trie.as_ref() {
+            let batch_dim = BatchTopology::new(flat_trie.token_subtrie_ranges().collect::<Box<[_]>>());
 
-        let command_buffer = self
-            .model
-            .engine
-            .context
-            .create_command_buffer(
-                Some(&format!("decode {} (forward)", self.metrics.num_decode_forward_passes)),
-                Some(self.allocation_pool.clone()),
-            )
-            .map_err(LanguageModelStreamError::Backend)?;
-        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+            let token_ids = command_buffer
+                .allocate_constant_from_slice(
+                    &flat_trie.token_ids().map(|token_id| token_id as u32).collect::<Box<[u32]>>(),
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
 
+            constant_token_ids = Some(token_ids);
+            (constant_token_ids.as_ref().unwrap(), batch_dim)
+        } else {
+            let mut token_ids = self
+                .model
+                .engine
+                .context
+                .create_buffer_gpu(size_for_shape(&[1], DataType::U32))
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            command_buffer.encode_copy(last_job.output_tokens_buffer(), &mut token_ids);
+
+            scratch_token_ids = token_ids;
+            (&scratch_token_ids, BatchTopology::flat(1))
+        };
+
+        // Forward pass
         command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
             self.metrics.num_decode_forward_passes,
             context_length,
-            input_flat_trie.len()
+            batch_dim.size()
         ));
-
-        let scratch_token_ids;
-        let mut constant_token_ids = None;
-        let token_ids: &dyn GpuBuffer<Backend = B> = if let Some(chain_copy) = chain_copy.as_deref() {
-            let mut token_ids = command_buffer
-                .allocate_scratch(DataType::U32.size_in_bytes())
-                .map_err(LanguageModelStreamError::Backend)?;
-            command_buffer.encode_copy(chain_copy, &mut token_ids);
-            scratch_token_ids = token_ids;
-            &scratch_token_ids
-        } else {
-            constant_token_ids.insert(
-                command_buffer
-                    .allocate_constant_from_slice(
-                        &input_flat_trie.token_ids().map(|token_id| token_id as u32).collect::<Box<[u32]>>(),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?,
-            )
-        };
-
-        let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-        // TODO: As above, this doesn't take in `full_accept`.
-        let batch_dim = BatchTopology::new(input_flat_trie_nodes);
 
         self.model_state
             .transformer_state
-            .prepare(self.model_state.transformer_state.context_length(), batch_dim.size())
+            .prepare(context_length, batch_dim.size())
             .map_err(LanguageModelStreamError::Backend)?;
 
         let hidden_feature_layer_indices =
@@ -659,67 +505,37 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
-        let logits = decoder_output.logits.unwrap();
 
-        let (bitmask, mut command_buffer) = if let Some(grammar) = self.options.grammar.as_mut() {
-            if chain_copy.is_some() {
-                pending.push(command_buffer.end_encoding().submit());
+        // Advance grammar
+        let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
+            use crate::backends::common::CpuBuffer;
 
-                let command_buffer = self
-                    .model
-                    .engine
-                    .context
-                    .create_command_buffer(
-                        Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
-                        Some(self.allocation_pool.clone()),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
-                let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+            let mut bitmask = command_buffer
+                .allocate_constant(
+                    self.model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
 
-                let mut bitmask = command_buffer
-                    .allocate_constant(
-                        self.model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
-
-                prev_output
-                    .resolve(
-                        &mut output_readback,
-                        &mut self.model_state.tokens,
-                        self.options.timestamps.as_ref(),
-                        Some(grammar),
-                    )
-                    .await?;
-                if grammar.next_bitmask(bitmask.as_slice_mut()) {
-                    (Some(bitmask), command_buffer)
-                } else {
-                    (None, command_buffer)
-                }
+            let filled = if let Some(flat_trie) = flat_trie.as_ref() {
+                flat_trie.fill_bitmasks(bitmask.as_slice_mut(), self.model.vocab_size, grammar)
             } else {
-                let mut bitmasks = command_buffer
-                    .allocate_constant(
-                        input_flat_trie.len()
-                            * self.model.vocab_size.div_ceil(DataType::U32.size_in_bits())
-                            * DataType::U32.size_in_bytes(),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
+                grammar.next_bitmask(bitmask.as_slice_mut())
+            };
 
-                if input_flat_trie.fill_bitmasks(bitmasks.as_slice_mut(), self.model.vocab_size, grammar) {
-                    (Some(bitmasks), command_buffer)
-                } else {
-                    (None, command_buffer)
-                }
-            }
+            filled.then_some(bitmask)
         } else {
-            (None, command_buffer)
+            None
         };
 
+        // Schedule sampling
         let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-            Some(
-                command_buffer
-                    .allocate_constant_from_slice(&input_flat_trie.token_seeds().collect::<Box<[u64]>>())
-                    .map_err(LanguageModelStreamError::Backend)?,
-            )
+            let seeds = if let Some(flat_trie) = flat_trie.as_ref() {
+                flat_trie.token_seeds().collect::<Box<[u64]>>()
+            } else {
+                Box::new([self.model_state.prng.derive(context_length as u64)])
+            };
+
+            Some(command_buffer.allocate_constant_from_slice(&seeds).map_err(LanguageModelStreamError::Backend)?)
         } else {
             None
         };
@@ -728,7 +544,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             .model
             .sampling
             .encode(
-                &logits,
+                &decoder_output.logits.unwrap(),
                 seeds.as_ref(),
                 bitmask.as_ref(),
                 self.context_ring.as_ref(),
@@ -742,9 +558,17 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
         drop(seeds);
         drop(bitmask);
-        drop(logits);
 
-        if full_accept {
+        // new job and statistics
+        if batch_dim.full_accept() {
+            capture_span.take();
+        }
+
+        self.metrics.num_decode_forward_passes += 1;
+        self.metrics.num_tokens_proposed += batch_dim.size() as usize;
+
+        // accept
+        let new_job = if batch_dim.full_accept() {
             self.model_state
                 .transformer_state
                 .encode_accept(&(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut command_buffer)
@@ -769,148 +593,155 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     &mut command_buffer,
                 );
             }
+
+            self.metrics.num_tokens_accepted += batch_dim.size() as usize;
+
+            GenerationJob::Pending {
+                output_norm: decoder_output.final_hidden,
+                output_tokens,
+                batch_dim,
+                trie,
+                hidden_features: None,
+                pending: command_buffer.end_encoding().submit(),
+            }
+        } else {
+            drop(constant_token_ids);
+
+            let mut new_job = GenerationJob::Pending {
+                output_norm: decoder_output.final_hidden,
+                output_tokens,
+                batch_dim,
+                trie,
+                hidden_features: Some(decoder_output.hidden_features.unwrap()),
+                pending: command_buffer.end_encoding().submit(),
+            };
+            // TODO: CPU-bubble: for `accepted_token_indices`.
+            let resolved = self.resolve(&mut new_job).await?;
+
+            let (accepted_token_indices, accepted_input_token_ids) =
+                resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
+            let accepted_output_token_ids = &resolved.output_tokens;
+
+            let command_buffer = self
+                .model
+                .engine
+                .context
+                .create_command_buffer(Some("accept"), Some(self.allocation_pool.clone()))
+                .map_err(LanguageModelStreamError::Backend)?;
+            let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+
+            self.model_state
+                .transformer_state
+                .encode_accept(accepted_token_indices, &mut command_buffer)
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            if let Some(speculator) = self.model.speculator.as_ref() {
+                speculator.encode_accept(
+                    self.model_state.speculator_state.as_mut().unwrap(),
+                    resolved.hidden_features.as_ref().unwrap().iter(),
+                    // TODO: can this be replaced?
+                    accepted_token_indices,
+                    &mut command_buffer,
+                )?;
+            }
+
+            if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
+                // TODO: This can be provided by a `verify_tree` kernel.
+                let accepted_input_token_ids_const = command_buffer
+                    .allocate_constant_from_slice(
+                        &accepted_input_token_ids.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?;
+
+                self.model.context_ring_update.encode(
+                    &accepted_input_token_ids_const,
+                    self.context_ring.as_mut().unwrap(),
+                    suffix_repetition_length,
+                    // TODO: This is easy to replace if we have a `accepted_token_indices` buffer as `[len; data]`
+                    accepted_token_indices.len() as u32,
+                    &mut command_buffer,
+                );
+            }
+
+            // TODO: This can be done on `resolve(job)`.
+            self.model_state.tokens.extend(accepted_output_token_ids);
+            self.metrics.num_tokens_accepted += accepted_token_indices.len();
+
+            command_buffer.end_encoding().submit();
+
+            new_job
+        };
+
+        // Return results
+        // NOTE: not a CPU bubble. The next job has already been scheduled.
+        let resolved_job = self.resolve_take(last_job).await?;
+
+        Ok((resolved_job, new_job))
+    }
+}
+
+impl<'a, B: Backend> LanguageModelStream<'a, B> {
+    pub fn new(
+        model: &'a LanguageModel<B>,
+        input: &[u64],
+        model_state: &'a mut LanguageModelState<B>,
+        options: LanguageModelStreamOptions,
+    ) -> Result<Self, LanguageModelStreamError<B>> {
+        let mut submitter = StreamEnqueuer::new(model, input, model_state, options)?;
+        let job = submitter.prefill(input)?;
+
+        Ok(Self {
+            submitter,
+            queued_tokens: Vec::new(),
+            job: Some(job),
+        })
+    }
+
+    pub fn closed(&self) -> bool {
+        self.job.is_none()
+    }
+
+    pub async fn generate(&mut self) -> Result<Option<u64>, LanguageModelStreamError<B>> {
+        if let Some(token) = self.queued_tokens.pop() {
+            self.submitter.metrics.num_tokens_returned += 1;
+            return Ok(Some(token));
         }
 
-        drop(constant_token_ids);
-        pending.push(command_buffer.end_encoding().submit());
+        let Some(job) = self.job.take() else {
+            return Ok(None);
+        };
 
-        if full_accept {
-            capture_span.take();
+        if self.submitter.context_full() {
+            let resolved = self.submitter.resolve_take(job).await?;
+            self.queued_tokens = resolved.output_tokens.iter().rev().copied().collect();
+
+            let token = self.queued_tokens.pop().unwrap();
+            self.submitter.metrics.num_tokens_returned += 1;
+            return Ok(Some(token));
         }
 
-        self.metrics.num_decode_forward_passes += 1;
-        self.metrics.num_tokens_proposed += input_flat_trie.len();
-        if full_accept {
-            self.metrics.num_tokens_accepted += input_flat_trie.len();
-        }
+        let (resolved, new_job) = self.submitter.get_and_queue_pass(job).await?;
 
-        self.decoding_state = DecodingState::ForwardPassPending(DecodingStatePending {
-            input_trie,
-            full_accept,
-            pending: pending.into_boxed_slice(),
-            capture_span,
-            hidden_features: if full_accept {
-                None
-            } else {
-                decoder_output.hidden_features
-            },
-            output_norm: decoder_output.final_hidden,
-            output_tokens: Arc::new(output_tokens),
-            _input_token_source: chain_copy,
-        });
+        self.job = Some(new_job);
+        self.queued_tokens = resolved.output_tokens.iter().rev().copied().collect();
 
-        Ok(Some(
-            prev_output
-                .resolve(
-                    &mut output_readback,
-                    &mut self.model_state.tokens,
-                    self.options.timestamps.as_ref(),
-                    self.options.grammar.as_mut(),
-                )
-                .await?
-                .0,
-        ))
+        // unwrap safe, should have generated at least one token.
+        let token = self.queued_tokens.pop().unwrap();
+        self.submitter.metrics.num_tokens_returned += 1;
+        Ok(Some(token))
     }
 
     pub fn metrics(&self) -> &TokenStreamMetrics {
-        &self.metrics
+        &self.submitter.metrics
     }
 
     pub async fn close(&mut self) -> Result<(), LanguageModelStreamError<B>> {
-        let last_output_token = match replace(&mut self.decoding_state, DecodingState::Closed) {
-            DecodingState::Seeded {
-                seed_token,
-            } => Some(seed_token),
-            DecodingState::ForwardPassPending(in_flight) => {
-                for pending in in_flight.pending {
-                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
-                }
-
-                if !in_flight.full_accept {
-                    let command_buffer = self
-                        .model
-                        .engine
-                        .context
-                        .create_command_buffer(
-                            Some(&format!("decode {} (accept on drop)", self.metrics.num_decode_forward_passes - 1)),
-                            Some(self.allocation_pool.clone()),
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
-                    self.model_state
-                        .transformer_state
-                        .encode_accept(&[0], &mut command_buffer)
-                        .map_err(LanguageModelStreamError::Backend)?;
-                    if let Some(speculator) = self.model.speculator.as_ref() {
-                        speculator.encode_accept(
-                            self.model_state.speculator_state.as_mut().unwrap(),
-                            in_flight.hidden_features.as_ref().unwrap().iter(),
-                            &[0],
-                            &mut command_buffer,
-                        )?;
-                    }
-                    wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref())
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
-                }
-
-                let context = &self.model.engine.context;
-                Some(
-                    context
-                        .copyout::<u32>(in_flight.output_tokens.subrange(..size_of::<u32>()))
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?[0] as u64,
-                )
-            },
-            DecodingState::Accepting {
-                full,
-                num_accepted,
-                hidden_features,
-                output_norm: _,
-                capture_span,
-            } => {
-                assert!(num_accepted > 0 && num_accepted < full.len());
-
-                let command_buffer = self
-                    .model
-                    .engine
-                    .context
-                    .create_command_buffer(
-                        Some(&format!("decode {} (accept on drop)", self.metrics.num_decode_forward_passes - 1)),
-                        Some(self.allocation_pool.clone()),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?;
-                let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
-                let accepted_token_indicies =
-                    full.iter().take(num_accepted + 1).map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
-                self.model_state
-                    .transformer_state
-                    .encode_accept(&accepted_token_indicies, &mut command_buffer)
-                    .map_err(LanguageModelStreamError::Backend)?;
-                if let Some(speculator) = self.model.speculator.as_ref() {
-                    speculator.encode_accept(
-                        self.model_state.speculator_state.as_mut().unwrap(),
-                        hidden_features.as_ref().unwrap().iter(),
-                        &accepted_token_indicies,
-                        &mut command_buffer,
-                    )?;
-                }
-                wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref())
-                    .await
-                    .map_err(LanguageModelStreamError::Backend)?;
-
-                drop(capture_span);
-
-                self.model_state.tokens.extend(full.iter().take(num_accepted).map(|(_, _, t)| *t));
-
-                Some(full[num_accepted].2)
-            },
-            DecodingState::Halted => None,
-            DecodingState::Invalid => None, // TODO: proper error handling
-            DecodingState::Closed => self.model_state.last_output_token,
+        let Some(job) = self.job.take() else {
+            return Ok(());
         };
 
-        self.model_state.last_output_token = last_output_token;
+        let last_resolved = self.submitter.resolve_take(job).await?;
+        self.queued_tokens.extend(last_resolved.output_tokens.into_iter().rev());
 
         Ok(())
     }
@@ -918,8 +749,9 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
 impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
     fn drop(&mut self) {
-        if !matches!(self.decoding_state, DecodingState::Closed)
+        if !self.closed()
             && self
+                .submitter
                 .model
                 .engine
                 .context
