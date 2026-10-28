@@ -10,5 +10,6 @@ enum class ActivationTransformOp : uint32_t {
   OutputRht = 1,
   Quantize = 2,
   QuantizeWithGroupSums = 3,
+  PackHalf = 4,
 };
 } // namespace uzu::activation_transform

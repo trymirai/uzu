@@ -253,7 +253,7 @@ fn parity_gemv_bf16(
 }
 
 #[uzu_test]
-fn qmv_mma_formats_match_cpu() {
+fn short_batch_quant_formats_match_cpu() {
     let context = block_on(MetalContext::new()).expect("Metal context");
     for (n, k, bits, group, method) in [
         (72, 1024, 4, 32, QuantizationMethod::ScaleZeroPoint),
@@ -270,7 +270,10 @@ fn qmv_mma_formats_match_cpu() {
             }
             let actual = run_quant_metal::<bf16>(&context, &input, GemmBLayout::RowMajor, None);
             let reference = run_quant_cpu::<bf16>(&input);
-            assert_parity::<bf16>(&format!("MMA W{bits} G{group} M{m}"), &reference, &actual, 0.05, 0.4);
+            assert_parity::<bf16>(&format!("W{bits} G{group} M{m}"), &reference, &actual, 0.05, 0.4);
+            if bits == 4 {
+                continue;
+            }
             let mut legacy = Vec::with_capacity(actual.len());
             for row in 0..m as usize {
                 let mut one = input.clone();

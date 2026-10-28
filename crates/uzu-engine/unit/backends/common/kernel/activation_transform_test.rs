@@ -157,7 +157,7 @@ mod quantize {
         backends::{
             common::{
                 Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-                kernel::{ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
+                kernel::{ActivationEncoding, ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
             },
             cpu::Cpu,
         },
@@ -187,13 +187,15 @@ mod quantize {
         let kernel = ActivationTransform::<B>::quantize(
             context.as_ref(),
             DataType::F32,
-            ActivationQuantization::new(
-                scale_group_size,
-                sum_group_size.unwrap_or(scale_group_size),
-                emit_group_sums,
-                code_layout,
-            )
-            .expect("supported activation quantization"),
+            ActivationEncoding::Int8(
+                ActivationQuantization::new(
+                    scale_group_size,
+                    sum_group_size.unwrap_or(scale_group_size),
+                    emit_group_sums,
+                    code_layout,
+                )
+                .expect("supported activation quantization"),
+            ),
         )
         .expect("quantize transform");
         let mut command_buffer = context.as_ref().create_command_buffer(None, None).expect("command buffer");

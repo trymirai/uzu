@@ -41,6 +41,7 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
     #[optional(clip_gate)] gate_clip_max: Option<f32>,
     #[optional(clip_value)] value_clip_min: Option<f32>,
     #[optional(clip_value)] value_clip_max: Option<f32>,
+    #[optional(ops == GatedActMulOp::PackHalf)] packed_half_out: Option<*mut u32>,
     #[specialize] ops: GatedActMulOp,
     #[specialize] grouped_by_weight_nibble: bool,
     #[specialize] interleaved: bool,
@@ -54,6 +55,8 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
     assert_eq!(hadamard_factors.is_some(), use_hadamard);
     let quantize = matches!(ops, GatedActMulOp::Quantize | GatedActMulOp::QuantizeWithGroupSums);
     let emit_group_sums = ops == GatedActMulOp::QuantizeWithGroupSums;
+    assert!(ops != GatedActMulOp::PackHalf, "CPU packed-half gate is not selected");
+    let _ = packed_half_out;
     assert!(!quantize || use_hadamard, "quantized gate activation requires RHT");
     assert!(!quantize || gated_dim.is_multiple_of(activation_scale_group_size));
     assert!(!emit_group_sums || gated_dim.is_multiple_of(sum_group_size));
@@ -104,16 +107,18 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
         }
 
         if let Some(transformed) = transformed.as_mut() {
-            let factors = hadamard_factors.expect("Hadamard factors are required");
-            for stripe_start in (0..gated_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
-                let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
-                for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
-                    let gated = stripe_start + lane;
-                    stripe[lane] = transformed[gated] * unsafe { *factors.add(gated) } as f32;
+            if use_hadamard {
+                let factors = hadamard_factors.expect("Hadamard factors are required");
+                for stripe_start in (0..gated_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
+                    let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
+                    for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+                        let gated = stripe_start + lane;
+                        stripe[lane] = transformed[gated] * unsafe { *factors.add(gated) } as f32;
+                    }
+                    hadamard_transform(&mut stripe);
+                    transformed[stripe_start..stripe_start + HADAMARD_TRANSFORM_BLOCK_SIZE as usize]
+                        .copy_from_slice(&stripe);
                 }
-                hadamard_transform(&mut stripe);
-                transformed[stripe_start..stripe_start + HADAMARD_TRANSFORM_BLOCK_SIZE as usize]
-                    .copy_from_slice(&stripe);
             }
 
             if quantize {

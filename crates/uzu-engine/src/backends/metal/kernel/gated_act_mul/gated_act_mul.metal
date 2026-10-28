@@ -2,6 +2,7 @@
 #include "../common/activation_quantization.h"
 #include "../common/dsl.h"
 #include "../common/gated_act_mul.h"
+#include "../common/packed_half_activation.h"
 #include "../common/thread_context.h"
 #include "../generated/gated_act_mul.h"
 #include "../hadamard_transform/hadamard_transform.h"
@@ -16,13 +17,14 @@ using namespace uzu::gated_act_mul;
 
 #define QUANTIZED (ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == GatedActMulOp::QuantizeWithGroupSums)
+#define PACKED_HALF (ops == GatedActMulOp::PackHalf)
 
 template <typename T>
 VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(GatedActMul) (
     const device T* act_operand,
     const device T* value_operand OPTIONAL(!interleaved),
-    device T* fp_out OPTIONAL(!QUANTIZED),
+    device T* fp_out OPTIONAL(!QUANTIZED && !PACKED_HALF),
     device int8_t* q_out OPTIONAL(QUANTIZED),
     device float* scales_out OPTIONAL(QUANTIZED),
     device int32_t* group_sums_out OPTIONAL(EMITS_GROUP_SUMS),
@@ -37,6 +39,7 @@ PUBLIC KERNEL(GatedActMul) (
     const constant float& gate_clip_max OPTIONAL(clip_gate),
     const constant float& value_clip_min OPTIONAL(clip_value),
     const constant float& value_clip_max OPTIONAL(clip_value),
+    device uint* packed_half_out OPTIONAL(PACKED_HALF),
     const GatedActMulOp ops SPECIALIZE,
     const bool grouped_by_weight_nibble SPECIALIZE,
     const bool interleaved SPECIALIZE,
@@ -109,7 +112,7 @@ PUBLIC KERNEL(GatedActMul) (
     results = simdgroup_hadamard_transform_vector(lane_index, results);
   }
 
-  if (!QUANTIZED) {
+  if (!QUANTIZED && !PACKED_HALF) {
     device T* out_row = fp_out + batch_idx * gated_dim;
     if (use_vector_io) {
       store_hadamard_vector(out_row + first_index, results);
@@ -117,6 +120,22 @@ PUBLIC KERNEL(GatedActMul) (
       for (uint index = 0; index < valid_count; ++index) {
         out_row[first_index + index] = static_cast<T>(results[index]);
       }
+    }
+    return;
+  }
+
+  if (PACKED_HALF) {
+    if (valid_count > 0) {
+      const float2 sums = store_packed_half_values(results, first_index, batch_idx, sum_group_size, packed_half_out);
+      store_packed_half_sums(
+          sums,
+          lane_index,
+          sum_group_size / HADAMARD_VECTOR_SIZE,
+          first_index / sum_group_size,
+          batch_idx,
+          sum_group_size,
+          packed_half_out
+      );
     }
     return;
   }

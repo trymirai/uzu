@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         kernel::{
-            ActivationQuantization,
+            ActivationEncoding, ActivationQuantization,
             matmul::{
                 arguments::MatmulArguments,
                 routing::{ActivationFormat, MatmulShape},
@@ -54,6 +54,34 @@ pub trait MatmulKernel: Sized + Send + Sync {
         _context: &<Self::Backend as Backend>::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
+    }
+
+    fn select_activation_encoding(
+        &self,
+        shape: &MatmulShape,
+        weights_layout: Self::WeightsLayout,
+        context: &<Self::Backend as Backend>::Context,
+    ) -> Option<ActivationEncoding> {
+        for batch_dim in 4..=8 {
+            let candidate = MatmulShape {
+                m: batch_dim,
+                ..*shape
+            };
+            if let ActivationFormat::PackedHalf {
+                group_size,
+            } = self.select_activation_format(&candidate, weights_layout, context)
+            {
+                return Some(ActivationEncoding::PackedHalf {
+                    group_size,
+                });
+            }
+        }
+
+        let candidate = MatmulShape {
+            a_full_precision: false,
+            ..*shape
+        };
+        self.select_activation_quantization(&candidate, context).map(ActivationEncoding::Int8)
     }
 
     fn optimize_weights_layout(

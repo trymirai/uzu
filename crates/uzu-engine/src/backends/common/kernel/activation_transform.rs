@@ -51,11 +51,19 @@ impl ActivationQuantization {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum ActivationEncoding {
+    Int8(ActivationQuantization),
+    PackedHalf {
+        group_size: u32,
+    },
+}
+
 pub struct ActivationTransform<B: Backend> {
     kernel: <B::Kernels as Kernels>::ActivationTransformKernel,
     in_place: bool,
     has_bias: bool,
-    quantization: Option<ActivationQuantization>,
+    encoding: Option<ActivationEncoding>,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -65,12 +73,19 @@ impl<B: Backend> ActivationTransform<B> {
         bias_data_type: Option<DataType>,
         ops: ActivationTransformOp,
         in_place: bool,
-        quantization: Option<ActivationQuantization>,
+        encoding: Option<ActivationEncoding>,
     ) -> Result<Self, B::Error> {
         let has_bias = bias_data_type.is_some();
-        let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match quantization {
-            Some(q) => (q.code_layout.is_grouped_by_nibble(), q.scale_group_size, q.sum_group_size),
-            None => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, None),
+        let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match encoding {
+            Some(ActivationEncoding::Int8(q)) => (
+                q.code_layout().is_grouped_by_nibble(),
+                q.scale_group_size(),
+                q.sum_group_size().unwrap_or(q.scale_group_size()),
+            ),
+            Some(ActivationEncoding::PackedHalf {
+                group_size,
+            }) => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
+            None => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
         };
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
             context,
@@ -80,14 +95,14 @@ impl<B: Backend> ActivationTransform<B> {
             codes_grouped_by_nibble,
             in_place,
             scale_group_size,
-            sum_group_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
+            sum_group_size,
             has_bias,
         )?;
         Ok(Self {
             kernel,
             in_place,
             has_bias,
-            quantization,
+            encoding,
         })
     }
 
@@ -111,24 +126,16 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        quantization: ActivationQuantization,
+        encoding: ActivationEncoding,
     ) -> Result<Self, B::Error> {
-        let op = quantization
-            .sum_group_size()
-            .map_or(ActivationTransformOp::Quantize, |_| ActivationTransformOp::QuantizeWithGroupSums);
-        Self::new(context, data_type, None, op, false, Some(quantization))
-    }
-
-    pub fn scale_group_size(&self) -> u32 {
-        self.quantization.expect("quantized activation transform required").scale_group_size()
-    }
-
-    pub fn sum_group_size(&self) -> Option<u32> {
-        self.quantization.expect("quantized activation transform required").sum_group_size()
-    }
-
-    pub fn code_layout(&self) -> Int8CodeLayout {
-        self.quantization.expect("quantized activation transform required").code_layout()
+        let op = match encoding {
+            ActivationEncoding::Int8(q) if q.sum_group_size().is_some() => ActivationTransformOp::QuantizeWithGroupSums,
+            ActivationEncoding::Int8(_) => ActivationTransformOp::Quantize,
+            ActivationEncoding::PackedHalf {
+                ..
+            } => ActivationTransformOp::PackHalf,
+        };
+        Self::new(context, data_type, None, op, false, Some(encoding))
     }
 
     /// `input` and `output` must be distinct buffers.
@@ -141,7 +148,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(self.quantization.is_none() && !self.in_place && !self.has_bias);
+        assert!(self.encoding.is_none() && !self.in_place && !self.has_bias);
         assert_row_width(element_count);
         self.kernel.encode(
             Some(input),
@@ -153,6 +160,7 @@ impl<B: Backend> ActivationTransform<B> {
             rht_factors,
             batch_size,
             element_count,
+            None::<&mut B::ScratchBuffer>,
             command_buffer,
         );
     }
@@ -166,7 +174,7 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(self.quantization.is_none() && self.in_place && self.has_bias == bias.is_some());
+        assert!(self.encoding.is_none() && self.in_place && self.has_bias == bias.is_some());
         assert_row_width(element_count);
         self.kernel.encode(
             None::<&B::ScratchBuffer>,
@@ -178,6 +186,7 @@ impl<B: Backend> ActivationTransform<B> {
             rht_factors,
             batch_size,
             element_count,
+            None::<&mut B::ScratchBuffer>,
             command_buffer,
         );
     }
@@ -185,34 +194,66 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn encode_quantize(
         &self,
         input: impl BufferRef<Backend = B>,
-        q_out: impl BufferMut<Backend = B>,
-        scales_out: impl BufferMut<Backend = B>,
-        group_sums_out: Option<impl BufferMut<Backend = B>>,
+        values: impl BufferMut<Backend = B>,
+        scales: impl BufferMut<Backend = B>,
+        group_sums: Option<impl BufferMut<Backend = B>>,
         rht_factors: impl BufferRef<Backend = B>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let quantization = self.quantization.expect("quantized activation transform required");
+        let Some(ActivationEncoding::Int8(q)) = self.encoding else {
+            panic!("INT8 activation transform required")
+        };
         assert_row_width(element_count);
-        assert!(
-            element_count.is_multiple_of(quantization.scale_group_size()),
-            "quantized activation row ({element_count}) must be a multiple of scale group ({})",
-            quantization.scale_group_size()
-        );
-        if let Some(group_size) = quantization.sum_group_size() {
+        assert!(element_count.is_multiple_of(q.scale_group_size()));
+        assert_eq!(q.sum_group_size().is_some(), group_sums.is_some());
+        if let Some(group_size) = q.sum_group_size() {
             assert!(element_count.is_multiple_of(group_size));
         }
         self.kernel.encode(
             Some(input),
             None::<&mut B::ScratchBuffer>,
             None::<&B::GlobalGpuBuffer>,
-            Some(q_out),
-            Some(scales_out),
-            group_sums_out,
+            Some(values),
+            Some(scales),
+            group_sums,
             rht_factors,
             batch_size,
             element_count,
+            None::<&mut B::ScratchBuffer>,
+            command_buffer,
+        );
+    }
+
+    pub fn encode_packed_half(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        output: impl BufferMut<Backend = B>,
+        rht_factors: impl BufferRef<Backend = B>,
+        batch_size: u32,
+        element_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        let Some(ActivationEncoding::PackedHalf {
+            group_size,
+        }) = self.encoding
+        else {
+            panic!("packed-half activation transform required")
+        };
+        assert_row_width(element_count);
+        assert!(element_count.is_multiple_of(group_size) && batch_size <= 8);
+        self.kernel.encode(
+            Some(input),
+            None::<&mut B::ScratchBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            None::<&mut B::ScratchBuffer>,
+            rht_factors,
+            batch_size,
+            element_count,
+            Some(output),
             command_buffer,
         );
     }

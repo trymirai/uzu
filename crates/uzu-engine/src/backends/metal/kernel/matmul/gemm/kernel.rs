@@ -19,11 +19,11 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::{
-                gemm::{GemmAPrologueKind, GemmAlignment, GemmBLayout, GemmTiling},
+                gemm::{GemmAPrologueKind, GemmAlignment, GemmBLayout},
                 matmul::GemmParams,
             },
             kernel::{
-                GemmMetalKernel, GemmPackInputMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,
+                GemmMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,
                 matmul::{
                     MatmulMetalError, MatmulOutputWork,
                     gemm::{
@@ -40,14 +40,6 @@ use crate::{
     data_type::DataType,
 };
 
-// Matches PackedW4Input::GROUP_WORDS in common/packed_w4_input.h.
-fn packed_input_bytes(
-    k: usize,
-    group_size: usize,
-) -> usize {
-    (k / group_size) * (16 * group_size + 64)
-}
-
 pub struct GemmKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -55,7 +47,6 @@ pub struct GemmKernel {
     trellis: TrellisGemm,
     kernels: HashMap<(GemmSpecialization, DataType), GemmMetalKernel>,
     split_k_reduce: HashMap<(GemmDTransform, DataType), GemmSplitKReduceMetalKernel>,
-    pack_pipelines: HashMap<u32, GemmPackInputMetalKernel>,
 }
 
 impl GemmKernel {
@@ -75,7 +66,6 @@ impl GemmKernel {
             trellis: TrellisGemm::default(),
             kernels: HashMap::new(),
             split_k_reduce: HashMap::new(),
-            pack_pipelines: HashMap::new(),
         }
     }
 
@@ -101,7 +91,6 @@ impl GemmKernel {
                     specialization.b_group_size.unwrap_or(0),
                     specialization.a_prologue,
                     specialization.a_group_size.unwrap_or(0),
-                    specialization.float_partials,
                     specialization.output_transform,
                     specialization.alignment,
                     specialization.signed_codes,
@@ -242,9 +231,9 @@ impl GemmKernel {
         }
     }
 
-    fn encode_weights<WB: BufferRef<Backend = Metal>>(
+    fn encode_weights<WB: BufferRef<Backend = Metal>, AB: BufferRef<Backend = Metal>>(
         &mut self,
-        a: MatmulA<impl BufferRef<Backend = Metal>>,
+        a: MatmulA<AB>,
         weights: WB,
         quantized: Option<QuantizedB<WB>>,
         output: MatmulOutput<'_, Metal, impl BufferMut<Backend = Metal>>,
@@ -261,11 +250,6 @@ impl GemmKernel {
         let output_transform = d_transform.mask();
         let soft_cap = d_transform.soft_cap;
         let register_quant_route = plan.tiling.is_register_quant_variant();
-        let register_soft_cap = if register_quant_route {
-            soft_cap
-        } else {
-            None
-        };
         let defer_rht = rht_factors.is_some() && plan.split_k > 1;
         let (output_bias, bias_after_rht, output_transform) = if defer_rht {
             (None, output_bias, output_transform.difference(GemmDTransform::RHT | GemmDTransform::BIAS))
@@ -288,7 +272,7 @@ impl GemmKernel {
         }
 
         let is_quant = quantized.is_some();
-        if !is_quant && !matches!(&a, MatmulA::FullPrecision { .. }) {
+        if !is_quant && matches!(a, MatmulA::Int8Symmetric { .. }) {
             return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
                 reason: "int8 activations require quantized weights",
@@ -304,25 +288,40 @@ impl GemmKernel {
                 quantized.zero_point_strides(),
             ),
         };
-        let (a_full_precision, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match &a {
+        let w4_tiling = plan.tiling.is_packed_w4();
+        let prepared_group_size = match a {
+            MatmulA::PackedHalf {
+                group_size,
+                ..
+            } => Some(group_size),
+            _ => None,
+        };
+        if w4_tiling != prepared_group_size.is_some()
+            || prepared_group_size.is_some_and(|group_size| Some(group_size) != shape.b_group_size)
+        {
+            return Err(MatmulMetalError::IncompatibleA {
+                path: "Gemm register W4",
+                reason: "packed activation buffer does not match the selected W4 group",
+            });
+        }
+
+        let (a_full_precision, a_packed_half, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
             MatmulA::FullPrecision {
                 values,
                 offset,
-            } => (Some(values.subrange(*offset..)), None, None, None, GemmAPrologueKind::FullPrecision, None),
+            } => (Some(values.subrange(offset..)), None, None, None, None, GemmAPrologueKind::FullPrecision, None),
+            MatmulA::PackedHalf {
+                values,
+                ..
+            } => (None, Some(values.subrange(0..)), None, None, None, GemmAPrologueKind::PackedHalf, None),
             MatmulA::Int8Symmetric {
                 values,
-                scales: activation_scales,
-                group_sums: activation_group_sums,
+                scales,
+                group_sums,
                 scale_group_size,
                 code_layout,
             } => {
-                validate_int8_left_operand(
-                    use_mxu,
-                    shape,
-                    *scale_group_size,
-                    *code_layout,
-                    activation_group_sums.is_some(),
-                )?;
+                validate_int8_left_operand(use_mxu, shape, scale_group_size, code_layout, group_sums.is_some())?;
                 if output_transform.contains(GemmDTransform::SOFT_CAP) {
                     return Err(MatmulMetalError::UnsupportedDOp {
                         bit: GemmDTransform::SOFT_CAP,
@@ -331,11 +330,12 @@ impl GemmKernel {
                 }
                 (
                     None,
-                    Some(*values),
-                    Some(*activation_scales),
-                    *activation_group_sums,
+                    None,
+                    Some(values),
+                    Some(scales),
+                    group_sums.filter(|_| Self::requires_activation_group_sums(&shape)),
                     GemmAPrologueKind::Int8Symmetric,
-                    Some(*scale_group_size),
+                    Some(scale_group_size),
                 )
             },
             MatmulA::Trellis {
@@ -346,43 +346,17 @@ impl GemmKernel {
                 });
             },
         };
-
-        let a_group_sums = a_group_sums.filter(|_| Self::requires_activation_group_sums(&shape));
-
-        let packed_a = if plan.tiling == GemmTiling::Tile8x32x64_Simdgroups1x2x4 {
-            let Some(a) = a_full_precision else {
-                return Err(MatmulMetalError::IncompatibleA {
-                    path: "Gemm",
-                    reason: "packed W4 route requires full-precision activations",
-                });
-            };
-            let group_size = shape.b_group_size.expect("validated packed W4 group size");
-            if let Entry::Vacant(entry) = self.pack_pipelines.entry(group_size) {
-                entry.insert(GemmPackInputMetalKernel::new(command_buffer.context(), group_size)?);
-            }
-            let mut packed = command_buffer.allocate_scratch(packed_input_bytes(k as usize, group_size as usize))?;
-            self.pack_pipelines[&group_size].encode(a, &mut packed, k, m, command_buffer);
-            Some(packed)
-        } else {
-            None
-        };
-
         if plan.split_k > 1 {
+            let soft_cap = soft_cap.filter(|_| register_quant_route);
             let tiling = plan.tiling;
             let split_k = plan.split_k;
             let kp = k / split_k;
-            let k_step = outer_block_k(shape, plan.engine, tiling).unwrap_or(1);
+            let k_step = outer_block_k(shape, plan.engine, plan.tiling).unwrap_or(1);
             let base_gx = n.div_ceil(tiling.block_n());
             let base_gy = m.div_ceil(tiling.block_m());
             let alignment =
                 GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
-            let float_partials = a_int8.is_some() || tiling.is_register_quant_variant();
-            let partial_data_type = if float_partials {
-                DataType::F32
-            } else {
-                self.output_data_type
-            };
-            let mut part_spec = GemmSpecialization::from_plan(
+            let part_spec = GemmSpecialization::from_plan(
                 plan,
                 shape,
                 gemm_b_layout,
@@ -393,8 +367,12 @@ impl GemmKernel {
                 a_group_size,
             )?;
 
-            part_spec.float_partials = float_partials;
             let elem = (m as usize) * (n as usize);
+            let partial_data_type = if a_int8.is_some() || tiling.is_register_quant_variant() {
+                DataType::F32
+            } else {
+                self.output_data_type
+            };
             let slice_bytes = elem * partial_data_type.size_in_bytes();
             let mut temp = command_buffer.allocate_scratch(split_k as usize * slice_bytes)?;
             let mut params = gemm_params(shape, plan, 1.0, scale_strides, zero_point_strides);
@@ -402,14 +380,14 @@ impl GemmKernel {
             let part_kernel = self.get_or_create(command_buffer.context(), part_spec, partial_data_type)?;
             part_kernel.encode(
                 a_full_precision,
-                packed_a.as_ref(),
+                a_packed_half,
                 weights,
                 &mut temp,
                 scales,
                 biases,
                 zero_points,
-                None::<&<Metal as Backend>::GlobalBuffer>,
-                None::<&<Metal as Backend>::GlobalBuffer>,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 None,
                 a_int8,
                 a_scales,
@@ -423,7 +401,6 @@ impl GemmKernel {
 
             debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
             let group_count = ((elem as u32) / 4).div_ceil(256);
-            let soft_cap = register_soft_cap;
             let mut reduce_transform = output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::BIAS);
             if soft_cap.is_some() {
                 reduce_transform |= GemmDTransform::SOFT_CAP;
@@ -452,12 +429,12 @@ impl GemmKernel {
                 soft_cap,
                 command_buffer,
             );
+
             if let Some(factors) = rht_factors {
                 output_work.apply(d.reborrow(), factors, bias_after_rht, m, n, command_buffer);
             }
             return Ok(());
         }
-
         let tiling = plan.tiling;
         let (alignment_m, alignment_n) = if use_mxu && a_int8.is_some() {
             (tiling.block_m() / tiling.simdgroups_m(), tiling.block_n() / tiling.simdgroups_n())
@@ -504,7 +481,7 @@ impl GemmKernel {
         let kernel = self.get_or_create(command_buffer.context(), specialization, self.output_data_type)?;
         kernel.encode(
             a_full_precision,
-            packed_a.as_ref(),
+            a_packed_half,
             weights,
             d.reborrow(),
             scales,

@@ -14,7 +14,7 @@ pub mod radix_top_k_small;
 #[cfg(any(backend = "cpu", test))]
 mod trellis;
 
-pub use activation_transform::{ActivationQuantization, ActivationTransform};
+pub use activation_transform::{ActivationEncoding, ActivationQuantization, ActivationTransform};
 pub use attention::{
     AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, FullPrecisionInput, Int8Input, KVFormat,
 };

@@ -9,7 +9,8 @@ use crate::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulKernel, MatmulShape, QuantParamsLayout,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel, MatmulShape,
+                    QuantParamsLayout,
                 },
             },
         },
@@ -226,6 +227,11 @@ impl MatmulKernel for MatmulMetalKernel {
         }
         match self.select_dispatch(bf16_shape, weights_layout, context) {
             MatmulDispatch::Gemv(_) => return ActivationFormat::Bf16,
+            MatmulDispatch::Gemm(plan) if plan.tiling.is_packed_w4() => {
+                return ActivationFormat::PackedHalf {
+                    group_size: bf16_shape.b_group_size.expect("W4 register plan requires group metadata"),
+                };
+            },
             MatmulDispatch::Gemm(plan) if plan.tiling.is_register_quant_variant() => {
                 return ActivationFormat::Bf16;
             },
@@ -292,12 +298,34 @@ impl MatmulKernel for MatmulMetalKernel {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), Self::Error> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, arguments.b.weights_layout(), command_buffer.context()) {
+        let mut plan = match self.select_dispatch(&shape, arguments.b.weights_layout(), command_buffer.context()) {
             MatmulDispatch::Gemv(gemv) => {
                 return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer);
             },
             MatmulDispatch::Gemm(plan) => plan,
         };
+        if plan.tiling.is_packed_w4() && matches!(&arguments.a, MatmulA::FullPrecision { .. }) {
+            let context = command_buffer.context();
+            if let Some(gemv) = GemvSpecialization::select_shape(
+                &shape,
+                arguments.b.weights_layout(),
+                self.weights_data_type,
+                self.input_data_type,
+                self.output_data_type,
+                context.gpu_core_count,
+                context.apple_gpu_family,
+            ) {
+                return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer);
+            }
+            plan = GemmProblem::new(
+                shape,
+                self.weights_data_type,
+                self.output_data_type,
+                context.supports_mxu,
+                context.apple_gpu_family,
+            )
+            .select_plan();
+        }
 
         self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
     }

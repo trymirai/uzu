@@ -10,7 +10,9 @@ use crate::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::activation_type::ActivationType,
-            kernel::{ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout},
+            kernel::{
+                ActivationEncoding, ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout,
+            },
         },
         cpu::Cpu,
     },
@@ -122,16 +124,18 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     let factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
     let mut values = create_buffer::<B, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
     let mut scales = create_buffer::<B, f32>(&context, (input.batch_dim * input.gated_dim / 128) as usize);
-    let kernel = GatedActMul::<B>::quantized(
+    let kernel = GatedActMul::<B>::quantize(
         &context,
         DataType::BF16,
-        ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
-            .expect("supported activation quantization"),
+        ActivationEncoding::Int8(
+            ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
+                .expect("supported activation quantization"),
+        ),
         GatedActMulSettings::default(),
     )
     .expect("create quantized GatedActMul");
     let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
-    kernel.encode_quantized(
+    kernel.encode_quantize(
         &act_operand,
         &mut values,
         &mut scales,
