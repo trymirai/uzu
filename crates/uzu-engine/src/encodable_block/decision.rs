@@ -114,20 +114,12 @@ impl<B: Backend> Decision<B> {
             .map_err(DecisionError::Backend)?;
         self.input_embedding.encode_lookup(token_ids, &mut embedded, token_count, self.input_scale, command_buffer);
 
-        let nodes = (0..token_count)
-            .map(|index| TrieNode {
-                trie_start: index,
-                trie_end: token_count - 1,
-                height: index,
-            })
-            .collect::<Box<[TrieNode]>>();
-
         let hidden = self
             .transformer
             .encode(
                 embedded,
                 None::<&B::ScratchBuffer>,
-                &BatchTopology::new(&nodes, true),
+                &BatchTopology::flat(token_count),
                 Some((token_count - 1..token_count).into()),
                 None,
                 None,

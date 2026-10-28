@@ -354,9 +354,12 @@ impl<B: Backend> DeltaNet<B> {
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
-        let parents =
-            command_buffer.allocate_constant_from_slice(batch_dim.parents()).map_err(MixerEncodeError::Backend)?;
-        let trie = command_buffer.allocate_constant_from_slice(batch_dim.nodes()).map_err(MixerEncodeError::Backend)?;
+        let parents = command_buffer
+            .allocate_constant_from_slice(batch_dim.parents().unwrap())
+            .map_err(MixerEncodeError::Backend)?;
+        let trie = command_buffer
+            .allocate_constant_from_slice(batch_dim.nodes().unwrap())
+            .map_err(MixerEncodeError::Backend)?;
 
         let mut conv_states = command_buffer
             .allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)
@@ -440,7 +443,7 @@ impl<B: Backend> DeltaNet<B> {
             v,
             log_decay,
             beta,
-            parents: batch_dim.parents().into(),
+            parents: batch_dim.parents().unwrap().into(),
         });
         Ok(output)
     }

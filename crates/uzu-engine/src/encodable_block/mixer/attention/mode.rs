@@ -157,7 +157,7 @@ impl<B: Backend> Attention<B> {
                 },
             };
             let trie = (!batch_dim.is_flat())
-                .then(|| command_buffer.allocate_constant_from_slice(batch_dim.nodes()))
+                .then(|| command_buffer.allocate_constant_from_slice(batch_dim.nodes().unwrap()))
                 .transpose()
                 .map_err(AttentionEncodeError::Backend)?;
             self.kernel

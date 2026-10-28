@@ -251,7 +251,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .map_err(LanguageModelStreamError::Backend)?;
 
                 let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-                let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
+                // TODO: This is techicallty wrong because it doesn't
+                // do `full_accept`, but really it should just be
+                // `BatchTopology::flat`, which I will do in the following
+                // commits
+                let batch_dim = BatchTopology::new(input_flat_trie_nodes);
 
                 let decoder_output = model.decoder.encode(
                     &token_ids,
@@ -636,7 +640,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
 
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-        let batch_dim = BatchTopology::new(&input_flat_trie_nodes, full_accept);
+        // TODO: As above, this doesn't take in `full_accept`.
+        let batch_dim = BatchTopology::new(input_flat_trie_nodes);
 
         self.model_state
             .transformer_state

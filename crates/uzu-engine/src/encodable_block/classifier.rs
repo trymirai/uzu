@@ -2,10 +2,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, gpu_types::trie::TrieNode,
-        kernel::PoolingMeanKernel,
-    },
+    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::PoolingMeanKernel},
     config::classifier::{ClassifierConfig, PoolingType},
     data_type::DataType,
     encodable_block::{
@@ -135,19 +132,12 @@ impl<B: Backend> Classifier<B> {
             .encode(&embedded, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(ClassifierError::Backend)?;
 
-        let nodes = (0..batch_dim)
-            .map(|index| TrieNode {
-                trie_start: index,
-                trie_end: batch_dim - 1,
-                height: index,
-            })
-            .collect::<Box<[TrieNode]>>();
         let hidden = self
             .transformer
             .encode(
                 hidden,
                 None::<&B::ScratchBuffer>,
-                &BatchTopology::new(&nodes, true),
+                &BatchTopology::flat(batch_dim),
                 Some((0..batch_dim).into()),
                 None,
                 None,
