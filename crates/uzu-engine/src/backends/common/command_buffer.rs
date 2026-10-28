@@ -86,6 +86,7 @@ pub trait CommandBufferEncoding: Send {
 
     fn with_timestamps(self) -> Self;
 
+    #[track_caller]
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 
