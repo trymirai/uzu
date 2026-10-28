@@ -251,7 +251,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     .map_err(LanguageModelStreamError::Backend)?;
 
                 let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-                let batch_dim = BatchTopology::new(&input_flat_trie_nodes, true);
+                let batch_dim = BatchTopology::new(input_flat_trie_nodes, true);
 
                 let decoder_output = model.decoder.encode(
                     &token_ids,
@@ -636,7 +636,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         };
 
         let input_flat_trie_nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
-        let batch_dim = BatchTopology::new(&input_flat_trie_nodes, full_accept);
+        let batch_dim = BatchTopology::new(input_flat_trie_nodes, false);
 
         self.model_state
             .transformer_state
