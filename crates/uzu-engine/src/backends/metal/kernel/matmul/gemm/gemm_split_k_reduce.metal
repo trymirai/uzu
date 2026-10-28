@@ -7,8 +7,7 @@ using namespace uzu::gemm;
 
 template <typename Input, typename T>
 VARIANTS(Input, float, bfloat)
-VARIANTS(T, float, bfloat)
-CONSTRAINT(Input == "float" || Input == T)
+VARIANTS(T, bfloat)
 KERNEL(GemmSplitKReduce)(
     const device Input* partial_sums,
     device T* output,

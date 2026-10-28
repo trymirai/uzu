@@ -56,8 +56,7 @@ impl MatmulMetalKernel {
             return false;
         }
         match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
-            (4, true, (DataType::F32, DataType::F32, DataType::F32))
-            | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
+            (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
             _ => {},
         }
         match shape.m {
