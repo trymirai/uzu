@@ -123,6 +123,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
     }
 }
 
+#[derive(Clone)]
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
     prefix: String,
@@ -192,11 +193,21 @@ impl<B: Backend> ParameterTree<'_, B> {
         shape: &[u32],
         dtype: DataType,
     ) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
+        self.read_buffer_with_tail(name, shape, dtype, 0)
+    }
+
+    pub fn read_buffer_with_tail(
+        &self,
+        name: &str,
+        shape: &[u32],
+        dtype: DataType,
+        tail: usize,
+    ) -> Result<B::GlobalBuffer, ParameterLoaderError<B>> {
         let tensor = self.tensor(name, shape, dtype)?;
         let (start, end) = tensor.data_offsets;
-        let mut buffer =
-            self.loader.context.create_buffer((end - start) as usize).map_err(ParameterLoaderError::BackendError)?;
-        self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.loader.data_offset + start)?;
+        let size = (end - start) as usize;
+        let mut buffer = self.loader.context.create_buffer(size + tail).map_err(ParameterLoaderError::BackendError)?;
+        self.loader.file.read_exact_at(&mut buffer.as_slice_mut::<u8>()[..size], self.loader.data_offset + start)?;
         tensor.read.set(true);
         Ok(buffer)
     }

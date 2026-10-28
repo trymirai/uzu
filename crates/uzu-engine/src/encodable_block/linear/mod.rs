@@ -4,10 +4,12 @@ use thiserror::Error;
 mod input_rht;
 mod matmul;
 mod rht_wrapper;
+mod transformed_linear;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
+pub use transformed_linear::{TransformedLinear, TransformedLinearError};
 pub use untied_readout::UntiedReadout;
 
 use crate::{
@@ -21,7 +23,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
     },
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -70,6 +72,11 @@ pub enum LinearInput<B: Backend> {
         scale_group_size: u32,
         code_layout: Int8CodeLayout,
     },
+    Trellis {
+        values: B::ScratchBuffer,
+        column_group_sums: B::ScratchBuffer,
+        scales: B::ScratchBuffer,
+    },
 }
 
 pub struct Gather<T: BufferRef> {
@@ -97,6 +104,15 @@ impl<B: Backend> LinearInput<B> {
                 scale_group_size: *scale_group_size,
                 code_layout: *code_layout,
             },
+            Self::Trellis {
+                values,
+                column_group_sums,
+                scales,
+            } => MatmulA::Trellis {
+                values,
+                column_group_sums,
+                scales,
+            },
         }
     }
 }
@@ -112,6 +128,8 @@ pub enum LinearBlockError<B: Backend> {
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("TransformedLinear error: {0}")]
+    TransformedLinearError(#[from] TransformedLinearError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
@@ -151,7 +169,8 @@ impl<B: Backend> dyn Linear<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 incoherence_block_size: Some(block_size),
-                incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+                incoherence_processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
+                incoherence_kind: IncoherenceKind::Hadamard,
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(RHTLinearWrapper::new(
                 input_dimension,
@@ -161,6 +180,21 @@ impl<B: Backend> dyn Linear<B> {
                 output_data_type,
                 has_biases,
                 parameter_tree,
+                context,
+            )?)),
+            spec @ (AnyWeightMatrixSpec::RowStackSpec(_)
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                incoherence_kind: IncoherenceKind::Kronecker,
+                ..
+            })) => Ok(Box::new(TransformedLinear::new(
+                input_dimension,
+                output_dimension,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+                has_biases,
+                spec,
+                &weights_tree,
                 context,
             )?)),
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
