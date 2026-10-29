@@ -246,6 +246,7 @@ impl GemmKernel {
         let (mut d, d_transform) = output.into_contiguous(n, "Gemm")?;
         let ab_scale = d_transform.ab_scale;
         let output_bias = d_transform.bias;
+        let soft_cap = d_transform.soft_cap;
         let rht_factors = d_transform.rht_factors;
         let output_transform = d_transform.mask();
         let (output_bias, bias_after_rht, output_transform) =
@@ -342,6 +343,7 @@ impl GemmKernel {
                 plan,
                 output_transform,
                 output_bias,
+                soft_cap,
                 command_buffer,
             )?;
             if let Some(factors) = rht_factors {
@@ -432,6 +434,7 @@ impl GemmKernel {
         plan: GemmPlan,
         output_transform: GemmDTransform,
         output_bias: Option<impl BufferRef<Backend = Metal>>,
+        soft_cap: Option<f32>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
@@ -509,7 +512,8 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let reduce_transform = output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::BIAS);
+        let reduce_transform =
+            output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::BIAS | GemmDTransform::SOFT_CAP);
         let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
             output_bias
         } else {
@@ -522,7 +526,18 @@ impl GemmKernel {
         };
         let reduce =
             self.get_or_create_split_k_reduce(command_buffer.context(), reduce_transform, partial_data_type)?;
-        reduce.encode(&temp, d.reborrow(), bias_arg, elem as u32, split_k, group_count, n, scale_arg, command_buffer);
+        reduce.encode(
+            &temp,
+            d.reborrow(),
+            bias_arg,
+            elem as u32,
+            split_k,
+            group_count,
+            n,
+            scale_arg,
+            soft_cap,
+            command_buffer,
+        );
 
         Ok(())
     }

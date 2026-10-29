@@ -1,4 +1,5 @@
 #include "../../common/dsl.h"
+#include "../../common/soft_cap.h"
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
 
@@ -20,6 +21,8 @@ KERNEL(GemmSplitKReduce)(
     const constant uint& column_count,
     const constant float& output_scale
         OPTIONAL(output_transform.contains(GemmDTransform::SCALE)),
+    const constant float& soft_cap
+        OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const GemmDTransform output_transform SPECIALIZE,
     const uint threadgroup_index GROUPS(threadgroup_count),
     const uint thread_index_in_threadgroup THREADS(256),
@@ -51,6 +54,9 @@ KERNEL(GemmSplitKReduce)(
   if (output_transform.contains(GemmDTransform::BIAS)) {
     const uint column = (vector_index * 4u) % column_count;
     accumulator += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));
+  }
+  if (output_transform.contains(GemmDTransform::SOFT_CAP)) {
+    accumulator = uzu::apply_soft_cap(accumulator, soft_cap);
   }
 
   output_vectors[vector_index] = vec<T, 4>(accumulator);
