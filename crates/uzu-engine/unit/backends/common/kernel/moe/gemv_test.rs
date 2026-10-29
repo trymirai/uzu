@@ -111,7 +111,7 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec(&output_buf)
+    buffer_to_vec::<B, _>(&context, &output_buf)
 }
 
 fn compare_moe_gemv<W: DataTypeRepr, Z: DataTypeRepr>(

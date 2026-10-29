@@ -43,7 +43,7 @@ fn run_router_top_k<B: Backend>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    (buffer_to_vec(&expert_ids), buffer_to_vec(&expert_weights))
+    (buffer_to_vec::<B, _>(&context, &expert_ids), buffer_to_vec::<B, _>(&context, &expert_weights))
 }
 
 #[uzu_test]

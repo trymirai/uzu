@@ -54,7 +54,7 @@ fn run_moe_combine<B: Backend>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec(&output_buf)
+    buffer_to_vec::<B, _>(&context, &output_buf)
 }
 
 #[uzu_test]
