@@ -42,7 +42,6 @@ template <
 VARIANTS(AT, bfloat)
 VARIANTS(BT, bfloat)
 VARIANTS(DT, bfloat, float)
-CONSTRAINT(DT != "float" || A_IS_INT8)
 VARIANTS(
     GEMM_TILING,
     GemmTiling::Tile8x32x32_Simdgroups1x1,

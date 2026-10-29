@@ -24,6 +24,7 @@ use crate::{
 };
 
 pub struct MatmulCpuKernel {
+    output_data_type: DataType,
     output_rht: ActivationTransform<Cpu>,
     bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
 }
@@ -39,19 +40,23 @@ impl MatmulKernel for MatmulCpuKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> Result<Self, Self::Error> {
-        for data_type in [weights_data_type, input_data_type, output_data_type] {
+        for data_type in [weights_data_type, input_data_type] {
             if data_type != DataType::BF16 {
                 return Err(MatmulCpuError::UnsupportedDataType(data_type));
             }
         }
-        let output_rht = ActivationTransform::output_rht(context, DataType::BF16, None, true)?;
+        if !matches!(output_data_type, DataType::BF16 | DataType::F32) {
+            return Err(MatmulCpuError::UnsupportedDataType(output_data_type));
+        }
+        let output_rht = ActivationTransform::output_rht(context, output_data_type, None, true)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
-            DataType::BF16,
+            output_data_type,
             DataType::BF16,
             true,
         )?;
         Ok(Self {
+            output_data_type,
             output_rht,
             bias_add,
         })
@@ -161,6 +166,7 @@ impl MatmulKernel for MatmulCpuKernel {
 
         let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u)?;
 
+        let output_data_type = self.output_data_type;
         let bias_after_rht = post_rht.is_some();
         command_buffer.push_command(move || {
             unsafe {
@@ -266,7 +272,11 @@ impl MatmulKernel for MatmulCpuKernel {
                         if let Some(cap) = soft_cap {
                             value = cap * (value / cap).tanh();
                         }
-                        write_bf16(d_ptr.as_ptr(), output_index, value);
+                        if output_data_type == DataType::F32 {
+                            *d_ptr.as_ptr().cast::<f32>().add(output_index) = value;
+                        } else {
+                            write_bf16(d_ptr.as_ptr(), output_index, value);
+                        }
                     }
                 }
             }
