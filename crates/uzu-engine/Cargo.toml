@@ -15,8 +15,6 @@ workspace = true
 [features]
 default = ["metal", "cpu"]
 
-vulkan = ["cpu", "dep:ash", "dep:vk-mem", "dep:dirs", "dep:shader-slang", "dep:shader-slang-sys", "dep:blake3", "dep:serde_json"]
-
 metal = [
     "dep:rayon",
     "dep:clang-ast",
@@ -41,6 +39,8 @@ webgpu = [
     "dep:wgpu",
     "dep:pollster",
 ]
+
+vulkan = ["cpu", "dep:ash", "dep:vk-mem", "dep:dirs", "dep:shader-slang", "dep:shader-slang-sys", "dep:blake3", "dep:serde_json"]
 
 cpu = [] # TODO: move libm here
 
@@ -91,6 +91,9 @@ itertools.workspace = true
 parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
+ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }

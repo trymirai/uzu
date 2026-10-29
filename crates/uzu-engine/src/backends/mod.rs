@@ -3,6 +3,9 @@ pub(crate) mod common;
 #[cfg(backend = "metal")]
 pub(crate) mod metal;
 
+#[cfg(backend = "vulkan")]
+pub mod vulkan;
+
 #[cfg(backend = "webgpu")]
 pub(crate) mod webgpu;
 
@@ -24,6 +27,8 @@ pub async fn select_backend<S: BackendSelection>(
 ) -> Result<S::Output, S::Error> {
     let default = if cfg!(backend = "metal") {
         "metal"
+    } else if cfg!(backend = "vulkan") {
+        "vulkan"
     } else if cfg!(backend = "webgpu") {
         "webgpu"
     } else if cfg!(backend = "cpu") {
@@ -36,6 +41,8 @@ pub async fn select_backend<S: BackendSelection>(
     match std::env::var("UZU_BACKEND").map(|s| s.to_lowercase()).as_deref().unwrap_or(default) {
         #[cfg(backend = "metal")]
         "metal" => selection.select::<metal::Metal>().await,
+        #[cfg(backend = "vulkan")]
+        "vulkan" => selection.select::<vulkan::Vulkan>().await,
         #[cfg(backend = "webgpu")]
         "webgpu" => selection.select::<webgpu::WebGPU>().await,
         #[cfg(backend = "cpu")]

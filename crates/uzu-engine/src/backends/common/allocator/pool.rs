@@ -4,6 +4,8 @@ use parking_lot::Mutex;
 
 use crate::backends::common::{Buffer, CpuBuffer, GpuBuffer};
 
+pub const MAX_ALLOCATION_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
 pub struct PoolAllocator<T> {
     pages: [Mutex<VecDeque<T>>; 32],
 }
