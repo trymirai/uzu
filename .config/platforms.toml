@@ -54,6 +54,12 @@ aliases = ["windows"]
 features = ["cpu"]
 aliases = ["windows"]
 
+# The uzu crate enables Vulkan by target, not by feature, and the engine's Vulkan includes the CPU backend.
+[targets."aarch64-linux-android"]
+features = ["cpu"]
+aliases = ["android"]
+required_envs = ["CARGO_NDK_PLATFORM"]
+
 [targets."wasm32-unknown-unknown"]
 features = ["webgpu"]
 aliases = ["wasm"]

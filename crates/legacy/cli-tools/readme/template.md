@@ -68,6 +68,7 @@ You can run any example via `cargo tools example` \<{% for language in languages
 Supported backends:
 
 - `metal`
+- `vulkan`
 - `cpu`
 
 <br>

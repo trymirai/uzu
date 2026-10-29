@@ -137,16 +137,14 @@ jobs:
   vulkan:
     name: vulkan
     runs-on: ubuntu-26.04
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - name: Install Vulkan
+      - uses: ./.github/actions/setup-nix
+      - name: Use lavapipe
         run: |
-          sudo add-apt-repository -y --no-update ppa:kisak/kisak-mesa
-          sudo apt-get -o APT::Architecture-Variants= update
-          sudo apt-get -o APT::Architecture-Variants= install -y mesa-vulkan-drivers vulkan-validationlayers vulkan-tools
-          dpkg --compare-versions "$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)" ge 26.2.0
-          drivers=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          mesa=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)
+          drivers=("$mesa"/share/vulkan/icd.d/lvp_icd*.json)
           test "${#drivers[@]}" -eq 1 && test -f "${drivers[0]}"
           echo "VK_DRIVER_FILES=${drivers[0]}" >> "$GITHUB_ENV"
       - name: Lint Vulkan
@@ -254,7 +252,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app bundle
-        run: pnpm build
+        run: pnpm build --target aarch64-apple-darwin
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v7
@@ -307,7 +305,7 @@ jobs:
     name: completed
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-uzu-pi-extension]
+    needs: [linters, tests, vulkan, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-uzu-pi-extension]
     if: ${{ always() }}
 
     steps:
