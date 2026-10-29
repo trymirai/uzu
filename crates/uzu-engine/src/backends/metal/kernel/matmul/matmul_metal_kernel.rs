@@ -9,6 +9,7 @@ use crate::{
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulKernel, MatmulShape, QuantParamsLayout,
+                    SYMROW2_COLUMN_TILE, SYMROW2_K_GROUP,
                 },
             },
         },
@@ -191,6 +192,24 @@ impl MatmulKernel for MatmulMetalKernel {
         shape: &MatmulShape,
         context: &MetalContext,
     ) -> Option<ActivationQuantization> {
+        if shape.is_symrow2() {
+            let supported = context.supports_mxu
+                && self.input_data_type == DataType::BF16
+                && self.output_data_type == DataType::BF16
+                && !shape.a_full_precision
+                && shape.k.is_multiple_of(SYMROW2_K_GROUP)
+                && shape.n.is_multiple_of(SYMROW2_COLUMN_TILE);
+            return if supported {
+                ActivationQuantization::new(
+                    ACTIVATION_SCALE_GROUP_SIZE,
+                    SYMROW2_K_GROUP,
+                    true,
+                    Int8CodeLayout::Sequential,
+                )
+            } else {
+                None
+            };
+        }
         let weight_group_size = shape.b_group_size?;
         let emit_group_sums = GemmKernel::requires_activation_group_sums(shape);
         let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits)?;
@@ -222,6 +241,9 @@ impl MatmulKernel for MatmulMetalKernel {
         weights_layout: GemmBLayout,
         context: &MetalContext,
     ) -> ActivationFormat {
+        if bf16_shape.is_symrow2() {
+            return ActivationFormat::Int8;
+        }
         if bf16_shape.params_layout != Some(QuantParamsLayout::GroupOutput)
             || !supports_integer_right_operand(bf16_shape)
             || matches!(self.select_dispatch(bf16_shape, weights_layout, context), MatmulDispatch::Gemv(_))

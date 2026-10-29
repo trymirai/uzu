@@ -6,6 +6,7 @@
 #include "common/full_precision_b_source.h"
 #include "common/tile.h"
 #include "common/quant_b_source.h"
+#include "common/symrow2_b_source.h"
 #include "common/reduce.h"
 
 using namespace metal;
@@ -35,8 +36,8 @@ VARIANTS(
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(GROUP_SIZE, 0, 32, 64)
-VARIANTS(BITS, 0, 4, 8)
+VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(BITS, 0, 2, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4, 5, 6, 7, 8)
@@ -48,8 +49,10 @@ VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 || BITS == 2)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
+CONSTRAINT(BITS != 2 || (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && GROUP_SIZE == 128))
+CONSTRAINT(GROUP_SIZE != 128 || BITS == 2)
 CONSTRAINT(BITS == 0 || K_SPLIT == 1)
 CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))
 CONSTRAINT(INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32)
@@ -80,6 +83,10 @@ CONSTRAINT(
     BITS == 0 || (AT == "bfloat" && DT == "bfloat") ||
     (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32))
 CONSTRAINT(BITS != 8 || (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32) || INPUT_ROW_TILE > 1)
+CONSTRAINT(
+    BITS != 2 ||
+    (AT == "bfloat" && DT == "bfloat" && K_SPLIT == 1 && INPUT_ROW_TILE == 1 && INPUT_ALIGNED && NUM_SIMDGROUPS == 2 &&
+     OUTPUT_ROW_TILE == 4 && REDUCTION_LANES == 32 && GROUP_LANES == 4))
 CONSTRAINT(INPUT_ALIGNED || K_SPLIT == 1)
 CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS && NUM_SIMDGROUPS % K_SPLIT == 0)
 CONSTRAINT(OUTPUT_ROW_TILE % (NUM_SIMDGROUPS / K_SPLIT) == 0)
@@ -98,7 +105,8 @@ CONSTRAINT(BITS != 0 || REDUCTION_LANES == 32)
 CONSTRAINT(
     BITS == 0 || INPUT_ROW_TILE > 1 ||
     (BITS == 4 && ((GROUP_SIZE == 32 && GROUP_LANES == 2) || (GROUP_SIZE == 64 && GROUP_LANES == 4))) ||
-    (BITS == 8 && ((GROUP_SIZE == 32 && GROUP_LANES == 4) || (GROUP_SIZE == 64 && GROUP_LANES == 8))))
+    (BITS == 8 && ((GROUP_SIZE == 32 && GROUP_LANES == 4) || (GROUP_SIZE == 64 && GROUP_LANES == 8))) ||
+    (BITS == 2 && GROUP_SIZE == 128 && GROUP_LANES == 4))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
@@ -160,18 +168,22 @@ KERNEL(Gemv)(
         OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
     thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
-    if constexpr (BITS == 0) {
-      FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile);
+    if constexpr (BITS == 2) {
+      SymRow2GatherBSource<Tile, AT, BT, DT, FullTile>::run(ops, params, tile);
     } else {
-      QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile>::accumulate(
-          result,
-          ops,
-          params,
-          tile
-      );
-    }
+      if constexpr (BITS == 0) {
+        FullPrecisionBSource<Tile, AT, BT, DT, INPUT_ALIGNED, FullTile>::accumulate(result, ops, params, tile);
+      } else {
+        QuantBSource<Tile, AT, BT, DT, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FullTile>::accumulate(
+            result,
+            ops,
+            params,
+            tile
+        );
+      }
 
-    Reduce<Tile, FullTile>::run(result, shared_results, tile);
-    Epilogue<Tile, AT, BT, DT, FullTile>::store(result, ops, params, tile, shared_results);
+      Reduce<Tile, FullTile>::run(result, shared_results, tile);
+      Epilogue<Tile, AT, BT, DT, FullTile>::store(result, ops, params, tile, shared_results);
+    }
   });
 }

@@ -10,7 +10,7 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
-                QuantParamsStrides, QuantizedB,
+                QuantParamsStrides, QuantizedB, SYMROW2_COLUMN_TILE, SYMROW2_K_GROUP,
             },
         },
         metal::{
@@ -51,7 +51,7 @@ pub struct GemmKernel {
 
 impl GemmKernel {
     pub fn requires_activation_group_sums(shape: &MatmulShape) -> bool {
-        shape.b_prologue == GemmBPrologueKind::ScaleBiasDequant
+        shape.b_prologue == GemmBPrologueKind::ScaleBiasDequant || shape.is_symrow2()
     }
 
     pub fn new(
@@ -204,6 +204,7 @@ impl GemmKernel {
                 arguments.a,
                 weights,
                 None,
+                None,
                 arguments.output,
                 shape,
                 plan,
@@ -214,6 +215,7 @@ impl GemmKernel {
                 arguments.a,
                 quantized.codes,
                 Some(quantized),
+                None,
                 arguments.output,
                 shape,
                 plan,
@@ -228,6 +230,20 @@ impl GemmKernel {
                 }
                 self.trellis.encode_plan(arguments, plan, command_buffer)
             },
+            MatmulB::SymRow2 {
+                codes,
+                row_scales,
+            } => self.encode_weights(
+                arguments.a,
+                codes,
+                None,
+                Some(row_scales),
+                arguments.output,
+                shape,
+                plan,
+                output_work,
+                command_buffer,
+            ),
         }
     }
 
@@ -236,6 +252,7 @@ impl GemmKernel {
         a: MatmulA<impl BufferRef<Backend = Metal>>,
         weights: WB,
         quantized: Option<QuantizedB<WB>>,
+        symrow2_scales: Option<WB>,
         output: MatmulOutput<'_, Metal, impl BufferMut<Backend = Metal>>,
         shape: MatmulShape,
         plan: GemmPlan,
@@ -258,6 +275,19 @@ impl GemmKernel {
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
         let gemm_b_layout = quantized.as_ref().map_or(GemmBLayout::RowMajor, |quantized| quantized.weights_layout);
+        if shape.is_symrow2()
+            && (shape.a_full_precision
+                || !k.is_multiple_of(SYMROW2_K_GROUP)
+                || !n.is_multiple_of(SYMROW2_COLUMN_TILE)
+                || ab_scale != 1.0
+                || d_transform.soft_cap.is_some()
+                || (output_bias.is_some() && rht_factors.is_none())
+                || (rht_factors.is_some() && !n.is_multiple_of(32)))
+        {
+            return Err(MatmulMetalError::UnsupportedLayout {
+                path: "GemmSymRow2",
+            });
+        }
         if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
             return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
@@ -265,7 +295,7 @@ impl GemmKernel {
             });
         }
 
-        let is_quant = quantized.is_some();
+        let is_quant = shape.is_quant();
         if !is_quant && !matches!(&a, MatmulA::FullPrecision { .. }) {
             return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
@@ -273,7 +303,7 @@ impl GemmKernel {
             });
         }
         let (scales, biases, zero_points, scale_strides, zero_point_strides) = match quantized.as_ref() {
-            None => (None, None, None, Default::default(), Default::default()),
+            None => (symrow2_scales, None, None, Default::default(), Default::default()),
             Some(quantized) => (
                 Some(quantized.scales),
                 quantized.biases(),
@@ -376,7 +406,9 @@ impl GemmKernel {
         } else {
             (false, threadgroups_per_row, threadgroups_per_column)
         };
-        if !is_quant {
+        if shape.is_symrow2() {
+            params.leading_dimension_b = n / SYMROW2_COLUMN_TILE * 32;
+        } else if !is_quant {
             params.leading_dimension_b = shape.b_leading_dimension.unwrap_or(if shape.b_transpose {
                 k
             } else {
@@ -550,6 +582,15 @@ fn validate_int8_left_operand(
     code_layout: Int8CodeLayout,
     has_group_sums: bool,
 ) -> Result<(), MatmulMetalError> {
+    if shape.is_symrow2() {
+        if !use_mxu || a_group_size != 128 || code_layout != Int8CodeLayout::Sequential || !has_group_sums {
+            return Err(MatmulMetalError::IncompatibleA {
+                path: "GemmSymRow2",
+                reason: "SymRow2 requires sequential int8 activations, 128-column groups, and code sums on MXU",
+            });
+        }
+        return Ok(());
+    }
     if shape.b_bits.and_then(Int8CodeLayout::for_right_bits) != Some(code_layout) {
         return Err(MatmulMetalError::IncompatibleA {
             path: "Gemm",

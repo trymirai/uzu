@@ -32,6 +32,10 @@ pub enum GemmTiling {
     Tile64x32x256_Simdgroups4x1,
     Tile64x64x256_Simdgroups2x2,
     Tile128x128x256_Simdgroups4x4,
+    Tile16x16x256_Simdgroups1x1x2,
+    Tile16x16x256_Simdgroups1x1x4,
+    Tile16x32x256_Simdgroups1x2x2,
+    Tile16x32x256_Simdgroups1x2x4,
 }
 
 pub const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
@@ -46,6 +50,10 @@ impl GemmTiling {
             Self::Tile32x32x32_Simdgroups2x2 => 32,
             Self::Tile16x32x256_Simdgroups1x1 => 16,
             Self::Tile16x32x256_Simdgroups1x1x4 => 16,
+            Self::Tile16x16x256_Simdgroups1x1x2
+            | Self::Tile16x16x256_Simdgroups1x1x4
+            | Self::Tile16x32x256_Simdgroups1x2x2
+            | Self::Tile16x32x256_Simdgroups1x2x4 => 16,
             Self::Tile16x128x256_Simdgroups1x4 => 16,
             Self::Tile32x64x256_Simdgroups2x2 => 32,
             Self::Tile64x32x256_Simdgroups4x1 => 64,
@@ -63,6 +71,8 @@ impl GemmTiling {
             Self::Tile32x32x32_Simdgroups2x2 => 32,
             Self::Tile16x32x256_Simdgroups1x1 => 32,
             Self::Tile16x32x256_Simdgroups1x1x4 => 32,
+            Self::Tile16x16x256_Simdgroups1x1x2 | Self::Tile16x16x256_Simdgroups1x1x4 => 16,
+            Self::Tile16x32x256_Simdgroups1x2x2 | Self::Tile16x32x256_Simdgroups1x2x4 => 32,
             Self::Tile16x128x256_Simdgroups1x4 => 128,
             Self::Tile32x64x256_Simdgroups2x2 => 64,
             Self::Tile64x32x256_Simdgroups4x1 => 32,
@@ -79,7 +89,11 @@ impl GemmTiling {
             Self::Tile64x64x32_Simdgroups2x2 => 32,
             Self::Tile32x32x32_Simdgroups2x2 => 32,
             Self::Tile16x32x256_Simdgroups1x1 => 256,
-            Self::Tile16x32x256_Simdgroups1x1x4 => 256,
+            Self::Tile16x32x256_Simdgroups1x1x4
+            | Self::Tile16x16x256_Simdgroups1x1x2
+            | Self::Tile16x16x256_Simdgroups1x1x4
+            | Self::Tile16x32x256_Simdgroups1x2x2
+            | Self::Tile16x32x256_Simdgroups1x2x4 => 256,
             Self::Tile16x128x256_Simdgroups1x4 => 256,
             Self::Tile32x64x256_Simdgroups2x2 => 256,
             Self::Tile64x32x256_Simdgroups4x1 => 256,
@@ -96,7 +110,11 @@ impl GemmTiling {
             Self::Tile64x64x32_Simdgroups2x2 => 2,
             Self::Tile32x32x32_Simdgroups2x2 => 2,
             Self::Tile16x32x256_Simdgroups1x1 => 1,
-            Self::Tile16x32x256_Simdgroups1x1x4 => 1,
+            Self::Tile16x32x256_Simdgroups1x1x4
+            | Self::Tile16x16x256_Simdgroups1x1x2
+            | Self::Tile16x16x256_Simdgroups1x1x4
+            | Self::Tile16x32x256_Simdgroups1x2x2
+            | Self::Tile16x32x256_Simdgroups1x2x4 => 1,
             Self::Tile16x128x256_Simdgroups1x4 => 1,
             Self::Tile32x64x256_Simdgroups2x2 => 2,
             Self::Tile64x32x256_Simdgroups4x1 => 4,
@@ -113,7 +131,10 @@ impl GemmTiling {
             Self::Tile64x64x32_Simdgroups2x2 => 2,
             Self::Tile32x32x32_Simdgroups2x2 => 2,
             Self::Tile16x32x256_Simdgroups1x1 => 1,
-            Self::Tile16x32x256_Simdgroups1x1x4 => 1,
+            Self::Tile16x32x256_Simdgroups1x1x4
+            | Self::Tile16x16x256_Simdgroups1x1x2
+            | Self::Tile16x16x256_Simdgroups1x1x4 => 1,
+            Self::Tile16x32x256_Simdgroups1x2x2 | Self::Tile16x32x256_Simdgroups1x2x4 => 2,
             Self::Tile16x128x256_Simdgroups1x4 => 4,
             Self::Tile32x64x256_Simdgroups2x2 => 2,
             Self::Tile64x32x256_Simdgroups4x1 => 1,
@@ -124,7 +145,10 @@ impl GemmTiling {
 
     pub const fn simdgroups_k(self) -> u32 {
         match self {
-            Self::Tile16x32x256_Simdgroups1x1x4 => 4,
+            Self::Tile16x32x256_Simdgroups1x1x4
+            | Self::Tile16x16x256_Simdgroups1x1x4
+            | Self::Tile16x32x256_Simdgroups1x2x4 => 4,
+            Self::Tile16x16x256_Simdgroups1x1x2 | Self::Tile16x32x256_Simdgroups1x2x2 => 2,
             _ => 1,
         }
     }
@@ -135,6 +159,10 @@ impl GemmTiling {
             Self::Tile16x32x256_Simdgroups1x1
                 | Self::Tile16x32x256_Simdgroups1x1x4
                 | Self::Tile16x128x256_Simdgroups1x4
+                | Self::Tile16x16x256_Simdgroups1x1x2
+                | Self::Tile16x16x256_Simdgroups1x1x4
+                | Self::Tile16x32x256_Simdgroups1x2x2
+                | Self::Tile16x32x256_Simdgroups1x2x4
                 | Self::Tile32x64x256_Simdgroups2x2
                 | Self::Tile64x32x256_Simdgroups4x1
                 | Self::Tile64x64x256_Simdgroups2x2

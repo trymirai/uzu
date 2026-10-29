@@ -5,7 +5,10 @@ use crate::{
     backends::common::{
         Backend,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
+        kernel::matmul::{
+            MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, SYMROW2_COLUMN_TILE,
+            SYMROW2_K_GROUP, WeightsLayout,
+        },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -92,6 +95,7 @@ struct Quantized<B: Backend> {
 pub struct WeightMatrix<B: Backend> {
     values: B::GlobalGpuBuffer,
     quantized: Option<Quantized<B>>,
+    symrow2_row_scales: Option<B::GlobalGpuBuffer>,
 }
 
 impl<B: Backend> WeightMatrix<B> {
@@ -103,6 +107,23 @@ impl<B: Backend> WeightMatrix<B> {
         required_layout: Layout,
         tree: &ParameterTree<'_, B>,
     ) -> Result<Self, WeightMatrixError<B>> {
+        if let AnyWeightMatrixSpec::SymRow2Spec(symrow2) = &spec {
+            if symrow2.layout != required_layout
+                || !input_dim.is_multiple_of(SYMROW2_K_GROUP)
+                || !output_dim.is_multiple_of(SYMROW2_COLUMN_TILE)
+            {
+                return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                    "SymRow2 needs the {required_layout:?} layout, K % {SYMROW2_K_GROUP} == 0 and N % {SYMROW2_COLUMN_TILE} == 0, got N={output_dim} K={input_dim}"
+                )));
+            }
+            let values = tree.read_buffer("weights", &[output_dim, input_dim / 4], DataType::U8).await?;
+            let row_scales = tree.read_buffer("scales", &[output_dim], DataType::BF16).await?;
+            return Ok(Self {
+                values,
+                quantized: None,
+                symrow2_row_scales: Some(row_scales),
+            });
+        }
         let ParsedWeightSpec {
             layout,
             quantization: quantization_info,
@@ -119,6 +140,7 @@ impl<B: Backend> WeightMatrix<B> {
             return Ok(Self {
                 values,
                 quantized: None,
+                symrow2_row_scales: None,
             });
         };
         // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
@@ -166,6 +188,7 @@ impl<B: Backend> WeightMatrix<B> {
                 signed_codes: false,
                 weights_layout: Default::default(),
             }),
+            symrow2_row_scales: None,
         })
     }
 
@@ -189,7 +212,17 @@ impl<B: Backend> WeightMatrix<B> {
         self.quantized.as_ref()?.correction.biases()
     }
 
+    pub fn is_symrow2(&self) -> bool {
+        self.symrow2_row_scales.is_some()
+    }
+
     pub fn matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
+        if let Some(row_scales) = self.symrow2_row_scales.as_ref() {
+            return MatmulB::SymRow2 {
+                codes: &self.values,
+                row_scales,
+            };
+        }
         let Some(quantized) = self.quantized.as_ref() else {
             return MatmulB::FullPrecision {
                 b: &self.values,
@@ -234,3 +267,7 @@ fn physical_shape(
         Layout::InputOutput => (input_dim, output_dim),
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/encodable_block/weight_matrix_test.rs"]
+mod tests;

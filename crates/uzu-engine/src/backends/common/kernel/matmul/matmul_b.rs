@@ -7,6 +7,18 @@ use crate::{
     data_type::DataType,
 };
 
+pub const SYMROW2_K_GROUP: u32 = 128;
+pub const SYMROW2_COLUMN_TILE: u32 = 16;
+
+/// A gather uses only some tiles, so the count comes from the buffer, not from the output size.
+pub fn symrow2_tile_count(
+    codes_bytes: usize,
+    k: u32,
+) -> Option<u32> {
+    let bytes_per_tile = (4 * k as usize).max(1);
+    u32::try_from(codes_bytes / bytes_per_tile).ok().filter(|_| codes_bytes % bytes_per_tile == 0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TrellisFormat {
     pub vector_width: u32,
@@ -45,6 +57,11 @@ pub enum MatmulB<TB: BufferRef> {
         row_scales: TB,
         codebook: TB,
         format: TrellisFormat,
+    },
+    /// `w = row_scale * (code - 1.5)` with BF16 row scales.
+    SymRow2 {
+        codes: TB,
+        row_scales: TB,
     },
 }
 
@@ -121,6 +138,10 @@ impl<TB: BufferRef> MatmulB<TB> {
         matches!(self, Self::Trellis { .. })
     }
 
+    pub fn is_symrow2(&self) -> bool {
+        matches!(self, Self::SymRow2 { .. })
+    }
+
     pub fn quantized(&self) -> Option<&QuantizedB<TB>> {
         match self {
             Self::FullPrecision {
@@ -128,21 +149,28 @@ impl<TB: BufferRef> MatmulB<TB> {
             }
             | Self::Trellis {
                 ..
+            }
+            | Self::SymRow2 {
+                ..
             } => None,
             Self::Quantized(quantized) => Some(quantized),
         }
     }
 
     pub fn b_prologue(&self) -> GemmBPrologueKind {
-        self.quantized().map_or(GemmBPrologueKind::FullPrecision, QuantizedB::prologue)
+        if self.is_symrow2() {
+            GemmBPrologueKind::ScaleSymmetricDequant
+        } else {
+            self.quantized().map_or(GemmBPrologueKind::FullPrecision, QuantizedB::prologue)
+        }
     }
 
     pub fn bits_per_b(&self) -> Option<u32> {
-        self.quantized().map(QuantizedB::bits)
+        self.quantized().map(QuantizedB::bits).or_else(|| self.is_symrow2().then_some(2))
     }
 
     pub fn group_size(&self) -> Option<u32> {
-        self.quantized().map(|quantized| quantized.group_size)
+        self.quantized().map(|quantized| quantized.group_size).or_else(|| self.is_symrow2().then_some(SYMROW2_K_GROUP))
     }
 
     pub fn signed_codes(&self) -> bool {

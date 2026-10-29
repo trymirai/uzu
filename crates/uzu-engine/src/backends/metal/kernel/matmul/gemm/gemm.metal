@@ -11,7 +11,8 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
+#define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION                                                                             \
+  (A_IS_INT8 && (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant || BITS == 2))
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
   ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
@@ -20,11 +21,16 @@ using namespace uzu::gemm;
        ? 1                                                                                                             \
        : (gemm_tiling_simdgroups_per_k(GEMM_TILING) - 1) * gemm_tiling_block_m(GEMM_TILING) *                          \
              gemm_tiling_block_n(GEMM_TILING) * uint(sizeof(float) / sizeof(BT)))
+// A fused-RHT SymRow2 tile also parks slice 0's partial.
+#define GEMM_SYMROW2_RHT_SLICE_ELEMENTS                                                                                \
+  ((BITS == 2 && gemm_tiling_simdgroups_per_column(GEMM_TILING) == 2)                                                  \
+       ? gemm_tiling_block_m(GEMM_TILING) * gemm_tiling_block_n(GEMM_TILING) * uint(sizeof(float) / sizeof(BT))        \
+       : 0)
 // The A8 MXU route reads its scales into registers, so it asks for no
 // threadgroup B memory.
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
-                               : GEMM_K_PARTIAL_ELEMENTS)                                                              \
+                               : GEMM_K_PARTIAL_ELEMENTS + GEMM_SYMROW2_RHT_SLICE_ELEMENTS)                            \
              : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
@@ -51,6 +57,10 @@ VARIANTS(
     GemmTiling::Tile32x32x32_Simdgroups2x2,
     GemmTiling::Tile16x32x256_Simdgroups1x1,
     GemmTiling::Tile16x32x256_Simdgroups1x1x4,
+    GemmTiling::Tile16x16x256_Simdgroups1x1x2,
+    GemmTiling::Tile16x16x256_Simdgroups1x1x4,
+    GemmTiling::Tile16x32x256_Simdgroups1x2x2,
+    GemmTiling::Tile16x32x256_Simdgroups1x2x4,
     GemmTiling::Tile16x128x256_Simdgroups1x4,
     GemmTiling::Tile32x64x256_Simdgroups2x2,
     GemmTiling::Tile64x32x256_Simdgroups4x1,
@@ -64,8 +74,8 @@ VARIANTS(
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(BITS, 0, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 32, 64)
+VARIANTS(BITS, 0, 2, 4, 8)
+VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
@@ -75,6 +85,10 @@ CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
      GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1x4 ||
+     GEMM_TILING == GemmTiling::Tile16x16x256_Simdgroups1x1x2 ||
+     GEMM_TILING == GemmTiling::Tile16x16x256_Simdgroups1x1x4 ||
+     GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x2x2 ||
+     GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x2x4 ||
      GEMM_TILING == GemmTiling::Tile16x128x256_Simdgroups1x4 ||
      GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile64x32x256_Simdgroups4x1 ||
@@ -83,7 +97,22 @@ CONSTRAINT(
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
+CONSTRAINT(GROUP_SIZE != 128 || BITS == 2)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 || BITS == 2)
+CONSTRAINT(
+    BITS != 2 ||
+    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && GROUP_SIZE == 128 &&
+     A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && A_GROUP_SIZE == 128 && DT == "bfloat" && TRANSPOSE_B &&
+     (GEMM_TILING == GemmTiling::Tile16x16x256_Simdgroups1x1x2 ||
+      GEMM_TILING == GemmTiling::Tile16x16x256_Simdgroups1x1x4 ||
+      GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x2x2 ||
+      GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x2x4)))
+CONSTRAINT(
+    (GEMM_TILING != GemmTiling::Tile16x16x256_Simdgroups1x1x2 &&
+     GEMM_TILING != GemmTiling::Tile16x16x256_Simdgroups1x1x4 &&
+     GEMM_TILING != GemmTiling::Tile16x32x256_Simdgroups1x2x2 &&
+     GEMM_TILING != GemmTiling::Tile16x32x256_Simdgroups1x2x4) ||
+    BITS == 2)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||

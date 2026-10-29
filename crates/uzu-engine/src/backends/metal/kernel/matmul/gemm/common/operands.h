@@ -42,13 +42,20 @@ struct RightOperand {
   UZU_CONST ushort BITS = QUANTIZED ? BITS_ : 0;
   UZU_CONST ushort GROUP_SIZE = QUANTIZED ? GROUP_SIZE_ : 0;
   UZU_CONST GemmBPrologueKind SCHEME = PROLOGUE;
-  UZU_CONST bool NEEDS_CORRECTION = PROLOGUE == GemmBPrologueKind::ScaleBiasDequant;
+  UZU_CONST bool NEEDS_CORRECTION = PROLOGUE == GemmBPrologueKind::ScaleBiasDequant || BITS_ == 2;
 
   UZU_CONST ushort CODE_ORIGIN = (!QUANTIZED || (BITS_ == 4 && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant))
                                      ? 0
                                      : ushort(1u << (BITS - 1));
 
-  static_assert(!QUANTIZED || BITS_ == 4 || BITS_ == 8, "quantized integer weights must use 4 or 8 bits");
+  static_assert(
+      !QUANTIZED || BITS_ == 2 || BITS_ == 4 || BITS_ == 8,
+      "quantized integer weights must use 2, 4, or 8 bits"
+  );
+  static_assert(
+      BITS_ != 2 || (PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && GROUP_SIZE_ == 128),
+      "2-bit weights use SymRow2 128-column groups"
+  );
   static_assert(!QUANTIZED || PROLOGUE != GemmBPrologueKind::FullPrecision, "quantized weights need a scheme");
 
   using CodeElement = int8_t;

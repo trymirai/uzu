@@ -58,6 +58,9 @@ impl WeightData {
             },
             MatmulB::Trellis {
                 ..
+            }
+            | MatmulB::SymRow2 {
+                ..
             } => Err(MatmulCpuError::UnsupportedLayout {
                 path: "CpuMatmul",
             }),

@@ -1,7 +1,7 @@
 use metal::MTLGPUFamily;
 
 use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile};
-use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
+use crate::backends::{common::kernel::matmul::SYMROW2_K_GROUP, metal::context::LARGE_MIN_GPU_CORES};
 
 const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
 const QUANT_K_BUCKET_MAXES: [u32; 3] = [512, 2048, 8192];
@@ -35,6 +35,9 @@ pub fn gathered_tile(
     m: u32,
     n: u32,
 ) -> Option<GemvTile> {
+    if bits == 2 && group == SYMROW2_K_GROUP {
+        return (m >= 1 && n > 0).then_some(GemvTile::quantized_output_tile(2, 4, 1, 32, 4));
+    }
     if !matches!(bits, 4 | 8) || !matches!(group, 32 | 64) || !(1..=8).contains(&m) {
         return None;
     }

@@ -10,7 +10,9 @@ pub use arguments::MatmulArguments;
 pub use d_ops::MatmulDOps;
 pub use kernel::MatmulKernel;
 pub use matmul_a::{Int8CodeLayout, MatmulA};
-pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection};
+pub use matmul_b::{
+    MatmulB, QuantizedB, QuantizedCorrection, SYMROW2_COLUMN_TILE, SYMROW2_K_GROUP, symrow2_tile_count,
+};
 #[cfg(backend = "metal")]
 pub use matmul_b::{TRELLIS_CODES_TAIL_BYTES, TrellisFormat};
 pub use output::MatmulOutput;

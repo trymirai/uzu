@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::{
         common::{
-            gpu_types::gemm::GemmBPrologueKind,
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
         },
         metal::{
@@ -52,6 +52,9 @@ impl GemmProblem {
     }
 
     pub fn select_plan(self) -> GemmPlan {
+        if self.shape.is_symrow2() {
+            return select_symrow2_plan(self.shape.m, self.shape.n, self.shape.k, self.shape.d_transform);
+        }
         if self.shape.b_is_trellis {
             return select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
         }
@@ -135,8 +138,6 @@ impl GemmProblem {
     }
 
     fn split_k_output_supported(&self) -> bool {
-        use crate::backends::common::gpu_types::gemm::GemmDTransform;
-
         let mut output_transform = self.shape.d_transform;
         if self.shape.is_quant()
             && output_transform.contains(GemmDTransform::RHT)
@@ -146,6 +147,28 @@ impl GemmProblem {
         }
         !output_transform.contains(GemmDTransform::BIAS)
             || (self.shape.n.is_multiple_of(4) && self.weights_data_type == self.output_data_type)
+    }
+}
+
+fn select_symrow2_plan(
+    m: u32,
+    n: u32,
+    k: u32,
+    output_transform: GemmDTransform,
+) -> GemmPlan {
+    // Tuned on M5 Max. A fused RHT needs 32-column blocks, i.e. two 16-column tiles.
+    let four_way_k = n <= 2048 || k >= 16384 || (k >= 12288 && m <= 8);
+    let two_tiles = output_transform.contains(GemmDTransform::RHT);
+    let tiling = match (two_tiles, four_way_k) {
+        (false, false) => GemmTiling::Tile16x16x256_Simdgroups1x1x2,
+        (false, true) => GemmTiling::Tile16x16x256_Simdgroups1x1x4,
+        (true, false) => GemmTiling::Tile16x32x256_Simdgroups1x2x2,
+        (true, true) => GemmTiling::Tile16x32x256_Simdgroups1x2x4,
+    };
+    GemmPlan {
+        engine: GemmEngine::Mxu,
+        tiling,
+        split_k: 1,
     }
 }
 

@@ -14,6 +14,7 @@
 #include "schedules/dense.h"
 #include "schedules/integer.h"
 #include "schedules/staged.h"
+#include "schedules/symrow2.h"
 #include "schedules/tile_context.h"
 
 using namespace metal;
@@ -37,17 +38,22 @@ struct MxuMmaCore {
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
+  using QuantizedSchedule = metal::
+      conditional_t<Right::BITS == 2, schedules::SymRow2Schedule<Left, Right>, schedules::IntegerSchedule<Left, Right>>;
   using Schedule = metal::conditional_t<
       !Left::QUANTIZED,
       metal::conditional_t<!Right::QUANTIZED, schedules::DenseSchedule, schedules::StagedSchedule>,
-      schedules::IntegerSchedule<Left, Right>>;
+      QuantizedSchedule>;
   UZU_CONST GemmTiling TILING = GEMM_TILING;
   UZU_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   UZU_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
   UZU_CONST ushort SIMDGROUPS_PER_K = gemm_tiling_simdgroups_per_k(GEMM_TILING);
-  static_assert(SIMDGROUPS_PER_K == 1 || SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1, "K slices share one tile");
+  static_assert(
+      SIMDGROUPS_PER_K == 1 || SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1 || Right::BITS == 2,
+      "only SymRow2 has grouped column and K-slice reduction"
+  );
   UZU_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   UZU_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
   UZU_CONST ushort SIMDGROUP_BLOCK_K = static_cast<ushort>(MXU_SIMDGROUP_BLOCK_K);
@@ -84,7 +90,9 @@ struct MxuMmaCore {
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_y = thread_context.threadgroup_position.y;
 
-    const uint2 tile = tile_id(uint2(thread_context.threadgroup_position.x, tile_y), params);
+    // Quantized grids are never swizzled, so SymRow2 skips the morton branch.
+    const uint2 tile = Right::BITS == 2 ? uint2(thread_context.threadgroup_position.x, tile_y)
+                                        : tile_id(uint2(thread_context.threadgroup_position.x, tile_y), params);
     const auto geometry = ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile, params);
     if (geometry.out_of_bounds) {
       return;
@@ -129,6 +137,89 @@ struct MxuMmaCore {
     const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
+
+    if constexpr (Right::BITS == 2) {
+      const ushort lane = ushort(thread_context.simd_lane_id);
+      // Fused-RHT operands are read before the K loop to hide their latency.
+      constexpr bool RHT_TILE = SIMDGROUPS_PER_COLUMN == 2;
+      const bool rht_epilogue = RHT_TILE && apply_rht;
+      int32_t rht_factor = 0;
+      float rht_row_scale = 0.0f;
+      float rht_bias = 0.0f;
+      if (rht_epilogue) {
+        rht_factor = rht_factors[block_col + lane];
+        rht_row_scale = float(right.scales[block_col + lane]);
+        if (apply_bias) {
+          rht_bias = float(output_bias[block_col + lane]);
+        }
+      }
+      AccumFragment accumulator_tile = Schedule::template launch<MxuMmaCore, false, false>(
+          left,
+          right,
+          b_shared,
+          params,
+          tile_context,
+          alignment,
+          thread_context
+      );
+
+      if constexpr (RHT_TILE) {
+        if (rht_epilogue) {
+          // Every K slice parks its partial tile, then each simdgroup reduces its rows and runs the RHT.
+          threadgroup float* partials = reinterpret_cast<threadgroup float*>(b_shared);
+          const short2 position = FragmentOps::get_position(lane);
+          thread float* values = accumulator_tile.elements();
+          threadgroup float* slice = partials +
+                                     (uint(k_slice) * THREADGROUP_BLOCK_M + uint(position.y)) * THREADGROUP_BLOCK_N +
+                                     uint(tile_col_offset) + uint(position.x);
+          *reinterpret_cast<threadgroup float4*>(slice) = *reinterpret_cast<thread float4*>(values);
+          *reinterpret_cast<threadgroup float4*>(slice + 8 * THREADGROUP_BLOCK_N) =
+              *reinterpret_cast<thread float4*>(values + 4);
+          threadgroup_barrier(mem_flags::mem_threadgroup);
+          apply_symrow2_output_random_hadamard_transform_from_k_partials<SIMDGROUPS_PER_K>(
+              partials,
+              d + size_t(partition) * size_t(params->M) * size_t(params->N) + block_row * params->leading_dimension_d +
+                  block_col,
+              rht_factor,
+              rht_row_scale,
+              rht_bias,
+              apply_bias,
+              ushort(min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row))),
+              params->leading_dimension_d,
+              SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * SIMDGROUPS_PER_K,
+              thread_context
+          );
+          return;
+        }
+      }
+      threadgroup float* k_partials = reinterpret_cast<threadgroup float*>(b_shared);
+      schedules::SymRow2Schedule<Left, Right>::template reduce_k_partials<AccumFragment, SIMDGROUPS_PER_K>(
+          accumulator_tile,
+          k_partials,
+          k_slice,
+          tile_index,
+          lane
+      );
+      if (k_slice == 0) {
+        schedules::SymRow2Schedule<Left, Right>::apply_row_scale(
+            accumulator_tile,
+            right,
+            tile_context.absolute_column_base(),
+            lane
+        );
+        if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
+          accumulator_tile.store(lane, d_simdgroup, int(params->leading_dimension_d));
+        } else {
+          accumulator_tile.template store_safe<false, false>(
+              lane,
+              d_simdgroup,
+              int(params->leading_dimension_d),
+              short2(simdgroup_limit_n, simdgroup_limit_m)
+          );
+        }
+      }
+      return;
+    }
 
     dispatch_bool(
         (alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M)) && simdgroup_limit_m > 0,

@@ -60,4 +60,9 @@ impl MatmulShape {
     pub fn is_quant(&self) -> bool {
         self.b_prologue != GemmBPrologueKind::FullPrecision
     }
+
+    /// SymRow2 is the only 2-bit format.
+    pub fn is_symrow2(&self) -> bool {
+        self.b_bits == Some(2)
+    }
 }

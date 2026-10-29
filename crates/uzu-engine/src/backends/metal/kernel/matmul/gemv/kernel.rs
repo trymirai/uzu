@@ -8,7 +8,7 @@ use crate::{
                 gemm::{GemmBPrologueKind, GemmDTransform},
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             },
-            kernel::matmul::{MatmulB, MatmulShape},
+            kernel::matmul::{MatmulB, MatmulShape, SYMROW2_K_GROUP, symrow2_tile_count},
         },
         metal::{
             command_buffer::MetalCommandBufferEncoding,
@@ -121,6 +121,16 @@ impl GemvSpecialization {
         if !shape.b_transpose || !shape.a_full_precision {
             return None;
         }
+        if shape.is_symrow2()
+            && (!shape.gathered
+                || !shape.d_transform.is_empty()
+                || weights_data_type != DataType::BF16
+                || input_data_type != DataType::BF16
+                || output_data_type != DataType::BF16
+                || !shape.k.is_multiple_of(SYMROW2_K_GROUP))
+        {
+            return None;
+        }
         let is_quant = shape.is_quant();
         let bad_leading_dimension = if is_quant {
             shape.b_leading_dimension.is_some()
@@ -141,6 +151,8 @@ impl GemvSpecialization {
         }
         let block_size = if !is_quant {
             FP_K_BLOCK
+        } else if bits == 2 {
+            SYMROW2_K_GROUP
         } else if bits == 4 {
             512
         } else {
@@ -238,7 +250,9 @@ fn full_tile(
     shape: &MatmulShape,
     tile: policy::GemvTile,
 ) -> bool {
-    shape.m.is_multiple_of(tile.input_row_tile) && shape.n.is_multiple_of(tile.output_row_tile())
+    // The gather repeats the last candidate for a tail, so every N shares one pipeline.
+    shape.is_symrow2()
+        || (shape.m.is_multiple_of(tile.input_row_tile) && shape.n.is_multiple_of(tile.output_row_tile()))
 }
 
 use std::collections::{HashMap, hash_map::Entry};
@@ -386,53 +400,23 @@ impl GemvKernel {
             return Ok(());
         }
         let pipeline = self.get_or_create(context, specialization)?;
-        match b {
+        let mut scale_group_stride = scale_strides.group_stride;
+        let (weights, scales) = match b {
             MatmulB::FullPrecision {
                 b: weights,
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                a,
-                d.reborrow(),
-                gemv_bias,
-                gemv_rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                scale_strides.output_stride,
-                scale_strides.group_stride,
-                zero_point_strides.output_stride,
-                zero_point_strides.group_stride,
-                soft_cap,
-                command_buffer,
-            ),
-            MatmulB::Quantized(quantized) => pipeline.encode(
-                quantized.codes,
-                scales,
-                zero_points,
-                biases,
-                a,
-                d.reborrow(),
-                gemv_bias,
-                gemv_rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                scale_strides.output_stride,
-                scale_strides.group_stride,
-                zero_point_strides.output_stride,
-                zero_point_strides.group_stride,
-                soft_cap,
-                command_buffer,
-            ),
+            } => (weights, scales),
+            MatmulB::Quantized(quantized) => (quantized.codes, scales),
+            MatmulB::SymRow2 {
+                codes,
+                row_scales,
+            } => {
+                // The scale group stride of the kernel carries the physical tile count (SymRow2 has no scale groups).
+                scale_group_stride =
+                    symrow2_tile_count(codes.size(), k).ok_or(MatmulMetalError::UnsupportedLayout {
+                        path: "GemvSymRow2",
+                    })?;
+                (codes, Some(row_scales))
+            },
             MatmulB::Trellis {
                 ..
             } => {
@@ -440,7 +424,29 @@ impl GemvKernel {
                     path: "Gemv",
                 });
             },
-        }
+        };
+        pipeline.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            a,
+            d.reborrow(),
+            gemv_bias,
+            gemv_rht_factors,
+            gather_indices,
+            k,
+            n,
+            m,
+            ab_scale,
+            output_group_count,
+            scale_strides.output_stride,
+            scale_group_stride,
+            zero_point_strides.output_stride,
+            zero_point_strides.group_stride,
+            soft_cap,
+            command_buffer,
+        );
 
         if let Some(factors) = deferred_factors {
             output_work.apply(d, factors, output_bias, m, n, command_buffer);

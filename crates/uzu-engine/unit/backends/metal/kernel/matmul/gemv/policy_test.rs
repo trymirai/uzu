@@ -191,3 +191,33 @@ fn gathered_group_major_is_a_gemv_route() {
         .is_some()
     );
 }
+
+#[uzu_test]
+fn symrow2_bf16_gather_has_one_pipeline_for_every_candidate_count() {
+    let shape = |m, n, k| MatmulShape {
+        k,
+        b_prologue: GemmBPrologueKind::ScaleSymmetricDequant,
+        b_bits: Some(2),
+        b_group_size: Some(128),
+        a_full_precision: true,
+        gathered: true,
+        ..quant_shape(m, n, GemmDTransform::empty())
+    };
+    let select = |shape: &MatmulShape, io| {
+        super::super::kernel::GemvSpecialization::select_shape(
+            shape,
+            GemmBLayout::RowMajor,
+            io,
+            io,
+            io,
+            LARGE_GPU_CORE_COUNT,
+            MTLGPUFamily::Apple10,
+        )
+    };
+    let one = select(&shape(1, 64, 384), DataType::BF16).expect("BF16 SymRow2 gather must select a GEMV tile");
+    for (m, n) in [(1, 63), (4, 511), (4, 512), (17, 517)] {
+        assert_eq!(select(&shape(m, n, 384), DataType::BF16), Some(one));
+    }
+    assert!(select(&shape(1, 64, 400), DataType::BF16).is_none());
+    assert!(select(&shape(1, 64, 384), DataType::F32).is_none());
+}

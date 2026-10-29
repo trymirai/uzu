@@ -5,6 +5,7 @@ pub mod full_precision_spec;
 pub mod hybrid_spec;
 pub mod int_spec;
 pub mod mlx_spec;
+pub mod symrow2_spec;
 
 #[uzu_config]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +19,7 @@ pub enum Layout {
     hybrid_spec::HybridSpec,
     int_spec::IntSpec,
     mlx_spec::MLXSpec,
-    d4s4_spec::D4S4Spec
+    d4s4_spec::D4S4Spec,
+    symrow2_spec::SymRow2Spec
 )]
 pub struct WeightMatrixSpec;

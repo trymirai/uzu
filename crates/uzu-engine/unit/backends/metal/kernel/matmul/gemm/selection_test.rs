@@ -242,3 +242,26 @@ fn int8_activations_require_mxu_tiled_weights() {
         );
     }
 }
+
+#[uzu_test]
+fn symrow2_plans_follow_k_split_and_fused_rht() {
+    use GemmTiling::*;
+
+    for (m, n, k, rht, expected) in [
+        (16, 6144, 4096, false, Tile16x16x256_Simdgroups1x1x2),
+        (16, 6144, 4096, true, Tile16x32x256_Simdgroups1x2x2),
+        (1, 2048, 4096, false, Tile16x16x256_Simdgroups1x1x4),
+        (8, 4096, 12288, true, Tile16x32x256_Simdgroups1x2x4),
+    ] {
+        let mut symrow2 = shape(m, n, k);
+        symrow2.b_prologue = GemmBPrologueKind::ScaleSymmetricDequant;
+        symrow2.b_bits = Some(2);
+        symrow2.b_group_size = Some(128);
+        symrow2.a_full_precision = false;
+        if rht {
+            symrow2.d_transform = GemmDTransform::RHT;
+        }
+        let plan = problem(symrow2, DataType::BF16).select_plan();
+        assert_eq!((plan.engine, plan.tiling, plan.split_k), (GemmEngine::Mxu, expected, 1), "M {m} N {n} K {k}");
+    }
+}
