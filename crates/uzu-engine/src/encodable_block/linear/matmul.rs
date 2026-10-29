@@ -124,19 +124,9 @@ impl<B: Backend> LinearMatmul<B> {
             let kernel = self.kernel.lock();
             self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&shape, weights, context))?;
         }
-        let shape = self.matmul_shape(5, ActivationFormat::Bf16);
-        let kernel = self.kernel.lock();
+        let shape = self.matmul_shape(1, ActivationFormat::Bf16);
         self.prepared_activation_format =
-            if let Some(quantization) = kernel.select_activation_quantization(&shape, context) {
-                ActivationFormat::Int8(quantization)
-            } else {
-                match kernel.select_activation_format(&shape, self.matmul_b().weights_layout(), context) {
-                    format @ ActivationFormat::PackedHalf {
-                        ..
-                    } => format,
-                    _ => ActivationFormat::Bf16,
-                }
-            };
+            self.kernel.lock().activation_preparation(&shape, self.matmul_b().weights_layout(), context);
         Ok(self.prepared_activation_format)
     }
 
@@ -225,15 +215,12 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        if self.prepared_activation_format == ActivationFormat::Bf16 {
-            return ActivationFormat::Bf16;
-        }
         let shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
-        let requested = self.kernel.lock().select_activation_format(&shape, self.matmul_b().weights_layout(), context);
-        if requested == self.prepared_activation_format {
-            requested
-        } else {
-            ActivationFormat::Bf16
-        }
+        self.kernel.lock().select_activation_format(
+            &shape,
+            self.matmul_b().weights_layout(),
+            self.prepared_activation_format,
+            context,
+        )
     }
 }

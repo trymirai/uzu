@@ -1,18 +1,16 @@
-use futures::executor::block_on;
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::*;
-use crate::backends::{
-    common::{
-        Context,
+use crate::{
+    backends::common::{
         gpu_types::gemm::GemmDTransform,
         kernel::{
             ActivationQuantization,
-            matmul::{Int8CodeLayout, MatmulKernel, QuantParamsLayout},
+            matmul::{Int8CodeLayout, QuantParamsLayout},
         },
     },
-    metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
+    tests::matmul::matmul_shape as shape,
 };
 
 fn a8_format() -> ActivationFormat {
@@ -27,29 +25,6 @@ fn a8_format() -> ActivationFormat {
     )
 }
 
-fn shape(
-    m: u32,
-    n: u32,
-    k: u32,
-) -> MatmulShape {
-    MatmulShape {
-        m,
-        n,
-        k,
-        b_transpose: true,
-        b_leading_dimension: None,
-        b_prologue: GemmBPrologueKind::FullPrecision,
-        b_is_trellis: false,
-        b_bits: None,
-        b_group_size: None,
-        signed_codes: false,
-        a: ActivationFormat::Bf16,
-        gathered: false,
-        params_layout: Some(QuantParamsLayout::OutputGroup),
-        d_transform: GemmDTransform::empty(),
-    }
-}
-
 fn quant(mut shape: MatmulShape) -> MatmulShape {
     shape.b_prologue = GemmBPrologueKind::ScaleSymmetricDequant;
     shape.b_bits = Some(4);
@@ -62,7 +37,7 @@ fn problem(
     shape: MatmulShape,
     output_data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, DataType::BF16, output_data_type, true, MTLGPUFamily::Apple7)
+    GemmProblem::new(shape, (DataType::BF16, DataType::BF16, output_data_type), true, MTLGPUFamily::Apple7)
 }
 
 #[uzu_test]
@@ -184,7 +159,7 @@ fn trellis_plan_matches_projection_cases() {
 fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
-        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false, MTLGPUFamily::Apple7)
+        GemmProblem::new(huge, (DataType::BF16, DataType::BF16, DataType::BF16), false, MTLGPUFamily::Apple7)
             .select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::MxuUnavailable)
     );
@@ -195,94 +170,4 @@ fn forced_engine_errors_are_preserved() {
         problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"))
     );
-}
-
-#[uzu_test]
-fn gemv_gemm_route_boundaries_are_preserved() {
-    for (shape, data_type, prefer_gemm) in [
-        (shape(4, 4096, 8192), DataType::BF16, true),
-        (shape(4, 8192, 4096), DataType::BF16, false),
-        (shape(3, 4096, 8192), DataType::BF16, false),
-        (shape(5, 4096, 8192), DataType::BF16, false),
-    ] {
-        let plan = GemmProblem::new(shape, data_type, data_type, true, MTLGPUFamily::Apple7).select_plan();
-        assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
-    }
-    let mut gathered = shape(4, 4096, 8192);
-    gathered.gathered = true;
-    let plan = problem(gathered, DataType::BF16).select_plan();
-    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
-}
-
-#[uzu_test]
-fn int8_activations_require_mxu_tiled_weights() {
-    let context = block_on(MetalContext::new()).expect("Metal context");
-    if !context.supports_mxu {
-        return;
-    }
-    let kernel =
-        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
-    for (n, k, bits, expected) in [
-        (96, 256, 4, true),
-        (72, 256, 4, false),
-        (64, 40960, 4, true),
-        (64, 41088, 4, false),
-        (64, 20480, 8, true),
-        (64, 20608, 8, false),
-    ] {
-        let shape = MatmulShape {
-            b_prologue: if bits == 4 {
-                GemmBPrologueKind::ScaleZeroPointDequant
-            } else {
-                GemmBPrologueKind::ScaleSymmetricDequant
-            },
-            b_bits: Some(bits),
-            signed_codes: bits == 8,
-            a: a8_format(),
-            params_layout: Some(QuantParamsLayout::GroupOutput),
-            ..quant(shape(16, n, k))
-        };
-        assert_eq!(
-            kernel.select_activation_quantization(&shape, &context).is_some(),
-            expected,
-            "n={n} k={k} bits={bits}"
-        );
-    }
-}
-
-#[uzu_test]
-fn w4_activation_format_matches_weight_layout() {
-    let context = block_on(MetalContext::new()).expect("Metal context");
-    let kernel =
-        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
-    for (m, n, k) in [(4, 5120, 6144), (5, 5120, 6144), (8, 5120, 6144), (512, 5120, 6144), (5, 72, 512)] {
-        let w4 = MatmulShape {
-            b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
-            signed_codes: false,
-            params_layout: Some(QuantParamsLayout::GroupOutput),
-            ..quant(shape(m, n, k))
-        };
-        let quantization = kernel.select_activation_quantization(&w4, &context);
-        assert_eq!(quantization.is_some(), context.supports_mxu && n.is_multiple_of(32));
-        let (layout, expected) = if let Some(q) = quantization {
-            (
-                GemmBLayout::MxuTiled,
-                if m >= 5 {
-                    ActivationFormat::Int8(q)
-                } else {
-                    ActivationFormat::Bf16
-                },
-            )
-        } else {
-            let format = if m <= 8 {
-                ActivationFormat::PackedHalf {
-                    group_size: 64,
-                }
-            } else {
-                ActivationFormat::Bf16
-            };
-            (GemmBLayout::RowMajor, format)
-        };
-        assert_eq!(kernel.select_activation_format(&w4, layout, &context), expected, "M={m} N={n} K={k}");
-    }
 }

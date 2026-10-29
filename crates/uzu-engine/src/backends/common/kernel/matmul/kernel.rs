@@ -3,12 +3,9 @@ use std::error::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        kernel::{
-            ActivationQuantization,
-            matmul::{
-                arguments::MatmulArguments,
-                routing::{ActivationFormat, MatmulShape},
-            },
+        kernel::matmul::{
+            arguments::MatmulArguments,
+            routing::{ActivationFormat, MatmulShape},
         },
     },
     data_type::DataType,
@@ -39,18 +36,20 @@ pub trait MatmulKernel: Sized + Send + Sync {
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), Self::Error>;
 
-    fn select_activation_quantization(
+    fn activation_preparation(
         &self,
-        _candidate: &MatmulShape,
+        _shape: &MatmulShape,
+        _weights_layout: Self::WeightsLayout,
         _context: &<Self::Backend as Backend>::Context,
-    ) -> Option<ActivationQuantization> {
-        None
+    ) -> ActivationFormat {
+        ActivationFormat::Bf16
     }
 
     fn select_activation_format(
         &self,
         _bf16_shape: &MatmulShape,
         _weights_layout: Self::WeightsLayout,
+        _prepared: ActivationFormat,
         _context: &<Self::Backend as Backend>::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16

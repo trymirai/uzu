@@ -8,5 +8,5 @@ pub use harness::{Case, cpu_reference, deterministic_input};
 pub use quant::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, transpose_metadata};
 pub use shape::{
     Shape, all_correctness_shapes, bench_fp_gemm_shapes, bench_quant_gemm_shapes, bench_quant_gemv_shapes,
-    qwen3_layer_shapes,
+    matmul_shape, quantized_matmul_shape, qwen3_layer_shapes,
 };

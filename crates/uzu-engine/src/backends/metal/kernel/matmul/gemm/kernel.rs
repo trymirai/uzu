@@ -156,8 +156,7 @@ impl GemmKernel {
     ) -> GemmProblem {
         GemmProblem::new(
             shape,
-            self.weights_data_type,
-            self.output_data_type,
+            (self.weights_data_type, self.input_data_type, self.output_data_type),
             context.supports_mxu,
             context.apple_gpu_family,
         )
