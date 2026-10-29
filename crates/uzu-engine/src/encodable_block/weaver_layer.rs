@@ -98,6 +98,7 @@ impl<B: Backend> WeaverLayer<B> {
         let pre_attention_norm = Normalization::new(
             model_dim,
             DATA_TYPE,
+            DATA_TYPE,
             None,
             if add_to_residual {
                 ShortcutMode::Add
@@ -112,6 +113,7 @@ impl<B: Backend> WeaverLayer<B> {
         .await?;
         let pre_mlp_norm = Normalization::new(
             model_dim,
+            DATA_TYPE,
             DATA_TYPE,
             None,
             ShortcutMode::Add,

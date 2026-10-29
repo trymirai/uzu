@@ -1059,6 +1059,11 @@ class ModelSpecialization:
         def __new__(cls) -> ModelSpecialization.Classification: ...
     
     @typing.final
+    class Decision(ModelSpecialization):
+        __match_args__ = ()
+        def __new__(cls) -> ModelSpecialization.Decision: ...
+    
+    @typing.final
     class TextToSpeech(ModelSpecialization):
         __match_args__ = ()
         def __new__(cls) -> ModelSpecialization.TextToSpeech: ...

@@ -108,7 +108,8 @@ pub struct Transformer<B: Backend> {
 
 impl<B: Backend> Transformer<B> {
     pub async fn new(
-        data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
         output_norm_hadamard_factors: Option<B::GlobalGpuBuffer>,
         transformer_config: &TransformerConfig,
         parameter_tree: &ParameterTree<'_, B>,
@@ -133,7 +134,7 @@ impl<B: Backend> Transformer<B> {
                 transformer_config.hidden_dim,
                 num_layers,
                 layer_index,
-                data_type,
+                input_data_type,
                 layer_config,
                 &layer_loader,
                 context,
@@ -145,7 +146,8 @@ impl<B: Backend> Transformer<B> {
 
         let output_norm = Normalization::new(
             transformer_config.model_dim,
-            data_type,
+            input_data_type,
+            output_data_type,
             output_norm_hadamard_factors,
             ShortcutMode::Add,
             PostLayerScalar::None,
@@ -155,7 +157,7 @@ impl<B: Backend> Transformer<B> {
         )
         .await?;
 
-        let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
+        let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, input_data_type, false)
             .map_err(TransformerNewError::Backend)?;
 
         Ok(Self {
@@ -178,6 +180,10 @@ impl<B: Backend> Transformer<B> {
         let elements = batch_size * self.model_dim;
         self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
         Ok(output)
+    }
+
+    pub fn model_dim(&self) -> u32 {
+        self.model_dim
     }
 
     pub fn speculation_supported(&self) -> bool {

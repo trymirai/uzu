@@ -175,6 +175,7 @@ fn gemv_gemm_route_boundaries_are_preserved() {
     for (shape, data_type, prefer_gemm) in [
         (shape(4, 4096, 8192), DataType::BF16, true),
         (shape(4, 8192, 4096), DataType::BF16, false),
+        (shape(4, 4096, 8192), DataType::F32, false),
         (shape(3, 4096, 8192), DataType::BF16, false),
         (shape(5, 4096, 8192), DataType::BF16, false),
     ] {

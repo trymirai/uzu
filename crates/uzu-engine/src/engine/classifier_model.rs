@@ -2,10 +2,7 @@ use std::{cmp::min, collections::HashMap, io, path::Path, sync::Arc};
 
 use derive_more::Debug;
 use half::bf16;
-use shoji::{
-    traits::backend::classification::ClassifierOutput,
-    types::session::classification::{ChatTokenCodecConfig, TokenCodecConfig},
-};
+use shoji::{traits::backend::classification::ClassifierOutput, types::session::classification::TokenCodecConfig};
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
@@ -104,20 +101,7 @@ impl<B: Backend> ClassifierModel<B> {
     }
 
     pub fn token_codec_config(&self) -> TokenCodecConfig {
-        match &self.token_codec_config {
-            AnyTokenCodecConfig::ChatCodecConfig(config) => TokenCodecConfig::Chat(ChatTokenCodecConfig {
-                prompt_template: config.prompt_template.clone(),
-                output_parser_regex: config.output_parser_regex.clone(),
-                system_role_name: config.system_role_name.clone(),
-                user_role_name: config.user_role_name.clone(),
-                assistant_role_name: config.assistant_role_name.clone(),
-                eos_token: config.eos_token.clone(),
-                bos_token: config.bos_token.clone(),
-                end_of_thinking_tag: config.end_of_thinking_tag.clone(),
-                default_system_prompt: config.default_system_prompt.clone(),
-            }),
-            AnyTokenCodecConfig::RawTextCodecConfig(_) => TokenCodecConfig::RawText,
-        }
+        TokenCodecConfig::from(&self.token_codec_config)
     }
 
     pub async fn classify(

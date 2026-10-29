@@ -63,6 +63,7 @@ impl<B: Backend> PredictionHead<B> {
         let normalization = Normalization::new(
             hidden_dim,
             data_type,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,

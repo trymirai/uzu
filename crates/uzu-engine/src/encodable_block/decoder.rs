@@ -72,6 +72,7 @@ impl<B: Backend> Decoder<B> {
                 Normalization::new(
                     config.transformer_config.model_dim,
                     data_type,
+                    data_type,
                     None,
                     ShortcutMode::None,
                     PostLayerScalar::None,
@@ -106,6 +107,7 @@ impl<B: Backend> Decoder<B> {
         };
 
         let transformer = Transformer::new(
+            data_type,
             data_type,
             readout_input_hadamard_factors,
             &config.transformer_config,

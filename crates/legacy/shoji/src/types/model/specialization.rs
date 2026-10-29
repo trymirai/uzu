@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum ModelSpecialization {
     Chat {},
     Classification {},
+    Decision {},
     TextToSpeech {},
     Translation {},
     Speculation {},
@@ -16,6 +17,7 @@ impl ModelSpecialization {
         match self {
             ModelSpecialization::Chat {} => "Chat".to_string(),
             ModelSpecialization::Classification {} => "Classification".to_string(),
+            ModelSpecialization::Decision {} => "Decision".to_string(),
             ModelSpecialization::TextToSpeech {} => "Text to Speech".to_string(),
             ModelSpecialization::Translation {} => "Translation".to_string(),
             ModelSpecialization::Speculation {} => "Speculation".to_string(),

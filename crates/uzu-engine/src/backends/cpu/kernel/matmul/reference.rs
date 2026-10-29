@@ -1,4 +1,4 @@
-use half::bf16;
+use num_traits::AsPrimitive;
 
 use crate::{
     backends::{
@@ -8,7 +8,8 @@ use crate::{
         },
         cpu::{Cpu, buffer::CpuBufferExt, kernel::matmul::MatmulCpuError},
     },
-    utils::pointers::SendPtr,
+    data_type::DataType,
+    utils::{dispatch_dtype::dispatch_dtype, pointers::SendPtr},
 };
 
 pub(super) enum WeightData {
@@ -76,18 +77,20 @@ impl WeightData {
 }
 
 #[inline]
-pub(super) unsafe fn read_bf16(
+pub(super) unsafe fn load(
     base: *const u8,
+    data_type: DataType,
     index: usize,
 ) -> f32 {
-    unsafe { f32::from(*base.cast::<bf16>().add(index)) }
+    dispatch_dtype!(|(T: data_type)| unsafe { (*base.cast::<T>().add(index)).as_() })
 }
 
 #[inline]
-pub(super) unsafe fn write_bf16(
+pub(super) unsafe fn store(
     base: *mut u8,
+    data_type: DataType,
     index: usize,
     value: f32,
 ) {
-    unsafe { *base.cast::<bf16>().add(index) = bf16::from_f32(value) }
+    dispatch_dtype!(|(T: data_type)| unsafe { *base.cast::<T>().add(index) = value.as_() })
 }

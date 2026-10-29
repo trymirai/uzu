@@ -15,7 +15,7 @@ use crate::{
             context::CpuContext,
             kernel::matmul::{
                 MatmulCpuError,
-                reference::{WeightData, read_bf16, write_bf16},
+                reference::{WeightData, load, store},
             },
         },
     },
@@ -24,6 +24,8 @@ use crate::{
 };
 
 pub struct MatmulCpuKernel {
+    weights_data_type: DataType,
+    input_data_type: DataType,
     output_data_type: DataType,
     output_rht: ActivationTransform<Cpu>,
     bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
@@ -40,22 +42,21 @@ impl MatmulKernel for MatmulCpuKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> Result<Self, Self::Error> {
-        for data_type in [weights_data_type, input_data_type] {
-            if data_type != DataType::BF16 {
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
                 return Err(MatmulCpuError::UnsupportedDataType(data_type));
             }
-        }
-        if !matches!(output_data_type, DataType::BF16 | DataType::F32) {
-            return Err(MatmulCpuError::UnsupportedDataType(output_data_type));
         }
         let output_rht = ActivationTransform::output_rht(context, output_data_type, None, true)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
             output_data_type,
-            DataType::BF16,
+            weights_data_type,
             true,
         )?;
         Ok(Self {
+            weights_data_type,
+            input_data_type,
             output_data_type,
             output_rht,
             bias_add,
@@ -112,7 +113,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 offset,
             } => {
                 let (values, range) = values.parts();
-                let byte_offset = range.start + offset * DataType::BF16.size_in_bytes();
+                let byte_offset = range.start + offset * self.input_data_type.size_in_bytes();
                 AData::FullPrecision(SendPtr(
                     values.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(byte_offset),
                 ))
@@ -170,6 +171,8 @@ impl MatmulKernel for MatmulCpuKernel {
 
         let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u)?;
 
+        let weights_data_type = self.weights_data_type;
+        let input_data_type = self.input_data_type;
         let output_data_type = self.output_data_type;
         let bias_after_rht = post_rht.is_some();
         command_buffer.push_command(move || {
@@ -184,7 +187,7 @@ impl MatmulKernel for MatmulCpuKernel {
                         let mut accumulator = 0.0f32;
                         for inner in 0..k_u {
                             let a_value = match a_data {
-                                AData::FullPrecision(ptr) => read_bf16(ptr.as_ptr(), row * k_u + inner),
+                                AData::FullPrecision(ptr) => load(ptr.as_ptr(), input_data_type, row * k_u + inner),
                                 AData::Int8 {
                                     values,
                                     scales,
@@ -210,7 +213,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     } else {
                                         inner * leading_dimension + b_col
                                     };
-                                    read_bf16(ptr.as_ptr(), index)
+                                    load(ptr.as_ptr(), weights_data_type, index)
                                 },
                                 WeightData::Quantized {
                                     weights,
@@ -238,7 +241,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     let group_index = inner / group_size;
                                     let metadata_index = b_col * scale_strides.output_stride as usize
                                         + group_index * scale_strides.group_stride as usize;
-                                    let scale = read_bf16(scales.as_ptr(), metadata_index);
+                                    let scale = load(scales.as_ptr(), weights_data_type, metadata_index);
                                     let midpoint = (1u32 << (bits - 1)) as f32;
                                     let zero_point = zero_points.as_ref().map(|(zp, strides)| {
                                         let zero_point_index = b_col * strides.output_stride as usize
@@ -258,7 +261,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     let bias_term = if let Some(zp) = zero_point {
                                         -scale * zp
                                     } else if let Some(b) = biases {
-                                        read_bf16(b.as_ptr(), metadata_index)
+                                        load(b.as_ptr(), weights_data_type, metadata_index)
                                     } else {
                                         -scale * midpoint
                                     };
@@ -271,16 +274,12 @@ impl MatmulKernel for MatmulCpuKernel {
                         let output_index = row * n_u + col;
                         let mut value = output_scale * accumulator;
                         if !bias_after_rht && let Some(bias) = bias_ptr {
-                            value += read_bf16(bias.as_ptr(), col);
+                            value += load(bias.as_ptr(), weights_data_type, col);
                         }
                         if let Some(cap) = soft_cap {
                             value = cap * (value / cap).tanh();
                         }
-                        if output_data_type == DataType::F32 {
-                            *d_ptr.as_ptr().cast::<f32>().add(output_index) = value;
-                        } else {
-                            write_bf16(d_ptr.as_ptr(), output_index, value);
-                        }
+                        store(d_ptr.as_ptr(), output_data_type, output_index, value);
                     }
                 }
             }

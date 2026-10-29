@@ -596,6 +596,7 @@ module.exports.ModelSourceFilesystem = nativeBinding.ModelSourceFilesystem
 module.exports.ModelSourceRegistry = nativeBinding.ModelSourceRegistry
 module.exports.ModelSpecializationChat = nativeBinding.ModelSpecializationChat
 module.exports.ModelSpecializationClassification = nativeBinding.ModelSpecializationClassification
+module.exports.ModelSpecializationDecision = nativeBinding.ModelSpecializationDecision
 module.exports.ModelSpecializationSpeculation = nativeBinding.ModelSpecializationSpeculation
 module.exports.ModelSpecializationTextToSpeech = nativeBinding.ModelSpecializationTextToSpeech
 module.exports.ModelSpecializationTranslation = nativeBinding.ModelSpecializationTranslation

@@ -39,9 +39,11 @@ template <
     uint REDUCTION_LANES,
     uint GROUP_LANES,
     uint NUM_SIMDGROUPS>
-VARIANTS(AT, bfloat)
-VARIANTS(BT, bfloat)
+VARIANTS(AT, bfloat, float)
+VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
+CONSTRAINT(AT == BT)
+CONSTRAINT(BT != "float" || (DT == "float" && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
