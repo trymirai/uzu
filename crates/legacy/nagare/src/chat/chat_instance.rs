@@ -42,7 +42,7 @@ impl ChatInstance {
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
-        let kind = tokio::spawn({
+        let kind_future = {
             let reference = reference.clone();
             async move {
                 if let Some(token_backend) = backend.as_chat_via_token_capable() {
@@ -55,11 +55,13 @@ impl ChatInstance {
                     Err(ChatSessionError::UnsupportedModel {})
                 }
             }
-        })
-        .await
-        .map_err(|error| ChatSessionError::Backend {
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let kind = tokio::spawn(kind_future).await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })??;
+        #[cfg(target_family = "wasm")]
+        let kind = kind_future.await?;
 
         Ok(Self {
             kind,

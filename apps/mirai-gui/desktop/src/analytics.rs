@@ -64,7 +64,7 @@ impl From<ChatReplyStats> for Stats {
 struct DeviceInfo {
     os_name: Option<String>,
     cpu_name: Option<String>,
-    memory_total: i64,
+    memory_total: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -259,7 +259,7 @@ mod tests {
             device: DeviceInfo {
                 os_name: Some("macOS".into()),
                 cpu_name: Some("Apple".into()),
-                memory_total: 64,
+                memory_total: Some(64),
             },
         };
         let record = Record {

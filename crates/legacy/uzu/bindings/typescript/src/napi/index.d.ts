@@ -921,9 +921,9 @@ export declare class ChatModelInfo {
 export declare class Device {
   osName?: string
   cpuName?: string
-  memoryTotal: number
+  memoryTotal?: number
   homePath: string
-  constructor(osName?: string, cpuName?: string, memoryTotal: number, homePath: string)
+  constructor(osName?: string, cpuName?: string, memoryTotal?: number, homePath: string)
 
   static create(): Device
 }

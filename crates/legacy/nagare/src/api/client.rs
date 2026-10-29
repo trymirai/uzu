@@ -11,6 +11,7 @@ pub struct Client {
     base_url: String,
     bearer_token: Option<String>,
     retry: RetryConfig,
+    timeout: Duration,
 }
 
 #[bon]
@@ -22,13 +23,14 @@ impl Client {
         bearer_token: Option<String>,
         #[builder(default)] retry: RetryConfig,
     ) -> Result<Self, Error> {
-        let client = ReqwestClient::builder().timeout(timeout).build().map_err(Error::from)?;
+        let client = ReqwestClient::builder().build().map_err(Error::from)?;
 
         Ok(Self {
             client,
             base_url,
             bearer_token,
             retry,
+            timeout,
         })
     }
 
@@ -71,7 +73,7 @@ impl Client {
         &self,
         path: &str,
     ) -> RequestBuilder {
-        let request = self.client.post(format!("{}/{}", self.base_url, path));
+        let request = self.client.post(format!("{}/{}", self.base_url, path)).timeout(self.timeout);
         match &self.bearer_token {
             Some(token) => request.bearer_auth(token),
             None => request,

@@ -5,19 +5,24 @@ use crate::registry::RegistryError;
 pub(super) fn resolve_model_shorthand<'a>(
     models: &'a [Model],
     requested: &str,
-    memory_total: u64,
+    memory_total: Option<u64>,
 ) -> Result<Option<&'a Model>, RegistryError> {
     let mut candidates = models.iter().filter(|model| model_shorthand_matches(model, requested)).collect::<Vec<_>>();
     if candidates.is_empty() {
         return Ok(None);
     }
 
-    candidates.retain(|model| checkpoint_size_bytes(model).is_some_and(|size| size <= memory_total));
+    candidates.retain(|model| {
+        checkpoint_size_bytes(model).is_some_and(|size| memory_total.is_none_or(|memory| size <= memory))
+    });
     if candidates.is_empty() {
         return Err(RegistryError::UnableToGetModels {
-            message: format!(
-                "model `{requested}` has checkpoints, but none fit in {memory_total} bytes of total memory"
-            ),
+            message: match memory_total {
+                Some(memory) => {
+                    format!("model `{requested}` has checkpoints, but none fit in {memory} bytes of total memory")
+                },
+                None => format!("model `{requested}` has no checkpoints with a known size"),
+            },
         });
     }
 
