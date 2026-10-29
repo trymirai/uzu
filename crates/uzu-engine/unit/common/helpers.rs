@@ -119,16 +119,3 @@ pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {
 pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 }
-
-pub fn buffer_readback<B: Backend>(
-    context: &B::Context,
-    buffer: impl BufferRef<Backend = B>,
-) -> B::GlobalGpuBuffer {
-    let mut output_buffer = create_buffer::<B, u8>(context, buffer.size());
-
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    command_buffer.encode_copy(buffer, &mut output_buffer);
-    submit_command_buffer(command_buffer);
-
-    output_buffer
-}
