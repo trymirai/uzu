@@ -1,6 +1,6 @@
 use std::{io, io::Write};
 
-use shoji::types::session::decision::{DecisionAnswer, DecisionInput, DecisionOption, DecisionQuestion};
+use shoji::types::session::decision::{DecisionInput, DecisionOption, DecisionQuestion};
 use uzu::engine::{Engine, EngineConfig};
 
 #[tokio::main]
@@ -39,53 +39,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = DecisionInput {
         state: "The order arrived damaged yesterday. The customer has a receipt and asks for a replacement today."
             .to_string(),
-        questions: questions.clone(),
+        questions,
     };
     let output = session.decide(input).await?;
 
-    for (question, answer) in questions.iter().zip(&output.answers) {
-        match (question, answer) {
-            (
-                DecisionQuestion::Choice {
-                    options,
-                    ..
-                },
-                DecisionAnswer::Choice {
-                    key,
-                    probabilities,
-                    ..
-                },
-            ) => {
-                println!("choice: {key}");
-                for (option, probability) in options.iter().zip(probabilities) {
-                    println!("  {:<10} {probability:.4}", option.key);
-                }
-            },
-            (
-                DecisionQuestion::Score {
-                    levels,
-                    ..
-                },
-                DecisionAnswer::Score {
-                    score,
-                    probabilities,
-                },
-            ) => {
-                println!("score: {score:.4}");
-                for (level, probability) in levels.iter().zip(probabilities) {
-                    println!("  {level:<10} {probability:.4}");
-                }
-            },
-            (
-                _,
-                DecisionAnswer::YesNo {
-                    yes_probability,
-                },
-            ) => println!("yes/no: {yes_probability:.4}"),
-            _ => unreachable!("answers follow the question types"),
-        }
-    }
-    println!("{} tokens in {:.2} s", output.stats.tokens_count, output.stats.total_duration);
+    println!("{}", serde_json::to_string_pretty(&output)?);
 
     Ok(())
 }

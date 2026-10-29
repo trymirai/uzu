@@ -66,8 +66,13 @@ pub struct DecisionStats {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionResult {
+    pub answer: DecisionAnswer,
+    pub stats: DecisionStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionOutput {
     // One per question, in input order.
-    pub answers: Vec<DecisionAnswer>,
-    pub stats: DecisionStats,
+    pub results: Vec<DecisionResult>,
 }

@@ -6,7 +6,9 @@ use shoji::{
     traits::{Backend, backend::decision::DecisionInstance},
     types::{
         model::{Model, ModelSpecialization},
-        session::decision::{DecisionAnswer, DecisionInput, DecisionOutput, DecisionQuestion, DecisionStats},
+        session::decision::{
+            DecisionAnswer, DecisionInput, DecisionOutput, DecisionQuestion, DecisionResult, DecisionStats,
+        },
     },
 };
 use tokio::sync::{Mutex, mpsc};
@@ -69,7 +71,7 @@ impl DecisionSession {
     async fn execute(
         holder: &DecisionInstanceHolder,
         input: &DecisionInput,
-    ) -> Result<(Vec<DecisionAnswer>, usize), DecisionSessionError> {
+    ) -> Result<Vec<DecisionResult>, DecisionSessionError> {
         if input.questions.is_empty() {
             return Err(DecisionSessionError::NoQuestions {});
         }
@@ -80,7 +82,8 @@ impl DecisionSession {
             .iter()
             .enumerate()
             .map(|(index, question)| {
-                holder.encoding.encode(&input.state, question).map_err(|error| match error {
+                let time_start = Instant::now();
+                let prompt = holder.encoding.encode(&input.state, question).map_err(|error| match error {
                     DecisionEncodingError::DuplicateOption(_) | DecisionEncodingError::InvalidQuestion(_) => {
                         DecisionSessionError::InvalidQuestion {
                             index: index as i64,
@@ -92,14 +95,15 @@ impl DecisionSession {
                     | DecisionEncodingError::UnsupportedTokenCodec => DecisionSessionError::Encoding {
                         message: error.to_string(),
                     },
-                })
+                })?;
+                Ok((prompt, time_start.elapsed()))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, DecisionSessionError>>()?;
 
-        let mut answers = Vec::with_capacity(prompts.len());
-        let mut tokens_count = 0;
-        for (question, prompt) in input.questions.iter().zip(prompts) {
-            tokens_count += prompt.len();
+        let mut results = Vec::with_capacity(prompts.len());
+        for (question, (prompt, encoding_duration)) in input.questions.iter().zip(prompts) {
+            let time_start = Instant::now();
+            let tokens_count = prompt.len();
             let tokens = prompt.into_iter().map(u64::from).collect::<Vec<_>>();
             let probabilities =
                 holder.instance.probabilities(&tokens, option_count(question)).await.map_err(|error| {
@@ -107,9 +111,15 @@ impl DecisionSession {
                         message: error.to_string(),
                     }
                 })?;
-            answers.push(answer(question, probabilities));
+            results.push(DecisionResult {
+                answer: answer(question, probabilities),
+                stats: DecisionStats {
+                    tokens_count: tokens_count as i64,
+                    total_duration: (encoding_duration + time_start.elapsed()).as_secs_f64(),
+                },
+            });
         }
-        Ok((answers, tokens_count))
+        Ok(results)
     }
 }
 
@@ -126,7 +136,6 @@ impl DecisionSession {
         let holder = self.holder.clone();
         let state = self.state.clone();
 
-        let time_start = Instant::now();
         tokio::spawn(async move {
             {
                 let mut state = state.lock().await;
@@ -145,12 +154,8 @@ impl DecisionSession {
                 let holder = holder.lock().await;
                 Self::execute(&holder, &input).await
             };
-            let output = result.map(|(answers, tokens_count)| DecisionOutput {
-                answers,
-                stats: DecisionStats {
-                    tokens_count: tokens_count as i64,
-                    total_duration: time_start.elapsed().as_secs_f64(),
-                },
+            let output = result.map(|results| DecisionOutput {
+                results,
             });
 
             *state.lock().await = DecisionSessionState::Idle;
