@@ -3,26 +3,14 @@
 #include <metal_stdlib>
 
 #include "activation_quantization.h"
-#include "../matmul/gemm/common/packed_half_layout.h"
+#include "../matmul/common/packed_half_layout.h"
+#include "../matmul/common/quant_unpack.h"
 
 using namespace metal;
 
 UZU_CONST uint PACKED_HALF_ROWS_PER_WORD = 2;
 UZU_CONST uint PACKED_HALF_VALUES_PER_VECTOR = 4;
 UZU_CONST float PACKED_HALF_MAX_FINITE = 65504.0f;
-
-// Matches the exponent offsets embedded in w4_pair's four half-precision nibble encodings.
-UZU_CONST float W4_PAIR_BIAS_0 = 1024.0f;
-UZU_CONST float W4_PAIR_BIAS_1 = 64.0f;
-UZU_CONST float W4_PAIR_BIAS_2 = 256.0f;
-UZU_CONST float W4_PAIR_BIAS_3 = 16.0f;
-
-static METAL_FUNC float w4_pair_bias(uint component) {
-  return component == 0   ? W4_PAIR_BIAS_0
-         : component == 1 ? W4_PAIR_BIAS_1
-         : component == 2 ? W4_PAIR_BIAS_2
-                          : W4_PAIR_BIAS_3;
-}
 
 static METAL_FUNC float2 store_packed_half_values(
     const float4 values,
@@ -43,7 +31,7 @@ static METAL_FUNC float2 store_packed_half_values(
   for (uint i = 0; i < PACKED_HALF_VALUES_PER_VECTOR; ++i) {
     const half value = half(clamp(values[i], -PACKED_HALF_MAX_FINITE, PACKED_HALF_MAX_FINITE));
     halves[PACKED_HALF_ROWS_PER_WORD * (word + i) + row % PACKED_HALF_ROWS_PER_WORD] = value;
-    sums += float2(float(value), w4_pair_bias(i) * float(value));
+    sums += float2(float(value), uzu::gemm::w4_pair_bias(i) * float(value));
   }
   return sums;
 }

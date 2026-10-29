@@ -13,8 +13,8 @@
 #include "gemm_rht.h"
 #include "gemm_tiling.h"
 #include "operands.h"
-#include "schedules/packed.h"
-#include "schedules/direct.h"
+#include "schedules/small_batch/packed.h"
+#include "schedules/small_batch/direct.h"
 
 using namespace metal;
 

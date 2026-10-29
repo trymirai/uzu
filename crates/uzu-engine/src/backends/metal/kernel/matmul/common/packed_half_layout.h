@@ -1,7 +1,7 @@
 #pragma once
 
 #include <metal_stdlib>
-#include "../../../common/defines.h"
+#include "../../common/defines.h"
 
 using namespace metal;
 

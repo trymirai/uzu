@@ -2,30 +2,17 @@
 
 #include <metal_stdlib>
 
-#include "../../../../generated/gemm.h"
-#include "../../../common/fragment.h"
-#include "../../../common/quant_unpack.h"
-#include "../../../common/simdgroup_fragment_ops.h"
-#include "../packed_half_layout.h"
+#include "../../../../../generated/gemm.h"
+#include "../../../../common/fragment.h"
+#include "../../../../common/quant_unpack.h"
+#include "../../../../common/simdgroup_fragment_ops.h"
+#include "../../../../common/packed_half_layout.h"
 
 using namespace metal;
 
 namespace uzu {
 namespace gemm {
 namespace schedules {
-
-static METAL_FUNC half2 w4_pair(uint word, ushort nibble) {
-  switch (nibble) {
-  case 0:
-    return as_type<half2>((word & 0x000f000fu) | 0x64006400u);
-  case 1:
-    return as_type<half2>((word & 0x00f000f0u) | 0x54005400u);
-  case 2:
-    return as_type<half2>(((word >> 6) & 0x003c003cu) | 0x5c005c00u);
-  default:
-    return as_type<half2>(((word >> 6) & 0x03c003c0u) | 0x4c004c00u);
-  }
-}
 
 struct PackedSchedule {
   UZU_CONST bool TRANSPOSED_OUTPUT = true;
