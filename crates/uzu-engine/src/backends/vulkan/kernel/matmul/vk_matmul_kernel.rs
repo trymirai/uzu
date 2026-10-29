@@ -133,7 +133,7 @@ impl MatmulKernel for VkMatmulKernel {
         }
         if !a8_shape.signed_codes && prepared_shape.signed_codes {
             // Device-local codes flip on the host through a copy.
-            let mut codes = block_on(context.copyout::<u8>(&*weights))?;
+            let mut codes = wait(context.copyout::<u8>(&*weights))?;
             let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(&mut codes);
             words.iter_mut().for_each(|word| *word ^= 0x8080_8080_8080_8080);
             prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= 0x80);
@@ -155,7 +155,7 @@ impl MatmulKernel for VkMatmulKernel {
         let kernel = GemmPrepareBLayoutVulkanKernel::new(&context.arc())?;
         // SAFETY: both ranges hold the n x k codes, which the copy above wrote to `rows`; the buffers do not alias.
         unsafe { kernel.encode((&rows, 0..bytes), (&*weights, 0..bytes), k, n, bits / 2, &mut command_buffer) };
-        block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
+        wait(command_buffer.end_encoding().submit().wait_until_completed())?;
         Ok((GemmBLayout::Tiled, prepared_shape.signed_codes))
     }
 
@@ -222,8 +222,8 @@ impl VkMatmulKernel {
         };
         let plan = VkMatmulPlan::GemmTensor(GemmTiling::Tile16x64x64_Simdgroups1x4x2);
         kernel.encode_plan(arguments, Some(plan), &mut command_buffer)?;
-        block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
-        let output = block_on(context.copyout::<f16>(&d))?;
+        wait(command_buffer.end_encoding().submit().wait_until_completed())?;
+        let output = wait(context.copyout::<f16>(&d))?;
         Ok(output.iter().all(|&value| value == f16::from_f32(1.0 / 64.0)))
     }
 
@@ -880,4 +880,10 @@ fn alignment(
     u32::from(m.is_multiple_of(tiling.block_m()))
         | (u32::from(n.is_multiple_of(tiling.block_n())) * 2)
         | (u32::from(k.is_multiple_of(tiling.block_k())) * 4)
+}
+
+/// `future`'s output, waited for on a thread of its own: weights load inside the caller's executor, which a nested
+/// `block_on` on the same thread would reject.
+fn wait<T: Send>(future: impl Future<Output = T> + Send) -> T {
+    std::thread::scope(|scope| scope.spawn(|| block_on(future)).join().expect("a Vulkan wait panicked"))
 }
