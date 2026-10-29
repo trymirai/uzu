@@ -52,7 +52,8 @@ impl MatmulMetalKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> bool {
-        if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
+        // F32 is compiled for GEMV only.
+        if shape.gathered || plan.engine != gemm::GemmEngine::Mxu || weights_data_type == DataType::F32 {
             return false;
         }
         if shape.m == 5

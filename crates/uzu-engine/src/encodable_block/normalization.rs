@@ -44,14 +44,16 @@ pub struct Normalization<B: Backend> {
     element_count: u32,
     hadamard_factors: Option<B::GlobalGpuBuffer>,
     post_layer_scalar_value: f32,
-    data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     kernel: <B::Kernels as Kernels>::NormalizationKernel,
 }
 
 impl<B: Backend> Normalization<B> {
     pub async fn new(
         element_count: u32,
-        data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
         hadamard_factors: Option<B::GlobalGpuBuffer>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
@@ -84,9 +86,9 @@ impl<B: Backend> Normalization<B> {
 
         let kernel = <B::Kernels as Kernels>::NormalizationKernel::new(
             context,
-            data_type,
+            input_data_type,
             DataType::F32,
-            data_type,
+            output_data_type,
             DataType::F32,
             false,
             config.subtract_mean,
@@ -109,7 +111,8 @@ impl<B: Backend> Normalization<B> {
             element_count,
             hadamard_factors,
             post_layer_scalar_value,
-            data_type,
+            input_data_type,
+            output_data_type,
             kernel,
         })
     }
@@ -122,10 +125,11 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let row_size = size_for_shape(&[self.element_count], self.data_type);
+        let row_size = size_for_shape(&[self.element_count], self.input_data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
-        let mut output = command_buffer.allocate_scratch_for_shape(&[row_count, self.element_count], self.data_type)?;
+        let mut output =
+            command_buffer.allocate_scratch_for_shape(&[row_count, self.element_count], self.output_data_type)?;
         self.kernel.encode(
             Some(input.subrange(row_offset_bytes..)),
             self.scales.as_ref(),

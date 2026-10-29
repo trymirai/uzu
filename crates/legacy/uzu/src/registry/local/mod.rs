@@ -100,6 +100,7 @@ impl Registry {
             .map(|model_type| match model_type {
                 ModelType::LanguageModel => ModelSpecialization::Chat {},
                 ModelType::Classifier => ModelSpecialization::Classification {},
+                ModelType::Decision => ModelSpecialization::Decision {},
             })
             .map_err(|error| RegistryError::UnableToGetModels {
                 message: format!("Unable to resolve specialization for {}: {error}", path.display()),

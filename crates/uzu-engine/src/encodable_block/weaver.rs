@@ -216,6 +216,7 @@ impl<B: Backend> Weaver<B> {
         let token_embedding_norm = Normalization::new(
             config.target_embedding_dim,
             DATA_TYPE,
+            DATA_TYPE,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
@@ -226,6 +227,7 @@ impl<B: Backend> Weaver<B> {
         .await?;
         let hidden_state_norm = Normalization::new(
             config.target_model_dim,
+            DATA_TYPE,
             DATA_TYPE,
             None,
             ShortcutMode::None,
@@ -253,6 +255,7 @@ impl<B: Backend> Weaver<B> {
         }
         let readout_norm = Normalization::new(
             config.model_dim,
+            DATA_TYPE,
             DATA_TYPE,
             None,
             ShortcutMode::Add,

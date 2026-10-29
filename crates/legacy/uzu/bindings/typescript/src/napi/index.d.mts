@@ -641,6 +641,10 @@ export declare class ModelSpecializationClassification {
   constructor()
 }
 
+export declare class ModelSpecializationDecision {
+  constructor()
+}
+
 export declare class ModelSpecializationSpeculation {
   constructor()
 }
@@ -871,7 +875,7 @@ export type ModelSource =
   ModelSourceRegistry | ModelSourceFilesystem
 
 export type ModelSpecialization =
-  ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation
+  ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationDecision | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation
 
 export type PcmBatchError =
   | { type: 'UnableToSaveAsWav'; message: string }

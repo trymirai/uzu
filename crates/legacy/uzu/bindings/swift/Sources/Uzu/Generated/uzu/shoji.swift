@@ -4553,6 +4553,7 @@ public enum ModelSpecialization: Equatable, Hashable, Codable {
     
     case chat
     case classification
+    case decision
     case textToSpeech
     case translation
     case speculation
@@ -4581,11 +4582,13 @@ public struct FfiConverterTypeModelSpecialization: FfiConverterRustBuffer {
         
         case 2: return .classification
         
-        case 3: return .textToSpeech
+        case 3: return .decision
         
-        case 4: return .translation
+        case 4: return .textToSpeech
         
-        case 5: return .speculation
+        case 5: return .translation
+        
+        case 6: return .speculation
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4603,16 +4606,20 @@ public struct FfiConverterTypeModelSpecialization: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
         
         
-        case .textToSpeech:
+        case .decision:
             writeInt(&buf, Int32(3))
         
         
-        case .translation:
+        case .textToSpeech:
             writeInt(&buf, Int32(4))
         
         
-        case .speculation:
+        case .translation:
             writeInt(&buf, Int32(5))
+        
+        
+        case .speculation:
+            writeInt(&buf, Int32(6))
         
         }
     }

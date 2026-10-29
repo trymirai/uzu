@@ -1,7 +1,7 @@
 #[cfg(any(backend = "webgpu", backend = "cpu"))]
 use crate::backends::common::kernel::Unsupported;
 use crate::{
-    backends::common::{Backend, CommandBuffer, Kernels},
+    backends::common::{Backend, CommandBuffer, GpuBuffer, Kernels},
     data_type::DataType,
 };
 
@@ -9,7 +9,7 @@ pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub in_projected: &'a B::ScratchBuffer,
     pub a_log: &'a B::GlobalGpuBuffer,
     pub dt_bias: &'a B::GlobalGpuBuffer,
-    pub ssm_state: &'a mut B::GlobalGpuBuffer,
+    pub ssm_state: &'a mut dyn GpuBuffer<Backend = B>,
     pub delta_output: &'a mut B::ScratchBuffer,
     pub num_heads: u32,
     pub num_groups: u32,

@@ -111,6 +111,7 @@ impl<B: Backend> DFlash<B> {
         let projected_feature_norm = Normalization::new(
             config.model_dim,
             data_type,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
@@ -153,6 +154,7 @@ impl<B: Backend> DFlash<B> {
         }
         let output_norm = Normalization::new(
             config.model_dim,
+            data_type,
             data_type,
             None,
             ShortcutMode::Add,

@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub mod classifier_model;
+pub mod decision_model;
 pub mod language_model;
 
 pub struct Engine<B: Backend> {
@@ -48,6 +49,7 @@ impl<B: Backend> Engine<B> {
 pub enum ModelType {
     LanguageModel,
     Classifier,
+    Decision,
 }
 
 #[derive(Debug, Error)]
@@ -62,6 +64,7 @@ pub async fn resolve_model_type(model_path: &Path) -> Result<ModelType, ResolveM
     Ok(match read_model_config(model_path).await? {
         AnyModelConfig::LanguageModelConfig(_) => ModelType::LanguageModel,
         AnyModelConfig::ClassifierModelConfig(_) => ModelType::Classifier,
+        AnyModelConfig::DecisionModelConfig(_) => ModelType::Decision,
     })
 }
 
@@ -69,6 +72,7 @@ pub async fn resolve_model_sampling_method(model_path: &Path) -> Result<Option<S
     Ok(match read_model_config(model_path).await? {
         AnyModelConfig::LanguageModelConfig(config) => Some(config.generation_config.default_sampling_method()),
         AnyModelConfig::ClassifierModelConfig(_) => None,
+        AnyModelConfig::DecisionModelConfig(config) => Some(config.generation_config.default_sampling_method()),
     })
 }
 
@@ -76,6 +80,7 @@ pub async fn resolve_model_context_length(model_path: &Path) -> Result<Option<u3
     let transformer = match read_model_config(model_path).await? {
         AnyModelConfig::LanguageModelConfig(config) => config.decoder_config.transformer_config,
         AnyModelConfig::ClassifierModelConfig(_) => return Ok(None),
+        AnyModelConfig::DecisionModelConfig(config) => config.decoder_config.transformer_config,
     };
     Ok(transformer
         .layer_configs
