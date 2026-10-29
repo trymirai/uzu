@@ -6,15 +6,21 @@
 #include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"
 #include "common/simdgroup_mma_core.h"
+#include "common/small_batch_mma_core.h"
 
 using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
+#define GEMM_PACKED_HALF_TILING (GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4)
+#define GEMM_SMALL_BATCH (GEMM_PACKED_HALF_TILING || GEMM_TILING == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
+#define GEMM_SMALL_BATCH_W8 (GEMM_SMALL_BATCH && !GEMM_PACKED_HALF_TILING)
 #define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
-  ((USE_MXU) ? 1 : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
+  ((GEMM_SMALL_BATCH || USE_MXU)                                                                                       \
+       ? 1                                                                                                             \
+       : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_K_PARTIAL_ELEMENTS                                                                                        \
   (gemm_tiling_simdgroups_per_k(GEMM_TILING) == 1                                                                      \
        ? 1                                                                                                             \
@@ -25,7 +31,9 @@ using namespace uzu::gemm;
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
                                : GEMM_K_PARTIAL_ELEMENTS)                                                              \
-             : (gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
+             : (GEMM_SMALL_BATCH                                                                                       \
+                    ? GEMM_K_PARTIAL_ELEMENTS                                                                          \
+                    : gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
     typename AT,
@@ -55,7 +63,9 @@ VARIANTS(
     GemmTiling::Tile32x64x256_Simdgroups2x2,
     GemmTiling::Tile64x32x256_Simdgroups4x1,
     GemmTiling::Tile64x64x256_Simdgroups2x2,
-    GemmTiling::Tile128x128x256_Simdgroups4x4)
+    GemmTiling::Tile128x128x256_Simdgroups4x4,
+    GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+    GemmTiling::Tile8x32x128_Simdgroups1x2x4)
 VARIANTS(TRANSPOSE_B, false, true)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(
@@ -69,7 +79,8 @@ VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
-    GemmAPrologueKind::Int8Symmetric)
+    GemmAPrologueKind::Int8Symmetric,
+    GemmAPrologueKind::PackedHalf)
 VARIANTS(A_GROUP_SIZE, 0, 128)
 CONSTRAINT(
     USE_MXU ==
@@ -105,13 +116,21 @@ CONSTRAINT(
 CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile16x128x256_Simdgroups1x4 ||
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
-CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || USE_MXU)
+CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_PROLOGUE == GemmAPrologueKind::PackedHalf || USE_MXU)
+CONSTRAINT(GEMM_PACKED_HALF_TILING == (A_PROLOGUE == GemmAPrologueKind::PackedHalf))
+CONSTRAINT(!GEMM_PACKED_HALF_TILING || (!USE_MXU && TRANSPOSE_B && BITS == 4))
+CONSTRAINT(
+    !GEMM_SMALL_BATCH_W8 ||
+    (!USE_MXU && TRANSPOSE_B && A_PROLOGUE == GemmAPrologueKind::FullPrecision &&
+     BITS == 8))
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
-CONSTRAINT((A_PROLOGUE == GemmAPrologueKind::FullPrecision) == (A_GROUP_SIZE == 0))
+CONSTRAINT((A_PROLOGUE != GemmAPrologueKind::Int8Symmetric) == (A_GROUP_SIZE == 0))
+CONSTRAINT(!A_IS_INT8 || GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
+    const device uint* a_packed_half OPTIONAL(A_PROLOGUE == GemmAPrologueKind::PackedHalf),
     const device BT* b,
     device DT* d,
     const device BT* scales
@@ -124,6 +143,8 @@ KERNEL(Gemm)(
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* rht_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
+    const constant float& soft_cap
+        OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
     const device int8_t* a_int8 OPTIONAL(A_IS_INT8),
     const device float* a_scales OPTIONAL(A_IS_INT8),
     const device int32_t* a_group_sums OPTIONAL(NEEDS_ASYMMETRIC_WEIGHT_CORRECTION),
@@ -159,7 +180,7 @@ KERNEL(Gemm)(
       NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),
       "kernel bindings and operand correction policy must agree"
   );
-  const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums);
+  const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums, a_packed_half);
   const auto right_storage =
       operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes, gemm_b_layout);
 
@@ -172,6 +193,20 @@ KERNEL(Gemm)(
         params,
         alignment,
         output_transform,
+        output_bias,
+        rht_factors,
+        b_shared,
+        thread_context
+    );
+  } else if constexpr (GEMM_SMALL_BATCH) {
+    using Core = SmallBatchMmaCore<DT, GEMM_TILING, LeftOperand, RightOperand>;
+    Core::run(
+        left_storage,
+        right_storage,
+        d,
+        params,
+        output_transform,
+        soft_cap,
         output_bias,
         rht_factors,
         b_shared,

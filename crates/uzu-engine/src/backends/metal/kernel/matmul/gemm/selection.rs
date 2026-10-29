@@ -4,11 +4,17 @@ use thiserror::Error;
 use crate::{
     backends::{
         common::{
-            gpu_types::gemm::GemmBPrologueKind,
-            kernel::{activation_transform::ACTIVATION_SCALE_GROUP_SIZE, matmul::MatmulShape},
+            gpu_types::{
+                gemm::{GemmBPrologueKind, GemmDTransform},
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            },
+            kernel::{
+                activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
+                matmul::{ActivationFormat, MatmulShape},
+            },
         },
         metal::{
-            gpu_types::gemm::GemmTiling,
+            gpu_types::gemm::{GemmBLayout, GemmTiling},
             kernel::matmul::gemm::{GemmEngine, GemmPlan, policy},
         },
     },
@@ -32,6 +38,40 @@ pub enum GemmPlanError {
     MxuUnavailable,
     #[error("GEMM input layout is unsupported: {0}")]
     UnsupportedLayout(&'static str),
+}
+
+/// The weight formats with small-M kernels (batched GEMV and register GEMM): W4 zero-point or scale-bias, and W8
+/// symmetric, at group size 32 or 64. Returns the GEMM's activation format, tiling and K alignment.
+pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTiling, u32)> {
+    let group_size = shape.b_group_size.filter(|group_size| matches!(group_size, 32 | 64))?;
+    match (shape.b_prologue, shape.b_bits) {
+        (GemmBPrologueKind::ScaleZeroPointDequant | GemmBPrologueKind::ScaleBiasDequant, Some(4)) => Some((
+            ActivationFormat::PackedHalf {
+                group_size,
+            },
+            GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+            512,
+        )),
+        (GemmBPrologueKind::ScaleSymmetricDequant, Some(8)) => {
+            Some((ActivationFormat::Bf16, GemmTiling::Tile8x32x128_Simdgroups1x2x4, 256))
+        },
+        _ => None,
+    }
+}
+
+pub fn small_batch_format(
+    shape: MatmulShape,
+    layout: GemmBLayout,
+) -> Option<(ActivationFormat, GemmTiling)> {
+    let (activation, tiling, k_alignment) = small_m_weights(&shape)?;
+    (shape.b_transpose
+        && !shape.gathered
+        && !shape.b_is_trellis
+        && layout == GemmBLayout::RowMajor
+        && shape.b_leading_dimension.is_none()
+        && shape.k.is_multiple_of(k_alignment)
+        && (!shape.d_transform.contains(GemmDTransform::RHT) || shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)))
+    .then_some((activation, tiling))
 }
 
 impl GemmProblem {
@@ -61,6 +101,23 @@ impl GemmProblem {
             GemmEngine::Simdgroup
         };
         self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family))
+    }
+
+    pub fn small_batch_plan(
+        self,
+        layout: GemmBLayout,
+    ) -> Option<GemmPlan> {
+        let (activation, tiling) = small_batch_format(self.shape, layout)?;
+        let plan = self.finish_plan(GemmEngine::Simdgroup, tiling);
+        let partition_alignment = if tiling.is_packed_w4() || plan.split_k == 1 {
+            256
+        } else {
+            512
+        };
+        (self.shape.a == activation
+            && (4..=8).contains(&self.shape.m)
+            && self.shape.k.is_multiple_of(partition_alignment * plan.split_k))
+        .then_some(plan)
     }
 
     #[cfg(test)]
@@ -123,9 +180,9 @@ impl GemmProblem {
             return 1;
         };
         let align = step.max(ACTIVATION_SCALE_GROUP_SIZE) * tiling.simdgroups_k();
-        let target_tiles = policy::split_k_target_tiles(!shape.a_full_precision, tiling, shape.b_bits);
+        let target_tiles = policy::split_k_target_tiles(shape.a_is_quantized(), tiling, shape.b_bits);
         let mut split_k = (target_tiles / base_tiles).max(1).min((shape.k / align).max(1));
-        if !shape.a_full_precision && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
+        if shape.a_is_quantized() && engine == GemmEngine::Mxu && tiling.block_k() != 0 {
             split_k = split_k.min((shape.k / tiling.block_k()).max(1));
         }
         while split_k > 1 && !shape.k.is_multiple_of(split_k * align) {
@@ -198,12 +255,12 @@ pub(super) fn outer_block_k(
 }
 
 fn mxu_is_eligible(shape: MatmulShape) -> bool {
-    if !shape.a_full_precision || shape.b_prologue == GemmBPrologueKind::FullPrecision {
+    if shape.a_is_quantized() || shape.b_prologue == GemmBPrologueKind::FullPrecision {
         return true;
     }
     shape.b_transpose
         && shape.b_leading_dimension.is_none()
-        && shape.k.is_multiple_of(policy::mxu_mn_tile(!shape.a_full_precision, shape.m, shape.n).block_k())
+        && shape.k.is_multiple_of(policy::mxu_mn_tile(shape.a_is_quantized(), shape.m, shape.n).block_k())
 }
 
 fn select_tiling(
@@ -214,7 +271,7 @@ fn select_tiling(
     match engine {
         GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m, shape.n, apple_gpu_family),
         GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
-        GemmEngine::Mxu if !shape.a_full_precision => match policy::mxu_int8_gemm_tile(shape.m, shape.n) {
+        GemmEngine::Mxu if shape.a_is_quantized() => match policy::mxu_int8_gemm_tile(shape.m, shape.n) {
             tiling
                 if tiling.simdgroups_k() > 1
                     && !shape.k.is_multiple_of(tiling.simdgroups_k() * ACTIVATION_SCALE_GROUP_SIZE) =>

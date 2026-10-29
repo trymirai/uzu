@@ -10,7 +10,7 @@ use crate::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
-                ActivationQuantization, ActivationTransform, Kernels,
+                ActivationFormat, ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
                     QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout,
@@ -38,6 +38,10 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub zero_points: Option<Vec<u8>>,
     pub biases: Option<Vec<T>>,
     pub x: Vec<T>,
+    pub ab_scale: f32,
+    pub soft_cap: Option<f32>,
+    pub output_bias: Option<Vec<T>>,
+    pub output_rht_factors: Option<Vec<i32>>,
     pub k: u32,
     pub n: u32,
     pub m: u32,
@@ -165,6 +169,10 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             zero_points,
             biases,
             x,
+            ab_scale: 1.0,
+            soft_cap: None,
+            output_bias: None,
+            output_rht_factors: None,
             k,
             n,
             m,
@@ -241,8 +249,9 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             code_layout,
         )
         .expect("supported activation quantization");
-        let transform = ActivationTransform::<Cpu>::quantize(&context, T::data_type(), quantization)
-            .expect("CPU activation quantization transform");
+        let transform =
+            ActivationTransform::<Cpu>::quantize(&context, T::data_type(), ActivationFormat::Int8(quantization))
+                .expect("CPU activation quantization transform");
         let mut command_buffer = context.create_command_buffer(None, None).expect("CPU command buffer");
         transform.encode_quantize(
             &input,
@@ -292,6 +301,8 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub prepared_a: Option<B::GlobalGpuBuffer>,
     pub prepared_a_scales: Option<B::GlobalGpuBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalGpuBuffer>,
+    pub output_bias: Option<B::GlobalGpuBuffer>,
+    pub output_rht_factors: Option<B::GlobalGpuBuffer>,
     pub y: B::GlobalGpuBuffer,
     pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
@@ -339,6 +350,11 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
                 .as_ref()
                 .filter(|prepared| !prepared.group_sums.is_empty())
                 .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
+            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
+            output_rht_factors: input
+                .output_rht_factors
+                .as_ref()
+                .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
             weights_layout: Default::default(),
             _t: std::marker::PhantomData,
@@ -408,6 +424,8 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         prepared_a,
         prepared_a_scales,
         prepared_a_group_sums,
+        output_bias,
+        output_rht_factors,
         y,
         weights_layout,
         ..
@@ -420,20 +438,24 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
             // Symmetric weights carry no correction term, so the GEMM never reads these.
             group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
                 .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
-            scale_group_size: prepared.quantization.scale_group_size(),
-            code_layout: prepared.quantization.code_layout(),
+            quantization: prepared.quantization,
         },
-        None => MatmulA::FullPrecision {
-            values: &*x,
-            offset: 0,
-        },
+        None => MatmulA::full_precision(&*x),
     };
     MatmulArguments {
         a,
         b,
         b_leading_dimension: None,
         b_transpose: true,
-        output: MatmulOutput::new(y, MatmulDOps::none()),
+        output: MatmulOutput::new(
+            y,
+            MatmulDOps {
+                ab_scale: input.ab_scale,
+                bias: output_bias.as_ref(),
+                rht_factors: output_rht_factors.as_ref(),
+                soft_cap: input.soft_cap,
+            },
+        ),
         gather_indices: None,
         m: input.m,
         n: input.n,

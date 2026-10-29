@@ -9,5 +9,6 @@ enum class GatedActMulOp : uint32_t {
   FullPrecision = 0,
   Quantize = 1,
   QuantizeWithGroupSums = 2,
+  PackHalf = 3,
 };
 } // namespace uzu::gated_act_mul

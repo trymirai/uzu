@@ -3,7 +3,9 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        Backend, CommandBuffer, CommandBufferEncoding,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        kernel::{ActivationFormat, matmul::MatmulA},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -62,7 +64,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
         }
 
-        let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
+        let (rht_signs, inner_linear, activation_format) = Self::load_inner_with_output_rht(
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -73,13 +75,11 @@ impl<B: Backend> RHTLinearWrapper<B> {
             context,
         )
         .await?;
-        let activation_quantization =
-            inner_linear.optimize_weights_layout(context).map_err(RHTLinearWrapperError::BackendError)?;
         Self::build_self_contained(
             input_data_type,
             LinearInputPreparation {
                 rht_signs,
-                activation_quantization,
+                activation_format,
             },
             inner_linear,
             context,
@@ -103,7 +103,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             return Ok(None);
         }
 
-        let (rht_signs, mut inner_linear) = Self::load_inner_with_output_rht(
+        let (rht_signs, inner_linear, activation_format) = Self::load_inner_with_output_rht(
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -116,11 +116,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
         .await?;
         let input_preparation = LinearInputPreparation {
             rht_signs,
-            activation_quantization: inner_linear
-                .optimize_weights_layout(context)
-                .map_err(RHTLinearWrapperError::BackendError)?,
+            activation_format,
         };
-        if input_preparation.activation_quantization.is_some() && !allow_prequantized_activation {
+        if input_preparation.activation_format != ActivationFormat::Bf16 && !allow_prequantized_activation {
             let wrapper = Self::build_self_contained(input_data_type, input_preparation, inner_linear, context)?;
             Ok(Some((Box::new(wrapper), None)))
         } else {
@@ -137,7 +135,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
         has_biases: bool,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(B::GlobalGpuBuffer, LinearMatmul<B>), RHTLinearWrapperError<B>> {
+    ) -> Result<(B::GlobalGpuBuffer, LinearMatmul<B>, ActivationFormat), RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
@@ -145,7 +143,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?;
         let output_factors =
             weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?;
-        let inner_linear = LinearMatmul::load(
+        let mut inner_linear = LinearMatmul::load(
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -158,7 +156,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
             context,
         )
         .await?;
-        Ok((rht_signs, inner_linear))
+        let activation_format =
+            inner_linear.prepare_activation(context).map_err(RHTLinearWrapperError::BackendError)?;
+        Ok((rht_signs, inner_linear, activation_format))
     }
 
     fn build_self_contained(
@@ -185,7 +185,10 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let input = match input {
-            LinearInput::FullPrecision(input) => input,
+            MatmulA::FullPrecision {
+                values: input,
+                ..
+            } => input,
             input => return self.inner_linear.encode_input(input, batch_dim, command_buffer),
         };
         let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
@@ -196,7 +199,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
             .prepare_in_place(input, batch_dim, format, command_buffer)
             .map_err(LinearEncodeError::Backend)?;
         let output = self.inner_linear.encode_with_a(
-            input.as_matmul_a(),
+            input.as_ref(),
             batch_dim,
             None::<Gather<&B::ScratchBuffer>>,
             command_buffer,

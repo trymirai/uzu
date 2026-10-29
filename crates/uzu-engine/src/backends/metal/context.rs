@@ -34,8 +34,6 @@ use crate::backends::{
     },
 };
 
-pub(super) const LARGE_MIN_GPU_CORES: u32 = 30;
-
 pub(super) struct SparseState {
     pub did_ops: bool,
     pub event_value: u64,

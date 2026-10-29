@@ -61,6 +61,7 @@ impl GemmSpecialization {
         let valid_activation_group = match self.a_prologue {
             GemmAPrologueKind::FullPrecision => self.a_group_size.is_none(),
             GemmAPrologueKind::Int8Symmetric => self.a_group_size == Some(ACTIVATION_SCALE_GROUP_SIZE),
+            GemmAPrologueKind::PackedHalf => self.a_group_size.is_none(),
         };
         if !valid_activation_group {
             return Err(GemmSpecializationError::InvalidAGroupSize {

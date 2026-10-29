@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 #include "../common/activation_quantization.h"
 #include "../common/defines.h"
+#include "../common/packed_half_activation.h"
 #include "../common/conversion.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
@@ -16,13 +17,14 @@ using namespace uzu::activation_transform;
 
 #define QUANTIZED (ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)
 #define EMITS_GROUP_SUMS (ops == ActivationTransformOp::QuantizeWithGroupSums)
+#define PACKED_HALF (ops == ActivationTransformOp::PackHalf)
 
 template <typename T, typename BiasT>
 VARIANTS(T, float, bfloat)
 VARIANTS(BiasT, float, bfloat)
 PUBLIC KERNEL(ActivationTransform)(
     const device T* input OPTIONAL(!in_place),
-    device T* fp_out OPTIONAL(!QUANTIZED),
+    device T* fp_out OPTIONAL(!QUANTIZED && !PACKED_HALF),
     const device BiasT* bias OPTIONAL(has_bias),
     device int8_t* q_out OPTIONAL(QUANTIZED),
     device float* scales_out OPTIONAL(QUANTIZED),
@@ -30,6 +32,7 @@ PUBLIC KERNEL(ActivationTransform)(
     const device int32_t* rht_factors,
     constant uint& batch_size,
     constant uint& element_count,
+    device uint* packed_half_out OPTIONAL(PACKED_HALF),
     const ActivationTransformOp ops SPECIALIZE,
     const bool grouped_by_weight_nibble SPECIALIZE,
     const bool in_place SPECIALIZE,
@@ -65,7 +68,7 @@ PUBLIC KERNEL(ActivationTransform)(
     values *= float4(factors);
   }
 
-  if (!QUANTIZED) {
+  if (!QUANTIZED && !PACKED_HALF) {
     if (in_bounds) {
       if (has_bias) {
         if constexpr (metal::is_same_v<T, bfloat>) {
@@ -74,6 +77,13 @@ PUBLIC KERNEL(ActivationTransform)(
         values += float4(load_hadamard_vector(bias + first_index));
       }
       store_hadamard_vector(fp_out + element_index, values);
+    }
+    return;
+  }
+
+  if (PACKED_HALF) {
+    if (in_bounds) {
+      store_packed_half(values, lane_index, first_index, batch_index, sum_group_size, packed_half_out);
     }
     return;
   }

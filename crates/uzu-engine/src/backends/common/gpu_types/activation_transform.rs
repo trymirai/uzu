@@ -5,4 +5,5 @@ pub enum ActivationTransformOp {
     OutputRht,
     Quantize,
     QuantizeWithGroupSums,
+    PackHalf,
 }

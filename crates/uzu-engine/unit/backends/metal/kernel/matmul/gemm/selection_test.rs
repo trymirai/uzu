@@ -3,37 +3,17 @@ use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::*;
-use crate::backends::{
-    common::{
-        Context,
-        gpu_types::gemm::GemmDTransform,
-        kernel::matmul::{MatmulKernel, QuantParamsLayout},
+use crate::{
+    backends::{
+        common::{
+            Context,
+            gpu_types::gemm::GemmDTransform,
+            kernel::matmul::{MatmulKernel, QuantParamsLayout},
+        },
+        metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
     },
-    metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
+    tests::matmul::{a8_format, matmul_shape as shape, quantized_matmul_shape},
 };
-
-fn shape(
-    m: u32,
-    n: u32,
-    k: u32,
-) -> MatmulShape {
-    MatmulShape {
-        m,
-        n,
-        k,
-        b_transpose: true,
-        b_leading_dimension: None,
-        b_prologue: GemmBPrologueKind::FullPrecision,
-        b_is_trellis: false,
-        b_bits: None,
-        b_group_size: None,
-        signed_codes: false,
-        a_full_precision: true,
-        gathered: false,
-        params_layout: Some(QuantParamsLayout::OutputGroup),
-        d_transform: GemmDTransform::empty(),
-    }
-}
 
 fn quant(mut shape: MatmulShape) -> MatmulShape {
     shape.b_prologue = GemmBPrologueKind::ScaleSymmetricDequant;
@@ -118,7 +98,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     let mut invalid_layout = quant(shape(64, 4096, 4096));
     invalid_layout.b_transpose = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Simdgroup);
-    invalid_layout.a_full_precision = false;
+    invalid_layout.a = a8_format();
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Mxu);
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
 
@@ -129,14 +109,14 @@ fn selection_fallbacks_and_split_k_are_preserved() {
         (8, 4096, 384, Tile16x32x256_Simdgroups1x1, 1),
     ] {
         let mut a8 = quant(shape(m, n, k));
-        a8.a_full_precision = false;
+        a8.a = a8_format();
         let plan = problem(a8, DataType::BF16).select_plan();
         assert_eq!(plan.tiling, expected_tiling);
         assert_eq!(plan.split_k, expected_split_k);
     }
 
     let mut biased = quant(shape(16, 4096, 4096));
-    biased.a_full_precision = false;
+    biased.a = a8_format();
     biased.d_transform = GemmDTransform::BIAS;
     assert_eq!(
         GemmProblem::new(biased, DataType::BF16, DataType::F32, true, MTLGPUFamily::Apple7).select_plan().split_k,
@@ -166,7 +146,7 @@ fn trellis_plan_matches_projection_cases() {
         (1, 80, 5120, Tile16x32x256_Simdgroups1x1, 80),
     ] {
         let mut trellis_shape = shape(m, n, k);
-        trellis_shape.a_full_precision = false;
+        trellis_shape.a = ActivationFormat::Trellis;
         trellis_shape.b_is_trellis = true;
         let plan = problem(trellis_shape, DataType::BF16).select_plan();
         assert_eq!((plan.engine, plan.tiling, plan.split_k), (GemmEngine::Mxu, tiling, split_k), "M {m} N {n} K {k}");
@@ -224,22 +204,7 @@ fn int8_activations_require_mxu_tiled_weights() {
         (64, 20480, 8, true),
         (64, 20608, 8, false),
     ] {
-        let shape = MatmulShape {
-            b_prologue: if bits == 4 {
-                GemmBPrologueKind::ScaleZeroPointDequant
-            } else {
-                GemmBPrologueKind::ScaleSymmetricDequant
-            },
-            b_bits: Some(bits),
-            signed_codes: bits == 8,
-            a_full_precision: false,
-            params_layout: Some(QuantParamsLayout::GroupOutput),
-            ..quant(shape(16, n, k))
-        };
-        assert_eq!(
-            kernel.select_activation_quantization(&shape, &context).is_some(),
-            expected,
-            "n={n} k={k} bits={bits}"
-        );
+        let shape = quantized_matmul_shape(16, n, k, bits, 64);
+        assert_eq!(kernel.select_activation_quantization(&shape, &context).is_some(), expected, "n={n} k={k} W{bits}");
     }
 }

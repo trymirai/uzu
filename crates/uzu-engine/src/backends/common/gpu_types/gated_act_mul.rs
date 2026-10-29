@@ -4,4 +4,5 @@ pub enum GatedActMulOp {
     FullPrecision,
     Quantize,
     QuantizeWithGroupSums,
+    PackHalf,
 }

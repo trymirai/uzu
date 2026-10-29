@@ -2,12 +2,17 @@ use super::{MatmulA, MatmulArguments, QuantParamsLayout};
 use crate::backends::common::{
     Backend, BufferMut, BufferRef,
     gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+    kernel::ActivationQuantization,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationFormat {
     Bf16,
-    Int8,
+    Int8(ActivationQuantization),
+    PackedHalf {
+        group_size: u32,
+    },
+    Trellis,
 }
 
 #[derive(Clone, Copy)]
@@ -22,7 +27,7 @@ pub struct MatmulShape {
     pub b_bits: Option<u32>,
     pub b_group_size: Option<u32>,
     pub signed_codes: bool,
-    pub a_full_precision: bool,
+    pub a: ActivationFormat,
     pub gathered: bool,
     pub params_layout: Option<QuantParamsLayout>,
     pub d_transform: GemmDTransform,
@@ -50,7 +55,24 @@ impl MatmulShape {
             b_bits: arguments.b.bits_per_b(),
             b_group_size: arguments.b.group_size(),
             signed_codes: arguments.b.signed_codes(),
-            a_full_precision: matches!(arguments.a, MatmulA::FullPrecision { .. }),
+            a: match &arguments.a {
+                MatmulA::FullPrecision {
+                    ..
+                } => ActivationFormat::Bf16,
+                MatmulA::PackedHalf {
+                    group_size,
+                    ..
+                } => ActivationFormat::PackedHalf {
+                    group_size: *group_size,
+                },
+                MatmulA::Int8Symmetric {
+                    quantization,
+                    ..
+                } => ActivationFormat::Int8(*quantization),
+                MatmulA::Trellis {
+                    ..
+                } => ActivationFormat::Trellis,
+            },
             gathered: arguments.gather_indices.is_some(),
             params_layout: arguments.b.quant_params_layout(),
             d_transform: arguments.output.ops.mask(),
@@ -59,5 +81,9 @@ impl MatmulShape {
 
     pub fn is_quant(&self) -> bool {
         self.b_prologue != GemmBPrologueKind::FullPrecision
+    }
+
+    pub fn a_is_quantized(&self) -> bool {
+        matches!(self.a, ActivationFormat::Int8(_) | ActivationFormat::Trellis)
     }
 }

@@ -258,7 +258,7 @@ impl GemmKernel {
 
         let use_mxu = plan.engine == GemmEngine::Mxu;
         let gemm_b_layout = quantized.as_ref().map_or(GemmBLayout::RowMajor, |quantized| quantized.weights_layout);
-        if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || shape.a_full_precision) {
+        if gemm_b_layout == GemmBLayout::MxuTiled && (!use_mxu || !shape.a_is_quantized()) {
             return Err(MatmulMetalError::IncompatibleA {
                 path: "Gemm",
                 reason: "MxuTiled GEMM B layout requires int8 activations on the MXU",
@@ -282,23 +282,26 @@ impl GemmKernel {
                 quantized.zero_point_strides(),
             ),
         };
-        let (a_full_precision, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match &a {
+        let (a_full_precision, a_packed_half, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match &a {
             MatmulA::FullPrecision {
                 values,
                 offset,
-            } => (Some(values.subrange(*offset..)), None, None, None, GemmAPrologueKind::FullPrecision, None),
+            } => (Some(values.subrange(*offset..)), None, None, None, None, GemmAPrologueKind::FullPrecision, None),
+            MatmulA::PackedHalf {
+                values,
+                ..
+            } => (None, Some(values.subrange(0..)), None, None, None, GemmAPrologueKind::PackedHalf, None),
             MatmulA::Int8Symmetric {
                 values,
                 scales: activation_scales,
                 group_sums: activation_group_sums,
-                scale_group_size,
-                code_layout,
+                quantization,
             } => {
                 validate_int8_left_operand(
                     use_mxu,
                     shape,
-                    *scale_group_size,
-                    *code_layout,
+                    quantization.scale_group_size(),
+                    quantization.code_layout(),
                     activation_group_sums.is_some(),
                 )?;
                 if output_transform.contains(GemmDTransform::SOFT_CAP) {
@@ -309,11 +312,12 @@ impl GemmKernel {
                 }
                 (
                     None,
+                    None,
                     Some(*values),
                     Some(*activation_scales),
                     *activation_group_sums,
                     GemmAPrologueKind::Int8Symmetric,
-                    Some(*scale_group_size),
+                    Some(quantization.scale_group_size()),
                 )
             },
             MatmulA::Trellis {
@@ -398,6 +402,7 @@ impl GemmKernel {
         let kernel = self.get_or_create(command_buffer.context(), specialization, self.output_data_type)?;
         kernel.encode(
             a_full_precision,
+            a_packed_half,
             weights,
             d.reborrow(),
             scales,
@@ -405,6 +410,7 @@ impl GemmKernel {
             zero_points,
             output_bias,
             rht_factors,
+            soft_cap,
             a_int8,
             a_scales,
             a_group_sums,
@@ -438,20 +444,29 @@ impl GemmKernel {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
-        let (a_full_precision, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
+        let (a_full_precision, a_packed_half, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
             MatmulA::FullPrecision {
                 values,
                 offset,
-            } => (Some(values.subrange(offset..)), None, None, None, GemmAPrologueKind::FullPrecision, None),
+            } => (Some(values.subrange(offset..)), None, None, None, None, GemmAPrologueKind::FullPrecision, None),
+            MatmulA::PackedHalf {
+                values,
+                ..
+            } => (None, Some(values.subrange(0..)), None, None, None, GemmAPrologueKind::PackedHalf, None),
             MatmulA::Int8Symmetric {
                 values,
                 scales,
                 group_sums,
-                scale_group_size,
-                code_layout: _,
-            } => {
-                (None, Some(values), Some(scales), group_sums, GemmAPrologueKind::Int8Symmetric, Some(scale_group_size))
-            },
+                quantization,
+            } => (
+                None,
+                None,
+                Some(values),
+                Some(scales),
+                group_sums,
+                GemmAPrologueKind::Int8Symmetric,
+                Some(quantization.scale_group_size()),
+            ),
             MatmulA::Trellis {
                 ..
             } => {
@@ -481,7 +496,7 @@ impl GemmKernel {
         )?;
 
         let elem = (m as usize) * (n as usize);
-        let partial_data_type = if a_int8.is_some() {
+        let partial_data_type = if a_int8.is_some() || tiling.is_small_batch_variant() {
             DataType::F32
         } else {
             self.output_data_type
@@ -493,6 +508,7 @@ impl GemmKernel {
         let part_kernel = self.get_or_create(command_buffer.context(), part_spec, partial_data_type)?;
         part_kernel.encode(
             a_full_precision,
+            a_packed_half,
             weights,
             &mut temp,
             scales,
@@ -500,6 +516,7 @@ impl GemmKernel {
             zero_points,
             None::<&<Metal as Backend>::GlobalGpuBuffer>,
             None::<&<Metal as Backend>::GlobalGpuBuffer>,
+            None,
             a_int8,
             a_scales,
             a_group_sums,
