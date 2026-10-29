@@ -11,7 +11,7 @@ pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     expert_outputs: *const T,
     expert_weights: *const f32,
     #[optional(has_shared)] shared_output: Option<*const T>,
-    #[optional(has_gate)] shared_gate: Option<*const f32>,
+    #[optional(has_gate)] shared_gate: Option<*const T>,
     output: *mut T,
     model_dim: u32,
     top_k: u32,
@@ -26,7 +26,7 @@ pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     for token_idx in 0..batch_size as usize {
         let shared_w = if has_shared {
             if has_gate {
-                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) };
+                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) }.to_f32().unwrap();
                 1.0f32 / (1.0f32 + (-g).exp())
             } else {
                 1.0f32

@@ -31,7 +31,10 @@ fn run_moe_combine<B: Backend>(
     let routed_buf = create_buffer_with_data::<B, bf16>(&context, routed_outputs);
     let weights_buf = create_buffer_with_data::<B, f32>(&context, expert_weights);
     let shared_out_buf = shared_output.map(|s| create_buffer_with_data::<B, bf16>(&context, s));
-    let shared_gate_buf = shared_gate.map(|g| create_buffer_with_data::<B, f32>(&context, g));
+    let shared_gate_buf = shared_gate.map(|g| {
+        let gate: Vec<bf16> = g.iter().map(|&v| bf16::from_f32(v)).collect();
+        create_buffer_with_data::<B, bf16>(&context, &gate)
+    });
     let mut output_buf = create_buffer::<B, bf16>(&context, (batch_dim * model_dim) as usize);
 
     let kernel = <B::Kernels as Kernels>::MoeCombineKernel::new(

@@ -10,7 +10,7 @@ PUBLIC KERNEL(MoeCombine)(
     const device T* expert_outputs,
     const device float* expert_weights,
     const device T* shared_output OPTIONAL(has_shared),
-    const device float* shared_gate OPTIONAL(has_gate),
+    const device T* shared_gate OPTIONAL(has_gate),
     device T* output,
     const constant uint& model_dim,
     const constant uint& top_k,

@@ -886,7 +886,7 @@ impl<B: Backend> MoeMlp<B> {
                     1,
                     data_type,
                     data_type,
-                    DataType::F32,
+                    data_type,
                     false,
                     &gate_tree,
                     context,
@@ -1025,8 +1025,7 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             .map_err(MlpEncodeError::Backend)?;
 
         let (gate_buf, gate_stride) = if self.has_folded_gate {
-            let f32_size = size_of::<f32>();
-            let gate_offset = (self.num_routed_experts as usize) * f32_size;
+            let gate_offset = (self.num_routed_experts as usize) * self.data_type.size_in_bytes();
             let gate_slice = (&router_logits).subrange(gate_offset..);
             (Some(gate_slice), self.num_routed_experts + 1)
         } else {
