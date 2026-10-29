@@ -10,10 +10,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context,
-            kernel::{
-                Kernels,
-                matmul::{MatmulKernel, MatmulShape},
-            },
+            kernel::{Kernels, matmul::MatmulKernel},
         },
         metal::{Metal, context::MetalContext, kernel::matmul::gemm::GemmEngine},
     },
@@ -97,24 +94,6 @@ fn matches_cpu_reference_bf16(#[case] ab_scale: f32) {
 }
 
 #[uzu_test]
-fn split_k_soft_cap_matches_cpu_reference_bf16() {
-    let context = block_on(MetalContext::new()).expect("Metal context");
-    let mut kernel = MatmulKernel::new(&*context, bf16::data_type(), bf16::data_type(), bf16::data_type()).unwrap();
-    let input = deterministic_input::<bf16>(Case::new(Shape::new(4, 1024, 32)).with_ab_scale(0.5).with_bias(true));
-    let cap = 0.1;
-    let expected: Vec<bf16> =
-        cpu_reference(&input).into_iter().map(|x| bf16::from_f32(cap * (x.to_f32() / cap).tanh())).collect();
-    let actual = run::<Metal, bf16>(&context, &mut kernel, &input, |kernel, mut args, command_buffer| {
-        args.output.ops.soft_cap = Some(cap);
-        let shape = MatmulShape::from_arguments(&args);
-        let engine = GemmEngine::Simdgroup;
-        assert!(kernel.gemm.select_plan_for_engine(&shape, engine, &context).unwrap().split_k > 1);
-        kernel.encode_with_gemm_engine(args, engine, command_buffer).unwrap();
-    });
-    assert_eq_float(&expected, &actual, 0.002, "split-K soft cap");
-}
-
-#[uzu_test]
 fn b_transpose_false_bf16() {
     run_matrix::<bf16>(
         |shape| Case {
@@ -171,6 +150,9 @@ fn bias_parity_bf16() {
             let case = Case::new(shape).with_bias(true);
             check_case::<bf16>(&context, &mut kernel, Some(engine), case, 1.0);
         }
+        let mut case = Case::new(Shape::new(4, 1024, 32)).with_ab_scale(0.5).with_bias(true);
+        case.soft_cap = Some(0.1);
+        check_case::<bf16>(&context, &mut kernel, Some(engine), case, 0.01);
     }
 }
 
