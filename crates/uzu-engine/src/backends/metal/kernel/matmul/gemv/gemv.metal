@@ -28,7 +28,7 @@ template <
     uint NUM_SIMDGROUPS>
 VARIANTS(AT, bfloat)
 VARIANTS(BT, bfloat)
-VARIANTS(DT, bfloat)
+VARIANTS(DT, bfloat, float)
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
