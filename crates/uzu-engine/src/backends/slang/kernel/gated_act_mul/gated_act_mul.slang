@@ -7,7 +7,7 @@ import generated.gated_act_mul;
 [[Public]] [[Kernel]] func GatedActMul<T>(
   StructuredBuffer<T> act_operand,
   [[Optional("!interleaved")]] StructuredBuffer<T> value_operand,
-  [[Optional("!(ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<T> fp_out,
+  [[Optional("(ops == GatedActMulOp::FullPrecision)")]] RWStructuredBuffer<T> fp_out,
   [[Optional("(ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<int8_t> q_out,
   [[Optional("(ops == GatedActMulOp::Quantize || ops == GatedActMulOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<float> scales_out,
   [[Optional("(ops == GatedActMulOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<int> group_sums_out,
@@ -22,6 +22,7 @@ import generated.gated_act_mul;
   [[Optional("clip_gate")]] float gate_clip_max,
   [[Optional("clip_value")]] float value_clip_min,
   [[Optional("clip_value")]] float value_clip_max,
+  [[Optional("(ops == GatedActMulOp::PackHalf)")]] RWStructuredBuffer<uint> packed_half_out,
   [[Specialize]] GatedActMulOp ops,
   [[Specialize]] bool grouped_by_weight_nibble,
   [[Specialize]] bool interleaved,
