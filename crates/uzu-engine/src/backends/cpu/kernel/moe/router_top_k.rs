@@ -1,10 +1,11 @@
+use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
 use crate::data_type::DataTypeRepr;
 
 #[kernel(MoeRouterTopK)]
-#[variants(T, f32)]
+#[variants(T, bf16)]
 #[variants(MAX_TOP_K, 8)]
 pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     logits: *const T,

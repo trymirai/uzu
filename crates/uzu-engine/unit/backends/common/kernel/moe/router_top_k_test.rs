@@ -1,4 +1,5 @@
 use futures::executor::block_on;
+use half::bf16;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
@@ -21,15 +22,16 @@ fn run_router_top_k<B: Backend>(
     batch_dim: u32,
 ) -> (Vec<u32>, Vec<f32>) {
     let context = create_context::<B>();
-    let logits_buf = create_buffer_with_data::<B, f32>(&context, logits);
-    let biases_buf = biases.map(|b| create_buffer_with_data::<B, f32>(&context, b));
+    let to_bf16 = |values: &[f32]| values.iter().map(|&v| bf16::from_f32(v)).collect::<Vec<bf16>>();
+    let logits_buf = create_buffer_with_data::<B, bf16>(&context, &to_bf16(logits));
+    let biases_buf = biases.map(|b| create_buffer_with_data::<B, bf16>(&context, &to_bf16(b)));
     let mut expert_ids = create_buffer::<B, u32>(&context, (batch_dim * k) as usize);
     let mut expert_weights = create_buffer::<B, f32>(&context, (batch_dim * k) as usize);
 
     assert!(k <= 8, "k must be <= 8 for MoeRouterTopK");
     let max_top_k = 8;
     let kernel =
-        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(&context, DataType::F32, max_top_k, biases.is_some())
+        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(&context, DataType::BF16, max_top_k, biases.is_some())
             .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(

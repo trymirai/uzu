@@ -5,7 +5,7 @@
 #include "common.h"
 
 template <typename T, uint MAX_TOP_K>
-VARIANTS(T, float)
+VARIANTS(T, bfloat)
 VARIANTS(MAX_TOP_K, 8)
 PUBLIC KERNEL(MoeRouterTopK)(
     const device T* logits,
