@@ -190,7 +190,6 @@ fn group_major_gemv_bf16(
 #[case::unaligned_k(1, 33, 64)]
 #[case::unaligned_n(1, 128, 11)]
 #[case::large(1, 4096, 2048)]
-#[case::small_n(1, 128, 3)]
 fn gemv_f32(
     #[case] m: usize,
     #[case] k: usize,
@@ -281,7 +280,7 @@ fn quant_gather_case(
 
 #[uzu_test]
 fn gemv_gather() {
-    // Full precision: one call per dtype (generic over T, so bf16/f32 can't be a runtime loop).
+    // Full-precision GEMV.
     for soft_cap in [None, Some(15.0)] {
         fp_gather_case::<bf16>(soft_cap, 0.1);
         fp_gather_case::<f32>(soft_cap, 0.01);

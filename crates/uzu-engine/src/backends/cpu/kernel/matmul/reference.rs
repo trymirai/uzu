@@ -77,7 +77,7 @@ impl WeightData {
 }
 
 #[inline]
-pub(super) unsafe fn read_f32(
+pub(super) unsafe fn load(
     base: *const u8,
     data_type: DataType,
     index: usize,
@@ -86,7 +86,7 @@ pub(super) unsafe fn read_f32(
 }
 
 #[inline]
-pub(super) unsafe fn write_f32(
+pub(super) unsafe fn store(
     base: *mut u8,
     data_type: DataType,
     index: usize,
