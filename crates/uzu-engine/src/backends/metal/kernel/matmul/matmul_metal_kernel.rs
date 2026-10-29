@@ -55,11 +55,10 @@ impl MatmulMetalKernel {
         if shape.gathered || plan.engine != gemm::GemmEngine::Mxu {
             return false;
         }
-        if shape.m == 5
-            && (weights_data_type, input_data_type, output_data_type)
-                == (DataType::BF16, DataType::BF16, DataType::BF16)
-        {
-            return false;
+        match (shape.m, shape.n == shape.k, (weights_data_type, input_data_type, output_data_type)) {
+            (4, true, (DataType::F32, DataType::F32, DataType::F32))
+            | (5, _, (DataType::BF16, DataType::BF16, DataType::BF16)) => return false,
+            _ => {},
         }
         match shape.m {
             0..=3 => return false,
@@ -170,6 +169,16 @@ impl MatmulKernel for MatmulMetalKernel {
             if !matches!(data_type, DataType::BF16 | DataType::F32) {
                 return Err(MatmulMetalError::UnsupportedDataType(data_type));
             }
+        }
+        // F32 operands are compiled only as F32 x F32 -> F32.
+        if weights_data_type != input_data_type
+            || (input_data_type == DataType::F32 && output_data_type != DataType::F32)
+        {
+            return Err(MatmulMetalError::UnsupportedDataTypes {
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+            });
         }
 
         let output_work = MatmulOutputWork::new(context, weights_data_type, output_data_type)?;

@@ -15,6 +15,14 @@ use crate::{
 pub enum MatmulMetalError {
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
+    #[error(
+        "Unsupported data types: weights={weights_data_type:?}, input={input_data_type:?}, output={output_data_type:?}"
+    )]
+    UnsupportedDataTypes {
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+    },
     #[error("Unsupported D-transform op {bit:?} on path {path}")]
     UnsupportedDOp {
         bit: GemmDTransform,

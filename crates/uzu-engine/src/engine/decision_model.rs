@@ -93,20 +93,20 @@ impl<B: Backend> DecisionModel<B> {
         let token_ids = command_buffer
             .allocate_constant_from_slice(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>())
             .map_err(DecisionModelError::Backend)?;
-        let hidden = self.decision.encode(&token_ids, input.len() as u32, &mut command_buffer)?;
+        let logits = self.decision.encode(&token_ids, input.len() as u32, &mut command_buffer)?;
 
         let mut output_buffer = self
             .context
-            .create_buffer_gpu(self.decision.model_dim() as usize * DataType::F32.size_in_bytes())
+            .create_buffer_gpu(answer_count * DataType::F32.size_in_bytes())
             .map_err(DecisionModelError::Backend)?;
-        command_buffer.encode_copy(&hidden, &mut output_buffer);
-        drop(hidden);
+        command_buffer.encode_copy(&logits, &mut output_buffer);
+        drop(logits);
         drop(token_ids);
+
         command_buffer.end_encoding().submit().wait_until_completed().await.map_err(DecisionModelError::Backend)?;
 
         let temperature = self.decision_config.temperature;
-        let hidden = self.context.copyout::<f32>(&output_buffer).await.map_err(DecisionModelError::Backend)?;
-        let logits = self.decision.readout(&hidden);
+        let logits = self.context.copyout::<f32>(&output_buffer).await.map_err(DecisionModelError::Backend)?;
         let scaled = logits[..option_count].iter().map(|logit| logit / temperature).collect::<Vec<_>>();
         let max = scaled.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let exps = scaled.iter().map(|logit| (logit - max).exp()).collect::<Vec<_>>();

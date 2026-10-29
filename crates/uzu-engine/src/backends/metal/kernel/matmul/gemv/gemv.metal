@@ -26,9 +26,12 @@ template <
     uint REDUCTION_LANES,
     uint GROUP_LANES,
     uint NUM_SIMDGROUPS>
-VARIANTS(AT, bfloat)
-VARIANTS(BT, bfloat)
+VARIANTS(AT, bfloat, float)
+VARIANTS(BT, bfloat, float)
 VARIANTS(DT, bfloat, float)
+// F32 is supported only as full-precision F32 x F32 -> F32.
+CONSTRAINT((AT == "float") == (BT == "float"))
+CONSTRAINT(BT != "float" || (DT == "float" && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
