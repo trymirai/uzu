@@ -73,9 +73,9 @@ pub struct VkContext {
     queue_family_index: u32,
     /// Submissions keep the context alive, so its completion thread is idle by the time the context drops this sender.
     completion: mpsc::Sender<VkCommandBufferSubmission>,
-    /// A failure where the common contract has no error to return (`GlobalBufferCpuGpu::handoff`), returned by the
-    /// next command buffer instead.
-    deferred_error: Mutex<Option<Error>>,
+    /// A failed upload, where the common contract has no error to return (`GlobalBufferCpuGpu::handoff`): every later
+    /// command buffer fails with it, as the uploaded buffers hold no data.
+    upload_failure: Mutex<Option<String>>,
 }
 impl VkContext {
     pub fn with_create_info(create_info: VkContextCreateInfo) -> Result<Arc<Self>, VkContextError> {
@@ -154,16 +154,16 @@ impl VkContext {
             queue: Mutex::new(queue),
             queue_family_index,
             completion,
-            deferred_error: Mutex::new(None),
+            upload_failure: Mutex::new(None),
         }))
     }
 
-    /// Keeps `error` for the next `create_command_buffer`, unless an earlier one is still pending.
-    pub fn defer_error(
+    /// Fails every later `create_command_buffer` with the first upload failure.
+    pub fn fail_uploads(
         &self,
         error: Error,
     ) {
-        self.deferred_error.lock().get_or_insert(error);
+        self.upload_failure.lock().get_or_insert_with(|| error.to_string());
     }
 
     fn create_readback_buffer(
@@ -422,8 +422,8 @@ impl Context for VkContext {
         _name: Option<&str>,
         allocation_pool: Option<Arc<<Vulkan as Backend>::AllocationPool>>,
     ) -> Result<VkCommandBufferEncoding, Error> {
-        if let Some(error) = self.deferred_error.lock().take() {
-            return Err(error);
+        if let Some(failure) = self.upload_failure.lock().as_ref() {
+            return Err(VkContextError::UploadFailed(failure.clone()).into());
         }
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
         VkCommandBufferEncoding::new(self.arc(), allocation_pool)

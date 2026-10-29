@@ -48,10 +48,10 @@ impl VkBufferInitializer {
 
 impl GlobalBufferCpuGpu for VkBufferInitializer {
     /// Submits the copy without waiting: later command buffers on the queue see it, and the completion thread frees
-    /// the staging buffer once it is done. A failed submission is the context's next command buffer's error.
+    /// the staging buffer once it is done. A failed submission fails every later command buffer of the context.
     fn handoff(self) -> Arc<VkBuffer> {
         if let Err(error) = self.submit_copy() {
-            self.buffer.context().defer_error(error);
+            self.buffer.context().fail_uploads(error);
         }
         self.buffer
     }

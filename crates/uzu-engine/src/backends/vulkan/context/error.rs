@@ -37,4 +37,7 @@ pub enum VkContextError {
 
     #[error("the Vulkan validation layer is not installed")]
     ValidationNotSupported,
+
+    #[error("a buffer upload failed, so buffers may hold no data: {0}")]
+    UploadFailed(String),
 }
