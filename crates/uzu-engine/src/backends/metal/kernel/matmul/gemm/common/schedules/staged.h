@@ -27,12 +27,15 @@ static METAL_FUNC auto make_staged_loader(
     const thread ThreadContext& thread_context
 ) {
   using Element = typename Core::RightElementType;
+  const uint row_stride =
+      uint(params->K) * uint(get_bytes_per_pack<RightOperand::BITS>()) / uint(get_pack_factor<RightOperand::BITS>());
   const uint first_group = k_offset / uint(RightOperand::GROUP_SIZE);
-  const int params_offset = right.scale_index(int(block_col), int(first_group), params);
+  const int params_offset =
+      int(block_col) * int(params->scale_output_stride) + int(first_group) * int(params->scale_group_stride);
   const device Element* scales = right.scales + params_offset;
-  const device uint8_t* values =
-      right.row_codes(block_col, params) + size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
-                                               size_t(get_pack_factor<RightOperand::BITS>());
+  const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
+                                 size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
+                                     size_t(get_pack_factor<RightOperand::BITS>());
   if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
     const device Element* biases = right.bias() + params_offset;
     using Loader = QuantizedBlockLoaderScaleBias<
@@ -75,7 +78,7 @@ static METAL_FUNC auto make_staged_loader(
         int(params->scale_output_stride),
         params->zero_point_output_stride,
         params->zero_point_group_stride,
-        right.zero_point_index(uint(block_col), first_group, params),
+        uint(block_col) * params->zero_point_output_stride + first_group * params->zero_point_group_stride,
         staging,
         thread_context.simdgroup_index,
         thread_context.simd_lane_id

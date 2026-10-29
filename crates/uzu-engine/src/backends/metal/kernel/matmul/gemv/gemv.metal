@@ -1,4 +1,3 @@
-#include "../../common/defines.h"
 #include "../../common/dsl.h"
 #include "../../common/integral_constant.h"
 #include "../../generated/gemm.h"
@@ -13,27 +12,19 @@ using namespace metal;
 using namespace uzu;
 using namespace uzu::gemm;
 
-#define GEMV_BATCHED_INPUT                                                                                             \
-  (INPUT_ALIGNED && GROUP_LANES == 1 && B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant &&                           \
-   (BITS == 4 || GROUP_SIZE == 64))
+#define GEMV_BATCHED_INPUT (INPUT_ALIGNED && GROUP_LANES == 1)
 #define GEMV_FULL_PRECISION_TILE                                                                                       \
   (BITS == 0 && NUM_SIMDGROUPS == 8 && REDUCTION_LANES == 32 && GROUP_LANES == 1 && (INPUT_ALIGNED || K_SPLIT == 1) && \
    (OUTPUT_ROW_TILE == 8 / K_SPLIT || OUTPUT_ROW_TILE == 32 / K_SPLIT) && INPUT_ROW_TILE == 1)
 #define GEMV_QUANTIZED_ROW_TILE                                                                                        \
-  (K_SPLIT == 1 && REDUCTION_LANES == 32 &&                                                                            \
-   ((BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES) || (BITS == 8 && GROUP_SIZE == 8 * GROUP_LANES)) &&                  \
-   ((NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32) ||                                                                  \
-    (BITS == 4 &&                                                                                                      \
-     ((NUM_SIMDGROUPS == 2 && (OUTPUT_ROW_TILE == 2 || OUTPUT_ROW_TILE == 4 || OUTPUT_ROW_TILE == 8)) ||               \
-      (NUM_SIMDGROUPS == 4 && (OUTPUT_ROW_TILE == 8 || OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)) ||             \
-      (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 16)))) &&                                                             \
-   INPUT_ROW_TILE == 1)
+  (K_SPLIT == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE == 1 &&     \
+   ((BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES) || (BITS == 8 && GROUP_SIZE == 8 * GROUP_LANES)))
 #define GEMV_BATCHED_FMA_32_TILE                                                                                       \
   (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 4 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE >= 2 &&      \
    INPUT_ROW_TILE <= 4)
 #define GEMV_BATCHED_FMA_16_TILE                                                                                       \
-  (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 2 && OUTPUT_ROW_TILE == 16 && INPUT_ROW_TILE == 5 &&      \
-   GROUP_SIZE == 64)
+  (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 2 && OUTPUT_ROW_TILE == 16 && INPUT_ROW_TILE >= 2 &&      \
+   INPUT_ROW_TILE <= 4)
 template <
     typename AT,
     typename BT,
@@ -61,7 +52,7 @@ VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
-VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4, 5)
+VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4)
 VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32)
 VARIANTS(REDUCTION_LANES, 8, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8)
@@ -136,7 +127,6 @@ KERNEL(Gemv)(
     using Tile = GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT>;
     const OutputTile<Tile, FullTile> tile =
         OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
-
     thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
     if constexpr (BITS == 0) {

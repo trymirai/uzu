@@ -18,7 +18,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     hidden_dim: u32,
     data_type: DataType,
     hadamard_factors: Option<B::GlobalGpuBuffer>,
-    encoder: Option<GatedActMul<B>>,
+    quantized_kernel: Option<GatedActMul<B>>,
 }
 
 impl<B: Backend> MlpGateActMulEncodable<B> {
@@ -40,8 +40,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             value_clipping,
         };
         let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
-        let encoder = (format != ActivationFormat::Bf16)
-            .then(|| GatedActMul::quantize(context, data_type, format, settings))
+        let quantized_kernel = (format != ActivationFormat::Bf16)
+            .then(|| GatedActMul::quantized(context, data_type, format, settings))
             .transpose()?;
         Ok(Self {
             fp_kernel,
@@ -49,7 +49,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             hidden_dim,
             data_type,
             hadamard_factors,
-            encoder,
+            quantized_kernel,
         })
     }
 
@@ -64,35 +64,30 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             panic!("Identity activation is not supported for kernel")
         }
 
-        let encoder = self.encoder.as_ref().filter(|kernel| kernel.format() == act_format);
-        assert!(
-            act_format == ActivationFormat::Bf16 || encoder.is_some(),
-            "requested activation format was not prepared"
-        );
-        if let (
-            ActivationFormat::PackedHalf {
+        if let Some(kernel) = self.quantized_kernel.as_ref().filter(|kernel| kernel.format() == act_format) {
+            let hadamard_factors = self.hadamard_factors.as_ref().expect("quantized input requires RHT factors");
+            if let ActivationFormat::PackedHalf {
                 group_size,
-            },
-            Some(kernel),
-        ) = (act_format, encoder)
-        {
-            let mut values = command_buffer.allocate_scratch(packed_half_bytes(self.hidden_dim, group_size))?;
-            kernel.encode_packed_half(
-                fused_up,
-                &mut values,
-                self.hadamard_factors.as_ref().expect("packed half requires RHT factors"),
-                self.hidden_dim,
-                batch_dim,
-                self.activation.act_type(),
-                command_buffer,
-            );
-            return Ok(MatmulA::PackedHalf {
-                values,
-                group_size,
-            });
-        }
-
-        if let (ActivationFormat::Int8(quantization), Some(kernel)) = (act_format, encoder) {
+            } = act_format
+            {
+                let mut values = command_buffer.allocate_scratch(packed_half_bytes(self.hidden_dim, group_size))?;
+                kernel.encode_pack_half(
+                    fused_up,
+                    &mut values,
+                    hadamard_factors,
+                    self.hidden_dim,
+                    batch_dim,
+                    self.activation.act_type(),
+                    command_buffer,
+                );
+                return Ok(MatmulA::PackedHalf {
+                    values,
+                    group_size,
+                });
+            }
+            let ActivationFormat::Int8(quantization) = act_format else {
+                unreachable!()
+            };
             let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.hidden_dim], DataType::I8)?;
             let mut scales = command_buffer.allocate_scratch_for_shape(
                 &[batch_dim, self.hidden_dim.div_ceil(quantization.scale_group_size())],
@@ -105,12 +100,12 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                         .allocate_scratch_for_shape(&[batch_dim, self.hidden_dim.div_ceil(group_size)], DataType::I32)
                 })
                 .transpose()?;
-            kernel.encode_quantize(
+            kernel.encode_quantized(
                 fused_up,
                 &mut values,
                 &mut scales,
                 group_sums.as_mut(),
-                self.hadamard_factors.as_ref().expect("INT8 requires RHT factors"),
+                hadamard_factors,
                 self.hidden_dim,
                 batch_dim,
                 self.activation.act_type(),

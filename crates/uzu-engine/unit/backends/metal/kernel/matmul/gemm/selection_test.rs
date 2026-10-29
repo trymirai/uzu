@@ -1,29 +1,19 @@
+use futures::executor::block_on;
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::*;
 use crate::{
-    backends::common::{
-        gpu_types::gemm::GemmDTransform,
-        kernel::{
-            ActivationQuantization,
-            matmul::{Int8CodeLayout, QuantParamsLayout},
+    backends::{
+        common::{
+            Context,
+            gpu_types::gemm::GemmDTransform,
+            kernel::matmul::{MatmulKernel, QuantParamsLayout},
         },
+        metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
     },
-    tests::matmul::matmul_shape as shape,
+    tests::matmul::{a8_format, matmul_shape as shape, quantized_matmul_shape},
 };
-
-fn a8_format() -> ActivationFormat {
-    ActivationFormat::Int8(
-        ActivationQuantization::new(
-            ACTIVATION_SCALE_GROUP_SIZE,
-            ACTIVATION_SCALE_GROUP_SIZE,
-            false,
-            Int8CodeLayout::GroupedByNibble,
-        )
-        .unwrap(),
-    )
-}
 
 fn quant(mut shape: MatmulShape) -> MatmulShape {
     shape.b_prologue = GemmBPrologueKind::ScaleSymmetricDequant;
@@ -37,7 +27,7 @@ fn problem(
     shape: MatmulShape,
     output_data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, (DataType::BF16, DataType::BF16, output_data_type), true, MTLGPUFamily::Apple7)
+    GemmProblem::new(shape, DataType::BF16, output_data_type, true, MTLGPUFamily::Apple7)
 }
 
 #[uzu_test]
@@ -125,6 +115,14 @@ fn selection_fallbacks_and_split_k_are_preserved() {
         assert_eq!(plan.split_k, expected_split_k);
     }
 
+    let mut biased = quant(shape(16, 4096, 4096));
+    biased.a = a8_format();
+    biased.d_transform = GemmDTransform::BIAS;
+    assert_eq!(
+        GemmProblem::new(biased, DataType::BF16, DataType::F32, true, MTLGPUFamily::Apple7).select_plan().split_k,
+        1
+    );
+
     let mut zero = quant(shape(0, 1, 1));
     zero.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
     zero.b_group_size = Some(u32::MAX);
@@ -159,7 +157,7 @@ fn trellis_plan_matches_projection_cases() {
 fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
-        GemmProblem::new(huge, (DataType::BF16, DataType::BF16, DataType::BF16), false, MTLGPUFamily::Apple7)
+        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false, MTLGPUFamily::Apple7)
             .select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::MxuUnavailable)
     );
@@ -170,4 +168,42 @@ fn forced_engine_errors_are_preserved() {
         problem(invalid_layout, DataType::BF16).select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::UnsupportedLayout("quantized weights require transposed contiguous B"))
     );
+}
+
+#[uzu_test]
+fn gemv_gemm_route_boundaries_are_preserved() {
+    for (shape, data_type, prefer_gemm) in [
+        (shape(4, 4096, 8192), DataType::BF16, true),
+        (shape(4, 8192, 4096), DataType::BF16, false),
+        (shape(3, 4096, 8192), DataType::BF16, false),
+        (shape(5, 4096, 8192), DataType::BF16, false),
+    ] {
+        let plan = GemmProblem::new(shape, data_type, data_type, true, MTLGPUFamily::Apple7).select_plan();
+        assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
+    }
+    let mut gathered = shape(4, 4096, 8192);
+    gathered.gathered = true;
+    let plan = problem(gathered, DataType::BF16).select_plan();
+    assert!(!MatmulMetalKernel::prefer_gemm_over_gemv(gathered, plan, DataType::BF16, DataType::BF16, DataType::BF16,));
+}
+
+#[uzu_test]
+fn int8_activations_require_mxu_tiled_weights() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let kernel =
+        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
+    for (n, k, bits, expected) in [
+        (96, 256, 4, true),
+        (72, 256, 4, false),
+        (64, 40960, 4, true),
+        (64, 41088, 4, false),
+        (64, 20480, 8, true),
+        (64, 20608, 8, false),
+    ] {
+        let shape = quantized_matmul_shape(16, n, k, bits, 64);
+        assert_eq!(kernel.select_activation_quantization(&shape, &context).is_some(), expected, "n={n} k={k} W{bits}");
+    }
 }

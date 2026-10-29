@@ -1,10 +1,6 @@
-use metal::MTLGPUFamily;
-
-use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
-
 mod quantized;
 
-pub(super) use quantized::{batched_tile, row_tile, select as quantized_tile};
+pub(super) use quantized::{gathered_tile, select as quantized_tile};
 
 // Full-precision GEMV accumulates four K values per SIMD lane, so one full
 // vectorized K block is 4 * 32 lanes.
@@ -28,10 +24,6 @@ pub struct GemvTile {
     pub(super) group_lanes: u32,
 }
 
-const SMALL_G13_HUGE_N: u32 = 32768;
-const SMALL_G13_BROAD_ROW_N: u32 = 6144;
-const DEEP_K: u32 = 8192;
-const FP_LARGE_SPLIT_K_MIN_DEPTH: u32 = 4 * FP_K_BLOCK;
 const FP_K_DEPTH_N_MAX: u32 = 4095;
 const FP_K_DEPTH_DEEP_MIN: u32 = 3072;
 const FP_K_DEPTH_VERY_DEEP_RATIO: u32 = 16;
@@ -142,29 +134,18 @@ fn preferred_fp_k_split(
 /// Selects the full-precision GEMV tile. `m` is the input-vector count,
 /// `n` is the output row count, and `k` is the reduction depth.
 pub(super) fn fp_tile(
-    gpu_core_count: u32,
-    apple_gpu_family: MTLGPUFamily,
     m: u32,
     n: u32,
     k: u32,
     input_aligned: bool,
 ) -> GemvTile {
-    let is_large_gpu = gpu_core_count >= LARGE_MIN_GPU_CORES;
-    let is_small_legacy = !is_large_gpu && apple_gpu_family < MTLGPUFamily::Apple8;
-    // SG8 is the portable full-precision geometry.
-    let should_disable_k_split = !input_aligned
-        || (m == 1 && is_large_gpu && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
-        || (m == 1 && is_small_legacy && n >= SMALL_G13_HUGE_N);
-
-    let k_split = if should_disable_k_split {
-        1
-    } else {
+    // SG8 is the portable full-precision geometry; one output row per SIMD group for a single vector.
+    let k_split = if input_aligned {
         cap_k_split_to_complete_fp_k_blocks(k, preferred_fp_k_split(m, n, k))
+    } else {
+        1
     };
-
-    let results_per_simdgroup = if is_small_legacy && m == 1 && n >= SMALL_G13_BROAD_ROW_N {
-        DEFAULT_RESULTS_PER_SIMDGROUP
-    } else if m == 1 && (k <= DEEP_K || !is_large_gpu) {
+    let results_per_simdgroup = if m == 1 {
         1
     } else {
         DEFAULT_RESULTS_PER_SIMDGROUP

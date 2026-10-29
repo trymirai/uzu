@@ -80,8 +80,9 @@ impl<B: Backend> ActivationTransform<B> {
             ActivationFormat::PackedHalf {
                 group_size,
             } => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
-            ActivationFormat::Bf16 => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE),
-            ActivationFormat::Trellis => unreachable!(),
+            ActivationFormat::Bf16 | ActivationFormat::Trellis => {
+                (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE)
+            },
         };
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
             context,
@@ -129,9 +130,9 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
-        encoding: ActivationFormat,
+        quantization: ActivationFormat,
     ) -> Result<Self, B::Error> {
-        let op = match encoding {
+        let op = match quantization {
             ActivationFormat::Int8(q) if q.sum_group_size().is_some() => ActivationTransformOp::QuantizeWithGroupSums,
             ActivationFormat::Int8(_) => ActivationTransformOp::Quantize,
             ActivationFormat::PackedHalf {
@@ -139,7 +140,7 @@ impl<B: Backend> ActivationTransform<B> {
             } => ActivationTransformOp::PackHalf,
             ActivationFormat::Bf16 | ActivationFormat::Trellis => unreachable!(),
         };
-        Self::new(context, data_type, None, op, false, encoding)
+        Self::new(context, data_type, None, op, false, quantization)
     }
 
     pub fn format(&self) -> ActivationFormat {
@@ -202,30 +203,33 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn encode_quantize(
         &self,
         input: impl BufferRef<Backend = B>,
-        values: impl BufferMut<Backend = B>,
-        scales: impl BufferMut<Backend = B>,
-        group_sums: Option<impl BufferMut<Backend = B>>,
+        q_out: impl BufferMut<Backend = B>,
+        scales_out: impl BufferMut<Backend = B>,
+        group_sums_out: Option<impl BufferMut<Backend = B>>,
         rht_factors: impl BufferRef<Backend = B>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let ActivationFormat::Int8(q) = self.format else {
-            panic!("INT8 activation transform required")
+        let ActivationFormat::Int8(quantization) = self.format else {
+            panic!("quantized activation transform required")
         };
         assert_row_width(element_count);
-        assert!(element_count.is_multiple_of(q.scale_group_size()));
-        assert_eq!(q.sum_group_size().is_some(), group_sums.is_some());
-        if let Some(group_size) = q.sum_group_size() {
+        assert!(
+            element_count.is_multiple_of(quantization.scale_group_size()),
+            "quantized activation row ({element_count}) must be a multiple of scale group ({})",
+            quantization.scale_group_size()
+        );
+        if let Some(group_size) = quantization.sum_group_size() {
             assert!(element_count.is_multiple_of(group_size));
         }
         self.kernel.encode(
             Some(input),
             None::<&mut B::ScratchBuffer>,
             None::<&B::GlobalGpuBuffer>,
-            Some(values),
-            Some(scales),
-            group_sums,
+            Some(q_out),
+            Some(scales_out),
+            group_sums_out,
             rht_factors,
             batch_size,
             element_count,
@@ -234,7 +238,7 @@ impl<B: Backend> ActivationTransform<B> {
         );
     }
 
-    pub fn encode_packed_half(
+    pub fn encode_pack_half(
         &self,
         input: impl BufferRef<Backend = B>,
         output: impl BufferMut<Backend = B>,
@@ -243,14 +247,8 @@ impl<B: Backend> ActivationTransform<B> {
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let ActivationFormat::PackedHalf {
-            group_size,
-        } = self.format
-        else {
-            panic!("packed-half activation transform required")
-        };
+        assert!(matches!(self.format, ActivationFormat::PackedHalf { .. }) && batch_size <= 8);
         assert_row_width(element_count);
-        assert!(element_count.is_multiple_of(group_size) && batch_size <= 8);
         self.kernel.encode(
             Some(input),
             None::<&mut B::ScratchBuffer>,

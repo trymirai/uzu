@@ -124,7 +124,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     let factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
     let mut values = create_buffer::<B, i8>(&context, (input.batch_dim * input.gated_dim) as usize);
     let mut scales = create_buffer::<B, f32>(&context, (input.batch_dim * input.gated_dim / 128) as usize);
-    let kernel = GatedActMul::<B>::quantize(
+    let kernel = GatedActMul::<B>::quantized(
         &context,
         DataType::BF16,
         ActivationFormat::Int8(
@@ -135,7 +135,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     )
     .expect("create quantized GatedActMul");
     let mut command_buffer = context.create_command_buffer(None, None).expect("create command buffer");
-    kernel.encode_quantize(
+    kernel.encode_quantized(
         &act_operand,
         &mut values,
         &mut scales,

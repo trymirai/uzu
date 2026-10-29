@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use crate::backends::common::{Buffer, kernel::ActivationQuantization};
+use crate::backends::common::kernel::ActivationQuantization;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Int8CodeLayout {
@@ -76,9 +76,7 @@ impl<T> MatmulA<T> {
             offset: 0,
         }
     }
-}
 
-impl<T: Buffer> MatmulA<T> {
     pub fn as_ref(&self) -> MatmulA<&T> {
         match self {
             Self::FullPrecision {
@@ -119,16 +117,11 @@ impl<T: Buffer> MatmulA<T> {
     }
 }
 
-pub fn packed_half_group_words(group_size: u32) -> usize {
-    assert!(matches!(group_size, 32 | 64));
-    32 * (group_size as usize / 8) + 16
-}
-
+/// Matches `PackedHalfLayout` in `packed_half_layout.h`.
 pub fn packed_half_bytes(
     k: u32,
     group_size: u32,
 ) -> usize {
-    let group_words = packed_half_group_words(group_size);
-    assert!(k.is_multiple_of(group_size));
-    (k as usize / group_size as usize) * group_words * size_of::<u32>()
+    assert!(matches!(group_size, 32 | 64) && k.is_multiple_of(group_size));
+    (k / group_size) as usize * (32 * (group_size as usize / 8) + 16) * size_of::<u32>()
 }

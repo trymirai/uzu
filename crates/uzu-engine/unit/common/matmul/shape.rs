@@ -1,5 +1,13 @@
 use derive_more::Display;
 
+use crate::backends::common::{
+    gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+    kernel::{
+        ActivationQuantization,
+        matmul::{ActivationFormat, Int8CodeLayout, MatmulShape, QuantParamsLayout},
+    },
+};
+
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 #[display("M[{m}]K[{k}]N[{n}]")]
 pub struct Shape {
@@ -116,11 +124,7 @@ pub fn matmul_shape(
     m: u32,
     n: u32,
     k: u32,
-) -> crate::backends::common::kernel::matmul::MatmulShape {
-    use crate::backends::common::{
-        gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-        kernel::matmul::{ActivationFormat, MatmulShape, QuantParamsLayout},
-    };
+) -> MatmulShape {
     MatmulShape {
         m,
         n,
@@ -145,11 +149,7 @@ pub fn quantized_matmul_shape(
     k: u32,
     bits: u32,
     group: u32,
-) -> crate::backends::common::kernel::matmul::MatmulShape {
-    use crate::backends::common::{
-        gpu_types::gemm::GemmBPrologueKind,
-        kernel::matmul::{MatmulShape, QuantParamsLayout},
-    };
+) -> MatmulShape {
     MatmulShape {
         b_prologue: if bits == 8 {
             GemmBPrologueKind::ScaleSymmetricDequant
@@ -162,4 +162,8 @@ pub fn quantized_matmul_shape(
         params_layout: Some(QuantParamsLayout::GroupOutput),
         ..matmul_shape(m, n, k)
     }
+}
+
+pub fn a8_format() -> ActivationFormat {
+    ActivationFormat::Int8(ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble).unwrap())
 }

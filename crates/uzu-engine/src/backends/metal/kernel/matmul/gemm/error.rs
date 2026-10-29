@@ -8,8 +8,6 @@ pub enum GemmSpecializationError {
     InvalidAGroupSize {
         a_group_size: Option<u32>,
     },
-    #[error("unsupported small-batch GEMM activation encoding, weights, geometry, or output transform")]
-    UnsupportedSmallBatch,
     #[error("quantized B requires transposed layout")]
     QuantizedRequiresTransposedB,
     #[error("tiling {tiling} does not match use_mxu={use_mxu}")]

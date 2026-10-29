@@ -83,16 +83,7 @@ PUBLIC KERNEL(ActivationTransform)(
 
   if (PACKED_HALF) {
     if (in_bounds) {
-      const float2 sums = store_packed_half_values(values, first_index, batch_index, sum_group_size, packed_half_out);
-      store_packed_half_sums(
-          sums,
-          lane_index,
-          sum_group_size / HADAMARD_VECTOR_SIZE,
-          first_index / sum_group_size,
-          batch_index,
-          sum_group_size,
-          packed_half_out
-      );
+      store_packed_half(values, lane_index, first_index, batch_index, sum_group_size, packed_half_out);
     }
     return;
   }

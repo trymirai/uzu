@@ -148,12 +148,27 @@ struct MxuMmaCore {
                         thread_context
                     );
 
-                if (!accumulator_tile
-                         .template reduce_k_slices<SIMDGROUPS_PER_K, SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN>(
-                             reinterpret_cast<threadgroup float*>(b_shared),
-                             thread_context
-                         )) {
-                  return;
+                if constexpr (SIMDGROUPS_PER_K > 1) {
+                  threadgroup float* k_partials = reinterpret_cast<threadgroup float*>(b_shared);
+                  thread AccumulatorType* values = accumulator_tile.elements();
+                  const ushort lane = ushort(thread_context.simd_lane_id);
+                  if (k_slice != 0) {
+                    for (ushort element = 0; element < AccumFragment::ELEMENTS_PER_FRAGMENT; ++element) {
+                      k_partials
+                          [((k_slice - 1) * AccumFragment::ELEMENTS_PER_FRAGMENT + element) * METAL_SIMD_SIZE + lane] =
+                              values[element];
+                    }
+                  }
+                  threadgroup_barrier(mem_flags::mem_threadgroup);
+                  if (k_slice != 0) {
+                    return;
+                  }
+                  for (ushort slice = 1; slice < SIMDGROUPS_PER_K; ++slice) {
+                    for (ushort element = 0; element < AccumFragment::ELEMENTS_PER_FRAGMENT; ++element) {
+                      values[element] += k_partials
+                          [((slice - 1) * AccumFragment::ELEMENTS_PER_FRAGMENT + element) * METAL_SIMD_SIZE + lane];
+                    }
+                  }
                 }
 
                 if (apply_scale) {
@@ -194,10 +209,8 @@ struct MxuMmaCore {
     }
 
     if (output_transform.contains(GemmDTransform::RHT)) {
-      if constexpr (
-          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
-          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
-      ) {
+      if constexpr (schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+                    SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE) {
         if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
           if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
             return;

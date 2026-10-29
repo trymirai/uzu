@@ -1,4 +1,4 @@
-use super::{GemmEngine, GemmPlan, error::GemmSpecializationError, selection::small_batch_plan_supported};
+use super::{GemmEngine, GemmPlan, error::GemmSpecializationError};
 use crate::{
     backends::{
         common::{
@@ -38,9 +38,6 @@ impl GemmSpecialization {
         a_prologue: GemmAPrologueKind,
         a_group_size: Option<u32>,
     ) -> Result<Self, GemmSpecializationError> {
-        if plan.tiling.is_small_batch_variant() && !small_batch_plan_supported(shape, gemm_b_layout, plan) {
-            return Err(GemmSpecializationError::UnsupportedSmallBatch);
-        }
         let specialization = Self {
             weights_data_type,
             tiling: plan.tiling,

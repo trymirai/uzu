@@ -58,8 +58,7 @@ impl GemmTiling {
             Self::Tile64x32x256_Simdgroups4x1 => 64,
             Self::Tile64x64x256_Simdgroups2x2 => 64,
             Self::Tile128x128x256_Simdgroups4x4 => 128,
-            Self::Tile8x32x64_Simdgroups1x2x4 => 8,
-            Self::Tile8x32x128_Simdgroups1x2x4 => 8,
+            Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 8,
         }
     }
 
@@ -77,8 +76,7 @@ impl GemmTiling {
             Self::Tile64x32x256_Simdgroups4x1 => 32,
             Self::Tile64x64x256_Simdgroups2x2 => 64,
             Self::Tile128x128x256_Simdgroups4x4 => 128,
-            Self::Tile8x32x64_Simdgroups1x2x4 => 32,
-            Self::Tile8x32x128_Simdgroups1x2x4 => 32,
+            Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 32,
         }
     }
 
@@ -115,8 +113,7 @@ impl GemmTiling {
             Self::Tile64x32x256_Simdgroups4x1 => 4,
             Self::Tile64x64x256_Simdgroups2x2 => 2,
             Self::Tile128x128x256_Simdgroups4x4 => 4,
-            Self::Tile8x32x64_Simdgroups1x2x4 => 1,
-            Self::Tile8x32x128_Simdgroups1x2x4 => 1,
+            Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 1,
         }
     }
 
@@ -134,8 +131,7 @@ impl GemmTiling {
             Self::Tile64x32x256_Simdgroups4x1 => 1,
             Self::Tile64x64x256_Simdgroups2x2 => 2,
             Self::Tile128x128x256_Simdgroups4x4 => 4,
-            Self::Tile8x32x64_Simdgroups1x2x4 => 2,
-            Self::Tile8x32x128_Simdgroups1x2x4 => 2,
+            Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 2,
         }
     }
 

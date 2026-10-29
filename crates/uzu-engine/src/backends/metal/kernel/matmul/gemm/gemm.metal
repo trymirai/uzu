@@ -12,8 +12,8 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define GEMM_PACKED_HALF_TILING UZU_GEMM_IS_PACKED_W4_TILING(GEMM_TILING)
-#define GEMM_SMALL_BATCH UZU_GEMM_IS_SMALL_BATCH_TILING(GEMM_TILING)
+#define GEMM_PACKED_HALF_TILING (GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4)
+#define GEMM_SMALL_BATCH (GEMM_PACKED_HALF_TILING || GEMM_TILING == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
 #define GEMM_SMALL_BATCH_W8 (GEMM_SMALL_BATCH && !GEMM_PACKED_HALF_TILING)
 #define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
@@ -82,7 +82,6 @@ VARIANTS(
     GemmAPrologueKind::Int8Symmetric,
     GemmAPrologueKind::PackedHalf)
 VARIANTS(A_GROUP_SIZE, 0, 128)
-CONSTRAINT(DT != "float" || A_IS_INT8 || GEMM_SMALL_BATCH)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -119,18 +118,16 @@ CONSTRAINT(
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_PROLOGUE == GemmAPrologueKind::PackedHalf || USE_MXU)
 CONSTRAINT(GEMM_PACKED_HALF_TILING == (A_PROLOGUE == GemmAPrologueKind::PackedHalf))
-CONSTRAINT(
-    !GEMM_PACKED_HALF_TILING ||
-    (!USE_MXU && TRANSPOSE_B && A_PROLOGUE == GemmAPrologueKind::PackedHalf &&
-     B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant && BITS == 4 && (GROUP_SIZE == 32 || GROUP_SIZE == 64)))
+CONSTRAINT(!GEMM_PACKED_HALF_TILING || (!USE_MXU && TRANSPOSE_B && BITS == 4))
 CONSTRAINT(
     !GEMM_SMALL_BATCH_W8 ||
     (!USE_MXU && TRANSPOSE_B && A_PROLOGUE == GemmAPrologueKind::FullPrecision &&
-     B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE == 64))
+     BITS == 8))
 CONSTRAINT(
     A_PROLOGUE == GemmAPrologueKind::FullPrecision ||
     (TRANSPOSE_B && B_PROLOGUE != GemmBPrologueKind::FullPrecision))
 CONSTRAINT((A_PROLOGUE != GemmAPrologueKind::Int8Symmetric) == (A_GROUP_SIZE == 0))
+CONSTRAINT(!A_IS_INT8 || GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4)
 KERNEL(Gemm)(
     const device AT* a OPTIONAL(A_PROLOGUE == GemmAPrologueKind::FullPrecision),
     const device uint* a_packed_half OPTIONAL(A_PROLOGUE == GemmAPrologueKind::PackedHalf),

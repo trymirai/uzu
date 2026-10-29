@@ -1,7 +1,6 @@
 use metal::MTLGPUFamily;
 use thiserror::Error;
 
-use super::kernel::GemmKernel;
 use crate::{
     backends::{
         common::{
@@ -10,9 +9,8 @@ use crate::{
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             },
             kernel::{
-                ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-                matmul::{ActivationFormat, Int8CodeLayout, MatmulShape, QuantParamsLayout},
+                matmul::{ActivationFormat, MatmulShape},
             },
         },
         metal::{
@@ -24,12 +22,12 @@ use crate::{
 };
 
 pub(super) const TRELLIS_K_STEP: u32 = 64;
-pub const MXU_INT8_MIN_BATCH: u32 = 5;
 
 #[derive(Clone, Copy)]
 pub struct GemmProblem {
     shape: MatmulShape,
-    data_types: (DataType, DataType, DataType),
+    weights_data_type: DataType,
+    output_data_type: DataType,
     supports_mxu: bool,
     apple_gpu_family: MTLGPUFamily,
 }
@@ -42,27 +40,30 @@ pub enum GemmPlanError {
     UnsupportedLayout(&'static str),
 }
 
-pub fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
-    matches!((shape.b_bits, shape.signed_codes), (Some(4), _) | (Some(8), true))
-}
-
-fn small_batch_format(
-    shape: MatmulShape,
-    layout: GemmBLayout,
-) -> Option<(ActivationFormat, GemmTiling)> {
-    let (activation, tiling, k_alignment) = match (shape.b_prologue, shape.b_bits, shape.b_group_size) {
-        (GemmBPrologueKind::ScaleZeroPointDequant, Some(4), Some(group_size @ (32 | 64))) => (
+/// The weight formats with small-M kernels (batched GEMV and register GEMM): W4 zero-point or scale-bias, and W8
+/// symmetric, at group size 32 or 64. Returns the GEMM's activation format, tiling and K alignment.
+pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTiling, u32)> {
+    let group_size = shape.b_group_size.filter(|group_size| matches!(group_size, 32 | 64))?;
+    match (shape.b_prologue, shape.b_bits) {
+        (GemmBPrologueKind::ScaleZeroPointDequant | GemmBPrologueKind::ScaleBiasDequant, Some(4)) => Some((
             ActivationFormat::PackedHalf {
                 group_size,
             },
             GemmTiling::Tile8x32x64_Simdgroups1x2x4,
             512,
-        ),
-        (GemmBPrologueKind::ScaleSymmetricDequant, Some(8), Some(64)) => {
-            (ActivationFormat::Bf16, GemmTiling::Tile8x32x128_Simdgroups1x2x4, 256)
+        )),
+        (GemmBPrologueKind::ScaleSymmetricDequant, Some(8)) => {
+            Some((ActivationFormat::Bf16, GemmTiling::Tile8x32x128_Simdgroups1x2x4, 256))
         },
-        _ => return None,
-    };
+        _ => None,
+    }
+}
+
+pub fn small_batch_format(
+    shape: MatmulShape,
+    layout: GemmBLayout,
+) -> Option<(ActivationFormat, GemmTiling)> {
+    let (activation, tiling, k_alignment) = small_m_weights(&shape)?;
     (shape.b_transpose
         && !shape.gathered
         && !shape.b_is_trellis
@@ -73,40 +74,18 @@ fn small_batch_format(
     .then_some((activation, tiling))
 }
 
-pub(super) fn small_batch_plan_supported(
-    shape: MatmulShape,
-    gemm_b_layout: GemmBLayout,
-    plan: GemmPlan,
-) -> bool {
-    let Some((activation, tiling)) = small_batch_format(shape, gemm_b_layout) else {
-        return false;
-    };
-    let is_w4 = tiling.is_packed_w4();
-    let partition_alignment: u32 = if is_w4 || plan.split_k == 1 {
-        256
-    } else {
-        512
-    };
-    let split_alignment = partition_alignment.checked_mul(plan.split_k);
-    let split_is_valid = plan.split_k > 0 && split_alignment.is_some_and(|alignment| shape.k.is_multiple_of(alignment));
-
-    shape.a == activation
-        && (4..=8).contains(&shape.m)
-        && plan.engine == GemmEngine::Simdgroup
-        && plan.tiling == tiling
-        && split_is_valid
-}
-
 impl GemmProblem {
     pub fn new(
         shape: MatmulShape,
-        data_types: (DataType, DataType, DataType),
+        weights_data_type: DataType,
+        output_data_type: DataType,
         supports_mxu: bool,
         apple_gpu_family: MTLGPUFamily,
     ) -> Self {
         Self {
             shape,
-            data_types,
+            weights_data_type,
+            output_data_type,
             supports_mxu,
             apple_gpu_family,
         }
@@ -128,70 +107,17 @@ impl GemmProblem {
         self,
         layout: GemmBLayout,
     ) -> Option<GemmPlan> {
-        if self.data_types != (DataType::BF16, DataType::BF16, DataType::BF16)
-            || (self.supports_mxu && self.shape.m < MXU_INT8_MIN_BATCH)
-        {
-            return None;
-        }
-        let (_, tiling) = small_batch_format(self.shape, layout)?;
+        let (activation, tiling) = small_batch_format(self.shape, layout)?;
         let plan = self.finish_plan(GemmEngine::Simdgroup, tiling);
-        small_batch_plan_supported(self.shape, layout, plan).then_some(plan)
-    }
-
-    fn int8_quantization(&self) -> Option<ActivationQuantization> {
-        let shape = &self.shape;
-        let weight_group_size = shape.b_group_size?;
-        let emit_group_sums = GemmKernel::requires_activation_group_sums(shape);
-        let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits)?;
-        let quantization =
-            ActivationQuantization::new(ACTIVATION_SCALE_GROUP_SIZE, weight_group_size, emit_group_sums, code_layout)?;
-        if !self.supports_mxu
-            || self.data_types.1 != DataType::BF16
-            || self.data_types.2 != DataType::BF16
-            || shape.params_layout != Some(QuantParamsLayout::GroupOutput)
-            || !supports_integer_right_operand(shape)
-            || !shape.is_quant()
-            || !shape.b_transpose
-            || shape.b_leading_dimension.is_some()
-            || !shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
-            || !shape.k.is_multiple_of(weight_group_size)
-            || !shape.n.is_multiple_of(32)
-            || shape.b_bits.and_then(|bits| GemmKernel::mxu_tiled_words_per_thread(shape.k, bits)).is_none()
-        {
-            return None;
-        }
-
-        Some(quantization)
-    }
-
-    pub fn activation_preparation(
-        self,
-        layout: GemmBLayout,
-    ) -> ActivationFormat {
-        if let Some(quantization) = self.int8_quantization() {
-            return ActivationFormat::Int8(quantization);
-        }
-        if self.shape.params_layout == Some(QuantParamsLayout::GroupOutput)
-            && self.data_types == (DataType::BF16, DataType::BF16, DataType::BF16)
-        {
-            return small_batch_format(self.shape, layout).map_or(ActivationFormat::Bf16, |(format, _)| format);
-        }
-        ActivationFormat::Bf16
-    }
-
-    pub fn prepared_plan(
-        self,
-        layout: GemmBLayout,
-    ) -> Option<GemmPlan> {
-        match self.shape.a {
-            ActivationFormat::PackedHalf {
-                ..
-            } => self.small_batch_plan(layout),
-            ActivationFormat::Int8(quantization) if self.int8_quantization() == Some(quantization) => {
-                Some(self.select_plan())
-            },
-            _ => None,
-        }
+        let partition_alignment = if tiling.is_packed_w4() || plan.split_k == 1 {
+            256
+        } else {
+            512
+        };
+        (self.shape.a == activation
+            && (4..=8).contains(&self.shape.m)
+            && self.shape.k.is_multiple_of(partition_alignment * plan.split_k))
+        .then_some(plan)
     }
 
     #[cfg(test)]
@@ -276,7 +202,7 @@ impl GemmProblem {
             output_transform.remove(GemmDTransform::BIAS);
         }
         !output_transform.contains(GemmDTransform::BIAS)
-            || (self.shape.n.is_multiple_of(4) && self.data_types.0 == self.data_types.2)
+            || (self.shape.n.is_multiple_of(4) && self.weights_data_type == self.output_data_type)
     }
 }
 

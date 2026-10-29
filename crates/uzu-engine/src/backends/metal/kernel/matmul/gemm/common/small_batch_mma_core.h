@@ -5,7 +5,6 @@
 #include "../../../common/thread_context.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
-#include "../../../hadamard_transform/hadamard_transform.h"
 #include "../../../common/soft_cap.h"
 #include "../../common/fragment.h"
 #include "../../common/simdgroup_fragment_ops.h"
@@ -39,8 +38,6 @@ struct SmallBatchMmaCore {
   UZU_CONST int SIMDGROUPS_PER_K = gemm_tiling_simdgroups_per_k(GEMM_TILING);
   UZU_CONST int SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   UZU_CONST int SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
-  UZU_CONST ushort SIMDGROUP_COUNT = SIMDGROUPS_PER_K * SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
-  static_assert(SIMDGROUPS_PER_K == 4 && SIMDGROUPS_PER_COLUMN == 2 && SIMDGROUP_BLOCK_N == 16);
   UZU_CONST ushort TILES_M = Schedule::TRANSPOSED_OUTPUT ? SIMDGROUP_BLOCK_N / FragmentOps::FRAGMENT_ROWS
                                                          : SIMDGROUP_BLOCK_M / FragmentOps::FRAGMENT_ROWS;
   UZU_CONST ushort TILES_N = Schedule::TRANSPOSED_OUTPUT ? SIMDGROUP_BLOCK_M / FragmentOps::FRAGMENT_COLS
@@ -48,11 +45,6 @@ struct SmallBatchMmaCore {
   using AccumFragment = uzu::matmul::Fragment<float, TILES_M, TILES_N, FragmentOps>;
 
   using BlockGeometry = ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>;
-  struct KBlockRange {
-    uint begin;
-    uint end;
-  };
-
   struct TileContext {
     BlockGeometry block_geometry;
     ushort simd_lane_id;
@@ -60,7 +52,8 @@ struct SmallBatchMmaCore {
     uint k_partition;
     ushort simdgroup_k_slice;
     uint simdgroup_column_base;
-    KBlockRange k_blocks;
+    uint k_block_begin;
+    uint k_block_end;
   };
 
   static METAL_FUNC TileContext
@@ -70,6 +63,10 @@ struct SmallBatchMmaCore {
         tile_id(uint2(thread_context.threadgroup_position.x, thread_context.threadgroup_position.y), params);
     const BlockGeometry block_geometry = BlockGeometry::compute(id, params);
     const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
+    const uint total_blocks = params->K / THREADGROUP_BLOCK_K;
+    const uint blocks_per_partition =
+        SIMDGROUPS_PER_K * params->aligned_inner_iterations + total_blocks % SIMDGROUPS_PER_K;
+    const uint k_block_begin = thread_context.threadgroup_position.z * blocks_per_partition;
     return {
         block_geometry,
         simd_lane_id,
@@ -77,17 +74,9 @@ struct SmallBatchMmaCore {
         thread_context.threadgroup_position.z,
         ushort(simdgroup_index / SIMDGROUPS_PER_COLUMN),
         block_geometry.block_col_start + uint(simdgroup_index % SIMDGROUPS_PER_COLUMN) * SIMDGROUP_BLOCK_N,
-        make_k_block_range(params, thread_context.threadgroup_position.z)
+        k_block_begin,
+        k_block_begin + blocks_per_partition
     };
-  }
-
-  static METAL_FUNC KBlockRange
-  make_k_block_range(const constant uzu::matmul::GemmParams* params, const uint k_partition) {
-    const uint total_blocks = params->K / THREADGROUP_BLOCK_K;
-    const uint blocks_per_partition =
-        SIMDGROUPS_PER_K * params->aligned_inner_iterations + total_blocks % SIMDGROUPS_PER_K;
-    const uint begin = k_partition * blocks_per_partition;
-    return {begin, begin + blocks_per_partition};
   }
 
   static METAL_FUNC void run(
@@ -107,7 +96,6 @@ struct SmallBatchMmaCore {
       return;
     }
     AccumFragment accumulator = Schedule::template launch<SmallBatchMmaCore>(left, right, params, tile_context);
-    constexpr bool OUTPUT_TRANSPOSED = Schedule::TRANSPOSED_OUTPUT;
     const bool output_writer = accumulator.template reduce_k_slices<SIMDGROUPS_PER_K, SIMDGROUPS_PER_COLUMN>(
         reinterpret_cast<threadgroup float*>(scratch),
         thread_context
@@ -123,8 +111,8 @@ struct SmallBatchMmaCore {
                                  ? min(uint(SIMDGROUP_BLOCK_N), params->N - tile_context.simdgroup_column_base)
                                  : 0;
     const uint safe_output_col = min(tile_context.simdgroup_column_base, params->N - 1);
-    const short2 tile_dimensions = OUTPUT_TRANSPOSED ? short2(short(m_remaining), short(n_remaining))
-                                                     : short2(short(n_remaining), short(m_remaining));
+    const short2 tile_dimensions = Schedule::TRANSPOSED_OUTPUT ? short2(short(m_remaining), short(n_remaining))
+                                                               : short2(short(n_remaining), short(m_remaining));
     device OutputElementType* row_destination =
         d + size_t(tile_context.k_partition) * size_t(params->M) * size_t(params->N) +
         size_t(row_start) * params->leading_dimension_d;
@@ -136,7 +124,7 @@ struct SmallBatchMmaCore {
       const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
       if (needs_bias && !needs_rht) {
         accumulator.map_coords(tile_context.simd_lane_id, [&](short row, short col, float value) {
-          const uint bias_col = OUTPUT_TRANSPOSED ? uint(row) : uint(col);
+          const uint bias_col = Schedule::TRANSPOSED_OUTPUT ? uint(row) : uint(col);
           return bias_col < n_remaining ? value + float(output_bias[tile_context.simdgroup_column_base + bias_col])
                                         : value;
         });
@@ -146,9 +134,9 @@ struct SmallBatchMmaCore {
       }
 
       device OutputElementType* destination = row_destination + safe_output_col;
-      const int row_stride = OUTPUT_TRANSPOSED ? 1 : int(params->leading_dimension_d);
+      const int row_stride = Schedule::TRANSPOSED_OUTPUT ? 1 : int(params->leading_dimension_d);
       const auto col_stride = [&]() {
-        if constexpr (OUTPUT_TRANSPOSED) {
+        if constexpr (Schedule::TRANSPOSED_OUTPUT) {
           return int(params->leading_dimension_d);
         } else {
           return uzu::Int<1>{};
@@ -183,7 +171,7 @@ struct SmallBatchMmaCore {
           ushort(m_remaining),
           tile_block_cols,
           params->leading_dimension_d,
-          SIMDGROUP_COUNT,
+          SIMDGROUPS_PER_K * SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN,
           thread_context
       );
     }

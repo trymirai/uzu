@@ -1,4 +1,3 @@
-use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile, fp_tile, quantized_tile, tile};
@@ -11,7 +10,6 @@ use crate::{
     tests::matmul::quantized_matmul_shape as shape,
 };
 
-const SMALL_GPU_CORE_COUNT: u32 = 29;
 const LARGE_GPU_CORE_COUNT: u32 = 30;
 
 fn qtile(
@@ -24,59 +22,45 @@ fn qtile(
 #[uzu_test]
 fn fp_policy_cases() {
     let cases = [
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 12288, 1536, true, tile(8, 8, 1)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 12288, 1536, false, tile(8, 1, 1)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, true, tile(8, 1, 1)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, true, tile(8, 2, 1)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 8, 12288, 1536, true, tile(8, 1, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 12288, true, tile(8, 8, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 262144, 1536, true, tile(8, 1, 4)),
+        (1, 12288, 1536, true, tile(8, 8, 1)),
+        (1, 12288, 1536, false, tile(8, 1, 1)),
+        (1, 1536, 256, true, tile(8, 2, 1)),
+        (8, 12288, 1536, true, tile(8, 1, 4)),
+        (1, 1536, 12288, true, tile(8, 8, 1)),
+        (1, 262144, 1536, true, tile(8, 8, 1)),
     ];
 
-    for (gpu_core_count, apple_gpu_family, m, n, k, aligned, expected) in cases {
-        assert_eq!(fp_tile(gpu_core_count, apple_gpu_family, m, n, k, aligned), expected);
+    for (m, n, k, aligned, expected) in cases {
+        assert_eq!(fp_tile(m, n, k, aligned), expected, "m={m} n={n} k={k} aligned={aligned}");
     }
 }
 
 #[uzu_test]
 fn quant_policy_cases() {
     let cases = [
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(2, 1)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(4, 2)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 262144, 1536, 4, qtile(8, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, 4, qtile(4, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 1, 1536, 256, 4, qtile(8, 4)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple8, 1, 2048, 1536, 4, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 256, 1536, 4, qtile(8, 2)),
-        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple7, 1, 1536, 256, 4, qtile(4, 8)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 2, 2048, 1536, 4, qtile(8, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 5120, 5120, 4, qtile(8, 4)),
-        (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 2048, 1536, 8, GemvTile::quantized(8, 4, 1, 32, 4)),
+        (1, 256, 4, qtile(8, 4)),
+        (1, 262144, 4, qtile(8, 4)),
+        (2, 2048, 4, qtile(8, 4)),
+        (4, 5120, 4, qtile(8, 4)),
+        (1, 2048, 8, GemvTile::quantized(8, 4, 1, 32, 4)),
     ];
 
-    for (gpu_core_count, apple_gpu_family, m, n, k, bits, expected) in cases {
-        let actual =
-            quantized_tile(gpu_core_count, apple_gpu_family, bits, 32, m, n, k, true).expect("quantized route");
-        assert_eq!(
-            actual, expected,
-            "m={m} n={n} k={k} bits={bits} gpu_core_count={gpu_core_count} apple_gpu_family={apple_gpu_family:?}"
-        );
+    for (m, n, bits, expected) in cases {
+        let actual = quantized_tile(bits, 32, m, n, true).expect("quantized route");
+        assert_eq!(actual, expected, "m={m} n={n} bits={bits}");
     }
 }
 
 #[uzu_test]
 fn quantized_policy_edges() {
-    assert_eq!(
-        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100, true),
-        Some(GemvTile::quantized(8, 4, 1, 32, 4))
-    );
-    assert!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8, 4096, true).is_some());
-    assert!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 1, 8192, 4096, true).is_some());
-    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096, true), None);
-    assert_eq!(
-        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8192, 4096, true),
-        Some(GemvTile::quantized(8, 4, 1, 32, 2))
-    );
+    assert_eq!(quantized_tile(4, 64, 4, 8192, true), Some(GemvTile::quantized(8, 4, 1, 32, 4)));
+    assert!(quantized_tile(4, 32, 4, 8, true).is_some());
+    assert!(quantized_tile(4, 32, 1, 8192, true).is_some());
+    assert_eq!(quantized_tile(4, 32, 9, 8192, true), None);
+    assert_eq!(quantized_tile(4, 32, 6, 8192, true), None);
+    assert_eq!(quantized_tile(4, 32, 6, 64, true), Some(GemvTile::quantized(8, 4, 1, 32, 2)));
+    assert_eq!(quantized_tile(4, 32, 1, 8192, false), None);
+    assert_eq!(quantized_tile(4, 32, 4, 8192, true), Some(GemvTile::quantized(8, 4, 1, 32, 2)));
 }
 
 #[uzu_test]
@@ -93,7 +77,6 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
             DataType::BF16,
             DataType::BF16,
             LARGE_GPU_CORE_COUNT,
-            MTLGPUFamily::Apple10,
         )
         .is_some()
     );
@@ -112,7 +95,6 @@ fn specialization_preserves_quantized_route() {
             DataType::BF16,
             DataType::BF16,
             LARGE_GPU_CORE_COUNT,
-            MTLGPUFamily::Apple10,
         )
     };
     let clean = select(8192).expect("quantized specialization");

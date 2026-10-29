@@ -77,18 +77,6 @@ static METAL_FUNC half2 w4_pair(uint word, ushort component) {
   }
 }
 
-UZU_CONST float W4_PAIR_BIAS_0 = w4_pair_bias_value(0);
-UZU_CONST float W4_PAIR_BIAS_1 = w4_pair_bias_value(1);
-UZU_CONST float W4_PAIR_BIAS_2 = w4_pair_bias_value(2);
-UZU_CONST float W4_PAIR_BIAS_3 = w4_pair_bias_value(3);
-
-static METAL_FUNC float w4_pair_bias(uint component) {
-  return component == 0   ? W4_PAIR_BIAS_0
-         : component == 1 ? W4_PAIR_BIAS_1
-         : component == 2 ? W4_PAIR_BIAS_2
-                          : W4_PAIR_BIAS_3;
-}
-
 template <uint ORIGIN>
 METAL_FUNC float magic_code_float(uint code) {
   return as_type<float>(code + W8_MAGIC_FLOAT_OFFSET - ORIGIN);

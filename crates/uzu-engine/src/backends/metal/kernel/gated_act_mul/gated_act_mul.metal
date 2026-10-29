@@ -126,16 +126,7 @@ PUBLIC KERNEL(GatedActMul) (
 
   if (PACKED_HALF) {
     if (valid_count > 0) {
-      const float2 sums = store_packed_half_values(results, first_index, batch_idx, sum_group_size, packed_half_out);
-      store_packed_half_sums(
-          sums,
-          lane_index,
-          sum_group_size / HADAMARD_VECTOR_SIZE,
-          first_index / sum_group_size,
-          batch_idx,
-          sum_group_size,
-          packed_half_out
-      );
+      store_packed_half(results, lane_index, first_index, batch_idx, sum_group_size, packed_half_out);
     }
     return;
   }

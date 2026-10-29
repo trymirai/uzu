@@ -367,7 +367,6 @@ struct Fragment {
       threadgroup ElementType* partials,
       const thread ThreadContext& thread_context
   ) thread {
-    static_assert(K_SLICES > 0 && OUTPUT_GROUPS > 0, "slice and output group counts must be positive");
     if constexpr (K_SLICES == 1) {
       return true;
     } else {

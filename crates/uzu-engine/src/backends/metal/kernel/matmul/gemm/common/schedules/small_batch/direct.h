@@ -26,10 +26,6 @@ struct DirectSchedule {
       const thread typename Core::TileContext& tile_context
   ) {
     using RightOperand = typename Core::Right;
-    static_assert(
-        RightOperand::QUANTIZED && RightOperand::BITS == 8 && RightOperand::GROUP_SIZE == 64,
-        "direct schedule requires W8 G64 weights"
-    );
     constexpr ushort K_STEPS_PER_BLOCK = 16;
     using Ops = typename Core::FragmentOps;
     constexpr uint K_BLOCK = Core::THREADGROUP_BLOCK_K;
@@ -58,7 +54,7 @@ struct DirectSchedule {
     const device bfloat* activation_row =
         left.values + min(tile_context.block_geometry.block_row_start + lane_row, params->M - 1) * inner_dimension +
         K_STEPS_PER_BLOCK * lane_column;
-    const auto k_blocks = tile_context.k_blocks;
+    const uint k_block_end = tile_context.k_block_end;
 
     uint4 activation_words[ACTIVATION_VECTORS_PER_LANE];
     uint4 weight_words[Core::TILES_N][2];
@@ -98,15 +94,15 @@ struct DirectSchedule {
           }
         };
 
-    uint k_block = k_blocks.begin + tile_context.simdgroup_k_slice;
-    if (k_block < k_blocks.end) {
+    uint k_block = tile_context.k_block_begin + tile_context.simdgroup_k_slice;
+    if (k_block < k_block_end) {
       load_activations(k_block, activation_words);
       load_weights(k_block, weight_words);
       load_metadata(k_block, weight_scales, dequant_offsets);
     }
-    for (; k_block < k_blocks.end; k_block += Core::SIMDGROUPS_PER_K) {
+    for (; k_block < k_block_end; k_block += Core::SIMDGROUPS_PER_K) {
       const uint next_k_block = k_block + Core::SIMDGROUPS_PER_K;
-      const uint prefetch_k_block = next_k_block < k_blocks.end ? next_k_block : k_block;
+      const uint prefetch_k_block = next_k_block < k_block_end ? next_k_block : k_block;
       METAL_PRAGMA_UNROLL
       for (uint tile_n = 0; tile_n < Core::TILES_N; ++tile_n) {
         METAL_PRAGMA_UNROLL

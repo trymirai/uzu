@@ -15,7 +15,7 @@ use crate::{
 pub(super) struct InputRht<B: Backend> {
     rht_signs: B::GlobalGpuBuffer,
     rht: ActivationTransform<B>,
-    encoder: Option<ActivationTransform<B>>,
+    quantizer: Option<ActivationTransform<B>>,
 }
 
 impl<B: Backend> InputRht<B> {
@@ -30,14 +30,14 @@ impl<B: Backend> InputRht<B> {
             activation_format,
         } = preparation;
         let rht = ActivationTransform::input_rht(context, data_type, in_place)?;
-        let encoder = (activation_format != ActivationFormat::Bf16)
+        let quantizer = (activation_format != ActivationFormat::Bf16)
             .then(|| ActivationTransform::quantize(context, data_type, activation_format))
             .transpose()?;
 
         Ok(Self {
             rht_signs,
             rht,
-            encoder,
+            quantizer,
         })
     }
 
@@ -48,25 +48,22 @@ impl<B: Backend> InputRht<B> {
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        let input_dim = self.input_dim();
-        let encoder = self.encoder.as_ref().filter(|kernel| kernel.format() == format);
-        assert!(format == ActivationFormat::Bf16 || encoder.is_some(), "requested activation format was not prepared");
-        if let (
-            ActivationFormat::PackedHalf {
+        if let Some(quantizer) = self.quantizer.as_ref().filter(|quantizer| quantizer.format() == format) {
+            let input_dim = self.input_dim();
+            if let ActivationFormat::PackedHalf {
                 group_size,
-            },
-            Some(kernel),
-        ) = (format, encoder)
-        {
-            let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, group_size))?;
-            kernel.encode_packed_half(input, &mut values, &self.rht_signs, batch_dim, input_dim, command_buffer);
-            return Ok(MatmulA::PackedHalf {
-                values,
-                group_size,
-            });
-        }
-
-        if let (ActivationFormat::Int8(quantization), Some(kernel)) = (format, encoder) {
+            } = format
+            {
+                let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, group_size))?;
+                quantizer.encode_pack_half(input, &mut values, &self.rht_signs, batch_dim, input_dim, command_buffer);
+                return Ok(MatmulA::PackedHalf {
+                    values,
+                    group_size,
+                });
+            }
+            let ActivationFormat::Int8(quantization) = format else {
+                unreachable!()
+            };
             let groups_per_row = input_dim.div_ceil(quantization.scale_group_size());
             let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, input_dim], DataType::I8)?;
             let mut scales = command_buffer.allocate_scratch_for_shape(&[batch_dim, groups_per_row], DataType::F32)?;
@@ -77,7 +74,7 @@ impl<B: Backend> InputRht<B> {
                         .allocate_scratch_for_shape(&[batch_dim, input_dim.div_ceil(group_size)], DataType::I32)
                 })
                 .transpose()?;
-            kernel.encode_quantize(
+            quantizer.encode_quantize(
                 input,
                 &mut values,
                 &mut scales,
@@ -87,6 +84,7 @@ impl<B: Backend> InputRht<B> {
                 input_dim,
                 command_buffer,
             );
+
             return Ok(MatmulA::Int8Symmetric {
                 values,
                 scales,
@@ -95,6 +93,7 @@ impl<B: Backend> InputRht<B> {
             });
         }
 
+        let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
         self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
         Ok(MatmulA::full_precision(transformed))
@@ -107,10 +106,9 @@ impl<B: Backend> InputRht<B> {
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        if self.encoder.as_ref().is_some_and(|kernel| kernel.format() == format) {
+        if self.quantizer.as_ref().is_some_and(|kernel| kernel.format() == format) {
             return self.prepare(&input, batch_dim, format, command_buffer);
         }
-        assert_eq!(format, ActivationFormat::Bf16, "requested activation format was not prepared");
 
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);

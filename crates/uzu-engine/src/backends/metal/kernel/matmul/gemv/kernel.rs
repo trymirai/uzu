@@ -1,5 +1,3 @@
-use metal::MTLGPUFamily;
-
 use crate::{
     backends::{
         common::{
@@ -51,21 +49,6 @@ pub struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
-    pub fn select_batched(
-        shape: &MatmulShape,
-        gemm_b_layout: GemmBLayout,
-        supports_mxu: bool,
-    ) -> Option<Self> {
-        let tile = policy::batched_tile(shape, supports_mxu)?;
-        Self::select_tile(shape, gemm_b_layout, tile).or_else(|| {
-            if gemm_b_layout != GemmBLayout::MxuTiled {
-                return None;
-            }
-            let row_tile = policy::row_tile(shape.b_bits?, shape.b_group_size?, shape.m, shape.n)?;
-            Self::select_tile(shape, gemm_b_layout, row_tile)
-        })
-    }
-
     pub fn select_shape(
         shape: &MatmulShape,
         gemm_b_layout: GemmBLayout,
@@ -73,7 +56,6 @@ impl GemvSpecialization {
         input_data_type: DataType,
         output_data_type: DataType,
         gpu_core_count: u32,
-        apple_gpu_family: MTLGPUFamily,
     ) -> Option<Self> {
         let is_quant = shape.is_quant();
         let bits = shape.b_bits.unwrap_or(0);
@@ -87,33 +69,15 @@ impl GemvSpecialization {
             && shape.k >= MXU_TILED_KERNEL_MIN_K
             && shape.n >= 32 * gpu_core_count;
         let tile = if is_quant && shape.gathered {
-            policy::row_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
+            policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
         } else if is_quant {
-            policy::quantized_tile(
-                gpu_core_count,
-                apple_gpu_family,
-                bits,
-                shape.b_group_size.unwrap_or(0),
-                shape.m,
-                shape.n,
-                shape.k,
-                bf16_io,
-            )
-            .map(|tile| match gemm_b_layout {
-                GemmBLayout::MxuTiled if mxu_tiled_kernel => {
-                    policy::GemvTile::quantized_output_tile(8, 32, 1, 32, tile.group_lanes)
-                },
-                GemmBLayout::MxuTiled if tile.output_row_tile() < 16 => {
-                    policy::GemvTile::quantized_output_tile(8, 16, 1, 32, tile.group_lanes)
-                },
-                _ => tile,
-            })
+            policy::quantized_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n, bf16_io)
         } else {
             if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH {
                 return None;
             }
             let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
-            Some(policy::fp_tile(gpu_core_count, apple_gpu_family, shape.m, shape.n, shape.k, input_aligned))
+            Some(policy::fp_tile(shape.m, shape.n, shape.k, input_aligned))
         };
         Self::select_tile(shape, gemm_b_layout, tile?).map(|specialization| Self {
             mxu_tiled_kernel,

@@ -55,8 +55,7 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
     assert_eq!(hadamard_factors.is_some(), use_hadamard);
     let quantize = matches!(ops, GatedActMulOp::Quantize | GatedActMulOp::QuantizeWithGroupSums);
     let emit_group_sums = ops == GatedActMulOp::QuantizeWithGroupSums;
-    assert!(ops != GatedActMulOp::PackHalf, "CPU packed-half gate is not selected");
-    let _ = packed_half_out;
+    assert!(packed_half_out.is_none(), "CPU packed-half gate is not selected");
     assert!(!quantize || use_hadamard, "quantized gate activation requires RHT");
     assert!(!quantize || gated_dim.is_multiple_of(activation_scale_group_size));
     assert!(!emit_group_sums || gated_dim.is_multiple_of(sum_group_size));

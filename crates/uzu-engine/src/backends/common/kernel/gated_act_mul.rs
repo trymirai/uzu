@@ -7,7 +7,7 @@ use crate::{
             activation_type::ActivationType, gated_act_mul::GatedActMulOp,
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         },
-        kernel::{ActivationFormat, GatedActMulKernel},
+        kernel::{GatedActMulKernel, matmul::ActivationFormat},
     },
     config::clipping::ClippingBounds,
     data_type::DataType,
@@ -50,14 +50,14 @@ impl<B: Backend> GatedActMul<B> {
         Self::new(context, data_type, options, settings, ActivationFormat::Bf16)
     }
 
-    pub fn quantize(
+    pub fn quantized(
         context: &B::Context,
         data_type: DataType,
-        encoding: ActivationFormat,
+        quantization: ActivationFormat,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let options = GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD;
-        Self::new(context, data_type, options, settings, encoding)
+        Self::new(context, data_type, options, settings, quantization)
     }
 
     fn new(
@@ -68,23 +68,22 @@ impl<B: Backend> GatedActMul<B> {
         format: ActivationFormat,
     ) -> Result<Self, B::Error> {
         let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match format {
-            ActivationFormat::Int8(q) => (
-                if q.sum_group_size().is_some() {
+            ActivationFormat::Int8(quantization) => (
+                if quantization.sum_group_size().is_some() {
                     GatedActMulOp::QuantizeWithGroupSums
                 } else {
                     GatedActMulOp::Quantize
                 },
-                q.code_layout().is_grouped_by_nibble(),
-                q.scale_group_size(),
-                q.sum_group_size().unwrap_or(q.scale_group_size()),
+                quantization.code_layout().is_grouped_by_nibble(),
+                quantization.scale_group_size(),
+                quantization.sum_group_size().unwrap_or(quantization.scale_group_size()),
             ),
             ActivationFormat::PackedHalf {
                 group_size,
             } => (GatedActMulOp::PackHalf, false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
-            ActivationFormat::Bf16 => {
+            ActivationFormat::Bf16 | ActivationFormat::Trellis => {
                 (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE)
             },
-            ActivationFormat::Trellis => unreachable!(),
         };
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
             context,
@@ -156,7 +155,7 @@ impl<B: Backend> GatedActMul<B> {
         );
     }
 
-    pub fn encode_quantize(
+    pub fn encode_quantized(
         &self,
         act_operand: impl BufferRef<Backend = B>,
         values: impl BufferMut<Backend = B>,
@@ -168,14 +167,15 @@ impl<B: Backend> GatedActMul<B> {
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let ActivationFormat::Int8(q) = self.format else {
-            panic!("INT8 gated activation required")
+        let ActivationFormat::Int8(quantization) = self.format else {
+            panic!("quantized gated activation required")
         };
-        assert!(self.options.contains(GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD));
+        assert!(self.options.contains(GatedActMulOptions::INTERLEAVED));
+        assert!(self.options.contains(GatedActMulOptions::HADAMARD));
         assert!(gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
-        assert!(gated_dim.is_multiple_of(q.scale_group_size()));
-        assert_eq!(q.sum_group_size().is_some(), group_sums.is_some());
-        if let Some(group_size) = q.sum_group_size() {
+        assert!(gated_dim.is_multiple_of(quantization.scale_group_size()));
+        assert_eq!(quantization.sum_group_size().is_some(), group_sums.is_some());
+        if let Some(group_size) = quantization.sum_group_size() {
             assert!(gated_dim.is_multiple_of(group_size));
         }
         let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
@@ -203,7 +203,7 @@ impl<B: Backend> GatedActMul<B> {
         );
     }
 
-    pub fn encode_packed_half(
+    pub fn encode_pack_half(
         &self,
         act_operand: impl BufferRef<Backend = B>,
         output: impl BufferMut<Backend = B>,
@@ -213,15 +213,8 @@ impl<B: Backend> GatedActMul<B> {
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let ActivationFormat::PackedHalf {
-            group_size,
-        } = self.format
-        else {
-            panic!("packed-half gated activation required")
-        };
-        assert!(self.options.contains(GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD));
+        assert!(matches!(self.format, ActivationFormat::PackedHalf { .. }) && batch_dim <= 8);
         assert!(gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
-        assert!(gated_dim.is_multiple_of(group_size) && batch_dim <= 8);
         let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
         let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
         self.kernel.encode(
