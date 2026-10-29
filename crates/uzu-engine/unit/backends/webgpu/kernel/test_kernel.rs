@@ -5,10 +5,7 @@ use crate::{
     backends::{
         common::{
             CommandBufferEncoding, Context,
-            gpu_types::{
-                activation_type::ActivationType, kv_cache_update::Copy, quantization::QuantizationMode,
-                ring::RingParams,
-            },
+            gpu_types::{activation_type::ActivationType, quantization::QuantizationMode, ring::RingParams},
         },
         webgpu::{
             WebGPU,
@@ -291,17 +288,17 @@ fn struct_constants<T: DataTypeRepr>() {
     let initial = filled::<T>(values.len(), -100.0);
     let mut expected = initial.clone();
     expected[stride..2 * stride].copy_from_slice(&values[2 * stride..3 * stride]);
-    let copy = Copy {
-        source: 2,
-        destination: 1,
+    let copy = RingParams {
+        ring_offset: 2,
+        ring_length: 1,
     };
     let scalar = TestKernelStructScalarWebGPUKernel::new(&context, T::data_type()).unwrap();
     check(&context, &initial, &expected, 0.0, |output, commands| {
         scalar.encode(&input, output, copy, stride as u32, commands);
     });
-    let mut copies = [Copy {
-        source: 0,
-        destination: 3,
+    let mut copies = [RingParams {
+        ring_offset: 0,
+        ring_length: 3,
     }; 16];
     copies[8] = copy;
     let constant = TestKernelStructConstantWebGPUKernel::new(&context, T::data_type()).unwrap();

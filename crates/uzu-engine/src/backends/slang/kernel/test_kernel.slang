@@ -1,6 +1,5 @@
 import definitions;
 import generated.activation_type;
-import generated.kv_cache_update;
 import generated.quantization;
 import generated.ring;
 
@@ -248,17 +247,17 @@ func TestKernelGroupsharedRefEntryFloat(
 }
 
 [[Kernel]] func TestKernelStructBuffer(
-  StructuredBuffer<Copy> pairs,
-  RWStructuredBuffer<Copy> out_pairs,
+  StructuredBuffer<RingParams> pairs,
+  RWStructuredBuffer<RingParams> out_pairs,
   RWStructuredBuffer<uint> indices,
   RingParams ring,
   uint size,
   [[Axis("size", "threadgroup_size")]] uint idx,
 ) {
-  Copy p = pairs[idx];
+  RingParams p = pairs[idx];
   uint dst = (idx + ring.ring_offset) % ring.ring_length;
   out_pairs[dst] = p;
-  indices[dst] = p.source;
+  indices[dst] = p.ring_offset;
 }
 
 [[Variants("T", "float, half")]]
@@ -284,22 +283,22 @@ func TestKernelGroupsharedRefEntryFloat(
 [[Kernel]] func TestKernelStructScalar<T: __BuiltinFloatingPointType>(
   StructuredBuffer<T> input,
   RWStructuredBuffer<T> output,
-  Copy copy,
+  RingParams copy,
   uint stride,
   [[Axis("stride", "threadgroup_size")]] uint idx,
 ) {
-  output[copy.destination * stride + idx] = input[copy.source * stride + idx];
+  output[copy.ring_length * stride + idx] = input[copy.ring_offset * stride + idx];
 }
 
 [[Variants("T", "float, half")]]
 [[Kernel]] func TestKernelStructConstant<T: __BuiltinFloatingPointType>(
   StructuredBuffer<T> input,
   RWStructuredBuffer<T> output,
-  Copy[16] copy,
+  RingParams[16] copy,
   uint stride,
   [[Axis("stride", "threadgroup_size")]] uint idx,
 ) {
-  output[copy[8].destination * stride + idx] = input[copy[8].source * stride + idx];
+  output[copy[8].ring_length * stride + idx] = input[copy[8].ring_offset * stride + idx];
 }
 
 [shader("compute")]
@@ -307,7 +306,7 @@ func TestKernelGroupsharedRefEntryFloat(
 func TestKernelStructConstantEntryFloat(
   StructuredBuffer<float> input,
   RWStructuredBuffer<float> output,
-  uniform Copy[16] copy,
+  uniform RingParams[16] copy,
   uniform uint stride,
   uint3 groupId : SV_GroupID,
   uint3 threadId : SV_GroupThreadID

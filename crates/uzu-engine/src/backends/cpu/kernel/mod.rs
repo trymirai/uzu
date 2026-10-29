@@ -15,6 +15,7 @@ mod matmul;
 mod normalization;
 mod pooling;
 mod radix_top_k_small;
+pub mod row_gather;
 mod sampling;
 mod short_conv;
 mod softmax;

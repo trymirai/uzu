@@ -11,7 +11,6 @@ pub mod embedding;
 pub mod gated_act_mul;
 pub mod gemm;
 pub mod hadamard_order;
-pub mod kv_cache_update;
 pub mod kv_layout;
 pub mod matmul;
 pub mod quantization;

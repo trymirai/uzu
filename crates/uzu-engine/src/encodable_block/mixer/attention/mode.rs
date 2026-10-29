@@ -213,7 +213,7 @@ impl<B: Backend> Attention<B> {
                 )?;
             },
         }
-        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
+        state.accept_all(batch_dim, command_buffer)?;
         Ok(())
     }
 

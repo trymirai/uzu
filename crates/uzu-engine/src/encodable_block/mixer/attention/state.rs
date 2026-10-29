@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{
         Backend, CommandBuffer,
-        gpu_types::{kv_cache_update::Copy, ring::RingParams},
+        gpu_types::ring::RingParams,
         kernel::{AttentionKernel, KVFormat},
     },
     encodable_block::mixer::{
@@ -103,58 +103,49 @@ impl KVCacheState {
         }
     }
 
-    fn accept(
+    fn advance(
         &mut self,
-        accepted_indices: &[u32],
-    ) -> Vec<Copy> {
-        assert!(accepted_indices.is_sorted_by(|a, b| a < b), "unsorted accept");
-        let suffix_base = self.view().prefix_len();
-
+        len_accepted: u32,
+    ) {
         match self {
             Self::Full {
                 length,
-            } => {
-                let mut copies = Vec::with_capacity(accepted_indices.len());
-                for (destination_index, accepted_index) in accepted_indices.iter().copied().enumerate() {
-                    let source = suffix_base + accepted_index;
-                    let destination = suffix_base + destination_index as u32;
-                    if source != destination {
-                        copies.push(Copy {
-                            source,
-                            destination,
-                        });
-                    }
-                }
-                *length += accepted_indices.len() as u32;
-                copies
-            },
+            } => *length += len_accepted,
             Self::Ring {
                 offset,
                 length,
                 capacity,
             } => {
-                let count = accepted_indices.len() as u32;
-                let mut copies = Vec::with_capacity(accepted_indices.len().min(*capacity as usize));
-                for (index, accepted_index) in accepted_indices.iter().copied().enumerate() {
-                    let source = suffix_base + accepted_index;
-                    let destination = (*offset + *length) % *capacity;
-                    // A copy is dead when a later accept in the same batch overwrites its
-                    // destination; emitting it would alias in a single kernel dispatch.
-                    if index as u32 + *capacity >= count && source != destination {
-                        copies.push(Copy {
-                            source,
-                            destination,
-                        });
-                    }
-
-                    if length < capacity {
-                        *length += 1;
-                    } else {
-                        *offset = (*offset + 1) % *capacity;
-                    }
-                }
-                copies
+                let len_accepted = len_accepted;
+                let grown = len_accepted.min(*capacity - *length);
+                *length += grown;
+                *offset = (*offset + len_accepted - grown) % *capacity;
             },
+        }
+    }
+
+    fn ring_capacity(&self) -> u32 {
+        match self {
+            Self::Full {
+                ..
+            } => 0,
+            Self::Ring {
+                capacity,
+                ..
+            } => *capacity,
+        }
+    }
+
+    fn ring_write_start(&self) -> u32 {
+        match self {
+            Self::Full {
+                ..
+            } => 0,
+            Self::Ring {
+                offset,
+                length,
+                capacity,
+            } => (*offset + *length) % *capacity,
         }
     }
 }
@@ -221,18 +212,37 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         self.kv.prepare(self.cache.required_prefix_len(context_length) + suffix_length)
     }
 
+    fn encode_accept_all(
+        &mut self,
+        _len_accepted: u32,
+        _command_buffer: &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), <B as Backend>::Error> {
+        // every suffix row already sits at its committed position; the counter
+        // advance happens in `commit_accept`
+        Ok(())
+    }
+
     fn encode_accept(
         &mut self,
-        accepted_indices: &[u32],
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
-        let copies = self.cache.accept(accepted_indices);
-
-        if !copies.is_empty() {
-            self.kv.encode_accept(&copies, command_buffer);
-        }
-
+        accepted_indices: &B::GlobalGpuBuffer,
+        command_buffer: &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), <B as Backend>::Error> {
+        let suffix_base = self.cache.view().prefix_len();
+        self.kv.encode_compact(
+            accepted_indices,
+            suffix_base,
+            self.cache.ring_write_start(),
+            self.cache.ring_capacity(),
+            command_buffer,
+        );
         Ok(())
+    }
+
+    fn commit_accept(
+        &mut self,
+        len_accepted: u32,
+    ) {
+        self.cache.advance(len_accepted);
     }
 }
 

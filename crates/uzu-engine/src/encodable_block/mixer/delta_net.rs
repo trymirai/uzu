@@ -7,7 +7,7 @@ use crate::{
         kernel::{
             ConvTreeScanKernel, DeltaNetConvPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
-            StateAdvanceKernel,
+            RowGatherKernel, StateAdvanceKernel,
             delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
             delta_net_tree_verify::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait,
         },
@@ -53,6 +53,7 @@ pub struct DeltaNetState<B: Backend> {
     ssm_state: B::GlobalGpuBuffer,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
+    row_gather: <B::Kernels as Kernels>::RowGatherKernel,
     is_empty: bool,
 }
 
@@ -65,19 +66,18 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
         Ok(())
     }
 
-    fn encode_accept(
+    fn encode_accept_all(
         &mut self,
-        accepted_indices: &[u32],
+        len_accepted: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let suffix_status = self.suffix_status.take().expect("delta net state has no suffix to accept");
-        let accepted_index = *accepted_indices.last().expect("delta net state attempted to accept zero indices");
 
         match suffix_status {
             DeltaNetSuffixStatus::Flat {
                 suffix_length,
             } => {
-                assert!(accepted_index == suffix_length - 1, "attempted a partial flat delta net accept");
+                assert_eq!(len_accepted, suffix_length, "attempted a partial flat delta net accept");
             },
             DeltaNetSuffixStatus::Tree {
                 conv_states,
@@ -87,26 +87,68 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                 beta,
                 parents,
             } => {
-                assert!(accepted_indices.iter().all(|&index| (index as usize) < parents.len()));
-                assert_eq!(parents[accepted_indices[0] as usize], -1);
-                assert!(accepted_indices.windows(2).all(|edge| parents[edge[1] as usize] == edge[0] as i32));
+                assert!(
+                    parents.iter().enumerate().all(|(index, &parent)| parent == index as i32 - 1),
+                    "delta net state full accept requires a chain suffix"
+                );
 
                 let conv_state_size = self.conv_state.size();
-                let accepted_offset = accepted_index as usize * conv_state_size;
+                let accepted_offset = (parents.len() - 1) * conv_state_size;
                 command_buffer.encode_copy(
                     conv_states.subrange(accepted_offset..accepted_offset + conv_state_size),
                     &mut self.conv_state,
                 );
 
-                let accepted_indices_buffer = command_buffer.allocate_constant_from_slice(accepted_indices)?;
+                let accepted_indices = command_buffer
+                    .allocate_constant_from_slice(&(0..=parents.len() as u32).rev().collect::<Box<[u32]>>())?;
                 self.state_advance.encode(
                     &k,
                     &v,
                     &log_decay,
                     &beta,
-                    &accepted_indices_buffer,
+                    &accepted_indices,
                     &mut self.ssm_state,
-                    accepted_indices.len() as u32,
+                    command_buffer,
+                );
+            },
+        }
+        Ok(())
+    }
+
+    fn encode_accept(
+        &mut self,
+        accepted_indices: &B::GlobalGpuBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let suffix_status = self.suffix_status.take().expect("delta net state has no suffix to accept");
+
+        match suffix_status {
+            DeltaNetSuffixStatus::Flat {
+                ..
+            } => panic!("flat delta net state suffixes must be fully accepted"),
+            DeltaNetSuffixStatus::Tree {
+                conv_states,
+                k,
+                v,
+                log_decay,
+                beta,
+                ..
+            } => {
+                let conv_state_size = self.conv_state.size() as u32;
+                self.row_gather.encode(
+                    &mut self.conv_state,
+                    &conv_states,
+                    accepted_indices,
+                    conv_state_size,
+                    command_buffer,
+                );
+                self.state_advance.encode(
+                    &k,
+                    &v,
+                    &log_decay,
+                    &beta,
+                    accepted_indices,
+                    &mut self.ssm_state,
                     command_buffer,
                 );
             },
@@ -651,12 +693,14 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             self.num_heads,
             self.num_groups,
         )?;
+        let row_gather = <B::Kernels as Kernels>::RowGatherKernel::new(context)?;
 
         Ok(Box::new(DeltaNetState {
             conv_state,
             ssm_state,
             suffix_status: None,
             state_advance,
+            row_gather,
             is_empty: true,
         }))
     }

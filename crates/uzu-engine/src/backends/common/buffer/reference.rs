@@ -143,6 +143,7 @@ impl<B: GpuBuffer + ?Sized> BufferMut for Subbuffer<'_, B, true> {
     }
 }
 
+#[track_caller]
 pub fn subrange(
     buffer_range: Range<usize>,
     subrange: impl RangeBounds<usize>,

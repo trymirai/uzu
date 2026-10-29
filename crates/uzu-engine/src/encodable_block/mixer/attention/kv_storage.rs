@@ -3,16 +3,15 @@ use std::any::Any;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, Context, DeviceCapabilities, GpuBuffer, Kernels, SparseBuffer,
-        gpu_types::kv_cache_update::Copy,
-        kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, KVFormat, kv_layout::Int8KVLayout},
+        kernel::{KVCacheCompactInt8Kernel, KVCacheCompactKernel, KVFormat, kv_layout::Int8KVLayout},
     },
     data_type::DataType,
     utils::size_for_shape::size_for_shape,
 };
 
 pub enum KVStorage<B: Backend> {
-    BF16(BF16KV<B>, <B::Kernels as Kernels>::KVCacheUpdateKernel),
-    Int8(Int8KV<B>, <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel),
+    BF16(BF16KV<B>, <B::Kernels as Kernels>::KVCacheCompactKernel),
+    Int8(Int8KV<B>, <B::Kernels as Kernels>::KVCacheCompactInt8Kernel),
 }
 
 pub struct BF16KV<B: Backend> {
@@ -62,7 +61,7 @@ impl<B: Backend> KVStorage<B> {
                     v_scales: create_kv_buffer(context, scale_bytes)?,
                     layout,
                 };
-                Self::Int8(kv, <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(context, head_dim, num_kv_heads)?)
+                Self::Int8(kv, <B::Kernels as Kernels>::KVCacheCompactInt8Kernel::new(context, head_dim, num_kv_heads)?)
             },
             KVFormat::BF16 => {
                 let element_dim = num_kv_heads * head_dim;
@@ -73,7 +72,7 @@ impl<B: Backend> KVStorage<B> {
                     element_dim,
                     data_type,
                 };
-                Self::BF16(kv, <B::Kernels as Kernels>::KVCacheUpdateKernel::new(context, data_type)?)
+                Self::BF16(kv, <B::Kernels as Kernels>::KVCacheCompactKernel::new(context, data_type)?)
             },
         })
     }
@@ -105,23 +104,34 @@ impl<B: Backend> KVStorage<B> {
         }
     }
 
-    pub fn encode_accept(
+    pub fn encode_compact(
         &mut self,
-        copies: &[Copy],
+        accepted_indices: &B::GlobalGpuBuffer,
+        suffix_base: u32,
+        ring_write_start: u32,
+        ring_capacity: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let count = copies.len() as u32;
         match self {
-            Self::BF16(kv, update) => {
-                update.encode(kv.keys.as_mut(), kv.values.as_mut(), copies, count, kv.element_dim, command_buffer)
-            },
-            Self::Int8(kv, update) => update.encode(
+            Self::BF16(kv, compact) => compact.encode(
+                kv.keys.as_mut(),
+                kv.values.as_mut(),
+                accepted_indices,
+                suffix_base,
+                ring_write_start,
+                ring_capacity,
+                kv.element_dim,
+                command_buffer,
+            ),
+            Self::Int8(kv, compact) => compact.encode(
                 kv.k_codes.as_mut(),
                 kv.v_codes.as_mut(),
                 kv.k_scales.as_mut(),
                 kv.v_scales.as_mut(),
-                copies,
-                count,
+                accepted_indices,
+                suffix_base,
+                ring_write_start,
+                ring_capacity,
                 command_buffer,
             ),
         }

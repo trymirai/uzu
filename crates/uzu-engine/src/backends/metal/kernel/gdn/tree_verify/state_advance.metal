@@ -22,11 +22,10 @@ PUBLIC KERNEL(StateAdvance)(
     device const float* log_decay_buf,
     // [tree_size, num_v_heads]
     device const float* beta_buf,
-    // [accepted_len]
+    // [accepted_len][accepted indices, deepest accepted row at word 1]
     device const uint* accepted_indices,
     // [num_v_heads, HEAD_K_DIM, HEAD_K_DIM], input/output
     device float* state,
-    constant const uint& accepted_len,
     const uint num_v_heads SPECIALIZE,
     const uint num_k_heads SPECIALIZE,
     const ThreadContext thread_context,
@@ -54,8 +53,9 @@ PUBLIC KERNEL(StateAdvance)(
   state_rows[2] = *reinterpret_cast<device const float4*>(state_tile + 2 * HEAD_K_DIM);
   state_rows[3] = *reinterpret_cast<device const float4*>(state_tile + 3 * HEAD_K_DIM);
 
+  const uint accepted_len = accepted_indices[0];
   for (uint accepted_idx = 0; accepted_idx < accepted_len; ++accepted_idx) {
-    const uint tree_idx = accepted_indices[accepted_idx];
+    const uint tree_idx = accepted_indices[accepted_len - accepted_idx];
     const uint tree_head_offset = tree_idx * num_v_heads + hv_idx;
     const float decay = fast::exp(log_decay_buf[tree_head_offset]);
     const float beta = beta_buf[tree_head_offset];

@@ -2,7 +2,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode},
+    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::model::decision_model::DecisionModelConfig,
     data_type::DataType,
     encodable_block::{

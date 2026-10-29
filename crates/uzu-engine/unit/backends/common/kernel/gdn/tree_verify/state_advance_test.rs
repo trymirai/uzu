@@ -61,21 +61,15 @@ fn run<B: Backend, T: DataTypeRepr + Float>(accepted_indices: &[u32]) -> Vec<f32
     let v = create_buffer_with_data::<B, T>(&context, &v);
     let log_decay = create_buffer_with_data::<B, f32>(&context, &log_decay);
     let beta = create_buffer_with_data::<B, f32>(&context, &beta);
-    let accepted_len = accepted_indices.len();
-    let accepted_indices = create_buffer_with_data::<B, u32>(&context, accepted_indices);
+    let accepted_len = accepted_indices.len() as u32;
+    // [len][indices, deepest accepted row first]
+    let accepted_indices =
+        std::iter::once(accepted_len).chain(accepted_indices.iter().copied().rev()).collect::<Vec<_>>();
+    let accepted_indices = create_buffer_with_data::<B, u32>(&context, &accepted_indices);
     let mut committed_state = create_buffer_with_data::<B, f32>(&context, &initial_state);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-    kernel.encode(
-        &k_norm,
-        &v,
-        &log_decay,
-        &beta,
-        &accepted_indices,
-        &mut committed_state,
-        accepted_len as u32,
-        &mut command_buffer,
-    );
+    kernel.encode(&k_norm, &v, &log_decay, &beta, &accepted_indices, &mut committed_state, &mut command_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec(&*context, &committed_state)
 }
@@ -121,7 +115,10 @@ fn bench_state_advance(c: &mut Criterion) {
     group.sample_size(30).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(1));
 
     for accepted_len in [1usize, 4, 8, 16] {
-        let accepted_indices = create_buffer_with_data::<Metal, u32>(&context, &PATH[..accepted_len]);
+        // [len][indices, deepest accepted row first]
+        let accepted_indices =
+            std::iter::once(accepted_len as u32).chain(PATH[..accepted_len].iter().copied().rev()).collect::<Vec<_>>();
+        let accepted_indices = create_buffer_with_data::<Metal, u32>(&context, &accepted_indices);
         let mut committed_states = ColdPool::new(buffer_size_bytes::<f32>(initial_state.len()), || {
             create_buffer_with_data::<Metal, f32>(&context, &initial_state)
         });
@@ -138,7 +135,6 @@ fn bench_state_advance(c: &mut Criterion) {
                         &beta,
                         &accepted_indices,
                         committed_states.next_mut(),
-                        accepted_len as u32,
                         command_buffer,
                     );
                 },

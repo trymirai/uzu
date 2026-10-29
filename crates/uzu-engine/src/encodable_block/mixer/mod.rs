@@ -24,6 +24,7 @@ pub mod attention;
 pub mod delta_net;
 pub mod short_conv;
 
+/// `encode_x` should schedule GPU only.
 pub trait MixerState<B: Backend>: Any + Send {
     fn prepare(
         &mut self,
@@ -31,11 +32,33 @@ pub trait MixerState<B: Backend>: Any + Send {
         suffix_length: u32,
     ) -> Result<(), B::Error>;
 
-    fn encode_accept(
+    fn encode_accept_all(
         &mut self,
-        accepted_indices: &[u32],
+        len_accepted: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
+
+    fn encode_accept(
+        &mut self,
+        accepted_indices: &B::GlobalGpuBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error>;
+
+    fn commit_accept(
+        &mut self,
+        _len_accepted: u32,
+    ) {
+    }
+
+    fn accept_all(
+        &mut self,
+        len_accepted: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        self.encode_accept_all(len_accepted, command_buffer)?;
+        self.commit_accept(len_accepted);
+        Ok(())
+    }
 }
 
 impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {

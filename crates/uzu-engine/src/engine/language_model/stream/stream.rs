@@ -191,12 +191,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         self.options.grammar.as_mut(),
                     )?;
 
-                    let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
+                    let accepted_token_indices = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
                     let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
                     let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
                     output_tokens = accepted_output_token_ids;
 
-                    Some((accepted_token_indicies, accepted_input_token_ids))
+                    Some((accepted_token_indices, accepted_input_token_ids))
                 } else {
                     None
                 };
@@ -296,7 +296,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
+                .accept_all(input_chunk.len() as u32, &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -602,7 +602,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let new_job = if batch_dim.full_accept() {
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut command_buffer)
+                .accept_all(batch_dim.size(), &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -661,9 +661,20 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
             let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
 
+            // TODO: This should be passed in from the verification.
+            let len = accepted_token_indices.len() as u32;
+            let mut staged = self
+                .model
+                .engine
+                .context
+                .create_buffer_cpu_gpu(size_for_shape(&[1 + len], DataType::U32))
+                .map_err(LanguageModelStreamError::Backend)?;
+            staged.copyin(&once(len).chain(accepted_token_indices.iter().copied().rev()).collect::<Box<[_]>>());
+            let accepted_token_indices_buffer = staged.handoff();
+
             self.model_state
                 .transformer_state
-                .encode_accept(accepted_token_indices, &mut command_buffer)
+                .encode_accept(&accepted_token_indices_buffer, &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -698,7 +709,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             self.model_state.tokens.extend(accepted_output_token_ids);
             self.metrics.num_tokens_accepted += accepted_token_indices.len();
 
-            command_buffer.end_encoding().submit();
+            wait(command_buffer.end_encoding().submit(), self.options.timestamps.as_ref())
+                .await
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            self.model_state
+                .transformer_state
+                .commit_accept(accepted_token_indices.len() as u32)
+                .map_err(LanguageModelStreamError::Backend)?;
 
             new_job
         };

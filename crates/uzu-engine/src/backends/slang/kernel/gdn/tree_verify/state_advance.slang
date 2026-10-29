@@ -10,7 +10,6 @@ import definitions;
   StructuredBuffer<float> beta_buf,
   StructuredBuffer<uint> accepted_indices,
   RWStructuredBuffer<float> state,
-  uint accepted_len,
   [[Specialize]] uint num_v_heads,
   [[Specialize]] uint num_k_heads,
   ThreadContext thread_context,

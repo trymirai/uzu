@@ -4,7 +4,9 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
-        kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
+        kernel::{
+            RowGatherKernel, ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel,
+        },
     },
     config::token_mixer::short_conv::ShortConvConfig,
     data_type::DataType,
@@ -29,6 +31,7 @@ enum ShortConvStateSuffixStatus<B: Backend> {
 pub struct ShortConvState<B: Backend> {
     conv_state: B::GlobalGpuBuffer,
     suffix_state: Option<ShortConvStateSuffixStatus<B>>,
+    row_gather: <B::Kernels as Kernels>::RowGatherKernel,
     is_empty: bool,
 }
 
@@ -41,35 +44,53 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
         Ok(())
     }
 
-    fn encode_accept(
+    fn encode_accept_all(
         &mut self,
-        accepted_indices: &[u32],
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        len_accepted: u32,
+        _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let suffix_state_type =
             self.suffix_state.take().expect("Called short conv state encode accept on a state with nothing to accept");
-
-        let accepted_index = *accepted_indices.last().expect("short conv state attempted to accept zero indicies");
 
         match suffix_state_type {
             ShortConvStateSuffixStatus::Flat {
                 suffix_length,
             } => {
-                assert!(accepted_index == suffix_length - 1, "attempted to do a partial flat short conv state accept");
-                Ok(())
+                assert_eq!(len_accepted, suffix_length, "attempted to do a partial flat short conv state accept");
             },
+            ShortConvStateSuffixStatus::Trie {
+                ..
+            } => panic!("short conv state cannot full-accept a trie suffix"),
+        }
+        Ok(())
+    }
+
+    fn encode_accept(
+        &mut self,
+        accepted_indices: &B::GlobalGpuBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let suffix_state_type =
+            self.suffix_state.take().expect("Called short conv state encode accept on a state with nothing to accept");
+
+        match suffix_state_type {
+            ShortConvStateSuffixStatus::Flat {
+                ..
+            } => panic!("flat short conv state suffixes must be fully accepted"),
             ShortConvStateSuffixStatus::Trie {
                 conv_states,
             } => {
-                let conv_state_size = self.conv_state.size();
-                let accepted_offset = accepted_index as usize * conv_state_size;
-                command_buffer.encode_copy(
-                    conv_states.subrange(accepted_offset..accepted_offset + conv_state_size),
+                let conv_state_size = self.conv_state.size() as u32;
+                self.row_gather.encode(
                     &mut self.conv_state,
+                    &conv_states,
+                    accepted_indices,
+                    conv_state_size,
+                    command_buffer,
                 );
-                Ok(())
             },
         }
+        Ok(())
     }
 }
 
@@ -289,10 +310,12 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
         let conv_state =
             context.create_buffer_gpu(size_for_shape(&[self.kernel_size - 1, self.hidden_dim], self.data_type))?;
+        let row_gather = <B::Kernels as Kernels>::RowGatherKernel::new(context)?;
 
         Ok(Box::new(ShortConvState {
             conv_state,
             suffix_state: None,
+            row_gather,
             is_empty: true,
         }))
     }

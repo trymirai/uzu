@@ -55,27 +55,55 @@ impl<B: Backend> TransformerState<B> {
         Ok(())
     }
 
-    pub fn encode_accept(
+    pub fn accept_all(
         &mut self,
-        accepted_indices: &[u32],
+        accepted_len: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        {
-            let command_buffer = &mut *command_buffer.debug_group("transformer accept");
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
 
-            for layer_state in &mut self.layer_states {
-                let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                    continue;
-                };
-
-                layer_state.encode_accept(accepted_indices, command_buffer)?;
-            }
-
-            self.context_length += accepted_indices.len() as u32;
+            layer_state.accept_all(accepted_len, command_buffer)?;
         }
 
-        command_buffer.debug_point(&format!("accepted {} tokens", accepted_indices.len()));
+        self.context_length += accepted_len;
 
+        Ok(())
+    }
+
+    pub fn encode_accept(
+        &mut self,
+        accepted_indices: &B::GlobalGpuBuffer,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let command_buffer = &mut *command_buffer.debug_group("transformer accept");
+
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
+
+            layer_state.encode_accept(accepted_indices, command_buffer)?;
+        }
+
+        Ok(())
+    }
+
+    /// advance CPU-side bookkeeping (required after [`Self::encode_accept`] and before enqueing any more work).
+    pub fn commit_accept(
+        &mut self,
+        accepted_len: u32,
+    ) -> Result<(), B::Error> {
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
+
+            layer_state.commit_accept(accepted_len);
+        }
+        self.context_length += accepted_len;
         Ok(())
     }
 }

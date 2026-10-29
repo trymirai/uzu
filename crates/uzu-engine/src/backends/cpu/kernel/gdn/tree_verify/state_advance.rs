@@ -12,13 +12,13 @@ pub fn state_advance<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
     v: *const T,
     log_decay_buf: *const f32,
     beta_buf: *const f32,
+    // [accepted_len][accepted indices, deepest accepted row at word 1]
     accepted_indices: *const u32,
     state: *mut f32,
-    accepted_len: u32,
     #[specialize] num_v_heads: u32,
     #[specialize] num_k_heads: u32,
 ) {
-    let accepted_len = accepted_len as usize;
+    let accepted_len = unsafe { *accepted_indices } as usize;
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
     let head_k_dim = HEAD_K_DIM as usize;
@@ -32,7 +32,7 @@ pub fn state_advance<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
         for dv_idx in 0..head_v_dim {
             let state_row_offset = (hv_idx * head_v_dim + dv_idx) * head_k_dim;
             for accepted_idx in 0..accepted_len {
-                let tree_idx = unsafe { *accepted_indices.add(accepted_idx) } as usize;
+                let tree_idx = unsafe { *accepted_indices.add(accepted_len - accepted_idx) } as usize;
                 let tree_head_offset = tree_idx * num_v_heads + hv_idx;
                 let decay = unsafe { *log_decay_buf.add(tree_head_offset) }.exp();
                 let beta = unsafe { *beta_buf.add(tree_head_offset) };
