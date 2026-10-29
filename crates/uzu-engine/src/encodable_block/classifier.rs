@@ -66,6 +66,7 @@ impl<B: Backend> Classifier<B> {
         let embedding_norm = Normalization::new(
             config.transformer_config.model_dim,
             data_type,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::None,
@@ -76,6 +77,7 @@ impl<B: Backend> Classifier<B> {
         .await?;
 
         let transformer = Transformer::new(
+            data_type,
             data_type,
             None,
             &config.transformer_config,

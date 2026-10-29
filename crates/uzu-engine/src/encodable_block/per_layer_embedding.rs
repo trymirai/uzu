@@ -83,6 +83,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let projection_norm = Normalization::new(
             config.ple_dim,
             data_type,
+            data_type,
             None,
             ShortcutMode::None,
             PostLayerScalar::ScaleOutput(config.input_scale),
@@ -199,6 +200,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         .await?;
         let norm = Normalization::new(
             model_dim,
+            data_type,
             data_type,
             None,
             ShortcutMode::None,

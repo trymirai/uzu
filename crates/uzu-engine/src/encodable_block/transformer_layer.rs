@@ -236,6 +236,7 @@ impl<B: Backend> TransformerLayer<B> {
                 Normalization::new(
                     model_dim,
                     data_type,
+                    data_type,
                     mixer_hadamard_factors,
                     if layer_index > 0 {
                         ShortcutMode::Add
@@ -260,6 +261,7 @@ impl<B: Backend> TransformerLayer<B> {
             Some(
                 Normalization::new(
                     model_dim,
+                    data_type,
                     data_type,
                     None,
                     ShortcutMode::None,
@@ -305,6 +307,7 @@ impl<B: Backend> TransformerLayer<B> {
         let pre_mlp_norm = Normalization::new(
             model_dim,
             data_type,
+            data_type,
             mlp_input_hadamard_factors,
             ShortcutMode::Add,
             residual_sum_scalar,
@@ -318,6 +321,7 @@ impl<B: Backend> TransformerLayer<B> {
             Some(
                 Normalization::new(
                     model_dim,
+                    data_type,
                     data_type,
                     None,
                     ShortcutMode::None,
