@@ -1,6 +1,7 @@
 pub mod chat_message;
 pub mod chat_token;
 pub mod classification;
+pub mod decision;
 pub mod text_to_speech;
 
 use std::{
@@ -28,6 +29,10 @@ pub trait Backend: Send + Sync {
     }
 
     fn as_classification_capable(&self) -> Option<&dyn classification::Backend> {
+        None
+    }
+
+    fn as_decision_capable(&self) -> Option<&dyn decision::DecisionBackend> {
         None
     }
 

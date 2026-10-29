@@ -5,6 +5,7 @@ uniffi::setup_scaffolding!();
 pub mod api;
 pub mod chat;
 pub mod classification;
+pub mod decision;
 pub mod text_to_speech;
 pub mod tool;
 mod util;

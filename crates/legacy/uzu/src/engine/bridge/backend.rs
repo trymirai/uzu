@@ -7,6 +7,7 @@ use shoji::{
             Error as BackendError,
             chat_token::{Backend as ChatTokenBackend, Instance as ChatTokenInstance},
             classification::{Backend as ClassificationBackend, Config, Instance as ClassificationInstance},
+            decision::{Config as DecisionConfig, DecisionBackend, DecisionInstance},
         },
     },
     types::session::chat::ChatConfig,
@@ -18,6 +19,7 @@ use uzu_engine::{
 
 use crate::engine::bridge::{
     chat_token_backend::UzuChatTokenBackendInstance, classification_backend::UzuClassificationBackendInstance,
+    decision_backend::UzuDecisionBackendInstance,
 };
 
 struct ChatTokenInstanceSelection {
@@ -51,6 +53,21 @@ impl BackendSelection for ClassificationInstanceSelection {
     }
 }
 
+struct DecisionInstanceSelection {
+    reference: String,
+}
+
+impl BackendSelection for DecisionInstanceSelection {
+    type Output = Box<dyn DecisionInstance>;
+    type Error = BackendError;
+
+    async fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {
+        UzuDecisionBackendInstance::<B>::new(self.reference)
+            .await
+            .map(|instance| Box::new(instance) as Box<dyn DecisionInstance>)
+    }
+}
+
 pub struct UzuLlmBackend;
 
 impl UzuLlmBackend {
@@ -73,6 +90,10 @@ impl LlmBackend for UzuLlmBackend {
     }
 
     fn as_classification_capable(&self) -> Option<&dyn ClassificationBackend> {
+        Some(self)
+    }
+
+    fn as_decision_capable(&self) -> Option<&dyn DecisionBackend> {
         Some(self)
     }
 }
@@ -106,6 +127,25 @@ impl ClassificationBackend for UzuLlmBackend {
         Box::pin(async move {
             let instance = select_backend(
                 ClassificationInstanceSelection {
+                    reference,
+                },
+                BackendError::from("Unable to open any backend"),
+            )
+            .await?;
+            Ok(instance)
+        })
+    }
+}
+
+impl DecisionBackend for UzuLlmBackend {
+    fn instance(
+        &self,
+        reference: String,
+        _config: DecisionConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn DecisionInstance>, BackendError>> + Send + '_>> {
+        Box::pin(async move {
+            let instance = select_backend(
+                DecisionInstanceSelection {
                     reference,
                 },
                 BackendError::from("Unable to open any backend"),
