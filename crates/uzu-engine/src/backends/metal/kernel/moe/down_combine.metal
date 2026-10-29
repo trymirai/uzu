@@ -36,7 +36,7 @@ PUBLIC KERNEL(MoeDownCombine)(
     const device T* a,
     const device uint* expert_ids,
     const device float* expert_weights,
-    const device float* shared_gate OPTIONAL(has_gate),
+    const device T* shared_gate OPTIONAL(has_gate),
     device T* output,
     const device T* output_bias OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* hadamard_factors OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
@@ -249,7 +249,7 @@ PUBLIC KERNEL(MoeDownCombine)(
 
         float shared_gate_val = 0.0f;
         if (has_gate) {
-          shared_gate_val = shared_gate[token_idx * gate_stride];
+          shared_gate_val = float(shared_gate[token_idx * gate_stride]);
         }
 
         Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {

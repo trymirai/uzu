@@ -33,7 +33,7 @@ pub fn moe_down_combine<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BI
     a: *const T,
     expert_ids: *const u32,
     expert_weights: *const f32,
-    #[optional(has_gate)] shared_gate: Option<*const f32>,
+    #[optional(has_gate)] shared_gate: Option<*const T>,
     output: *mut T,
     #[optional(output_transform.contains(GemmDTransform::BIAS))] output_bias: Option<*const T>,
     #[optional(output_transform.contains(GemmDTransform::RHT))] hadamard_factors: Option<*const i32>,
@@ -150,7 +150,7 @@ pub fn moe_down_combine<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BI
             }
 
             let shared_w = if has_gate {
-                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) };
+                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) }.to_f32().unwrap();
                 1.0f32 / (1.0f32 + (-g).exp())
             } else {
                 1.0f32

@@ -53,7 +53,10 @@ fn run_moe_down_combine<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
     let input_buf = create_buffer_with_data::<B, bf16>(&context, input);
     let expert_ids_buf = create_buffer_with_data::<B, u32>(&context, expert_ids);
     let expert_weights_buf = create_buffer_with_data::<B, f32>(&context, expert_weights);
-    let shared_gate_buf = shared_gate.map(|g| create_buffer_with_data::<B, f32>(&context, g));
+    let shared_gate_buf = shared_gate.map(|g| {
+        let gate: Vec<bf16> = g.iter().map(|&v| bf16::from_f32(v)).collect();
+        create_buffer_with_data::<B, bf16>(&context, &gate)
+    });
     let out_bias_buf = output_bias.map(|b| create_buffer_with_data::<B, bf16>(&context, b));
     let rht_buf = output_hadamard_factors.map(|f| create_buffer_with_data::<B, i32>(&context, f));
 
