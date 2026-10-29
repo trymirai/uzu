@@ -563,7 +563,7 @@ impl<B: Backend> Weaver<B> {
         target_embedding: &Embedding<B>,
         logits: impl BufferRef<Backend = B>,
         depth_seeds: &[u64],
-        root_token_id: u32,
+        root_token: impl BufferRef<Backend = B>,
         shape: WeaverTreeShape,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
@@ -629,10 +629,12 @@ impl<B: Backend> Weaver<B> {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(WeaverEncodeError::Backend)?;
 
-            let root = command_buffer
-                .allocate_constant_from_slice(&[root_token_id, 1u32])
-                .map_err(WeaverEncodeError::Backend)?;
             let word_bytes = DataType::U32.size_in_bytes();
+            assert_eq!(root_token.size(), word_bytes, "root token must be a single u32");
+            let mut root = command_buffer
+                .allocate_constant_from_slice(&[0u32, 1u32])
+                .map_err(WeaverEncodeError::Backend)?;
+            command_buffer.encode_copy(root_token, root.subrange_mut(..word_bytes));
             let tree_field_bytes = size_for_shape(&[tree_slot_count], DataType::U32);
             let mut packed_tree = command_buffer
                 .allocate_scratch(TreeIdx::COUNT * tree_field_bytes)

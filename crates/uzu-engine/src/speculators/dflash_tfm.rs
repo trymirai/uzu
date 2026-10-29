@@ -198,7 +198,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         &self,
         state: &mut DFlashState<B>,
         target_output_norm: impl BufferRef<Backend = B>,
-        target_output_token: u32,
+        target_output_token: impl BufferRef<Backend = B, Buffer = B::GlobalGpuBuffer>,
         target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
         sampling_method: &SamplingMethod,
@@ -238,12 +238,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 }
                 let chain_length = shape.tree_budget - 1;
                 let mut nodes = Vec::with_capacity(shape.tree_budget as usize);
-                nodes.push(ProposalNode {
-                    token_id: target_output_token,
-                    depth: 0,
-                    logprob: 0.0,
-                    child_indices: vec![1],
-                });
                 let dflash_output = self.dflash.encode_draft(
                     target_embedding,
                     target_output_token,
@@ -268,8 +262,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     .map_err(DFlashTreeError::Backend)?;
                 let completed =
                     wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let tokens = self.context.copyout::<u32>(&sampled).await.map_err(DFlashTreeError::Backend)?;
+                let (root_token, tokens) = futures::future::try_join(
+                    self.context.copyout::<u32>(target_output_token),
+                    self.context.copyout::<u32>(&sampled),
+                )
+                .await
+                .map_err(DFlashTreeError::Backend)?;
                 drop(completed);
+                nodes.push(ProposalNode {
+                    token_id: root_token[0],
+                    depth: 0,
+                    logprob: 0.0,
+                    child_indices: vec![1],
+                });
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
                     token_id,
                     depth,
