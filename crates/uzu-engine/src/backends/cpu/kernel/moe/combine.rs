@@ -16,15 +16,17 @@ pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     model_dim: u32,
     top_k: u32,
     batch_size: u32,
+    gate_stride: u32,
     #[specialize] has_shared: bool,
     #[specialize] has_gate: bool,
 ) {
     let model_dim_u = model_dim as usize;
     let top_k_u = top_k as usize;
+    let gate_stride_u = gate_stride as usize;
     for token_idx in 0..batch_size as usize {
         let shared_w = if has_shared {
             if has_gate {
-                let g = unsafe { *shared_gate.unwrap().add(token_idx) }.to_f32().unwrap();
+                let g = unsafe { *shared_gate.unwrap().add(token_idx * gate_stride_u) }.to_f32().unwrap();
                 1.0f32 / (1.0f32 + (-g).exp())
             } else {
                 1.0f32

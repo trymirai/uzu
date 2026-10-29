@@ -2,7 +2,7 @@ use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-use super::assert_vec_close;
+use super::{SharedGemv, assert_vec_close};
 use crate::{
     backends::{
         common::{
@@ -41,6 +41,7 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
     zero_point_output_stride: u32,
     zero_point_group_stride: u32,
     a_per_token: bool,
+    shared: Option<&SharedGemv<'_, W, Z>>,
 ) -> Vec<bf16> {
     let context = create_context::<B>();
     let weights_buf = create_buffer_with_data::<B, W>(&context, weights);
@@ -51,6 +52,21 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
     let expert_ids_buf = create_buffer_with_data::<B, u32>(&context, expert_ids);
     let out_bias_buf = output_bias.map(|b| create_buffer_with_data::<B, bf16>(&context, b));
     let rht_buf = output_hadamard_factors.map(|f| create_buffer_with_data::<B, i32>(&context, f));
+
+    let has_shared = shared.is_some();
+    let num_routed_routes = shared.as_ref().map_or(num_routes, |s| s.num_routed_routes);
+    let shared_weights_buf = shared.as_ref().map(|s| create_buffer_with_data::<B, W>(&context, s.weights));
+    let shared_scales_buf =
+        shared.as_ref().and_then(|s| s.scales.map(|sc| create_buffer_with_data::<B, bf16>(&context, sc)));
+    let shared_zp_buf =
+        shared.as_ref().and_then(|s| s.zero_points.map(|z| create_buffer_with_data::<B, Z>(&context, z)));
+    let shared_biases_buf =
+        shared.as_ref().and_then(|s| s.biases.map(|b| create_buffer_with_data::<B, bf16>(&context, b)));
+    let shared_out_bias_buf =
+        shared.as_ref().and_then(|s| s.output_bias.map(|b| create_buffer_with_data::<B, bf16>(&context, b)));
+    let shared_rht_buf =
+        shared.as_ref().and_then(|s| s.hadamard.map(|f| create_buffer_with_data::<B, i32>(&context, f)));
+
     let mut output_buf = create_buffer::<B, bf16>(&context, (num_routes * output_dim) as usize);
 
     let b_prologue = if bits == 0 {
@@ -81,6 +97,7 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
         false,
         full_tile,
         a_per_token,
+        has_shared,
     )
     .unwrap();
 
@@ -91,11 +108,17 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
         scales_buf.as_ref(),
         zp_buf.as_ref(),
         biases_buf.as_ref(),
+        shared_weights_buf.as_ref(),
+        shared_scales_buf.as_ref(),
+        shared_zp_buf.as_ref(),
+        shared_biases_buf.as_ref(),
         &input_buf,
         &expert_ids_buf,
         &mut output_buf,
         out_bias_buf.as_ref(),
         rht_buf.as_ref(),
+        shared_out_bias_buf.as_ref(),
+        shared_rht_buf.as_ref(),
         input_dim,
         output_dim,
         num_routes,
@@ -108,6 +131,7 @@ fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
         scale_group_stride,
         zero_point_output_stride,
         zero_point_group_stride,
+        num_routed_routes,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -131,6 +155,7 @@ fn compare_moe_gemv<W: DataTypeRepr, Z: DataTypeRepr>(
     a_per_token: bool,
     tol: f32,
     desc: &str,
+    shared: Option<&SharedGemv<'_, W, Z>>,
 ) {
     let b_stride = out_dim
         * if bits == 0 {
@@ -165,6 +190,7 @@ fn compare_moe_gemv<W: DataTypeRepr, Z: DataTypeRepr>(
         1,
         out_dim,
         a_per_token,
+        shared,
     );
 
     for_each_non_cpu_backend!(|B| {
@@ -191,6 +217,7 @@ fn compare_moe_gemv<W: DataTypeRepr, Z: DataTypeRepr>(
             1,
             out_dim,
             a_per_token,
+            shared,
         );
         assert_vec_close(&actual, &expected, tol, desc);
     });
@@ -244,6 +271,7 @@ fn moe_gemv_u4_asymmetric_matches_cpu() {
             true,
             2e-2,
             &format!("U4 asymmetric (batch={batch}, rht={use_rht})"),
+            None,
         );
     }
 }
@@ -288,6 +316,7 @@ fn moe_gemv_u8_symmetric_matches_cpu() {
         true,
         2e-2,
         "U8 symmetric",
+        None,
     );
 }
 
@@ -320,6 +349,7 @@ fn moe_gemv_bf16_and_scale_bias_matches_cpu() {
         true,
         2e-2,
         "BF16",
+        None,
     );
 
     // 2. Scale-bias dequantization
@@ -349,6 +379,7 @@ fn moe_gemv_bf16_and_scale_bias_matches_cpu() {
         true,
         2e-2,
         "Scale-bias",
+        None,
     );
 }
 
@@ -388,6 +419,7 @@ fn moe_gemv_partial_tile_and_real_shapes_matches_cpu() {
             false,
             2e-2,
             "PartialTile",
+            None,
         );
     }
 
@@ -426,6 +458,75 @@ fn moe_gemv_partial_tile_and_real_shapes_matches_cpu() {
             true,
             2e-2,
             &format!("Shape {in_dim}->{out_dim}"),
+            None,
+        );
+    }
+}
+
+#[uzu_test]
+fn moe_gemv_shared_expert_matches_cpu() {
+    let (num_experts, in_dim, out_dim, group_size, active, batch) = (4u32, 128u32, 64u32, 64u32, 2u32, 2u32);
+    let num_groups = in_dim / group_size;
+    let num_routed_routes = batch * active;
+    let num_routes = num_routed_routes + batch;
+
+    let weights: Vec<u8> =
+        (0..(num_experts * out_dim * (in_dim / 2)) as usize).map(|i| ((i * 73 + 19) & 0xFF) as u8).collect();
+    let scales: Vec<bf16> = (0..(num_experts * num_groups * out_dim) as usize)
+        .map(|i| bf16::from_f32((((i * 29 + 5) % 41) as f32 + 1.0) * 0.01))
+        .collect();
+    let zero_points: Vec<u8> = (0..(num_experts * num_groups * (out_dim / 2)) as usize)
+        .map(|i| (((i * 43 + 11) & 0x0F) | (((i * 61 + 3) & 0x0F) << 4)) as u8)
+        .collect();
+
+    let shared_weights: Vec<u8> =
+        (0..(out_dim * (in_dim / 2)) as usize).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+    let shared_scales: Vec<bf16> = (0..(num_groups * out_dim) as usize)
+        .map(|i| bf16::from_f32((((i * 17 + 3) % 31) as f32 + 1.0) * 0.01))
+        .collect();
+    let shared_zero_points: Vec<u8> = (0..(num_groups * (out_dim / 2)) as usize)
+        .map(|i| (((i * 19 + 7) & 0x0F) | (((i * 23 + 5) & 0x0F) << 4)) as u8)
+        .collect();
+
+    let expert_ids: Vec<u32> = (0..num_routed_routes as usize).map(|i| (i as u32) % num_experts).collect();
+    let shared = SharedGemv {
+        weights: &shared_weights,
+        scales: Some(&shared_scales),
+        zero_points: Some(&shared_zero_points),
+        biases: None,
+        output_bias: None,
+        hadamard: None,
+        num_routed_routes,
+    };
+
+    for a_per_token in [true, false] {
+        let input_rows = if a_per_token {
+            batch
+        } else {
+            num_routes
+        };
+        let input: Vec<bf16> = (0..(input_rows * in_dim) as usize)
+            .map(|i| bf16::from_f32((((i * 31 + 17) % 53) as f32 - 26.0) * 0.05))
+            .collect();
+
+        compare_moe_gemv(
+            &weights,
+            Some(&scales),
+            Some(&zero_points),
+            None,
+            &input,
+            &expert_ids,
+            None,
+            in_dim,
+            out_dim,
+            num_routes,
+            active,
+            4,
+            group_size,
+            a_per_token,
+            2e-2,
+            &format!("Shared expert (a_per_token={a_per_token})"),
+            Some(&shared),
         );
     }
 }
