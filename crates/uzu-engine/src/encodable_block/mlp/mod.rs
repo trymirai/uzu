@@ -62,7 +62,7 @@ impl<B: Backend> dyn Mlp<B> {
                 Ok((Box::new(dense), up_input_hadamard_factors))
             },
             AnyMLPConfig::MixtureOfExpertsConfig(config) => {
-                let moe = MoeMlp::new(model_dimension, data_type, config, parameter_tree, context)?;
+                let moe = MoeMlp::new(model_dimension, data_type, config, parameter_tree, context).await?;
 
                 Ok((Box::new(moe), None))
             },

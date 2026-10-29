@@ -74,13 +74,13 @@ pub enum MoeMlpNewError<B: Backend> {
 
 struct RoutedProjection<B: Backend> {
     kernel: <B::Kernels as Kernels>::MoeGemvKernel,
-    input_rht: Option<(ActivationTransform<B>, B::GlobalBuffer)>,
-    weights: B::GlobalBuffer,
-    scales: Option<B::GlobalBuffer>,
-    zero_points: Option<B::GlobalBuffer>,
-    biases: Option<B::GlobalBuffer>,
-    output_bias: Option<B::GlobalBuffer>,
-    output_hadamard_factors: Option<B::GlobalBuffer>,
+    input_rht: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
+    weights: B::GlobalGpuBuffer,
+    scales: Option<B::GlobalGpuBuffer>,
+    zero_points: Option<B::GlobalGpuBuffer>,
+    biases: Option<B::GlobalGpuBuffer>,
+    output_bias: Option<B::GlobalGpuBuffer>,
+    output_hadamard_factors: Option<B::GlobalGpuBuffer>,
     input_dim: u32,
     output_dim: u32,
     data_type: DataType,
@@ -94,14 +94,14 @@ struct RoutedProjection<B: Backend> {
 }
 
 impl<B: Backend> RoutedProjection<B> {
-    fn load(
+    async fn load(
         num_experts: u32,
         input_dim: u32,
         output_dim: u32,
         data_type: DataType,
         has_biases: bool,
         fuse_input_rht_externally: bool,
-        proj_tree: &ParameterTree<B>,
+        proj_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<LinearInputPreparation<B>>), MoeMlpNewError<B>> {
         if data_type != DataType::BF16 {
@@ -121,34 +121,42 @@ impl<B: Backend> RoutedProjection<B> {
                     mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => {
-                let signs = match weights_tree.read_buffer(
-                    "incoherence_signs.input_signs",
-                    &[num_experts, input_dim],
-                    DataType::I32,
-                ) {
-                    Ok(buf) => {
-                        let signs_slice = (&buf).as_slice::<i32>();
-                        if !verify_uniform_expert_signs(signs_slice, num_experts as usize, input_dim as usize) {
+                // The loader error carries B::Error, which has no Send bound, so the Result must not live across
+                // an await: decide first, then read.
+                let per_expert_signs = match weights_tree
+                    .read_slice::<i32>("incoherence_signs.input_signs", &[num_experts, input_dim])
+                    .await
+                {
+                    Ok(signs_slice) => Some(signs_slice),
+                    Err(ParameterLoaderError::InvalidTensor {
+                        ..
+                    }) => None,
+                    Err(err) => return Err(err.into()),
+                };
+                let signs = match per_expert_signs {
+                    Some(signs_slice) => {
+                        if !verify_uniform_expert_signs(&signs_slice, num_experts as usize, input_dim as usize) {
                             return Err(MoeMlpNewError::UnsupportedConfiguration(
                                 "incoherence input_signs vary across experts in routed projection".to_string(),
                             ));
                         }
-                        buf
+                        weights_tree
+                            .read_buffer("incoherence_signs.input_signs", &[num_experts, input_dim], DataType::I32)
+                            .await?
                     },
-                    Err(ParameterLoaderError::InvalidTensor {
-                        ..
-                    }) => weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dim], DataType::I32)?,
-                    Err(err) => return Err(err.into()),
+                    None => {
+                        weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dim], DataType::I32).await?
+                    },
                 };
-                let out_signs = (mode == IncoherenceProcessingMode::InputOutput)
-                    .then(|| {
-                        weights_tree.read_buffer(
-                            "incoherence_signs.output_signs",
-                            &[num_experts, output_dim],
-                            DataType::I32,
-                        )
-                    })
-                    .transpose()?;
+                let out_signs = if mode == IncoherenceProcessingMode::InputOutput {
+                    Some(
+                        weights_tree
+                            .read_buffer("incoherence_signs.output_signs", &[num_experts, output_dim], DataType::I32)
+                            .await?,
+                    )
+                } else {
+                    None
+                };
                 (weights_tree.subtree("quantized"), *quantization_spec, Some(signs), out_signs)
             },
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
@@ -171,8 +179,11 @@ impl<B: Backend> RoutedProjection<B> {
             )));
         }
 
-        let output_bias =
-            has_biases.then(|| proj_tree.read_buffer("biases", &[num_experts, output_dim], data_type)).transpose()?;
+        let output_bias = if has_biases {
+            Some(proj_tree.read_buffer("biases", &[num_experts, output_dim], data_type).await?)
+        } else {
+            None
+        };
 
         let mut output_transform = GemmDTransform::empty();
         if output_hadamard_factors.is_some() {
@@ -202,7 +213,7 @@ impl<B: Backend> RoutedProjection<B> {
             zero_point_strides,
         ) = match quantization {
             None => {
-                let w = quant_tree.read_buffer("weights", &[num_experts, output_dim, input_dim], data_type)?;
+                let w = quant_tree.read_buffer("weights", &[num_experts, output_dim, input_dim], data_type).await?;
                 let stride_bytes = output_dim * input_dim * (data_type.size_in_bytes() as u32);
                 (
                     w,
@@ -244,23 +255,20 @@ impl<B: Backend> RoutedProjection<B> {
                 let scale_strides = params.scale_strides();
                 let zp_strides = params.zero_point_strides(info.mode);
 
-                let w = quant_tree.read_buffer(
-                    "weights",
-                    &[num_experts, output_dim, input_dim / packing_divisor],
-                    storage_type,
-                )?;
-                let s = quant_tree.read_buffer("scales", &[num_experts, scale_shape[0], scale_shape[1]], data_type)?;
+                let w = quant_tree
+                    .read_buffer("weights", &[num_experts, output_dim, input_dim / packing_divisor], storage_type)
+                    .await?;
+                let s =
+                    quant_tree.read_buffer("scales", &[num_experts, scale_shape[0], scale_shape[1]], data_type).await?;
                 let b_stride = output_dim * (input_dim / packing_divisor);
                 let s_stride = scale_shape[0] * scale_shape[1];
 
                 match info.method {
                     QuantizationMethod::ScaleZeroPoint => {
                         let zp_shape = params.zero_point_shape(info.mode);
-                        let zp = quant_tree.read_buffer(
-                            "zero_points",
-                            &[num_experts, zp_shape[0], zp_shape[1]],
-                            storage_type,
-                        )?;
+                        let zp = quant_tree
+                            .read_buffer("zero_points", &[num_experts, zp_shape[0], zp_shape[1]], storage_type)
+                            .await?;
                         let zp_stride = zp_shape[0] * zp_shape[1];
                         (
                             w,
@@ -278,11 +286,9 @@ impl<B: Backend> RoutedProjection<B> {
                         )
                     },
                     QuantizationMethod::ScaleBias => {
-                        let b = quant_tree.read_buffer(
-                            "biases",
-                            &[num_experts, scale_shape[0], scale_shape[1]],
-                            data_type,
-                        )?;
+                        let b = quant_tree
+                            .read_buffer("biases", &[num_experts, scale_shape[0], scale_shape[1]], data_type)
+                            .await?;
                         (
                             w,
                             Some(s),
@@ -453,18 +459,19 @@ const fn zp_strides_or_zero(
     }
 }
 
-fn read_first_input_signs<B: Backend>(
-    proj_tree: &ParameterTree<B>,
+async fn read_first_input_signs<B: Backend>(
+    proj_tree: &ParameterTree<'_, B>,
     num_experts: Option<u32>,
     input_dim: u32,
 ) -> Option<Vec<i32>> {
     let weights_tree = proj_tree.subtree("weights");
-    let slice = match num_experts {
-        Some(e) => weights_tree
-            .read_slice::<i32>("incoherence_signs.input_signs", &[e, input_dim])
-            .or_else(|_| weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[input_dim]))
-            .ok()?,
-        None => weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[input_dim]).ok()?,
+    let per_expert = match num_experts {
+        Some(e) => weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[e, input_dim]).await.ok(),
+        None => None,
+    };
+    let slice = match per_expert {
+        Some(slice) => slice,
+        None => weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[input_dim]).await.ok()?,
     };
     Some(slice[..input_dim as usize].to_vec())
 }
@@ -487,11 +494,11 @@ pub struct MoeMlp<B: Backend> {
 }
 
 impl<B: Backend> MoeMlp<B> {
-    pub fn new(
+    pub async fn new(
         model_dimension: u32,
         data_type: DataType,
         config: &MixtureOfExpertsConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, MoeMlpNewError<B>> {
         let AnyRoutingFunction::SoftmaxRouting(_) = config.routing_function;
@@ -523,13 +530,15 @@ impl<B: Backend> MoeMlp<B> {
             config.router_has_biases,
             &parameter_tree.subtree("router"),
             context,
-        )?;
+        )
+        .await?;
         let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, 8, false)
             .map_err(MoeMlpNewError::Backend)?;
 
         let routed_tree = parameter_tree.subtree("routed_experts");
         let routed_up_tree = routed_tree.subtree("up_projection");
-        let routed_signs = read_first_input_signs(&routed_up_tree, Some(config.num_routed_experts), model_dimension);
+        let routed_signs =
+            read_first_input_signs(&routed_up_tree, Some(config.num_routed_experts), model_dimension).await;
         let (routed_up, _) = RoutedProjection::load(
             config.num_routed_experts,
             model_dimension,
@@ -539,7 +548,8 @@ impl<B: Backend> MoeMlp<B> {
             false,
             &routed_up_tree,
             context,
-        )?;
+        )
+        .await?;
         let (routed_down, down_input_prep) = RoutedProjection::load(
             config.num_routed_experts,
             config.expert_hidden_dim,
@@ -549,7 +559,8 @@ impl<B: Backend> MoeMlp<B> {
             true,
             &routed_tree.subtree("down_projection"),
             context,
-        )?;
+        )
+        .await?;
         let routed_gate = MlpGateActMulEncodable::new(
             config.expert_hidden_dim,
             data_type,
@@ -562,12 +573,14 @@ impl<B: Backend> MoeMlp<B> {
         .map_err(MoeMlpNewError::Backend)?;
 
         let shared_tree = parameter_tree.subtree("shared_experts").unit_mixture();
-        let shared_signs = (config.num_shared_experts == 1)
-            .then(|| read_first_input_signs(&shared_tree.subtree("up_projection"), None, model_dimension))
-            .flatten();
+        let shared_signs = if config.num_shared_experts == 1 {
+            read_first_input_signs(&shared_tree.subtree("up_projection"), None, model_dimension).await
+        } else {
+            None
+        };
         let shared_uses_routed_rht = routed_signs.is_some() && routed_signs == shared_signs;
-        let shared_expert = (config.num_shared_experts == 1)
-            .then(|| {
+        let shared_expert = if config.num_shared_experts == 1 {
+            Some(
                 DenseMlp::new_self_contained(
                     model_dimension,
                     config.expert_hidden_dim,
@@ -576,17 +589,25 @@ impl<B: Backend> MoeMlp<B> {
                     &shared_tree,
                     context,
                 )
-            })
-            .transpose()?;
+                .await?,
+            )
+        } else {
+            None
+        };
 
         let gate_tree = parameter_tree.subtree("gate");
-        let gate_signs = (config.num_shared_experts > 0 && config.gate_config.is_some())
-            .then(|| read_first_input_signs(&gate_tree, None, model_dimension))
-            .flatten();
+        let has_shared_gate = config.num_shared_experts > 0 && config.gate_config.is_some();
+        let gate_signs = if has_shared_gate {
+            read_first_input_signs(&gate_tree, None, model_dimension).await
+        } else {
+            None
+        };
         let gate_uses_routed_rht = routed_signs.is_some() && routed_signs == gate_signs;
-        let shared_gate = (config.num_shared_experts > 0 && config.gate_config.is_some())
-            .then(|| <dyn Linear<B>>::new(model_dimension, 1, data_type, false, &gate_tree, context))
-            .transpose()?;
+        let shared_gate = if has_shared_gate {
+            Some(<dyn Linear<B>>::new(model_dimension, 1, data_type, false, &gate_tree, context).await?)
+        } else {
+            None
+        };
 
         let combine = <B::Kernels as Kernels>::MoeCombineKernel::new(
             context,
@@ -837,42 +858,42 @@ mod tests {
             file.flush().unwrap();
         }
 
-        let std_file = std::fs::File::open(&temp_path).expect("failed to open temp file");
         let context = block_on(<Cpu as Backend>::Context::new()).expect("failed to create Cpu context");
-        let loader = ParameterLoader::<Cpu>::new(&std_file, context.as_ref()).expect("failed to create loader");
+        let loader =
+            block_on(ParameterLoader::<Cpu>::new(&temp_path, context.as_ref())).expect("failed to create loader");
         let tree = loader.tree();
 
         // 1. num_active_routed_experts == 0 fails
         let config = make_test_moe_config(0, 4, 0);
-        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        let res = block_on(MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref()));
         assert!(
             matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (0)"))
         );
 
         // 2. num_active_routed_experts > 8 fails
         let config = make_test_moe_config(9, 64, 0);
-        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        let res = block_on(MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref()));
         assert!(
             matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_active_routed_experts (9)"))
         );
 
         // 3. num_routed_experts == 0 fails
         let config = make_test_moe_config(4, 0, 0);
-        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        let res = block_on(MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref()));
         assert!(
             matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_routed_experts (0)"))
         );
 
         // 4. num_routed_experts > 512 fails
         let config = make_test_moe_config(4, 513, 0);
-        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        let res = block_on(MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref()));
         assert!(
             matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_routed_experts (513)"))
         );
 
         // 5. num_shared_experts > 1 fails
         let config = make_test_moe_config(4, 8, 2);
-        let res = MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref());
+        let res = block_on(MoeMlp::<Cpu>::new(64, DataType::BF16, &config, &tree, context.as_ref()));
         assert!(
             matches!(res, Err(MoeMlpNewError::UnsupportedConfiguration(msg)) if msg.contains("num_shared_experts (2)"))
         );

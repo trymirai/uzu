@@ -79,12 +79,12 @@ impl<B: Backend> DenseMlp<B> {
     }
 
     #[allow(dead_code)]
-    pub fn new_self_contained(
+    pub async fn new_self_contained(
         model_dimension: u32,
         hidden_dimension: u32,
         data_type: DataType,
         config: &DenseMLPConfig,
-        parameter_tree: &ParameterTree<B>,
+        parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, DenseMlpNewError<B>> {
         let up = <dyn Linear<B>>::new(
@@ -94,7 +94,8 @@ impl<B: Backend> DenseMlp<B> {
             config.has_up_biases,
             &parameter_tree.subtree("up_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         let (down, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
             hidden_dimension,
@@ -103,7 +104,8 @@ impl<B: Backend> DenseMlp<B> {
             config.has_down_biases,
             &parameter_tree.subtree("down_projection"),
             context,
-        )?;
+        )
+        .await?;
 
         let gate = MlpGateActMulEncodable::new(
             hidden_dimension,
