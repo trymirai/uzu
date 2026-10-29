@@ -46,6 +46,7 @@ pub struct LinearMatmul<B: Backend> {
     input_dim: u32,
     output_dim: u32,
     output_data_type: DataType,
+    prepared_activation_format: ActivationFormat,
 }
 
 async fn load_biases<B: Backend>(
@@ -110,6 +111,7 @@ impl<B: Backend> LinearMatmul<B> {
             input_dim,
             output_dim,
             output_data_type,
+            prepared_activation_format: ActivationFormat::Bf16,
         })
     }
 
@@ -117,41 +119,25 @@ impl<B: Backend> LinearMatmul<B> {
         &mut self,
         context: &B::Context,
     ) -> Result<ActivationFormat, B::Error> {
-        let mut shape = self.matmul_shape(1, ActivationFormat::Bf16);
-        let Some(signed_codes) = self.matrix.a8_signed_codes() else {
-            return Ok(ActivationFormat::Bf16);
-        };
-        shape.signed_codes = signed_codes;
-        let weights_layout = self.matmul_b().weights_layout();
-        if let Some(quantization) = self.kernel.lock().select_activation_quantization(&shape, context)
-            && self.matrix.try_prepare_a8_storage()
         {
-            let format = ActivationFormat::Int8(quantization);
-            self.optimize_weights_layout(context, format)?;
-            return Ok(format);
+            let shape = self.matmul_shape(1, ActivationFormat::Bf16);
+            let kernel = self.kernel.lock();
+            self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&shape, weights, context))?;
         }
-
-        let short_batch = MatmulShape {
-            m: 4,
-            ..shape
-        };
-        let selected = self.kernel.lock().select_activation_format(&short_batch, weights_layout, context);
-        Ok(match selected {
-            format @ ActivationFormat::PackedHalf {
-                ..
-            } => format,
-            _ => ActivationFormat::Bf16,
-        })
-    }
-
-    pub(super) fn optimize_weights_layout(
-        &mut self,
-        context: &B::Context,
-        activation_format: ActivationFormat,
-    ) -> Result<(), B::Error> {
-        let shape = self.matmul_shape(1, activation_format);
+        let shape = self.matmul_shape(5, ActivationFormat::Bf16);
         let kernel = self.kernel.lock();
-        self.matrix.optimize_weights_layout(|weights| kernel.optimize_weights_layout(&shape, weights, context))
+        self.prepared_activation_format =
+            if let Some(quantization) = kernel.select_activation_quantization(&shape, context) {
+                ActivationFormat::Int8(quantization)
+            } else {
+                match kernel.select_activation_format(&shape, self.matmul_b().weights_layout(), context) {
+                    format @ ActivationFormat::PackedHalf {
+                        ..
+                    } => format,
+                    _ => ActivationFormat::Bf16,
+                }
+            };
+        Ok(self.prepared_activation_format)
     }
 
     pub(super) fn encode_with_a(
@@ -239,7 +225,15 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        let bf16_shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
-        self.kernel.lock().select_activation_format(&bf16_shape, self.matmul_b().weights_layout(), context)
+        if self.prepared_activation_format == ActivationFormat::Bf16 {
+            return ActivationFormat::Bf16;
+        }
+        let shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
+        let requested = self.kernel.lock().select_activation_format(&shape, self.matmul_b().weights_layout(), context);
+        if requested == self.prepared_activation_format {
+            requested
+        } else {
+            ActivationFormat::Bf16
+        }
     }
 }

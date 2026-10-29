@@ -1,4 +1,4 @@
-use super::{GemmEngine, GemmPlan, error::GemmSpecializationError, selection::register_quant_plan_supported};
+use super::{GemmEngine, GemmPlan, error::GemmSpecializationError, selection::small_batch_plan_supported};
 use crate::{
     backends::{
         common::{
@@ -38,8 +38,8 @@ impl GemmSpecialization {
         a_prologue: GemmAPrologueKind,
         a_group_size: Option<u32>,
     ) -> Result<Self, GemmSpecializationError> {
-        if plan.tiling.is_register_quant_variant() && !register_quant_plan_supported(shape, gemm_b_layout, plan) {
-            return Err(GemmSpecializationError::UnsupportedRegisterQuant);
+        if plan.tiling.is_small_batch_variant() && !small_batch_plan_supported(shape, gemm_b_layout, plan) {
+            return Err(GemmSpecializationError::UnsupportedSmallBatch);
         }
         let specialization = Self {
             weights_data_type,
@@ -64,6 +64,7 @@ impl GemmSpecialization {
         let valid_activation_group = match self.a_prologue {
             GemmAPrologueKind::FullPrecision => self.a_group_size.is_none(),
             GemmAPrologueKind::Int8Symmetric => self.a_group_size == Some(ACTIVATION_SCALE_GROUP_SIZE),
+            GemmAPrologueKind::PackedHalf => self.a_group_size.is_none(),
         };
         if !valid_activation_group {
             return Err(GemmSpecializationError::InvalidAGroupSize {

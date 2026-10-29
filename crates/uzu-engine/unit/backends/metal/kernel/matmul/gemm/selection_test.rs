@@ -7,10 +7,25 @@ use crate::backends::{
     common::{
         Context,
         gpu_types::gemm::GemmDTransform,
-        kernel::matmul::{MatmulKernel, QuantParamsLayout},
+        kernel::{
+            ActivationQuantization,
+            matmul::{Int8CodeLayout, MatmulKernel, QuantParamsLayout},
+        },
     },
     metal::{context::MetalContext, kernel::matmul::MatmulMetalKernel},
 };
+
+fn a8_format() -> ActivationFormat {
+    ActivationFormat::Int8(
+        ActivationQuantization::new(
+            ACTIVATION_SCALE_GROUP_SIZE,
+            ACTIVATION_SCALE_GROUP_SIZE,
+            false,
+            Int8CodeLayout::GroupedByNibble,
+        )
+        .unwrap(),
+    )
+}
 
 fn shape(
     m: u32,
@@ -28,7 +43,7 @@ fn shape(
         b_bits: None,
         b_group_size: None,
         signed_codes: false,
-        a_full_precision: true,
+        a: ActivationFormat::Bf16,
         gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),
         d_transform: GemmDTransform::empty(),
@@ -118,7 +133,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     let mut invalid_layout = quant(shape(64, 4096, 4096));
     invalid_layout.b_transpose = false;
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Simdgroup);
-    invalid_layout.a_full_precision = false;
+    invalid_layout.a = a8_format();
     assert_eq!(problem(invalid_layout, DataType::BF16).select_plan().engine, Mxu);
     assert_eq!(problem(quant(shape(64, 4096, 4095)), DataType::BF16).select_plan().engine, Simdgroup);
 
@@ -129,7 +144,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
         (8, 4096, 384, Tile16x32x256_Simdgroups1x1, 1),
     ] {
         let mut a8 = quant(shape(m, n, k));
-        a8.a_full_precision = false;
+        a8.a = a8_format();
         let plan = problem(a8, DataType::BF16).select_plan();
         assert_eq!(plan.tiling, expected_tiling);
         assert_eq!(plan.split_k, expected_split_k);
@@ -158,7 +173,7 @@ fn trellis_plan_matches_projection_cases() {
         (1, 80, 5120, Tile16x32x256_Simdgroups1x1, 80),
     ] {
         let mut trellis_shape = shape(m, n, k);
-        trellis_shape.a_full_precision = false;
+        trellis_shape.a = ActivationFormat::Trellis;
         trellis_shape.b_is_trellis = true;
         let plan = problem(trellis_shape, DataType::BF16).select_plan();
         assert_eq!((plan.engine, plan.tiling, plan.split_k), (GemmEngine::Mxu, tiling, split_k), "M {m} N {n} K {k}");
@@ -223,7 +238,7 @@ fn int8_activations_require_mxu_tiled_weights() {
             },
             b_bits: Some(bits),
             signed_codes: bits == 8,
-            a_full_precision: false,
+            a: a8_format(),
             params_layout: Some(QuantParamsLayout::GroupOutput),
             ..quant(shape(16, n, k))
         };
@@ -232,5 +247,42 @@ fn int8_activations_require_mxu_tiled_weights() {
             expected,
             "n={n} k={k} bits={bits}"
         );
+    }
+}
+
+#[uzu_test]
+fn w4_activation_format_matches_weight_layout() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    let kernel =
+        MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).expect("matmul kernel");
+    for (m, n, k) in [(4, 5120, 6144), (5, 5120, 6144), (8, 5120, 6144), (512, 5120, 6144), (5, 72, 512)] {
+        let w4 = MatmulShape {
+            b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
+            signed_codes: false,
+            params_layout: Some(QuantParamsLayout::GroupOutput),
+            ..quant(shape(m, n, k))
+        };
+        let quantization = kernel.select_activation_quantization(&w4, &context);
+        assert_eq!(quantization.is_some(), context.supports_mxu && n.is_multiple_of(32));
+        let (layout, expected) = if let Some(q) = quantization {
+            (
+                GemmBLayout::MxuTiled,
+                if m >= 5 {
+                    ActivationFormat::Int8(q)
+                } else {
+                    ActivationFormat::Bf16
+                },
+            )
+        } else {
+            let format = if m <= 8 {
+                ActivationFormat::PackedHalf {
+                    group_size: 64,
+                }
+            } else {
+                ActivationFormat::Bf16
+            };
+            (GemmBLayout::RowMajor, format)
+        };
+        assert_eq!(kernel.select_activation_format(&w4, layout, &context), expected, "M={m} N={n} K={k}");
     }
 }

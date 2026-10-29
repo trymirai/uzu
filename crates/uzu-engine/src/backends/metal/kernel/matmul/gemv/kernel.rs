@@ -51,6 +51,21 @@ pub struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
+    pub fn select_batched(
+        shape: &MatmulShape,
+        gemm_b_layout: GemmBLayout,
+        supports_mxu: bool,
+    ) -> Option<Self> {
+        let tile = policy::batched_tile(shape, supports_mxu)?;
+        Self::select_tile(shape, gemm_b_layout, tile).or_else(|| {
+            if gemm_b_layout != GemmBLayout::MxuTiled {
+                return None;
+            }
+            let row_tile = policy::row_tile(shape.b_bits?, shape.b_group_size?, shape.m, shape.n)?;
+            Self::select_tile(shape, gemm_b_layout, row_tile)
+        })
+    }
+
     pub fn select_shape(
         shape: &MatmulShape,
         gemm_b_layout: GemmBLayout,
@@ -72,7 +87,7 @@ impl GemvSpecialization {
             && shape.k >= MXU_TILED_KERNEL_MIN_K
             && shape.n >= 32 * gpu_core_count;
         let tile = if is_quant && shape.gathered {
-            policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
+            policy::row_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
         } else if is_quant {
             policy::quantized_tile(
                 gpu_core_count,
@@ -111,7 +126,7 @@ impl GemvSpecialization {
         gemm_b_layout: GemmBLayout,
         tile: policy::GemvTile,
     ) -> Option<Self> {
-        if !shape.b_transpose || !shape.a_full_precision {
+        if !shape.b_transpose || shape.a != crate::backends::common::kernel::matmul::ActivationFormat::Bf16 {
             return None;
         }
         let is_quant = shape.is_quant();

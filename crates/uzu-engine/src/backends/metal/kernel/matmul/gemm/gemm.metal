@@ -6,19 +6,19 @@
 #include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"
 #include "common/simdgroup_mma_core.h"
-#include "common/register_quant_core.h"
+#include "common/small_batch_mma_core.h"
 
 using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
 #define GEMM_PACKED_HALF_TILING UZU_GEMM_IS_PACKED_W4_TILING(GEMM_TILING)
-#define GEMM_REGISTER_QUANT UZU_GEMM_IS_REGISTER_QUANT_TILING(GEMM_TILING)
-#define GEMM_REGISTER_W8 (GEMM_REGISTER_QUANT && !GEMM_PACKED_HALF_TILING)
+#define GEMM_SMALL_BATCH UZU_GEMM_IS_SMALL_BATCH_TILING(GEMM_TILING)
+#define GEMM_SMALL_BATCH_W8 (GEMM_SMALL_BATCH && !GEMM_PACKED_HALF_TILING)
 #define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
 #define GEMM_TGA_ELEMENTS                                                                                              \
-  ((GEMM_REGISTER_QUANT || USE_MXU)                                                                                    \
+  ((GEMM_SMALL_BATCH || USE_MXU)                                                                                       \
        ? 1                                                                                                             \
        : (gemm_tiling_block_m(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_K_PARTIAL_ELEMENTS                                                                                        \
@@ -31,7 +31,7 @@ using namespace uzu::gemm;
 #define GEMM_TGB_ELEMENTS                                                                                              \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
                                : GEMM_K_PARTIAL_ELEMENTS)                                                              \
-             : (GEMM_REGISTER_QUANT                                                                                    \
+             : (GEMM_SMALL_BATCH                                                                                       \
                     ? GEMM_K_PARTIAL_ELEMENTS                                                                          \
                     : gemm_tiling_block_n(GEMM_TILING) * (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
@@ -82,7 +82,7 @@ VARIANTS(
     GemmAPrologueKind::Int8Symmetric,
     GemmAPrologueKind::PackedHalf)
 VARIANTS(A_GROUP_SIZE, 0, 128)
-CONSTRAINT(DT != "float" || A_IS_INT8 || GEMM_REGISTER_QUANT)
+CONSTRAINT(DT != "float" || A_IS_INT8 || GEMM_SMALL_BATCH)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile16x32x256_Simdgroups1x1 ||
@@ -124,7 +124,7 @@ CONSTRAINT(
     (!USE_MXU && TRANSPOSE_B && A_PROLOGUE == GemmAPrologueKind::PackedHalf &&
      B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant && BITS == 4 && (GROUP_SIZE == 32 || GROUP_SIZE == 64)))
 CONSTRAINT(
-    !GEMM_REGISTER_W8 ||
+    !GEMM_SMALL_BATCH_W8 ||
     (!USE_MXU && TRANSPOSE_B && A_PROLOGUE == GemmAPrologueKind::FullPrecision &&
      B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE == 64))
 CONSTRAINT(
@@ -201,8 +201,8 @@ KERNEL(Gemm)(
         b_shared,
         thread_context
     );
-  } else if constexpr (GEMM_REGISTER_QUANT) {
-    using Core = RegisterMmaCore<DT, GEMM_TILING, LeftOperand, RightOperand>;
+  } else if constexpr (GEMM_SMALL_BATCH) {
+    using Core = SmallBatchMmaCore<DT, GEMM_TILING, LeftOperand, RightOperand>;
     Core::run(
         left_storage,
         right_storage,

@@ -104,7 +104,6 @@ private:
     });
   }
 
-public:
   template <bool APPLY_BIAS>
   static METAL_FUNC U
   transform(U value, uint global_row, const thread GemvOperands<AT, BT, DT>& ops, const thread GemvParams& params) {

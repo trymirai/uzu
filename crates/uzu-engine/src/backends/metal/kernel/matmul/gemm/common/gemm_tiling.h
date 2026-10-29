@@ -3,7 +3,7 @@
 #include "../../../generated/gemm.h"
 
 #define UZU_GEMM_IS_PACKED_W4_TILING(TILING) ((TILING) == GemmTiling::Tile8x32x64_Simdgroups1x2x4)
-#define UZU_GEMM_IS_REGISTER_QUANT_TILING(TILING)                                                                      \
+#define UZU_GEMM_IS_SMALL_BATCH_TILING(TILING)                                                                         \
   (UZU_GEMM_IS_PACKED_W4_TILING(TILING) || (TILING) == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
 
 namespace uzu {

@@ -161,7 +161,7 @@ impl GemmTiling {
         )
     }
 
-    pub const fn is_register_quant_variant(self) -> bool {
+    pub const fn is_small_batch_variant(self) -> bool {
         matches!(self, Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4)
     }
 }

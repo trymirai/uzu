@@ -1,15 +1,17 @@
 use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
-use super::*;
+use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile, fp_tile, quantized_tile, tile};
 use crate::{
     backends::{
         common::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulShape, QuantParamsLayout},
+            kernel::matmul::{ActivationFormat, MatmulShape, QuantParamsLayout},
         },
-        metal::gpu_types::gemm::{GemmBLayout, GemmTiling},
+        metal::{
+            gpu_types::gemm::{GemmBLayout, GemmTiling},
             kernel::matmul::{MatmulDispatch, MatmulMetalKernel},
+        },
     },
     data_type::DataType,
 };
@@ -45,6 +47,7 @@ fn fp_policy_cases() {
 fn quant_policy_cases() {
     let cases = [
         (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(2, 1)),
+        (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(4, 2)),
         (LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 262144, 1536, 4, qtile(8, 4)),
         (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 1, 1536, 256, 4, qtile(4, 4)),
         (SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 1, 1536, 256, 4, qtile(8, 4)),
@@ -67,81 +70,25 @@ fn quant_policy_cases() {
 }
 
 #[uzu_test]
-fn gpu_core_count_boundary_selects_large_policy() {
-    let small = quantized(SMALL_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536).expect("small GPU route");
-    let large = quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple9, 4, 32, 1, 256, 1536).expect("large GPU route");
-
-    assert_eq!(small, qtile(4, 2));
-    assert_eq!(large, qtile(2, 1));
-}
-
-fn quantized(
-    gpu_core_count: u32,
-    apple_gpu_family: MTLGPUFamily,
-    bits: u32,
-    group: u32,
-    m: u32,
-    n: u32,
-    k: u32,
-) -> Option<GemvTile> {
-    quantized_tile(gpu_core_count, apple_gpu_family, bits, group, m, n, k, true)
-}
-
-#[uzu_test]
 fn quantized_policy_edges() {
     assert_eq!(
-        quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100),
+        quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100, true),
         Some(GemvTile::quantized(8, 4, 1, 32, 4))
     );
-    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8, 4096).is_some());
-    assert!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 1, 8192, 4096).is_some());
-    assert_eq!(quantized(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096), None);
+    assert!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8, 4096, true).is_some());
+    assert!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 1, 8192, 4096, true).is_some());
+    assert_eq!(quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096, true), None);
     assert_eq!(
         quantized_tile(LARGE_GPU_CORE_COUNT, MTLGPUFamily::Apple10, 4, 32, 4, 8192, 4096, true),
         Some(GemvTile::quantized(8, 4, 1, 32, 2))
     );
 }
 
-fn quant_shape(
-    m: u32,
-    n: u32,
-    d_transform: GemmDTransform,
-) -> MatmulShape {
-    MatmulShape {
-        m,
-        n,
-        k: 4096,
-        b_transpose: true,
-        b_leading_dimension: None,
-        b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
-        b_is_trellis: false,
-        b_bits: Some(4),
-        b_group_size: Some(32),
-        signed_codes: false,
-        a_full_precision: true,
-        gathered: false,
-        params_layout: Some(QuantParamsLayout::OutputGroup),
-        d_transform,
-    }
-}
-
 #[uzu_test]
 fn block_unaligned_quantized_k_stays_on_gemv() {
     let shape = MatmulShape {
-        m: 1,
-        n: 64,
-        k: 1152,
-        b_transpose: true,
-        b_leading_dimension: None,
-        b_prologue: GemmBPrologueKind::ScaleZeroPointDequant,
-        b_is_trellis: false,
-        b_bits: Some(4),
-        b_group_size: Some(64),
-        signed_codes: false,
-        a_full_precision: true,
-        gathered: false,
         params_layout: Some(QuantParamsLayout::OutputGroup),
-        d_transform: GemmDTransform::empty(),
+        ..shape(1, 64, 1152, 4, 64)
     };
     assert!(
         super::super::kernel::GemvSpecialization::select_shape(
@@ -159,9 +106,12 @@ fn block_unaligned_quantized_k_stays_on_gemv() {
 
 #[uzu_test]
 fn specialization_preserves_quantized_route() {
-    let select = |n, transform| {
+    let select = |n| {
         super::super::kernel::GemvSpecialization::select_shape(
-            &quant_shape(4, n, transform),
+            &MatmulShape {
+                params_layout: Some(QuantParamsLayout::OutputGroup),
+                ..shape(4, n, 4096, 4, 32)
+            },
             GemmBLayout::RowMajor,
             DataType::BF16,
             DataType::BF16,
@@ -170,26 +120,17 @@ fn specialization_preserves_quantized_route() {
             MTLGPUFamily::Apple10,
         )
     };
-    let clean = select(8192, GemmDTransform::empty()).expect("quantized specialization");
+    let clean = select(8192).expect("quantized specialization");
     assert!(clean.output_row_tile() > DEFAULT_RESULTS_PER_SIMDGROUP);
-    assert!(select(8192 + clean.output_row_tile() / 2, GemmDTransform::empty()).is_some());
+    assert!(select(8192 + clean.output_row_tile() / 2).is_some());
 }
 
 #[uzu_test]
 fn gathered_group_major_is_a_gemv_route() {
-    let mut shape = quant_shape(1, 8192, GemmDTransform::empty());
-    shape.params_layout = Some(QuantParamsLayout::GroupOutput);
+    let mut shape = shape(1, 8192, 4096, 4, 32);
     shape.gathered = true;
     assert!(
-        super::super::kernel::GemvSpecialization::select_tile(
-            &shape,
-            GemmBLayout::RowMajor,
-            DataType::BF16,
-            DataType::BF16,
-            DataType::BF16,
-            qtile(8, 4),
-        )
-        .is_some()
+        super::super::kernel::GemvSpecialization::select_tile(&shape, GemmBLayout::RowMajor, qtile(8, 4),).is_some()
     );
 }
 
@@ -215,7 +156,7 @@ fn shape(
         b_bits: Some(bits),
         b_group_size: Some(group),
         signed_codes: bits == 8,
-        a_full_precision: true,
+        a: ActivationFormat::Bf16,
         gathered: false,
         params_layout: Some(QuantParamsLayout::GroupOutput),
         d_transform: GemmDTransform::empty(),
@@ -223,54 +164,40 @@ fn shape(
 }
 
 #[uzu_test]
-fn w4_w8_lane_policy() {
-    let qtile = |sg, rows| GemvTile::quantized(sg, rows, 1, 32, 2);
-    for (cores, family, m, n, k, bits, expected) in [
-        (30, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(2, 1)),
-        (29, MTLGPUFamily::Apple9, 1, 256, 1536, 4, qtile(4, 2)),
-        (30, MTLGPUFamily::Apple9, 1, 262144, 1536, 4, qtile(8, 4)),
-        (29, MTLGPUFamily::Apple9, 1, 1536, 256, 4, qtile(4, 4)),
-        (29, MTLGPUFamily::Apple10, 1, 1536, 256, 4, qtile(8, 4)),
-        (29, MTLGPUFamily::Apple8, 1, 2048, 1536, 4, qtile(8, 2)),
-        (29, MTLGPUFamily::Apple7, 1, 256, 1536, 4, qtile(8, 2)),
-        (29, MTLGPUFamily::Apple7, 1, 1536, 256, 4, qtile(4, 8)),
-        (30, MTLGPUFamily::Apple9, 2, 2048, 1536, 4, qtile(8, 4)),
-        (30, MTLGPUFamily::Apple9, 4, 5120, 5120, 4, qtile(8, 4)),
-        (30, MTLGPUFamily::Apple9, 1, 2048, 1536, 8, GemvTile::quantized(8, 4, 1, 32, 4)),
-    ] {
-        assert_eq!(quantized_tile(cores, family, bits, 32, m, n, k, true), Some(expected));
-    }
-    assert_eq!(
-        quantized_tile(30, MTLGPUFamily::Apple10, 4, 64, 4, 8192, 4100, true),
-        Some(GemvTile::quantized(8, 4, 1, 32, 4))
-    );
-    assert_eq!(quantized_tile(30, MTLGPUFamily::Apple10, 4, 32, 9, 8192, 4096, true), None);
-    assert_eq!(gathered_tile(4, 32, 1, 8192), Some(qtile(8, 4)));
-}
-
-#[uzu_test]
 fn qmv_route_boundaries() {
-    for (supports_mxu, m, n, k, bits, group, gemm_route) in [
-        (false, 2, 72, 1024, 4, 64, false),
-        (false, 4, 72, 1024, 4, 64, true),
-        (false, 4, 72, 256, 8, 64, true),
-        (true, 4, 72, 1024, 4, 64, false),
-        (true, 5, 72, 1024, 4, 32, true),
-        (true, 5, 72, 256, 8, 64, true),
-        (true, 5, 72, 768, 8, 64, true),
-        (true, 4, 72, 1024, 8, 64, false),
-        (true, 8, 72, 1024, 8, 64, true),
-        (true, 3, 72, 1024, 4, 32, false),
+    use GemmBLayout::{MxuTiled, RowMajor};
+
+    for (supports_mxu, layout, m, n, k, bits, group, gemm_route, soft_cap) in [
+        (false, RowMajor, 2, 72, 1024, 4, 64, false, false),
+        (false, RowMajor, 8, 72, 1024, 4, 64, false, false),
+        (true, RowMajor, 5, 72, 1024, 4, 32, false, false),
+        (false, RowMajor, 4, 72, 1024, 4, 64, true, false),
+        (false, RowMajor, 4, 72, 256, 8, 64, true, false),
+        (true, RowMajor, 4, 72, 1024, 4, 64, false, false),
+        (true, RowMajor, 5, 72, 1024, 4, 32, true, false),
+        (true, RowMajor, 5, 72, 768, 8, 64, true, false),
+        (true, RowMajor, 3, 72, 1024, 4, 32, false, false),
+        (true, RowMajor, 8, 72, 1024, 8, 64, true, true),
+        (true, MxuTiled, 5, 64, 1024, 4, 64, false, false),
+        (true, MxuTiled, 6, 64, 1024, 4, 64, false, false),
+        (true, MxuTiled, 8, 64, 128, 4, 64, false, false),
+        (true, MxuTiled, 8, 64, 128, 8, 64, false, false),
     ] {
         let family = if supports_mxu {
             MTLGPUFamily::Apple10
         } else {
             MTLGPUFamily::Apple9
         };
-        let problem = shape(m, n, k, bits, group);
+        let mut problem = shape(m, n, k, bits, group);
+        if bits == 4 && gemm_route {
+            problem.a = ActivationFormat::PackedHalf {
+                group_size: group,
+            };
+        }
+        problem.d_transform.set(GemmDTransform::SOFT_CAP, soft_cap);
         let actual = MatmulMetalKernel::choose_dispatch(
             &problem,
-            GemmBLayout::RowMajor,
+            layout,
             40,
             family,
             supports_mxu,
@@ -292,21 +219,4 @@ fn qmv_route_boundaries() {
             assert!(matches!(actual, MatmulDispatch::Gemv(_)), "M={m} W{bits} G{group}, MXU={supports_mxu}");
         }
     }
-
-    let mut soft_cap = shape(8, 72, 1024, 8, 64);
-    soft_cap.d_transform = GemmDTransform::SOFT_CAP;
-    let fallback = MatmulMetalKernel::choose_dispatch(
-        &soft_cap,
-        GemmBLayout::RowMajor,
-        40,
-        MTLGPUFamily::Apple10,
-        true,
-        DataType::BF16,
-        DataType::BF16,
-        DataType::BF16,
-    );
-    assert!(
-        matches!(fallback, MatmulDispatch::Gemm(plan) if plan.tiling == GemmTiling::Tile8x32x128_Simdgroups1x2x4),
-        "W8 G64 soft-cap uses the register-quant GEMM route"
-    );
 }

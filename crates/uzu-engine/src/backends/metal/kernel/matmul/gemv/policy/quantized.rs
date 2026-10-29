@@ -1,7 +1,13 @@
 use metal::MTLGPUFamily;
 
 use super::{DEFAULT_RESULTS_PER_SIMDGROUP, GemvTile};
-use crate::backends::metal::context::LARGE_MIN_GPU_CORES;
+use crate::backends::{
+    common::{
+        gpu_types::gemm::GemmBPrologueKind,
+        kernel::matmul::{ActivationFormat, MatmulShape},
+    },
+    metal::context::LARGE_MIN_GPU_CORES,
+};
 
 const QUANT_N_BUCKET_MAXES: [u32; 6] = [512, 2048, 4096, 8192, 16384, 32768];
 const QUANT_K_BUCKET_MAXES: [u32; 3] = [512, 2048, 8192];
@@ -29,7 +35,27 @@ const fn lane_default(
     lane_tile(8, DEFAULT_RESULTS_PER_SIMDGROUP, bits, group)
 }
 
-pub fn gathered_tile(
+pub fn batched_tile(
+    shape: &MatmulShape,
+    supports_mxu: bool,
+) -> Option<GemvTile> {
+    if shape.a != ActivationFormat::Bf16 || !(2..=8).contains(&shape.m) {
+        return None;
+    }
+    match (shape.b_prologue, shape.b_bits, shape.b_group_size) {
+        (GemmBPrologueKind::ScaleZeroPointDequant, Some(4), Some(32 | 64))
+        | (GemmBPrologueKind::ScaleSymmetricDequant, Some(8), Some(64)) => {},
+        _ => return None,
+    }
+    match (supports_mxu, shape.m, shape.b_group_size) {
+        // G32 three-row QMV failed the M5 numerical audit.
+        (true, 3, Some(32)) => None,
+        (true, 5, Some(64)) => Some(GemvTile::quantized_output_tile(2, 16, 5, 8, 1)),
+        _ => Some(GemvTile::quantized_output_tile(4, 32, shape.m.min(4), 8, 1)),
+    }
+}
+
+pub fn row_tile(
     bits: u32,
     group: u32,
     m: u32,

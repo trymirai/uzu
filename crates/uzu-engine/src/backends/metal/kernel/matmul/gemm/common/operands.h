@@ -94,6 +94,10 @@ struct RightStorage {
   bool signed_codes;
   GemmBLayout gemm_b_layout;
 
+  METAL_FUNC uint sign_mask() const thread {
+    return signed_codes ? (Right::BITS == 4 ? W4_SIGN_MASK : W8_SIGN_MASK) : 0u;
+  }
+
   template <typename Index>
   METAL_FUNC const device uint8_t* row_codes(
       const Index row,

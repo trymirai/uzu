@@ -83,7 +83,7 @@ impl MatmulShape {
         self.b_prologue != GemmBPrologueKind::FullPrecision
     }
 
-    pub fn a_full_precision(&self) -> bool {
-        matches!(self.a, ActivationFormat::Bf16 | ActivationFormat::PackedHalf { .. })
+    pub fn a_is_quantized(&self) -> bool {
+        matches!(self.a, ActivationFormat::Int8(_) | ActivationFormat::Trellis)
     }
 }

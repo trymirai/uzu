@@ -194,8 +194,10 @@ struct MxuMmaCore {
     }
 
     if (output_transform.contains(GemmDTransform::RHT)) {
-      if constexpr (schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
-                    SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE) {
+      if constexpr (
+          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
+      ) {
         if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
           if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
             return;
@@ -203,13 +205,11 @@ struct MxuMmaCore {
           simdgroup_barrier(mem_flags::mem_device);
           apply_output_random_hadamard_transform<OutputElementType, RightElementType, true>(
               d_simdgroup,
-              d_simdgroup,
               rht_factors + block_col + tile_col_offset,
               bias_simdgroup,
               apply_bias,
               SIMDGROUP_BLOCK_M,
               SIMDGROUP_BLOCK_N,
-              params->leading_dimension_d,
               params->leading_dimension_d,
               1,
               thread_context
@@ -228,13 +228,11 @@ struct MxuMmaCore {
       const ushort tile_block_cols = ushort(min(int(THREADGROUP_BLOCK_N), int(params->N) - int(block_col)));
       apply_output_random_hadamard_transform(
           d_block,
-          d_block,
           rht_factors + block_col,
           output_bias + block_col,
           apply_bias,
           tile_block_rows,
           tile_block_cols,
-          params->leading_dimension_d,
           params->leading_dimension_d,
           ushort(SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN),
           thread_context

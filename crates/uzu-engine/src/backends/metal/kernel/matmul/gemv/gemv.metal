@@ -28,9 +28,12 @@ using namespace uzu::gemm;
       (NUM_SIMDGROUPS == 4 && (OUTPUT_ROW_TILE == 8 || OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)) ||             \
       (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 16)))) &&                                                             \
    INPUT_ROW_TILE == 1)
-#define GEMV_BATCHED_FMA_TILE                                                                                          \
+#define GEMV_BATCHED_FMA_32_TILE                                                                                       \
   (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 4 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE >= 2 &&      \
    INPUT_ROW_TILE <= 4)
+#define GEMV_BATCHED_FMA_16_TILE                                                                                       \
+  (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 2 && OUTPUT_ROW_TILE == 16 && INPUT_ROW_TILE == 5 &&      \
+   GROUP_SIZE == 64)
 template <
     typename AT,
     typename BT,
@@ -58,7 +61,7 @@ VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
-VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4)
+VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4, 5)
 VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32)
 VARIANTS(REDUCTION_LANES, 8, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8)
@@ -72,7 +75,8 @@ CONSTRAINT(
     (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE != 0))
 CONSTRAINT(INPUT_ROW_TILE == 1 || GEMV_BATCHED_INPUT)
 CONSTRAINT(
-    GEMV_FULL_PRECISION_TILE || (BITS != 0 && (GEMV_QUANTIZED_ROW_TILE || GEMV_BATCHED_FMA_TILE)))
+    GEMV_FULL_PRECISION_TILE ||
+    (BITS != 0 && (GEMV_QUANTIZED_ROW_TILE || GEMV_BATCHED_FMA_32_TILE || GEMV_BATCHED_FMA_16_TILE)))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales

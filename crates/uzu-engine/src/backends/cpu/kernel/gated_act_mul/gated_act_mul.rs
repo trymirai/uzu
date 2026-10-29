@@ -107,18 +107,16 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
         }
 
         if let Some(transformed) = transformed.as_mut() {
-            if use_hadamard {
-                let factors = hadamard_factors.expect("Hadamard factors are required");
-                for stripe_start in (0..gated_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
-                    let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
-                    for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
-                        let gated = stripe_start + lane;
-                        stripe[lane] = transformed[gated] * unsafe { *factors.add(gated) } as f32;
-                    }
-                    hadamard_transform(&mut stripe);
-                    transformed[stripe_start..stripe_start + HADAMARD_TRANSFORM_BLOCK_SIZE as usize]
-                        .copy_from_slice(&stripe);
+            let factors = hadamard_factors.expect("Hadamard factors are required");
+            for stripe_start in (0..gated_dim).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
+                let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
+                for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+                    let gated = stripe_start + lane;
+                    stripe[lane] = transformed[gated] * unsafe { *factors.add(gated) } as f32;
                 }
+                hadamard_transform(&mut stripe);
+                transformed[stripe_start..stripe_start + HADAMARD_TRANSFORM_BLOCK_SIZE as usize]
+                    .copy_from_slice(&stripe);
             }
 
             if quantize {
