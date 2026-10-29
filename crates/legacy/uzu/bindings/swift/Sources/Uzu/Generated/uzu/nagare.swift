@@ -2553,8 +2553,9 @@ fileprivate struct UniffiCallbackInterfaceForeignToolHandler {
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
     //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceForeignToolHandler = UniffiVTableCallbackInterfaceForeignToolHandler(
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceForeignToolHandler] = [UniffiVTableCallbackInterfaceForeignToolHandler(
         uniffiFree: { (uniffiHandle: UInt64) -> () in
             do {
                 try FfiConverterCallbackInterfaceForeignToolHandler.handleMap.remove(handle: uniffiHandle)
@@ -2612,19 +2613,11 @@ fileprivate struct UniffiCallbackInterfaceForeignToolHandler {
                 droppedCallback: uniffiOutDroppedCallback
             )
         }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceForeignToolHandler> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceForeignToolHandler>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
+    )]
 }
 
 private func uniffiCallbackInitForeignToolHandler() {
-    uniffi_nagare_fn_init_callback_vtable_foreigntoolhandler(UniffiCallbackInterfaceForeignToolHandler.vtablePtr)
+    uniffi_nagare_fn_init_callback_vtable_foreigntoolhandler(UniffiCallbackInterfaceForeignToolHandler.vtable)
 }
 
 // FfiConverter protocol for callback interfaces

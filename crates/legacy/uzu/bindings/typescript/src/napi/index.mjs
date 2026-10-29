@@ -93,6 +93,7 @@ export const ModelSourceFilesystem = cjs.ModelSourceFilesystem;
 export const ModelSourceRegistry = cjs.ModelSourceRegistry;
 export const ModelSpecializationChat = cjs.ModelSpecializationChat;
 export const ModelSpecializationClassification = cjs.ModelSpecializationClassification;
+export const ModelSpecializationDecision = cjs.ModelSpecializationDecision;
 export const ModelSpecializationSpeculation = cjs.ModelSpecializationSpeculation;
 export const ModelSpecializationTextToSpeech = cjs.ModelSpecializationTextToSpeech;
 export const ModelSpecializationTranslation = cjs.ModelSpecializationTranslation;
