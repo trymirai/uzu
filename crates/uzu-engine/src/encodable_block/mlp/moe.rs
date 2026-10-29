@@ -526,13 +526,13 @@ impl<B: Backend> MoeMlp<B> {
             config.num_routed_experts,
             data_type,
             data_type,
-            DataType::F32,
+            data_type,
             config.router_has_biases,
             &parameter_tree.subtree("router"),
             context,
         )
         .await?;
-        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, 8, false)
+        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, data_type, 8, false)
             .map_err(MoeMlpNewError::Backend)?;
 
         let routed_tree = parameter_tree.subtree("routed_experts");
