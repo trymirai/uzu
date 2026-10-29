@@ -21,6 +21,7 @@ use crate::{
 pub struct Case {
     pub shape: Shape,
     pub ab_scale: f32,
+    pub soft_cap: Option<f32>,
     pub b_transpose: bool,
     pub enable_rht: bool,
     pub enable_bias: bool,
@@ -31,6 +32,7 @@ impl Case {
         Self {
             shape,
             ab_scale: 1.0,
+            soft_cap: None,
             b_transpose: true,
             enable_rht: false,
             enable_bias: false,
@@ -135,7 +137,7 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
         ab_scale: input.case.ab_scale,
         bias: bias_buffer.as_ref(),
         rht_factors: rht_buffer.as_ref(),
-        soft_cap: None,
+        soft_cap: input.case.soft_cap,
     };
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");

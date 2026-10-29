@@ -150,6 +150,9 @@ fn bias_parity_bf16() {
             let case = Case::new(shape).with_bias(true);
             check_case::<bf16>(&context, &mut kernel, Some(engine), case, 1.0);
         }
+        let mut case = Case::new(Shape::new(4, 1024, 32)).with_ab_scale(0.5).with_bias(true);
+        case.soft_cap = Some(0.1);
+        check_case::<bf16>(&context, &mut kernel, Some(engine), case, 0.01);
     }
 }
 
