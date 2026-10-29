@@ -678,6 +678,22 @@ impl Engine {
     }
 
     #[bindings::export(Method)]
+    pub async fn decision(
+        &self,
+        model: Model,
+    ) -> Result<DecisionSession, EngineError> {
+        let path = self.model_path(&model).await;
+        if let Some(backend) = model.backends.first() {
+            let backends = self.backends.lock().await;
+            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
+            let session = DecisionSession::new(backend.clone(), model, path).await?;
+            Ok(session)
+        } else {
+            Err(EngineError::BackendNotFound {})
+        }
+    }
+
+    #[bindings::export(Method)]
     pub async fn text_to_speech(
         &self,
         model: Model,
@@ -703,21 +719,6 @@ impl Engine {
 }
 
 impl Engine {
-    pub async fn decision(
-        &self,
-        model: Model,
-    ) -> anyhow::Result<DecisionSession> {
-        let path = self.model_path(&model).await;
-        if let Some(backend) = model.backends.first() {
-            let backends = self.backends.lock().await;
-            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = DecisionSession::new(backend.clone(), model, path).await?;
-            Ok(session)
-        } else {
-            Err(EngineError::BackendNotFound {}.into())
-        }
-    }
-
     pub fn storage_subscribe(&self) -> BroadcastStream<(ModelIdentifier, DownloadState)> {
         self.storage.subscribe()
     }

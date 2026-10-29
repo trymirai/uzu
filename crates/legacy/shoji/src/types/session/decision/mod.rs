@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionOption {
     pub key: String,
@@ -18,6 +19,7 @@ impl DecisionOption {
     }
 }
 
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DecisionQuestion {
@@ -36,12 +38,14 @@ pub enum DecisionQuestion {
     },
 }
 
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionInput {
     pub state: String,
     pub questions: Vec<DecisionQuestion>,
 }
 
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DecisionAnswer {
@@ -59,18 +63,21 @@ pub enum DecisionAnswer {
     },
 }
 
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionStats {
     pub tokens_count: i64,
     pub total_duration: f64,
 }
 
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionResult {
     pub answer: DecisionAnswer,
     pub stats: DecisionStats,
 }
 
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionOutput {
     // One per question, in input order.

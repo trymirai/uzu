@@ -1663,6 +1663,272 @@ public func FfiConverterTypeClassificationStats_lower(_ value: ClassificationSta
 }
 
 
+public struct DecisionInput: Equatable, Hashable, Codable {
+    public var state: String
+    public var questions: [DecisionQuestion]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(state: String, questions: [DecisionQuestion]) {
+        self.state = state
+        self.questions = questions
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DecisionInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionInput {
+        return
+            try DecisionInput(
+                state: FfiConverterString.read(from: &buf), 
+                questions: FfiConverterSequenceTypeDecisionQuestion.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DecisionInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterSequenceTypeDecisionQuestion.write(value.questions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionInput_lift(_ buf: RustBuffer) throws -> DecisionInput {
+    return try FfiConverterTypeDecisionInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionInput_lower(_ value: DecisionInput) -> RustBuffer {
+    return FfiConverterTypeDecisionInput.lower(value)
+}
+
+
+public struct DecisionOption: Equatable, Hashable, Codable {
+    public var key: String
+    public var description: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: String, description: String?) {
+        self.key = key
+        self.description = description
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DecisionOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionOption {
+        return
+            try DecisionOption(
+                key: FfiConverterString.read(from: &buf), 
+                description: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DecisionOption, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterOptionString.write(value.description, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionOption_lift(_ buf: RustBuffer) throws -> DecisionOption {
+    return try FfiConverterTypeDecisionOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionOption_lower(_ value: DecisionOption) -> RustBuffer {
+    return FfiConverterTypeDecisionOption.lower(value)
+}
+
+
+public struct DecisionOutput: Equatable, Hashable, Codable {
+    public var results: [DecisionResult]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(results: [DecisionResult]) {
+        self.results = results
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DecisionOutput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionOutput {
+        return
+            try DecisionOutput(
+                results: FfiConverterSequenceTypeDecisionResult.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DecisionOutput, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeDecisionResult.write(value.results, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionOutput_lift(_ buf: RustBuffer) throws -> DecisionOutput {
+    return try FfiConverterTypeDecisionOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionOutput_lower(_ value: DecisionOutput) -> RustBuffer {
+    return FfiConverterTypeDecisionOutput.lower(value)
+}
+
+
+public struct DecisionResult: Equatable, Hashable, Codable {
+    public var answer: DecisionAnswer
+    public var stats: DecisionStats
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(answer: DecisionAnswer, stats: DecisionStats) {
+        self.answer = answer
+        self.stats = stats
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DecisionResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionResult {
+        return
+            try DecisionResult(
+                answer: FfiConverterTypeDecisionAnswer.read(from: &buf), 
+                stats: FfiConverterTypeDecisionStats.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DecisionResult, into buf: inout [UInt8]) {
+        FfiConverterTypeDecisionAnswer.write(value.answer, into: &buf)
+        FfiConverterTypeDecisionStats.write(value.stats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionResult_lift(_ buf: RustBuffer) throws -> DecisionResult {
+    return try FfiConverterTypeDecisionResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionResult_lower(_ value: DecisionResult) -> RustBuffer {
+    return FfiConverterTypeDecisionResult.lower(value)
+}
+
+
+public struct DecisionStats: Equatable, Hashable, Codable {
+    public var tokensCount: Int64
+    public var totalDuration: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tokensCount: Int64, totalDuration: Double) {
+        self.tokensCount = tokensCount
+        self.totalDuration = totalDuration
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DecisionStats: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionStats {
+        return
+            try DecisionStats(
+                tokensCount: FfiConverterInt64.read(from: &buf), 
+                totalDuration: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DecisionStats, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.tokensCount, into: &buf)
+        FfiConverterDouble.write(value.totalDuration, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionStats_lift(_ buf: RustBuffer) throws -> DecisionStats {
+    return try FfiConverterTypeDecisionStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionStats_lower(_ value: DecisionStats) -> RustBuffer {
+    return FfiConverterTypeDecisionStats.lower(value)
+}
+
+
 public struct Feature: Equatable, Hashable, Codable {
     public var name: String
     public var values: [String]
@@ -4105,6 +4371,179 @@ public func FfiConverterTypeContextLength_lower(_ value: ContextLength) -> RustB
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum DecisionAnswer: Equatable, Hashable, Codable {
+    
+    case choice(index: Int64, key: String, probabilities: [Double]
+    )
+    case score(probabilities: [Double], score: Double
+    )
+    case yesNo(yesProbability: Double
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DecisionAnswer: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionAnswer: FfiConverterRustBuffer {
+    typealias SwiftType = DecisionAnswer
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionAnswer {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .choice(index: try FfiConverterInt64.read(from: &buf), key: try FfiConverterString.read(from: &buf), probabilities: try FfiConverterSequenceDouble.read(from: &buf)
+        )
+        
+        case 2: return .score(probabilities: try FfiConverterSequenceDouble.read(from: &buf), score: try FfiConverterDouble.read(from: &buf)
+        )
+        
+        case 3: return .yesNo(yesProbability: try FfiConverterDouble.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DecisionAnswer, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .choice(index,key,probabilities):
+            writeInt(&buf, Int32(1))
+            FfiConverterInt64.write(index, into: &buf)
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterSequenceDouble.write(probabilities, into: &buf)
+            
+        
+        case let .score(probabilities,score):
+            writeInt(&buf, Int32(2))
+            FfiConverterSequenceDouble.write(probabilities, into: &buf)
+            FfiConverterDouble.write(score, into: &buf)
+            
+        
+        case let .yesNo(yesProbability):
+            writeInt(&buf, Int32(3))
+            FfiConverterDouble.write(yesProbability, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionAnswer_lift(_ buf: RustBuffer) throws -> DecisionAnswer {
+    return try FfiConverterTypeDecisionAnswer.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionAnswer_lower(_ value: DecisionAnswer) -> RustBuffer {
+    return FfiConverterTypeDecisionAnswer.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DecisionQuestion: Equatable, Hashable, Codable {
+    
+    case choice(instructions: String?, options: [DecisionOption]
+    )
+    case score(instructions: String?, levels: [String]
+    )
+    case yesNo(instructions: String?, noDescription: String?, yesDescription: String?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DecisionQuestion: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionQuestion: FfiConverterRustBuffer {
+    typealias SwiftType = DecisionQuestion
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionQuestion {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .choice(instructions: try FfiConverterOptionString.read(from: &buf), options: try FfiConverterSequenceTypeDecisionOption.read(from: &buf)
+        )
+        
+        case 2: return .score(instructions: try FfiConverterOptionString.read(from: &buf), levels: try FfiConverterSequenceString.read(from: &buf)
+        )
+        
+        case 3: return .yesNo(instructions: try FfiConverterOptionString.read(from: &buf), noDescription: try FfiConverterOptionString.read(from: &buf), yesDescription: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DecisionQuestion, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .choice(instructions,options):
+            writeInt(&buf, Int32(1))
+            FfiConverterOptionString.write(instructions, into: &buf)
+            FfiConverterSequenceTypeDecisionOption.write(options, into: &buf)
+            
+        
+        case let .score(instructions,levels):
+            writeInt(&buf, Int32(2))
+            FfiConverterOptionString.write(instructions, into: &buf)
+            FfiConverterSequenceString.write(levels, into: &buf)
+            
+        
+        case let .yesNo(instructions,noDescription,yesDescription):
+            writeInt(&buf, Int32(3))
+            FfiConverterOptionString.write(instructions, into: &buf)
+            FfiConverterOptionString.write(noDescription, into: &buf)
+            FfiConverterOptionString.write(yesDescription, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionQuestion_lift(_ buf: RustBuffer) throws -> DecisionQuestion {
+    return try FfiConverterTypeDecisionQuestion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionQuestion_lower(_ value: DecisionQuestion) -> RustBuffer {
+    return FfiConverterTypeDecisionQuestion.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum Grammar: Equatable, Hashable, Codable {
     
     case jsonAny
@@ -5623,6 +6062,56 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDecisionOption: FfiConverterRustBuffer {
+    typealias SwiftType = [DecisionOption]
+
+    public static func write(_ value: [DecisionOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDecisionOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DecisionOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DecisionOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDecisionOption.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDecisionResult: FfiConverterRustBuffer {
+    typealias SwiftType = [DecisionResult]
+
+    public static func write(_ value: [DecisionResult], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDecisionResult.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DecisionResult] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DecisionResult]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDecisionResult.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFile: FfiConverterRustBuffer {
     typealias SwiftType = [File]
 
@@ -5790,6 +6279,31 @@ fileprivate struct FfiConverterSequenceTypeChatContentBlock: FfiConverterRustBuf
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeChatContentBlock.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDecisionQuestion: FfiConverterRustBuffer {
+    typealias SwiftType = [DecisionQuestion]
+
+    public static func write(_ value: [DecisionQuestion], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDecisionQuestion.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DecisionQuestion] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DecisionQuestion]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDecisionQuestion.read(from: &buf))
         }
         return seq
     }

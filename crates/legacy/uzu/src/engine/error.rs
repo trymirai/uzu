@@ -23,6 +23,8 @@ pub enum EngineError {
     #[error(transparent)]
     ClassificationSession(#[from] nagare::classification::ClassificationSessionError),
     #[error(transparent)]
+    DecisionSession(#[from] nagare::decision::DecisionSessionError),
+    #[error(transparent)]
     TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
     #[error("Settings not available")]
     SettingsNotAvailable,

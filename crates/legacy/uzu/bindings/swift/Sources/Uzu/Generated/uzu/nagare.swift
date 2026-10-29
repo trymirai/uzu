@@ -441,6 +441,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -1188,6 +1204,151 @@ public func FfiConverterTypeClassificationSession_lift(_ handle: UInt64) throws 
 #endif
 public func FfiConverterTypeClassificationSession_lower(_ value: ClassificationSession) -> UInt64 {
     return FfiConverterTypeClassificationSession.lower(value)
+}
+
+
+
+
+
+
+public protocol DecisionSessionProtocol: AnyObject, Sendable {
+    
+    func decide(input: DecisionInput) async throws  -> DecisionOutput
+    
+    func state() async  -> DecisionSessionState
+    
+}
+open class DecisionSession: DecisionSessionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nagare_fn_clone_decisionsession(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_nagare_fn_free_decisionsession(handle, $0) }
+    }
+
+    
+
+    
+open func decide(input: DecisionInput)async throws  -> DecisionOutput  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_decisionsession_decide(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeDecisionInput_lower(input)
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nagare_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nagare_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDecisionOutput_lift,
+            errorHandler: FfiConverterTypeDecisionSessionError_lift
+        )
+}
+    
+open func state()async  -> DecisionSessionState  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_decisionsession_state(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nagare_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nagare_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDecisionSessionState_lift,
+            errorHandler: nil
+            
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionSession: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = DecisionSession
+
+    public static func lift(_ handle: UInt64) throws -> DecisionSession {
+        return DecisionSession(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: DecisionSession) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionSession {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: DecisionSession, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionSession_lift(_ handle: UInt64) throws -> DecisionSession {
+    return try FfiConverterTypeDecisionSession.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionSession_lower(_ value: DecisionSession) -> UInt64 {
+    return FfiConverterTypeDecisionSession.lower(value)
 }
 
 
@@ -2232,6 +2393,193 @@ public func FfiConverterTypeClassificationSessionState_lower(_ value: Classifica
 
 
 
+public enum DecisionSessionError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
+
+    
+    
+    case Backend(message: String
+    )
+    case Encoding(message: String
+    )
+    case InvalidQuestion(index: Int64, message: String
+    )
+    case NoQuestions
+    case UnsupportedModel
+    case UnableToPerformOperationInCurrentState
+    case NoResponse
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension DecisionSessionError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionSessionError: FfiConverterRustBuffer {
+    typealias SwiftType = DecisionSessionError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionSessionError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .Backend(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .Encoding(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .InvalidQuestion(
+            index: try FfiConverterInt64.read(from: &buf), 
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .NoQuestions
+        case 5: return .UnsupportedModel
+        case 6: return .UnableToPerformOperationInCurrentState
+        case 7: return .NoResponse
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DecisionSessionError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .Backend(message):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .Encoding(message):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .InvalidQuestion(index,message):
+            writeInt(&buf, Int32(3))
+            FfiConverterInt64.write(index, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case .NoQuestions:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .UnsupportedModel:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .UnableToPerformOperationInCurrentState:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .NoResponse:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionSessionError_lift(_ buf: RustBuffer) throws -> DecisionSessionError {
+    return try FfiConverterTypeDecisionSessionError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionSessionError_lower(_ value: DecisionSessionError) -> RustBuffer {
+    return FfiConverterTypeDecisionSessionError.lower(value)
+}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DecisionSessionState: Equatable, Hashable, Codable {
+    
+    case idle
+    case deciding
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DecisionSessionState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecisionSessionState: FfiConverterRustBuffer {
+    typealias SwiftType = DecisionSessionState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DecisionSessionState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .idle
+        
+        case 2: return .deciding
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DecisionSessionState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .idle:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .deciding:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionSessionState_lift(_ buf: RustBuffer) throws -> DecisionSessionState {
+    return try FfiConverterTypeDecisionSessionState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecisionSessionState_lower(_ value: DecisionSessionState) -> RustBuffer {
+    return FfiConverterTypeDecisionSessionState.lower(value)
+}
+
+
+
 public enum ForeignToolError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
     
@@ -3093,6 +3441,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_classificationsession_state() != 63891) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_decisionsession_decide() != 3185) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_decisionsession_state() != 7935) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_texttospeechsession_state() != 12535) {

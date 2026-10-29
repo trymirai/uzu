@@ -860,6 +860,8 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func classification(model: Model) async throws  -> ClassificationSession
     
+    func decision(model: Model) async throws  -> DecisionSession
+    
     func download(model: Model) async throws  -> DownloaderStream
     
     func downloadState(model: Model) async  -> DownloadState?
@@ -1047,6 +1049,23 @@ open func classification(model: Model)async throws  -> ClassificationSession  {
             completeFunc: ffi_uzu_rust_future_complete_u64,
             freeFunc: ffi_uzu_rust_future_free_u64,
             liftFunc: FfiConverterTypeClassificationSession_lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
+open func decision(model: Model)async throws  -> DecisionSession  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_decision(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeModel_lower(model)
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_u64,
+            completeFunc: ffi_uzu_rust_future_complete_u64,
+            freeFunc: ffi_uzu_rust_future_free_u64,
+            liftFunc: FfiConverterTypeDecisionSession_lift,
             errorHandler: FfiConverterTypeEngineError_lift
         )
 }
@@ -2426,6 +2445,8 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     )
     case ClassificationSession(ClassificationSessionError
     )
+    case DecisionSession(DecisionSessionError
+    )
     case TextToSpeechSession(TextToSpeechSessionError
     )
     case SettingsNotAvailable
@@ -2483,11 +2504,14 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
         case 9: return .ClassificationSession(
             try FfiConverterTypeClassificationSessionError.read(from: &buf)
             )
-        case 10: return .TextToSpeechSession(
+        case 10: return .DecisionSession(
+            try FfiConverterTypeDecisionSessionError.read(from: &buf)
+            )
+        case 11: return .TextToSpeechSession(
             try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
             )
-        case 11: return .SettingsNotAvailable
-        case 12: return .ModelConfig(
+        case 12: return .SettingsNotAvailable
+        case 13: return .ModelConfig(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -2545,17 +2569,22 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             FfiConverterTypeClassificationSessionError.write(v1, into: &buf)
             
         
-        case let .TextToSpeechSession(v1):
+        case let .DecisionSession(v1):
             writeInt(&buf, Int32(10))
+            FfiConverterTypeDecisionSessionError.write(v1, into: &buf)
+            
+        
+        case let .TextToSpeechSession(v1):
+            writeInt(&buf, Int32(11))
             FfiConverterTypeTextToSpeechSessionError.write(v1, into: &buf)
             
         
         case .SettingsNotAvailable:
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(12))
         
         
         case let .ModelConfig(message):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(13))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -3530,6 +3559,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_classification() != 6465) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_decision() != 35547) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_download() != 31558) {

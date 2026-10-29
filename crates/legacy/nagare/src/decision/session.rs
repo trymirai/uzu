@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, mpsc};
 
 pub use crate::decision::error::DecisionSessionError;
 
+#[bindings::export(Enumeration)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DecisionSessionState {
     Idle,
@@ -26,6 +27,7 @@ struct DecisionInstanceHolder {
     encoding: DecisionEncoding,
 }
 
+#[bindings::export(Class)]
 #[derive(Clone)]
 pub struct DecisionSession {
     holder: Arc<Mutex<DecisionInstanceHolder>>,
@@ -123,11 +125,14 @@ impl DecisionSession {
     }
 }
 
+#[bindings::export(Implementation)]
 impl DecisionSession {
+    #[bindings::export(Method(Getter))]
     pub async fn state(&self) -> DecisionSessionState {
         *self.state.lock().await
     }
 
+    #[bindings::export(Method)]
     pub async fn decide(
         &self,
         input: DecisionInput,
