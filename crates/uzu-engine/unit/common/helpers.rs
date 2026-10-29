@@ -1,11 +1,11 @@
-use std::{mem::size_of, ops::Deref, sync::Arc};
+use std::{mem::size_of, sync::Arc};
 
 use futures::executor::block_on;
 
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, CpuBuffer,
-        GlobalBufferCpuGpu,
+        GlobalBufferCpuGpu, kernel::AttentionKernelConfig,
     },
     data_type::DataTypeRepr,
 };
@@ -16,6 +16,11 @@ macro_rules! for_each_backend {
         #[cfg(backend = "metal")]
         {
             type $B = crate::backends::metal::Metal;
+            $body
+        }
+        #[cfg(backend = "vulkan")]
+        {
+            type $B = crate::backends::vulkan::Vulkan;
             $body
         }
         {

@@ -333,6 +333,8 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub output_bias: Option<B::GlobalGpuBuffer>,
     pub output_rht_factors: Option<B::GlobalGpuBuffer>,
     pub y: B::GlobalGpuBuffer,
+    pub output_rht_factors: Option<B::GlobalGpuBuffer>,
+    pub output_bias: Option<B::GlobalGpuBuffer>,
     pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -347,19 +349,17 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         let params = QuantParams::new(params_layout, input.n, groups);
         let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
         let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
-        let mut scales = pad(&input.scales, metadata_elements);
-        let mut zp = input.zero_points.as_ref().map(|values| pad(values, zero_point_bytes));
-        let mut bias = input.biases.as_ref().map(|values| pad(values, metadata_elements));
-        if params_layout == QuantParamsLayout::GroupOutput {
-            let value_bits = size_of::<T>() as u32 * u8::BITS;
-            transpose_metadata(bytemuck::cast_slice_mut(&mut scales), input.n, groups, value_bits);
-            if let Some(bias) = &mut bias {
-                transpose_metadata(bytemuck::cast_slice_mut(bias), input.n, groups, value_bits);
+        // Group-output metadata planes are transposed on the host before upload.
+        let group_output = params_layout == QuantParamsLayout::GroupOutput;
+        let metadata = |values: &[T], transposed: bool| {
+            let mut plane = pad(values, metadata_elements);
+            if group_output && transposed {
+                let value_bits = size_of::<T>() as u32 * u8::BITS;
+                transpose_metadata(bytemuck::cast_slice_mut(&mut plane), input.n, groups, value_bits);
             }
-            if let Some(zp) = &mut zp {
-                transpose_metadata(zp, input.n, groups, DataType::from(input.mode).size_in_bits() as u32);
-            }
-        }
+            plane
+        };
+        let (x, prepared_a, prepared_a_scales, prepared_a_group_sums) = activations::<B, T>(context, input);
         Self {
             w: create_buffer_with_data::<B, u32>(context, &input.weights_for_upload()),
             scales: create_buffer_with_data::<B, T>(context, &scales),
@@ -395,6 +395,16 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         }
     }
 
+    /// Replaces the activations, A8 included, with `input`'s, keeping the weights and their layout.
+    pub fn upload_activations(
+        &mut self,
+        context: &B::Context,
+        input: &QuantInput<T>,
+    ) {
+        (self.x, self.prepared_a, self.prepared_a_scales, self.prepared_a_group_sums) =
+            activations::<B, T>(context, input);
+    }
+
     pub fn matmul_b<'a>(
         &'a self,
         input: &QuantInput<T>,
@@ -409,6 +419,22 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
             input,
         )
     }
+}
+
+/// `input`'s activations: full precision, then its prepared A8 codes, scales and group sums where it has them.
+fn activations<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    input: &QuantInput<T>,
+) -> (B::GlobalGpuBuffer, Option<B::GlobalGpuBuffer>, Option<B::GlobalGpuBuffer>, Option<B::GlobalGpuBuffer>) {
+    let prepared = input.prepared_a.as_ref();
+    (
+        create_buffer_with_data::<B, T>(context, &input.x),
+        prepared.map(|prepared| create_buffer_with_data::<B, i8>(context, &prepared.values)),
+        prepared.map(|prepared| create_buffer_with_data::<B, f32>(context, &prepared.scales)),
+        prepared
+            .filter(|prepared| !prepared.group_sums.is_empty())
+            .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
+    )
 }
 
 fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
@@ -499,18 +525,88 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
     }
 }
 
+type BackendMatmul<B> = <<B as Backend>::Kernels as Kernels>::MatmulKernel;
+
+/// `input` as a linear loaded with A8 storage runs it, with its buffers: U8 codes signed, and the activations
+/// `select_activation_format` picks for the weights' layout, A8 prepared as the backend quantizes. `None` where the
+/// backend gives the weights no A8 storage, so they stay row-major with BF16 activations.
+pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    matmul: &BackendMatmul<B>,
+    input: QuantInput<T>,
+) -> Option<(QuantInput<T>, ActivationFormat, QuantBuffers<B, T>)> {
+    let mut input = match input.mode {
+        QuantizationMode::U4 => input,
+        _ => input.with_signed_weight_codes(),
+    };
+    let mut buffers = production_quant_buffers::<B, T>(context, matmul, &input);
+    let a8_shape = MatmulShape {
+        a_full_precision: false,
+        ..MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input))
+    };
+    let quantization = matmul.select_activation_quantization(&a8_shape, context)?;
+    let bf16_shape = MatmulShape {
+        a_full_precision: true,
+        ..a8_shape
+    };
+    let format = matmul.select_activation_format(&bf16_shape, buffers.weights_layout, context);
+    if format == ActivationFormat::Int8 {
+        input = input.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size());
+        buffers.upload_activations(context, &input);
+    }
+    Some((input, format, buffers))
+}
+
+/// Buffers of `input` with its weights laid out by the backend's `optimize_weights_layout` where it takes A8, as a
+/// loaded linear's.
+pub fn production_quant_buffers<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    matmul: &BackendMatmul<B>,
+    input: &QuantInput<T>,
+) -> QuantBuffers<B, T> {
+    let mut buffers = QuantBuffers::<B, T>::allocate(context, input);
+    let a8_shape = MatmulShape {
+        a_full_precision: false,
+        ..MatmulShape::from_arguments(&quant_arguments(&mut buffers, input))
+    };
+    if matmul.select_activation_quantization(&a8_shape, context).is_some() {
+        buffers.weights_layout =
+            matmul.optimize_weights_layout(&a8_shape, &mut buffers.w, context).expect("weights layout").0;
+    }
+    buffers
+}
+
+/// A quantized product's (relative, absolute) tolerance against the CPU's product of the same codes. GEMM stages
+/// dequantized B as BF16, as Metal does: over 256 U8 levels it errs with the outputs' size.
+pub fn quant_tolerance(
+    format: ActivationFormat,
+    bits: u32,
+    expected: &[bf16],
+) -> (f64, f64) {
+    let abs_tol = match (format, bits) {
+        (ActivationFormat::Bf16, 8) => expected.iter().fold(0.4f32, |tol, value| tol.max(0.02 * value.to_f32().abs())),
+        _ => 0.4,
+    };
+    (0.05, f64::from(abs_tol))
+}
+
 pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = block_on(<Cpu as Backend>::Context::new()).expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
-    let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        &context,
-        T::data_type(),
-        T::data_type(),
-        T::data_type(),
-    )
-    .expect("MatmulCpuKernel");
+    run_quant_with(&*context, &mut buffers, input)
+}
+
+/// Runs `input` on `buffers`, whose weights a test may have laid out for the backend first.
+pub fn run_quant_with<B: Backend, T: DataTypeRepr + Float>(
+    context: &B::Context,
+    buffers: &mut QuantBuffers<B, T>,
+    input: &QuantInput<T>,
+) -> Vec<T> {
+    let mut matmul =
+        <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
+            .expect("MatmulKernel");
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    matmul.encode(quant_arguments(&mut buffers, input), &mut command_buffer).expect("encode cpu quant");
+    matmul.encode(quant_arguments(buffers, input), &mut command_buffer).expect("encode quant");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<Cpu, T>(&context, &buffers.y)
+    buffer_to_vec::<B, T>(context, &buffers.y)
 }

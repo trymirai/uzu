@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use crate::backends::{
-    common::{Buffer, SparseBuffer},
+    common::{Buffer, GpuBuffer, SparseBuffer},
     vulkan::{Error, Vulkan},
 };
 
@@ -16,6 +16,8 @@ impl Buffer for VkSparseBuffer {
         match self.never {}
     }
 }
+
+impl GpuBuffer for VkSparseBuffer {}
 
 impl SparseBuffer for VkSparseBuffer {
     fn map(

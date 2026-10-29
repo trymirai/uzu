@@ -11,7 +11,7 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context, GlobalBufferInitializer,
+            Context, CpuBuffer, GlobalBufferCpuGpu,
             gpu_types::{
                 gemm::{GemmBPrologueKind, GemmDTransform},
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
@@ -116,29 +116,47 @@ impl MatmulKernel for VkMatmulKernel {
         VkMatmulPlan::activation_format(bf16_shape, weights_layout, self.data_types(), capabilities)
     }
 
-    /// Packs codes into tiles for integer GEMM through one temporary copy.
+    /// Stores 8-bit codes signed where A8 applies, then packs codes into tiles for integer GEMM through one temporary
+    /// copy; returns the layout and whether the codes are signed.
     fn optimize_weights_layout(
         &self,
         a8_shape: &MatmulShape,
-        weights: &mut <Vulkan as Backend>::GlobalBuffer,
+        weights: &mut <Vulkan as Backend>::GlobalGpuBuffer,
         context: &VkContext,
-    ) -> Result<GemmBLayout, Error> {
+    ) -> Result<(GemmBLayout, bool), Error> {
+        let prepared_shape = MatmulShape {
+            signed_codes: a8_shape.signed_codes || a8_shape.b_bits == Some(8),
+            ..*a8_shape
+        };
+        if self.select_activation_quantization(&prepared_shape, context).is_none() {
+            return Ok((GemmBLayout::RowMajor, a8_shape.signed_codes));
+        }
+        if !a8_shape.signed_codes && prepared_shape.signed_codes {
+            // Device-local codes flip on the host through a copy.
+            let mut codes = block_on(context.copyout::<u8>(&*weights))?;
+            let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(&mut codes);
+            words.iter_mut().for_each(|word| *word ^= 0x8080_8080_8080_8080);
+            prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= 0x80);
+            let mut signed = context.create_buffer_cpu_gpu(codes.len())?;
+            signed.copyin(&codes);
+            *weights = signed.handoff();
+        }
         let (n, k) = (a8_shape.n, a8_shape.k);
         let capabilities = context.physical_device().capabilities;
         let Some(bits) =
             a8_shape.b_bits.filter(|_| VkMatmulPlan::tiles_weights(a8_shape, self.data_types(), capabilities))
         else {
-            return Ok(GemmBLayout::RowMajor);
+            return Ok((GemmBLayout::RowMajor, prepared_shape.signed_codes));
         };
         let bytes = u64::from(n) * u64::from(k) * u64::from(bits) / 8;
-        let rows = context.create_buffer(bytes as usize)?;
+        let rows = context.create_buffer_gpu(bytes as usize)?;
         let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
         command_buffer.encode_copy(weights, 0..bytes, &rows, 0)?;
         let kernel = GemmPrepareBLayoutVulkanKernel::new(&context.arc())?;
         // SAFETY: both ranges hold the n x k codes, which the copy above wrote to `rows`; the buffers do not alias.
         unsafe { kernel.encode((&rows, 0..bytes), (&*weights, 0..bytes), k, n, bits / 2, &mut command_buffer) };
         block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
-        Ok(GemmBLayout::Tiled)
+        Ok((GemmBLayout::Tiled, prepared_shape.signed_codes))
     }
 
     fn encode(
@@ -178,12 +196,12 @@ impl VkMatmulKernel {
         let rows = |row: [f32; 2], count: usize| {
             let values = row.into_iter().chain([0.0; 62]).map(f16::from_f32).cycle().take(64 * count);
             let values = values.collect::<Vec<_>>();
-            let mut initializer = context.create_buffer_initializer(2 * values.len())?;
+            let mut initializer = context.create_buffer_cpu_gpu(2 * values.len())?;
             initializer.copyin(&values);
-            initializer.end_initialization()
+            Ok::<_, Error>(initializer.handoff())
         };
         let (a, b) = (rows([128.125, -128.25], 16)?, rows([128.125, 128.0], 64)?);
-        let mut d = context.create_buffer(2 * 16 * 64)?;
+        let mut d = context.create_buffer_gpu(2 * 16 * 64)?;
         let mut kernel = Self::new(context, DataType::F16, DataType::F16, DataType::F16)?;
         let mut command_buffer = context.create_command_buffer(Some("probe FP16 cooperative products"), None)?;
         let arguments = MatmulArguments {
@@ -197,7 +215,7 @@ impl VkMatmulKernel {
             b_leading_dimension: None,
             b_transpose: true,
             output: MatmulOutput::new(&mut d, MatmulDOps::none()),
-            gather_indices: None::<&<Vulkan as Backend>::GlobalBuffer>,
+            gather_indices: None::<&<Vulkan as Backend>::GlobalGpuBuffer>,
             m: 16,
             n: 64,
             k: 64,
@@ -205,7 +223,7 @@ impl VkMatmulKernel {
         let plan = VkMatmulPlan::GemmTensor(GemmTiling::Tile16x64x64_Simdgroups1x4x2);
         kernel.encode_plan(arguments, Some(plan), &mut command_buffer)?;
         block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
-        let output = block_on(context.read_completed::<f16>(&d))?;
+        let output = block_on(context.copyout::<f16>(&d))?;
         Ok(output.iter().all(|&value| value == f16::from_f32(1.0 / 64.0)))
     }
 

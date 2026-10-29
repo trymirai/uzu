@@ -5,7 +5,7 @@ use ash::vk;
 use crate::{
     backends::{
         common::{
-            Buffer, BufferCpuAccessible, BufferRef, ConstantBuffer, GlobalBuffer, ScratchBuffer,
+            Buffer, BufferRef, CpuBuffer, GlobalGpuBuffer, GpuBuffer,
             allocator::{bump::BumpAllocation, pool::PoolAllocation},
         },
         vulkan::{Error, VkBufferMemory, VkContext, Vulkan},
@@ -113,36 +113,13 @@ impl Buffer for Arc<VkBuffer> {
     }
 }
 
-impl BufferCpuAccessible for Arc<VkBuffer> {
+impl GpuBuffer for Arc<VkBuffer> {}
+
+/// Constant pages are host-visible; device-local buffers panic in `cpu_ptr`.
+impl CpuBuffer for Arc<VkBuffer> {
     fn cpu_ptr(&self) -> NonNull<c_void> {
         VkBuffer::cpu_ptr(self)
     }
 }
 
-impl GlobalBuffer for Arc<VkBuffer> {}
-
-impl Buffer for BumpAllocation<Arc<VkBuffer>> {
-    type Backend = Vulkan;
-
-    fn size(&self) -> usize {
-        self.range().iter().len()
-    }
-}
-
-impl BufferCpuAccessible for BumpAllocation<Arc<VkBuffer>> {
-    fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { VkBuffer::cpu_ptr(self.page()).byte_add(self.range().start) }
-    }
-}
-
-impl ConstantBuffer for BumpAllocation<Arc<VkBuffer>> {}
-
-impl Buffer for PoolAllocation<Arc<VkBuffer>> {
-    type Backend = Vulkan;
-
-    fn size(&self) -> usize {
-        self.range().iter().len()
-    }
-}
-
-impl ScratchBuffer for PoolAllocation<Arc<VkBuffer>> {}
+impl GlobalGpuBuffer for Arc<VkBuffer> {}

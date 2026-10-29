@@ -84,7 +84,7 @@ impl VkCommandBufferEncoding {
             reads: Vec::new(),
             writes: Vec::new(),
             compute_only_barrier: false,
-            uploads: BumpAllocator::new(UPLOAD_PAGE_SIZE),
+            uploads: BumpAllocator::new(UPLOAD_PAGE_SIZE, 1),
             allocation_pool,
             segments: Vec::new(),
             segment_commands: 0,
@@ -458,8 +458,10 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         size: usize,
     ) -> Result<<Vulkan as Backend>::ConstantBuffer, Error> {
         let context = self.context.clone();
-        self.uploads
-            .allocate(size, |size| Ok(Arc::new(VkBuffer::new(context, size as u64, VkBufferMemory::Constants)?)))
+        let alignment = usize::min(size, 64).next_power_of_two();
+        self.uploads.allocate(size, alignment, |size| {
+            Ok(Arc::new(VkBuffer::new(context, size as u64, VkBufferMemory::Constants)?))
+        })
     }
 
     fn allocate_scratch(

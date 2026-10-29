@@ -208,7 +208,14 @@ pub mod projection {
         format: TrellisFormat,
         (m, n, k): (usize, usize, usize),
         encode: impl FnOnce(
-            MatmulArguments<'_, B, &B::GlobalBuffer, &B::GlobalBuffer, &mut B::GlobalBuffer, &B::GlobalBuffer>,
+            MatmulArguments<
+                '_,
+                B,
+                &B::GlobalGpuBuffer,
+                &B::GlobalGpuBuffer,
+                &mut B::GlobalGpuBuffer,
+                &B::GlobalGpuBuffer,
+            >,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         ),
     ) {

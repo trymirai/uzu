@@ -5,10 +5,11 @@ use rand_distr::Normal;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, CpuBuffer, Kernels,
-            kernel::{DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        kernel::{
+            DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel,
+            delta_net_chunked_prefill::{CHUNK_SIZE, DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
         },
     },
     data_type::DataType,
@@ -50,8 +51,8 @@ fn random_in_proj(tokens: usize) -> Vec<bf16> {
 fn run_prefill<B: Backend>(
     context: &B::Context,
     in_proj_data: &[bf16],
-    chunked: Option<&MetalDeltaNetChunkedPrefill>,
-    state: &mut <Metal as Backend>::GlobalGpuBuffer,
+    chunked: Option<&ChunkedPrefill<B>>,
+    state: &mut B::GlobalGpuBuffer,
 ) -> Vec<f32> {
     let suffix_len = in_proj_data.len() / TOTAL_PROJ_DIM;
     // a_log = ln U(1, 16) and dt_bias = softplus^-1(logU(1e-3, 1e-1)) as in Qwen3-Next
@@ -107,7 +108,7 @@ fn run_prefill<B: Backend>(
             &dt_bias,
             &mut q,
             &mut k,
-            None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
+            None::<&mut B::GlobalGpuBuffer>,
             &mut beta,
             &mut decay,
             NUM_V_HEADS as u32,
@@ -140,8 +141,7 @@ fn run_prefill<B: Backend>(
     let mut output = create_buffer::<B, bf16>(context, suffix_len * VALUE_DIM);
     command_buffer.encode_copy(&out, &mut output);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let out = crate::tests::helpers::buffer_readback::<Metal>(context, &out);
-    buffer_to_vec::<Metal, bf16>(context, &out).into_iter().map(f32::from).collect()
+    buffer_to_vec::<B, bf16>(context, &output).into_iter().map(f32::from).collect()
 }
 
 fn check<B: Backend>(
@@ -160,7 +160,7 @@ fn check<B: Backend>(
         .collect();
     let recurrent_out = run_prefill::<B>(context, in_proj, None, &mut recurrent_state);
     let (chunked_state, recurrent_state) =
-        (buffer_to_vec::<Metal, f32>(context, &chunked_state), buffer_to_vec::<Metal, f32>(context, &recurrent_state));
+        (buffer_to_vec::<B, f32>(context, &chunked_state), buffer_to_vec::<B, f32>(context, &recurrent_state));
 
     assert!(
         is_close::default().abs_tol(5e-3).rel_tol(1e-3).all_close(chunked_out, recurrent_out),
@@ -183,9 +183,9 @@ fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>() {
     };
     let in_proj = random_in_proj(WARMUP_TOKENS + 4096);
     let (warmup, tokens) = in_proj.split_at(WARMUP_TOKENS * TOTAL_PROJ_DIM);
-    let mut state = create_buffer_with_data::<Metal, f32>(&context, &vec![0.0; NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM]);
-    run_prefill(&context, warmup, None, &mut state);
-    let state0 = buffer_to_vec::<Metal, f32>(&context, &state);
+    let mut state = create_buffer_with_data::<B, f32>(&context, &vec![0.0; NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM]);
+    run_prefill::<B>(&context, warmup, None, &mut state);
+    let state0 = buffer_to_vec::<B, f32>(&context, &state);
     assert!(state0.iter().any(|value| *value != 0.0), "initial state is zero");
 
     for suffix_len in [2 * CHUNK_SIZE as usize + 1, 512, 1024] {

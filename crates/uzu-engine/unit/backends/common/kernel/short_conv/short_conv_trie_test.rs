@@ -87,7 +87,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    (buffer_to_vec(&*context, &out), buffer_to_vec(&*context, &suffix_state))
+    (buffer_to_vec(&*context, &out), buffer_prefix_to_vec(&*context, &suffix_state, suffix_state_size))
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.

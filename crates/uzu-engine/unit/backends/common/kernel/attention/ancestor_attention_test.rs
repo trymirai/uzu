@@ -147,10 +147,11 @@ fn ancestor_attention_matches_cpu() {
     let expected_output = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
     let expected_node_kv = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.node_kv);
 
-    let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
-    metal.encode(1);
-    let actual_output = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.output);
-    let actual_node_kv = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.node_kv);
+    for_each_non_cpu_backend!(|B| {
+        let mut runner = Runner::<B>::new(4, 5, 3, 16);
+        runner.encode(1);
+        let actual_output = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);
+        let actual_node_kv = buffer_to_vec::<B, bf16>(&runner.context, &runner.node_kv);
 
         assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
         assert_eq!(actual_node_kv, expected_node_kv);

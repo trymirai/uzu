@@ -18,12 +18,12 @@ impl Backend for Vulkan {
     type Context = VkContext;
     type CommandBuffer = VkCommandBuffer;
     type DebugGroupSpan<'a> = VkDebugGroupSpan<'a>;
-    type GlobalBuffer = Arc<VkBuffer>;
-    type GlobalBufferInitializer = VkBufferInitializer;
-    type ConstantBuffer = BumpAllocation<Self::GlobalBuffer>;
-    type ScratchBuffer = PoolAllocation<Self::GlobalBuffer>;
+    type GlobalGpuBuffer = Arc<VkBuffer>;
+    type GlobalBufferCpuGpu = VkBufferInitializer;
+    type ConstantBuffer = BumpAllocation<Self::GlobalGpuBuffer>;
+    type ScratchBuffer = PoolAllocation<Self::GlobalGpuBuffer>;
     type SparseBuffer = VkSparseBuffer;
-    type AllocationPool = PoolAllocator<Self::GlobalBuffer>;
+    type AllocationPool = PoolAllocator<Self::GlobalGpuBuffer>;
     type CaptureSpan = Infallible;
     type Kernels = VulkanKernels;
     type Error = Error;

@@ -19,7 +19,7 @@ use vk_mem::Alloc;
 use crate::{
     backends::{
         common::{
-            Backend, BufferRef, CommandBufferEncoding, CommandBufferPending, Context, DeviceCapabilities,
+            Backend, BufferRef, CommandBufferEncoding, CommandBufferPending, Context, CpuBuffer, DeviceCapabilities,
             allocator::pool::PoolAllocator,
         },
         vulkan::{
@@ -73,6 +73,9 @@ pub struct VkContext {
     queue_family_index: u32,
     /// Submissions keep the context alive, so its completion thread is idle by the time the context drops this sender.
     completion: mpsc::Sender<VkCommandBufferSubmission>,
+    /// A failure where the common contract has no error to return (`GlobalBufferCpuGpu::handoff`), returned by the
+    /// next command buffer instead.
+    deferred_error: Mutex<Option<Error>>,
 }
 impl VkContext {
     pub fn with_create_info(create_info: VkContextCreateInfo) -> Result<Arc<Self>, VkContextError> {
@@ -151,7 +154,23 @@ impl VkContext {
             queue: Mutex::new(queue),
             queue_family_index,
             completion,
+            deferred_error: Mutex::new(None),
         }))
+    }
+
+    /// Keeps `error` for the next `create_command_buffer`, unless an earlier one is still pending.
+    pub fn defer_error(
+        &self,
+        error: Error,
+    ) {
+        self.deferred_error.lock().get_or_insert(error);
+    }
+
+    fn create_readback_buffer(
+        &self,
+        size: usize,
+    ) -> Result<Arc<VkBuffer>, Error> {
+        Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Readback)?))
     }
 
     /// The `Arc` that `with_create_info` created and that owns this context; it is alive while `&self` is.
@@ -403,25 +422,21 @@ impl Context for VkContext {
         _name: Option<&str>,
         allocation_pool: Option<Arc<<Vulkan as Backend>::AllocationPool>>,
     ) -> Result<VkCommandBufferEncoding, Error> {
+        if let Some(error) = self.deferred_error.lock().take() {
+            return Err(error);
+        }
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
         VkCommandBufferEncoding::new(self.arc(), allocation_pool)
     }
 
-    fn create_buffer(
+    fn create_buffer_gpu(
         &self,
         size: usize,
     ) -> Result<Arc<VkBuffer>, Error> {
         Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Device)?))
     }
 
-    fn create_readback_buffer(
-        &self,
-        size: usize,
-    ) -> Result<Arc<VkBuffer>, Error> {
-        Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Readback)?))
-    }
-
-    fn create_buffer_initializer(
+    fn create_buffer_cpu_gpu(
         &self,
         size: usize,
     ) -> Result<VkBufferInitializer, Error> {
@@ -449,7 +464,7 @@ impl Context for VkContext {
         async move {
             let (pending, readback) = submitted?;
             pending.wait_until_completed().await?;
-            Ok((&readback).copyout())
+            Ok(readback.copyout())
         }
     }
 

@@ -6,9 +6,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{
-            Backend, Buffer, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-        },
+        common::{Backend, Buffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
         cpu::Cpu,
     },
     encodable_block::batch_topology::BatchTopology,
@@ -32,7 +30,7 @@ fn log_probabilities<B: Backend>(
     step: usize,
 ) -> Vec<Vec<f64>> {
     let engine = block_on(Engine::<B>::new()).expect("engine");
-    let model = engine.load_language_model(model_path).expect("language model");
+    let model = block_on(engine.load_language_model(model_path)).expect("language model");
     let ids = model.tokenizer.encode(PROMPT, false).expect("tokens");
     let tokens = ids.get_ids().iter().map(|&id| u64::from(id)).collect::<Vec<_>>();
     let mut state = model.create_empty_state(Some(tokens.len() as u32), 0).expect("state");
@@ -62,7 +60,7 @@ fn log_probabilities<B: Backend>(
                 )
                 .expect("decoder");
             let logits = output.logits.expect("logits");
-            let mut readback = context.create_readback_buffer(logits.size()).expect("readback buffer");
+            let mut readback = context.create_buffer_gpu(logits.size()).expect("readback buffer");
             command_buffer.encode_copy(&logits, &mut readback);
             readback
         };
@@ -71,7 +69,7 @@ fn log_probabilities<B: Backend>(
             .encode_accept(&(0..length).collect::<Box<[u32]>>(), &mut command_buffer)
             .expect("accept");
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("forward pass");
-        let logits = readback.as_slice::<bf16>();
+        let logits = block_on(context.copyout::<bf16>(&readback)).expect("logits");
         rows.extend(logits.chunks(logits.len() / chunk.len()).map(|row| {
             let row = row.iter().map(|&logit| f64::from(logit.to_f32())).collect::<Vec<_>>();
             let max = row.iter().copied().fold(f64::NEG_INFINITY, f64::max);

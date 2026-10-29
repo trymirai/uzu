@@ -7,12 +7,10 @@ use std::{
     },
 };
 
-use futures::channel::mpsc;
 use metal::{
     MTL4CommandAllocator, MTL4CommandQueue, MTL4CommandQueueDescriptor, MTLCaptureTarget, MTLComputePipelineState,
     MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEventExt, MTLSharedEventListener,
-    MTLSharedEventNotificationBlock, MTLSparsePageSize,
+    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -208,20 +206,6 @@ impl Context for MetalContext {
         size: usize,
     ) -> Result<<Metal as Backend>::GlobalBufferCpuGpu, MetalError> {
         self.block_allocator.allocate(size, |size| MetalDenseBuffer::new(&self.weak_self.upgrade().unwrap(), size))
-    }
-
-    fn create_readback_buffer(
-        &self,
-        size: usize,
-    ) -> Result<<Metal as Backend>::GlobalBuffer, MetalError> {
-        self.create_buffer(size)
-    }
-
-    fn create_buffer_initializer(
-        &self,
-        size: usize,
-    ) -> Result<<Metal as Backend>::GlobalBufferInitializer, MetalError> {
-        self.create_buffer(size)
     }
 
     fn create_sparse_buffer(

@@ -27,17 +27,6 @@ pub trait Context: Sized + Send + Sync {
         size: usize,
     ) -> Result<<Self::Backend as Backend>::GlobalBufferCpuGpu, <Self::Backend as Backend>::Error>;
 
-    /// A global buffer that GPU work writes for the CPU to read in place once that work completes.
-    fn create_readback_buffer(
-        &self,
-        size: usize,
-    ) -> Result<<Self::Backend as Backend>::GlobalBuffer, <Self::Backend as Backend>::Error>;
-
-    fn create_buffer_initializer(
-        &self,
-        size: usize,
-    ) -> Result<<Self::Backend as Backend>::GlobalBufferInitializer, <Self::Backend as Backend>::Error>;
-
     fn create_sparse_buffer(
         &self,
         capacity: usize,

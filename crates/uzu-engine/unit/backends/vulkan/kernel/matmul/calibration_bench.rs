@@ -105,7 +105,7 @@ fn calibrate(
         Rc<QuantInput<bf16>>,
         VkMatmulKernel,
         ColdPool<QuantBuffers<Vulkan, bf16>, impl FnMut() -> QuantBuffers<Vulkan, bf16> + use<>>,
-        <Vulkan as Backend>::GlobalBuffer,
+        <Vulkan as Backend>::GlobalGpuBuffer,
         VkMatmulPlan,
     ),
     String,
@@ -232,7 +232,7 @@ fn select(
     input: &QuantInput<bf16>,
     kernel: &mut VkMatmulKernel,
     buffers: &mut ColdPool<QuantBuffers<Vulkan, bf16>, impl FnMut() -> QuantBuffers<Vulkan, bf16>>,
-    output: &mut <Vulkan as Backend>::GlobalBuffer,
+    output: &mut <Vulkan as Backend>::GlobalGpuBuffer,
     baseline: VkMatmulPlan,
     qualified: &[VkMatmulPlan],
 ) -> Option<VkMatmulPlan> {
@@ -337,7 +337,7 @@ fn time_encode_loop(
         encode(&mut command_buffer);
     }
     let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    completed.gpu_execution_time()
+    completed.gpu_execution_time().expect("Vulkan times every command buffer")
 }
 
 /// The activations every plan qualifies on: zeros, the seeded ones with one 32 a row, alternating +-4, then the seeded

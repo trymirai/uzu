@@ -1,11 +1,11 @@
 use std::{os::raw::c_void, ptr::NonNull, sync::Arc};
 
 use crate::backends::{
-    common::{Buffer, BufferCpuAccessible, CommandBufferEncoding, Context, GlobalBufferInitializer},
+    common::{Buffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu},
     vulkan::{Error, VkBuffer, VkBufferMemory, VkContext, Vulkan},
 };
 
-/// A staging buffer the host fills, which ending initialization copies into its device-local buffer.
+/// A staging buffer the host fills, which `handoff` copies into its device-local buffer.
 pub struct VkBufferInitializer {
     staging: Arc<VkBuffer>,
     buffer: Arc<VkBuffer>,
@@ -31,19 +31,28 @@ impl Buffer for VkBufferInitializer {
     }
 }
 
-impl BufferCpuAccessible for VkBufferInitializer {
+impl CpuBuffer for VkBufferInitializer {
     fn cpu_ptr(&self) -> NonNull<c_void> {
         self.staging.cpu_ptr()
     }
 }
 
-impl GlobalBufferInitializer for VkBufferInitializer {
-    /// Submits the copy without waiting: later command buffers on the queue see it, and the completion thread frees
-    /// the staging buffer once it is done.
-    fn end_initialization(self) -> Result<Arc<VkBuffer>, Error> {
+impl VkBufferInitializer {
+    fn submit_copy(&self) -> Result<(), Error> {
         let mut encoding = self.buffer.context().create_command_buffer(None, None)?;
         encoding.encode_copy(&self.staging, 0..VkBuffer::size(&self.staging), &self.buffer, 0)?;
         drop(encoding.end_encoding().try_submit()?);
-        Ok(self.buffer)
+        Ok(())
+    }
+}
+
+impl GlobalBufferCpuGpu for VkBufferInitializer {
+    /// Submits the copy without waiting: later command buffers on the queue see it, and the completion thread frees
+    /// the staging buffer once it is done. A failed submission is the context's next command buffer's error.
+    fn handoff(self) -> Arc<VkBuffer> {
+        if let Err(error) = self.submit_copy() {
+            self.buffer.context().defer_error(error);
+        }
+        self.buffer
     }
 }

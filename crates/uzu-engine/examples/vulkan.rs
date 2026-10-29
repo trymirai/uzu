@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use uzu_engine::backends::vulkan::{
-    BufferMut, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-    Error, GlobalBufferInitializer, TestKernelAxisFloatVulkanKernel, VkBuffer, VkContext, VkContextCreateInfo,
+    CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, CpuBuffer,
+    Error, GlobalBufferCpuGpu, TestKernelAxisFloatVulkanKernel, VkBuffer, VkContext, VkContextCreateInfo,
 };
 
 fn main() -> Result<(), Error> {
@@ -11,9 +11,9 @@ fn main() -> Result<(), Error> {
     println!("Vulkan context created: {}", context.device_name().unwrap_or("unknown"));
 
     let upload = |bytes: &[u8]| -> Result<Arc<VkBuffer>, Error> {
-        let mut initializer = context.create_buffer_initializer(bytes.len())?;
-        initializer.copyin(bytes);
-        initializer.end_initialization()
+        let mut buffer = context.create_buffer_cpu_gpu(bytes.len())?;
+        buffer.copyin(bytes);
+        Ok(buffer.handoff())
     };
 
     let data = (0..4096).map(|index| (index % 100) as u8).collect::<Box<[u8]>>();

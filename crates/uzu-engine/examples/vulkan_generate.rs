@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let engine = block_on(Engine::<Vulkan>::new())?;
     let load = Instant::now();
-    let model = engine.load_language_model(Path::new(&model_path))?;
+    let model = block_on(engine.load_language_model(Path::new(&model_path)))?;
     println!("loaded {model_path} in {:.2} s", load.elapsed().as_secs_f64());
     let input = model.tokenizer().encode(prompt, false)?.get_ids().iter().map(|&id| u64::from(id)).collect::<Vec<_>>();
 

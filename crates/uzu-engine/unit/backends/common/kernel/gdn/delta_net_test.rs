@@ -626,11 +626,11 @@ fn test_delta_net_prefill_prep() {
         );
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    let gpu_q = buffer_to_vec::<Metal, bf16>(&context, &q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
-    let gpu_k = buffer_to_vec::<Metal, bf16>(&context, &k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
-    let gpu_v: Vec<bf16> = buffer_to_vec(&*context, &compact_v_array);
-    let gpu_beta: Vec<f32> = buffer_to_vec(&*context, &beta_array);
-    let gpu_decay: Vec<f32> = buffer_to_vec(&*context, &decay_array);
+        let gpu_q = buffer_to_vec::<B, bf16>(&context, &q_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+        let gpu_k = buffer_to_vec::<B, bf16>(&context, &k_norm_array).into_iter().map(f32::from).collect::<Vec<_>>();
+        let gpu_v: Vec<bf16> = buffer_to_vec(&*context, &compact_v_array);
+        let gpu_beta: Vec<f32> = buffer_to_vec(&*context, &beta_array);
+        let gpu_decay: Vec<f32> = buffer_to_vec(&*context, &decay_array);
 
         assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
         assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");

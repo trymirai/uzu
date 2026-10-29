@@ -64,20 +64,6 @@ impl Context for CpuContext {
         Ok(CpuDenseBuffer::new(size))
     }
 
-    fn create_readback_buffer(
-        &self,
-        size: usize,
-    ) -> Result<<Cpu as Backend>::GlobalBuffer, CpuError> {
-        self.create_buffer(size)
-    }
-
-    fn create_buffer_initializer(
-        &self,
-        size: usize,
-    ) -> Result<<Cpu as Backend>::GlobalBufferInitializer, CpuError> {
-        Ok(CpuBuffer::new(size))
-    }
-
     fn create_sparse_buffer(
         &self,
         _capacity: usize,
