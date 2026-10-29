@@ -918,8 +918,6 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func removeRegistry(registryIdentifier: String) async throws 
     
-    func settings() async throws  -> Settings
-    
     func textToSpeech(model: Model) async throws  -> TextToSpeechSession
     
     /**
@@ -1510,23 +1508,6 @@ open func removeRegistry(registryIdentifier: String)async throws   {
         )
 }
     
-open func settings()async throws  -> Settings  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_uzu_fn_method_engine_settings(
-                    self.uniffiCloneHandle()
-                    
-                )
-            },
-            pollFunc: ffi_uzu_rust_future_poll_u64,
-            completeFunc: ffi_uzu_rust_future_complete_u64,
-            freeFunc: ffi_uzu_rust_future_free_u64,
-            liftFunc: FfiConverterTypeSettings_lift,
-            errorHandler: FfiConverterTypeEngineError_lift
-        )
-}
-    
 open func textToSpeech(model: Model)async throws  -> TextToSpeechSession  {
     return
         try  await uniffiRustCallAsync(
@@ -1853,145 +1834,6 @@ public func FfiConverterTypePlayer_lower(_ value: Player) -> UInt64 {
 
 
 
-
-
-public protocol SettingsProtocol: AnyObject, Sendable {
-    
-    func clear() throws 
-    
-    func load(kind: SettingKind, key: String) throws  -> String?
-    
-    func save(kind: SettingKind, key: String, value: String?) throws 
-    
-}
-open class Settings: SettingsProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_uzu_fn_clone_settings(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_uzu_fn_free_settings(handle, $0) }
-    }
-
-    
-
-    
-open func clear()throws   {try rustCallWithError(FfiConverterTypeSettingsError_lift) {
-    uniffi_uzu_fn_method_settings_clear(
-            self.uniffiCloneHandle(),$0
-    )
-}
-}
-    
-open func load(kind: SettingKind, key: String)throws  -> String?  {
-    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeSettingsError_lift) {
-    uniffi_uzu_fn_method_settings_load(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeSettingKind_lower(kind),
-        FfiConverterString.lower(key),$0
-    )
-})
-}
-    
-open func save(kind: SettingKind, key: String, value: String?)throws   {try rustCallWithError(FfiConverterTypeSettingsError_lift) {
-    uniffi_uzu_fn_method_settings_save(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeSettingKind_lower(kind),
-        FfiConverterString.lower(key),
-        FfiConverterOptionString.lower(value),$0
-    )
-}
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeSettings: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = Settings
-
-    public static func lift(_ handle: UInt64) throws -> Settings {
-        return Settings(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: Settings) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Settings {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: Settings, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSettings_lift(_ handle: UInt64) throws -> Settings {
-    return try FfiConverterTypeSettings.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSettings_lower(_ value: Settings) -> UInt64 {
-    return FfiConverterTypeSettings.lower(value)
-}
-
-
-
-
 /**
  * Chat metadata available without loading model weights or allocating a session.
  */
@@ -2122,7 +1964,6 @@ public func FfiConverterTypeDevice_lower(_ value: Device) -> RustBuffer {
 
 
 public struct EngineConfig: Equatable, Hashable, Codable {
-    public var applicationIdentifier: String?
     public var miraiApiKey: String?
     public var localPath: String?
     public var huggingfaceApiKey: String?
@@ -2138,8 +1979,7 @@ public struct EngineConfig: Equatable, Hashable, Codable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(applicationIdentifier: String?, miraiApiKey: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
-        self.applicationIdentifier = applicationIdentifier
+    public init(miraiApiKey: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
         self.miraiApiKey = miraiApiKey
         self.localPath = localPath
         self.huggingfaceApiKey = huggingfaceApiKey
@@ -2178,15 +2018,6 @@ public func withAnthropicApiKey(anthropicApiKey: String) -> EngineConfig  {
     uniffi_uzu_fn_method_engineconfig_with_anthropic_api_key(
             FfiConverterTypeEngineConfig_lower(self),
         FfiConverterString.lower(anthropicApiKey),$0
-    )
-})
-}
-    
-public func withApplicationIdentifier(applicationIdentifier: String) -> EngineConfig  {
-    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
-    uniffi_uzu_fn_method_engineconfig_with_application_identifier(
-            FfiConverterTypeEngineConfig_lower(self),
-        FfiConverterString.lower(applicationIdentifier),$0
     )
 })
 }
@@ -2287,7 +2118,6 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EngineConfig {
         return
             try EngineConfig(
-                applicationIdentifier: FfiConverterOptionString.read(from: &buf), 
                 miraiApiKey: FfiConverterOptionString.read(from: &buf), 
                 localPath: FfiConverterOptionString.read(from: &buf), 
                 huggingfaceApiKey: FfiConverterOptionString.read(from: &buf), 
@@ -2304,7 +2134,6 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: EngineConfig, into buf: inout [UInt8]) {
-        FfiConverterOptionString.write(value.applicationIdentifier, into: &buf)
         FfiConverterOptionString.write(value.miraiApiKey, into: &buf)
         FfiConverterOptionString.write(value.localPath, into: &buf)
         FfiConverterOptionString.write(value.huggingfaceApiKey, into: &buf)
@@ -2414,8 +2243,6 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     )
     case Device(DeviceError
     )
-    case Settings(SettingsError
-    )
     case Storage(StorageError
     )
     case Registry(RegistryError
@@ -2428,7 +2255,6 @@ public enum EngineError: Swift.Error, Equatable, Hashable, Codable, Foundation.L
     )
     case TextToSpeechSession(TextToSpeechSessionError
     )
-    case SettingsNotAvailable
     case ModelConfig(message: String
     )
 
@@ -2466,28 +2292,24 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
         case 2: return .Device(
             try FfiConverterTypeDeviceError.read(from: &buf)
             )
-        case 3: return .Settings(
-            try FfiConverterTypeSettingsError.read(from: &buf)
-            )
-        case 4: return .Storage(
+        case 3: return .Storage(
             try FfiConverterTypeStorageError.read(from: &buf)
             )
-        case 5: return .Registry(
+        case 4: return .Registry(
             try FfiConverterTypeRegistryError.read(from: &buf)
             )
-        case 6: return .UnableToCreateBackend
-        case 7: return .BackendNotFound
-        case 8: return .ChatSession(
+        case 5: return .UnableToCreateBackend
+        case 6: return .BackendNotFound
+        case 7: return .ChatSession(
             try FfiConverterTypeChatSessionError.read(from: &buf)
             )
-        case 9: return .ClassificationSession(
+        case 8: return .ClassificationSession(
             try FfiConverterTypeClassificationSessionError.read(from: &buf)
             )
-        case 10: return .TextToSpeechSession(
+        case 9: return .TextToSpeechSession(
             try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
             )
-        case 11: return .SettingsNotAvailable
-        case 12: return .ModelConfig(
+        case 10: return .ModelConfig(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -2512,50 +2334,41 @@ public struct FfiConverterTypeEngineError: FfiConverterRustBuffer {
             FfiConverterTypeDeviceError.write(v1, into: &buf)
             
         
-        case let .Settings(v1):
-            writeInt(&buf, Int32(3))
-            FfiConverterTypeSettingsError.write(v1, into: &buf)
-            
-        
         case let .Storage(v1):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(3))
             FfiConverterTypeStorageError.write(v1, into: &buf)
             
         
         case let .Registry(v1):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(4))
             FfiConverterTypeRegistryError.write(v1, into: &buf)
             
         
         case .UnableToCreateBackend:
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(5))
         
         
         case .BackendNotFound:
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(6))
         
         
         case let .ChatSession(v1):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(7))
             FfiConverterTypeChatSessionError.write(v1, into: &buf)
             
         
         case let .ClassificationSession(v1):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(8))
             FfiConverterTypeClassificationSessionError.write(v1, into: &buf)
             
         
         case let .TextToSpeechSession(v1):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(9))
             FfiConverterTypeTextToSpeechSessionError.write(v1, into: &buf)
             
         
-        case .SettingsNotAvailable:
-            writeInt(&buf, Int32(11))
-        
-        
         case let .ModelConfig(message):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(10))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -2753,147 +2566,6 @@ public func FfiConverterTypeRegistryError_lift(_ buf: RustBuffer) throws -> Regi
 #endif
 public func FfiConverterTypeRegistryError_lower(_ value: RegistryError) -> RustBuffer {
     return FfiConverterTypeRegistryError.lower(value)
-}
-
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
-public enum SettingKind: Equatable, Hashable, Codable {
-    
-    case config
-    case secret
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension SettingKind: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeSettingKind: FfiConverterRustBuffer {
-    typealias SwiftType = SettingKind
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SettingKind {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .config
-        
-        case 2: return .secret
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: SettingKind, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .config:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .secret:
-            writeInt(&buf, Int32(2))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSettingKind_lift(_ buf: RustBuffer) throws -> SettingKind {
-    return try FfiConverterTypeSettingKind.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSettingKind_lower(_ value: SettingKind) -> RustBuffer {
-    return FfiConverterTypeSettingKind.lower(value)
-}
-
-
-
-public enum SettingsError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
-
-    
-    
-    case BackendError(message: String
-    )
-
-    
-
-    
-
-    
-    public var errorDescription: String? {
-        String(reflecting: self)
-    }
-    
-}
-
-#if compiler(>=6)
-extension SettingsError: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeSettingsError: FfiConverterRustBuffer {
-    typealias SwiftType = SettingsError
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SettingsError {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        
-
-        
-        case 1: return .BackendError(
-            message: try FfiConverterString.read(from: &buf)
-            )
-
-         default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: SettingsError, into buf: inout [UInt8]) {
-        switch value {
-
-        
-
-        
-        
-        case let .BackendError(message):
-            writeInt(&buf, Int32(1))
-            FfiConverterString.write(message, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSettingsError_lift(_ buf: RustBuffer) throws -> SettingsError {
-    return try FfiConverterTypeSettingsError.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeSettingsError_lower(_ value: SettingsError) -> RustBuffer {
-    return FfiConverterTypeSettingsError.lower(value)
 }
 
 
@@ -3613,9 +3285,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_remove_registry() != 48480) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_uzu_checksum_method_engine_settings() != 6450) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_uzu_checksum_method_engine_text_to_speech() != 62782) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3644,15 +3313,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_player_stop() != 11919) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_uzu_checksum_method_settings_clear() != 28707) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_uzu_checksum_method_settings_load() != 8520) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_uzu_checksum_method_settings_save() != 30707) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_constructor_enginecallback_create() != 1654) {

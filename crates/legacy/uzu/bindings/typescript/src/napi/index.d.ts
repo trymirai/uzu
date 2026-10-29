@@ -992,7 +992,6 @@ export declare class Engine {
   chatWithInstance(instance: ChatInstance): Promise<ChatSession>
   classification(model: Model): Promise<ClassificationSession>
   textToSpeech(model: Model): Promise<TextToSpeechSession>
-  settings(): Promise<Settings>
 }
 
 export declare class EngineCallback {
@@ -1000,7 +999,6 @@ export declare class EngineCallback {
 }
 
 export declare class EngineConfig {
-  applicationIdentifier?: string
   miraiApiKey?: string
   localPath?: string
   huggingfaceApiKey?: string
@@ -1013,10 +1011,9 @@ export declare class EngineConfig {
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
   downloadManagerType: DownloadManagerType
-  constructor(applicationIdentifier?: string, miraiApiKey?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
+  constructor(miraiApiKey?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
 
   static create(): EngineConfig
-  withApplicationIdentifier(applicationIdentifier: string): EngineConfig
   withMiraiApiKey(miraiApiKey: string): EngineConfig
   withLocalPath(localPath: string): EngineConfig
   withHuggingfaceApiKey(huggingfaceApiKey: string): EngineConfig
@@ -1037,19 +1034,12 @@ export declare class Player {
   static create(): Promise<Player>
 }
 
-export declare class Settings {
-  save(kind: SettingKind, key: string, value?: string | undefined | null): void
-  load(kind: SettingKind, key: string): string | null
-  clear(): void
-}
-
 export type DeviceError =
   | { type: 'UnsupportedDevice' }
 
 export type EngineError =
   | { type: 'TokioError'; message: string }
   | { type: 'Device'; field0: DeviceError }
-  | { type: 'Settings'; field0: SettingsError }
   | { type: 'Storage'; field0: StorageError }
   | { type: 'Registry'; field0: RegistryError }
   | { type: 'UnableToCreateBackend' }
@@ -1057,7 +1047,6 @@ export type EngineError =
   | { type: 'ChatSession'; field0: ChatSessionError }
   | { type: 'ClassificationSession'; field0: ClassificationSessionError }
   | { type: 'TextToSpeechSession'; field0: TextToSpeechSessionError }
-  | { type: 'SettingsNotAvailable' }
   | { type: 'ModelConfig'; message: string }
 
 export type PlayerError =
@@ -1068,14 +1057,6 @@ export type RegistryError =
   | { type: 'UnableToCreate'; message: string }
   | { type: 'UnableToGetModels'; message: string }
   | { type: 'UnableToAddRegistry'; identifier: string }
-
-export declare const enum SettingKind {
-  Config = 'Config',
-  Secret = 'Secret'
-}
-
-export type SettingsError =
-  | { type: 'BackendError'; message: string }
 
 export type StorageError =
   | { type: 'UnableToCreateDirectory'; path: string }

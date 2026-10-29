@@ -2,10 +2,7 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    settings::{SettingKind, Settings, SettingsError},
-    storage::DownloadManagerType,
-};
+use crate::storage::DownloadManagerType;
 
 pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
 pub const KEY_LOCAL_PATH: &str = "LOCAL_PATH";
@@ -21,7 +18,6 @@ pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct EngineConfig {
-    pub application_identifier: Option<String>,
     pub mirai_api_key: Option<String>,
     pub local_path: Option<String>,
     pub huggingface_api_key: Option<String>,
@@ -40,7 +36,6 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
-            application_identifier: None,
             mirai_api_key: env::var(KEY_MIRAI_API_KEY).ok(),
             local_path: env::var(KEY_LOCAL_PATH).ok(),
             huggingface_api_key: env::var(KEY_HF_TOKEN).ok(),
@@ -50,37 +45,10 @@ impl Default for EngineConfig {
             xai_api_key: env::var(KEY_XAI_API_KEY).ok(),
             baseten_api_key: env::var(KEY_BASETEN_API_KEY).ok(),
             openrouter_api_key: env::var(KEY_OPENROUTER_API_KEY).ok(),
-            allow_ollama_usage: true,
-            allow_lmstudio_usage: true,
+            allow_ollama_usage: false,
+            allow_lmstudio_usage: false,
             download_manager_type: DownloadManagerType::default(),
         }
-    }
-}
-
-impl EngineConfig {
-    pub fn synchronize_with_settings(
-        &mut self,
-        settings: &Settings,
-    ) -> Result<(), SettingsError> {
-        macro_rules! synchronize_field {
-            ($setting_kind:path, $field:ident, $key:expr) => {
-                if let Some(value) = settings.load($setting_kind, $key)? {
-                    self.$field = Some(value);
-                }
-            };
-        }
-
-        synchronize_field!(SettingKind::Secret, mirai_api_key, KEY_MIRAI_API_KEY.to_string());
-        synchronize_field!(SettingKind::Config, local_path, KEY_LOCAL_PATH.to_string());
-        synchronize_field!(SettingKind::Secret, huggingface_api_key, KEY_HF_TOKEN.to_string());
-        synchronize_field!(SettingKind::Secret, openai_api_key, KEY_OPENAI_API_KEY.to_string());
-        synchronize_field!(SettingKind::Secret, anthropic_api_key, KEY_ANTHROPIC_API_KEY.to_string());
-        synchronize_field!(SettingKind::Secret, gemini_api_key, KEY_GEMINI_API_KEY.to_string());
-        synchronize_field!(SettingKind::Secret, xai_api_key, KEY_XAI_API_KEY.to_string());
-        synchronize_field!(SettingKind::Secret, baseten_api_key, KEY_BASETEN_API_KEY.to_string());
-        synchronize_field!(SettingKind::Secret, openrouter_api_key, KEY_OPENROUTER_API_KEY.to_string());
-
-        Ok(())
     }
 }
 
@@ -94,17 +62,6 @@ impl EngineConfig {
 
 #[bindings::export(Implementation)]
 impl EngineConfig {
-    #[bindings::export(Method)]
-    pub fn with_application_identifier(
-        &self,
-        application_identifier: String,
-    ) -> Self {
-        Self {
-            application_identifier: Some(application_identifier),
-            ..self.clone()
-        }
-    }
-
     #[bindings::export(Method)]
     pub fn with_mirai_api_key(
         &self,

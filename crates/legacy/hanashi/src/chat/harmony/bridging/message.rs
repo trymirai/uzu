@@ -9,12 +9,9 @@ use shoji::types::{
     session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
-use crate::chat::{
-    harmony::{
-        CHANNEL_ANALYSIS, CHANNEL_COMMENTARY, CHANNEL_FINAL, CONTENT_TYPE_JSON, ROLE_ASSISTANT,
-        bridging::{Error, FromHarmony, ToHarmony},
-    },
-    strftime_now,
+use crate::chat::harmony::{
+    CHANNEL_ANALYSIS, CHANNEL_COMMENTARY, CHANNEL_FINAL, CONTENT_TYPE_JSON, ROLE_ASSISTANT,
+    bridging::{Error, FromHarmony, ToHarmony},
 };
 
 const FUNCTIONS_NAMESPACE: &str = "functions";
@@ -300,7 +297,7 @@ pub fn bridge_messages_to_harmony(
 fn system_message(mut content: ExternalSystemContent) -> ExternalMessage {
     // Match the reference template's current-date fallback.
     if content.conversation_start_date.is_none() {
-        content.conversation_start_date = Some(strftime_now("%Y-%m-%d".to_string()));
+        content.conversation_start_date = Some(chrono::Local::now().date_naive().to_string());
     }
     ExternalMessage {
         author: ExternalAuthor::from(ExternalRole::System),

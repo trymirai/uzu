@@ -19,9 +19,9 @@ thiserror.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 regex.workspace = true
-libc.workspace = true
 indexmap.workspace = true
 tracing.workspace = true
+chrono.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true
