@@ -103,10 +103,8 @@ impl GemvSpecialization {
             return None;
         }
         let bits = shape.b_bits.unwrap_or(0);
-        if !is_quant {
-            if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH {
-                return None;
-            }
+        if !is_quant && (shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH) {
+            return None;
         }
         let block_size = if !is_quant {
             FP_K_BLOCK
