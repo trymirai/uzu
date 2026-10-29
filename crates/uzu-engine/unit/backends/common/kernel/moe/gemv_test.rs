@@ -2,7 +2,7 @@ use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-use super::{SharedGemv, assert_vec_close};
+use super::{MOE_GEMV_OUTPUT_ROW_TILE, SharedGemv, assert_vec_close};
 use crate::{
     backends::{
         common::{
@@ -16,9 +16,7 @@ use crate::{
     tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
-const MOE_GEMV_OUTPUT_ROW_TILE: u32 = 32;
-
-fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
+pub(super) fn run_moe_gemv<B: Backend, W: DataTypeRepr, Z: DataTypeRepr>(
     weights: &[W],
     scales: Option<&[bf16]>,
     zero_points: Option<&[Z]>,

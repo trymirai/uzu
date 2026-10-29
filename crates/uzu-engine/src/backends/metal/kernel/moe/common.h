@@ -5,6 +5,7 @@
 #define MOE_ROUTER_NUM_SIMDGROUPS 8
 #define MOE_ROUTER_MAX_PER_THREAD 2
 #define MOE_GEMV_NUM_SIMDGROUPS 8
+#define MOE_GEMV_OUTPUT_ROW_TILE (32)
 
 inline bool is_better_candidate(float v_new, uint id_new, float v_cur, uint id_cur, uint num_experts) {
   if (id_new >= num_experts)
