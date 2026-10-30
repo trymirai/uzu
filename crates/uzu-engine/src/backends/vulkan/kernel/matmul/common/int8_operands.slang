@@ -7,8 +7,6 @@ import generated.quantization_method;
 // whose dot within a weight group is exact. W4 activations are stored GroupedByNibble (K order 0, 2, 4, 6, 1, 3, 5, 7
 // per 8 codes): a weight word's low nibbles then its high ones, so words pair without shuffles.
 
-public static const uint INT8_SCALE_GROUP = 128;
-
 // The integer dot of the 4 signed bytes of `a` and `b`, never saturating.
 public int dot_i8x4(uint a, uint b) {
   return spirv_asm {

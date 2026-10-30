@@ -1,4 +1,5 @@
 import definitions;
+import common.activation_quantization;
 import common.hadamard;
 import matmul.common.matmul;
 import common.quantized_value;
@@ -568,7 +569,7 @@ public struct Int8Gemm<
                 let group = (end - 1) / weights.group_size;
                 if (index < uint(BM)) {
                   let input = min(block_row + index, m - 1);
-                  let a_scale = activations.scales[input * (k / INT8_SCALE_GROUP) + (end - 1) / INT8_SCALE_GROUP];
+                  let a_scale = activations.scales[(input * k + end - 1) / ACTIVATION_QUANTIZATION_TILE];
                   let group_sum = scale_bias ? group_sums[input * (k / weights.group_size) + group] : 0;
                   value = float2(a_scale, a_scale * float(group_sum));
                 } else {
@@ -630,7 +631,7 @@ public struct Int8Gemm<
               for (int i = 0; i < TM; i++) {
                 let row = block_row + (subgroup / uint(SG_N)) * uint(TM * 16) + uint(16 * i) + lane / 2;
                 let input = min(row, m - 1);
-                let a_scale = activations.scales[input * (k / INT8_SCALE_GROUP) + (end - 1) / INT8_SCALE_GROUP];
+                let a_scale = activations.scales[(input * k + end - 1) / ACTIVATION_QUANTIZATION_TILE];
                 let group_sum = scale_bias ? group_sums[input * (k / weights.group_size) + group] : 0;
                 [unroll]
                 for (int j = 0; j < TN; j++) {

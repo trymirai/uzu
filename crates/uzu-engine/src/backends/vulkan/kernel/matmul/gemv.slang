@@ -1,5 +1,6 @@
 import definitions;
 import matmul.common.matmul;
+import common.activation_quantization;
 import common.hadamard;
 import common.workgroup_reduction;
 import generated.gemm;
@@ -301,7 +302,7 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
       if (I < INPUT_ROWS && (I == 0 || input < m)) {
         uint activation[8];
         gemv_int8_words(codes, input * k + column, GEMV_INT8_RUN, activation);
-        let scale = a_scales[input * (k / INT8_SCALE_GROUP) + column / INT8_SCALE_GROUP];
+        let scale = a_scales[(input * k + column) / ACTIVATION_QUANTIZATION_TILE];
         let group_sum = head ? a_group_sums[input * (k / group_size) + group] : 0;
         let activation_sum = unsigned_dot ? int(biased_activations(activation)) - 128 * int(GEMV_INT8_RUN) : 0;
         [ForceUnroll]
