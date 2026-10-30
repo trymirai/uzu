@@ -142,7 +142,3 @@ objc2-foundation.workspace = true
 # concern, so on-device (iOS) builds skip it (see metrics.rs stub).
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 keisoku.workspace = true
-
-[[example]]
-name = "vulkan"
-required-features = ["vulkan"]

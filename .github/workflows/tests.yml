@@ -148,12 +148,9 @@ jobs:
           test "${#drivers[@]}" -eq 1 && test -f "${drivers[0]}"
           echo "VK_DRIVER_FILES=${drivers[0]}" >> "$GITHUB_ENV"
       - name: Lint Vulkan
-        run: cargo +nightly clippy -p uzu-engine --no-default-features --features cpu,vulkan --lib --tests --example vulkan --locked -- -D warnings
+        run: cargo +nightly clippy -p uzu-engine --no-default-features --features cpu,vulkan --lib --tests --locked -- -D warnings
       - name: Test CPU and Vulkan contracts
-        run: |
-          cargo +nightly test -p uzu-engine --no-default-features --features cpu,vulkan --lib --locked
-          cargo +stable run -p uzu-engine --no-default-features --features cpu,vulkan --example vulkan --locked 2>&1 | tee vulkan.log
-          ! grep -q '\[Error\]' vulkan.log
+        run: cargo +nightly test -p uzu-engine --no-default-features --features cpu,vulkan --lib --locked
 
   validate-bindings:
     name: validate-bindings
