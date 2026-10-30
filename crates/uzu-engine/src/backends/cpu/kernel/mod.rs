@@ -22,6 +22,7 @@ mod short_conv;
 mod softmax;
 mod tensor_add_bias;
 mod tensor_add_scale;
+mod verify_trie;
 mod weaver;
 
 include!(concat!(env!("OUT_DIR"), "/cpu.rs"));

@@ -13,6 +13,7 @@ use crate::{
         sampling::{Sampling, SamplingMethod},
     },
     engine::Engine,
+    engine::language_model::stream::TrieVerifier,
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
     utils::file,
@@ -29,6 +30,7 @@ pub struct LanguageModel<B: Backend> {
     decoder: Decoder<B>,
     speculator: Option<DFlashTfmSpeculator<B>>,
     sampling: Sampling<B>,
+    trie_verifier: TrieVerifier<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
     end_of_thinking_tag: Option<String>,
@@ -92,6 +94,8 @@ impl<B: Backend> Engine<B> {
 
         let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
 
+        let trie_verifier = TrieVerifier::new(self.context.as_ref()).map_err(EngineLoadLanguageModelError::Backend)?;
+
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
@@ -110,6 +114,7 @@ impl<B: Backend> Engine<B> {
             decoder,
             speculator,
             sampling,
+            trie_verifier,
             context_ring_update,
             generation_config,
             end_of_thinking_tag,

@@ -18,6 +18,9 @@ pub use crate::{
 };
 
 mod stream;
+mod verify_trie;
+
+pub use verify_trie::TrieVerifier;
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,

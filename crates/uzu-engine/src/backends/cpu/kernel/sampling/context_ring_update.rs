@@ -9,7 +9,7 @@ pub fn context_ring_update(
     suffix_repetition_length: u32,
 ) {
     unsafe {
-        // `input` is `[len; tokens...]`.
+        // `input` is `[len; tokens in reverse order]`.
         let input_length = *input;
         let input = input.add(1);
         let ring = &mut *context_ring.cast::<RingParams>();
@@ -25,7 +25,7 @@ pub fn context_ring_update(
                 ring.ring_offset = (ring.ring_offset + 1) % suffix_repetition_length;
                 slot
             };
-            *ring_tokens.add(slot as usize) = *input.add(input_index as usize);
+            *ring_tokens.add(slot as usize) = *input.add((input_length - 1 - input_index) as usize);
         }
     }
 }
