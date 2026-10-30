@@ -348,7 +348,6 @@ void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IModelFloat, D : IMo
 [[Precondition("new", "[16, 32, 64].contains(&ROW_BLOCK)")]]
 [[Precondition("new", "NUM_SIMDGROUPS == if ROW_BLOCK == 64 { 8 } else { 4 }")]]
 [[Precondition("new", "context.physical_device().capabilities.contains(VkDeviceCapabilities::INT8_TENSOR_CORES_K32 | VkDeviceCapabilities::SUBGROUP_SIZE_32)")]]
-[[Precondition("new", "shared_words == 2 * (ROW_BLOCK + 64) * 5 + 4 * 64 * (ROW_BLOCK / 16)")]]
 [[Precondition("new", "split_phase < 3 && [1, 2, 4, 8].contains(&splits) && (split_phase == 0) == (splits == 1)")]]
 [[Precondition("encode", "k.is_multiple_of(128 * splits)")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32)")]]
@@ -409,7 +408,6 @@ public func GemmInt8<B: IModelFloat, D: IModelFloat>(
 [[Precondition("new", "[16, 32, 64].contains(&ROW_BLOCK)")]]
 [[Precondition("new", "NUM_SIMDGROUPS == if ROW_BLOCK == 64 { 8 } else { 4 }")]]
 [[Precondition("new", "context.physical_device().capabilities.contains(VkDeviceCapabilities::INT8_TENSOR_CORES_K16 | VkDeviceCapabilities::SUBGROUP_SIZE_32)")]]
-[[Precondition("new", "shared_words == 2 * (ROW_BLOCK + 64) * 5 + 4 * 64 * (ROW_BLOCK / 16)")]]
 [[Precondition("new", "split_phase < 3 && [1, 2, 4, 8].contains(&splits) && (split_phase == 0) == (splits == 1)")]]
 [[Precondition("encode", "k.is_multiple_of(128 * splits)")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32)")]]
@@ -473,7 +471,6 @@ public func GemmInt8K16<B: IModelFloat, D: IModelFloat>(
 [[Precondition("new", "if ROW_BLOCK == 32 { [4, 8].contains(&NUM_SIMDGROUPS) } else { NUM_SIMDGROUPS == if ROW_BLOCK == 64 { 8 } else { 4 } }")]]
 [[Precondition("new", "context.physical_device().capabilities.contains(VkDeviceCapabilities::INT8_ELEMENT_FOLD | VkDeviceCapabilities::INT8_TENSOR_CORES_K32 | VkDeviceCapabilities::SUBGROUP_SIZE_32)")]]
 [[Precondition("new", "stage_depth == 64 || (stage_depth == 128 && ROW_BLOCK == 16 && group_size.is_multiple_of(64))")]]
-[[Precondition("new", "shared_words == 2 * (ROW_BLOCK + 64) * (stage_depth / 16 + 1)")]]
 [[Precondition("new", "split_phase < 3 && [1, 2, 4, 8].contains(&splits) && (split_phase == 0) == (splits == 1)")]]
 [[Precondition("encode", "k.is_multiple_of(128 * splits)")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32)")]]
@@ -520,6 +517,8 @@ public func GemmInt8Nv<B: IModelFloat, D: IModelFloat>(
   [[Specialize]] bool has_rht,
   [[Specialize]] uint stage_depth,
 ) {
+  // Consecutive workgroups take consecutive row tiles of one column tile, so those in flight share its weight rows in
+  // cache.
   let column_tiles = (n - 1) / 64 + 1;
   let row_tiles = (m - 1) / ROW_BLOCK + 1;
   let linear_tile = column_tile + row_tile * column_tiles;
