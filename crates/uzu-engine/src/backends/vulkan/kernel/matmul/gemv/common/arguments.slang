@@ -5,7 +5,7 @@ import generated.gemm_b_layout;
 import generated.quantization;
 import generated.quantization_method;
 
-// b is a word pointer each B source reinterprets.
+// b is a word pointer the full-precision B source reads as B; quantized B is read through QuantizedWeights.
 
 public struct GemvOperands<A : IModelFloat, B : IModelFloat, D : IModelFloat> {
   public Ptr<uint, Access.Read> b;
