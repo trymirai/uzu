@@ -32,7 +32,7 @@ use kiban::rt::RuntimeHandle;
 pub use model_info::ChatModelInfo;
 use nagare::chat::{ChatInstance, ChatSession};
 #[cfg(not(target_family = "wasm"))]
-use nagare::{classification::ClassificationSession, text_to_speech::TextToSpeechSession};
+use nagare::{classification::ClassificationSession, decision::DecisionSession, text_to_speech::TextToSpeechSession};
 use shoji::{
     traits::{Backend, Registry},
     types::{
@@ -665,6 +665,23 @@ impl Engine {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
             let session = ClassificationSession::new(backend.clone(), model, path).await?;
+            Ok(session)
+        } else {
+            Err(EngineError::BackendNotFound {})
+        }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[bindings::export(Method)]
+    pub async fn decision(
+        &self,
+        model: Model,
+    ) -> Result<DecisionSession, EngineError> {
+        let path = self.model_path(&model).await;
+        if let Some(backend) = model.backends.first() {
+            let backends = self.backends.lock().await;
+            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
+            let session = DecisionSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
             Err(EngineError::BackendNotFound {})

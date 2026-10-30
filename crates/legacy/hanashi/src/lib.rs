@@ -1,8 +1,10 @@
 mod classification;
+mod decision;
 
 pub mod chat;
 
 pub use classification::encoding::ClassificationEncoding;
+pub use decision::{encoding::DecisionEncoding, error::DecisionEncodingError};
 
 pub trait Encoding {
     type Config;

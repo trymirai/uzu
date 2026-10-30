@@ -102,6 +102,11 @@ export declare class ClassificationSession {
   classify(input: Array<ClassificationMessage>): Promise<ClassificationOutput>
 }
 
+export declare class DecisionSession {
+  get state(): Promise<DecisionSessionState>
+  decide(input: DecisionInput): Promise<DecisionOutput>
+}
+
 export declare class NativeTool {
   constructor(definition: ToolFunction, invokeJson: (arg0: string, arg1: string) => Promise<string>, cancel: (arg: string) => void)
 }
@@ -174,6 +179,20 @@ export type ClassificationSessionError =
 export declare const enum ClassificationSessionState {
   Idle = 'Idle',
   Classifying = 'Classifying'
+}
+
+export type DecisionSessionError =
+  | { type: 'Backend'; message: string }
+  | { type: 'Encoding'; message: string }
+  | { type: 'InvalidQuestion'; index: number; message: string }
+  | { type: 'NoQuestions' }
+  | { type: 'UnsupportedModel' }
+  | { type: 'UnableToPerformOperationInCurrentState' }
+  | { type: 'NoResponse' }
+
+export declare const enum DecisionSessionState {
+  Idle = 'Idle',
+  Deciding = 'Deciding'
 }
 
 export type TextToSpeechSessionError =
@@ -481,6 +500,72 @@ export declare class ContextLengthDefault {
 
 export declare class ContextLengthMaximal {
   constructor()
+}
+
+export declare class DecisionAnswerChoice {
+  index: number
+  key: string
+  probabilities: Array<number>
+  constructor(index: number, key: string, probabilities: Array<number>)
+}
+
+export declare class DecisionAnswerScore {
+  probabilities: Array<number>
+  score: number
+  constructor(probabilities: Array<number>, score: number)
+}
+
+export declare class DecisionAnswerYesNo {
+  yesProbability: number
+  constructor(yesProbability: number)
+}
+
+export declare class DecisionInput {
+  state: string
+  questions: Array<DecisionQuestion>
+  constructor(state: string, questions: Array<DecisionQuestion>)
+}
+
+export declare class DecisionOption {
+  key: string
+  description?: string
+  constructor(key: string, description?: string)
+}
+
+export declare class DecisionOutput {
+  results: Array<DecisionResult>
+  constructor(results: Array<DecisionResult>)
+}
+
+export declare class DecisionQuestionChoice {
+  instructions?: string
+  options: Array<DecisionOption>
+  constructor(instructions?: string, options: Array<DecisionOption>)
+}
+
+export declare class DecisionQuestionScore {
+  instructions?: string
+  levels: Array<string>
+  constructor(instructions?: string, levels: Array<string>)
+}
+
+export declare class DecisionQuestionYesNo {
+  instructions?: string
+  noDescription?: string
+  yesDescription?: string
+  constructor(instructions?: string, noDescription?: string, yesDescription?: string)
+}
+
+export declare class DecisionResult {
+  answer: DecisionAnswer
+  stats: DecisionStats
+  constructor(answer: DecisionAnswer, stats: DecisionStats)
+}
+
+export declare class DecisionStats {
+  tokensCount: number
+  totalDuration: number
+  constructor(tokensCount: number, totalDuration: number)
 }
 
 export declare class Feature {
@@ -845,6 +930,12 @@ export declare const enum ClassificationRole {
 export type ContextLength =
   ContextLengthDefault | ContextLengthMaximal | ContextLengthCustom
 
+export type DecisionAnswer =
+  DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerYesNo
+
+export type DecisionQuestion =
+  DecisionQuestionChoice | DecisionQuestionScore | DecisionQuestionYesNo
+
 export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
 
@@ -991,6 +1082,7 @@ export declare class Engine {
   chatInstance(model: Model, config: ChatConfig): Promise<ChatInstance>
   chatWithInstance(instance: ChatInstance): Promise<ChatSession>
   classification(model: Model): Promise<ClassificationSession>
+  decision(model: Model): Promise<DecisionSession>
   textToSpeech(model: Model): Promise<TextToSpeechSession>
 }
 
@@ -1046,6 +1138,7 @@ export type EngineError =
   | { type: 'BackendNotFound' }
   | { type: 'ChatSession'; field0: ChatSessionError }
   | { type: 'ClassificationSession'; field0: ClassificationSessionError }
+  | { type: 'DecisionSession'; field0: DecisionSessionError }
   | { type: 'TextToSpeechSession'; field0: TextToSpeechSessionError }
   | { type: 'ModelConfig'; message: string }
 
