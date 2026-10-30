@@ -16,12 +16,16 @@ pub struct VkPhysicalDevice {
     pub capabilities: VkDeviceCapabilities,
     /// Streaming multiprocessors or compute units, where the device reports them.
     pub compute_units: Option<u32>,
-    /// maxBufferSize (maintenance4) and maxMemoryAllocationSize (maintenance3): the largest single buffer and
-    /// single allocation.
-    pub max_buffer_size: u64,
-    pub max_memory_allocation_size: u64,
+    /// The largest buffer one allocation can back: maxBufferSize (maintenance4) within maxMemoryAllocationSize
+    /// (maintenance3).
+    pub max_buffer_bytes: u64,
 }
 impl VkPhysicalDevice {
+    /// The resource limits, which the identity-free matmul selectors read without naming `properties`.
+    pub fn limits(&self) -> &vk::PhysicalDeviceLimits {
+        &self.properties.limits
+    }
+
     /// The first compute queue family; Vulkan 1.4's timestampComputeAndGraphics gives each one timestamps.
     pub fn compute_queue_family(&self) -> Option<u32> {
         self.queue_families
@@ -196,8 +200,7 @@ impl VkPhysicalDevice {
             queue_families,
             capabilities,
             compute_units,
-            max_buffer_size: vk13properties.max_buffer_size,
-            max_memory_allocation_size: maintenance3.max_memory_allocation_size,
+            max_buffer_bytes: vk13properties.max_buffer_size.min(maintenance3.max_memory_allocation_size),
         })
     }
 }

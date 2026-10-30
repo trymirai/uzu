@@ -11,7 +11,7 @@ use crate::{
             },
         },
         vulkan::{
-            VkDeviceCapabilities as Capability, VkDeviceFacts,
+            VkDeviceCapabilities as Capability, VkPhysicalDevice,
             gpu_types::{
                 gemm::{GemmTiling, INT8_FOLD_ENTRIES, INT8_FOLD_PADDING},
                 gemm_b_layout::GemmBLayout,
@@ -31,7 +31,7 @@ const INT8_CORES: [Capability; 3] = [
 const INT8_FOLD_BYTES: u32 = 4 * (2 * INT8_FOLD_ENTRIES + INT8_FOLD_PADDING);
 /// One dispatch family of the existing matmul kernels with its specialization parameters. A plan's cost is all of its
 /// dispatches: split K's reduction phase and the output transform the encoder appends. The loaded weight layout and the activation format
-/// are the problem's, never the plan's. Legality and the baseline read [`VkDeviceFacts`], never the device's identity.
+/// are the problem's, never the plan's. Legality and the baseline read the device's queried facts, never its identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VkMatmulPlan {
     /// Gemv on full-precision A, with its tile.
@@ -66,20 +66,20 @@ impl VkMatmulPlan {
         shape: &MatmulShape,
         b_layout: GemmBLayout,
         data_types: [DataType; 3],
-        device: VkDeviceFacts<'_>,
+        device: &VkPhysicalDevice,
         float_tensor_cores_eligible: bool,
     ) -> Self {
         let (m, n, k) = (shape.m, shape.n, shape.k);
         let [weights, input, _] = data_types;
         let (capabilities, units) = (device.capabilities, device.compute_units);
-        let max_shared = device.limits.max_compute_shared_memory_size;
+        let max_shared = device.limits().max_compute_shared_memory_size;
         // Where only unsigned dot products are accelerated, up to 8 rows of full-precision A quantize themselves.
         if shape.a == ActivationFormat::Bf16
             && m <= 8
             && capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
         {
-            return Self::gemv_int8(m, shape.gathered, device.subgroups.size);
+            return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
         }
         if shape.a == ActivationFormat::Bf16 {
             return if shape.gathered || m <= 8 || !Self::gemm_rows(shape) {
@@ -104,7 +104,7 @@ impl VkMatmulPlan {
         // Up to 8 rows, and on devices without INT8 tensor cores or whose unsigned dot products are the fast ones,
         // GemvInt8.
         if m <= 8 || !capabilities.prefers_int8_gemm() {
-            return Self::gemv_int8(m, shape.gathered, device.subgroups.size);
+            return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
         }
         // The element fold, else 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both.
         let element_fold = capabilities.contains(Capability::INT8_ELEMENT_FOLD);
@@ -156,11 +156,11 @@ impl VkMatmulPlan {
         shape: &MatmulShape,
         b_layout: GemmBLayout,
         data_types: [DataType; 3],
-        device: VkDeviceFacts<'_>,
+        device: &VkPhysicalDevice,
     ) -> Result<(), &'static str> {
         let [weights, input, _] = data_types;
         let (m, n, k) = (shape.m, shape.n, shape.k);
-        let (capabilities, limits, subgroups) = (device.capabilities, device.limits, device.subgroups);
+        let (capabilities, limits, subgroups) = (device.capabilities, device.limits(), &device.subgroup_properties);
         let group = shape.b_group_size.unwrap_or(0);
         let max_shared = limits.max_compute_shared_memory_size;
         let require = |met: bool, reason: &'static str| met.then_some(()).ok_or(reason);
@@ -261,8 +261,7 @@ impl VkMatmulPlan {
                 require(
                     splits == 1
                         || bytes.is_some_and(|bytes| {
-                            bytes <= MAX_ALLOCATION_SIZE as u64
-                                && bytes.next_power_of_two() <= device.max_buffer_bytes()
+                            bytes <= MAX_ALLOCATION_SIZE as u64 && bytes.next_power_of_two() <= device.max_buffer_bytes
                         }),
                     "split K's partial sums exceed 32-bit indexing, the scratch pool or the device's largest buffer",
                 )?;

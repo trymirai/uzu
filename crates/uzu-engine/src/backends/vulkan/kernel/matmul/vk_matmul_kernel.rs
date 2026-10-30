@@ -30,7 +30,7 @@ use crate::{
             ActivationQuantizeVulkanKernel, Error, GemmInt8K16VulkanKernel, GemmInt8NvVulkanKernel,
             GemmInt8VulkanKernel, GemmPrepareBLayoutVulkanKernel, GemmTensorVulkanKernel, GemmVulkanKernel,
             GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer, VkCommandBufferEncoding,
-            VkContext, VkDeviceCapabilities, VkDeviceFacts, VkKernelError, Vulkan,
+            VkContext, VkDeviceCapabilities, VkKernelError, Vulkan,
             gpu_types::{gemm::GemmTiling, gemm_b_layout::GemmBLayout},
         },
     },
@@ -449,7 +449,7 @@ impl VkMatmulKernel {
             Some(plan) => plan,
             None => self.baseline(&shape, b_layout, &context)?,
         };
-        plan.check(&shape, b_layout, self.data_types(), VkDeviceFacts::new(physical_device))
+        plan.check(&shape, b_layout, self.data_types(), physical_device)
             .map_err(|reason| precondition("Matmul", reason))?;
         // GemvInt8 of full-precision A first quantizes it to scratch A8 by the shape's A8 contract.
         let quantized_a = match (plan, &a_range) {
@@ -835,9 +835,8 @@ impl VkMatmulKernel {
         b_layout: GemmBLayout,
         context: &VkContext,
     ) -> Result<VkMatmulPlan, Error> {
-        let device = VkDeviceFacts::new(context.physical_device());
         let eligible = context.qualified_float_tensor_cores(self.input_data_type)?;
-        Ok(VkMatmulPlan::baseline(shape, b_layout, self.data_types(), device, eligible))
+        Ok(VkMatmulPlan::baseline(shape, b_layout, self.data_types(), context.physical_device(), eligible))
     }
 
     fn data_types(&self) -> [DataType; 3] {
