@@ -122,8 +122,8 @@ impl MatmulKernel for VkMatmulKernel {
         context: &VkContext,
     ) -> ActivationFormat {
         let capabilities = context.physical_device().capabilities;
-        match VkMatmulPlan::activation_format(bf16_shape, weights_layout, self.data_types(), capabilities) {
-            ActivationFormat::Int8(_) if matches!(prepared, ActivationFormat::Int8(_)) => prepared,
+        match prepared {
+            ActivationFormat::Int8(_) if VkMatmulPlan::a8_rows(bf16_shape.m, weights_layout, capabilities) => prepared,
             _ => ActivationFormat::Bf16,
         }
     }

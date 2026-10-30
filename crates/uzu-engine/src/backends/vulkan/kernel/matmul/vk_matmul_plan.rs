@@ -320,26 +320,20 @@ impl VkMatmulPlan {
         .then_some(quantization)
     }
 
-    /// The format callers give `bf16_shape`'s A from weights in `b_layout`: A8 within its contract from one row on
-    /// unsigned-dot devices, otherwise from 2 to 8 rows and, where the device prefers INT8 GEMM, beyond; tiled weights
-    /// take A8 from 2 rows.
-    pub fn activation_format(
-        bf16_shape: &MatmulShape,
+    /// Whether callers give m rows of A as A8 from weights in `b_layout` that take it: from one row on unsigned-dot
+    /// devices, otherwise from 2 to 8 rows and, where the device prefers INT8 GEMM, beyond; tiled weights from 2 rows.
+    pub fn a8_rows(
+        m: u32,
         b_layout: GemmBLayout,
-        data_types: [DataType; 3],
         capabilities: Capability,
-    ) -> ActivationFormat {
-        let m = bf16_shape.m;
-        let rows = m >= 1
-            && (capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
-                || (m >= 2 && (m <= 8 || capabilities.prefers_int8_gemm())));
-        let int8 = match b_layout {
+    ) -> bool {
+        match b_layout {
             GemmBLayout::Tiled => m >= 2,
-            GemmBLayout::RowMajor => rows,
-        };
-        match Self::a8_quantization(bf16_shape, data_types, capabilities).filter(|_| int8) {
-            Some(quantization) => ActivationFormat::Int8(quantization),
-            None => ActivationFormat::Bf16,
+            GemmBLayout::RowMajor => {
+                m >= 1
+                    && (capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
+                        || (m >= 2 && (m <= 8 || capabilities.prefers_int8_gemm())))
+            },
         }
     }
 
