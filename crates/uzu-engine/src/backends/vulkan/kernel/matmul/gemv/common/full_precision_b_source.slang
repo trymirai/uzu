@@ -28,9 +28,7 @@ public struct FullPrecisionBSource {
   ) {
     let VALUES_PER_THREAD = 4u;
     let BLOCK_SIZE = VALUES_PER_THREAD * SIMD_SIZE;
-    let k_stride = Tile.K_SPLIT * BLOCK_SIZE;
-    let k_start = tile.k_slice * BLOCK_SIZE;
-    let thread_k = tile.reduction_lane * VALUES_PER_THREAD + k_start;
+    let thread_k = tile.reduction_lane * VALUES_PER_THREAD;
     let weights_row_stride = params.in_vec_size;
     let input_row = tile.input_row;
     let vector = params.in_vec_size % VALUES_PER_THREAD == 0;
@@ -47,8 +45,8 @@ public struct FullPrecisionBSource {
       weight_rows[output_index] = weight_row * weights_row_stride + thread_k;
     }
 
-    uint k = k_start;
-    for (; k + BLOCK_SIZE <= params.in_vec_size; k += k_stride) {
+    uint k = 0;
+    for (; k + BLOCK_SIZE <= params.in_vec_size; k += BLOCK_SIZE) {
       let input_values = gemv_load4(ops.a, input, vector);
       [unroll]
       for (uint output_index = 0; output_index < Tile.ROWS_PER_LANE; output_index++) {
@@ -57,15 +55,14 @@ public struct FullPrecisionBSource {
           let weight_values = gemv_load4(weights, weight_rows[output_index], vector);
           result[0][output_index] += dot(weight_values, input_values);
         }
-        weight_rows[output_index] += k_stride;
+        weight_rows[output_index] += BLOCK_SIZE;
       }
-      input += k_stride;
+      input += BLOCK_SIZE;
     }
 
-    if (Tile.K_SPLIT == 1 && !INPUT_ALIGNED) {
-      let thread_offset = tile.reduction_lane * VALUES_PER_THREAD;
-      let remaining = k + thread_offset < params.in_vec_size
-        ? min(int(params.in_vec_size - k - thread_offset), int(VALUES_PER_THREAD))
+    if (!INPUT_ALIGNED) {
+      let remaining = k + thread_k < params.in_vec_size
+        ? min(int(params.in_vec_size - k - thread_k), int(VALUES_PER_THREAD))
         : 0;
       if (remaining > 0) {
         [unroll]

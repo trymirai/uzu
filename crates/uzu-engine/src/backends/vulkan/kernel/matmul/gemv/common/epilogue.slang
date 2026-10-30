@@ -12,8 +12,7 @@ public struct Epilogue {
     OutputTile tile,
     bool FULL_TILE
   ) {
-    let output_writer = tile.writer && tile.reduction_lane == 0;
-    if (!output_writer) {
+    if (tile.reduction_lane != 0) {
       return;
     }
     [unroll]

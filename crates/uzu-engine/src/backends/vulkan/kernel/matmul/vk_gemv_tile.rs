@@ -13,14 +13,10 @@ pub struct VkGemvTile {
     pub metal_layout: bool,
     /// SIMD groups launched in one threadgroup.
     pub num_simdgroups: u32,
-    /// Number of split-K slices reduced by one threadgroup.
-    pub k_split: u32,
     /// Output rows computed by each SIMD group.
     pub results_per_simdgroup: u32,
     /// Input rows processed by one threadgroup.
     pub input_row_tile: u32,
-    /// SIMD lanes cooperating over K for one output-row block.
-    pub reduction_lanes: u32,
     /// SIMD lanes cooperating on one quantization group.
     pub group_lanes: u32,
 }
@@ -29,8 +25,6 @@ impl VkGemvTile {
     const fn new(
         num_simdgroups: u32,
         results_per_simdgroup: u32,
-        input_row_tile: u32,
-        reduction_lanes: u32,
         group_lanes: u32,
     ) -> Self {
         Self {
@@ -38,20 +32,14 @@ impl VkGemvTile {
             full_tile: false,
             metal_layout: true,
             num_simdgroups,
-            k_split: 1,
             results_per_simdgroup,
-            input_row_tile,
-            reduction_lanes,
+            input_row_tile: 1,
             group_lanes,
         }
     }
 
     pub const fn output_row_tile(self) -> u32 {
-        (self.num_simdgroups / self.k_split) * self.results_per_simdgroup
-    }
-
-    const fn rows_per_lane(self) -> u32 {
-        self.results_per_simdgroup / (32 / self.reduction_lanes)
+        self.num_simdgroups * self.results_per_simdgroup
     }
 }
 
@@ -66,7 +54,7 @@ const fn lane_default(
         8 => 4,
         _ => 1,
     };
-    VkGemvTile::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, 1, 32, group / (2 * pack_factor))
+    VkGemvTile::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, group / (2 * pack_factor))
 }
 
 fn gathered_tile(
@@ -79,13 +67,13 @@ fn gathered_tile(
         return None;
     }
     let tile = lane_default(bits, group);
-    (n >= tile.rows_per_lane()).then_some(tile)
+    (n >= tile.results_per_simdgroup).then_some(tile)
 }
 
 impl VkGemvTile {
     /// The reader tile for shapes outside the lane layout: 8 outputs of one row per workgroup of 8 simdgroups.
     pub fn reader() -> Self {
-        let mut tile = Self::new(8, 1, 1, 32, 1);
+        let mut tile = Self::new(8, 1, 1);
         tile.metal_layout = false;
         tile
     }
@@ -94,7 +82,7 @@ impl VkGemvTile {
         n: u32,
         k: u32,
     ) -> Self {
-        let mut selected = Self::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, 1, 32, 1);
+        let mut selected = Self::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, 1);
         selected.input_aligned = k.is_multiple_of(FP_K_BLOCK);
         selected.full_tile = n.is_multiple_of(selected.output_row_tile());
         selected
@@ -136,7 +124,7 @@ impl VkGemvTile {
             8
         };
         let narrow =
-            (general.is_some() && !gathered && (group / 2).is_multiple_of(lane_run)).then(|| Self::new(4, 2, 1, 32, 2));
+            (general.is_some() && !gathered && (group / 2).is_multiple_of(lane_run)).then(|| Self::new(4, 2, 2));
         let tiles = match bf16_io && m == 1 && b_layout == GemmBLayout::Tiled {
             true => [narrow, general],
             false => [general, narrow],

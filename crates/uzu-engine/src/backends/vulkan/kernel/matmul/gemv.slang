@@ -78,12 +78,12 @@ void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmul
 [[Kernel]]
 [[Precondition("new", "b_prologue == GemmBPrologueKind::FullPrecision || (group_size > 0 && quantization_mode != QuantizationMode::I8)")]]
 [[Precondition("new", "METAL_LAYOUT || (OUTPUT_ROW_TILE == 8 && NUM_SIMDGROUPS == 8 && INPUT_ROW_TILE == 1)")]]
-[[Precondition("new", "!METAL_LAYOUT || b_prologue != GemmBPrologueKind::FullPrecision || (NUM_SIMDGROUPS == 8 && INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && GROUP_LANES == 1 && [1, 2, 4, 8].contains(&K_SPLIT) && (OUTPUT_ROW_TILE == 8 / K_SPLIT || OUTPUT_ROW_TILE == 32 / K_SPLIT) && (INPUT_ALIGNED || K_SPLIT == 1))")]]
-[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || (K_SPLIT == 1 && [16, 32, 64, 128].contains(&group_size))")]]
-[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || ((1..=16).contains(&INPUT_ROW_TILE) && (INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32))")]]
-[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || ([8, 16, 32].contains(&REDUCTION_LANES) && [1, 2, 4, 8, 16].contains(&GROUP_LANES) && REDUCTION_LANES.is_multiple_of(GROUP_LANES))")]]
+[[Precondition("new", "!METAL_LAYOUT || b_prologue != GemmBPrologueKind::FullPrecision || (NUM_SIMDGROUPS == 8 && INPUT_ROW_TILE == 1 && GROUP_LANES == 1 && [8, 32].contains(&OUTPUT_ROW_TILE))")]]
+[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || [16, 32, 64, 128].contains(&group_size)")]]
+[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || (1..=16).contains(&INPUT_ROW_TILE)")]]
+[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || [1, 2, 4, 8, 16].contains(&GROUP_LANES)")]]
 [[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || (group_size.is_multiple_of(GROUP_LANES) && (group_size / GROUP_LANES).is_multiple_of(if quantization_mode == QuantizationMode::U4 { 16 } else { 8 }))")]]
-[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || ([2, 4, 8].contains(&NUM_SIMDGROUPS) && OUTPUT_ROW_TILE.is_multiple_of(NUM_SIMDGROUPS) && [1, 2, 4, 8].contains(&(OUTPUT_ROW_TILE / NUM_SIMDGROUPS)) && (OUTPUT_ROW_TILE / NUM_SIMDGROUPS).is_multiple_of(32 / REDUCTION_LANES))")]]
+[[Precondition("new", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || ([2, 4, 8].contains(&NUM_SIMDGROUPS) && OUTPUT_ROW_TILE.is_multiple_of(NUM_SIMDGROUPS) && [1, 2, 4, 8].contains(&(OUTPUT_ROW_TILE / NUM_SIMDGROUPS)))")]]
 [[Precondition("new", "!METAL_LAYOUT || !gathered || INPUT_ROW_TILE == 1")]]
 [[Precondition("encode", "!METAL_LAYOUT || b_prologue != GemmBPrologueKind::FullPrecision || (b_row_stride == k.into() && b_inner_stride == 1u32.into())")]]
 [[Precondition("encode", "!METAL_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || quantization_mode != QuantizationMode::U4 || k.is_multiple_of(2)")]]
@@ -125,9 +125,7 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   [[Specialize]] uint OUTPUT_ROW_TILE,
   [[Specialize]] uint NUM_SIMDGROUPS,
   [[Specialize]] uint INPUT_ROW_TILE,
-  [[Specialize]] uint REDUCTION_LANES,
   [[Specialize]] uint GROUP_LANES,
-  [[Specialize]] uint K_SPLIT,
   [[Specialize]] bool INPUT_ALIGNED,
   [[Specialize]] bool FULL_TILE,
   [[Specialize]] bool METAL_LAYOUT,
@@ -155,7 +153,7 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
     k, n, scale_output_stride, scale_group_stride, zero_point_output_stride, zero_point_group_stride, m, ab_scale,
     soft_cap, has_scale, has_bias, has_soft_cap, gathered, signed_codes, b_layout
   };
-  let Tile = GemvTile(INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT);
+  let Tile = GemvTile(INPUT_ROW_TILE, OUTPUT_ROW_TILE, GROUP_LANES, NUM_SIMDGROUPS);
   let tile = OutputTile.make(Tile, FULL_TILE, output_tile_idx, input_tile_idx, n);
   float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE];
   [unroll]
@@ -170,7 +168,7 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   } else {
     FullPrecisionBSource.accumulate(result, ops, params, Tile, tile, INPUT_ALIGNED, FULL_TILE);
   }
-  Reduce.run(result, Tile, tile);
+  Reduce.run(result, Tile);
   Epilogue.store(result, ops, params, Tile, tile, FULL_TILE);
 }
 
