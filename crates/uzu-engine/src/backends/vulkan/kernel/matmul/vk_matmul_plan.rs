@@ -120,9 +120,7 @@ impl VkMatmulPlan {
         core(row_block, stage_depth, units.map_or(1, |units| int8_splits(tiles, k, residency, units)))
     }
 
-    /// Why this plan cannot run `shape` from weights in `b_layout`, checked before any pipeline is created or command
-    /// recorded: the caller's A format, B layout and gather against the family, then the device's shared memory,
-    /// workgroup and subgroup limits. The kernels check their own specializations when created.
+    /// Why this plan cannot run `shape` from weights in `b_layout` on `device`, before any pipeline or command.
     pub fn check(
         &self,
         shape: &MatmulShape,

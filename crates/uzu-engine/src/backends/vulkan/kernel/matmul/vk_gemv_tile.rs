@@ -91,9 +91,7 @@ impl VkGemvTile {
         selected
     }
 
-    /// The tile of a quantized shape: the general tile, lane-sliced over the group or every input row at once for 2 to
-    /// GEMV_INPUT_ROW_TILE rows of BF16, else the reader. One BF16 row from B packed in 32-row tiles takes the narrow
-    /// tile of 4 simdgroups by 2 rows instead where its two group lanes hold whole runs of 16 U4 or 8 U8 values.
+    /// The narrow tile for one BF16 row from tiled B in whole lane runs, else the general tile, else the reader.
     pub fn quantized(
         shape: &MatmulShape,
         b_layout: GemmBLayout,
