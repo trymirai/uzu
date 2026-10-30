@@ -174,17 +174,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "apple-native-keyring-store"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b350bfd03649e07aa05c0a81b3e15934374e585c98204a57e20b9d49f49bb9a"
-dependencies = [
- "keyring-core",
- "log",
- "security-framework",
-]
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -623,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "async-openai",
  "futures",
@@ -677,7 +666,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks-uzu"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "cc",
@@ -720,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -730,9 +719,10 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "inventory",
+ "js-sys",
  "napi",
  "napi-build",
  "napi-derive",
@@ -1308,7 +1298,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1347,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "clap",
@@ -2220,7 +2210,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "async-trait",
  "bindings",
@@ -3319,10 +3309,10 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
+ "chrono",
  "indexmap 2.14.2",
- "libc",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -4160,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "fancy-regex 0.19.2",
  "indexmap 2.14.2",
@@ -4242,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "libc",
  "obfstr",
@@ -4262,7 +4252,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "bitflags 2.13.2",
  "kanka",
@@ -4287,15 +4277,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyring-core"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29fbf4b551298c67925f38cf341a1ada797a75f1837bdf8ae1fc8e2ebc6efb59"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4314,7 +4295,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kiban"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4781,7 +4762,7 @@ dependencies = [
 
 [[package]]
 name = "mirai-gui"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "chrono",
  "futures",
@@ -4803,7 +4784,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "base64 0.23.1",
  "bitflags 2.13.2",
@@ -4973,7 +4954,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "async-trait",
  "bindings",
@@ -4984,6 +4965,7 @@ dependencies = [
  "indexmap 2.14.2",
  "inventory",
  "keisoku",
+ "kiban",
  "nagare-macros",
  "napi",
  "napi-build",
@@ -5012,7 +4994,7 @@ dependencies = [
 
 [[package]]
 name = "nagare-macros"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
@@ -7985,7 +7967,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -9203,7 +9185,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "indexmap 2.14.2",
  "json-transform",
@@ -10013,27 +9995,25 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
- "apple-native-keyring-store",
  "async-openai",
  "backend-remote",
  "bindings",
  "bindings-types",
  "bon",
- "confy",
  "dirs",
  "dotenvy",
  "download-manager",
  "fancy-regex 0.19.2",
  "futures",
  "futures-util",
+ "getrandom 0.4.3",
  "hanashi",
  "indexmap 2.14.2",
  "indicatif",
  "inventory",
- "keyring-core",
  "kiban",
  "mock-registry",
  "nagare",
@@ -10073,12 +10053,13 @@ dependencies = [
  "uzu-engine",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "wiremock",
 ]
 
 [[package]]
 name = "uzu-engine"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -10142,7 +10123,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine-macros"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "quote",
  "syn 3.0.9",

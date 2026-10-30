@@ -9,7 +9,7 @@ pub mod routing;
 pub use arguments::MatmulArguments;
 pub use d_ops::MatmulDOps;
 pub use kernel::MatmulKernel;
-pub use matmul_a::{Int8CodeLayout, MatmulA};
+pub use matmul_a::{Int8CodeLayout, MatmulA, packed_half_bytes};
 pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection};
 #[cfg(backend = "metal")]
 pub use matmul_b::{TRELLIS_CODES_TAIL_BYTES, TrellisFormat};

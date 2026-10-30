@@ -64,6 +64,7 @@ pub fn activation_transform<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float
     rht_factors: *const i32,
     batch_size: u32,
     element_count: u32,
+    #[optional(ops == ActivationTransformOp::PackHalf)] packed_half_out: Option<*mut u32>,
     #[specialize] ops: ActivationTransformOp,
     #[specialize] grouped_by_weight_nibble: bool,
     #[specialize] in_place: bool,
@@ -79,6 +80,7 @@ pub fn activation_transform<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float
     let columns = element_count as usize;
     let input_rht = ops != ActivationTransformOp::OutputRht;
     let quantize = matches!(ops, ActivationTransformOp::Quantize | ActivationTransformOp::QuantizeWithGroupSums);
+    assert!(packed_half_out.is_none(), "CPU packed-half activation is not selected");
     assert_eq!(bias.is_some(), has_bias);
 
     let mut transformed = vec![0.0f32; columns];

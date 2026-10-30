@@ -19,7 +19,7 @@ pub struct FetchModels {
 pub struct CatalogDevice {
     os_name: Option<String>,
     cpu_name: Option<String>,
-    memory_total: i64,
+    memory_total: Option<i64>,
 }
 
 impl From<&Device> for CatalogDevice {
@@ -50,7 +50,7 @@ mod tests {
         let device = Device {
             os_name: Some("macOS".to_string()),
             cpu_name: Some("Apple silicon".to_string()),
-            memory_total: 32_000_000_000,
+            memory_total: Some(32_000_000_000),
             home_path: "/Users/private-user".to_string(),
         };
         let request = FetchModels::builder().device(CatalogDevice::from(&device)).backends(vec![]).build();

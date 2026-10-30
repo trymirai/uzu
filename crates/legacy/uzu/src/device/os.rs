@@ -24,5 +24,9 @@ pub fn home_path() -> Option<PathBuf> {
         let path = NSHomeDirectory();
         return Some(PathBuf::from(path.to_string()));
     }
-    dirs::home_dir()
+    #[cfg(not(target_family = "wasm"))]
+    return dirs::home_dir();
+
+    #[cfg(target_family = "wasm")]
+    Some(PathBuf::from("/"))
 }

@@ -29,6 +29,7 @@ struct GemmDTransform {
 enum class GemmAPrologueKind : uint32_t {
   FullPrecision = 0,
   Int8Symmetric = 1,
+  PackedHalf = 2,
 };
 
 enum class GemmBLayout : uint32_t {
@@ -49,6 +50,8 @@ enum class GemmTiling : uint32_t {
   Tile64x32x256_Simdgroups4x1 = 9,
   Tile64x64x256_Simdgroups2x2 = 10,
   Tile128x128x256_Simdgroups4x4 = 11,
+  Tile8x32x64_Simdgroups1x2x4 = 12,
+  Tile8x32x128_Simdgroups1x2x4 = 13,
 };
 
 static constant constexpr uint32_t MXU_SIMDGROUP_BLOCK_K = 32;

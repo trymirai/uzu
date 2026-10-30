@@ -12,6 +12,19 @@ using namespace metal;
 using namespace uzu;
 using namespace uzu::gemm;
 
+#define GEMV_BATCHED_INPUT (INPUT_ALIGNED && GROUP_LANES == 1)
+#define GEMV_FULL_PRECISION_TILE                                                                                       \
+  (BITS == 0 && NUM_SIMDGROUPS == 8 && REDUCTION_LANES == 32 && GROUP_LANES == 1 && (INPUT_ALIGNED || K_SPLIT == 1) && \
+   (OUTPUT_ROW_TILE == 8 / K_SPLIT || OUTPUT_ROW_TILE == 32 / K_SPLIT) && INPUT_ROW_TILE == 1)
+#define GEMV_QUANTIZED_ROW_TILE                                                                                        \
+  (K_SPLIT == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE == 1 &&     \
+   ((BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES) || (BITS == 8 && GROUP_SIZE == 8 * GROUP_LANES)))
+#define GEMV_BATCHED_FMA_32_TILE                                                                                       \
+  (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 4 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE >= 2 &&      \
+   INPUT_ROW_TILE <= 4)
+#define GEMV_BATCHED_FMA_16_TILE                                                                                       \
+  (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 2 && OUTPUT_ROW_TILE == 16 && INPUT_ROW_TILE >= 2 &&      \
+   INPUT_ROW_TILE <= 4)
 template <
     typename AT,
     typename BT,
@@ -41,66 +54,22 @@ VARIANTS(GROUP_SIZE, 0, 32, 64)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
-VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4, 5, 6, 7, 8)
-VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32, 64)
-VARIANTS(REDUCTION_LANES, 8, 16, 32)
-VARIANTS(GROUP_LANES, 1, 2, 4, 8, 16)
+VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4)
+VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32)
+VARIANTS(REDUCTION_LANES, 8, 32)
+VARIANTS(GROUP_LANES, 1, 2, 4, 8)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 
-CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
-CONSTRAINT(BITS == 0 || K_SPLIT == 1)
-CONSTRAINT(BITS != 0 || (INPUT_ROW_TILE == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && GROUP_LANES == 1))
-CONSTRAINT(INPUT_ROW_TILE != 1 || REDUCTION_LANES == 32)
 CONSTRAINT(
-    INPUT_ROW_TILE == 1 ||
-    (K_SPLIT == 1 && INPUT_ALIGNED && AT == "bfloat" && DT == "bfloat" && GROUP_LANES == 1))
-
-#define GEMV_TILE(OUTPUT_ROWS, LANES, SIMD_GROUPS)                                                                     \
-  (OUTPUT_ROW_TILE == OUTPUT_ROWS && REDUCTION_LANES == LANES && NUM_SIMDGROUPS == SIMD_GROUPS)
-#define INPUT_ROWS(FIRST, LAST) (INPUT_ROW_TILE >= FIRST && INPUT_ROW_TILE <= LAST)
-
+    (B_PROLOGUE == GemmBPrologueKind::FullPrecision && BITS == 0 && GROUP_SIZE == 0) ||
+    ((B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant ||
+      B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) &&
+     BITS == 4 && GROUP_SIZE != 0) ||
+    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE != 0))
+CONSTRAINT(INPUT_ROW_TILE == 1 || GEMV_BATCHED_INPUT)
 CONSTRAINT(
-    INPUT_ROW_TILE == 1 ||
-    (B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant && GROUP_SIZE == 64 &&
-     ((GEMV_TILE(16, 8, 2) && INPUT_ROWS(2, 7)) ||
-      (BITS == 4 && GEMV_TILE(16, 16, 4) && INPUT_ROWS(3, 6)) ||
-      (BITS == 4 && GEMV_TILE(8, 8, 2) && INPUT_ROW_TILE == 2))))
-
-// Keep only selector-reachable geometry families.
-CONSTRAINT(
-    BITS == 0 ||
-    (NUM_SIMDGROUPS == 2 &&
-     (OUTPUT_ROW_TILE == 2 || OUTPUT_ROW_TILE == 4 || OUTPUT_ROW_TILE == 8 ||
-      (INPUT_ROW_TILE > 1 && OUTPUT_ROW_TILE == 16))) ||
-    (NUM_SIMDGROUPS == 4 && (OUTPUT_ROW_TILE == 8 || OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)) ||
-    (NUM_SIMDGROUPS == 8 && (OUTPUT_ROW_TILE == 16 || OUTPUT_ROW_TILE == 32)))
-CONSTRAINT(
-    BITS == 0 || (AT == "bfloat" && DT == "bfloat") ||
-    (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32))
-CONSTRAINT(BITS != 8 || (NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32) || INPUT_ROW_TILE > 1)
-CONSTRAINT(INPUT_ALIGNED || K_SPLIT == 1)
-CONSTRAINT(K_SPLIT <= NUM_SIMDGROUPS && NUM_SIMDGROUPS % K_SPLIT == 0)
-CONSTRAINT(OUTPUT_ROW_TILE % (NUM_SIMDGROUPS / K_SPLIT) == 0)
-CONSTRAINT(OUTPUT_ROW_TILE / (NUM_SIMDGROUPS / K_SPLIT) % (32 / REDUCTION_LANES) == 0)
-CONSTRAINT(
-    (BITS == 0 && (OUTPUT_ROW_TILE == (NUM_SIMDGROUPS / K_SPLIT) ||
-                   OUTPUT_ROW_TILE == 4 * (NUM_SIMDGROUPS / K_SPLIT))) ||
-    (BITS != 0 &&
-     (OUTPUT_ROW_TILE == NUM_SIMDGROUPS || OUTPUT_ROW_TILE == 2 * NUM_SIMDGROUPS ||
-      OUTPUT_ROW_TILE == 4 * NUM_SIMDGROUPS || OUTPUT_ROW_TILE == 8 * NUM_SIMDGROUPS)))
-CONSTRAINT(REDUCTION_LANES % GROUP_LANES == 0)
-CONSTRAINT(BITS == 0 || GROUP_SIZE % GROUP_LANES == 0)
-CONSTRAINT(BITS != 4 || (GROUP_SIZE / GROUP_LANES) % 16 == 0)
-CONSTRAINT(BITS != 8 || (GROUP_SIZE / GROUP_LANES) % 8 == 0)
-CONSTRAINT(BITS != 0 || REDUCTION_LANES == 32)
-CONSTRAINT(
-    BITS == 0 || INPUT_ROW_TILE > 1 ||
-    (BITS == 4 && ((GROUP_SIZE == 32 && GROUP_LANES == 2) || (GROUP_SIZE == 64 && GROUP_LANES == 4))) ||
-    (BITS == 8 && ((GROUP_SIZE == 32 && GROUP_LANES == 4) || (GROUP_SIZE == 64 && GROUP_LANES == 8))))
+    GEMV_FULL_PRECISION_TILE ||
+    (BITS != 0 && (GEMV_QUANTIZED_ROW_TILE || GEMV_BATCHED_FMA_32_TILE || GEMV_BATCHED_FMA_16_TILE)))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales

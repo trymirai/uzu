@@ -41,23 +41,21 @@ inventory::submit! {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub mod device;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub mod engine;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub mod helpers;
 #[cfg(not(target_family = "wasm"))]
 pub mod logs;
 #[cfg(not(target_family = "wasm"))]
 pub mod player;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub mod registry;
-#[cfg(not(target_family = "wasm"))]
-pub mod settings;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub mod storage;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub use nagare as session;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_os = "wasi"))]
 pub use shoji::*;

@@ -14,10 +14,7 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, Kernels,
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::{
-            ActivationQuantization,
-            matmul::{ActivationFormat, Int8CodeLayout, MatmulA, MatmulKernel},
-        },
+        kernel::matmul::{ActivationFormat, MatmulA, MatmulKernel},
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -42,7 +39,7 @@ pub trait Linear<B: Backend>: Send + Sync {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        self.encode_input(LinearInput::FullPrecision(input), batch_dim, command_buffer)
+        self.encode_input(MatmulA::full_precision(input), batch_dim, command_buffer)
     }
 
     fn encode_input(
@@ -61,49 +58,16 @@ pub trait Linear<B: Backend>: Send + Sync {
     }
 }
 
-pub enum LinearInput<B: Backend> {
-    FullPrecision(B::ScratchBuffer),
-    Int8Symmetric {
-        values: B::ScratchBuffer,
-        scales: B::ScratchBuffer,
-        group_sums: Option<B::ScratchBuffer>,
-        scale_group_size: u32,
-        code_layout: Int8CodeLayout,
-    },
-}
+pub type LinearInput<B> = MatmulA<<B as Backend>::ScratchBuffer>;
 
 pub struct Gather<T: BufferRef> {
     pub indices: T,
     pub output_dim: u32,
 }
 
-impl<B: Backend> LinearInput<B> {
-    fn as_matmul_a(&self) -> MatmulA<&B::ScratchBuffer> {
-        match self {
-            Self::FullPrecision(values) => MatmulA::FullPrecision {
-                values,
-                offset: 0,
-            },
-            Self::Int8Symmetric {
-                values,
-                scales,
-                group_sums,
-                scale_group_size,
-                code_layout,
-            } => MatmulA::Int8Symmetric {
-                values,
-                scales,
-                group_sums: group_sums.as_ref(),
-                scale_group_size: *scale_group_size,
-                code_layout: *code_layout,
-            },
-        }
-    }
-}
-
 pub struct LinearInputPreparation<B: Backend> {
     pub rht_signs: B::GlobalGpuBuffer,
-    pub activation_quantization: Option<ActivationQuantization>,
+    pub activation_format: ActivationFormat,
 }
 
 #[derive(Debug, Error)]

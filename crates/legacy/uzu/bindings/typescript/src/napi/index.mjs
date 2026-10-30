@@ -145,5 +145,3 @@ export const Engine = cjs.Engine;
 export const EngineCallback = cjs.EngineCallback;
 export const EngineConfig = cjs.EngineConfig;
 export const Player = cjs.Player;
-export const Settings = cjs.Settings;
-export const SettingKind = cjs.SettingKind;

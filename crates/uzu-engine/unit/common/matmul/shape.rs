@@ -1,5 +1,13 @@
 use derive_more::Display;
 
+use crate::backends::common::{
+    gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+    kernel::{
+        ActivationQuantization,
+        matmul::{ActivationFormat, Int8CodeLayout, MatmulShape, QuantParamsLayout},
+    },
+};
+
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 #[display("M[{m}]K[{k}]N[{n}]")]
 pub struct Shape {
@@ -110,4 +118,52 @@ pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shap
         .iter()
         .filter(move |&&(_, k, _)| k.is_multiple_of(block_size))
         .flat_map(move |&(label, k, n)| ms.iter().map(move |&m| (label, Shape::new(m, k, n))))
+}
+
+pub fn matmul_shape(
+    m: u32,
+    n: u32,
+    k: u32,
+) -> MatmulShape {
+    MatmulShape {
+        m,
+        n,
+        k,
+        b_transpose: true,
+        b_leading_dimension: None,
+        b_prologue: GemmBPrologueKind::FullPrecision,
+        b_is_trellis: false,
+        b_bits: None,
+        b_group_size: None,
+        signed_codes: false,
+        a: ActivationFormat::Bf16,
+        gathered: false,
+        params_layout: Some(QuantParamsLayout::OutputGroup),
+        d_transform: GemmDTransform::empty(),
+    }
+}
+
+pub fn quantized_matmul_shape(
+    m: u32,
+    n: u32,
+    k: u32,
+    bits: u32,
+    group: u32,
+) -> MatmulShape {
+    MatmulShape {
+        b_prologue: if bits == 8 {
+            GemmBPrologueKind::ScaleSymmetricDequant
+        } else {
+            GemmBPrologueKind::ScaleZeroPointDequant
+        },
+        b_bits: Some(bits),
+        b_group_size: Some(group),
+        signed_codes: bits == 8,
+        params_layout: Some(QuantParamsLayout::GroupOutput),
+        ..matmul_shape(m, n, k)
+    }
+}
+
+pub fn a8_format() -> ActivationFormat {
+    ActivationFormat::Int8(ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble).unwrap())
 }

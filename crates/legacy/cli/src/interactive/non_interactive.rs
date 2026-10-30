@@ -15,7 +15,6 @@ use uzu::{
 use crate::{
     common::thinking::ThinkingSupport,
     interactive::{
-        APP_IDENTIFIER,
         components::{ApplicationState, TranscriptItem, chat_transcript_component},
         sessions::chat::{build_transcript, create_session},
     },
@@ -28,7 +27,7 @@ pub async fn run_non_interactive(
     seed: Option<i64>,
 ) -> Result<()> {
     let preferences = ApplicationState::load_preferences().unwrap_or_default();
-    let config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
+    let config = EngineConfig::default();
     let engine = Engine::new(config).await?;
     let model = engine.model(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?;
     if !model.is_chat_capable() {

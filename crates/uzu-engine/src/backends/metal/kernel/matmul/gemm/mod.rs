@@ -8,7 +8,7 @@ mod trellis;
 pub use error::GemmSpecializationError;
 pub use kernel::GemmKernel;
 pub use selection::GemmPlanError;
-pub(super) use selection::GemmProblem;
+pub(super) use selection::{GemmProblem, small_batch_format, small_m_weights};
 
 use crate::backends::metal::gpu_types::gemm::GemmTiling;
 

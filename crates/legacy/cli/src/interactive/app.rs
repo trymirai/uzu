@@ -2,10 +2,7 @@ use std::io::IsTerminal;
 
 use iocraft::prelude::*;
 use shoji::types::basic::ReasoningEffort;
-use uzu::{
-    engine::{Engine, EngineConfig, EngineError},
-    settings::SettingsError,
-};
+use uzu::engine::{Engine, EngineConfig, EngineError};
 
 use crate::interactive::components::Application;
 
@@ -14,8 +11,6 @@ use crate::interactive::components::Application;
 pub enum CliError {
     #[error(transparent)]
     Engine(#[from] EngineError),
-    #[error(transparent)]
-    Settigs(#[from] SettingsError),
     #[error("Rendering error: {message}")]
     RenderingError {
         message: String,
@@ -52,12 +47,9 @@ impl CliApplication {
             });
         }
 
-        let settings = self.engine.settings().await.ok();
-
         element! {
             Application(
                 engine: Some(self.engine.clone()),
-                settings,
                 model,
                 reasoning_effort,
                 seed,

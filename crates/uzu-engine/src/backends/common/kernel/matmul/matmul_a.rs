@@ -1,8 +1,8 @@
 use std::mem::size_of;
 
-use crate::backends::common::BufferRef;
+use crate::backends::common::kernel::ActivationQuantization;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Int8CodeLayout {
     Sequential,
     GroupedByNibble,
@@ -46,21 +46,82 @@ impl Int8CodeLayout {
     }
 }
 
-pub enum MatmulA<T: BufferRef> {
+#[derive(Clone, Copy)]
+pub enum MatmulA<T> {
     FullPrecision {
         values: T,
         offset: usize,
+    },
+    PackedHalf {
+        values: T,
+        group_size: u32,
     },
     Int8Symmetric {
         values: T,
         scales: T,
         group_sums: Option<T>,
-        scale_group_size: u32,
-        code_layout: Int8CodeLayout,
+        quantization: ActivationQuantization,
     },
     Trellis {
         values: T,
         column_group_sums: T,
         scales: T,
     },
+}
+
+impl<T> MatmulA<T> {
+    pub fn full_precision(values: T) -> Self {
+        Self::FullPrecision {
+            values,
+            offset: 0,
+        }
+    }
+
+    pub fn as_ref(&self) -> MatmulA<&T> {
+        match self {
+            Self::FullPrecision {
+                values,
+                offset,
+            } => MatmulA::FullPrecision {
+                values,
+                offset: *offset,
+            },
+            Self::PackedHalf {
+                values,
+                group_size,
+            } => MatmulA::PackedHalf {
+                values,
+                group_size: *group_size,
+            },
+            Self::Int8Symmetric {
+                values,
+                scales,
+                group_sums,
+                quantization,
+            } => MatmulA::Int8Symmetric {
+                values,
+                scales,
+                group_sums: group_sums.as_ref(),
+                quantization: *quantization,
+            },
+            Self::Trellis {
+                values,
+                column_group_sums,
+                scales,
+            } => MatmulA::Trellis {
+                values,
+                column_group_sums,
+                scales,
+            },
+        }
+    }
+}
+
+/// Matches `PackedHalfLayout` in `packed_half_layout.h`.
+pub fn packed_half_bytes(
+    k: u32,
+    group_size: u32,
+) -> usize {
+    assert!(matches!(group_size, 32 | 64) && k.is_multiple_of(group_size));
+    (k / group_size) as usize * (32 * (group_size as usize / 8) + 16) * size_of::<u32>()
 }

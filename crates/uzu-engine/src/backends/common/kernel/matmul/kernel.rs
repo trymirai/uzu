@@ -47,10 +47,20 @@ pub trait MatmulKernel: Sized + Send + Sync {
         None
     }
 
+    fn activation_preparation(
+        &self,
+        _shape: &MatmulShape,
+        _weights_layout: Self::WeightsLayout,
+        _context: &<Self::Backend as Backend>::Context,
+    ) -> ActivationFormat {
+        ActivationFormat::Bf16
+    }
+
     fn select_activation_format(
         &self,
         _bf16_shape: &MatmulShape,
         _weights_layout: Self::WeightsLayout,
+        _prepared: ActivationFormat,
         _context: &<Self::Backend as Backend>::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16

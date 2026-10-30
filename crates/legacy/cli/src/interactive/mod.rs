@@ -28,14 +28,14 @@ pub async fn run_interactive(
     seed: Option<i64>,
     no_tools: bool,
 ) -> anyhow::Result<()> {
-    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
+    let engine_config = EngineConfig::default();
     let application = CliApplication::create(engine_config).await?;
     application.run_with_model(model, reasoning_effort, seed, no_tools).await?;
     Ok(())
 }
 
 pub async fn run_list_models() -> anyhow::Result<()> {
-    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
+    let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
     let models = list_models(&engine).await?;
     if models.is_empty() {
@@ -58,7 +58,7 @@ pub async fn run_list_models() -> anyhow::Result<()> {
 }
 
 pub async fn run_list_checkpoints(model_id: String) -> anyhow::Result<()> {
-    let engine_config = EngineConfig::default().with_application_identifier(APP_IDENTIFIER.to_string());
+    let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await?;
     let models = list_models(&engine).await?;
     let checkpoints = get_checkpoints(&models, &model_id);

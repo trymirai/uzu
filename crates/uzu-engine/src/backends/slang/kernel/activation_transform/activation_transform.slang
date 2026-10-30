@@ -6,7 +6,7 @@ import generated.activation_transform;
 [[Variants("BiasT", "float, BFloat16")]]
 [[Public]] [[Kernel]] func ActivationTransform<T, BiasT>(
   [[Optional("!in_place")]] StructuredBuffer<T> input,
-  [[Optional("!(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<T> fp_out,
+  [[Optional("(ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht)")]] RWStructuredBuffer<T> fp_out,
   [[Optional("has_bias")]] StructuredBuffer<BiasT> bias,
   [[Optional("(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<int8_t> q_out,
   [[Optional("(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<float> scales_out,
@@ -14,6 +14,7 @@ import generated.activation_transform;
   StructuredBuffer<int> rht_factors,
   uint batch_size,
   uint element_count,
+  [[Optional("(ops == ActivationTransformOp::PackHalf)")]] RWStructuredBuffer<uint> packed_half_out,
   [[Specialize]] ActivationTransformOp ops,
   [[Specialize]] bool grouped_by_weight_nibble,
   [[Specialize]] bool in_place,

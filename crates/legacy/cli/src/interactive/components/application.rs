@@ -7,7 +7,6 @@ use shoji::types::{
 };
 use uzu::{
     engine::Engine,
-    settings::Settings,
     storage::{DownloadPhase, DownloadState},
 };
 
@@ -16,7 +15,7 @@ use crate::{
     interactive::{
         APP_IDENTIFIER,
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
-        flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
+        flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
         sessions::{self, SessionState},
     },
@@ -27,7 +26,6 @@ const HISTORY_LIMIT: usize = 20;
 #[derive(Default, Props)]
 pub struct ApplicationProps {
     pub engine: Option<Engine>,
-    pub settings: Option<Settings>,
     pub model: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub seed: Option<i64>,
@@ -52,7 +50,6 @@ pub struct ApplicationState {
     pub seed: Option<i64>,
     pub no_tools: bool,
     pub engine: Engine,
-    pub settings: Option<Settings>,
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
@@ -118,7 +115,6 @@ pub fn Application(
 
     let state = hooks.use_state(|| ApplicationState {
         engine,
-        settings: props.settings.clone(),
         preferences: ApplicationState::load_preferences().unwrap_or_else(|error| {
             tracing::warn!("Unable to load or migrate CLI preferences: {error}");
             Preferences::default()
@@ -132,7 +128,6 @@ pub fn Application(
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()
-            .register("auth", "Add models from a specific provider", false, || Box::new(AuthFlow))
             .register("model", "Choose the model", false, || Box::new(ModelRegistriesFlow))
             .register("settings", "Configure thinking and sampling", true, || Box::new(SettingsFlow))
             .register("theme", "Choose the theme", false, || Box::new(ThemeFlow))

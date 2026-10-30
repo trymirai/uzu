@@ -19,6 +19,7 @@ pub use attention::{
     AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, FullPrecisionInput, Int8Input, KVFormat,
 };
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
+pub use matmul::ActivationFormat;
 
 #[cfg(any(backend = "cpu", test))]
 pub use crate::backends::common::kernel::trellis::mixing_dimension;

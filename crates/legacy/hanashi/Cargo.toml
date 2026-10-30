@@ -12,16 +12,18 @@ license.workspace = true
 shoji.workspace = true
 token-stream-parser.workspace = true
 tokenizers.workspace = true
-openai-harmony.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 regex.workspace = true
-libc.workspace = true
 indexmap.workspace = true
 tracing.workspace = true
+chrono.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+openai-harmony.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true

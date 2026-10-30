@@ -43,6 +43,14 @@ impl From<FileSystemWritableFileStream> for WritableFileStream {
 }
 
 impl WritableFileStream {
+    pub async fn write_blob(
+        &self,
+        blob: &Blob,
+    ) -> Result<()> {
+        JsFuture::from(self.0.write_with_blob(blob)?).await?;
+        Ok(())
+    }
+
     pub async fn write(
         &self,
         data: &[u8],

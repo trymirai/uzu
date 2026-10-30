@@ -31,6 +31,58 @@ UZU_CONST ushort W4_BITS = 4;
 UZU_CONST uint W4_SIGN_MASK = symmetric_zero_point<W4_BITS>() * 0x11111111u;
 UZU_CONST uint W8_SIGN_MASK = symmetric_zero_point<8>() * 0x01010101u;
 UZU_CONST uint W4_NIBBLE_MASK = 0x0F0F0F0Fu;
+UZU_CONST uint ZERO_POINTS_PER_BYTE = 2;
+UZU_CONST uint W8_MAGIC_FLOAT_OFFSET = 0x4B400000u;
+
+UZU_CONST uint W4_PAIR_HALF_BITS = 16;
+UZU_CONST uint W4_PAIR_MANTISSA_BITS = 10;
+UZU_CONST uint W4_PAIR_EXPONENT_BIAS = 15;
+
+static METAL_FUNC constexpr uint w4_pair_offset(uint component) {
+  constexpr uint COMPONENTS = W4_PAIR_HALF_BITS / W4_BITS;
+  return W4_BITS * (component < COMPONENTS ? component : COMPONENTS - 1);
+}
+
+static METAL_FUNC constexpr uint w4_pair_position(uint component) {
+  const uint offset = w4_pair_offset(component);
+  return offset + W4_BITS <= W4_PAIR_MANTISSA_BITS ? offset : offset - (W4_PAIR_HALF_BITS - W4_PAIR_MANTISSA_BITS);
+}
+
+template <uint COMPONENT>
+static METAL_FUNC half2 w4_pair_at(uint word) {
+  constexpr uint offset = w4_pair_offset(COMPONENT);
+  constexpr uint position = w4_pair_position(COMPONENT);
+  constexpr uint mask = ((1u << W4_BITS) - 1) << position;
+  constexpr uint exponent = (W4_PAIR_EXPONENT_BIAS + W4_PAIR_MANTISSA_BITS - position) << W4_PAIR_MANTISSA_BITS;
+  return as_type<half2>(
+      ((word >> (offset - position)) & (mask | (mask << W4_PAIR_HALF_BITS))) |
+      (exponent | (exponent << W4_PAIR_HALF_BITS))
+  );
+}
+
+static METAL_FUNC constexpr float w4_pair_bias_value(uint component) {
+  return float(1u << (W4_PAIR_MANTISSA_BITS - w4_pair_position(component)));
+}
+
+static METAL_FUNC half2 w4_pair(uint word, ushort component) {
+  switch (component) {
+  case 0:
+    return w4_pair_at<0>(word);
+  case 1:
+    return w4_pair_at<1>(word);
+  case 2:
+    return w4_pair_at<2>(word);
+  default:
+    return w4_pair_at<3>(word);
+  }
+}
+
+template <uint ORIGIN>
+METAL_FUNC float magic_code_float(uint code) {
+  return as_type<float>(code + W8_MAGIC_FLOAT_OFFSET - ORIGIN);
+}
+
+METAL_FUNC float magic_dequant_bias(float scale) { return -12582912.0f * scale; }
 
 template <typename U, int N, int bits>
 inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, const bool signed_codes) {

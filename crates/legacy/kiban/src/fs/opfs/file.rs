@@ -22,6 +22,10 @@ impl From<web_sys::File> for File {
 }
 
 impl File {
+    pub fn as_blob(&self) -> &Blob {
+        self.0.as_ref()
+    }
+
     pub fn last_modified(&self) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_millis(self.0.last_modified() as u64)
     }

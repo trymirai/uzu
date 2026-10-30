@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::locks::{LockError, LockOwner};
 
 pub struct DestinationLock {
+    #[cfg(not(target_family = "wasm"))]
     path: PathBuf,
     _lock: FileLock,
 }
@@ -27,6 +28,7 @@ impl DestinationLock {
         };
         lock.write(&serde_json::to_vec(owner).map_err(std::io::Error::other)?).await?;
         Ok(Self {
+            #[cfg(not(target_family = "wasm"))]
             path,
             _lock: lock,
         })
@@ -90,6 +92,7 @@ impl DestinationLock {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Drop for DestinationLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
