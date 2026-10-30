@@ -9,6 +9,8 @@ import generated.gated_act_mul;
 // rounded to T; the Hadamard transform and quantization run in FP32. Tiles past the row hold zeros so every invocation
 // reaches every barrier.
 [[Kernel]] [[Public]]
+// Packed-half activations feed Metal's matmuls only; no Vulkan plan reads them.
+[[Precondition("new", "ops != GatedActMulOp::PackHalf")]]
 [[Precondition("new", "ops == GatedActMulOp::FullPrecision || use_hadamard")]]
 [[Precondition("new", "ops == GatedActMulOp::FullPrecision || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "ops != GatedActMulOp::QuantizeWithGroupSums || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
@@ -37,6 +39,7 @@ func GatedActMul<T: IModelFloat>(
   [[Optional("clip_gate")]] float gate_clip_max,
   [[Optional("clip_value")]] float value_clip_min,
   [[Optional("clip_value")]] float value_clip_max,
+  [[Optional("ops == GatedActMulOp::PackHalf")]] Ptr<uint, Access.ReadWrite> packed_half_out,
   [[Groups("gated_dim.div_ceil(128)")]] uint tile,
   [[Groups("batch_dim")]] uint batch,
   [[Threads("128")]] uint tid,

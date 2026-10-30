@@ -91,14 +91,14 @@ impl VkMatmulPlan {
         let (capabilities, units) = (device.capabilities, device.compute_units);
         let max_shared = device.limits.max_compute_shared_memory_size;
         // Where only unsigned dot products are accelerated, up to 8 rows of full-precision A quantize themselves.
-        if shape.a_full_precision
+        if shape.a == ActivationFormat::Bf16
             && m <= 8
             && capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
         {
             return Self::gemv_int8(m, shape.gathered, device.subgroups.size);
         }
-        if shape.a_full_precision {
+        if shape.a == ActivationFormat::Bf16 {
             return if shape.gathered || m <= 8 || !Self::gemm_rows(shape) {
                 Self::Gemv(match (shape.is_quant(), Self::gemm_rows(shape)) {
                     (false, true) => VkGemvTile::dense(n, k),
@@ -187,9 +187,10 @@ impl VkMatmulPlan {
         let gemm = matches!(self, Self::GemmTensor(_) | Self::Gemm(_));
         let a8 = matches!(self, Self::GemvInt8 { .. } | Self::GemmInt8 { .. });
         // GemvInt8 also takes full-precision A, which the encoder quantizes first.
-        let quantizes_a = shape.a_full_precision && matches!(self, Self::GemvInt8 { .. });
+        let full_precision = shape.a == ActivationFormat::Bf16;
+        let quantizes_a = full_precision && matches!(self, Self::GemvInt8 { .. });
         require(
-            a8 != shape.a_full_precision || quantizes_a,
+            a8 != full_precision || quantizes_a,
             "A8 takes GemvInt8 or GemmInt8, full precision GemvInt8 or the other families",
         )?;
         require(
@@ -388,7 +389,7 @@ impl VkMatmulPlan {
                 (plan, omitted(input_rows, 1))
             })
             .collect::<Vec<_>>();
-        let families: Vec<Vec<(Self, bool)>> = if shape.a_full_precision {
+        let families: Vec<Vec<(Self, bool)>> = if shape.a == ActivationFormat::Bf16 {
             let gemv: Vec<VkGemvTile> = match (shape.is_quant(), Self::gemm_rows(shape)) {
                 (false, true) => vec![VkGemvTile::dense(n, k), VkGemvTile::reader()],
                 (false, false) => vec![VkGemvTile::reader()],
@@ -547,11 +548,11 @@ impl VkMatmulPlan {
                 || (m >= 2 && (m <= 8 || capabilities.prefers_int8_gemm())));
         let int8 = match b_layout {
             GemmBLayout::Tiled => m >= 2,
-            GemmBLayout::RowMajor => rows && Self::a8_quantization(bf16_shape, data_types, capabilities).is_some(),
+            GemmBLayout::RowMajor => rows,
         };
-        match int8 {
-            true => ActivationFormat::Int8,
-            false => ActivationFormat::Bf16,
+        match Self::a8_quantization(bf16_shape, data_types, capabilities).filter(|_| int8) {
+            Some(quantization) => ActivationFormat::Int8(quantization),
+            None => ActivationFormat::Bf16,
         }
     }
 

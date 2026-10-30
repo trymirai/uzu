@@ -103,17 +103,30 @@ impl MatmulKernel for VkMatmulKernel {
         context: &VkContext,
     ) -> Option<ActivationQuantization> {
         let capabilities = context.physical_device().capabilities;
-        VkMatmulPlan::a8_quantization(shape, self.data_types(), capabilities).filter(|_| !shape.a_full_precision)
+        VkMatmulPlan::a8_quantization(shape, self.data_types(), capabilities)
+    }
+
+    fn activation_preparation(
+        &self,
+        shape: &MatmulShape,
+        _weights_layout: GemmBLayout,
+        context: &VkContext,
+    ) -> ActivationFormat {
+        self.select_activation_quantization(shape, context).map_or(ActivationFormat::Bf16, ActivationFormat::Int8)
     }
 
     fn select_activation_format(
         &self,
         bf16_shape: &MatmulShape,
         weights_layout: GemmBLayout,
+        prepared: ActivationFormat,
         context: &VkContext,
     ) -> ActivationFormat {
         let capabilities = context.physical_device().capabilities;
-        VkMatmulPlan::activation_format(bf16_shape, weights_layout, self.data_types(), capabilities)
+        match VkMatmulPlan::activation_format(bf16_shape, weights_layout, self.data_types(), capabilities) {
+            ActivationFormat::Int8(_) if matches!(prepared, ActivationFormat::Int8(_)) => prepared,
+            _ => ActivationFormat::Bf16,
+        }
     }
 
     /// Stores 8-bit codes signed where A8 applies, then packs codes into tiles for integer GEMM through one temporary
@@ -344,19 +357,21 @@ impl VkMatmulKernel {
                 values,
                 scales,
                 group_sums,
-                scale_group_size,
-                code_layout,
+                quantization,
             } => (
                 None,
                 Some((
                     VkBuffer::resolve_ref(values),
                     VkBuffer::resolve_ref(scales),
                     group_sums.map(VkBuffer::resolve_ref),
-                    scale_group_size,
-                    code_layout,
+                    quantization.scale_group_size(),
+                    quantization.code_layout(),
                 )),
             ),
-            MatmulA::Trellis {
+            MatmulA::PackedHalf {
+                ..
+            }
+            | MatmulA::Trellis {
                 ..
             } => {
                 return Err(precondition(

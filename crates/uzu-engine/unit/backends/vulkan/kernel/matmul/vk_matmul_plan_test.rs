@@ -99,7 +99,7 @@ fn linears() -> [MatmulShape; 3] {
         b_bits: Some(4),
         b_group_size: Some(32),
         signed_codes: false,
-        a_full_precision: true,
+        a: ActivationFormat::Bf16,
         gathered: false,
         params_layout: Some(params_layout),
         d_transform,
@@ -119,11 +119,7 @@ fn routed(
     rows: u32,
 ) -> (MatmulShape, GemmBLayout, VkMatmulPlan) {
     let capabilities = device.capabilities;
-    let a8 = MatmulShape {
-        a_full_precision: false,
-        ..linear
-    };
-    let b_layout = match VkMatmulPlan::tiles_weights(&a8, DATA_TYPES, capabilities) {
+    let b_layout = match VkMatmulPlan::tiles_weights(&linear, DATA_TYPES, capabilities) {
         true => GemmBLayout::Tiled,
         false => GemmBLayout::RowMajor,
     };
@@ -132,8 +128,7 @@ fn routed(
         ..linear
     };
     let shape = MatmulShape {
-        a_full_precision: VkMatmulPlan::activation_format(&bf16, b_layout, DATA_TYPES, capabilities)
-            == ActivationFormat::Bf16,
+        a: VkMatmulPlan::activation_format(&bf16, b_layout, DATA_TYPES, capabilities),
         ..bf16
     };
     let eligible = capabilities.float_tensor_cores(DataType::BF16);

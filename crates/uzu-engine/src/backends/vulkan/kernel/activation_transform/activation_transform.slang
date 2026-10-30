@@ -7,6 +7,8 @@ import generated.activation_transform;
 // transform, output transforms after it. The result rounds to T, then the bias adds in FP32 and rounds to T again.
 // Tiles past the row hold zeros so every invocation reaches every barrier.
 [[Kernel]] [[Public]]
+// Packed-half activations feed Metal's matmuls only; no Vulkan plan reads them.
+[[Precondition("new", "ops != ActivationTransformOp::PackHalf")]]
 [[Precondition("new", "!in_place || ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht")]]
 [[Precondition("new", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "ops != ActivationTransformOp::QuantizeWithGroupSums || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
@@ -26,6 +28,7 @@ func ActivationTransform<T: IModelFloat, BiasT: IModelFloat>(
   Ptr<int, Access.Read> rht_factors,
   uint batch_size,
   uint element_count,
+  [[Optional("ops == ActivationTransformOp::PackHalf")]] Ptr<uint, Access.ReadWrite> packed_half_out,
   [[Groups("element_count.div_ceil(128)")]] uint tile,
   [[Groups("batch_size")]] uint batch,
   [[Threads("128")]] uint tid,

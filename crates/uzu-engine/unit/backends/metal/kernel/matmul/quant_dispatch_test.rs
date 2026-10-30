@@ -37,6 +37,7 @@ use crate::{
     },
     data_type::{DataType, DataTypeRepr},
     tests::{
+        assert::assert_parity,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
         matmul::{QuantBuffers, QuantInput, quant::run_quant_cpu, quant_arguments},
     },
@@ -132,23 +133,6 @@ fn quant_params_layout_table() {
         assert_eq!(strides(params.zero_point_strides(QuantizationMode::U8)), scale_strides);
         assert_eq!(params.zero_point_shape(QuantizationMode::U4), u4_shape);
         assert_eq!(strides(params.zero_point_strides(QuantizationMode::U4)), u4_strides);
-    }
-}
-
-fn assert_parity<T: DataTypeRepr + Float + Debug + Display>(
-    label: &str,
-    reference: &[T],
-    actual: &[T],
-    rel_tol: f64,
-    abs_tol: f64,
-) {
-    assert_eq!(reference.len(), actual.len(), "{label}: length mismatch");
-    for (i, (&expected, &actual)) in reference.iter().zip(actual).enumerate() {
-        let expected = expected.to_f32().unwrap();
-        let actual = actual.to_f32().unwrap();
-        let diff = f64::from((expected - actual).abs());
-        let tolerance = abs_tol.max(f64::from(expected.abs()) * rel_tol);
-        assert!(diff <= tolerance, "{label}[{i}]: expected {expected}, got {actual}, diff {diff} > {tolerance}");
     }
 }
 

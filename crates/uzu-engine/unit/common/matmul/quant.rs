@@ -11,7 +11,7 @@ use crate::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
             kernel::{
-                ActivationFormat, ActivationQuantization, ActivationTransform, Kernels,
+                ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
                     MatmulOutput, MatmulShape, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection,
@@ -42,8 +42,6 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub x: Vec<T>,
     pub ab_scale: f32,
     pub soft_cap: Option<f32>,
-    pub output_bias: Option<Vec<T>>,
-    pub output_rht_factors: Option<Vec<i32>>,
     pub k: u32,
     pub n: u32,
     pub m: u32,
@@ -176,8 +174,6 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             x,
             ab_scale: 1.0,
             soft_cap: None,
-            output_bias: None,
-            output_rht_factors: None,
             k,
             n,
             m,
@@ -330,8 +326,6 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub prepared_a: Option<B::GlobalGpuBuffer>,
     pub prepared_a_scales: Option<B::GlobalGpuBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalGpuBuffer>,
-    pub output_bias: Option<B::GlobalGpuBuffer>,
-    pub output_rht_factors: Option<B::GlobalGpuBuffer>,
     pub y: B::GlobalGpuBuffer,
     pub output_rht_factors: Option<B::GlobalGpuBuffer>,
     pub output_bias: Option<B::GlobalGpuBuffer>,
@@ -362,28 +356,25 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         let (x, prepared_a, prepared_a_scales, prepared_a_group_sums) = activations::<B, T>(context, input);
         Self {
             w: create_buffer_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: create_buffer_with_data::<B, T>(context, &scales),
-            zp: zp.as_ref().map(|values| create_buffer_with_data::<B, u8>(context, values)),
-            bias: bias.as_ref().map(|values| create_buffer_with_data::<B, T>(context, values)),
-            x: create_buffer_with_data::<B, T>(context, &input.x),
-            prepared_a: input
-                .prepared_a
-                .as_ref()
-                .map(|prepared| create_buffer_with_data::<B, i8>(context, &prepared.values)),
-            prepared_a_scales: input
-                .prepared_a
-                .as_ref()
-                .map(|prepared| create_buffer_with_data::<B, f32>(context, &prepared.scales)),
-            prepared_a_group_sums: input
-                .prepared_a
-                .as_ref()
-                .filter(|prepared| !prepared.group_sums.is_empty())
-                .map(|prepared| create_buffer_with_data::<B, i32>(context, &prepared.group_sums)),
-            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
-            output_rht_factors: input
-                .output_rht_factors
-                .as_ref()
-                .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
+            scales: create_buffer_with_data::<B, T>(context, &metadata(&input.scales, true)),
+            zp: input.zero_points.as_ref().map(|zero_points| {
+                let mut plane = pad(zero_points, zero_point_bytes);
+                if group_output && input.quant_method == QuantizationMethod::ScaleZeroPoint {
+                    let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
+                    transpose_metadata(&mut plane, input.n, groups, correction_bits);
+                }
+                create_buffer_with_data::<B, u8>(context, &plane)
+            }),
+            bias: input.biases.as_ref().map(|biases| {
+                create_buffer_with_data::<B, T>(
+                    context,
+                    &metadata(biases, input.quant_method == QuantizationMethod::ScaleBias),
+                )
+            }),
+            x,
+            prepared_a,
+            prepared_a_scales,
+            prepared_a_group_sums,
             y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
             output_rht_factors: input
                 .output_rht_factors
@@ -484,8 +475,6 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         prepared_a,
         prepared_a_scales,
         prepared_a_group_sums,
-        output_bias,
-        output_rht_factors,
         y,
         output_rht_factors,
         output_bias,
@@ -497,9 +486,7 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         Some(prepared) => MatmulA::Int8Symmetric {
             values: prepared_a.as_ref().expect("prepared activation buffer"),
             scales: prepared_a_scales.as_ref().expect("prepared activation scales"),
-            // Symmetric weights carry no correction term, so the GEMM never reads these.
-            group_sums: (input.quant_method != QuantizationMethod::ScaleSymmetric)
-                .then(|| prepared_a_group_sums.as_ref().expect("prepared activation row sums")),
+            group_sums: prepared_a_group_sums.as_ref(),
             quantization: prepared.quantization,
         },
         None => MatmulA::full_precision(&*x),
@@ -540,17 +527,11 @@ pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
         _ => input.with_signed_weight_codes(),
     };
     let mut buffers = production_quant_buffers::<B, T>(context, matmul, &input);
-    let a8_shape = MatmulShape {
-        a_full_precision: false,
-        ..MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input))
-    };
-    let quantization = matmul.select_activation_quantization(&a8_shape, context)?;
-    let bf16_shape = MatmulShape {
-        a_full_precision: true,
-        ..a8_shape
-    };
-    let format = matmul.select_activation_format(&bf16_shape, buffers.weights_layout, context);
-    if format == ActivationFormat::Int8 {
+    let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, &input));
+    matmul.select_activation_quantization(&shape, context)?;
+    let prepared = matmul.activation_preparation(&shape, buffers.weights_layout, context);
+    let format = matmul.select_activation_format(&shape, buffers.weights_layout, prepared, context);
+    if let ActivationFormat::Int8(quantization) = format {
         input = input.with_prepared_a(quantization.scale_group_size(), quantization.sum_group_size());
         buffers.upload_activations(context, &input);
     }
@@ -565,13 +546,10 @@ pub fn production_quant_buffers<B: Backend, T: DataTypeRepr + Float>(
     input: &QuantInput<T>,
 ) -> QuantBuffers<B, T> {
     let mut buffers = QuantBuffers::<B, T>::allocate(context, input);
-    let a8_shape = MatmulShape {
-        a_full_precision: false,
-        ..MatmulShape::from_arguments(&quant_arguments(&mut buffers, input))
-    };
-    if matmul.select_activation_quantization(&a8_shape, context).is_some() {
+    let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, input));
+    if matmul.select_activation_quantization(&shape, context).is_some() {
         buffers.weights_layout =
-            matmul.optimize_weights_layout(&a8_shape, &mut buffers.w, context).expect("weights layout").0;
+            matmul.optimize_weights_layout(&shape, &mut buffers.w, context).expect("weights layout").0;
     }
     buffers
 }
