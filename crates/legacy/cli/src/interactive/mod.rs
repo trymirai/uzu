@@ -12,6 +12,7 @@ mod app;
 mod components;
 mod flows;
 mod helpers;
+mod keyboard_enhancement;
 mod list;
 mod non_interactive;
 mod sampling;

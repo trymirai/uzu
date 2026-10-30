@@ -17,6 +17,7 @@ use crate::{
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
         flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
+        keyboard_enhancement::KeyboardEnhancement,
         sessions::{self, SessionState},
     },
 };
@@ -111,6 +112,7 @@ pub fn Application(
     props: &ApplicationProps,
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
+    hooks.use_hook(KeyboardEnhancement::default);
     let engine = props.engine.clone().expect("Application requires an engine");
 
     let state = hooks.use_state(|| ApplicationState {
