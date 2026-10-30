@@ -1877,12 +1877,14 @@ public func FfiConverterTypeDecisionResult_lower(_ value: DecisionResult) -> Rus
 
 public struct DecisionStats: Equatable, Hashable, Codable {
     public var tokensCount: Int64
+    public var prefillDuration: Double
     public var totalDuration: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(tokensCount: Int64, totalDuration: Double) {
+    public init(tokensCount: Int64, prefillDuration: Double, totalDuration: Double) {
         self.tokensCount = tokensCount
+        self.prefillDuration = prefillDuration
         self.totalDuration = totalDuration
     }
 
@@ -1903,12 +1905,14 @@ public struct FfiConverterTypeDecisionStats: FfiConverterRustBuffer {
         return
             try DecisionStats(
                 tokensCount: FfiConverterInt64.read(from: &buf), 
+                prefillDuration: FfiConverterDouble.read(from: &buf), 
                 totalDuration: FfiConverterDouble.read(from: &buf)
         )
     }
 
     public static func write(_ value: DecisionStats, into buf: inout [UInt8]) {
         FfiConverterInt64.write(value.tokensCount, into: &buf)
+        FfiConverterDouble.write(value.prefillDuration, into: &buf)
         FfiConverterDouble.write(value.totalDuration, into: &buf)
     }
 }

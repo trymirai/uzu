@@ -1,7 +1,10 @@
 use std::{path::PathBuf, pin::Pin, sync::Arc};
 
 use shoji::{
-    traits::backend::{Error as BackendError, decision::DecisionInstance},
+    traits::backend::{
+        Error as BackendError,
+        decision::{DecisionInstance, DecisionProbabilities},
+    },
     types::session::classification::TokenCodecConfig,
 };
 use tokenizers::Tokenizer;
@@ -42,7 +45,7 @@ impl<B: Backend> DecisionInstance for UzuDecisionBackendInstance<B> {
         &'a self,
         input: &'a [u64],
         option_count: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, BackendError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<DecisionProbabilities, BackendError>> + Send + 'a>> {
         Box::pin(async move {
             self.model.probabilities(input, option_count).await.map_err(|err| BackendError::from(err.to_string()))
         })

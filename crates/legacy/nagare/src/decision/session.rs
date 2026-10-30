@@ -107,16 +107,16 @@ impl DecisionSession {
             let time_start = Instant::now();
             let tokens_count = prompt.len();
             let tokens = prompt.into_iter().map(u64::from).collect::<Vec<_>>();
-            let probabilities =
-                holder.instance.probabilities(&tokens, option_count(question)).await.map_err(|error| {
-                    DecisionSessionError::Backend {
-                        message: error.to_string(),
-                    }
-                })?;
+            let output = holder.instance.probabilities(&tokens, option_count(question)).await.map_err(|error| {
+                DecisionSessionError::Backend {
+                    message: error.to_string(),
+                }
+            })?;
             results.push(DecisionResult {
-                answer: answer(question, probabilities),
+                answer: answer(question, output.probabilities),
                 stats: DecisionStats {
                     tokens_count: tokens_count as i64,
+                    prefill_duration: output.prefill_duration.as_secs_f64(),
                     total_duration: (encoding_duration + time_start.elapsed()).as_secs_f64(),
                 },
             });

@@ -564,8 +564,9 @@ export declare class DecisionResult {
 
 export declare class DecisionStats {
   tokensCount: number
+  prefillDuration: number
   totalDuration: number
-  constructor(tokensCount: number, totalDuration: number)
+  constructor(tokensCount: number, prefillDuration: number, totalDuration: number)
 }
 
 export declare class Feature {
