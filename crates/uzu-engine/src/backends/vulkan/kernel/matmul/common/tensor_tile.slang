@@ -574,7 +574,9 @@ public struct Int8Gemm<
                   if (BM == 64 && BK == 64 && weights.group_size == 64 && (stage & 1u) != 0) {
                     a_scale = int8_fold_rows[128 + index];
                   } else {
-                    a_scale = activations.scales[(input * k + end - 1) / ACTIVATION_QUANTIZATION_TILE];
+                    a_scale = activations.scales[
+                      input * (k / ACTIVATION_QUANTIZATION_TILE) + (end - 1) / ACTIVATION_QUANTIZATION_TILE
+                    ];
                   }
                   let group_sum = scale_bias ? group_sums[input * (k / weights.group_size) + group] : 0;
                   value = float2(a_scale, a_scale * float(group_sum));
@@ -637,7 +639,9 @@ public struct Int8Gemm<
               for (int i = 0; i < TM; i++) {
                 let row = block_row + (subgroup / uint(SG_N)) * uint(TM * 16) + uint(16 * i) + lane / 2;
                 let input = min(row, m - 1);
-                let a_scale = activations.scales[(input * k + end - 1) / ACTIVATION_QUANTIZATION_TILE];
+                let a_scale = activations.scales[
+                  input * (k / ACTIVATION_QUANTIZATION_TILE) + (end - 1) / ACTIVATION_QUANTIZATION_TILE
+                ];
                 let group_sum = scale_bias ? group_sums[input * (k / weights.group_size) + group] : 0;
                 [unroll]
                 for (int j = 0; j < TN; j++) {
