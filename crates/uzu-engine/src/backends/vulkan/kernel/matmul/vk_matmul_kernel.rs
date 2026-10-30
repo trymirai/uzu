@@ -441,6 +441,12 @@ impl MatmulKernel for VkMatmulKernel {
                 )
             })
         });
+        // The output transform, and the bias after it, finish in the epilogue where the plan fuses them.
+        let rht = rht_factors.filter(|_| plan.fuses_output_rht()).map(VkBuffer::resolve_ref);
+        let (has_bias, bias_range) = match rht {
+            Some(_) => (bias.is_some(), bias.map(VkBuffer::resolve_ref)),
+            None => (has_bias, bias_range),
+        };
 
         // SAFETY (every dispatch below): the common contract makes callers pass A of [m, k] elements from `offset` or
         // A8 codes of [m, k] with their [m, k / 128] scales and [m, k / group] group sums, B of n rows at the given
@@ -465,12 +471,6 @@ impl MatmulKernel for VkMatmulKernel {
                 input_rows,
             } = plan
             {
-                // The output transform, and the bias after it, finish in the epilogue where it fuses them.
-                let rht = rht_factors.filter(|_| plan.fuses_output_rht()).map(VkBuffer::resolve_ref);
-                let (has_bias, bias_range) = match rht {
-                    Some(_) => (bias.is_some(), bias.map(VkBuffer::resolve_ref)),
-                    None => (has_bias, bias_range),
-                };
                 let gemv_flags = [has_scale, has_bias, has_soft_cap, gathered, rht.is_some()];
                 let kernel = cached(&mut self.gemv_int8, (gemv_flags, prologue, rows, input_rows, b_layout), || {
                     GemvInt8VulkanKernel::new(
@@ -517,9 +517,6 @@ impl MatmulKernel for VkMatmulKernel {
                         command_buffer,
                     )
                 };
-                if rht.is_some() {
-                    return Ok(());
-                }
             } else {
                 let VkMatmulPlan::GemmInt8 {
                     element_fold,
@@ -541,12 +538,6 @@ impl MatmulKernel for VkMatmulKernel {
                     0..1
                 } else {
                     1..3
-                };
-                // The output transform, and the bias after it, finish in the last phase's epilogue.
-                let rht = rht_factors.map(VkBuffer::resolve_ref);
-                let (has_bias, bias_range) = match rht {
-                    Some(_) => (bias.is_some(), bias.map(VkBuffer::resolve_ref)),
-                    None => (has_bias, bias_range),
                 };
                 let flags = [has_scale, has_bias, has_soft_cap, rht.is_some()];
                 // The same arguments for every core and phase.
@@ -612,7 +603,6 @@ impl MatmulKernel for VkMatmulKernel {
                         gemm_int8!(self.gemm_int8_k16, GemmInt8K16VulkanKernel, phase);
                     }
                 }
-                return Ok(());
             }
         } else {
             let a_range = a_range.expect("full-precision A outside A8");
@@ -758,7 +748,7 @@ impl MatmulKernel for VkMatmulKernel {
             }
         }
 
-        if let Some(factors) = rht_factors {
+        if let Some(factors) = rht_factors.filter(|_| rht.is_none()) {
             let transform = cached(&mut self.output_rht, bias.is_some(), || {
                 ActivationTransform::output_rht(context.as_ref(), output_type, bias.map(|_| weights_type), true)
             })?;
