@@ -11,10 +11,7 @@ use crate::{
         },
         vulkan::{
             VkDeviceCapabilities as Capability, VkPhysicalDevice,
-            gpu_types::{
-                gemm::{GemmTiling, INT8_FOLD_ENTRIES},
-                gemm_b_layout::GemmBLayout,
-            },
+            gpu_types::{gemm::INT8_FOLD_ENTRIES, gemm_b_layout::GemmBLayout, gemm_tiling::GemmTiling},
         },
     },
     data_type::DataType,

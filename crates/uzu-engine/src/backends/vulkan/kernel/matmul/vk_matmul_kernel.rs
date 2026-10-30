@@ -30,7 +30,7 @@ use crate::{
             GemmInt8VulkanKernel, GemmPrepareBLayoutVulkanKernel, GemmTensorVulkanKernel, GemmVulkanKernel,
             GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer, VkCommandBufferEncoding,
             VkContext, VkDeviceCapabilities, VkKernelError, Vulkan,
-            gpu_types::{gemm::GemmTiling, gemm_b_layout::GemmBLayout},
+            gpu_types::{gemm_b_layout::GemmBLayout, gemm_tiling::GemmTiling},
         },
     },
     data_type::DataType,

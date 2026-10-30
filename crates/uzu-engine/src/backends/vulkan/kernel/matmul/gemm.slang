@@ -1,6 +1,7 @@
 import definitions;
 import matmul.common.matmul;
 import generated.gemm;
+import generated.gemm_tiling;
 import generated.gemm_b_layout;
 import generated.quantization;
 import generated.quantization_method;
