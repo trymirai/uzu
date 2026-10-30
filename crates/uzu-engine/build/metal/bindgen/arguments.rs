@@ -4,12 +4,13 @@ use quote::{format_ident, quote};
 use syn::{Expr, Ident, Type};
 
 use crate::{
-    common::{expr_rewrite::rewrite_paths_with, gpu_type_paths::GpuTypePaths},
+    common::{
+        expr_rewrite::rewrite_paths_with,
+        gpu_type_paths::GpuTypePaths,
+        kernel::{KernelArgumentType, KernelBufferAccess},
+    },
     metal::{
-        ast::{
-            MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo,
-            shared_element_byte_size,
-        },
+        ast::{MetalArgument, MetalArgumentType, MetalGroupsType, MetalKernelInfo, shared_element_byte_size},
         bindgen::host_expression_rewriter::HostExpressionRewriter,
         enum_path_rewrite::rewrite_for_rust,
     },
@@ -17,7 +18,7 @@ use crate::{
 
 pub enum ArgumentEmission {
     Buffer(BufferArgument),
-    Constant(ConstantArgument),
+    Value(ValueArgument),
     Shared(SharedArgument),
     IndirectDispatch(IndirectDispatchArgument),
 }
@@ -25,18 +26,18 @@ pub enum ArgumentEmission {
 pub struct BufferArgument {
     name: Ident,
     buffer_index: usize,
-    access: MetalBufferAccess,
+    access: KernelBufferAccess,
     condition: Option<ArgumentCondition>,
 }
 
-pub struct ConstantArgument {
+pub struct ValueArgument {
     name: Ident,
     buffer_index: usize,
-    shape: ConstantShape,
+    shape: ValueShape,
     condition: Option<ArgumentCondition>,
 }
 
-enum ConstantShape {
+enum ValueShape {
     Scalar(Type),
     UnsizedSlice(Type),
     SizedArray {
@@ -69,23 +70,20 @@ pub fn parse(
     let mut indirect_dispatch_emitted = false;
 
     for argument in kernel.arguments.iter() {
-        match &argument.argument_type {
-            MetalArgumentType::Buffer(access) => {
+        match &argument.binding_type {
+            Some(KernelArgumentType::Buffer(access)) => {
                 let buffer = parse_buffer_argument(argument, *access, next_buffer_index, gpu_type_paths)?;
                 emissions.push(ArgumentEmission::Buffer(buffer));
                 next_buffer_index += 1;
             },
-            MetalArgumentType::Constant((rust_type_text, constant_type)) => {
-                let constant = parse_constant_argument(
-                    argument,
-                    rust_type_text,
-                    constant_type,
-                    next_buffer_index,
-                    gpu_type_paths,
-                )?;
-                emissions.push(ArgumentEmission::Constant(constant));
+            Some(KernelArgumentType::Value(rust_type_text)) => {
+                let value = parse_value_argument(argument, rust_type_text, next_buffer_index, gpu_type_paths)?;
+                emissions.push(ArgumentEmission::Value(value));
                 next_buffer_index += 1;
             },
+            None => {},
+        }
+        match &argument.argument_type {
             MetalArgumentType::Shared(dimensions) if argument.condition.is_some() => {
                 let shared = parse_shared_argument(
                     argument,
@@ -139,7 +137,7 @@ fn parse_shared_argument(
 
 fn parse_buffer_argument(
     argument: &MetalArgument,
-    access: MetalBufferAccess,
+    access: KernelBufferAccess,
     buffer_index: usize,
     gpu_type_paths: &GpuTypePaths,
 ) -> Result<BufferArgument> {
@@ -153,31 +151,29 @@ fn parse_buffer_argument(
     })
 }
 
-fn parse_constant_argument(
+fn parse_value_argument(
     argument: &MetalArgument,
     rust_type_text: &str,
-    constant_type: &MetalConstantType,
     buffer_index: usize,
     gpu_type_paths: &GpuTypePaths,
-) -> Result<ConstantArgument> {
+) -> Result<ValueArgument> {
     let name = format_ident!("{}", argument.name.as_ref());
-    let element_type = gpu_type_paths
+    let ty = gpu_type_paths
         .resolve_type(rust_type_text)
-        .with_context(|| format!("constant rust type `{}` cannot be parsed", rust_type_text))?;
-    let shape = match constant_type {
-        MetalConstantType::Scalar => ConstantShape::Scalar(element_type),
-        MetalConstantType::Array(None) => ConstantShape::UnsizedSlice(element_type),
-        MetalConstantType::Array(Some(size_text)) => {
-            let size: Expr = syn::parse_str(size_text)
-                .with_context(|| format!("constant array size `{}` cannot be parsed", size_text))?;
-            ConstantShape::SizedArray {
-                element_type,
-                size,
-            }
+        .with_context(|| format!("value rust type `{}` cannot be parsed", rust_type_text))?;
+    let shape = match ty {
+        Type::Reference(reference) => match *reference.elem {
+            Type::Slice(slice) => ValueShape::UnsizedSlice(*slice.elem),
+            Type::Array(array) => ValueShape::SizedArray {
+                element_type: *array.elem,
+                size: array.len,
+            },
+            _ => anyhow::bail!("unsupported value reference type `{rust_type_text}`"),
         },
+        ty => ValueShape::Scalar(ty),
     };
     let condition = parse_argument_condition(argument, gpu_type_paths)?;
-    Ok(ConstantArgument {
+    Ok(ValueArgument {
         name,
         buffer_index,
         shape,
@@ -236,7 +232,7 @@ impl ArgumentEmission {
     pub fn encode_argument_definition(&self) -> Option<TokenStream> {
         match self {
             ArgumentEmission::Buffer(buffer) => Some(emit_buffer_argument_definition(buffer)),
-            ArgumentEmission::Constant(constant) => Some(emit_constant_argument_definition(constant)),
+            ArgumentEmission::Value(value) => Some(emit_value_argument_definition(value)),
             ArgumentEmission::Shared(_) => None,
             ArgumentEmission::IndirectDispatch(_) => Some(quote! {
                 __dsl_indirect_dispatch_buffer: impl crate::backends::common::BufferRef<Backend = crate::backends::metal::Metal>
@@ -257,32 +253,32 @@ impl ArgumentEmission {
             ArgumentEmission::IndirectDispatch(_) => Some(quote! {
                 let __dsl_indirect_dispatch_buffer = __dsl_indirect_dispatch_buffer.parts();
             }),
-            ArgumentEmission::Constant(constant) => {
-                let constant_name = &constant.name;
-                let buffer_name = format_ident!("__dsl_argument_buffer_{}", constant_name);
-                let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", constant_name);
-                let (buffer_size, buffer_copy) = match &constant.shape {
-                    ConstantShape::Scalar(ty) => (
+            ArgumentEmission::Value(value) => {
+                let value_name = &value.name;
+                let buffer_name = format_ident!("__dsl_argument_buffer_{}", value_name);
+                let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", value_name);
+                let (buffer_size, buffer_copy) = match &value.shape {
+                    ValueShape::Scalar(ty) => (
                         quote! { std::mem::size_of::<#ty>() },
-                        quote! { #buffer_name.copyin(unsafe { std::slice::from_raw_parts((&raw const #constant_name) as *const u8, std::mem::size_of::<#ty>()) }); },
+                        quote! { #buffer_name.copyin(unsafe { std::slice::from_raw_parts((&raw const #value_name) as *const u8, std::mem::size_of::<#ty>()) }); },
                     ),
-                    ConstantShape::UnsizedSlice(ty) => (
-                        quote! { std::mem::size_of_val::<[#ty]>(#constant_name).max(std::mem::size_of::<#ty>()) },
+                    ValueShape::UnsizedSlice(ty) => (
+                        quote! { std::mem::size_of_val::<[#ty]>(#value_name).max(std::mem::size_of::<#ty>()) },
                         quote! {
-                            if !#constant_name.is_empty() {
-                                #buffer_name.copyin(unsafe { std::slice::from_raw_parts(#constant_name.as_ptr() as *const u8, std::mem::size_of_val::<[#ty]>(#constant_name)) });
+                            if !#value_name.is_empty() {
+                                #buffer_name.copyin(unsafe { std::slice::from_raw_parts(#value_name.as_ptr() as *const u8, std::mem::size_of_val::<[#ty]>(#value_name)) });
                             }
                         },
                     ),
-                    ConstantShape::SizedArray {
+                    ValueShape::SizedArray {
                         element_type,
                         size,
                     } => (
                         quote! { std::mem::size_of::<[#element_type; #size]>() },
-                        quote! { #buffer_name.copyin(unsafe { std::slice::from_raw_parts(#constant_name.as_ptr() as *const u8, std::mem::size_of::<[#element_type; #size]>()) }); },
+                        quote! { #buffer_name.copyin(unsafe { std::slice::from_raw_parts(#value_name.as_ptr() as *const u8, std::mem::size_of::<[#element_type; #size]>()) }); },
                     ),
                 };
-                Some(if constant.condition.is_none() {
+                Some(if value.condition.is_none() {
                     quote! {
                         let mut #buffer_name = command_buffer.allocate_constant(#buffer_size).unwrap();
                         #buffer_copy
@@ -291,7 +287,7 @@ impl ArgumentEmission {
                 } else {
                     quote! {
                         let mut #buffer_name;
-                        let #parts_name = if let Some(#constant_name) = #constant_name {
+                        let #parts_name = if let Some(#value_name) = #value_name {
                             #buffer_name = command_buffer.allocate_constant(#buffer_size).unwrap();
                             #buffer_copy
                             Some(#buffer_name.parts())
@@ -316,7 +312,7 @@ impl ArgumentEmission {
                     write: false,
                 })
             }),
-            ArgumentEmission::Constant(constant) => Some(emit_constant_access(constant)),
+            ArgumentEmission::Value(value) => Some(emit_value_access(value)),
             ArgumentEmission::Shared(_) => None,
         }
     }
@@ -324,7 +320,7 @@ impl ArgumentEmission {
     pub fn encode_set(&self) -> Option<TokenStream> {
         match self {
             ArgumentEmission::Buffer(buffer) => Some(emit_buffer_set(buffer)),
-            ArgumentEmission::Constant(constant) => Some(emit_constant_set(constant)),
+            ArgumentEmission::Value(value) => Some(emit_value_set(value)),
             ArgumentEmission::Shared(shared) => Some(emit_shared_set(shared)),
             ArgumentEmission::IndirectDispatch(_) => None,
         }
@@ -333,7 +329,7 @@ impl ArgumentEmission {
     fn condition(&self) -> Option<&ArgumentCondition> {
         match self {
             ArgumentEmission::Buffer(buffer) => buffer.condition.as_ref(),
-            ArgumentEmission::Constant(constant) => constant.condition.as_ref(),
+            ArgumentEmission::Value(value) => value.condition.as_ref(),
             ArgumentEmission::Shared(shared) => Some(&shared.condition),
             ArgumentEmission::IndirectDispatch(_) => None,
         }
@@ -343,10 +339,10 @@ impl ArgumentEmission {
 fn emit_buffer_argument_definition(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
     let buffer_argument_type = match buffer.access {
-        MetalBufferAccess::Read => quote! {
+        KernelBufferAccess::Read => quote! {
             impl crate::backends::common::BufferRef<Backend = crate::backends::metal::Metal>
         },
-        MetalBufferAccess::ReadWrite => quote! {
+        KernelBufferAccess::ReadWrite => quote! {
             impl crate::backends::common::BufferMut<Backend = crate::backends::metal::Metal>
         },
     };
@@ -357,17 +353,17 @@ fn emit_buffer_argument_definition(buffer: &BufferArgument) -> TokenStream {
     }
 }
 
-fn emit_constant_argument_definition(constant: &ConstantArgument) -> TokenStream {
-    let name = &constant.name;
-    let base_type = match &constant.shape {
-        ConstantShape::Scalar(element_type) => quote! { #element_type },
-        ConstantShape::UnsizedSlice(element_type) => quote! { &[#element_type] },
-        ConstantShape::SizedArray {
+fn emit_value_argument_definition(value: &ValueArgument) -> TokenStream {
+    let name = &value.name;
+    let base_type = match &value.shape {
+        ValueShape::Scalar(element_type) => quote! { #element_type },
+        ValueShape::UnsizedSlice(element_type) => quote! { &[#element_type] },
+        ValueShape::SizedArray {
             element_type,
             size,
         } => quote! { &[#element_type; #size] },
     };
-    if constant.condition.is_some() {
+    if value.condition.is_some() {
         quote! { #name: Option<#base_type> }
     } else {
         quote! { #name: #base_type }
@@ -376,7 +372,7 @@ fn emit_constant_argument_definition(constant: &ConstantArgument) -> TokenStream
 
 fn emit_buffer_access(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
-    let write = matches!(buffer.access, MetalBufferAccess::ReadWrite);
+    let write = matches!(buffer.access, KernelBufferAccess::ReadWrite);
     let access_expression = quote! {
         crate::backends::metal::command_buffer::Access {
             range: #name.0.gpu_address_subrange(#name.1),
@@ -390,15 +386,15 @@ fn emit_buffer_access(buffer: &BufferArgument) -> TokenStream {
     }
 }
 
-fn emit_constant_access(constant: &ConstantArgument) -> TokenStream {
-    let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", constant.name);
+fn emit_value_access(value: &ValueArgument) -> TokenStream {
+    let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", value.name);
     let access_expression = quote! {
         crate::backends::metal::command_buffer::Access {
             range: #parts_name.0.gpu_address_subrange(#parts_name.1),
             write: false,
         }
     };
-    if constant.condition.is_some() {
+    if value.condition.is_some() {
         quote! { #parts_name.as_ref().map(|#parts_name| #access_expression) }
     } else {
         quote! { Some(#access_expression) }
@@ -425,13 +421,13 @@ fn emit_buffer_set(buffer: &BufferArgument) -> TokenStream {
     }
 }
 
-fn emit_constant_set(constant: &ConstantArgument) -> TokenStream {
-    let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", constant.name);
-    let buffer_index = constant.buffer_index;
+fn emit_value_set(value: &ValueArgument) -> TokenStream {
+    let parts_name = format_ident!("__dsl_argument_buffer_parts_{}", value.name);
+    let buffer_index = value.buffer_index;
     let unconditional_set = quote! {
         command_buffer.argument_table.set_address_at_index(#parts_name.0.gpu_address() + #parts_name.1.start as u64, #buffer_index);
     };
-    match &constant.condition {
+    match &value.condition {
         Some(condition) => {
             let field_name = &condition.field_name;
             quote! {

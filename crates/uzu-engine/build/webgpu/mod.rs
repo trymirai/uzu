@@ -8,7 +8,10 @@ use naga::{
 use proc_macro2::TokenStream;
 use shader_slang::{CompileTarget, ComponentType, GlobalSession, TargetDesc};
 
-use crate::slang::{SlangKernel, SlangTarget};
+use crate::{
+    common::gpu_type_paths::GpuTypePaths,
+    slang::{SlangKernel, SlangTarget},
+};
 
 mod bindgen_file;
 mod bindgen_global;
@@ -46,10 +49,11 @@ impl SlangTarget for WebGPU {
         linked_component: &ComponentType,
         kernels: &[SlangKernel],
         gpu_type_map: &HashMap<String, String>,
+        gpu_type_paths: &GpuTypePaths,
         constants: &HashMap<String, String>,
         object_file: &Path,
     ) -> anyhow::Result<TokenStream> {
-        bindgen_file::bindgen_file(linked_component, kernels, gpu_type_map, constants, object_file)
+        bindgen_file::bindgen_file(linked_component, kernels, gpu_type_map, gpu_type_paths, constants, object_file)
     }
 
     fn bindgen_global(kernels: &[(impl AsRef<Path>, &[crate::common::kernel::Kernel])]) -> anyhow::Result<TokenStream> {

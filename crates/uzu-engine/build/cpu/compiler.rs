@@ -22,9 +22,8 @@ use crate::common::{
 
 #[derive(PartialEq, Debug)]
 pub enum FunctionArgumentType {
-    Buffer(KernelBufferAccess),
-    Constant(Type, Option<Expr>),
-    Scalar(Type),
+    Pointer(KernelBufferAccess),
+    Value(Type),
     Specialization(Type),
 }
 
@@ -44,16 +43,21 @@ impl FunctionArgument {
             name: ArgumentName::from(self.name.to_string()),
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
-                FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(*access),
-                FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
-                    format!("&[{}]", canonicalize_type_text(ty, gpu_type_paths)).into_boxed_str(),
-                ),
-                FunctionArgumentType::Constant(ty, Some(size)) => KernelArgumentType::Constant(
-                    format!("&[{}; {}]", canonicalize_type_text(ty, gpu_type_paths), size.to_token_stream(),)
-                        .into_boxed_str(),
-                ),
-                FunctionArgumentType::Scalar(ty) => {
-                    KernelArgumentType::Constant(canonicalize_type_text(ty, gpu_type_paths).into_boxed_str())
+                FunctionArgumentType::Pointer(access) => KernelArgumentType::Buffer(*access),
+                FunctionArgumentType::Value(ty) => {
+                    let ty = match ty {
+                        Type::Reference(reference) => match &*reference.elem {
+                            Type::Slice(slice) => format!("&[{}]", canonicalize_type_text(&slice.elem, gpu_type_paths)),
+                            Type::Array(array) => format!(
+                                "&[{}; {}]",
+                                canonicalize_type_text(&array.elem, gpu_type_paths),
+                                array.len.to_token_stream()
+                            ),
+                            _ => unreachable!(),
+                        },
+                        ty => canonicalize_type_text(ty, gpu_type_paths),
+                    };
+                    KernelArgumentType::Value(ty.into_boxed_str())
                 },
                 FunctionArgumentType::Specialization(_) => {
                     return None;
@@ -395,7 +399,7 @@ impl CpuCompiler {
                             quote! { impl crate::backends::common::BufferMut<Backend = crate::backends::cpu::Cpu> }
                         },
                     },
-                    KernelArgumentType::Constant(ty) => {
+                    KernelArgumentType::Value(ty) => {
                         let ty = gpu_type_paths.resolve_type(ty)?;
                         quote! { #ty }
                     },
@@ -414,7 +418,7 @@ impl CpuCompiler {
             .flat_map(|argument| {
                 let argument_ident = &argument.name;
                 match &argument.ty {
-                    FunctionArgumentType::Buffer(access) => {
+                    FunctionArgumentType::Pointer(access) => {
                         let (buffer_ptr, buffer_ptr_wrapper) = match access {
                             KernelBufferAccess::Read => (
                                 quote! { crate::backends::cpu::buffer::CpuBufferExt::cpu_address(__dsl_buffer).as_ptr().cast::<u8>().cast_const() },
@@ -444,13 +448,12 @@ impl CpuCompiler {
                             })
                         }
                     },
-                    FunctionArgumentType::Constant(_, None) => {
-                        Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); })
+                    FunctionArgumentType::Value(Type::Reference(reference)) => match &*reference.elem {
+                        Type::Slice(_) => Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); }),
+                        Type::Array(_) => Some(quote! { let #argument_ident = Box::new(*#argument_ident); }),
+                        _ => unreachable!(),
                     },
-                    FunctionArgumentType::Constant(_, Some(_)) => {
-                        Some(quote! { let #argument_ident = Box::new(*#argument_ident); })
-                    },
-                    FunctionArgumentType::Scalar(_) => None,
+                    FunctionArgumentType::Value(_) => None,
                     FunctionArgumentType::Specialization(_) => {
                         Some(quote! { let #argument_ident = self.#argument_ident; })
                     },
@@ -469,15 +472,15 @@ impl CpuCompiler {
                 let argument_ident = &argument.name;
 
                 match &argument.ty {
-                    FunctionArgumentType::Buffer(_) => {
+                    FunctionArgumentType::Pointer(_) => {
                         if argument.conditional.is_some() {
                             quote! { #argument_ident.map(|p| p.as_ptr() as _) }
                         } else {
                             quote! { #argument_ident.as_ptr() as _ }
                         }
                     },
-                    FunctionArgumentType::Constant(_, _) => quote! { &*#argument_ident },
-                    FunctionArgumentType::Scalar(_) | FunctionArgumentType::Specialization(_) => {
+                    FunctionArgumentType::Value(Type::Reference(_)) => quote! { &*#argument_ident },
+                    FunctionArgumentType::Value(_) | FunctionArgumentType::Specialization(_) => {
                         quote! { #argument_ident }
                     },
                 }
@@ -640,17 +643,20 @@ impl CpuCompiler {
 
     fn parse_type(ty: Type) -> anyhow::Result<FunctionArgumentType> {
         Ok(match ty {
-            Type::Ptr(ty) => FunctionArgumentType::Buffer(if matches!(ty.mutability, syn::PointerMutability::Mut(_)) {
-                KernelBufferAccess::ReadWrite
-            } else {
-                KernelBufferAccess::Read
-            }),
-            Type::Reference(ty) => match *ty.elem {
-                Type::Slice(ty) => FunctionArgumentType::Constant(*ty.elem, None),
-                Type::Array(ty) => FunctionArgumentType::Constant(*ty.elem, Some(ty.len)),
-                ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream(), ty),
+            Type::Ptr(ty) => {
+                FunctionArgumentType::Pointer(if matches!(ty.mutability, syn::PointerMutability::Mut(_)) {
+                    KernelBufferAccess::ReadWrite
+                } else {
+                    KernelBufferAccess::Read
+                })
             },
-            Type::Path(ty) => FunctionArgumentType::Scalar(Type::Path(ty)),
+            Type::Reference(ty) => {
+                if !matches!(*ty.elem, Type::Slice(_) | Type::Array(_)) {
+                    bail!("unsupported reference type: {} ({:?})", ty.elem.to_token_stream(), ty.elem);
+                }
+                FunctionArgumentType::Value(Type::Reference(ty))
+            },
+            Type::Path(ty) => FunctionArgumentType::Value(Type::Path(ty)),
             ty => bail!("unsupported type: {} ({:?})", ty.to_token_stream(), ty),
         })
     }

@@ -53,7 +53,7 @@ pub fn traitgen(
                         quote! { impl crate::backends::common::BufferMut<Backend = Self::Backend> }
                     },
                 },
-                KernelArgumentType::Constant(ty) => {
+                KernelArgumentType::Value(ty) => {
                     let ty = gpu_type_paths
                         .resolve_type(ty)
                         .with_context(|| format!("invalid type for argument `{}`", a.name))?;

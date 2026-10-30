@@ -13,7 +13,11 @@ use shader_slang::{
 use syn::{Expr, Ident, Type};
 
 use crate::{
-    common::{kernel::KernelParameterType, mangling::static_mangle},
+    common::{
+        gpu_type_paths::GpuTypePaths,
+        kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
+        mangling::static_mangle,
+    },
     slang::{SlangArgumentType, SlangBufferAccess, SlangKernel, SlangParameterType, Specializer, slang2rust},
 };
 
@@ -21,6 +25,7 @@ pub fn bindgen_file(
     linked_component: &ComponentType,
     kernels: &[SlangKernel],
     gpu_type_map: &HashMap<String, String>,
+    gpu_type_paths: &GpuTypePaths,
     constants: &HashMap<String, String>,
     object_file: &Path,
 ) -> anyhow::Result<TokenStream> {
@@ -30,7 +35,9 @@ pub fn bindgen_file(
 
     let generated_kernels = kernels
         .iter()
-        .map(|kernel| bindgen_kernel(linked_component, shader, kernel, gpu_type_map, constants, &object_constant))
+        .map(|kernel| {
+            bindgen_kernel(linked_component, shader, kernel, gpu_type_map, gpu_type_paths, constants, &object_constant)
+        })
         .collect::<anyhow::Result<Vec<TokenStream>>>()?;
 
     Ok(quote! {
@@ -46,6 +53,7 @@ fn bindgen_kernel(
     shader: &Shader,
     kernel: &SlangKernel,
     gpu_type_map: &HashMap<String, String>,
+    gpu_type_paths: &GpuTypePaths,
     constants: &HashMap<String, String>,
     object_constant: &Ident,
 ) -> anyhow::Result<TokenStream> {
@@ -164,89 +172,46 @@ fn bindgen_kernel(
     let specialization_constants = specialization_constants.into_iter().flatten().collect::<Vec<_>>();
 
     let mut indirect_used = false;
-
-    let (kernel_encode_arguments_definitions, wrapper_encode_arguments_definitions, kernel_wrapper_call_arguments) = kernel
+    let binding_arguments = kernel
         .arguments
         .iter()
+        .filter_map(|argument| argument.to_common_argument(&mut indirect_used))
+        .collect::<Vec<_>>();
+
+    let (kernel_encode_arguments_definitions, wrapper_encode_arguments_definitions, kernel_wrapper_call_arguments) = binding_arguments
+        .iter()
         .map(|argument| {
-            match &argument.argument_type {
-                SlangArgumentType::Buffer {
-                    access_type: _,
-                    condition,
-                }
-                | SlangArgumentType::Constant {
-                    condition,
-                } => {
-                    let argument_name = format_ident!("{}", argument.name);
-
-                    let (mut kernel_argument_type, mut wrapper_argument_type, mut kernel_wrapper_call_argument) = match &argument.argument_type {
-                        SlangArgumentType::Buffer {
-                            access_type:
-                                access_type @ (SlangBufferAccess::Read {
-                                    is_constant: false,
-                                }
-                                | SlangBufferAccess::ReadWrite),
-                            condition: _,
-                        } => {
-                            let buffer_arg_type = match access_type {
-                                SlangBufferAccess::Read { .. } => quote! { BufferRef },
-                                SlangBufferAccess::ReadWrite => quote! { BufferMut },
-                            };
-
-                            (
-                                quote! { impl crate::backends::common::#buffer_arg_type<Backend = crate::backends::webgpu::WebGPU> },
-                                quote! { (&wgpu::Buffer, usize, usize) },
-                                Some(quote! { { let (buffer, range) = #argument_name.parts(); binding_parts(buffer, range) } }),
-                            )
-                        },
-                        SlangArgumentType::Constant {
-                            condition: _,
-                        }
-                        | SlangArgumentType::Buffer {
-                            access_type:
-                                SlangBufferAccess::Read {
-                                    is_constant: true,
-                                },
-                            condition: _,
-                        } => {
-                            let ty: Type = argument.rust_type(gpu_type_map).and_then(|ty| {
-                                syn::parse_str(&ty).with_context(|| format!("cannot parse the type of argument {}", argument.name))
-                            })?;
-
-                            (quote! { #ty }, quote! { #ty }, None)
-                        },
-                        _ => unreachable!(),
+            let argument_name = format_ident!("{}", argument.name.as_ref());
+            let (mut kernel_argument_type, mut wrapper_argument_type, mut conversion) = match &argument.ty {
+                KernelArgumentType::Buffer(access) => {
+                    let buffer_arg_type = match access {
+                        KernelBufferAccess::Read => quote! { BufferRef },
+                        KernelBufferAccess::ReadWrite => quote! { BufferMut },
                     };
-
-                    if let Some(_condition) = condition {
-                        kernel_argument_type = quote! { Option<#kernel_argument_type> };
-                        wrapper_argument_type = quote! { Option<#wrapper_argument_type> };
-                        kernel_wrapper_call_argument = kernel_wrapper_call_argument.map(|conversion| {
-                            quote! { #argument_name.map(|#argument_name| #conversion) }
-                        });
-                    }
-
-                    let kernel_wrapper_call_argument = kernel_wrapper_call_argument.unwrap_or_else(|| quote! { #argument_name });
-
-                    Ok(Some((
-                        quote! { #argument_name: #kernel_argument_type },
-                        quote! { #[allow(unused)] #argument_name: #wrapper_argument_type },
-                        quote! { #kernel_wrapper_call_argument },
-                    )))
+                    (
+                        quote! { impl crate::backends::common::#buffer_arg_type<Backend = crate::backends::webgpu::WebGPU> },
+                        quote! { (&wgpu::Buffer, usize, usize) },
+                        Some(quote! { { let (buffer, range) = #argument_name.parts(); binding_parts(buffer, range) } }),
+                    )
                 },
-                SlangArgumentType::Groups { groups } if !indirect_used && groups == "INDIRECT" => {
-                    indirect_used = true;
-
-                    Ok(Some((
-                        quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::BufferRef<Backend = crate::backends::webgpu::WebGPU> },
-                        quote! { #[allow(unused)] __dsl_indirect_dispatch_buffer: (&wgpu::Buffer, usize, usize) },
-                        quote! { { let (buffer, range) = __dsl_indirect_dispatch_buffer.parts(); binding_parts(buffer, range) } },
-                    )))
+                KernelArgumentType::Value(ty) => {
+                    let ty = gpu_type_paths.resolve_type(ty)
+                        .with_context(|| format!("cannot parse the type of argument {}", argument.name))?;
+                    (quote! { #ty }, quote! { #ty }, None)
                 },
-                _ => Ok(None)
+            };
+            if argument.conditional {
+                kernel_argument_type = quote! { Option<#kernel_argument_type> };
+                wrapper_argument_type = quote! { Option<#wrapper_argument_type> };
+                conversion = conversion.map(|conversion| quote! { #argument_name.map(|#argument_name| #conversion) });
             }
+            let call_argument = conversion.unwrap_or_else(|| quote! { #argument_name });
+            Ok((
+                quote! { #argument_name: #kernel_argument_type },
+                quote! { #[allow(unused)] #argument_name: #wrapper_argument_type },
+                call_argument,
+            ))
         })
-        .filter_map(|x| x.transpose())
         .collect::<anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>)>>()?;
 
     let wrapper_trait_name = format_ident!("{}KernelTrait", kernel.name.as_str());
@@ -424,7 +389,7 @@ fn bindgen_kernel(
             Buffer {
                 conditional: bool,
             },
-            Constant {
+            Values {
                 buffer_size: usize,
                 fields: Vec<(usize, String, bool, SourceType)>,
             },
@@ -466,25 +431,20 @@ fn bindgen_kernel(
 
                     let buffer_name = parameter_name.to_string();
 
-                    let read_only = matches!(access_type, SlangBufferAccess::Read { .. });
+                    let read_only = matches!(access_type, SlangBufferAccess::Read);
 
-                    let source_type = if matches!(
-                        access_type,
-                        SlangBufferAccess::Read {
-                            is_constant: true
-                        }
-                    ) {
-                        let element_type = parameter.type_layout().unwrap().resource_result_type().unwrap();
-                        let element_type_layout =
-                            shader.type_layout(element_type, LayoutRules::DefaultStructuredBuffer).unwrap();
-
-                        BindGroupEntrySourceType::Slice {
-                            element_type: SourceType::from_type_layout(element_type_layout)?,
-                        }
-                    } else {
-                        BindGroupEntrySourceType::Buffer {
+                    let source_type = match kernel_argument.unwrap().binding_type.as_ref().unwrap() {
+                        KernelArgumentType::Value(_) => {
+                            let element_type = parameter.type_layout().unwrap().resource_result_type().unwrap();
+                            let element_type_layout =
+                                shader.type_layout(element_type, LayoutRules::DefaultStructuredBuffer).unwrap();
+                            BindGroupEntrySourceType::Slice {
+                                element_type: SourceType::from_type_layout(element_type_layout)?,
+                            }
+                        },
+                        KernelArgumentType::Buffer(_) => BindGroupEntrySourceType::Buffer {
                             conditional: condition.is_some(),
-                        }
+                        },
                     };
 
                     vacant.insert(BindGroupEntry {
@@ -496,12 +456,17 @@ fn bindgen_kernel(
                     });
                 },
                 ParameterCategory::Uniform => {
-                    let SlangArgumentType::Constant {
+                    let SlangArgumentType::Uniform {
                         condition,
                     } = &kernel_argument.unwrap().argument_type
                     else {
                         unreachable!();
                     };
+
+                    ensure!(
+                        matches!(kernel_argument.unwrap().binding_type, Some(KernelArgumentType::Value(_))),
+                        "uniform argument {parameter_name} requires a value binding",
+                    );
 
                     let binding = binding_base + parameter.offset(ParameterCategory::DescriptorTableSlot);
                     let offset = parameter.offset(ParameterCategory::Uniform);
@@ -514,12 +479,12 @@ fn bindgen_kernel(
                             if !matches!(occupied.get().binding_type, BindGroupEntryBindingType::UniformBuffer) {
                                 bail!("binding {binding} repeated as uniform and non-uniform")
                             }
-                            let BindGroupEntrySourceType::Constant {
+                            let BindGroupEntrySourceType::Values {
                                 buffer_size,
                                 fields,
                             } = &mut occupied.get_mut().source_type
                             else {
-                                bail!("binding {binding} repeated as buffer and constant")
+                                bail!("binding {binding} repeated as buffer and values")
                             };
                             *buffer_size = usize::max(*buffer_size, field_buffer_size);
                             fields.push((offset, parameter_name.to_string(), condition.is_some(), source_type))
@@ -531,7 +496,7 @@ fn bindgen_kernel(
                             vacant.insert(BindGroupEntry {
                                 buffer_name,
                                 binding_type: BindGroupEntryBindingType::UniformBuffer,
-                                source_type: BindGroupEntrySourceType::Constant {
+                                source_type: BindGroupEntrySourceType::Values {
                                     buffer_size: field_buffer_size,
                                     fields: vec![(
                                         offset,
@@ -596,7 +561,7 @@ fn bindgen_kernel(
                         });
                     })
                 }
-                BindGroupEntrySourceType::Constant { buffer_size, fields } => {
+                BindGroupEntrySourceType::Values { buffer_size, fields } => {
                     let field_writes = fields.iter().map(|(offset, name, conditional, source_type)| {
                         let name = format_ident!("{}", name);
                         let write = source_type.generate_write(quote! { buffer_slice[#offset..] }, quote! { #name });
