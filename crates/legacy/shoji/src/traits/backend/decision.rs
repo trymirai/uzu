@@ -7,6 +7,7 @@ use crate::{traits::backend::Error, types::session::classification::TokenCodecCo
 pub struct DecisionProbabilities {
     pub probabilities: Vec<f32>,
     pub prefill_duration: Duration,
+    pub memory_used_bytes: Option<usize>,
 }
 
 pub type Config = ();
