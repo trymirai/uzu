@@ -54,7 +54,7 @@ pub enum VkMatmulPlan {
         stage_depth: u32,
         splits: u32,
     },
-    /// GemmTensor's cooperative core on BF16 or FP16 A and B.
+    /// GemmTensor's cooperative core on BF16 A and B.
     GemmTensor(GemmTiling),
     /// Gemm's scalar core.
     Gemm(GemmTiling),
@@ -62,13 +62,12 @@ pub enum VkMatmulPlan {
 
 impl VkMatmulPlan {
     /// The default, without allocating: a generic rule of the shape, the loaded weight layout and raw device
-    /// capabilities, and the context's separate eligibility for floating-point cooperative products.
+    /// capabilities.
     pub fn baseline(
         shape: &MatmulShape,
         b_layout: GemmBLayout,
         data_types: [DataType; 3],
         device: &VkPhysicalDevice,
-        float_tensor_cores_eligible: bool,
     ) -> Self {
         let (m, n, k) = (shape.m, shape.n, shape.k);
         let [weights, input, _] = data_types;
@@ -91,7 +90,7 @@ impl VkMatmulPlan {
                         quantized_gemv_tiles(shape, b_layout, data_types).next().expect("the reader ends every list")
                     },
                 })
-            } else if float_tensor_cores_eligible && capabilities.float_tensor_cores(input) && input == weights {
+            } else if capabilities.float_tensor_cores(input) && input == weights {
                 // The widest tiling whose staging fits the workgroup's shared memory.
                 let tiling = [tensor_tiling(m), tensor_tiling(m.min(64))]
                     .into_iter()
@@ -270,8 +269,7 @@ impl VkMatmulPlan {
             Self::GemmTensor(tiling) => {
                 require(
                     tiling.is_tensor() && input == weights && capabilities.float_tensor_cores(input),
-                    "the cooperative core takes a tensor tiling of equal BF16 or FP16 A and B on matrices the device \
-                     reports",
+                    "the cooperative core takes a tensor tiling of equal BF16 A and B on matrices the device reports",
                 )?;
                 require(16 * tiling.tensor_staging() <= max_shared, "the staging exceeds the device's shared memory")?;
             },
@@ -401,7 +399,7 @@ impl VkMatmulPlan {
         16 * self.int8_shared_words() + INT8_FOLD_BYTES
     }
 
-    /// The activation quantization the A8 kernels take for `shape`'s B, whatever its A: BF16 or FP16 activations and
+    /// The activation quantization the A8 kernels take for `shape`'s B, whatever its A: BF16 activations and
     /// output, transposed contiguous B within [`Self::a8_shape`], and group-output metadata or output-group metadata
     /// on unsigned-dot devices.
     pub fn a8_quantization(
@@ -414,7 +412,7 @@ impl VkMatmulPlan {
         let code_layout = Int8CodeLayout::for_right_bits(bits)?;
         let quantization =
             ActivationQuantization::new(ACTIVATION_SCALE_GROUP_SIZE, group_size, scale_bias, code_layout)?;
-        (matches!(input, DataType::BF16 | DataType::F16)
+        (input == DataType::BF16
             && output == input
             && Self::a8_shape(shape)
             && match shape.params_layout {
@@ -519,14 +517,14 @@ impl VkMatmulPlan {
     }
 }
 
-/// Gemv's tiles of a quantized shape from weights in `b_layout`, the default first, for BF16 or FP16 throughout or other
+/// Gemv's tiles of a quantized shape from weights in `b_layout`, the default first, for BF16 throughout or other
 /// data types.
 fn quantized_gemv_tiles(
     shape: &MatmulShape,
     b_layout: GemmBLayout,
     [_, input, output]: [DataType; 3],
 ) -> impl Iterator<Item = VkGemvTile> {
-    let bf16_io = matches!(input, DataType::BF16 | DataType::F16) && output == input;
+    let bf16_io = input == DataType::BF16 && output == input;
     let (bits, group) = (shape.b_bits.unwrap_or(0), shape.b_group_size.unwrap_or(0));
     VkGemvTile::quantized_tiles(bits, group, shape.m, shape.n, shape.k, bf16_io, shape.gathered, b_layout)
 }

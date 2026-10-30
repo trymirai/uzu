@@ -103,7 +103,7 @@ impl AttentionKernel for VkAttentionKernel {
                 >= ATTENTION_GEMM_SHARED_BYTES;
         let has_grouped = [128, 256].contains(&config.head_dim)
             && !config.has_sinks
-            && context.qualified_float_tensor_cores(config.data_type)?;
+            && context.physical_device().capabilities.float_tensor_cores(config.data_type);
         Ok(Self {
             config,
             single_pass: [single_pass(false)?, single_pass(true)?],

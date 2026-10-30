@@ -166,10 +166,6 @@ impl VkPhysicalDevice {
                     && bfloat16_features.shader_bfloat16_cooperative_matrix == vk::TRUE
                     && supports(16, VkShaderBfloat16Features::COMPONENT_TYPE, vk::ComponentTypeKHR::FLOAT32),
             ),
-            (
-                VkDeviceCapabilities::FP16_TENSOR_CORES,
-                supports(16, vk::ComponentTypeKHR::FLOAT16, vk::ComponentTypeKHR::FLOAT32),
-            ),
             (VkDeviceCapabilities::INT8_TENSOR_CORES_K32, int8_k32),
             (VkDeviceCapabilities::INT8_TENSOR_CORES_K16, int8_k16),
             (

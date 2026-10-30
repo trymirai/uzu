@@ -151,7 +151,6 @@ void gemm_tensor_tiling<B : IModelFloat16, N : ICoopElement, D : IModelFloat>(
 
 [[Kernel]]
 [[RequiredSubgroupSize("32")]]
-// Reported support, as explicit plans take; defaults also need the context's qualified predicate.
 [[Precondition("new", "context.physical_device().capabilities.float_tensor_cores(B)")]]
 [[Precondition("new", "tiling.is_tensor() && NUM_SIMDGROUPS == tiling.simdgroups()")]]
 [[Precondition("new", "shared_words == tiling.tensor_staging()")]]
@@ -198,11 +197,7 @@ public func GemmTensor<B: IModelFloat16, D: IModelFloat>(
   let tile = uint2(column_tile, row_tile);
   let tid = simd_group * 32 + simd_lane;
   let quantized = b_prologue != GemmBPrologueKind.FullPrecision;
-  if (B.FRACTION_BITS == 7) {
-    gemm_tensor_tiling<B, BFloat16, D>(tiling, left, dense, weights, quantized, d, bias, params, tile, tid);
-  } else {
-    gemm_tensor_tiling<B, half, D>(tiling, left, dense, weights, quantized, d, bias, params, tile, tid);
-  }
+  gemm_tensor_tiling<B, BFloat16, D>(tiling, left, dense, weights, quantized, d, bias, params, tile, tid);
 }
 
 [[SpecializationConstant]] public const uint __dsl_GemmInt8_shared_words = 1;

@@ -4,7 +4,6 @@ use std::{
 };
 
 use futures::executor::block_on;
-use half::f16;
 
 use super::{GemmBPrologue, VkGemvTile, VkMatmulPlan};
 use crate::{
@@ -21,8 +20,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel,
-                    MatmulOutput, MatmulShape, TrellisFormat,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulKernel, MatmulShape,
+                    TrellisFormat,
                 },
             },
         },
@@ -72,7 +71,7 @@ impl MatmulKernel for VkMatmulKernel {
         output_data_type: DataType,
     ) -> Result<Self, Error> {
         let data_types = [weights_data_type, input_data_type, output_data_type];
-        if !data_types.iter().all(|data_type| matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)) {
+        if !data_types.iter().all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32)) {
             return Err(VkKernelError::KernelVariant {
                 kernel: "Matmul",
                 data_types: Box::new(data_types),
@@ -172,6 +171,8 @@ impl MatmulKernel for VkMatmulKernel {
         Ok((GemmBLayout::Tiled, prepared_shape.signed_codes))
     }
 
+    /// Encodes the arguments by the baseline plan, checked against them before any pipeline is created or command
+    /// recorded. Trellis B has a single configuration and takes no plan.
     fn encode(
         &mut self,
         arguments: MatmulArguments<
@@ -182,63 +183,6 @@ impl MatmulKernel for VkMatmulKernel {
             impl BufferMut<Backend = Vulkan>,
             impl BufferRef<Backend = Vulkan>,
         >,
-        command_buffer: &mut VkCommandBufferEncoding,
-    ) -> Result<(), Error> {
-        self.encode_plan(arguments, None, command_buffer)
-    }
-}
-
-impl VkMatmulKernel {
-    /// Whether the device's FP16 cooperative products keep FP32 precision: rows [128.125, -128.25, 0, ...] of A times
-    /// rows [128.125, 128, 0, ...] of transposed B sum to exactly 1/64 from FP32 products, to 0 from FP16-rounded ones.
-    pub fn fp16_products_exact(context: &VkContext) -> Result<bool, Error> {
-        let rows = |row: [f32; 2], count: usize| {
-            let values = row.into_iter().chain([0.0; 62]).map(f16::from_f32).cycle().take(64 * count);
-            let values = values.collect::<Vec<_>>();
-            let mut initializer = context.create_buffer_cpu_gpu(2 * values.len())?;
-            initializer.copyin(&values);
-            Ok::<_, Error>(initializer.handoff())
-        };
-        let (a, b) = (rows([128.125, -128.25], 16)?, rows([128.125, 128.0], 64)?);
-        let mut d = context.create_buffer_gpu(2 * 16 * 64)?;
-        let mut kernel = Self::new(context, DataType::F16, DataType::F16, DataType::F16)?;
-        let mut command_buffer = context.create_command_buffer(Some("probe FP16 cooperative products"), None)?;
-        let arguments = MatmulArguments {
-            a: MatmulA::FullPrecision {
-                values: &a,
-                offset: 0,
-            },
-            b: MatmulB::FullPrecision {
-                b: &b,
-            },
-            b_leading_dimension: None,
-            b_transpose: true,
-            output: MatmulOutput::new(&mut d, MatmulDOps::none()),
-            gather_indices: None::<&<Vulkan as Backend>::GlobalGpuBuffer>,
-            m: 16,
-            n: 64,
-            k: 64,
-        };
-        let plan = VkMatmulPlan::GemmTensor(GemmTiling::Tile16x64x64_Simdgroups1x4x2);
-        kernel.encode_plan(arguments, Some(plan), &mut command_buffer)?;
-        wait(command_buffer.end_encoding().submit().wait_until_completed())?;
-        let output = wait(context.copyout::<f16>(&d))?;
-        Ok(output.iter().all(|&value| value == f16::from_f32(1.0 / 64.0)))
-    }
-
-    /// Encodes the arguments by `plan`, or without one by the default, checked against them before any pipeline is
-    /// created or command recorded. Trellis B has a single configuration and ignores the plan.
-    fn encode_plan(
-        &mut self,
-        arguments: MatmulArguments<
-            '_,
-            Vulkan,
-            impl BufferRef<Backend = Vulkan>,
-            impl BufferRef<Backend = Vulkan>,
-            impl BufferMut<Backend = Vulkan>,
-            impl BufferRef<Backend = Vulkan>,
-        >,
-        plan: Option<VkMatmulPlan>,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<(), Error> {
         let shape = MatmulShape::from_arguments(&arguments);
@@ -445,10 +389,7 @@ impl VkMatmulKernel {
         };
         let (scale_output, scale_group) = scale_strides.unzip();
         let (zero_point_output, zero_point_group) = zero_point_strides.unzip();
-        let plan = match plan {
-            Some(plan) => plan,
-            None => self.baseline(&shape, b_layout, &context)?,
-        };
+        let plan = VkMatmulPlan::baseline(&shape, b_layout, self.data_types(), physical_device);
         plan.check(&shape, b_layout, self.data_types(), physical_device)
             .map_err(|reason| precondition("Matmul", reason))?;
         // GemvInt8 of full-precision A first quantizes it to scratch A8 by the shape's A8 contract.
@@ -826,19 +767,9 @@ impl VkMatmulKernel {
         }
         Ok(())
     }
+}
 
-    /// The default for `shape` from weights in `b_layout`, whose FP16 tensor cores count only where the context
-    /// qualified them.
-    fn baseline(
-        &self,
-        shape: &MatmulShape,
-        b_layout: GemmBLayout,
-        context: &VkContext,
-    ) -> Result<VkMatmulPlan, Error> {
-        let eligible = context.qualified_float_tensor_cores(self.input_data_type)?;
-        Ok(VkMatmulPlan::baseline(shape, b_layout, self.data_types(), context.physical_device(), eligible))
-    }
-
+impl VkMatmulKernel {
     fn data_types(&self) -> [DataType; 3] {
         [self.weights_data_type, self.input_data_type, self.output_data_type]
     }

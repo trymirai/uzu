@@ -15,8 +15,6 @@ bitflags! {
         const MEMORY_BUDGET = 1 << 2;
         /// Subgroup-scope 16 x 16 x 16 BF16 cooperative matrices with FP32 accumulation.
         const BF16_TENSOR_CORES = 1 << 3;
-        /// The FP16 counterpart of `BF16_TENSOR_CORES`, as reported; defaults also need exact products.
-        const FP16_TENSOR_CORES = 1 << 4;
         /// Subgroup-scope 16 x 16 x 32 INT8 cooperative matrices with INT32 accumulation.
         const INT8_TENSOR_CORES_K32 = 1 << 5;
         /// Subgroup-scope 16 x 16 x 16 INT8 cooperative matrices with INT32 accumulation, reported independently of the
@@ -41,12 +39,7 @@ impl VkDeviceCapabilities {
         self,
         data_type: DataType,
     ) -> bool {
-        self.contains(Self::SUBGROUP_SIZE_32)
-            && match data_type {
-                DataType::BF16 => self.contains(Self::BF16_TENSOR_CORES),
-                DataType::F16 => self.contains(Self::FP16_TENSOR_CORES),
-                _ => false,
-            }
+        self.contains(Self::SUBGROUP_SIZE_32) && data_type == DataType::BF16 && self.contains(Self::BF16_TENSOR_CORES)
     }
 
     /// The default activation-format and weight-layout preference for INT8 GEMM: INT8 matrices on pinned 32-wide

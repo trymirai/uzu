@@ -4,7 +4,7 @@ use std::{
     ffi::{CStr, c_char, c_void},
     path::{Path, PathBuf},
     sync::{
-        Arc, OnceLock, Weak,
+        Arc, Weak,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
@@ -16,21 +16,17 @@ use bytemuck::AnyBitPattern;
 use parking_lot::{Mutex, MutexGuard};
 use vk_mem::Alloc;
 
-use crate::{
-    backends::{
-        common::{
-            Backend, BufferRef, CommandBufferEncoding, CommandBufferPending, Context, CpuBuffer, DeviceCapabilities,
-            allocator::pool::PoolAllocator,
-        },
-        vulkan::{
-            Error, VkBuffer, VkBufferError, VkBufferInitializer, VkBufferMemory, VkCommandBufferEncoding,
-            VkCommandBufferError, VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline,
-            VkComputePipelineKey, VkContextError, VkCooperativeMatrix2Features, VkDebugMessages, VkDeviceCapabilities,
-            VkKernelError, VkMatmulKernel, VkPhysicalDevice, VkPhysicalDeviceFeatures, VkShaderBfloat16Features,
-            VkSparseBuffer, Vulkan,
-        },
+use crate::backends::{
+    common::{
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferPending, Context, CpuBuffer, DeviceCapabilities,
+        allocator::pool::PoolAllocator,
     },
-    data_type::DataType,
+    vulkan::{
+        Error, VkBuffer, VkBufferError, VkBufferInitializer, VkBufferMemory, VkCommandBufferEncoding,
+        VkCommandBufferError, VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline,
+        VkComputePipelineKey, VkContextError, VkCooperativeMatrix2Features, VkDebugMessages, VkDeviceCapabilities,
+        VkKernelError, VkPhysicalDevice, VkPhysicalDeviceFeatures, VkShaderBfloat16Features, VkSparseBuffer, Vulkan,
+    },
 };
 
 const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
@@ -50,8 +46,6 @@ pub struct VkContext {
     /// Compiled pipelines, loaded from the file and saved back to it with the data size it loaded.
     pipeline_cache: vk::PipelineCache,
     pipeline_cache_file: Option<(PathBuf, usize)>,
-    /// Whether FP16 cooperative products keep FP32 precision, probed on first use.
-    fp16_products_exact: OnceLock<bool>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     /// Command-buffer labels, available with validation.
@@ -141,7 +135,6 @@ impl VkContext {
             compute_pipelines: Mutex::new(HashMap::new()),
             pipeline_cache,
             pipeline_cache_file: pipeline_cache_path.map(|path| (path, pipeline_cache_size)),
-            fp16_products_exact: OnceLock::new(),
             debug_utils,
             debug_messenger,
             debug_utils_device,
@@ -358,24 +351,6 @@ impl VkContext {
             .into());
         }
         Ok(())
-    }
-
-    /// Whether defaults may take the float tensor cores of `data_type`: BF16 ones on reported support, FP16 ones only
-    /// where a probe finds their products exact, as devices rounding each product to FP16 before FP32 accumulation are
-    /// not. Explicit plans take reported support.
-    pub fn qualified_float_tensor_cores(
-        &self,
-        data_type: DataType,
-    ) -> Result<bool, Error> {
-        let reported = self.physical_device.capabilities.float_tensor_cores(data_type);
-        if !reported || data_type != DataType::F16 {
-            return Ok(reported);
-        }
-        if let Some(&exact) = self.fp16_products_exact.get() {
-            return Ok(exact);
-        }
-        let exact = VkMatmulKernel::fp16_products_exact(self)?;
-        Ok(*self.fp16_products_exact.get_or_init(|| exact))
     }
 
     /// The validation layer's first error since the previous call; always `None` without validation.
@@ -623,11 +598,8 @@ fn get_logical_device(
 
     let capabilities = physical_device.capabilities;
     let bf16_type = capabilities.contains(VkDeviceCapabilities::BF16_TYPE);
-    let matrices = capabilities.intersects(
-        VkDeviceCapabilities::BF16_TENSOR_CORES
-            | VkDeviceCapabilities::FP16_TENSOR_CORES
-            | VkDeviceCapabilities::INT8_TENSOR_CORES,
-    );
+    let matrices =
+        capabilities.intersects(VkDeviceCapabilities::BF16_TENSOR_CORES | VkDeviceCapabilities::INT8_TENSOR_CORES);
     let element_fold = capabilities.contains(VkDeviceCapabilities::INT8_ELEMENT_FOLD);
     let mut device_extensions = Vec::new();
     if capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET) {
