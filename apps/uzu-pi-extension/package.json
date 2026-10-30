@@ -1,6 +1,6 @@
 {
   "name": "@trymirai/uzu-pi-extension",
-  "version": "0.6.14",
+  "version": "0.6.15",
   "description": "On-device Uzu models for the Pi coding agent",
   "type": "module",
   "license": "MIT",
