@@ -4,17 +4,18 @@ import common.quantized_value;
 import generated.gemm_b_layout;
 import generated.quantization_method;
 
-// The FP32 value of an A or B element `inner` of row `row`, which starts at element `base`.
+// The FP32 value of an A or B element `inner` of row `row`.
 public interface IMatmulOperand {
-  public float value(uint row, uint inner, uint base);
+  public float value(uint row, uint inner);
 }
 
 // Full-precision rows of k elements.
 public struct DenseOperand<T : IModelFloat> : IMatmulOperand {
   public Ptr<T, Access.Read> values;
+  public uint k;
 
-  public float value(uint row, uint inner, uint base) {
-    return values[base + inner].toFloat();
+  public float value(uint row, uint inner) {
+    return values[row * k + inner].toFloat();
   }
 }
 
@@ -83,7 +84,7 @@ public struct QuantizedWeights<B : IModelFloat> : IMatmulOperand {
     return metadata;
   }
 
-  public float value(uint row, uint inner, uint base) {
+  public float value(uint row, uint inner) {
     let byte = uint(codes[code_byte(row, inner)]);
     let nibble = layout == GemmBLayout.RowMajor ? (row * k + inner) & 1u : inner & 1u;
     var code = u4 ? (byte >> (4 * nibble)) & 15u : byte;

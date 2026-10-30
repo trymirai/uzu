@@ -33,7 +33,6 @@ public struct GemvTile {
 }
 
 public struct OutputTile {
-  public uint simd_lane;
   public uint reduction_lane;
   public uint input_row;
   public uint tile_row;
@@ -49,13 +48,11 @@ public struct OutputTile {
     uint out_vec_size
   ) {
     let invocation = subgroup_invocation();
-    let simd_lane = invocation % SIMD_SIZE;
     let local_row = invocation / SIMD_SIZE * Tile.ROWS_PER_LANE;
     let unclamped = output_tile_idx * Tile.OUTPUT_ROWS + local_row;
     let last = out_vec_size > Tile.ROWS_PER_LANE ? out_vec_size - Tile.ROWS_PER_LANE : 0;
     OutputTile tile;
-    tile.simd_lane = simd_lane;
-    tile.reduction_lane = simd_lane;
+    tile.reduction_lane = invocation % SIMD_SIZE;
     tile.input_row = input_tile_idx * Tile.INPUT_ROWS;
     tile.tile_row = output_tile_idx * Tile.OUTPUT_ROWS;
     tile.local_row = local_row;

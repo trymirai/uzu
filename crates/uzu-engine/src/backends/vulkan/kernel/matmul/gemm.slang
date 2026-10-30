@@ -74,8 +74,8 @@ public func Gemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   [[Specialize]] uint shared_b_elements,
 ) {
   ThreadContext thread_context = { simd_group * 32 + simd_lane, simd_group, simd_lane };
-  DenseOperand<A> left = { a };
-  GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, alignment };
+  DenseOperand<A> left = { a, k };
+  GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, alignment };
   let position = uint2(column_tile, row_tile);
   if (b_prologue == GemmBPrologueKind.FullPrecision) {
     FullPrecisionRight<B> right = { Ptr<B, Access.Read>(b), k };
@@ -188,8 +188,8 @@ public func GemmTensor<B: IModelFloat16, D: IModelFloat>(
   [[Specialize]] uint NUM_SIMDGROUPS,
   [[Specialize]] uint shared_words,
 ) {
-  DenseOperand<B> left = { a };
-  GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, 0 };
+  DenseOperand<B> left = { a, k };
+  GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, 0 };
   let dense = Ptr<B, Access.Read>(b);
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k,
@@ -319,7 +319,7 @@ void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IModelFloat, D : IMo
   );
   Int8Activations activations = { a, a_scales };
   // Under the output transform the bias adds after it.
-  GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
+  GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
   if (ROW_BLOCK == 16 && stage_depth == 128) {
     Int8Gemm<MMA_K, S, B, D, 16, 1, 4, ELEMENT_FOLD, 128>.run(
       activations, a_group_sums, weights, d, bias, partials, params, tile, tid, split_phase, splits, split_index,

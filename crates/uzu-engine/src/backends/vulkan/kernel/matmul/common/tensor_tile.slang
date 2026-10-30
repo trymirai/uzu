@@ -369,7 +369,7 @@ public void gemm_tensor_run<
           if (col < params.N) {
             let bias = params.has_bias ? output_bias[col].toFloat() : 0.0;
             let output = gemm_output(values[value], bias, params);
-            d[row * params.leading_dimension_d + col] = D.fromFloat(output);
+            d[row * params.N + col] = D.fromFloat(output);
           }
         }
       }

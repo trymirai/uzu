@@ -24,7 +24,7 @@ public struct ThreadgroupTile<
   public static const int A_STRIDE_ROW = BLOCK_DEPTH + 16 / int(sizeof(A));
   public static const int B_STRIDE_COL = BLOCK_DEPTH + 16 / int(sizeof(B));
 
-  public Fragment<float, TILE_ROWS, TILE_COLS> c_fragment;
+  public Fragment<TILE_ROWS, TILE_COLS> c_fragment;
 
   public int simdgroup_row_offset;
   public int simdgroup_col_offset;

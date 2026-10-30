@@ -18,8 +18,6 @@ public struct GemmParams {
   public uint M;
   public uint N;
   public uint K;
-  public uint leading_dimension_a;
-  public uint leading_dimension_d;
   public float ab_scale;
   public float soft_cap;
   public bool has_scale;
@@ -143,11 +141,11 @@ void simdgroup_mma_finalize<
     }
   }
 
-  let d_block = block_row * params.leading_dimension_d + block_col;
+  let d_block = block_row * params.N + block_col;
   if (aligned) {
-    accumulator.store_result(d, d_block, params.leading_dimension_d);
+    accumulator.store_result(d, d_block, params.N);
   } else {
-    accumulator.store_result_safe(d, d_block, params.leading_dimension_d, int2(tile_block_cols, tile_block_rows));
+    accumulator.store_result_safe(d, d_block, params.N, int2(tile_block_cols, tile_block_rows));
   }
 }
 
@@ -185,12 +183,11 @@ public void simdgroup_mma_core_run<
 
   var loader_a = ThreadgroupLoader<A>(
     left.values,
-    block_row * params.leading_dimension_a,
-    int(params.leading_dimension_a),
+    block_row * params.K,
+    int(params.K),
     THREADGROUP_BLOCK_M,
     THREADGROUP_BLOCK_K,
     shared_stride_a,
-    true,
     threadgroup_threads,
     thread_context
   );

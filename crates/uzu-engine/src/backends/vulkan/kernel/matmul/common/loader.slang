@@ -28,8 +28,7 @@ public struct ThreadgroupLoader<T : IModelFloat> : IThreadgroupLoader<T> {
   Ptr<T, Access.Read> source;
   uint offset;
 
-  // The tile from element `source_offset` of `source_ptr`. REDUCTION_DIMENSION: tiles advance along columns (K) rather
-  // than rows.
+  // The tile from element `source_offset` of `source_ptr`; tiles advance along columns (K).
   public __init(
     Ptr<T, Access.Read> source_ptr,
     uint source_offset,
@@ -37,7 +36,6 @@ public struct ThreadgroupLoader<T : IModelFloat> : IThreadgroupLoader<T> {
     int tile_rows,
     int tile_cols,
     int destination_leading_dim,
-    bool reduction_dimension,
     int threadgroup_size,
     ThreadContext thread_context,
   ) {
@@ -47,7 +45,7 @@ public struct ThreadgroupLoader<T : IModelFloat> : IThreadgroupLoader<T> {
     let thread_cols = tile_cols / reads_per_thread;
     thread_rows = threadgroup_size / thread_cols;
     source_leading_dimension = source_leading_dim;
-    tile_stride = reduction_dimension ? tile_cols : tile_rows * source_leading_dim;
+    tile_stride = tile_cols;
     let thread_index = int(thread_context.thread_index);
     tile_row_index = thread_index / thread_cols;
     tile_col_index = reads_per_thread * (thread_index % thread_cols);

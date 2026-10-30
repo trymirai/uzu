@@ -26,7 +26,7 @@ struct StridedOperand<T : IModelFloat> : IMatmulOperand {
   uint row_stride;
   uint inner_stride;
 
-  float value(uint row, uint inner, uint base) {
+  float value(uint row, uint inner) {
     return values[row * row_stride + inner * inner_stride].toFloat();
   }
 }
@@ -44,7 +44,6 @@ void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmul
   Ptr<uint, Access.Read> gather,
   uint k,
   uint n,
-  uint m,
   float ab_scale,
   float soft_cap,
   uint tile,
@@ -59,12 +58,11 @@ void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmul
   let lane = invocation % GEMV_LANES;
   let column = tile * GEMV_OUTPUTS + output;
   let active = column < n;
-  let a_base = row * k;
   var partial = 0.0;
   if (active) {
     let b_row = gathered ? gather[row * n + column] : column;
     for (uint j = lane; j < k; j += GEMV_LANES) {
-      partial = fma(activations.value(row, j, a_base), weights.value(b_row, j, b_row * k), partial);
+      partial = fma(activations.value(row, j), weights.value(b_row, j), partial);
     }
   }
   let dot = segment_reduce<Sum<float>, GEMV_THREADS>(partial, GEMV_LANES);
@@ -135,13 +133,13 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
   if (!METAL_LAYOUT) {
-    DenseOperand<A> activations = { a };
+    DenseOperand<A> activations = { a, k };
     if (quantized) {
-      gemv_body<DenseOperand<A>, B, D>(weights, activations, d, bias, gather, k, n, m, ab_scale, soft_cap,
+      gemv_body<DenseOperand<A>, B, D>(weights, activations, d, bias, gather, k, n, ab_scale, soft_cap,
         output_tile_idx, input_tile_idx, has_scale, has_bias, has_soft_cap, gathered);
     } else {
       StridedOperand<B> strided = { Ptr<B, Access.Read>(b), b_row_stride, b_inner_stride };
-      gemv_body<DenseOperand<A>, B, D>(strided, activations, d, bias, gather, k, n, m, ab_scale, soft_cap,
+      gemv_body<DenseOperand<A>, B, D>(strided, activations, d, bias, gather, k, n, ab_scale, soft_cap,
         output_tile_idx, input_tile_idx, has_scale, has_bias, has_soft_cap, gathered);
     }
     return;
@@ -255,7 +253,7 @@ func GemvInt8<B: IModelFloat, D: IModelFloat>(
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
   // Under the output transform the bias adds after it.
-  GemmParams params = { m, n, k, k, n, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
+  GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
   let split = INPUT_ROWS == 1 || ROWS >= 8;
   let held = split ? (INPUT_ROWS > 1 ? 2u : 1u) : ROWS;
   let parts = held * SIMD_SIZE / ROWS;

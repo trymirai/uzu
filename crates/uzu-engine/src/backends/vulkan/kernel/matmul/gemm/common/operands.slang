@@ -19,10 +19,10 @@ public interface IRightOperand<B> {
   );
 }
 
-// Full-precision B, element (n, k) at n leading_dimension_b + k.
+// Full-precision B, rows of k elements.
 public struct FullPrecisionRight<B : IModelFloat> : IRightOperand<B> {
   public Ptr<B, Access.Read> dense;
-  public uint leading_dimension_b;
+  public uint k;
 
   public typealias Loader = ThreadgroupLoader<B>;
 
@@ -36,12 +36,11 @@ public struct FullPrecisionRight<B : IModelFloat> : IRightOperand<B> {
   ) {
     return ThreadgroupLoader<B>(
       dense,
-      block_col * leading_dimension_b,
-      int(leading_dimension_b),
+      block_col * k,
+      int(k),
       block_n,
       block_k,
       shared_stride_b,
-      true,
       threadgroup_threads,
       thread_context
     );
