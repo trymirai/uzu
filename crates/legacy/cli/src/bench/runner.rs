@@ -66,7 +66,12 @@ impl BenchRunner {
         let messages = self.task.to_chat_messages(ThinkingSupport::for_model(&model))?;
         let device = self.get_device_info();
 
-        let session_config = ChatConfig::default();
+        let session_config = match std::env::var("UZU_BENCH_SEED") {
+            Ok(seed) => ChatConfig::default().with_sampling_seed(shoji::types::basic::SamplingSeed::Custom {
+                seed: seed.parse().unwrap(),
+            }),
+            Err(_) => ChatConfig::default(),
+        };
         let session = engine.chat(model, session_config).await?;
 
         let warmup_config = ChatReplyConfig::default().with_token_limit(Some(1));

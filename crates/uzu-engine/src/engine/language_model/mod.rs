@@ -87,7 +87,7 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = if let Some(speculator_path) = speculator_path.as_deref() {
-            DFlashTfmSpeculator::new(speculator_path, self.context.clone()).await?
+            DFlashTfmSpeculator::new(speculator_path, self.context.clone(), decoder.embedding()).await?
         } else {
             None
         };

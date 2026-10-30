@@ -21,6 +21,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        confidence_head::{ConfidenceHead, ConfidenceHeadError},
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
@@ -58,6 +59,8 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     DFlash(#[from] DFlashNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
+    #[error("confidence head error: {0}")]
+    ConfidenceHead(#[from] ConfidenceHeadError<B>),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -89,6 +92,7 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     context: Arc<B::Context>,
     dflash: DFlash<B>,
     weaver: Option<Weaver<B>>,
+    confidence_head: Option<ConfidenceHead<B>>,
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
@@ -98,6 +102,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
     pub async fn new(
         model_path: &Path,
         context: Arc<B::Context>,
+        target_embedding: &Embedding<B>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
         let mut shapes: HashMap<String, DFlashTfmTreeShape> =
             serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
@@ -133,6 +138,13 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         } else {
             None
         };
+        let confidence_head = match &config.confidence_head_config {
+            Some(head_config) => Some(
+                ConfidenceHead::new(head_config, &speculator_tree.subtree("confidence_head"), target_embedding, &*context)
+                    .await?,
+            ),
+            None => None,
+        };
 
         weight_loader.assert_all_tensors_read()?;
 
@@ -142,6 +154,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             context,
             dflash,
             weaver,
+            confidence_head,
             sampling,
             config,
             shape,
@@ -325,11 +338,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
+                let head = match sampling_method {
+                    SamplingMethod::Stochastic {
+                        temperature,
+                        top_k,
+                        ..
+                    } if *temperature != Some(0.0) && *top_k != Some(1) => self.confidence_head.as_ref(),
+                    _ => None,
+                };
                 let prune_sigma = match sampling_method {
                     SamplingMethod::Greedy => None,
                     SamplingMethod::Stochastic {
                         ..
-                    } => prune_sigma,
+                    } => prune_sigma.filter(|_| head.is_none()),
                 };
                 let tree = weaver.encode_tree(
                     target_output_norm,
@@ -347,6 +368,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         expand_width,
                         prune_noise_scale: prune_sigma.map(f32::recip),
                     },
+                    head,
                     &mut command_buffer,
                 )?;
                 let completed =

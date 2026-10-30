@@ -16,6 +16,7 @@ use crate::{
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
     data_type::DataType,
     encodable_block::{
+        confidence_head::{ConfidenceHead, ConfidenceHeadError, ConfidenceHeadStep},
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
@@ -172,6 +173,8 @@ pub enum WeaverNewError<B: Backend> {
 pub enum WeaverEncodeError<B: Backend> {
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("confidence head error: {0}")]
+    ConfidenceHead(#[from] ConfidenceHeadError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearEncodeError<B>),
     #[error("MLP error: {0}")]
@@ -407,13 +410,14 @@ impl<B: Backend> Weaver<B> {
         shape: &WeaverTreeShape,
         batch_node_count: u32,
         batch_start_slot: u32,
+        head: Option<(&ConfidenceHead<B>, &mut ConfidenceHeadStep<B>)>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
         let tree_slot_count = shape.slot_count();
         let ancestor_stride = self.max_depth;
         let frontier_capacity = tree_slot_count * shape.expand_width;
 
-        let fuse_select = shape.expand_per_round <= 4 && shape.prune_noise_scale.is_none();
+        let fuse_select = shape.expand_per_round <= 4 && shape.prune_noise_scale.is_none() && head.is_none();
         if batch_start_slot > 0 && !fuse_select {
             self.frontier_select.encode(
                 None::<&B::ScratchBuffer>,
@@ -552,6 +556,20 @@ impl<B: Backend> Weaver<B> {
             shape.prune_noise_scale,
             command_buffer,
         );
+        if let Some((head, step)) = head {
+            head.encode_round(
+                step,
+                &logit_residuals,
+                candidate_logits,
+                candidate_ids,
+                node_metadata.as_ref(),
+                node_valid.as_ref(),
+                packed_tree,
+                frontier,
+                batch_node_count,
+                command_buffer,
+            );
+        }
 
         Ok(())
     }
@@ -565,6 +583,7 @@ impl<B: Backend> Weaver<B> {
         depth_seeds: &[u64],
         root_token_id: u32,
         shape: WeaverTreeShape,
+        confidence_head: Option<&ConfidenceHead<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<EncodedWeaverTree<B>, WeaverEncodeError<B>> {
         let (packed_tree, frontier) = {
@@ -686,6 +705,19 @@ impl<B: Backend> Weaver<B> {
                 .map_err(WeaverEncodeError::Backend)?;
             let depth_seeds_buffer =
                 command_buffer.allocate_constant_from_slice(depth_seeds).map_err(WeaverEncodeError::Backend)?;
+            let mut head_step = confidence_head
+                .map(|head| {
+                    head.encode_step(
+                        draft_hidden,
+                        &candidate_logits,
+                        &candidate_ids,
+                        &depth_seeds_buffer,
+                        pool_depth_count,
+                        head.params(self.candidate_pool_size, shape.expand_width, tree_slot_count, vocab_size),
+                        command_buffer,
+                    )
+                })
+                .transpose()?;
 
             let mut batch_start_slot = 0;
             for round in 0..shape.rounds {
@@ -715,9 +747,13 @@ impl<B: Backend> Weaver<B> {
                     &shape,
                     batch_node_count,
                     batch_start_slot,
+                    confidence_head.zip(head_step.as_mut()),
                     command_buffer,
                 )?;
                 batch_start_slot += batch_node_count;
+            }
+            if let (Some(head), Some(step)) = (confidence_head, head_step) {
+                head.encode_prune(step, &mut packed_tree, &mut frontier, &slot_ancestors, ancestor_stride, command_buffer)?;
             }
 
             (packed_tree, frontier)

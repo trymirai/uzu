@@ -118,3 +118,30 @@ inline uint philox_next(thread PhiloxState* state) {
 inline float uniform_float(thread PhiloxState* state) {
   return float(metal::max(philox_next(state) >> 8, 1u)) * (1.0f / 16777216.0f);
 }
+
+#define GUMBEL_THREADGROUP_SIZE 1024u
+#define GUMBEL_WORDS_PER_OFFSET 4u
+
+inline metal::uint2 gumbel_revidx(uint logit_idx, uint vocab_size) {
+  const uint thread_idx = logit_idx % GUMBEL_THREADGROUP_SIZE;
+  const uint thread_offset = ((vocab_size + GUMBEL_THREADGROUP_SIZE * GUMBEL_WORDS_PER_OFFSET - 1) / (GUMBEL_THREADGROUP_SIZE * GUMBEL_WORDS_PER_OFFSET)) * thread_idx;
+  const uint block_idx = logit_idx / GUMBEL_THREADGROUP_SIZE;
+  return metal::uint2(thread_offset + block_idx / GUMBEL_WORDS_PER_OFFSET, block_idx % GUMBEL_WORDS_PER_OFFSET);
+}
+
+inline float gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
+  const metal::uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
+  PhiloxState rng;
+  philox_init(&rng, seed, offset_word.x);
+  const float uniform = float(rng.output[offset_word.y]) * (1.0f / 4294967296.0f);
+  return -metal::log(-metal::log(uniform));
+}
+
+// The noise the target sampler adds for this token: the 24-bit uniform of `uniform_float` in rng.h keeps it finite.
+inline float target_gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
+  const metal::uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
+  PhiloxState rng;
+  philox_init(&rng, seed, offset_word.x);
+  const float uniform = float(metal::max(rng.output[offset_word.y] >> 8, 1u)) * (1.0f / 16777216.0f);
+  return -metal::log(-metal::log(uniform));
+}
