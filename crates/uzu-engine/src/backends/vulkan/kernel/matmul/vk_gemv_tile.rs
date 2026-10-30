@@ -1,4 +1,7 @@
-use crate::backends::vulkan::gpu_types::{gemm::GEMV_INPUT_ROW_TILE, gemm_b_layout::GemmBLayout};
+use crate::backends::{
+    common::kernel::matmul::MatmulShape,
+    vulkan::gpu_types::{gemm::GEMV_INPUT_ROW_TILE, gemm_b_layout::GemmBLayout},
+};
 
 // Full-precision GEMV accumulates four K values per SIMD lane, so one full
 // vectorized K block is 4 * 32 lanes.
@@ -88,20 +91,16 @@ impl VkGemvTile {
         selected
     }
 
-    /// The tiles that take this quantized shape, the default first and the reader last: the general tile, lane-sliced
-    /// over the group or every input row at once for 2 to GEMV_INPUT_ROW_TILE rows of BF16, and the narrow tile of 4
-    /// simdgroups by 2 rows where its two group lanes hold whole runs of 16 U4 or 8 U8 values. The narrow tile leads
-    /// for one BF16 row from B packed in 32-row tiles, where fewer rows a workgroup stride less.
-    pub fn quantized_tiles(
-        bits: u32,
-        group: u32,
-        m: u32,
-        n: u32,
-        k: u32,
-        bf16_io: bool,
-        gathered: bool,
+    /// The tile of a quantized shape: the general tile, lane-sliced over the group or every input row at once for 2 to
+    /// GEMV_INPUT_ROW_TILE rows of BF16, else the reader. One BF16 row from B packed in 32-row tiles takes the narrow
+    /// tile of 4 simdgroups by 2 rows instead where its two group lanes hold whole runs of 16 U4 or 8 U8 values.
+    pub fn quantized(
+        shape: &MatmulShape,
         b_layout: GemmBLayout,
-    ) -> impl Iterator<Item = Self> + Clone {
+        bf16_io: bool,
+    ) -> Self {
+        let (m, n, k, gathered) = (shape.m, shape.n, shape.k, shape.gathered);
+        let (bits, group) = (shape.b_bits.unwrap_or(0), shape.b_group_size.unwrap_or(0));
         let general = if bits == 4 && !k.is_multiple_of(2) {
             None
         } else if gathered {
@@ -124,12 +123,13 @@ impl VkGemvTile {
             8
         };
         let narrow =
-            (general.is_some() && !gathered && (group / 2).is_multiple_of(lane_run)).then(|| Self::new(4, 2, 2));
-        let tiles = match bf16_io && m == 1 && b_layout == GemmBLayout::Tiled {
-            true => [narrow, general],
-            false => [general, narrow],
-        };
-        tiles.into_iter().flatten().chain([Self::reader()]).map(move |tile| tile.finished(group, m, n, k))
+            bf16_io && m == 1 && b_layout == GemmBLayout::Tiled && !gathered && (group / 2).is_multiple_of(lane_run);
+        match general {
+            Some(_) if narrow => Self::new(4, 2, 2),
+            Some(general) => general,
+            None => Self::reader(),
+        }
+        .finished(group, m, n, k)
     }
 
     /// The tile with the K alignment and whole-tile flags the shape allows; neither applies outside the lane layout.

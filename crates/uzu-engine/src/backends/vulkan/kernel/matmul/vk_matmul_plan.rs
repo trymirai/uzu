@@ -69,7 +69,7 @@ impl VkMatmulPlan {
         device: &VkPhysicalDevice,
     ) -> Self {
         let (m, n, k) = (shape.m, shape.n, shape.k);
-        let [weights, input, _] = data_types;
+        let [weights, input, output] = data_types;
         let (capabilities, units) = (device.capabilities, device.compute_units);
         let max_shared = device.limits().max_compute_shared_memory_size;
         // Where only unsigned dot products are accelerated, up to 8 rows of full-precision A quantize themselves.
@@ -81,13 +81,12 @@ impl VkMatmulPlan {
             return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
         }
         if shape.a == ActivationFormat::Bf16 {
-            return if shape.gathered || m <= 8 || !Self::gemm_rows(shape) {
-                Self::Gemv(match (shape.is_quant(), Self::gemm_rows(shape)) {
+            let gemm_rows = Self::gemm_rows(shape);
+            return if shape.gathered || m <= 8 || !gemm_rows {
+                Self::Gemv(match (shape.is_quant(), gemm_rows) {
                     (false, true) => VkGemvTile::dense(n, k),
                     (false, false) => VkGemvTile::reader(),
-                    (true, _) => {
-                        quantized_gemv_tiles(shape, b_layout, data_types).next().expect("the reader ends every list")
-                    },
+                    (true, _) => VkGemvTile::quantized(shape, b_layout, input == DataType::BF16 && output == input),
                 })
             } else if capabilities.float_tensor_cores(input) && input == weights {
                 // The widest tiling whose staging fits the workgroup's shared memory.
@@ -424,18 +423,6 @@ impl VkMatmulPlan {
             },
         }
     }
-}
-
-/// Gemv's tiles of a quantized shape from weights in `b_layout`, the default first, for BF16 throughout or other
-/// data types.
-fn quantized_gemv_tiles(
-    shape: &MatmulShape,
-    b_layout: GemmBLayout,
-    [_, input, output]: [DataType; 3],
-) -> impl Iterator<Item = VkGemvTile> {
-    let bf16_io = input == DataType::BF16 && output == input;
-    let (bits, group) = (shape.b_bits.unwrap_or(0), shape.b_group_size.unwrap_or(0));
-    VkGemvTile::quantized_tiles(bits, group, shape.m, shape.n, shape.k, bf16_io, shape.gathered, b_layout)
 }
 
 /// The cooperative core's block for m rows: one row block up to 64 rows, so each weight is read once.
