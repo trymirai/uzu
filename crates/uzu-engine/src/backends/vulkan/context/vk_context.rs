@@ -25,9 +25,9 @@ use crate::{
         vulkan::{
             Error, VkBuffer, VkBufferError, VkBufferInitializer, VkBufferMemory, VkCommandBufferEncoding,
             VkCommandBufferError, VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline,
-            VkComputePipelineKey, VkContextCreateInfo, VkContextError, VkCooperativeMatrix2Features, VkDebugMessages,
-            VkDeviceCapabilities, VkKernelError, VkMatmulKernel, VkPhysicalDevice, VkPhysicalDeviceFeatures,
-            VkShaderBfloat16Features, VkSparseBuffer, Vulkan,
+            VkComputePipelineKey, VkContextError, VkCooperativeMatrix2Features, VkDebugMessages, VkDeviceCapabilities,
+            VkKernelError, VkMatmulKernel, VkPhysicalDevice, VkPhysicalDeviceFeatures, VkShaderBfloat16Features,
+            VkSparseBuffer, Vulkan,
         },
     },
     data_type::DataType,
@@ -78,13 +78,14 @@ pub struct VkContext {
     upload_failure: Mutex<Option<String>>,
 }
 impl VkContext {
-    pub fn with_create_info(create_info: VkContextCreateInfo) -> Result<Arc<Self>, VkContextError> {
+    /// `pipeline_cache_path` is where compiled pipelines persist between runs; `None` compiles each one again in every
+    /// process.
+    fn with_settings(
+        with_validation: bool,
+        pipeline_cache_path: Option<PathBuf>,
+    ) -> Result<Arc<Self>, VkContextError> {
         let completion =
             VkCommandBufferSubmission::spawn_completion_thread().map_err(VkContextError::CompletionThreadSpawn)?;
-        let VkContextCreateInfo {
-            with_validation,
-            pipeline_cache_path,
-        } = create_info;
         let debug_messages = Box::new(VkDebugMessages::default());
 
         let entry = unsafe { ash::Entry::load() }.map_err(VkContextError::EntryLoad)?;
@@ -173,7 +174,7 @@ impl VkContext {
         Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Readback)?))
     }
 
-    /// The `Arc` that `with_create_info` created and that owns this context; it is alive while `&self` is.
+    /// The `Arc` that `with_settings` created and that owns this context; it is alive while `&self` is.
     pub fn arc(&self) -> Arc<Self> {
         self.weak_self.upgrade().expect("a VkContext is always owned by the Arc that created it")
     }
@@ -405,12 +406,12 @@ impl Context for VkContext {
     type Backend = Vulkan;
 
     async fn new() -> Result<Arc<Self>, Error> {
-        let defaults = VkContextCreateInfo::default();
-        Ok(VkContext::with_create_info(VkContextCreateInfo {
-            with_validation: cfg!(test) && defaults.with_validation,
-            // Tests leave the user's pipeline cache alone.
-            pipeline_cache_path: defaults.pipeline_cache_path.filter(|_| !cfg!(test)),
-        })?)
+        // Android loads layers only from an app's own package or on debuggable builds.
+        let with_validation = cfg!(test) && !cfg!(target_os = "android");
+        // Tests leave the user's pipeline cache alone.
+        let pipeline_cache_path =
+            (!cfg!(test)).then(dirs::cache_dir).flatten().map(|dir| dir.join("uzu").join("vulkan-pipeline-cache.bin"));
+        Ok(VkContext::with_settings(with_validation, pipeline_cache_path)?)
     }
 
     fn device_name(&self) -> Option<&str> {
