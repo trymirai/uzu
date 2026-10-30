@@ -8,8 +8,6 @@ public interface IStorageFloat {
     // values between lanes and for values loaded as packed words.
     public uint storageBits();
     public static This fromStorageBits(uint bits);
-    // Explicitly stored fraction bits.
-    public static const uint FRACTION_BITS;
 }
 
 public extension float : IStorageFloat {
@@ -28,8 +26,6 @@ public extension float : IStorageFloat {
     public static float fromStorageBits(uint bits) {
         return asfloat(bits);
     }
-
-    public static const uint FRACTION_BITS = 23;
 }
 
 public extension half : IStorageFloat {
@@ -48,6 +44,4 @@ public extension half : IStorageFloat {
     public static half fromStorageBits(uint bits) {
         return asfloat16(uint16_t(bits));
     }
-
-    public static const uint FRACTION_BITS = 10;
 }

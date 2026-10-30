@@ -39,6 +39,4 @@ public struct bf16 : IModelFloat16 {
         result.bits = uint16_t(bits);
         return result;
     }
-
-    public static const uint FRACTION_BITS = 7;
 }
