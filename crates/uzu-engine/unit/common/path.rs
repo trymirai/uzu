@@ -1,17 +1,10 @@
 use std::{path::PathBuf, sync::OnceLock};
 
-const MODEL_FILE_NAME: &str = "model.safetensors";
-
 pub fn get_test_model_path() -> PathBuf {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(resolve_test_model_path).clone()
 }
 
-pub fn get_test_weights_path() -> PathBuf {
-    get_test_model_path().join(MODEL_FILE_NAME)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn resolve_test_model_path() -> PathBuf {
     use uzu::{
         engine::{Engine, EngineConfig},
@@ -43,9 +36,4 @@ fn resolve_test_model_path() -> PathBuf {
         let path = engine.model_path(&model).await.expect("model path unavailable after download");
         PathBuf::from(path)
     })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn resolve_test_model_path() -> PathBuf {
-    panic!("test model download is not supported on wasm")
 }

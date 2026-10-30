@@ -130,12 +130,12 @@ rhai = "1.26.1"
 indicatif = "0.18.6"
 rocket = { version = "0.5.1", features = ["json"] }
 uuid = { version = "1.28.0", features = ["serde", "v4", "v5"] }
-comfy-table = { version = "8.0.1", default-features = false }
+comfy-table = "8.0.1"
 test-tag = "0.1.6"
 rstest = "0.27.0"
 wiremock = "0.6.5"
-proptest = { version = "1.12.0", default-features = false, features = ["std"] }
-criterion = { version = "0.8.2", default-features = false }
+proptest = "1.12.0"
+criterion = "0.8.2"
 libtest-mimic = "0.8.2"
 indexmap = { version = "2.14.2", features = ["serde"] }
 tracing = "0.1.44"

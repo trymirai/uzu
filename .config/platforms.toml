@@ -76,12 +76,6 @@ aliases = ["wasm"]
 capabilities_supported = []
 capabilities_default = []
 
-[targets."wasm32-wasip1-threads"]
-backend = "cpu"
-aliases = ["wasi"]
-capabilities_supported = []
-capabilities_default = []
-
 [languages.rust]
 targets = [
     "aarch64-apple-darwin",
@@ -89,7 +83,6 @@ targets = [
     "aarch64-apple-ios",
     "aarch64-apple-ios-sim",
     "aarch64-apple-ios-macabi",
-    "wasm32-wasip1-threads",
 ]
 tools = []
 bindings = []

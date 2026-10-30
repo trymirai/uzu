@@ -1418,6 +1418,7 @@ version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96a46ad395a5e00676eddaca4a45ed78b29c08be5a878d35e4b071c625637dd"
 dependencies = [
+ "crossterm",
  "unicode-segmentation",
  "unicode-width 0.2.2",
 ]

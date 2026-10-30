@@ -107,7 +107,6 @@
             nodejs_26
             pnpm_12
             wasm-bindgen-cli_0_2_129 # Keep in sync with Cargo.toml.
-            wasmtime_36
             evcxr
             cargo-deny
             cargo-nextest
