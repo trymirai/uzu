@@ -64,13 +64,11 @@ You can run any example via `cargo tools example` \<{% for language in languages
 - `Python` via [pyo3](https://github.com/PyO3/pyo3)
 - `TypeScript` via [napi-rs](https://github.com/napi-rs/napi-rs)
 
-It supports:
+Supported backends:
 
-- Backends:
-{% for backend in backends %}    - `{{ backend }}`
-{% endfor %}- Targets:
-{% for target in targets %}    - `{{ target.name }}`{% if target.in_progress %} _(in progress)_{% endif %}
-{% endfor %}
+- `metal`
+- `cpu`
+
 <br>
 For initial setup we recommend running <code>cargo tools setup</code>, which installs all necessary dependencies (<code>rustup</code>, <code>uv</code>, <code>pnpm</code>, <code>Rust targets</code>, <code>Metal toolchain</code>, ...) if not already present.
 

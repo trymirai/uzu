@@ -13,7 +13,7 @@ build = "build/main.rs"
 workspace = true
 
 [features]
-default = ["metal", "cpu", "grammar"]
+default = ["metal", "cpu"]
 
 metal = [
     "dep:rayon",
@@ -41,8 +41,6 @@ webgpu = [
 ]
 
 cpu = [] # TODO: move libm here
-
-grammar = ["dep:xgrammar", "dep:schemars"]
 
 [build-dependencies]
 anyhow.workspace = true
@@ -80,6 +78,8 @@ serde_json.workspace = true
 monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
+xgrammar.workspace = true
+schemars.workspace = true
 rangemap.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 num-traits.workspace = true
@@ -113,8 +113,6 @@ web-sys = { workspace = true, features = [
 ] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-xgrammar = { workspace = true, optional = true }
-schemars = { workspace = true, optional = true }
 async-fs.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

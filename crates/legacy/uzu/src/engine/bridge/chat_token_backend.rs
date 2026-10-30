@@ -31,13 +31,12 @@ use uzu_engine::{
     engine::{Engine, language_model::LanguageModel},
 };
 
-#[cfg(feature = "capability-grammar")]
-use crate::engine::bridge::helpers::{
-    get_grammar, grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt,
-};
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
-    helpers::{error_stream, get_max_context_length, get_sampling_method},
+    helpers::{
+        error_stream, get_grammar, get_max_context_length, get_sampling_method, grammar_trigger_token_sequence,
+        grammar_trigger_token_sequence_for_prompt,
+    },
 };
 
 #[derive(Clone)]
@@ -48,7 +47,6 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     stop_token_ids: Vec<i32>,
     max_context_length: Option<u32>,
     sampling_defaults: SamplingParameters,
-    #[cfg(feature = "capability-grammar")]
     grammar_trigger_token_sequence: Option<Vec<u64>>,
 }
 
@@ -72,7 +70,6 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             suffix_repetition_length: generation_config.suffix_repetition_length.map(|value| value as i64),
         };
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
-        #[cfg(feature = "capability-grammar")]
         let grammar_trigger_token_sequence =
             grammar_trigger_token_sequence(model.end_of_thinking_tag(), model.tokenizer());
 
@@ -83,7 +80,6 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             stop_token_ids,
             max_context_length,
             sampling_defaults,
-            #[cfg(feature = "capability-grammar")]
             grammar_trigger_token_sequence,
         })
     }
@@ -127,7 +123,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let token_limit = config.token_limit.map(|count| count as usize);
 
-        #[cfg(feature = "capability-grammar")]
         let grammar = if let Some(grammar_config) = config.grammar {
             let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
                 self.grammar_trigger_token_sequence.as_deref(),
@@ -143,10 +138,6 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         } else {
             None
         };
-        #[cfg(not(feature = "capability-grammar"))]
-        if config.grammar.is_some() {
-            return Box::pin(NoMetricsStream::new(error_stream("Grammar is not supported by this build".to_string())));
-        }
 
         let sampling_method = match get_sampling_method::<B>(&self.model, &config.sampling_policy) {
             Ok(sampling_method) => sampling_method,
@@ -157,10 +148,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 
         let mut options = self.model.default_stream_options();
         options.sampling_method = sampling_method;
-        #[cfg(feature = "capability-grammar")]
-        {
-            options.grammar = grammar;
-        }
+        options.grammar = grammar;
 
         let stream = match self.model.stream(input, state.value.get_mut(), options) {
             Ok(stream) => stream,

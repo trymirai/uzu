@@ -135,8 +135,7 @@ jobs:
           config = tomllib.loads(Path('.config/platforms.toml').read_text())
           target = 'aarch64-apple-darwin'
           platform = config['targets'][target]
-          features = [f"backend-{platform['backend']}"]
-          features += [f'capability-{cap}' for cap in platform['capabilities_default']]
+          features = platform['features']
           env = os.environ | {key: config['envs'][key] for key in platform['required_envs']}
           subprocess.run([
               'cargo', 'build', '--locked', '--release', '-p', config['binaries']['mirai']['crate'],

@@ -23,7 +23,6 @@ fn main() -> anyhow::Result<ExitCode> {
         println!("cargo::rerun-if-changed=/var/empty/hack_nonexistent_file_to_always_rerun");
     }
 
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH")?;
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
 
     println!("cargo::rustc-check-cfg=cfg(backend, values(\"metal\", \"webgpu\", \"cpu\"))");
@@ -41,12 +40,6 @@ fn main() -> anyhow::Result<ExitCode> {
     let backend_cpu = cfg!(feature = "cpu");
     if backend_cpu {
         println!("cargo::rustc-cfg=backend=\"cpu\"");
-    }
-
-    let grammar = cfg!(feature = "grammar") && target_arch != "wasm32";
-    println!("cargo::rustc-check-cfg=cfg(grammar)");
-    if grammar {
-        println!("cargo::rustc-cfg=grammar");
     }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);

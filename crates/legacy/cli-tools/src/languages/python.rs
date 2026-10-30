@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use crate::{
     configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget},
-    types::{Capability, Command, Configuration, Language},
+    types::{Command, Configuration, Language},
 };
 
 pub struct PythonLanguageBackend {
@@ -108,7 +108,7 @@ impl LanguageBackend for PythonLanguageBackend {
             fs::remove_dir_all(&wheels_root)?;
         }
 
-        self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()])?;
 
         let destination = release_path.join("python-pypi");
         if destination.exists() {

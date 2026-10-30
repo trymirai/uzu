@@ -1,11 +1,10 @@
-#[cfg(grammar)]
 use itertools::Itertools;
 use thiserror::Error;
 
-use crate::{backends::common::gpu_types::trie::TrieNode as GpuTrieNode, encodable_block::sampling::PRng};
-#[cfg(grammar)]
 use crate::{
+    backends::common::gpu_types::trie::TrieNode as GpuTrieNode,
     data_type::DataType,
+    encodable_block::sampling::PRng,
     engine::language_model::grammar::{Grammar, GrammarError},
 };
 
@@ -17,7 +16,6 @@ pub enum TrieError {
 
 #[derive(Debug, Error)]
 pub enum TrieAcceptError {
-    #[cfg(grammar)]
     #[error("Grammar error: {0}")]
     Grammar(#[from] GrammarError),
 }
@@ -223,7 +221,6 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().map(|n| n.node.seed)
     }
 
-    #[cfg(grammar)]
     pub fn fill_bitmasks(
         &self,
         bitmasks: &mut [u32],
@@ -271,7 +268,7 @@ impl<'a> FlatTrie<'a> {
     pub fn accept(
         &self,
         sampled_tokens: &[u64],
-        #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
+        mut grammar: Option<&mut Grammar>,
     ) -> Result<Box<[(usize, u64, u64)]>, TrieAcceptError> {
         let mut current_token = self.root().unwrap();
         let mut accepted = Vec::new();
@@ -280,7 +277,6 @@ impl<'a> FlatTrie<'a> {
             let current_token_id = sampled_tokens[current_token_index];
 
             accepted.push((current_token_index, current_token.token, current_token_id));
-            #[cfg(grammar)]
             if let Some(grammar) = grammar.as_mut()
                 && !grammar.is_terminated()
             {

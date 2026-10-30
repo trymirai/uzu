@@ -30,6 +30,9 @@ jobs:
       - id: setup
         uses: ./.github/actions/setup-nix
 
+      - name: Check that Cargo.lock is consistent with Cargo.toml
+        run: cargo metadata --locked --format-version=1 > /dev/null
+
       - name: Check uzu-engine rustfmt discovery
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RUSTUP_TOOLCHAIN=nightly ./scripts/check-rustfmt-discovery.sh
@@ -46,20 +49,17 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo +nightly clippy --workspace --all-targets --features uzu-engine/webgpu -- -D warnings
 
-      - name: Check that Cargo.lock is consistent with Cargo.toml
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: |
-          cargo metadata --locked --format-version=1 > /dev/null
-          git diff --exit-code -- Cargo.lock
-
       - name: Check with cargo-deny
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        # The GUI has a separate audit for its supported macOS target.
         run: cargo deny --exclude mirai-gui check -D warnings
 
       - name: Check sync
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo tools sync --check
+
+      - name: Check working tree
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: git diff --exit-code
 
   tests:
     name: ${{ matrix.host }}${{ matrix.backend && format(' ({0})', matrix.backend) }}${{ matrix.target && format(' ({0})', matrix.target) }}
@@ -79,14 +79,14 @@ jobs:
             benches: true
             crates: ['uzu-engine']
             no-default-features: true
-            features: ['uzu-engine/webgpu', 'uzu-engine/cpu', 'uzu-engine/grammar']
+            features: ['uzu-engine/webgpu', 'uzu-engine/cpu']
           - host: 'linux'
             crates: ['cli']
           - host: 'linux'
             target: 'wasm32-unknown-unknown'
             crates: ['uzu']
             no-default-features: true
-            features: ['uzu/backend-webgpu']
+            features: ['uzu/webgpu']
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
@@ -94,7 +94,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-nix
+      - id: setup
+        uses: ./.github/actions/setup-nix
+
+      - name: Check that Cargo.lock is consistent with Cargo.toml
+        run: cargo metadata --locked --format-version=1 > /dev/null
 
       - name: Download test data
         if: ${{ matrix.tests == true }}
@@ -125,6 +129,10 @@ jobs:
             ${{ matrix.no-default-features && '--no-default-features' || '' }} \
             ${{ matrix.features && format('--features {0}', join(matrix.features, ',')) || '' }} \
             ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
+
+      - name: Check working tree
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: git diff --exit-code
 
   validate-bindings:
     name: validate-bindings
@@ -251,7 +259,7 @@ jobs:
           MIRAI_DISABLE_DENO_BUILD: '1'
         run: |
           pnpm install --frozen-lockfile
-          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features backend-metal,capability-grammar,bindings-napi --platform --output-dir src/napi
+          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features metal,bindings-napi --platform --output-dir src/napi
           pnpm build
 
       - name: Install dependencies

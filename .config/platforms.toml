@@ -12,69 +12,49 @@ swift = { provider = "cargo", version = "0.11.1" }
 maturin = { provider = "uv", version = "1.15.0" }
 
 [targets."aarch64-apple-darwin"]
-backend = "metal"
+features = ["metal"]
 aliases = ["apple", "macos"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
 [targets."x86_64-apple-darwin"]
-backend = "cpu"
+features = ["cpu"]
 aliases = ["apple", "macos-intel"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios"]
-backend = "metal"
+features = ["metal"]
 aliases = ["apple", "ios"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios-sim"]
-backend = "metal"
+features = ["metal"]
 aliases = ["apple", "ios-sim", "ios-simulator"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios-macabi"]
-backend = "metal"
+features = ["metal"]
 aliases = ["apple", "maccatalyst"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-unknown-linux-gnu"]
-backend = "cpu"
+features = ["cpu"]
 aliases = ["linux"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 
 [targets."x86_64-unknown-linux-gnu"]
-backend = "cpu"
+features = ["cpu"]
 aliases = ["linux"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 
 [targets."aarch64-pc-windows-msvc"]
-backend = "cpu"
+features = ["cpu"]
 aliases = ["windows"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 
 [targets."x86_64-pc-windows-msvc"]
-backend = "cpu"
+features = ["cpu"]
 aliases = ["windows"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
 
 [targets."wasm32-unknown-unknown"]
-backend = "webgpu"
+features = ["webgpu"]
 aliases = ["wasm"]
-capabilities_supported = []
-capabilities_default = []
 
 [languages.rust]
 targets = [

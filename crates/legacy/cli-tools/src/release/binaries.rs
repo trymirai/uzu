@@ -36,10 +36,7 @@ fn stage_binary(
     binary_config: &BinaryConfig,
 ) -> Result<()> {
     for target in &binary_config.targets {
-        let backend = platforms.backend_for_target(target.clone())?;
-        let capabilities = platforms.capabilities_for_target(target.clone(), Vec::new())?;
-        let features =
-            [vec![backend.feature()], capabilities.iter().map(|capability| capability.feature()).collect()].concat();
+        let features = platforms.features_for_target(target.clone())?;
 
         Command::cargo_build(binary_config.crate_name.clone(), target.clone(), features, Configuration::Release)
             .with_envs(platforms.required_envs_for_target(target.clone())?)

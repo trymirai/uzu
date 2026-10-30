@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::{
     configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget},
-    types::{Capability, Command, Configuration, Language},
+    types::{Command, Configuration, Language},
     utilities::fs::copy_directory,
 };
 
@@ -89,7 +89,7 @@ impl LanguageBackend for TypeScriptLanguageBackend {
         _version: &str,
         release_path: &Path,
     ) -> Result<()> {
-        self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()])?;
 
         let paths = Paths::new()?;
         let source = paths.bindings_for_language_path(self.language()).join("dist");

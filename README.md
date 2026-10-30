@@ -1416,23 +1416,10 @@ main().catch((error: unknown) => {
 - `Python` via [pyo3](https://github.com/PyO3/pyo3)
 - `TypeScript` via [napi-rs](https://github.com/napi-rs/napi-rs)
 
-It supports:
+Supported backends:
 
-- Backends:
-    - `metal`
-    - `webgpu`
-    - `cpu`
-- Targets:
-    - `aarch64-apple-darwin`
-    - `aarch64-apple-ios`
-    - `aarch64-apple-ios-macabi`
-    - `aarch64-apple-ios-sim`
-    - `aarch64-pc-windows-msvc` _(in progress)_
-    - `aarch64-unknown-linux-gnu` _(in progress)_
-    - `wasm32-unknown-unknown` _(in progress)_
-    - `x86_64-apple-darwin`
-    - `x86_64-pc-windows-msvc` _(in progress)_
-    - `x86_64-unknown-linux-gnu` _(in progress)_
+- `metal`
+- `cpu`
 
 <br>
 For initial setup we recommend running <code>cargo tools setup</code>, which installs all necessary dependencies (<code>rustup</code>, <code>uv</code>, <code>pnpm</code>, <code>Rust targets</code>, <code>Metal toolchain</code>, ...) if not already present.

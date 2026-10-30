@@ -83,7 +83,7 @@ jobs:
           MIRAI_DISABLE_DENO_BUILD: '1'
         run: |
           pnpm install --frozen-lockfile
-          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features backend-metal,capability-grammar,bindings-napi --platform --output-dir src/napi
+          pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features metal,bindings-napi --platform --output-dir src/napi
           pnpm build
 
       - name: Install dependencies

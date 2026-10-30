@@ -8,7 +8,7 @@ use cli_tools::{
     },
     release::run_release,
     sync::run_sync,
-    types::{Capability, Command, Configuration, Language},
+    types::{Command, Configuration, Language},
 };
 use kiban::rt::RuntimeHandle;
 
@@ -39,8 +39,6 @@ enum Commands {
         configuration: Configuration,
         #[arg(long, value_delimiter = ',', default_value = HOST_TARGET)]
         targets: Vec<String>,
-        #[arg(long, value_enum, value_delimiter = ',')]
-        capabilities: Vec<Capability>,
     },
     /// Run tests for a specific language
     Test {
@@ -88,7 +86,7 @@ fn run_setup(include_platform_specific: bool) -> Result<()> {
 fn run_verify(config: &PlatformsConfig) -> Result<()> {
     for language in config.languages.keys() {
         let backend = language_backend(*language, config.clone())?;
-        backend.build(Configuration::Release, vec![config.host_target()?], vec![])?;
+        backend.build(Configuration::Release, vec![config.host_target()?])?;
     }
     let (output, _) = Command::git_status_porcelain().output()?;
     if !output.is_empty() {
@@ -127,30 +125,27 @@ async fn main() -> Result<()> {
             language,
             configuration,
             targets,
-            capabilities,
-        }) => language_backend(language, config)?.build(configuration, targets, capabilities)?,
+        }) => language_backend(language, config)?.build(configuration, targets)?,
         Some(Commands::Test {
             language,
         }) => {
             let configuration = Configuration::Release;
-            let capabilities = vec![];
             let backend = language_backend(language, config.clone())?;
             if backend.expects_prebuild_for_run() {
-                backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
+                backend.build(configuration, vec![host_target.clone()])?;
             }
-            backend.test(configuration, host_target.clone(), capabilities.clone())?
+            backend.test(configuration, host_target.clone())?
         },
         Some(Commands::Example {
             language,
             name,
         }) => {
             let configuration = Configuration::Release;
-            let capabilities = vec![];
             let backend = language_backend(language, config.clone())?;
             if backend.expects_prebuild_for_run() {
-                backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
+                backend.build(configuration, vec![host_target.clone()])?;
             }
-            backend.example(&name, configuration, host_target.clone(), capabilities.clone())?
+            backend.example(&name, configuration, host_target.clone())?
         },
         Some(Commands::Sync {
             check,

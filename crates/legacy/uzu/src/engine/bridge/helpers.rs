@@ -1,19 +1,21 @@
 use std::pin::Pin;
 
 use futures::{Stream, stream};
-#[cfg(feature = "capability-grammar")]
-use shoji::types::basic::Grammar as ShojiGrammar;
 use shoji::{
     traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
-    types::basic::{ContextLength, SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy},
+    types::basic::{
+        ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
+        SamplingPolicy as ShojiSamplingPolicy,
+    },
 };
-#[cfg(feature = "capability-grammar")]
 use tokenizers::Tokenizer;
-#[cfg(feature = "capability-grammar")]
-use uzu_engine::engine::language_model::grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError};
 use uzu_engine::{
     backends::Backend,
-    engine::language_model::{LanguageModel, stream::SamplingMethod as UzuSamplingMethod},
+    engine::language_model::{
+        LanguageModel,
+        grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError},
+        stream::SamplingMethod as UzuSamplingMethod,
+    },
 };
 
 pub fn error_stream<'a>(
@@ -24,7 +26,6 @@ pub fn error_stream<'a>(
     }))
 }
 
-#[cfg(feature = "capability-grammar")]
 pub fn get_grammar(
     grammar: ShojiGrammar,
     tokenizer: &Tokenizer,
@@ -51,7 +52,6 @@ pub fn get_grammar(
 /// Leading whitespace-only tokens are excluded because BPE can merge them with
 /// preceding whitespace in both the prompt and generated reasoning. Tokens that
 /// fuse whitespace with marker text retain their original encoding.
-#[cfg(feature = "capability-grammar")]
 pub fn grammar_trigger_token_sequence(
     end_of_thinking_tag: Option<&str>,
     tokenizer: &Tokenizer,
@@ -77,7 +77,6 @@ pub fn grammar_trigger_token_sequence(
 /// Returns the end-of-thinking trigger only when it still has to be generated.
 /// Toggle-capable models render the trigger into the generation prompt when
 /// reasoning is disabled, in which case the grammar must engage immediately.
-#[cfg(feature = "capability-grammar")]
 pub fn grammar_trigger_token_sequence_for_prompt(
     trigger_token_sequence: Option<&[u64]>,
     prompt: &[u64],
@@ -176,7 +175,7 @@ fn get_custom_sampling_method(method: &ShojiSamplingMethod) -> Result<UzuSamplin
     }
 }
 
-#[cfg(all(test, feature = "capability-grammar"))]
+#[cfg(test)]
 mod tests {
     use tokenizers::{
         AddedToken, Tokenizer,

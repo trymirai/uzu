@@ -16,7 +16,7 @@ pub use typescript::TypeScriptLanguageBackend;
 
 use crate::{
     configs::PlatformsConfig,
-    types::{Capability, Configuration, Language},
+    types::{Configuration, Language},
 };
 
 #[derive(Clone)]
@@ -60,9 +60,8 @@ pub trait LanguageBackend {
         &self,
         configuration: Configuration,
         targets: Vec<String>,
-        capabilities: Vec<Capability>,
     ) -> Result<()> {
-        let targets = self.resolve_targets("build".to_string(), configuration, targets, capabilities)?;
+        let targets = self.resolve_targets("build".to_string(), configuration, targets)?;
         self.build_targets(configuration, targets)?;
         Ok(())
     }
@@ -79,9 +78,8 @@ pub trait LanguageBackend {
         &self,
         configuration: Configuration,
         target: String,
-        capabilities: Vec<Capability>,
     ) -> Result<()> {
-        let targets = self.resolve_targets("test".to_string(), configuration, vec![target], capabilities)?;
+        let targets = self.resolve_targets("test".to_string(), configuration, vec![target])?;
         if targets.len() != 1 {
             return Err(anyhow!("Expected 1 target for test, got {}", targets.len()));
         }
@@ -103,9 +101,8 @@ pub trait LanguageBackend {
         name: &str,
         configuration: Configuration,
         target: String,
-        capabilities: Vec<Capability>,
     ) -> Result<()> {
-        let targets = self.resolve_targets("example".to_string(), configuration, vec![target], capabilities)?;
+        let targets = self.resolve_targets("example".to_string(), configuration, vec![target])?;
         if targets.len() != 1 {
             return Err(anyhow!("Expected 1 target for example, got {}", targets.len()));
         }
@@ -136,7 +133,6 @@ pub trait LanguageBackend {
         name: String,
         configuration: Configuration,
         targets: Vec<String>,
-        capabilities: Vec<Capability>,
     ) -> Result<Vec<LanguageBackendTarget>> {
         let separator = "--------------------------------------------------".green();
         let language = self.language();
@@ -161,25 +157,9 @@ pub trait LanguageBackend {
             .map(|target| {
                 println!("Resolving target: {}", target.green());
 
-                let backend = self.config().backend_for_target(target.clone())?;
-                let resolved_capabilities =
-                    self.config().capabilities_for_target(target.clone(), capabilities.clone())?;
-                let features = [
-                    vec![backend.feature()],
-                    resolved_capabilities.iter().map(|capability| capability.feature()).collect::<Vec<_>>(),
-                    bindings.iter().map(|binding| binding.feature()).collect::<Vec<_>>(),
-                ]
-                .iter()
-                .flatten()
-                .cloned()
-                .collect::<Vec<_>>();
+                let mut features = self.config().features_for_target(target.clone())?;
+                features.extend(bindings.iter().map(|binding| binding.feature()));
 
-                println!("Backend: {}", format!("{:?}", backend).green());
-                println!(
-                    "Capabilities: {} (resolved from: {})",
-                    format!("{:?}", resolved_capabilities).green(),
-                    format!("{:?}", capabilities).yellow()
-                );
                 println!("Features: {}", format!("{:?}", features).green());
                 println!("{separator}");
 

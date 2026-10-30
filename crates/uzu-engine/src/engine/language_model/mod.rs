@@ -22,7 +22,6 @@ pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde
 pub mod state;
 pub mod stream;
 
-#[cfg(grammar)]
 pub mod grammar;
 
 pub struct LanguageModel<B: Backend> {
@@ -34,7 +33,6 @@ pub struct LanguageModel<B: Backend> {
     generation_config: GenerationConfig,
     end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
-    #[cfg(grammar)]
     vocab_size: usize,
 }
 
@@ -105,7 +103,6 @@ impl<B: Backend> Engine<B> {
             AnyTokenCodecConfig::RawTextCodecConfig(_) => None,
         };
 
-        #[cfg(grammar)]
         let vocab_size = config.decoder_config.vocab_size as usize;
 
         Ok(LanguageModel {
@@ -117,7 +114,6 @@ impl<B: Backend> Engine<B> {
             generation_config,
             end_of_thinking_tag,
             tokenizer,
-            #[cfg(grammar)]
             vocab_size,
         })
     }
