@@ -1,5 +1,5 @@
 pub const HINT_COMMANDS: &str = "/ for commands";
-pub const HINT_SEND: &str = "enter to send";
+pub const HINT_SEND: &str = "enter to send, shift+enter for a new line";
 // An example input, line by line, with what it is and a note on how it's written.
 pub struct HintExample {
     pub label: &'static str,
@@ -13,7 +13,7 @@ pub const HINT_DECISION_STATE_EXAMPLES: &[HintExample] = &[HintExample {
     lines: &["This LLM runs right on my laptop and answers in under a second, love it!"],
     note: "a message, a document or JSON",
 }];
-pub const HINT_DECISION_STATE_NOTES: &[&str] = &["ctrl+j, or \\ then enter, starts a new line"];
+pub const HINT_DECISION_STATE_NOTES: &[&str] = &["shift+enter for a new line (also ctrl+j or \\ then enter)"];
 pub const HINT_DECISION_QUESTION_TITLE: &str =
     "Ask a question about the text, then press enter. Each question is sent on its own";
 pub const HINT_DECISION_QUESTION_EXAMPLES: &[HintExample] = &[
@@ -34,7 +34,7 @@ pub const HINT_DECISION_QUESTION_EXAMPLES: &[HintExample] = &[
     },
 ];
 pub const HINT_DECISION_QUESTION_NOTES: &[&str] =
-    &["esc to change the text", "ctrl+j, or \\ then enter, starts a new line"];
+    &["esc to change the text", "shift+enter for a new line (also ctrl+j or \\ then enter)"];
 pub const HINT_STORAGE_PAUSE_RESUME: &str = "ctrl+p to pause/resume download";
 pub const HINT_STORAGE_DELETE: &str = "ctrl+d to delete model";
 pub const HINT_SESSION_INTERRUPT: &str = "esc to interrupt";
