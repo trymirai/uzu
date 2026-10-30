@@ -18,8 +18,11 @@ pub fn confidence_head_tree_input(
     let (rows, width) = (rows as usize, width as usize);
     let value = |buffer: *const bf16, index: usize| unsafe { (*buffer.add(index)).to_f32() };
     for row in 0..rows {
-        let depth =
-            if row == 0 { 0 } else { unsafe { *frontier.add(FrontierIdx::Depth as usize * (rows - 1) + row - 1) } };
+        let depth = if row == 0 {
+            0
+        } else {
+            unsafe { *frontier.add(FrontierIdx::Depth as usize * (rows - 1) + row - 1) }
+        };
         let slot = unsafe { *row_slots.add(row) };
         for unit in 0..width {
             let mut sum = 0.0;

@@ -109,8 +109,16 @@ fn tree() -> Tree {
     for slot in 0..SLOTS {
         let entry = SLOT_ENTRY[slot];
         let field = |index: TreeIdx| index as usize * SLOTS + slot;
-        packed_tree[field(TreeIdx::TokenId)] = if entry == NONE { 7 } else { entry_token(entry as usize) };
-        packed_tree[field(TreeIdx::ParentSlot)] = if entry == NONE { NONE } else { entry / CHILDREN as u32 };
+        packed_tree[field(TreeIdx::TokenId)] = if entry == NONE {
+            7
+        } else {
+            entry_token(entry as usize)
+        };
+        packed_tree[field(TreeIdx::ParentSlot)] = if entry == NONE {
+            NONE
+        } else {
+            entry / CHILDREN as u32
+        };
         packed_tree[field(TreeIdx::Depth)] = depth(slot) as u32;
         packed_tree[field(TreeIdx::PathLogprobBits)] = (-0.3 * slot as f32).to_bits();
         packed_tree[field(TreeIdx::Valid)] = 1;
@@ -120,7 +128,11 @@ fn tree() -> Tree {
             slot_ancestors[slot * STRIDE + depth(ancestor)] = ancestor as u32;
         }
         if EXPANDED[slot] {
-            let row = if entry == NONE { 0 } else { 1 + entry };
+            let row = if entry == NONE {
+                0
+            } else {
+                1 + entry
+            };
             slot_rows[slot] = row;
             row_slots[row as usize] = slot as u32;
         }
@@ -133,7 +145,6 @@ fn tree() -> Tree {
         row_slots,
     }
 }
-
 
 const DEPTHS: usize = 4;
 
@@ -231,7 +242,8 @@ fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<u32>, Vec<f32>, Vec<u32>,
     let mut features = values(DEPTHS * 3 * CANDIDATES as usize, 4.1, 3.0);
     for depth in 0..DEPTHS {
         for index in 0..CANDIDATES as usize {
-            features[depth * 3 * CANDIDATES as usize + index] = -features[depth * 3 * CANDIDATES as usize + index].abs();
+            features[depth * 3 * CANDIDATES as usize + index] =
+                -features[depth * 3 * CANDIDATES as usize + index].abs();
         }
     }
     let u32s = |data: &[u32]| create_buffer_with_data::<B, u32>(&context, data);
@@ -321,7 +333,10 @@ fn frontier_floats(
     frontier: &[u32],
     field: FrontierIdx,
 ) -> Vec<f32> {
-    frontier[field as usize * CAPACITY..(field as usize + 1) * CAPACITY].iter().map(|bits| f32::from_bits(*bits)).collect()
+    frontier[field as usize * CAPACITY..(field as usize + 1) * CAPACITY]
+        .iter()
+        .map(|bits| f32::from_bits(*bits))
+        .collect()
 }
 
 fn packed_edges(packed_tree: &[u32]) -> Vec<f32> {
@@ -335,7 +350,8 @@ fn run_edges<B: Backend>(refine: bool) -> (Vec<u32>, Vec<u32>, Vec<f32>) {
     for slot in 0..SLOTS {
         metadata[MetadataIdx::TreeSlot as usize * SLOTS + slot] = slot as u32;
     }
-    let pools = (0..CAPACITY).map(|entry| CHILD_INDEX[entry % CHILDREN] + (entry / CHILDREN) as u32).collect::<Vec<_>>();
+    let pools =
+        (0..CAPACITY).map(|entry| CHILD_INDEX[entry % CHILDREN] + (entry / CHILDREN) as u32).collect::<Vec<_>>();
     let u32s = |data: &[u32]| create_buffer_with_data::<B, u32>(&context, data);
     let f32s = |data: &[f32]| create_buffer_with_data::<B, f32>(&context, data);
     let bf16_buffer = |data: &[f32]| create_buffer_with_data::<B, bf16>(&context, &bf16s(data));
@@ -409,7 +425,12 @@ fn edges_match_cpu() {
         for_each_non_cpu_backend!(|B| {
             let actual = run_edges::<B>(refine);
             for field in [FrontierIdx::EdgeLogprobBits, FrontierIdx::PathLogprobBits] {
-                assert_close("frontier", &frontier_floats(&actual.0, field), &frontier_floats(&expected.0, field), 1e-3);
+                assert_close(
+                    "frontier",
+                    &frontier_floats(&actual.0, field),
+                    &frontier_floats(&expected.0, field),
+                    1e-3,
+                );
             }
             assert_close("tree edges", &packed_edges(&actual.1), &packed_edges(&expected.1), 1e-3);
             assert_close("child inputs", &actual.2, &expected.2, 2e-2);
@@ -494,7 +515,8 @@ fn run_tree_attention<B: Backend>() -> Vec<f32> {
         create_buffer_with_data::<B, u32>(&context, &relations),
         create_buffer_with_data::<B, bf16>(&context, &bf16s(&values(12, 2.2, 3.0))),
     );
-    let mut output = create_buffer_with_data::<B, bf16>(&context, &vec![bf16::ZERO; ROWS * (heads * head_dim) as usize]);
+    let mut output =
+        create_buffer_with_data::<B, bf16>(&context, &vec![bf16::ZERO; ROWS * (heads * head_dim) as usize]);
     let kernel = <B::Kernels as Kernels>::ConfidenceHeadTreeAttentionKernel::new(&context, heads, head_dim).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(&inputs.0, &inputs.1, &inputs.2, &mut output, ROWS as u32, &mut command_buffer);

@@ -141,7 +141,7 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     if (lane == 0) {
       memory.deltas[simdgroup] = delta + float(output_biases[0]);
     }
-  } else if (simdgroup < HEAD_CHILDREN_MAX + 2u) {
+  } else if (simdgroup >= HEAD_CHILDREN_MAX && simdgroup < HEAD_CHILDREN_MAX + 2u) {
     const uint output = simdgroup - HEAD_CHILDREN_MAX;
     const float value =
         head_simd_dot(alpha_beta_weights + output * model_dim, memory.node, model_dim, lane) + float(alpha_beta_biases[output]);

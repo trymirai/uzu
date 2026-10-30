@@ -26,7 +26,14 @@ pub fn confidence_head_tree_relations(
         }
     };
     let ancestor_row = |(depth, parent): (usize, usize), level: usize| {
-        read(slot_rows, if level + 1 == depth { parent } else { read(slot_ancestors, parent * stride + level) })
+        read(
+            slot_rows,
+            if level + 1 == depth {
+                parent
+            } else {
+                read(slot_ancestors, parent * stride + level)
+            },
+        )
     };
     for query in 0..rows {
         for key in 0..rows {
@@ -36,9 +43,17 @@ pub fn confidence_head_tree_relations(
             } else if query == key {
                 1
             } else if key_row.0 < query_row.0 && ancestor_row(query_row, key_row.0) == key {
-                if key_row.0 + 1 == query_row.0 { 2 } else { 4 }
+                if key_row.0 + 1 == query_row.0 {
+                    2
+                } else {
+                    4
+                }
             } else if query_row.0 < key_row.0 && ancestor_row(key_row, query_row.0) == query {
-                if query_row.0 + 1 == key_row.0 { 3 } else { 5 }
+                if query_row.0 + 1 == key_row.0 {
+                    3
+                } else {
+                    5
+                }
             } else if query_row.0 == key_row.0 && query_row.0 != 0 && query_row.1 == key_row.1 {
                 6
             } else {

@@ -6,7 +6,7 @@ mod tree_attention;
 
 pub use error::ConfidenceHeadError;
 pub use head::{ConfidenceHead, ConfidenceHeadStep};
-pub use tree_attention::{SLOT_NUMBERS, TreeAttention};
+use tree_attention::TreeAttention;
 
 use crate::{
     backends::common::Backend,
@@ -18,6 +18,8 @@ use crate::{
     },
     safetensors::ParameterTree,
 };
+
+const SLOT_NUMBERS: u32 = 4;
 
 async fn linear<B: Backend>(
     parameter_tree: &ParameterTree<'_, B>,

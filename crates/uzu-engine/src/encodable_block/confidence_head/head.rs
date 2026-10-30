@@ -9,8 +9,8 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         confidence_head::{
-            ConfidenceHeadError, SLOT_NUMBERS, TreeAttention, edge_weights::EdgeWeights, linear, node_weights::NodeWeights,
-            norm,
+            ConfidenceHeadError, SLOT_NUMBERS, TreeAttention, edge_weights::EdgeWeights, linear,
+            node_weights::NodeWeights, norm,
         },
         embedding::Embedding,
         linear::Linear,
@@ -56,13 +56,14 @@ impl<B: Backend> ConfidenceHead<B> {
         config: &ConfidenceHeadConfig,
         parameter_tree: &ParameterTree<'_, B>,
         target_embedding: &Embedding<B>,
+        tree_depth: u32,
         context: &B::Context,
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let width = config.model_dim;
-        if width > 64 || config.pool_hidden_dim > 16 || config.edge_hidden_dim > 128 {
+        if width > 64 || config.pool_hidden_dim > 16 || config.edge_hidden_dim > 128 || config.max_depth < tree_depth {
             return Err(ConfidenceHeadError::UnsupportedShape(format!(
-                "width {width}, pool width {} and edge width {}",
-                config.pool_hidden_dim, config.edge_hidden_dim
+                "width {width}, pool width {}, edge width {} and depth {} for trees of depth {tree_depth}",
+                config.pool_hidden_dim, config.edge_hidden_dim, config.max_depth
             )));
         }
         let target_dim = target_embedding.model_dim();
@@ -336,8 +337,9 @@ async fn encode_token_features<B: Backend>(
     let mut table = context.create_buffer_gpu(vocab_size as usize * row_bytes).map_err(ConfidenceHeadError::Backend)?;
     for start in (0..vocab_size).step_by(TOKEN_CHUNK as usize) {
         let count = TOKEN_CHUNK.min(vocab_size - start);
-        let mut command_buffer =
-            context.create_command_buffer(Some("confidence head tokens"), None).map_err(ConfidenceHeadError::Backend)?;
+        let mut command_buffer = context
+            .create_command_buffer(Some("confidence head tokens"), None)
+            .map_err(ConfidenceHeadError::Backend)?;
         let ids = (start..start + count).collect::<Box<[u32]>>();
         let ids = command_buffer.allocate_constant_from_slice(&ids).map_err(ConfidenceHeadError::Backend)?;
         let rows = target_embedding.encode_lookup(&ids, count, &mut command_buffer)?;

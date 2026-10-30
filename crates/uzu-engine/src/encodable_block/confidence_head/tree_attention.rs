@@ -12,7 +12,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        confidence_head::{ConfidenceHeadError, linear, norm},
+        confidence_head::{ConfidenceHeadError, SLOT_NUMBERS, linear, norm},
         linear::Linear,
         normalization::{Normalization, ShortcutMode},
     },
@@ -21,7 +21,6 @@ use crate::{
 
 const RELATIONS: u32 = 6;
 const ROWS_MAX: u32 = 1024;
-pub const SLOT_NUMBERS: u32 = 4;
 
 struct TreeAttentionLayer<B: Backend> {
     attention_norm: Normalization<B>,

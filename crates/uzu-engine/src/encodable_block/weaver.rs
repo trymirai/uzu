@@ -753,7 +753,14 @@ impl<B: Backend> Weaver<B> {
                 batch_start_slot += batch_node_count;
             }
             if let (Some(head), Some(step)) = (confidence_head, head_step) {
-                head.encode_prune(step, &mut packed_tree, &mut frontier, &slot_ancestors, ancestor_stride, command_buffer)?;
+                head.encode_prune(
+                    step,
+                    &mut packed_tree,
+                    &mut frontier,
+                    &slot_ancestors,
+                    ancestor_stride,
+                    command_buffer,
+                )?;
             }
 
             (packed_tree, frontier)

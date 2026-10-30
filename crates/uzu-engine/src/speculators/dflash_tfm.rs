@@ -140,8 +140,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         };
         let confidence_head = match &config.confidence_head_config {
             Some(head_config) => Some(
-                ConfidenceHead::new(head_config, &speculator_tree.subtree("confidence_head"), target_embedding, &*context)
-                    .await?,
+                ConfidenceHead::new(
+                    head_config,
+                    &speculator_tree.subtree("confidence_head"),
+                    target_embedding,
+                    weaver.as_ref().map_or(0, Weaver::max_depth),
+                    &*context,
+                )
+                .await?,
             ),
             None => None,
         };

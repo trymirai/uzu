@@ -47,7 +47,8 @@ fn report(
     actual: &[f32],
     expected: &[f32],
 ) {
-    let mut errors = actual.iter().zip(expected).map(|(actual, expected)| (actual - expected).abs()).collect::<Vec<_>>();
+    let mut errors =
+        actual.iter().zip(expected).map(|(actual, expected)| (actual - expected).abs()).collect::<Vec<_>>();
     errors.sort_by(f32::total_cmp);
     let mean = errors.iter().sum::<f32>() / errors.len() as f32;
     let worst = errors[errors.len() - 1];
@@ -70,7 +71,10 @@ async fn check<B: Backend>(
         VOCAB,
         MODEL,
         DataType::BF16,
-        &serde_json::from_str::<AnyEmbeddingConfig>(r#"{"type": "TiedEmbeddingConfig", "input_scale": null, "logit_soft_cap": null, "logit_scale": null}"#).unwrap(),
+        &serde_json::from_str::<AnyEmbeddingConfig>(
+            r#"{"type": "TiedEmbeddingConfig", "input_scale": null, "logit_soft_cap": null, "logit_scale": null}"#,
+        )
+        .unwrap(),
         &tree,
         &*context,
     )
@@ -80,6 +84,7 @@ async fn check<B: Backend>(
         config.confidence_head_config.as_ref().unwrap(),
         &weights.tree().subtree("speculator").subtree("confidence_head"),
         &embedding,
+        STRIDE,
         &*context,
     )
     .await
