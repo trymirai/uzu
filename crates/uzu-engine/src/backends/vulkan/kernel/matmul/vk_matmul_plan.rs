@@ -30,8 +30,9 @@ const INT8_CORES: [Capability; 3] = [
 /// The fold metadata arrays every Int8Gemm core declares in shared memory.
 const INT8_FOLD_BYTES: u32 = 4 * (2 * INT8_FOLD_ENTRIES + INT8_FOLD_PADDING);
 /// One dispatch family of the existing matmul kernels with its specialization parameters. A plan's cost is all of its
-/// dispatches: split K's reduction phase and the output transform the encoder appends. The loaded weight layout and the activation format
-/// are the problem's, never the plan's. Legality and the baseline read the device's queried facts, never its identity.
+/// dispatches: split K's reduction phase and the output transform the encoder appends. The loaded weight layout and the
+/// activation format are the problem's, never the plan's. Legality and the baseline read the device's queried facts,
+/// never its identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VkMatmulPlan {
     /// Gemv on full-precision A, with its tile.
