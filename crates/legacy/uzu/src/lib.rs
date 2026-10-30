@@ -41,6 +41,8 @@ inventory::submit! {
     }
 }
 
+#[cfg(target_os = "android")]
+mod android;
 pub mod device;
 pub mod engine;
 pub mod helpers;

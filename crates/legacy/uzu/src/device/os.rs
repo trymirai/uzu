@@ -24,6 +24,11 @@ pub fn home_path() -> Option<PathBuf> {
         let path = NSHomeDirectory();
         return Some(PathBuf::from(path.to_string()));
     }
+    // Inside an app, Kotlin's `Uzu.initialize` sets the storage root; shell processes keep HOME.
+    #[cfg(target_os = "android")]
+    if let Some(path) = crate::android::home_path() {
+        return Some(path);
+    }
     #[cfg(not(target_family = "wasm"))]
     return dirs::home_dir();
 

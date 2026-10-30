@@ -10016,6 +10016,7 @@ dependencies = [
  "indexmap 2.14.2",
  "indicatif",
  "inventory",
+ "jni 0.22.4",
  "kiban",
  "mock-registry",
  "nagare",
