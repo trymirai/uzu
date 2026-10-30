@@ -12,6 +12,12 @@ license.workspace = true
 name = "cli-tools"
 path = "src/main.rs"
 
+[features]
+default = ["backend-cpu", "backend-metal", "capability-grammar"]
+backend-cpu = ["uzu-engine/cpu"]
+backend-metal = ["uzu-engine/metal"]
+capability-grammar = ["uzu-engine/grammar"]
+
 [dependencies]
 clap.workspace = true
 ignore.workspace = true
@@ -33,6 +39,9 @@ minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true
+uzu-engine.workspace = true
+sysinfo.workspace = true
+parquet.workspace = true
 
 [lints]
 workspace = true

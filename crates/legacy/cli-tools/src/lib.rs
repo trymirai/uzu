@@ -1,3 +1,4 @@
+pub mod collect_gpu_timestamps;
 pub mod configs;
 pub mod hanashi;
 pub mod languages;

@@ -37,6 +37,16 @@ impl<B: Backend> DFlashState<B> {
     pub fn context_length(&self) -> u32 {
         self.context_length
     }
+
+    pub fn set_context_length(
+        &mut self,
+        context_length: u32,
+    ) {
+        for layer_state in &mut self.layer_states {
+            layer_state.set_context_length(context_length);
+        }
+        self.context_length = context_length;
+    }
 }
 
 pub struct DFlash<B: Backend> {

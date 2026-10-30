@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
+    collect_gpu_timestamps,
     configs::{HOST_TARGET, PlatformsConfig},
     hanashi::export_tokenizers,
     languages::{
@@ -67,6 +68,16 @@ enum Commands {
         path: std::path::PathBuf,
     },
     HanashiTokenizers,
+    /// Measure forward-pass GPU time over a grid of KV-cache and suffix lengths
+    CollectGpuTimestamps {
+        /// Local model directory.
+        model_path: std::path::PathBuf,
+        /// Directory to write the Parquet files to.
+        output_dir: std::path::PathBuf,
+        /// Also record per-block GPU spans (slows small passes down).
+        #[arg(long)]
+        spans: bool,
+    },
 }
 
 fn run_setup(include_platform_specific: bool) -> Result<()> {
@@ -113,8 +124,6 @@ fn language_backend(
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config = PlatformsConfig::load()?;
-    let host_target = config.host_target()?;
 
     match cli.command {
         Some(Commands::Setup {
@@ -122,19 +131,21 @@ async fn main() -> Result<()> {
         }) => run_setup(include_platform_specific)?,
         Some(Commands::Install {
             language,
-        }) => language_backend(language, config)?.install()?,
+        }) => language_backend(language, PlatformsConfig::load()?)?.install()?,
         Some(Commands::Build {
             language,
             configuration,
             targets,
             capabilities,
-        }) => language_backend(language, config)?.build(configuration, targets, capabilities)?,
+        }) => language_backend(language, PlatformsConfig::load()?)?.build(configuration, targets, capabilities)?,
         Some(Commands::Test {
             language,
         }) => {
+            let config = PlatformsConfig::load()?;
+            let host_target = config.host_target()?;
             let configuration = Configuration::Release;
             let capabilities = vec![];
-            let backend = language_backend(language, config.clone())?;
+            let backend = language_backend(language, config)?;
             if backend.expects_prebuild_for_run() {
                 backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
             }
@@ -144,9 +155,11 @@ async fn main() -> Result<()> {
             language,
             name,
         }) => {
+            let config = PlatformsConfig::load()?;
+            let host_target = config.host_target()?;
             let configuration = Configuration::Release;
             let capabilities = vec![];
-            let backend = language_backend(language, config.clone())?;
+            let backend = language_backend(language, config)?;
             if backend.expects_prebuild_for_run() {
                 backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
             }
@@ -155,12 +168,17 @@ async fn main() -> Result<()> {
         Some(Commands::Sync {
             check,
         }) => run_sync(check)?,
-        Some(Commands::Verify) => run_verify(&config)?,
+        Some(Commands::Verify) => run_verify(&PlatformsConfig::load()?)?,
         Some(Commands::Release {
             version,
             path,
         }) => run_release(&version, &path)?,
         Some(Commands::HanashiTokenizers) => export_tokenizers(RuntimeHandle::current()).await?,
+        Some(Commands::CollectGpuTimestamps {
+            model_path,
+            output_dir,
+            spans,
+        }) => collect_gpu_timestamps::run(model_path, output_dir, spans).await?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;
