@@ -146,11 +146,8 @@ impl VkMatmulPlan {
     }
 
     /// Why this plan cannot run `shape` from weights in `b_layout`, checked before any pipeline is created or command
-    /// recorded. Family fields are validated before any arithmetic uses them; then the problem's format against the
-    /// family (the A8 contract included), the shaders' layout, tile, split and capability contracts, the workgroup
-    /// against the device's dimensions, invocations and required subgroups, shared memory of static plus specialized
-    /// staging, split K's scratch against the pool and the largest buffer, and every dispatch's workgroup count. Buffer
-    /// alignment, scales and metadata planes remain the encoder's checks.
+    /// recorded: the caller's A format, B layout and gather against the family, then the device's shared memory,
+    /// workgroup and subgroup limits. The kernels check their own specializations when created.
     pub fn check(
         &self,
         shape: &MatmulShape,
@@ -161,11 +158,9 @@ impl VkMatmulPlan {
         let [weights, input, _] = data_types;
         let (m, n, k) = (shape.m, shape.n, shape.k);
         let (capabilities, limits, subgroups) = (device.capabilities, device.limits(), &device.subgroup_properties);
-        let group = shape.b_group_size.unwrap_or(0);
-        let max_shared = limits.max_compute_shared_memory_size;
         let require = |met: bool, reason: &'static str| met.then_some(()).ok_or(reason);
         require(m > 0 && n > 0 && k > 0, "matmul dimensions must be positive")?;
-        require(!shape.is_quant() || group > 0, "quantized B needs a positive group size")?;
+        require(!shape.is_quant() || shape.b_group_size > Some(0), "quantized B needs a positive group size")?;
         let gemm = matches!(self, Self::GemmTensor(_) | Self::Gemm(_));
         let a8 = matches!(self, Self::GemvInt8 { .. } | Self::GemmInt8 { .. });
         // GemvInt8 also takes full-precision A, which the encoder quantizes first.
@@ -188,72 +183,13 @@ impl VkMatmulPlan {
             "tiled B is whole 32 x 128 tiles of codes, which only Gemv and the A8 kernels read",
         )?;
         require(!gemm || (!shape.gathered && Self::gemm_rows(shape)), "Gemm stages contiguous B rows, without gather")?;
-        match *self {
-            Self::Gemv(tile) => {
-                tile.contract(shape.is_quant(), shape.b_bits.unwrap_or(0), group, shape.gathered)?;
-                let k_block = if shape.is_quant() {
-                    group
-                } else {
-                    128
-                };
-                require(
-                    !tile.metal_layout || shape.is_quant() || Self::gemm_rows(shape),
-                    "the lane layout reads contiguous full-precision B rows",
-                )?;
-                require(
-                    !tile.metal_layout || shape.b_bits != Some(4) || k % 2 == 0,
-                    "the lane layout reads whole U4 bytes",
-                )?;
-                require(
-                    !tile.full_tile || (n % tile.output_row_tile() == 0 && m % tile.input_row_tile == 0),
-                    "a full tile needs whole output and input tiles",
-                )?;
-                require(
-                    !tile.input_aligned || (k_block > 0 && k % k_block == 0),
-                    "aligned input needs whole K blocks",
-                )?;
-            },
-            Self::GemvInt8 {
-                rows,
-                input_rows,
-            } => {
-                require(
-                    [1, 2, 4, 8, 16].contains(&rows) && (1..=8).contains(&input_rows),
-                    "GemvInt8 takes 1, 2, 4, 8 or 16 rows by 1 to 8 inputs",
-                )?;
-                require(!shape.gathered || input_rows == 1, "gathered GemvInt8 takes one input row a workgroup")?;
-            },
+        // Gemv and GemvInt8 stage fixed arrays, and the baseline picks GemmTensor's tiling by its staging.
+        let shared = match *self {
             Self::GemmInt8 {
-                matrices,
-                row_block,
-                simdgroups,
-                stage_depth,
                 splits,
+                ..
             } => {
-                let element_fold = matrices.contains(Capability::INT8_ELEMENT_FOLD);
                 require(!shape.gathered, "INT8 GEMM stages contiguous B rows, without gather")?;
-                require(
-                    INT8_CORES.contains(&matrices)
-                        && [16, 32, 64].contains(&row_block)
-                        && [1, 2, 4, 8].contains(&splits)
-                        && (simdgroups
-                            == (if row_block == 64 {
-                                8
-                            } else {
-                                4
-                            })
-                            || (element_fold && row_block == 32 && simdgroups == 8))
-                        && (stage_depth == 64
-                            || (element_fold && stage_depth == 128 && row_block == 16 && group.is_multiple_of(64))),
-                    "INT8 cores take row blocks of 16, 32 or 64, their simdgroups, 64-deep staging or the element \
-                     fold's 128 on 16 rows of 64-value groups, and 1, 2, 4 or 8 splits",
-                )?;
-                require(
-                    capabilities.contains(matrices | Capability::SUBGROUP_SIZE_32),
-                    "the device reports none of this core's INT8 matrices on requirable 32-lane subgroups",
-                )?;
-                require(k % (128 * splits) == 0, "split K takes whole 128-value blocks a split")?;
-                require(self.int8_shared_bytes() <= max_shared, "the staging exceeds the device's shared memory")?;
                 // The encoder counts the 32-bit partial sums in u32 and takes them from the scratch pool, whose page of
                 // the next power of two bytes one buffer and one allocation must hold.
                 let partials = splits.checked_mul(m).and_then(|count| count.checked_mul(n));
@@ -265,29 +201,15 @@ impl VkMatmulPlan {
                         }),
                     "split K's partial sums exceed 32-bit indexing, the scratch pool or the device's largest buffer",
                 )?;
-            },
-            Self::GemmTensor(tiling) => {
-                require(
-                    tiling.is_tensor() && input == weights && capabilities.float_tensor_cores(input),
-                    "the cooperative core takes a tensor tiling of equal BF16 A and B on matrices the device reports",
-                )?;
-                require(16 * tiling.tensor_staging() <= max_shared, "the staging exceeds the device's shared memory")?;
+                self.int8_shared_bytes()
             },
             Self::Gemm(tiling) => {
                 let bytes = |left: bool, size: u32| tiling.scalar_staging(left, size) * size;
-                require(!tiling.is_tensor(), "the scalar core takes a scalar tiling")?;
-                require(
-                    !shape.is_quant() || group.is_multiple_of(tiling.block_k()),
-                    "groups hold whole K blocks of the tiling",
-                )?;
-                require(
-                    bytes(true, input.size_in_bytes() as u32) + bytes(false, weights.size_in_bytes() as u32)
-                        <= max_shared,
-                    "the staging exceeds the device's shared memory",
-                )?;
+                bytes(true, input.size_in_bytes() as u32) + bytes(false, weights.size_in_bytes() as u32)
             },
-        }
-        // The family fields are in range now, so the workgroup's dimensions are small.
+            _ => 0,
+        };
+        require(shared <= limits.max_compute_shared_memory_size, "the staging exceeds the device's shared memory")?;
         let ([x, y], required) = self.workgroup();
         let size = limits.max_compute_work_group_size;
         require(
@@ -320,7 +242,7 @@ impl VkMatmulPlan {
     }
 
     /// The largest workgroup grid of the family's dispatches for m x n outputs, as the entry points declare it: split
-    /// K's partial phase spans the splits, its reduction phase one. Called on validated fields only.
+    /// K's partial phase spans the splits, its reduction phase one.
     fn groups(
         &self,
         m: u32,

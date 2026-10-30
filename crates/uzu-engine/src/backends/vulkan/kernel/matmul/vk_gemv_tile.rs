@@ -144,65 +144,6 @@ impl VkGemvTile {
         tiles.into_iter().flatten().chain([Self::reader()]).map(move |tile| tile.finished(group, m, n, k))
     }
 
-    /// Why this tile breaks Gemv's `new` preconditions for B of `bits` in groups of `group`, `quantized` or not, and
-    /// `gathered` rows; it validates every field before the derived output tile divides by them.
-    pub fn contract(
-        self,
-        quantized: bool,
-        bits: u32,
-        group: u32,
-        gathered: bool,
-    ) -> Result<(), &'static str> {
-        let require = |met: bool, reason: &'static str| met.then_some(()).ok_or(reason);
-        let (simdgroups, split, lanes) = (self.num_simdgroups, self.k_split, self.reduction_lanes);
-        require(
-            [2, 4, 8].contains(&simdgroups)
-                && [1, 2, 4, 8].contains(&split)
-                && split <= simdgroups
-                && (1..=8).contains(&self.results_per_simdgroup)
-                && (1..=GEMV_INPUT_ROW_TILE).contains(&self.input_row_tile)
-                && [8, 16, 32].contains(&lanes)
-                && [1, 2, 4, 8, 16].contains(&self.group_lanes),
-            "Gemv tile fields outside the ranges its entry point specializes",
-        )?;
-        let (rows, per_simdgroup) = (self.output_row_tile(), self.output_row_tile() / simdgroups);
-        if !self.metal_layout {
-            return require(
-                rows == 8 && simdgroups == 8 && self.input_row_tile == 1,
-                "the reader is 8 rows of 8 simdgroups",
-            );
-        }
-        require(!gathered || self.input_row_tile == 1, "gather takes 1 input row")?;
-        if !quantized {
-            return require(
-                simdgroups == 8
-                    && self.input_row_tile == 1
-                    && lanes == 32
-                    && self.group_lanes == 1
-                    && (rows == 8 / split || rows == 32 / split)
-                    && (self.input_aligned || split == 1),
-                "the full-precision lane tile is 8 simdgroups of 32 lanes over 8 or 32 rows split across K",
-            );
-        }
-        let lane_run = if bits == 4 {
-            16
-        } else {
-            8
-        };
-        require(
-            split == 1
-                && [16, 32, 64, 128].contains(&group)
-                && (self.input_row_tile != 1 || lanes == 32)
-                && lanes.is_multiple_of(self.group_lanes)
-                && group.is_multiple_of(self.group_lanes)
-                && (group / self.group_lanes).is_multiple_of(lane_run)
-                && rows.is_multiple_of(simdgroups)
-                && [1, 2, 4, 8].contains(&per_simdgroup)
-                && per_simdgroup.is_multiple_of(32 / lanes),
-            "the quantized lane tile's lanes, groups and rows break its entry point's contract",
-        )
-    }
-
     /// The tile with the K alignment and whole-tile flags the shape allows; neither applies outside the lane layout.
     fn finished(
         mut self,
