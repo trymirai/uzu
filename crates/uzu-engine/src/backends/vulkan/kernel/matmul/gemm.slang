@@ -86,8 +86,7 @@ public func Gemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
     QuantizedRight<B> right = {
       gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
         zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k,
-        GemmBLayout.RowMajor),
-      k
+        GemmBLayout.RowMajor)
     };
     gemm_simdgroup<A, B, D, QuantizedRight<B>, GemmStorage<A, 0>, GemmStorage<B, 1>>(
       tiling, left, right, d, bias, params, position, thread_context

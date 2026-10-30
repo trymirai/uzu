@@ -53,7 +53,6 @@ public struct FullPrecisionRight<B : IModelFloat> : IRightOperand<B> {
 // U4/U8 B of K-element rows under any scheme.
 public struct QuantizedRight<B : IModelFloat> : IRightOperand<B> {
   public QuantizedWeights<B> weights;
-  public uint k;
 
   public typealias Loader = QuantizedBlockLoader<B>;
 
@@ -66,7 +65,7 @@ public struct QuantizedRight<B : IModelFloat> : IRightOperand<B> {
     ThreadContext thread_context,
   ) {
     return QuantizedBlockLoader<B>(
-      weights, k, block_col, block_n, block_k, shared_stride_b, threadgroup_threads, thread_context
+      weights, block_col, block_n, block_k, shared_stride_b, threadgroup_threads, thread_context
     );
   }
 }
@@ -103,7 +102,6 @@ public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
 
   public __init(
     QuantizedWeights<T> right,
-    uint k,
     uint block_col,
     int tile_rows,
     int tile_cols,
@@ -130,7 +128,7 @@ public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
     dst = uint(tile_row_index * destination_leading_dimension + tile_col_index * pack_factor);
     let row = block_col + uint(tile_row_index);
     src = right.codes;
-    src_index = row * (k / uint(pack_factor)) + uint(tile_col_index);
+    src_index = right.code_byte(row, 0) + uint(tile_col_index);
     scales = right.scales;
     biases = right.biases;
     scale_index = row * right.scale_output_stride;

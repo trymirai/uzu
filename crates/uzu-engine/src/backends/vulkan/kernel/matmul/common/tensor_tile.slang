@@ -171,7 +171,7 @@ struct TensorStager<B : IModelFloat16, N : ICoopElement, S : ITensorShared<N>, l
       var bias = 0.0;
       if (count > 0) {
         let bytes = weights.u4 ? (count + 1) / 2 : count;
-        let source = row * (weights.u4 ? k / 2 : k) + (weights.u4 ? column / 2 : column);
+        let source = weights.code_byte(row, column);
         if (b_vector && count == 16) {
           if (weights.u4) {
             word.xy = load_aligned<uint2, 8>(weights.codes, source);
