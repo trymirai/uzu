@@ -1,6 +1,6 @@
-use std::{io, path::Path, sync::Arc};
+use std::{io, path::Path, sync::Arc, time::Instant};
 
-use shoji::types::session::classification::TokenCodecConfig;
+use shoji::{traits::backend::decision::DecisionProbabilities, types::session::classification::TokenCodecConfig};
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
@@ -67,7 +67,7 @@ impl<B: Backend> DecisionModel<B> {
         &self,
         input: &[u64],
         option_count: usize,
-    ) -> Result<Vec<f32>, DecisionModelError<B>> {
+    ) -> Result<DecisionProbabilities, DecisionModelError<B>> {
         if input.is_empty() {
             return Err(DecisionModelError::EmptyInput);
         }
@@ -88,13 +88,14 @@ impl<B: Backend> DecisionModel<B> {
             });
         }
 
-        let mut command_buffer = self.context.create_command_buffer(None, None).map_err(DecisionModelError::Backend)?;
+        let prefill_start = Instant::now();
 
+        let mut command_buffer = self.context.create_command_buffer(None, None).map_err(DecisionModelError::Backend)?;
         let token_ids = command_buffer
             .allocate_constant_from_slice(&input.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>())
             .map_err(DecisionModelError::Backend)?;
-        let logits = self.decision.encode(&token_ids, input.len() as u32, &mut command_buffer)?;
 
+        let logits = self.decision.encode(&token_ids, input.len() as u32, &mut command_buffer)?;
         let mut output_buffer = self
             .context
             .create_buffer_gpu(answer_count * DataType::F32.size_in_bytes())
@@ -105,14 +106,19 @@ impl<B: Backend> DecisionModel<B> {
 
         command_buffer.end_encoding().submit().wait_until_completed().await.map_err(DecisionModelError::Backend)?;
 
+        let prefill_duration = prefill_start.elapsed();
+
         let temperature = self.decision_config.temperature;
         let logits = self.context.copyout::<f32>(&output_buffer).await.map_err(DecisionModelError::Backend)?;
         let scaled = logits[..option_count].iter().map(|logit| logit / temperature).collect::<Vec<_>>();
         let max = scaled.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let exps = scaled.iter().map(|logit| (logit - max).exp()).collect::<Vec<_>>();
         let sum = exps.iter().sum::<f32>();
-        let result = exps.into_iter().map(|value| value / sum).collect();
-        Ok(result)
+        let probabilities = exps.into_iter().map(|value| value / sum).collect();
+        Ok(DecisionProbabilities {
+            probabilities,
+            prefill_duration,
+        })
     }
 }
 
