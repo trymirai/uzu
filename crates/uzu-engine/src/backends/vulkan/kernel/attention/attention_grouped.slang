@@ -280,13 +280,9 @@ func AttentionGrouped<T: IModelFloat16>(
     v_head_stride, v_seq_stride, ring_params, scale, suffix_length, trie, sliding_window_size, splits,
     is_kv_cache_ring, is_causal, is_trie, is_sliding_window
   };
-  if (T.FRACTION_BITS == 7 && HEAD_DIM == 128) {
+  if (HEAD_DIM == 128) {
     GroupedAttention<T, BFloat16, 128>.run(arguments, row_tile, kv_head, split, subgroup_id());
-  } else if (T.FRACTION_BITS == 7) {
-    GroupedAttention<T, BFloat16, 256>.run(arguments, row_tile, kv_head, split, subgroup_id());
-  } else if (HEAD_DIM == 128) {
-    GroupedAttention<T, half, 128>.run(arguments, row_tile, kv_head, split, subgroup_id());
   } else {
-    GroupedAttention<T, half, 256>.run(arguments, row_tile, kv_head, split, subgroup_id());
+    GroupedAttention<T, BFloat16, 256>.run(arguments, row_tile, kv_head, split, subgroup_id());
   }
 }

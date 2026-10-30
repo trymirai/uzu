@@ -166,8 +166,8 @@ fn variants_for_constraint(constraint: &str) -> Option<&'static [&'static str]> 
     match constraint {
         "IStorageFloat" => Some(&["float", "half", "bf16"]),
         "IFloat32" => Some(&["float"]),
-        "IModelFloat" => Some(&["float", "half", "bf16"]),
-        "IModelFloat16" => Some(&["half", "bf16"]),
+        "IModelFloat" => Some(&["float", "bf16"]),
+        "IModelFloat16" => Some(&["bf16"]),
         _ => None,
     }
 }

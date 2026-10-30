@@ -7,7 +7,7 @@ import generated.weaver;
 groupshared uint weaver_select_winners[FRONTIER_MAX_WIDTH];
 
 // A candidate's logit, its Gumbel selection score and its pruning noise.
-float3 weaver_top_values<R : IModelFloat16>(float candidate, R residual, uint2 key, uint token, uint vocab_size) {
+float3 weaver_top_values(float candidate, bf16 residual, uint2 key, uint token, uint vocab_size) {
   let index = sampling_index(token, vocab_size);
   let word = sampling_words(key, index.x)[index.y];
   let logit = candidate + residual.toFloat();
