@@ -1,5 +1,5 @@
 import definitions;
-import common.quantized_value;
+import matmul.common.matmul;
 import generated.quantization_method;
 import matmul.gemv.common.arguments;
 import matmul.gemv.common.quant_chunk;
@@ -18,35 +18,21 @@ public struct QuantMetadata {
   }
 
   [mutating]
-  public void load<A : IModelFloat, B : IModelFloat, D : IModelFloat>(
+  public void load<B : IModelFloat>(
     uint group_index,
     uint weight_rows[GEMV_MAX_ROWS_PER_LANE],
-    GemvOperands<A, B, D> ops,
-    GemvParams params,
-    GemvTile Tile,
-    QuantizationMethod b_prologue,
-    uint bits
+    QuantizedWeights<B> weights,
+    GemvTile Tile
   ) {
-    B_PROLOGUE = b_prologue;
-    BITS = bits;
-    signed_codes = params.signed_codes;
+    B_PROLOGUE = weights.method;
+    BITS = weights.u4 ? 4 : 8;
+    signed_codes = weights.signed_codes;
     [unroll]
     for (uint R = 0; R < Tile.ROWS_PER_LANE; R++) {
-      let row = weight_rows[R];
-      let scale_index = row * params.scale_output_stride + group_index * params.scale_group_stride;
-      scale[R] = ops.scales[scale_index].toFloat();
-      if (B_PROLOGUE == QuantizationMethod.ScaleZeroPoint) {
-        let zero_point_index = row * params.zero_point_output_stride + group_index * params.zero_point_group_stride;
-        let zero_point = BITS == 4 ? read_nibble(ops.zero_points, zero_point_index) : uint(ops.zero_points[zero_point_index]);
-        origin[R] = QuantChunk.MANTISSA_BASE + float(zero_point);
-        bias[R] = 0.0;
-      } else if (B_PROLOGUE != QuantizationMethod.ScaleBias) {
-        origin[R] = QuantChunk.MANTISSA_BASE + float(1u << (BITS - 1));
-        bias[R] = 0.0;
-      } else {
-        origin[R] = QuantChunk.MANTISSA_BASE;
-        bias[R] = ops.biases[scale_index].toFloat();
-      }
+      let group = weights.metadata(weight_rows[R], group_index);
+      scale[R] = group.scale;
+      origin[R] = QuantChunk.MANTISSA_BASE + float(group.zero_point);
+      bias[R] = group.bias;
     }
   }
 

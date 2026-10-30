@@ -132,13 +132,11 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   [[Specialize]] GemmBLayout b_layout,
 ) {
   let quantized = b_prologue != GemmBPrologueKind.FullPrecision;
-  let method = gemm_quantization_method(b_prologue);
-  let BITS = quantization_mode == QuantizationMode.U4 ? 4u : 8u;
+  let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
+    zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
   if (!METAL_LAYOUT) {
     DenseOperand<A> activations = { a };
     if (quantized) {
-      let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
-        zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
       gemv_body<DenseOperand<A>, B, D>(weights, activations, d, bias, gather, k, n, m, ab_scale, soft_cap,
         output_tile_idx, input_tile_idx, has_scale, has_bias, has_soft_cap, gathered);
     } else {
@@ -148,11 +146,8 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
     }
     return;
   }
-  GemvOperands<A, B, D> ops = { b, scales, zero_points, biases, a, d, bias, gather };
-  GemvParams params = {
-    k, n, scale_output_stride, scale_group_stride, zero_point_output_stride, zero_point_group_stride, m, ab_scale,
-    soft_cap, has_scale, has_bias, has_soft_cap, gathered, signed_codes, b_layout
-  };
+  GemvOperands<A, B, D> ops = { b, a, d, bias, gather };
+  GemvParams params = { k, n, m, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, gathered };
   let Tile = GemvTile(INPUT_ROW_TILE, OUTPUT_ROW_TILE, GROUP_LANES, NUM_SIMDGROUPS);
   let tile = OutputTile.make(Tile, FULL_TILE, output_tile_idx, input_tile_idx, n);
   float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE];
@@ -164,7 +159,7 @@ func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
     }
   }
   if (quantized) {
-    QuantBSource.accumulate(result, ops, params, Tile, tile, method, group_size, BITS, INPUT_ALIGNED, FULL_TILE);
+    QuantBSource.accumulate(result, weights, ops, params, Tile, tile, INPUT_ALIGNED, FULL_TILE);
   } else {
     FullPrecisionBSource.accumulate(result, ops, params, Tile, tile, INPUT_ALIGNED, FULL_TILE);
   }

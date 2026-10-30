@@ -9,9 +9,6 @@ import generated.quantization_method;
 
 public struct GemvOperands<A : IModelFloat, B : IModelFloat, D : IModelFloat> {
   public Ptr<uint, Access.Read> b;
-  public Ptr<B, Access.Read> scales;
-  public Ptr<uint8_t, Access.Read> zero_points;
-  public Ptr<B, Access.Read> biases;
   public Ptr<A, Access.Read> a;
   public Ptr<D, Access.ReadWrite> d;
   public Ptr<B, Access.Read> output_bias;
@@ -21,10 +18,6 @@ public struct GemvOperands<A : IModelFloat, B : IModelFloat, D : IModelFloat> {
 public struct GemvParams {
   public uint in_vec_size;
   public uint out_vec_size;
-  public uint scale_output_stride;
-  public uint scale_group_stride;
-  public uint zero_point_output_stride;
-  public uint zero_point_group_stride;
   public uint batch_size;
   public float ab_scale;
   public float soft_cap;
@@ -32,8 +25,6 @@ public struct GemvParams {
   public bool has_bias;
   public bool has_soft_cap;
   public bool gathered;
-  public bool signed_codes;
-  public GemmBLayout b_layout;
 }
 
 // The quantization method of a B prologue; full precision has none and reads as symmetric.

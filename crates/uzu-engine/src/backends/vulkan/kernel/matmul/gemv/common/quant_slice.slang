@@ -1,6 +1,5 @@
 import definitions;
 import matmul.common.matmul;
-import generated.gemm_b_layout;
 import generated.quantization_method;
 import matmul.gemv.common.arguments;
 import matmul.gemv.common.quant_chunk;
@@ -44,13 +43,12 @@ public struct QuantSlice {
   }
 
   [mutating]
-  public void load_weights(
+  public void load_weights<B : IModelFloat>(
     QuantPosition position,
-    Ptr<uint8_t, Access.Read> weights_base,
+    QuantizedWeights<B> quantized,
     uint weight_row_indices[GEMV_MAX_ROWS_PER_LANE],
     uint row_stride,
     uint group_offset,
-    GemvParams params,
     GemvTile Tile,
     bool INPUT_ALIGNED
   ) {
@@ -59,14 +57,14 @@ public struct QuantSlice {
     [unroll]
     for (uint R = 0; R < Tile.ROWS_PER_LANE; R++) {
       let row = weight_row_indices[R];
-      let byte = gemm_b_code_byte(params.b_layout, row, k, params.in_vec_size, BITS == 4);
+      let byte = quantized.code_byte(row, k);
       if (INPUT_ALIGNED) {
-        load_words(false, weights[R], weights_base, byte, SLICE_BYTES);
+        load_words(false, weights[R], quantized.codes, byte, SLICE_BYTES);
       } else {
         let valid_bytes = offset_bytes < row_stride ? min(row_stride - offset_bytes, SLICE_BYTES) : 0u;
         let LOAD_ALIGNMENT = min(SLICE_BYTES, QuantChunk.VECTOR_BYTES);
         let aligned = (byte & (LOAD_ALIGNMENT - 1)) == 0;
-        load_words(valid_bytes != SLICE_BYTES || !aligned, weights[R], weights_base, byte, valid_bytes);
+        load_words(valid_bytes != SLICE_BYTES || !aligned, weights[R], quantized.codes, byte, valid_bytes);
       }
     }
   }

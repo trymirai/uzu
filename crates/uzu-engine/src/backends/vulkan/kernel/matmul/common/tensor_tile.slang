@@ -188,7 +188,7 @@ struct TensorStager<B : IModelFloat16, N : ICoopElement, S : ITensorShared<N>, l
         }
         let group = weights.metadata(row, column / weights.group_size);
         scale = group.scale;
-        bias = weights.method == QuantizationMethod.ScaleBias ? group.bias : round_to<B>(-scale * float(group.zero_point));
+        bias = staged_bias<B>(group, weights.method);
       }
       b_words[i] = word;
       metadata[i] = float2(scale, bias);

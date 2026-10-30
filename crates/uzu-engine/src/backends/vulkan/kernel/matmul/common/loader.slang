@@ -1,5 +1,6 @@
 import definitions;
 import matmul.common.matmul;
+import generated.quantization_method;
 import matmul.common.simdgroup_multiply_accumulate;
 
 // A tile's device-to-threadgroup staging into S: load_unsafe for a whole tile, load_safe zeroing outside
@@ -144,4 +145,9 @@ public void dequantize<U : IModelFloat, S : IThreadgroupStorage<U>>(
 // The staged weight of a product and bias, each rounded to U.
 public U staged_weight<U : IModelFloat>(float product, float bias) {
   return U.fromFloat(round_to<U>(product) + bias);
+}
+
+// The bias a weight group's codes stage with in U: the ScaleBias bias, otherwise -scale zero_point rounded to U.
+public float staged_bias<U : IModelFloat>(WeightGroup group, QuantizationMethod method) {
+  return method == QuantizationMethod.ScaleBias ? group.bias : round_to<U>(-group.scale * float(group.zero_point));
 }
