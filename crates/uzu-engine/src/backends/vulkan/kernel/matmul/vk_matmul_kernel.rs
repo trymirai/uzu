@@ -36,7 +36,7 @@ use crate::{
     data_type::DataType,
 };
 
-/// K columns per GemmTrellis step; its single-partition dispatch defines only whole steps.
+/// K columns per TrellisGemv step, which takes whole steps only.
 const TRELLIS_K_STEP: u32 = 64;
 
 /// The common MatmulKernel over Gemv, Gemm (scalar and cooperative-matrix cores), their A8 variants and TrellisGemv,

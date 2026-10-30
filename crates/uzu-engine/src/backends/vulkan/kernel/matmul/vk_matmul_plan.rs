@@ -19,17 +19,12 @@ use crate::{
 
 /// The fold metadata arrays every Int8Gemm core declares in shared memory.
 const INT8_FOLD_BYTES: u32 = 4 * 2 * INT8_FOLD_ENTRIES;
-/// One dispatch family of the existing matmul kernels with its specialization parameters. A plan's cost is all of its
-/// dispatches: split K's reduction phase and the output transform the encoder appends. The loaded weight layout and the
-/// activation format are the problem's, never the plan's. Legality and the baseline read the device's queried facts,
-/// never its identity.
+/// One dispatch family of the matmul kernels with its specialization parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VkMatmulPlan {
     /// Gemv on full-precision A, with its tile.
     Gemv(VkGemvTile),
-    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations. One input row or 8 or
-    /// more rows give each output 32 / rows invocations, which split its runs for every input; fewer rows by more inputs
-    /// give each 32-lane simdgroup `rows` outputs.
+    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations.
     GemvInt8 {
         rows: u32,
         input_rows: u32,
@@ -50,8 +45,7 @@ pub enum VkMatmulPlan {
 }
 
 impl VkMatmulPlan {
-    /// The default, without allocating: a generic rule of the shape, the loaded weight layout and raw device
-    /// capabilities.
+    /// The plan for `shape` from weights in `b_layout` on `device`, by its capabilities and limits, never its identity.
     pub fn baseline(
         shape: &MatmulShape,
         b_layout: GemmBLayout,
@@ -112,8 +106,7 @@ impl VkMatmulPlan {
             _ if core(64, 64, 1).int8_shared_bytes() <= max_shared => 64,
             _ => 32,
         };
-        // The committed heuristic, not an occupancy model: GemmInt8Nv's 16-row tile stages 128 values deep for grids of
-        // no more tiles than units, which split K anyway; it counts three such workgroups a unit against five 64 deep.
+        // GemmInt8Nv's 16-row tiles stage 128 deep on grids of at most a tile a unit, three workgroups a unit.
         let tiles = u64::from(n.div_ceil(64)) * u64::from(m.div_ceil(row_block));
         let deep = element_fold
             && row_block == 16
