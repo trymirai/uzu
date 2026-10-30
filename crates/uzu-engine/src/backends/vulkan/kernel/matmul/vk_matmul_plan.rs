@@ -133,7 +133,10 @@ impl VkMatmulPlan {
         let (capabilities, limits, subgroups) = (device.capabilities, device.limits(), &device.subgroup_properties);
         let require = |met: bool, reason: &'static str| met.then_some(()).ok_or(reason);
         require(m > 0 && n > 0 && k > 0, "matmul dimensions must be positive")?;
-        require(!shape.is_quant() || shape.b_group_size > Some(0), "quantized B needs a positive group size")?;
+        require(
+            !shape.is_quant() || shape.b_group_size.is_some_and(|group| group > 0),
+            "quantized B needs a positive group size",
+        )?;
         let gemm = matches!(self, Self::GemmTensor(_) | Self::Gemm(_));
         let a8 = matches!(self, Self::GemvInt8 { .. } | Self::GemmInt8 { .. });
         // GemvInt8 also takes full-precision A, which the encoder quantizes first.
