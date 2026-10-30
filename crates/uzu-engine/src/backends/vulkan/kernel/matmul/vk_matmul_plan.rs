@@ -2,7 +2,6 @@ use super::VkGemvTile;
 use crate::{
     backends::{
         common::{
-            allocator::MAX_ALLOCATION_SIZE,
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::{
                 ActivationQuantization,
@@ -186,21 +185,9 @@ impl VkMatmulPlan {
         // Gemv and GemvInt8 stage fixed arrays, and the baseline picks GemmTensor's tiling by its staging.
         let shared = match *self {
             Self::GemmInt8 {
-                splits,
                 ..
             } => {
                 require(!shape.gathered, "INT8 GEMM stages contiguous B rows, without gather")?;
-                // The encoder counts the 32-bit partial sums in u32 and takes them from the scratch pool, whose page of
-                // the next power of two bytes one buffer and one allocation must hold.
-                let partials = splits.checked_mul(m).and_then(|count| count.checked_mul(n));
-                let bytes = partials.map(|count| 4 * u64::from(count));
-                require(
-                    splits == 1
-                        || bytes.is_some_and(|bytes| {
-                            bytes <= MAX_ALLOCATION_SIZE as u64 && bytes.next_power_of_two() <= device.max_buffer_bytes
-                        }),
-                    "split K's partial sums exceed 32-bit indexing, the scratch pool or the device's largest buffer",
-                )?;
                 self.int8_shared_bytes()
             },
             Self::Gemm(tiling) => {

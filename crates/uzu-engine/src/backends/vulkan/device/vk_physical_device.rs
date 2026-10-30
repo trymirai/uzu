@@ -16,9 +16,6 @@ pub struct VkPhysicalDevice {
     pub capabilities: VkDeviceCapabilities,
     /// Streaming multiprocessors or compute units, where the device reports them.
     pub compute_units: Option<u32>,
-    /// The largest buffer one allocation can back: maxBufferSize (maintenance4) within maxMemoryAllocationSize
-    /// (maintenance3).
-    pub max_buffer_bytes: u64,
 }
 impl VkPhysicalDevice {
     /// The resource limits, which the identity-free matmul selectors read without naming `properties`.
@@ -50,13 +47,11 @@ impl VkPhysicalDevice {
         let mut device_subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
         let mut float_controls = vk::PhysicalDeviceFloatControlsProperties::default();
         let mut vk13properties = vk::PhysicalDeviceVulkan13Properties::default();
-        let mut maintenance3 = vk::PhysicalDeviceMaintenance3Properties::default();
         let mut sm_builtins = vk::PhysicalDeviceShaderSMBuiltinsPropertiesNV::default();
         let mut core_properties = vk::PhysicalDeviceShaderCoreProperties2AMD::default();
         let mut core_builtins = vk::PhysicalDeviceShaderCoreBuiltinsPropertiesARM::default();
         let mut properties2 = vk::PhysicalDeviceProperties2::default()
             .push_next(&mut vk13properties)
-            .push_next(&mut maintenance3)
             .push_next(&mut device_subgroup_properties)
             .push_next(&mut float_controls);
         let unit_extensions = [
@@ -196,7 +191,6 @@ impl VkPhysicalDevice {
             queue_families,
             capabilities,
             compute_units,
-            max_buffer_bytes: vk13properties.max_buffer_size.min(maintenance3.max_memory_allocation_size),
         })
     }
 }
