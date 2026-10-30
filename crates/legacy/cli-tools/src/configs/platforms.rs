@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     configs::{BinaryConfig, LanguageConfig, Paths, TargetConfig, ToolConfig},
-    types::{Backend, Bindings, Capability, Language, Tool},
+    types::{Bindings, Language, Tool},
 };
 
 pub const HOST_TARGET: &str = "host";
@@ -95,32 +95,12 @@ impl PlatformsConfig {
         Ok(resolved_targets)
     }
 
-    pub fn backend_for_target(
+    pub fn features_for_target(
         &self,
         target: String,
-    ) -> Result<Backend> {
+    ) -> Result<Vec<String>> {
         let target_config = self.targets.get(&target).context("Target not found")?;
-        Ok(target_config.backend)
-    }
-
-    pub fn capabilities_for_target(
-        &self,
-        target: String,
-        requested_capabilities: Vec<Capability>,
-    ) -> Result<Vec<Capability>> {
-        let target_config = self.targets.get(&target).context("Target not found")?;
-
-        let default_capabilities = target_config.capabilities_default.clone();
-        if requested_capabilities.is_empty() {
-            return Ok(default_capabilities);
-        }
-
-        let supported_capabilities = target_config.capabilities_supported.clone();
-        Ok(requested_capabilities
-            .iter()
-            .filter(|capability| supported_capabilities.contains(capability))
-            .copied()
-            .collect::<Vec<_>>())
+        Ok(target_config.features.clone())
     }
 
     pub fn bindings_for_language(

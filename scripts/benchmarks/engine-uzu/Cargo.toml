@@ -22,7 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-uzu = { workspace = true, features = ["backend-metal"] }
+uzu = { workspace = true, features = ["metal"] }
 
 [build-dependencies]
 cc = "1"

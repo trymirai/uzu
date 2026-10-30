@@ -9,7 +9,7 @@ use regex::Regex;
 use crate::{
     configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget, generate_swift_extensions},
-    types::{Capability, Command, Configuration, Language},
+    types::{Command, Configuration, Language},
     utilities::fs::copy_directory,
 };
 
@@ -120,7 +120,7 @@ impl LanguageBackend for SwiftLanguageBackend {
         version: &str,
         release_path: &Path,
     ) -> Result<()> {
-        self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()])?;
 
         let paths = Paths::new()?;
         let xcframework_path = paths.swift_xcframework_path();

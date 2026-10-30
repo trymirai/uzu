@@ -412,7 +412,6 @@ pub(crate) fn build_messages(
 
 #[derive(Debug, PartialEq, Eq)]
 enum ResponseFormatError {
-    GrammarUnsupported,
     InvalidResponseFormat(String),
     InvalidJsonSchema(String),
 }
@@ -420,10 +419,6 @@ enum ResponseFormatError {
 impl ResponseFormatError {
     fn message(&self) -> String {
         match self {
-            ResponseFormatError::GrammarUnsupported => {
-                "response_format with JSON constraints requires building mirai server with capability-grammar"
-                    .to_string()
-            },
             ResponseFormatError::InvalidResponseFormat(detail) => {
                 format!("response_format is not a recognized object: {detail}")
             },
@@ -435,7 +430,6 @@ impl ResponseFormatError {
 
     fn code(&self) -> &'static str {
         match self {
-            ResponseFormatError::GrammarUnsupported => "unsupported_response_format",
             ResponseFormatError::InvalidResponseFormat(_) => "invalid_response_format",
             ResponseFormatError::InvalidJsonSchema(_) => "invalid_json_schema",
         }
@@ -458,17 +452,6 @@ fn invalid_request_response(
             },
         }),
     ))
-}
-
-fn with_response_format_grammar(
-    config: ChatReplyConfig,
-    grammar: Grammar,
-) -> Result<ChatReplyConfig, ResponseFormatError> {
-    if !cfg!(feature = "capability-grammar") {
-        return Err(ResponseFormatError::GrammarUnsupported);
-    }
-
-    Ok(config.with_grammar(Some(grammar)))
 }
 
 fn json_schema_grammar(json_schema: &JsonSchemaFormat) -> Result<Grammar, ResponseFormatError> {
@@ -529,10 +512,10 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
     };
 
     config = match response_format {
-        Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
+        Some(ResponseFormat::JsonObject) => config.with_grammar(Some(Grammar::JsonAny {})),
         Some(ResponseFormat::JsonSchema {
             json_schema,
-        }) => with_response_format_grammar(config, json_schema_grammar(&json_schema)?)?,
+        }) => config.with_grammar(Some(json_schema_grammar(&json_schema)?)),
         Some(ResponseFormat::Text) | None => config,
     };
 

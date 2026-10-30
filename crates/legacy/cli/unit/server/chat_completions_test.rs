@@ -9,38 +9,15 @@ fn reply_config(json: &str) -> ChatReplyConfig {
     build_reply_config(&request(json)).expect("valid reply config")
 }
 
-#[cfg(not(feature = "capability-grammar"))]
-fn reply_config_error(json: &str) -> ResponseFormatError {
-    build_reply_config(&request(json)).expect_err("invalid reply config")
-}
-
 #[test]
 fn response_format_maps_to_grammar() {
     assert!(reply_config(r#"{"messages":[]}"#).grammar.is_none());
     assert!(reply_config(r#"{"messages":[],"response_format":{"type":"text"}}"#).grammar.is_none());
 
-    #[cfg(feature = "capability-grammar")]
     assert_eq!(
         reply_config(r#"{"messages":[],"response_format":{"type":"json_object"}}"#).grammar,
         Some(Grammar::JsonAny {})
     );
-}
-
-#[test]
-fn response_format_rejects_grammar_without_capability() {
-    #[cfg(not(feature = "capability-grammar"))]
-    {
-        assert_eq!(
-            reply_config_error(r#"{"messages":[],"response_format":{"type":"json_object"}}"#),
-            ResponseFormatError::GrammarUnsupported
-        );
-        assert_eq!(
-            reply_config_error(
-                r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#
-            ),
-            ResponseFormatError::GrammarUnsupported
-        );
-    }
 }
 
 #[test]
@@ -53,7 +30,6 @@ fn response_format_unrecognized_is_invalid() {
     );
 }
 
-#[cfg(feature = "capability-grammar")]
 #[test]
 fn response_format_json_schema_maps_to_grammar() {
     let config = reply_config(
@@ -79,7 +55,7 @@ fn response_format_json_schema_rejects_invalid_schema() {
 
 #[test]
 fn response_format_validation_errors_are_request_errors() {
-    let error = ResponseFormatError::GrammarUnsupported;
+    let error = ResponseFormatError::InvalidResponseFormat("unknown type".to_string());
     match invalid_request_response("response_format", error.code(), error.message()) {
         ChatCompletionResult::Error(_) => {},
         ChatCompletionResult::Json(_, _) | ChatCompletionResult::Stream(_) => {
@@ -314,7 +290,6 @@ fn error_responder_yields_http_400_with_openai_body() {
     );
 }
 
-#[cfg(feature = "capability-grammar")]
 #[test]
 fn response_format_composes_with_sampling_options() {
     let stochastic = reply_config(

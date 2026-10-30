@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::Path,
-};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result, anyhow};
 use minijinja::{Environment, context, value::Serde};
@@ -42,12 +38,6 @@ struct ExampleEntry {
     title: String,
     description: String,
     explanation: Option<String>,
-}
-
-#[derive(Serialize)]
-struct TargetEntry {
-    name: String,
-    in_progress: bool,
 }
 
 impl SyncTask for ReadmeSyncTask {
@@ -93,30 +83,6 @@ impl SyncTask for ReadmeSyncTask {
             })
             .collect();
 
-        let mut binding_targets: BTreeSet<String> = BTreeSet::new();
-        for language_config in platforms.languages.values() {
-            if !language_config.bindings.is_empty() {
-                binding_targets.extend(language_config.targets.iter().cloned());
-            }
-        }
-        let targets: Vec<TargetEntry> = platforms
-            .targets
-            .keys()
-            .map(|name| TargetEntry {
-                name: name.clone(),
-                in_progress: !binding_targets.contains(name),
-            })
-            .collect();
-
-        let backends: Vec<String> = platforms
-            .targets
-            .values()
-            .map(|target| target.backend)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(|backend| backend.name())
-            .collect();
-
         let rendered = template.render(context! {
             title => "uzu",
             version => &workspace.workspace.package.version,
@@ -126,8 +92,6 @@ impl SyncTask for ReadmeSyncTask {
             intro => intro,
             languages => Serde(language_contexts),
             examples => Serde(example_entries),
-            targets => Serde(targets),
-            backends => backends,
         })?;
 
         Ok(format!("{}\n", rendered.trim_end()))

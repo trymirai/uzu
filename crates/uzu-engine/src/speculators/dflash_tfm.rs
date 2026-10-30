@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use crate::encodable_block::dflash::DFlashState;
-#[cfg(grammar)]
-use crate::engine::language_model::grammar::Grammar;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
@@ -26,6 +24,7 @@ use crate::{
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
+    engine::language_model::grammar::Grammar,
     safetensors::{ParameterLoader, ParameterLoaderError},
     trie::TrieNode,
     utils::{
@@ -204,7 +203,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
         sampling_method: &SamplingMethod,
-        #[cfg(grammar)] grammar: Option<&mut Grammar>,
+        grammar: Option<&mut Grammar>,
         prng: &PRng,
         allocation_pool: Arc<B::AllocationPool>,
         command_buffer_name: Option<&str>,
@@ -361,7 +360,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             nodes: &[ProposalNode],
             index: usize,
             root_position: u32,
-            #[cfg(grammar)] mut grammar: Option<&mut Grammar>,
+            mut grammar: Option<&mut Grammar>,
             prng: &PRng,
         ) -> TrieNode {
             let node = &nodes[index];
@@ -371,23 +370,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 node.logprob,
             );
             for &child_index in &node.child_indices {
-                #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut()
                     && (grammar.is_terminated() || grammar.accept_token(nodes[child_index].token_id as u64).is_err())
                 {
                     continue;
                 }
 
-                let child = recursive_build(
-                    nodes,
-                    child_index,
-                    root_position,
-                    #[cfg(grammar)]
-                    grammar.as_deref_mut(),
-                    prng,
-                );
+                let child = recursive_build(nodes, child_index, root_position, grammar.as_deref_mut(), prng);
 
-                #[cfg(grammar)]
                 if let Some(grammar) = grammar.as_mut() {
                     grammar.rollback(1);
                 }
@@ -397,14 +387,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             trie_node
         }
 
-        let mut trie = recursive_build(
-            &nodes,
-            0,
-            root_position,
-            #[cfg(grammar)]
-            grammar,
-            prng,
-        );
+        let mut trie = recursive_build(&nodes, 0, root_position, grammar, prng);
         trie.prune_to_budget(shape.tree_budget as usize);
         Ok(trie)
     }
