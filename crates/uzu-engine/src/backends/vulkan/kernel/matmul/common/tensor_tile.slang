@@ -410,7 +410,7 @@ public interface IInt8Shared<let MMA_K : int> {
 
 // Fold metadata [slot][kind][index] of each 32-deep step ending a weight group, slot = stage parity * 2 + step: rows
 // hold the activation scale and its ScaleBias correction, columns the weight scale and bias.
-groupshared float int8_fold_rows[INT8_FOLD_ENTRIES + INT8_FOLD_PADDING];
+groupshared float int8_fold_rows[INT8_FOLD_ENTRIES];
 groupshared float int8_fold_cols[INT8_FOLD_ENTRIES];
 
 typealias Int8Dots = CoopMat<int, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator>;

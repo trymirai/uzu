@@ -72,10 +72,8 @@ impl GemmTiling {
     }
 }
 
-/// Int8Gemm's fold metadata entries per array, [stage parity * 2 + step][kind][row or column]; the row array has
-/// INT8_FOLD_PADDING more, which holds NVIDIA's occupancy target where the accumulators stay in registers.
+/// Int8Gemm's fold metadata entries per array, [stage parity * 2 + step][kind][row or column].
 pub const INT8_FOLD_ENTRIES: u32 = 4 * 2 * 64;
-pub const INT8_FOLD_PADDING: u32 = 64;
 
 /// The most input rows a GEMV workgroup takes at once.
 pub const GEMV_INPUT_ROW_TILE: u32 = 16;

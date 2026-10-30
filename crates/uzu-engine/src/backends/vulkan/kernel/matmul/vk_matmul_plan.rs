@@ -13,7 +13,7 @@ use crate::{
         vulkan::{
             VkDeviceCapabilities as Capability, VkPhysicalDevice,
             gpu_types::{
-                gemm::{GemmTiling, INT8_FOLD_ENTRIES, INT8_FOLD_PADDING},
+                gemm::{GemmTiling, INT8_FOLD_ENTRIES},
                 gemm_b_layout::GemmBLayout,
             },
         },
@@ -28,7 +28,7 @@ const INT8_CORES: [Capability; 3] = [
     Capability::INT8_TENSOR_CORES_K32.union(Capability::INT8_ELEMENT_FOLD),
 ];
 /// The fold metadata arrays every Int8Gemm core declares in shared memory.
-const INT8_FOLD_BYTES: u32 = 4 * (2 * INT8_FOLD_ENTRIES + INT8_FOLD_PADDING);
+const INT8_FOLD_BYTES: u32 = 4 * 2 * INT8_FOLD_ENTRIES;
 /// One dispatch family of the existing matmul kernels with its specialization parameters. A plan's cost is all of its
 /// dispatches: split K's reduction phase and the output transform the encoder appends. The loaded weight layout and the
 /// activation format are the problem's, never the plan's. Legality and the baseline read the device's queried facts,
