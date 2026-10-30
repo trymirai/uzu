@@ -101,9 +101,9 @@ impl VkGemvTile {
     }
 
     /// The tiles that take this quantized shape, the default first and the reader last: the general tile, lane-sliced
-    /// over the group or every input row at once for 2 to GEMV_INPUT_ROW_TILE rows of BF16 or FP16, and the narrow tile
-    /// of 4 simdgroups by 2 rows where its two group lanes hold whole runs of 16 U4 or 8 U8 values. The narrow tile
-    /// leads for one BF16 or FP16 row from B packed in 32-row tiles, where fewer rows a workgroup stride less.
+    /// over the group or every input row at once for 2 to GEMV_INPUT_ROW_TILE rows of BF16, and the narrow tile of 4
+    /// simdgroups by 2 rows where its two group lanes hold whole runs of 16 U4 or 8 U8 values. The narrow tile leads
+    /// for one BF16 row from B packed in 32-row tiles, where fewer rows a workgroup stride less.
     pub fn quantized_tiles(
         bits: u32,
         group: u32,

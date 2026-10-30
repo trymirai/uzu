@@ -66,7 +66,7 @@ struct GroupedArguments<T : IModelFloat16> {
 
   // Element `element` of a 16-bit operand as a 16 x 16 matrix, rows `stride` apart. Slang's CoopMat.Load takes
   // read-write device pointers only: the access is Slang's, the SPIR-V pointer type the same, so the address is copied
-  // rather than converted, which would widen it through 64 bits; only BF16 operands then change element type.
+  // rather than converted, which would widen it through 64 bits; the bf16 operands are then loaded as BFloat16.
   static CoopMat<N, MemoryScope.Subgroup, 16, 16, USE> load<
     N : ICoopElement,
     let USE : CoopMatMatrixUse,
