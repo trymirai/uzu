@@ -73,7 +73,6 @@ public struct QuantizedRight<B : IModelFloat> : IRightOperand<B> {
 public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
   QuantizedWeights<T> weights;
   int threadgroup_tile_rows;
-  int bits;
   int pack_factor;
   int reads_per_thread;
   int group_steps_per_block;
@@ -101,8 +100,7 @@ public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
   ) {
     weights = right;
     threadgroup_tile_rows = tile_rows;
-    bits = right.u4 ? 4 : 8;
-    pack_factor = 8 / bits;
+    pack_factor = right.u4 ? 2 : 1;
     let tile_cols_packed = tile_cols / pack_factor;
     tile_has_idle_threads = tile_cols_packed * tile_rows < threadgroup_size;
     reads_per_thread = tile_has_idle_threads ? 1 : (tile_cols_packed * tile_rows) / threadgroup_size;
@@ -119,6 +117,16 @@ public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
     group = 0;
   }
 
+  // Code byte i of this invocation's run into S.
+  void stage<S : IThreadgroupStorage<T>>(int i, float scale, float bias) {
+    T values[2];
+    dequantize_code<T>(uint(weights.codes[src_index + uint(i)]), scale, bias, weights.u4, weights.signed_codes, values);
+    S.write(dst + uint(i * pack_factor), values[0]);
+    if (weights.u4) {
+      S.write(dst + uint(i * pack_factor + 1), values[1]);
+    }
+  }
+
   [mutating]
   public void load_unsafe<S : IThreadgroupStorage<T>>() {
     if (tile_has_idle_threads && tile_row_index >= threadgroup_tile_rows) {
@@ -127,10 +135,7 @@ public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
     let metadata = weights.metadata(row, group);
     let bias = staged_bias<T>(metadata, weights.method);
     for (int i = 0; i < reads_per_thread; i++) {
-      dequantize<T, S>(
-        weights.codes, src_index + uint(i), metadata.scale, bias, dst + uint(i * pack_factor), pack_factor, bits,
-        weights.signed_codes
-      );
+      stage<S>(i, metadata.scale, bias);
     }
   }
 
@@ -153,10 +158,7 @@ public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
     for (int i = 0; i < reads_per_thread; i++) {
       let pack_index = tile_col_index + i;
       if (pack_index < valid_packs) {
-        dequantize<T, S>(
-          weights.codes, src_index + uint(i), metadata.scale, bias, dst + uint(i * pack_factor), pack_factor, bits,
-          weights.signed_codes
-        );
+        stage<S>(i, metadata.scale, bias);
         if (pack_index == valid_packs - 1) {
           for (int lane = valid_cols - pack_index * pack_factor; lane < pack_factor; ++lane) {
             S.write(dst + uint(i * pack_factor + lane), zero);

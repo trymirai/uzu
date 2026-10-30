@@ -245,27 +245,16 @@ struct TensorStager<B : IModelFloat16, N : ICoopElement, S : ITensorShared<N>, l
           let scale = metadata[i].x;
           let bias = metadata[i].y;
           uint bits[16];
-          if (weights.u4) {
-            // A high nibble is read in place, 16 times its code, against the scale over 16.
-            let sixteenth = round_to<B>(scale / 16.0);
-            [unroll]
-            for (uint byte = 0; byte < 8; byte++) {
-              let code = ((b_words[i][byte / 4] >> (8 * (byte % 4))) & 0xffu) ^ (weights.signed_codes ? 0x88u : 0u);
-              bits[2 * byte] = staged_weight<B>(scale * float(code & 15u), bias).storageBits();
-              bits[2 * byte + 1] = staged_weight<B>(sixteenth * float(code & 0xf0u), bias).storageBits();
-            }
-          } else if (weights.signed_codes) {
-            let adjusted = round_to<B>(bias + round_to<B>(scale * 128.0));
-            [unroll]
-            for (uint byte = 0; byte < 16; byte++) {
-              let code = int(b_words[i][byte / 4] << (24 - 8 * (byte % 4))) >> 24;
-              bits[byte] = staged_weight<B>(scale * float(code), adjusted).storageBits();
-            }
-          } else {
-            [unroll]
-            for (uint byte = 0; byte < 16; byte++) {
-              let code = (b_words[i][byte / 4] >> (8 * (byte % 4))) & 0xffu;
-              bits[byte] = staged_weight<B>(scale * float(code), bias).storageBits();
+          [unroll]
+          for (uint byte = 0; byte < 16; byte++) {
+            let code = (b_words[i][byte / 4] >> (8 * (byte % 4))) & 0xffu;
+            B values[2];
+            dequantize_code<B>(code, scale, bias, weights.u4, weights.signed_codes, values);
+            if (!weights.u4) {
+              bits[byte] = values[0].storageBits();
+            } else if (byte < 8) {
+              bits[2 * byte] = values[0].storageBits();
+              bits[2 * byte + 1] = values[1].storageBits();
             }
           }
           [unroll]

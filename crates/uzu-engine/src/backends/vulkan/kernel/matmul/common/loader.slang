@@ -107,38 +107,26 @@ public float round_to<U : IModelFloat>(float value) {
   return U.fromFloat(value).toFloat();
 }
 
-// The pack_factor codes of one pack at w[w_offset] times scale plus bias, in U arithmetic, into S from w_local. Signed
-// codes are stored with the top bit flipped.
-public void dequantize<U : IModelFloat, S : IThreadgroupStorage<U>>(
-  Ptr<uint8_t, Access.Read> w,
-  uint w_offset,
+// The codes of code byte `byte` times scale plus bias in U arithmetic: two U4 values, the low nibble first and the high
+// one read in place, 16 times its code, against the scale over 16; or one U8 value. Signed codes are stored with the top
+// bit flipped.
+public void dequantize_code<U : IModelFloat>(
+  uint byte,
   float scale,
   float bias,
-  uint w_local,
-  int pack_factor,
-  int bits,
+  bool u4,
   bool signed_codes,
+  out U values[2],
 ) {
-  if (bits == 4) {
-    let s1 = round_to<U>(scale / 16.0);
-    for (int i = 0; i < pack_factor / 2; i++) {
-      let word = uint(w[w_offset + uint(i)]) ^ (signed_codes ? 0x88u : 0u);
-      S.write(w_local + uint(2 * i), staged_weight<U>(scale * float(word & 15u), bias));
-      S.write(w_local + uint(2 * i + 1), staged_weight<U>(s1 * float(word & 0xf0u), bias));
-    }
+  values[1] = U.fromFloat(0.0);
+  if (u4) {
+    let code = byte ^ (signed_codes ? 0x88u : 0u);
+    values[0] = staged_weight<U>(scale * float(code & 15u), bias);
+    values[1] = staged_weight<U>(round_to<U>(scale / 16.0) * float(code & 0xf0u), bias);
+  } else if (signed_codes) {
+    values[0] = staged_weight<U>(scale * float(int(byte << 24) >> 24), round_to<U>(bias + round_to<U>(scale * 128.0)));
   } else {
-    if (signed_codes) {
-      let adjusted_bias = round_to<U>(bias + round_to<U>(scale * 128.0));
-      for (int i = 0; i < pack_factor; i++) {
-        let signed_weight = (int(w[w_offset + uint(i)]) << 24) >> 24;
-        S.write(w_local + uint(i), staged_weight<U>(scale * float(signed_weight), adjusted_bias));
-      }
-    } else {
-      for (int i = 0; i < pack_factor; i++) {
-        let code = int(w[w_offset + uint(i)]);
-        S.write(w_local + uint(i), staged_weight<U>(scale * float(code), bias));
-      }
-    }
+    values[0] = staged_weight<U>(scale * float(byte), bias);
   }
 }
 
