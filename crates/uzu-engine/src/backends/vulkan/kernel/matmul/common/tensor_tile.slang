@@ -385,13 +385,8 @@ public interface IInt8Shared<let MMA_K : int> {
   static void write(uint word, uint4 value);
   static CoopMat<int8_t, MemoryScope.Subgroup, 16, MMA_K, CoopMatMatrixUse.MatrixA> load_a(uint word, uint stride);
   static CoopMat<int8_t, MemoryScope.Subgroup, MMA_K, 16, CoopMatMatrixUse.MatrixB> load_b(uint word, uint stride);
-  static void store(
-    CoopMat<int, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value,
-    uint word,
-    uint stride
-  );
-  static void store_float(
-    CoopMat<float, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value,
+  static void store<T : ICoopElement>(
+    CoopMat<T, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value,
     uint word,
     uint stride
   );
@@ -707,7 +702,7 @@ public struct Int8Gemm<
         [unroll]
         for (int j = 0; j < TN; j++) {
           GroupMemoryBarrierWithGroupSync();
-          S.store_float(folded[i][j], subgroup * 64, 4);
+          S.store(folded[i][j], subgroup * 64, 4);
           GroupMemoryBarrierWithGroupSync();
           let low = S.read(subgroup * 64 + lane * 2);
           let high = S.read(subgroup * 64 + lane * 2 + 1);

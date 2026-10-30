@@ -206,33 +206,26 @@ public func GemmTensor<B: IModelFloat16, D: IModelFloat>(
 [[SpecializationConstant]] public const uint __dsl_GemmInt8Nv_shared_words = 1;
 
 // GemmInt8's (ROLE 0) or GemmInt8Nv's (ROLE 1) two stages, and GemmInt8's per-subgroup fold scratch.
-public struct GemmInt8Shared<let ROLE : int, let MMA_K : int> : IInt8Shared<MMA_K> {
-  static groupshared uint4 data[ROLE == 0 ? __dsl_GemmInt8_shared_words : (ROLE == 1 ? __dsl_GemmInt8Nv_shared_words : __dsl_GemmInt8K16_shared_words)];
+public struct GemmInt8Shared<let ROLE : int> : IInt8Shared<32> {
+  static groupshared uint4 data[ROLE == 0 ? __dsl_GemmInt8_shared_words : __dsl_GemmInt8Nv_shared_words];
   public static uint4 read(uint word) { return data[word]; }
   public static void write(uint word, uint4 value) { data[word] = value; }
-  public static CoopMat<int8_t, MemoryScope.Subgroup, 16, MMA_K, CoopMatMatrixUse.MatrixA> load_a(uint word, uint stride) {
-    return CoopMat<int8_t, MemoryScope.Subgroup, 16, MMA_K, CoopMatMatrixUse.MatrixA>.Load<CoopMatMatrixLayout.RowMajor, uint4>(
+  public static CoopMat<int8_t, MemoryScope.Subgroup, 16, 32, CoopMatMatrixUse.MatrixA> load_a(uint word, uint stride) {
+    return CoopMat<int8_t, MemoryScope.Subgroup, 16, 32, CoopMatMatrixUse.MatrixA>.Load<CoopMatMatrixLayout.RowMajor, uint4>(
       data, word, stride
     );
   }
-  public static CoopMat<int8_t, MemoryScope.Subgroup, MMA_K, 16, CoopMatMatrixUse.MatrixB> load_b(uint word, uint stride) {
-    return CoopMat<int8_t, MemoryScope.Subgroup, MMA_K, 16, CoopMatMatrixUse.MatrixB>.Load<
+  public static CoopMat<int8_t, MemoryScope.Subgroup, 32, 16, CoopMatMatrixUse.MatrixB> load_b(uint word, uint stride) {
+    return CoopMat<int8_t, MemoryScope.Subgroup, 32, 16, CoopMatMatrixUse.MatrixB>.Load<
       CoopMatMatrixLayout.ColumnMajor,
       uint4
     >(data, word, stride);
   }
-  public static void store(
-    CoopMat<int, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value,
+  public static void store<T : ICoopElement>(
+    CoopMat<T, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value,
     uint word,
     uint stride
-) {
-    value.Store<CoopMatMatrixLayout.RowMajor, uint4>(data, word, stride);
-  }
-  public static void store_float(
-    CoopMat<float, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value,
-    uint word,
-    uint stride
-) {
+  ) {
     value.Store<CoopMatMatrixLayout.RowMajor, uint4>(data, word, stride);
   }
 }
@@ -240,7 +233,8 @@ public struct GemmInt8Shared<let ROLE : int, let MMA_K : int> : IInt8Shared<MMA_
 // Byte operands and INT32 results keep matrix accesses in their native component types. Output transforms reuse the
 // byte staging after the operands are consumed; matrix products use the following INT32 scratch.
 public struct GemmInt8K16Shared : IInt8Shared<16> {
-  static const uint STAGES = 2 * (__dsl_GemmInt8K16_ROW_BLOCK + 64) * 5;
+  // Int8Gemm's two 64-deep stages of ROW_BLOCK + 64 rows, 64 / 16 + 1 words each.
+  static const uint STAGES = 2 * (__dsl_GemmInt8K16_ROW_BLOCK + 64) * (64 / 16 + 1);
   static groupshared int8_t data[16 * STAGES];
   static groupshared int scratch[4 * (__dsl_GemmInt8K16_shared_words - STAGES)];
   public static uint4 read(uint word) {
@@ -265,10 +259,7 @@ public struct GemmInt8K16Shared : IInt8Shared<16> {
   public static CoopMat<int8_t, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixB> load_b(uint word, uint stride) {
     return CoopMat<int8_t, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixB>.Load<CoopMatMatrixLayout.ColumnMajor, int8_t>(data, 16 * word, 16 * stride);
   }
-  public static void store(CoopMat<int, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value, uint word, uint stride) {
-    value.Store<CoopMatMatrixLayout.RowMajor, int>(scratch, 4 * (word - STAGES), 4 * stride);
-  }
-  public static void store_float(CoopMat<float, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value, uint word, uint stride) {
+  public static void store<T : ICoopElement>(CoopMat<T, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator> value, uint word, uint stride) {
     value.Store<CoopMatMatrixLayout.RowMajor, int>(scratch, 4 * (word - STAGES), 4 * stride);
   }
 }
@@ -403,7 +394,7 @@ public func GemmInt8<B: IModelFloat, D: IModelFloat>(
   [[Specialize]] uint NUM_SIMDGROUPS,
   [[Specialize]] bool has_rht,
 ) {
-  gemm_int8<32, GemmInt8Shared<0, 32>, B, D, false>(
+  gemm_int8<32, GemmInt8Shared<0>, B, D, false>(
     b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, partials, k, n, m, scale_output_stride,
     scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, uint2(column_tile, row_tile),
     simd_group * 32 + simd_lane, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes, group_size,
@@ -532,7 +523,7 @@ public func GemmInt8Nv<B: IModelFloat, D: IModelFloat>(
   let column_tiles = (n - 1) / 64 + 1;
   let row_tiles = (m - 1) / ROW_BLOCK + 1;
   let linear_tile = column_tile + row_tile * column_tiles;
-  gemm_int8<32, GemmInt8Shared<1, 32>, B, D, true>(
+  gemm_int8<32, GemmInt8Shared<1>, B, D, true>(
     b, scales, biases, zero_points, a, a_scales, a_group_sums, d, bias, partials, k, n, m, scale_output_stride,
     scale_group_stride, zero_point_output_stride, zero_point_group_stride, ab_scale, soft_cap, uint2(linear_tile / row_tiles, linear_tile % row_tiles),
     simd_group * 32 + simd_lane, has_scale, has_bias, has_soft_cap, b_prologue, quantization_mode, signed_codes, group_size,
