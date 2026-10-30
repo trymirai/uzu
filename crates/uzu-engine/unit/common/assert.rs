@@ -37,7 +37,7 @@ pub fn assert_eq_float<T: DataTypeRepr + Float + Display>(
     }
 }
 
-pub fn check_tolerance(
+fn check_tolerance(
     expected: f32,
     actual: f32,
     rel_tol: f64,

@@ -1,5 +1,3 @@
-use itertools::iproduct;
-
 use super::VkGemvTile;
 use crate::{
     backends::{
@@ -23,20 +21,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// The most plans calibration times for one problem.
-const MAX_CANDIDATES: usize = 24;
-/// The cooperative core's existing tilings, then the scalar core's.
-const TILINGS: [GemmTiling; 9] = [
-    GemmTiling::Tile16x64x64_Simdgroups1x4x2,
-    GemmTiling::Tile32x64x64_Simdgroups1x4x2,
-    GemmTiling::Tile64x128x32_Simdgroups2x4x1,
-    GemmTiling::Tile128x128x32_Simdgroups2x4x1,
-    GemmTiling::Tile8x32x32_Simdgroups1x1,
-    GemmTiling::Tile32x32x32_Simdgroups2x2,
-    GemmTiling::Tile64x32x32_Simdgroups2x2,
-    GemmTiling::Tile64x64x16_Simdgroups2x2,
-    GemmTiling::Tile64x64x32_Simdgroups2x2,
-];
 /// The INT8 GEMM cores by the device matrices each runs on: GemmInt8, GemmInt8K16 and GemmInt8Nv.
 const INT8_CORES: [Capability; 3] = [
     Capability::INT8_TENSOR_CORES_K32,
@@ -45,9 +29,8 @@ const INT8_CORES: [Capability; 3] = [
 ];
 /// The fold metadata arrays every Int8Gemm core declares in shared memory.
 const INT8_FOLD_BYTES: u32 = 4 * (2 * INT8_FOLD_ENTRIES + INT8_FOLD_PADDING);
-/// One dispatch family of the existing matmul kernels with its specialization parameters: the committed baseline or an
-/// explicit calibration candidate, which the one encoder runs alike. A plan's cost is all of its dispatches: split K's
-/// reduction phase and the output transform the encoder appends. The loaded weight layout and the activation format
+/// One dispatch family of the existing matmul kernels with its specialization parameters. A plan's cost is all of its
+/// dispatches: split K's reduction phase and the output transform the encoder appends. The loaded weight layout and the activation format
 /// are the problem's, never the plan's. Legality and the baseline read [`VkDeviceFacts`], never the device's identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VkMatmulPlan {
@@ -149,7 +132,6 @@ impl VkMatmulPlan {
         };
         // The committed heuristic, not an occupancy model: GemmInt8Nv's 16-row tile stages 128 values deep for grids of
         // no more tiles than units, which split K anyway; it counts three such workgroups a unit against five 64 deep.
-        // Other depths and splits stay legal candidates, also without a unit count.
         let tiles = u64::from(n.div_ceil(64)) * u64::from(m.div_ceil(row_block));
         let deep = element_fold
             && row_block == 16
@@ -361,94 +343,6 @@ impl VkMatmulPlan {
             Self::GemmTensor(tiling) | Self::Gemm(tiling) => {
                 [n.div_ceil(tiling.block_n()), m.div_ceil(tiling.block_m()), 1]
             },
-        }
-    }
-
-    /// The baseline, then the other legal plans of the activation format's families, taken from each family in turn up
-    /// to MAX_CANDIDATES; every tuple left out comes back with its reason: illegal, a bounded-search omission of row
-    /// tiles past the problem's rows, or past the cap. A8 searches GemvInt8's tiles and every INT8 GEMM core the
-    /// device's matrices allow, whatever the committed routing prefers; full precision searches Gemv's existing tiles,
-    /// Gemm's tilings and GemvInt8 on the A it quantizes. Only this explicit search allocates.
-    pub fn candidates(
-        baseline: Self,
-        shape: &MatmulShape,
-        b_layout: GemmBLayout,
-        data_types: [DataType; 3],
-        device: VkDeviceFacts<'_>,
-    ) -> (Vec<Self>, Vec<(Self, &'static str)>) {
-        let (m, n, k) = (shape.m, shape.n, shape.k);
-        // The bounded search omits tiles of more rows than the next power of two of the problem's, not measured slower.
-        let omitted = |rows: u32, least: u32| rows > m.checked_next_power_of_two().unwrap_or(u32::MAX).max(least);
-        let grid = iproduct!([1, 2, 4, 8, 16], [1, 2, 4, 8]);
-        let gemv_int8 = grid
-            .map(|(rows, input_rows)| {
-                let plan = Self::GemvInt8 {
-                    rows,
-                    input_rows,
-                };
-                (plan, omitted(input_rows, 1))
-            })
-            .collect::<Vec<_>>();
-        let families: Vec<Vec<(Self, bool)>> = if shape.a == ActivationFormat::Bf16 {
-            let gemv: Vec<VkGemvTile> = match (shape.is_quant(), Self::gemm_rows(shape)) {
-                (false, true) => vec![VkGemvTile::dense(n, k), VkGemvTile::reader()],
-                (false, false) => vec![VkGemvTile::reader()],
-                (true, _) => quantized_gemv_tiles(shape, b_layout, data_types).collect(),
-            };
-            let (tensor, scalar) = TILINGS.split_at(4);
-            let families = vec![
-                gemv.into_iter().map(|tile| (Self::Gemv(tile), false)).collect(),
-                tensor.iter().map(|&tiling| (Self::GemmTensor(tiling), false)).collect(),
-                scalar.iter().map(|&tiling| (Self::Gemm(tiling), false)).collect(),
-            ];
-            families.into_iter().chain([gemv_int8]).collect()
-        } else {
-            let gemm = INT8_CORES.map(|matrices| {
-                let grid = iproduct!([16, 32, 64], [4, 8], [64, 128], [1, 2, 4, 8]);
-                grid.map(|(row_block, simdgroups, stage_depth, splits)| {
-                    let plan = Self::GemmInt8 {
-                        matrices,
-                        row_block,
-                        simdgroups,
-                        stage_depth,
-                        splits,
-                    };
-                    (plan, omitted(row_block, 16))
-                })
-                .collect::<Vec<_>>()
-            });
-            [gemv_int8].into_iter().chain(gemm).collect()
-        };
-        let mut excluded = Vec::new();
-        let mut candidates = Vec::new();
-        match baseline.check(shape, b_layout, data_types, device) {
-            Ok(()) => candidates.push(baseline),
-            Err(reason) => excluded.push((baseline, reason)),
-        }
-        let mut legal = Vec::new();
-        for family in families {
-            let mut plans = Vec::new();
-            for (plan, omitted) in family.into_iter().filter(|&(plan, _)| plan != baseline) {
-                match plan.check(shape, b_layout, data_types, device) {
-                    Err(reason) => excluded.push((plan, reason)),
-                    Ok(()) if omitted => excluded.push((plan, "bounded search: a row tile past the problem's rows")),
-                    Ok(()) => plans.push(plan),
-                }
-            }
-            legal.push(plans.into_iter());
-        }
-        // A plan from each family in turn, so the cap leaves every legal family represented.
-        loop {
-            let round = legal.iter_mut().filter_map(Iterator::next).collect::<Vec<_>>();
-            if round.is_empty() {
-                return (candidates, excluded);
-            }
-            for plan in round {
-                match candidates.len() < MAX_CANDIDATES {
-                    true => candidates.push(plan),
-                    false => excluded.push((plan, "past the candidate cap")),
-                }
-            }
         }
     }
 

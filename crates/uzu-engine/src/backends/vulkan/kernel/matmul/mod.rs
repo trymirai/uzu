@@ -1,6 +1,3 @@
-#[cfg(test)]
-#[path = "../../../../../unit/backends/vulkan/kernel/matmul/calibration_bench.rs"]
-mod calibration_bench;
 mod vk_gemv_tile;
 mod vk_matmul_kernel;
 mod vk_matmul_plan;

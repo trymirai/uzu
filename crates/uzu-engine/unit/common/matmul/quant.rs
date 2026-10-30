@@ -540,7 +540,7 @@ pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
 
 /// Buffers of `input` with its weights laid out by the backend's `optimize_weights_layout` where it takes A8, as a
 /// loaded linear's.
-pub fn production_quant_buffers<B: Backend, T: DataTypeRepr + Float>(
+fn production_quant_buffers<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     matmul: &BackendMatmul<B>,
     input: &QuantInput<T>,

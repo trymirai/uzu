@@ -189,20 +189,6 @@ impl MatmulKernel for VkMatmulKernel {
 }
 
 impl VkMatmulKernel {
-    /// The default for `shape`, then the plans calibration may time from weights in `b_layout`: the default first where
-    /// it is legal, then the others [`VkMatmulPlan::candidates`] allows, with every tuple left out and its reason.
-    pub fn candidates(
-        &self,
-        shape: &MatmulShape,
-        b_layout: GemmBLayout,
-        context: &VkContext,
-    ) -> Result<(VkMatmulPlan, Vec<VkMatmulPlan>, Vec<(VkMatmulPlan, &'static str)>), Error> {
-        let device = VkDeviceFacts::new(context.physical_device());
-        let baseline = self.baseline(shape, b_layout, context)?;
-        let (plans, excluded) = VkMatmulPlan::candidates(baseline, shape, b_layout, self.data_types(), device);
-        Ok((baseline, plans, excluded))
-    }
-
     /// Whether the device's FP16 cooperative products keep FP32 precision: rows [128.125, -128.25, 0, ...] of A times
     /// rows [128.125, 128, 0, ...] of transposed B sum to exactly 1/64 from FP32 products, to 0 from FP16-rounded ones.
     pub fn fp16_products_exact(context: &VkContext) -> Result<bool, Error> {
@@ -241,9 +227,8 @@ impl VkMatmulKernel {
     }
 
     /// Encodes the arguments by `plan`, or without one by the default, checked against them before any pipeline is
-    /// created or command recorded. Inference and calibration share this encoder. Trellis B has a single configuration
-    /// and takes no plan.
-    pub fn encode_plan(
+    /// created or command recorded. Trellis B has a single configuration and ignores the plan.
+    fn encode_plan(
         &mut self,
         arguments: MatmulArguments<
             '_,
@@ -289,9 +274,6 @@ impl VkMatmulKernel {
             else {
                 return Err(precondition("TrellisGemv", "Trellis A with Trellis B"));
             };
-            if plan.is_some() {
-                return Err(precondition("TrellisGemv", "no plan: TrellisGemv has a single configuration"));
-            }
             if output_type != DataType::BF16 {
                 return Err(VkKernelError::KernelVariant {
                     kernel: "TrellisGemv",
