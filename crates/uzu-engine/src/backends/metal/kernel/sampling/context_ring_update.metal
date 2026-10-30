@@ -10,9 +10,12 @@ PUBLIC KERNEL(ContextRingUpdate)(
     const device uint32_t* input,
     device uint32_t* context_ring,
     const constant uint32_t& suffix_repetition_length,
-    const constant uint32_t& input_length,
     uint32_t thread_index THREADS(THREADGROUP_SIZE)
 ) {
+  // `input` is `[len; tokens...]`.
+  const uint32_t input_length = input[0];
+  const device uint32_t* tokens = input + 1;
+
   const RingParams ring = *reinterpret_cast<device RingParams*>(context_ring);
 
   device uint32_t* ring_tokens = context_ring + 2;
@@ -20,7 +23,7 @@ PUBLIC KERNEL(ContextRingUpdate)(
 
   for (uint32_t input_index = write_start + thread_index; input_index < input_length; input_index += THREADGROUP_SIZE) {
     const uint32_t slot = (ring.ring_offset + ring.ring_length + input_index) % suffix_repetition_length;
-    ring_tokens[slot] = input[input_index];
+    ring_tokens[slot] = tokens[input_index];
   }
 
   threadgroup_barrier(mem_flags::mem_none);

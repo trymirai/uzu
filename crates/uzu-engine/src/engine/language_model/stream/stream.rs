@@ -10,7 +10,7 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context,
         CpuBuffer as _, DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer, capture_matcher::CAPTURE_MATCHER,
         kernel::ContextRingUpdateKernel,
     },
@@ -310,11 +310,18 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             }
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
+                let ring_update_input = command_buffer
+                    .allocate_constant_from_slice(
+                        &once(input_chunk.len() as u32)
+                            .chain(input_chunk.iter().map(|token_id| *token_id as u32))
+                            .collect::<Box<[u32]>>(),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?;
+
                 self.model.context_ring_update.encode(
-                    &token_ids,
+                    &ring_update_input,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
-                    input_chunk.len() as u32,
                     &mut command_buffer,
                 );
             }
@@ -616,11 +623,22 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             }
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
+                let mut ring_update_input = self
+                    .model
+                    .engine
+                    .context
+                    .create_buffer_gpu(size_for_shape(&[1 + batch_dim.size()], DataType::U32))
+                    .map_err(LanguageModelStreamError::Backend)?;
+                let length_prefix = command_buffer
+                    .allocate_constant_from_slice(&[batch_dim.size()])
+                    .map_err(LanguageModelStreamError::Backend)?;
+                let word_bytes = DataType::U32.size_in_bytes();
+                command_buffer.encode_copy(&length_prefix, ring_update_input.subrange_mut(..word_bytes));
+                command_buffer.encode_copy(token_ids, ring_update_input.subrange_mut(word_bytes..));
                 self.model.context_ring_update.encode(
-                    token_ids,
+                    &ring_update_input,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
-                    batch_dim.size(),
                     &mut command_buffer,
                 );
             }
@@ -682,6 +700,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     self.model_state.speculator_state.as_mut().unwrap(),
                     resolved.hidden_features.as_ref().unwrap().iter(),
                     &accepted_token_indices_buffer,
+                    // TODO: Get this from accepted indices buffer
                     len,
                     &mut command_buffer,
                 )?;
@@ -691,7 +710,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 // TODO: This can be provided by a `verify_tree` kernel.
                 let accepted_input_token_ids_const = command_buffer
                     .allocate_constant_from_slice(
-                        &accepted_input_token_ids.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
+                        &once(accepted_token_indices.len() as u32)
+                            .chain(accepted_input_token_ids.iter().map(|token_id| *token_id as u32))
+                            .collect::<Box<[u32]>>(),
                     )
                     .map_err(LanguageModelStreamError::Backend)?;
 
@@ -699,8 +720,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     &accepted_input_token_ids_const,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
-                    // TODO: This is easy to replace if we have a `accepted_token_indices` buffer as `[len; data]`
-                    accepted_token_indices.len() as u32,
                     &mut command_buffer,
                 );
             }

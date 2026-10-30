@@ -7,9 +7,11 @@ pub fn context_ring_update(
     input: *const u32,
     context_ring: *mut u32,
     suffix_repetition_length: u32,
-    input_length: u32,
 ) {
     unsafe {
+        // `input` is `[len; tokens...]`.
+        let input_length = *input;
+        let input = input.add(1);
         let ring = &mut *context_ring.cast::<RingParams>();
         let ring_tokens = context_ring.add(2);
 

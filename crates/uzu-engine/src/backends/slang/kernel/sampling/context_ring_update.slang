@@ -5,7 +5,6 @@ import definitions;
   StructuredBuffer<uint> input,
   RWStructuredBuffer<uint> context_ring,
   uint suffix_repetition_length,
-  uint input_length,
   [[Threads("256")]] uint thread_index,
 ) {
   // TODO
