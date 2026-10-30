@@ -421,18 +421,25 @@ fn scalar_tiling(
     group: Option<u32>,
 ) -> GemmTiling {
     use GemmTiling::*;
+    // Metal's `simdgroup_quant_tile` thresholds (metal gemm/policy.rs), with its Apple8-and-older partial-M rule.
+    const SIMDGROUP_QUANT_SMALL_M_MAX: u32 = 32;
+    const SIMDGROUP_QUANT_NARROW_BLOCK_M: u32 = 8;
+    const SIMDGROUP_QUANT_LARGE_M_MIN: u32 = 64;
+    const SIMDGROUP_QUANT_WIDE_N_MIN: u32 = 6144;
     let tiling = match group {
         None if 2_u32.saturating_mul(m.max(n)) > k => Tile64x64x16_Simdgroups2x2,
         None => Tile64x32x32_Simdgroups2x2,
         Some(group) if group < 32 => Tile64x64x16_Simdgroups2x2,
-        Some(_) if m < 32 => {
-            if m <= 8 || m.is_multiple_of(8) {
+        Some(_) if m < SIMDGROUP_QUANT_SMALL_M_MAX => {
+            if m <= SIMDGROUP_QUANT_NARROW_BLOCK_M || m.is_multiple_of(SIMDGROUP_QUANT_NARROW_BLOCK_M) {
                 Tile8x32x32_Simdgroups1x1
             } else {
                 Tile32x32x32_Simdgroups2x2
             }
         },
-        Some(_) if m >= 64 && n >= 6144 && n.is_multiple_of(64) => Tile64x64x32_Simdgroups2x2,
+        Some(_) if m >= SIMDGROUP_QUANT_LARGE_M_MIN && n >= SIMDGROUP_QUANT_WIDE_N_MIN && n.is_multiple_of(64) => {
+            Tile64x64x32_Simdgroups2x2
+        },
         Some(_) => Tile32x32x32_Simdgroups2x2,
     };
     match group {
