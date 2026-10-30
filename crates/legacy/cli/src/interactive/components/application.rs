@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use iocraft::prelude::*;
 use shoji::types::{
     basic::{ReasoningEffort, SamplingParameters},
-    model::Model,
+    model::{Model, ModelSpecialization},
 };
 use uzu::{
     engine::Engine,
@@ -253,6 +253,15 @@ pub fn Application(
                 return;
             };
             sessions::classification::run_session(state, session, text).await;
+        } else if model.specializations.contains(&ModelSpecialization::Decision {}) {
+            let has_running_session = state.read().session_state().is_some_and(SessionState::is_busy);
+            if has_running_session {
+                return;
+            }
+            let Some(session) = sessions::decision::ensure_session(state, &model).await else {
+                return;
+            };
+            sessions::decision::run_session(state, session, text).await;
         } else if model.is_text_to_speech_capable() {
             let has_running_session = state.read().session_state().is_some_and(SessionState::is_busy);
             if has_running_session {
@@ -314,6 +323,10 @@ pub fn Application(
                 }
                 state.flow = None;
             }
+            return;
+        }
+
+        if is_escape && sessions::decision::leave_question_mode(&mut state) {
             return;
         }
 

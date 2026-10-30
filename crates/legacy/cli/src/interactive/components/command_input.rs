@@ -1,11 +1,17 @@
 use iocraft::prelude::*;
+use shoji::types::model::ModelSpecialization;
 use unicode_width::UnicodeWidthStr;
 use uzu::storage::DownloadPhase;
 
 use crate::interactive::{
     components::{ApplicationState, InputType, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
     flows::Command,
-    helpers::{HINT_COMMANDS, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, SYMBOL_COMMAND, SYMBOL_INPUT},
+    helpers::{
+        HINT_COMMANDS, HINT_DECISION_QUESTION_EXAMPLES, HINT_DECISION_QUESTION_NOTES, HINT_DECISION_QUESTION_TITLE,
+        HINT_DECISION_STATE_EXAMPLES, HINT_DECISION_STATE_NOTES, HINT_DECISION_STATE_TITLE, HINT_SEND,
+        HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, HintExample, SYMBOL_COMMAND, SYMBOL_INPUT,
+    },
+    sessions::decision::is_question_mode,
 };
 
 const SAFE_PADDING: u16 = 1;
@@ -113,13 +119,35 @@ fn hint_component(
         },
     }
     hints.push(HINT_COMMANDS.to_string());
+    let is_decision_model = state
+        .read()
+        .model_state
+        .as_ref()
+        .is_some_and(|model_state| model_state.model.specializations.contains(&ModelSpecialization::Decision {}));
 
     if commands.is_empty() {
         return element! {
-            Text(
-                content: hints.join("\n"),
-                color: state.read().theme().subtitle_color,
-            )
+            View(flex_direction: FlexDirection::Column) {
+                Text(
+                    content: hints.join("\n"),
+                    color: state.read().theme().subtitle_color,
+                )
+                #(is_decision_model.then(|| if is_question_mode(&state.read()) {
+                    decision_guide_component(
+                        state,
+                        HINT_DECISION_QUESTION_TITLE,
+                        HINT_DECISION_QUESTION_EXAMPLES,
+                        HINT_DECISION_QUESTION_NOTES,
+                    )
+                } else {
+                    decision_guide_component(
+                        state,
+                        HINT_DECISION_STATE_TITLE,
+                        HINT_DECISION_STATE_EXAMPLES,
+                        HINT_DECISION_STATE_NOTES,
+                    )
+                }))
+            }
         }
         .into();
     }
@@ -151,6 +179,56 @@ fn hint_component(
                 }
             },
         )
+    }
+    .into()
+}
+
+fn decision_guide_component(
+    state: State<ApplicationState>,
+    title: &'static str,
+    examples: &'static [HintExample],
+    notes: &'static [&'static str],
+) -> AnyElement<'static> {
+    let theme = state.read().theme().clone();
+    let label_width = examples.iter().map(|example| UnicodeWidthStr::width(example.label) as u16).max().unwrap_or(0);
+    let lines_width = examples
+        .iter()
+        .flat_map(|example| example.lines.iter())
+        .map(|line| UnicodeWidthStr::width(*line) as u16)
+        .max()
+        .unwrap_or(0);
+    let rows: Vec<AnyElement<'static>> = examples
+        .iter()
+        .map(|example| {
+            element! {
+                View(flex_direction: FlexDirection::Row, column_gap: theme.padding_wide()) {
+                    View(width: label_width) {
+                        Text(content: example.label, color: theme.subtitle_color)
+                    }
+                    View(width: lines_width) {
+                        Text(content: example.lines.join("\n"))
+                    }
+                    Text(content: example.note, color: theme.subtitle_color)
+                }
+            }
+            .into()
+        })
+        .collect();
+
+    element! {
+        View(
+            width: 100pct,
+            flex_direction: FlexDirection::Column,
+            row_gap: theme.padding(),
+            border_style: BorderStyle::Single,
+            border_color: theme.subtitle_color,
+            padding_left: theme.padding(),
+            padding_right: theme.padding(),
+        ) {
+            Text(content: title, weight: Weight::Bold)
+            #(rows.into_iter())
+            Text(content: notes.join("\n"), color: theme.subtitle_color)
+        }
     }
     .into()
 }
