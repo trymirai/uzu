@@ -569,7 +569,13 @@ public struct Int8Gemm<
                 let group = (end - 1) / weights.group_size;
                 if (index < uint(BM)) {
                   let input = min(block_row + index, m - 1);
-                  let a_scale = activations.scales[(input * k + end - 1) / ACTIVATION_QUANTIZATION_TILE];
+                  // An odd stage's 64-value group shares its 128-value scale group with the previous stage's slot 1.
+                  float a_scale;
+                  if (BM == 64 && BK == 64 && weights.group_size == 64 && (stage & 1u) != 0) {
+                    a_scale = int8_fold_rows[128 + index];
+                  } else {
+                    a_scale = activations.scales[(input * k + end - 1) / ACTIVATION_QUANTIZATION_TILE];
+                  }
                   let group_sum = scale_bias ? group_sums[input * (k / weights.group_size) + group] : 0;
                   value = float2(a_scale, a_scale * float(group_sum));
                 } else {
