@@ -22,7 +22,8 @@ pub fn confidence_head_tree_attention(
     for query in 0..rows {
         let relation = |key: usize| unsafe { *relations.add(query * rows + key) };
         for head in 0..heads {
-            let keys = (0..rows).filter(|&key| relation(query) != ABSENT && relation(key) != ABSENT).collect::<Vec<_>>();
+            let keys =
+                (0..rows).filter(|&key| relation(query) != ABSENT && relation(key) != ABSENT).collect::<Vec<_>>();
             let scores = keys
                 .iter()
                 .map(|&key| {

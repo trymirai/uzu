@@ -62,13 +62,16 @@ pub fn confidence_head_edges(
             continue;
         }
         let row = unsafe { *slot_rows.add(slot) } as usize;
-        let node =
-            (0..width).map(|unit| value(nodes, slot * width + unit) + shift(node_shifts, row * width + unit)).collect::<Vec<_>>();
+        let node = (0..width)
+            .map(|unit| value(nodes, slot * width + unit) + shift(node_shifts, row * width + unit))
+            .collect::<Vec<_>>();
         let raw = dense(&weights(alpha_beta_weights, 2 * width), &weights(alpha_beta_biases, 2), &node);
-        let [alpha, beta] = [raw[0], raw[1]].map(|value| (value.max(0.0) + (-value.abs()).exp().ln_1p()).min(params.logit_cap));
+        let [alpha, beta] =
+            [raw[0], raw[1]].map(|value| (value.max(0.0) + (-value.abs()).exp().ln_1p()).min(params.logit_cap));
         let mut logits = (0..candidates)
             .map(|index| unsafe {
-                alpha * *scores.add(2 * slot * candidates + index) + beta * *scores.add((2 * slot + 1) * candidates + index)
+                alpha * *scores.add(2 * slot * candidates + index)
+                    + beta * *scores.add((2 * slot + 1) * candidates + index)
             })
             .collect::<Vec<_>>();
         let entries = (slot * children..(slot + 1) * children).collect::<Vec<_>>();
@@ -76,7 +79,9 @@ pub fn confidence_head_edges(
         for &entry in &entries {
             let token = unsafe { *frontier.add(FrontierIdx::TokenId as usize * capacity + entry) } as usize;
             let tokens = (0..width)
-                .map(|unit| value(token_features, token * width + unit) + shift(child_shifts, (1 + entry) * width + unit))
+                .map(|unit| {
+                    value(token_features, token * width + unit) + shift(child_shifts, (1 + entry) * width + unit)
+                })
                 .collect::<Vec<_>>();
             let numbers = tensor(unsafe { child_numbers.add(entry * SLOT_NUMBERS) }, SLOT_NUMBERS);
             let input = node
@@ -86,14 +91,31 @@ pub fn confidence_head_edges(
                 .chain(node.iter().zip(&tokens).map(|(node, token)| node * token))
                 .chain(numbers.iter().copied())
                 .collect::<Vec<_>>();
-            let input = layer_norm(&input, &weights(input_norm_scales, inputs), &weights(input_norm_biases, inputs), params.epsilon);
+            let input = layer_norm(
+                &input,
+                &weights(input_norm_scales, inputs),
+                &weights(input_norm_biases, inputs),
+                params.epsilon,
+            );
             let state = dense(&weights(entry_weights, width * inputs), &weights(entry_biases, width), &input);
-            let block = layer_norm(&state, &weights(block_norm_scales, width), &weights(block_norm_biases, width), params.epsilon);
-            let raised =
-                dense(&weights(up_weights, hidden * width), &weights(up_biases, hidden), &block).into_iter().map(silu).collect::<Vec<_>>();
+            let block = layer_norm(
+                &state,
+                &weights(block_norm_scales, width),
+                &weights(block_norm_biases, width),
+                params.epsilon,
+            );
+            let raised = dense(&weights(up_weights, hidden * width), &weights(up_biases, hidden), &block)
+                .into_iter()
+                .map(silu)
+                .collect::<Vec<_>>();
             let lowered = dense(&weights(down_weights, width * hidden), &weights(down_biases, width), &raised);
             let state = state.iter().zip(lowered).map(|(state, lowered)| state + lowered).collect::<Vec<_>>();
-            let state = layer_norm(&state, &weights(final_norm_scales, width), &weights(final_norm_biases, width), params.epsilon);
+            let state = layer_norm(
+                &state,
+                &weights(final_norm_scales, width),
+                &weights(final_norm_biases, width),
+                params.epsilon,
+            );
             let pool = unsafe { *child_pools.add(entry) } as usize;
             logits[pool] += dense(&weights(output_weights, width), &weights(output_biases, 1), &state)[0];
             child_rows.push((pool, tokens.into_iter().chain(numbers.iter().copied()).collect::<Vec<_>>()));
@@ -108,7 +130,9 @@ pub fn confidence_head_edges(
                 let token = unsafe { *field(FrontierIdx::TokenId) };
                 for other in 0..slots {
                     let tree = |index: TreeIdx| unsafe { packed_tree.add(index as usize * slots + other) };
-                    if unsafe { *tree(TreeIdx::ParentSlot) } == slot as u32 && unsafe { *tree(TreeIdx::TokenId) } == token {
+                    if unsafe { *tree(TreeIdx::ParentSlot) } == slot as u32
+                        && unsafe { *tree(TreeIdx::TokenId) } == token
+                    {
                         unsafe { *tree(TreeIdx::EdgeLogprobBits) = edge.to_bits() };
                     }
                 }

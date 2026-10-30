@@ -38,12 +38,8 @@ pub fn confidence_head_nodes(
     #[specialize] model_dim: u32,
     #[specialize] pool_hidden: u32,
 ) {
-    let (rows, slots, candidates, children) = (
-        rows as usize,
-        params.tree_slot_count as usize,
-        params.candidates as usize,
-        params.children as usize,
-    );
+    let (rows, slots, candidates, children) =
+        (rows as usize, params.tree_slot_count as usize, params.candidates as usize, params.children as usize);
     let (width, pool) = (model_dim as usize, pool_hidden as usize);
     let capacity = slots * children;
     let read = |buffer: *const u32, index: usize| unsafe { *buffer.add(index) };
@@ -115,7 +111,9 @@ pub fn confidence_head_nodes(
             let parent = read(packed_tree, TreeIdx::ParentSlot as usize * slots + slot) as usize;
             let own_token = read(packed_tree, TreeIdx::TokenId as usize * slots + slot);
             (0..children)
-                .find(|&child| read(frontier, FrontierIdx::TokenId as usize * capacity + parent * children + child) == own_token)
+                .find(|&child| {
+                    read(frontier, FrontierIdx::TokenId as usize * capacity + parent * children + child) == own_token
+                })
                 .map_or(0, |child| 1 + parent * children + child)
         };
         unsafe {
