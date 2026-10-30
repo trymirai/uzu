@@ -24,6 +24,7 @@ pub enum EngineError {
     #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     DecisionSession(#[from] nagare::decision::DecisionSessionError),
+    #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
     #[error("Unable to read model configuration: {message}")]

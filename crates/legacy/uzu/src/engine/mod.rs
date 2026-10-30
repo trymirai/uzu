@@ -688,6 +688,7 @@ impl Engine {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[bindings::export(Method)]
     pub async fn text_to_speech(
         &self,
