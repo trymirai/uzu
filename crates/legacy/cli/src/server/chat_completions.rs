@@ -35,10 +35,17 @@ use crate::{
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
             to_tool_call, tool_call_result_block, tool_parameter_types, withhold_stream_text,
         },
+        error::{OaiError, OaiErrorResponse, strip_backend_prefixes},
         request_info::RequestInfo,
         request_log::RequestLog,
     },
 };
+
+pub struct ChatState {
+    pub session: Arc<Mutex<ChatSession>>,
+    pub thinking_support: ThinkingSupport,
+    pub prefix_cache: bool,
+}
 
 fn deserialize_message_content<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
@@ -195,20 +202,6 @@ struct ChatCompletionChunk {
     choices: Vec<StreamChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<ChatCompletionUsage>,
-}
-
-#[derive(Serialize)]
-pub struct OaiErrorResponse {
-    error: OaiError,
-}
-
-#[derive(Serialize)]
-struct OaiError {
-    message: String,
-    #[serde(rename = "type")]
-    kind: String,
-    param: Option<String>,
-    code: Option<String>,
 }
 
 pub enum ChatCompletionResult {
@@ -576,16 +569,6 @@ fn usage_from_stats(
             .as_ref()
             .map(|speculator_stats| speculator_stats.num_decode_forward_passes),
     }
-}
-
-/// nagare re-wraps backend errors at each layer, so a message can arrive as
-/// "Backend error: Backend error: ..."; the wire message keeps only the inner text.
-fn strip_backend_prefixes(message: &str) -> &str {
-    let mut message = message;
-    while let Some(inner) = message.strip_prefix("Backend error: ") {
-        message = inner;
-    }
-    message
 }
 
 fn oai_error_body(
@@ -1188,6 +1171,7 @@ async fn run_stream(
 pub async fn handle_chat_completions(
     body: Data<'_>,
     state: &State<ServerState>,
+    chat: &State<ChatState>,
     request_info: &RequestInfo,
     content_type: &ContentType,
 ) -> ChatCompletionResult {
@@ -1240,7 +1224,7 @@ pub async fn handle_chat_completions(
             return invalid_request_response("response_format", error.code(), error.message());
         },
     };
-    let messages = match build_messages(&request, state.thinking_support) {
+    let messages = match build_messages(&request, chat.thinking_support) {
         Ok(messages) => messages,
         Err(error) => {
             let param = error.param();
@@ -1257,16 +1241,16 @@ pub async fn handle_chat_completions(
 
     let id = request_info.id.as_str().to_owned();
     if is_stream {
-        let session = Arc::clone(&state.session);
+        let session = Arc::clone(&chat.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Event>();
         tokio::spawn(
-            run_stream(session, messages, config, id, model, created, state.prefix_cache, parameter_types, sender, log)
+            run_stream(session, messages, config, id, model, created, chat.prefix_cache, parameter_types, sender, log)
                 .in_current_span(),
         );
         let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
         ChatCompletionResult::Stream(EventStream::from(body))
     } else {
-        let session = Arc::clone(&state.session);
+        let session = Arc::clone(&chat.session);
         let (sender, receiver) = mpsc::unbounded_channel::<Vec<u8>>();
         tokio::spawn(
             run_blocking(
@@ -1276,7 +1260,7 @@ pub async fn handle_chat_completions(
                 id,
                 model,
                 created,
-                state.prefix_cache,
+                chat.prefix_cache,
                 parameter_types,
                 sender,
                 log,
