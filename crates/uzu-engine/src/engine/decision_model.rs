@@ -118,6 +118,7 @@ impl<B: Backend> DecisionModel<B> {
         Ok(DecisionProbabilities {
             probabilities,
             prefill_duration,
+            memory_used_bytes: self.context.peak_memory_usage(),
         })
     }
 }
