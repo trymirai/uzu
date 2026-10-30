@@ -1,5 +1,5 @@
-#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[cfg(not(target_family = "wasm"))]
 pub type SystemTime = std::time::SystemTime;
 
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+#[cfg(target_family = "wasm")]
 pub type SystemTime = web_time::SystemTime;

@@ -2,7 +2,7 @@
 mod bindings_napi;
 #[cfg(feature = "bindings-pyo3")]
 mod bindings_pyo3;
-#[cfg(all(feature = "bindings-wasm", target_arch = "wasm32", target_os = "unknown"))]
+#[cfg(all(feature = "bindings-wasm", target_arch = "wasm32"))]
 mod bindings_wasm;
 mod chat_instance;
 mod error;

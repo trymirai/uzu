@@ -3,11 +3,3 @@ tools = "run --quiet -p cli-tools --"
 
 [env]
 RUST_TEST_THREADS = "1"
-
-[target.wasm32-wasip1-threads]
-# threads=y         — wasmtime need this flag to use threads
-# --dir /::/        — allow wasmtime to read current directory
-runner = ["wasmtime", "-W", "threads=y", "-S", "threads=y", "--dir", "/::/", "--"]
-
-# --max-memory      — default max memory = 1Gb
-rustflags = ["-C", "link-arg=--max-memory=4294967296"]

@@ -23,5 +23,5 @@ impl<F: Future> Future for MakeSendFuture<F> {
     }
 }
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown", not(target_feature = "atomics")))]
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
 unsafe impl<F> Send for MakeSendFuture<F> {}

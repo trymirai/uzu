@@ -82,8 +82,6 @@ wasm-bindgen = { workspace = true, optional = true }
 serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
-
-[target.'cfg(not(target_os = "wasi"))'.dependencies]
 nagare.workspace = true
 hanashi.workspace = true
 bon.workspace = true
@@ -104,7 +102,7 @@ tokenizers.workspace = true
 rand.workspace = true
 tracing.workspace = true
 
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+[target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { workspace = true, features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
 wasm-bindgen.workspace = true

@@ -111,6 +111,7 @@ impl<B: Backend> ActivationTransform<B> {
         Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, ActivationFormat::Bf16)
     }
 
+    #[cfg(any(backend = "cpu", backend = "metal"))]
     pub fn output_rht(
         context: &B::Context,
         data_type: DataType,

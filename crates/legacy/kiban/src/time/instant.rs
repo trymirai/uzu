@@ -1,5 +1,5 @@
-#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[cfg(not(target_family = "wasm"))]
 pub type Instant = std::time::Instant;
 
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+#[cfg(target_family = "wasm")]
 pub type Instant = web_time::Instant;
