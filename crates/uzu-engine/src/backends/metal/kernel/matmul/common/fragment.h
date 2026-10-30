@@ -370,24 +370,31 @@ struct Fragment {
     if constexpr (K_SLICES == 1) {
       return true;
     } else {
+      static_assert(ELEMENTS_PER_FRAGMENT % 2 == 0, "K-slice partials are stored as 2- or 4-wide vectors");
+      constexpr ushort WIDTH = ELEMENTS_PER_FRAGMENT % 4 == 0 ? 4 : 2;
+      constexpr ushort VECTORS = ELEMENTS_PER_FRAGMENT / WIDTH;
+      using Vector = metal::vec<ElementType, WIDTH>;
       const ushort k_slice = ushort(thread_context.simdgroup_index) / OUTPUT_GROUPS;
       const ushort output_group = ushort(thread_context.simdgroup_index) % OUTPUT_GROUPS;
       const ushort lane = ushort(thread_context.simd_lane_id);
-      thread ElementType* values = elements();
-      constexpr ushort ELEMENTS = ELEMENTS_PER_FRAGMENT;
-      constexpr ushort GROUP_STRIDE = (K_SLICES - 1) * ELEMENTS * METAL_SIMD_SIZE;
+      threadgroup Vector* group_partials = reinterpret_cast<threadgroup Vector*>(partials) +
+                                           output_group * (K_SLICES - 1) * VECTORS * METAL_SIMD_SIZE + lane;
+      thread Vector* values = reinterpret_cast<thread Vector*>(elements());
       if (k_slice != 0) {
-        for (ushort e = 0; e < ELEMENTS; ++e) {
-          partials[output_group * GROUP_STRIDE + ((k_slice - 1) * ELEMENTS + e) * METAL_SIMD_SIZE + lane] = values[e];
+        METAL_PRAGMA_UNROLL
+        for (ushort v = 0; v < VECTORS; ++v) {
+          group_partials[((k_slice - 1) * VECTORS + v) * METAL_SIMD_SIZE] = values[v];
         }
       }
       threadgroup_barrier(mem_flags::mem_threadgroup);
       if (k_slice != 0) {
         return false;
       }
+      METAL_PRAGMA_UNROLL
       for (ushort slice = 1; slice < K_SLICES; ++slice) {
-        for (ushort e = 0; e < ELEMENTS; ++e) {
-          values[e] += partials[output_group * GROUP_STRIDE + ((slice - 1) * ELEMENTS + e) * METAL_SIMD_SIZE + lane];
+        METAL_PRAGMA_UNROLL
+        for (ushort v = 0; v < VECTORS; ++v) {
+          values[v] += group_partials[((slice - 1) * VECTORS + v) * METAL_SIMD_SIZE];
         }
       }
       return true;
