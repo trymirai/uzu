@@ -10,15 +10,12 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::Linear,
-        mixer::{
-            MixerState,
-            attention::{
-                Attention, AttentionEncodeError, KVCacheView,
-                kv_storage::{Int8KV, KVStorage},
-                qkv_norm::QKVNorm,
-                rope::PrecalculatedRoPE,
-                state::AttentionState,
-            },
+        mixer::attention::{
+            Attention, AttentionEncodeError, KVCacheView,
+            kv_storage::{Int8KV, KVStorage},
+            qkv_norm::QKVNorm,
+            rope::PrecalculatedRoPE,
+            state::AttentionState,
         },
     },
     utils::maybe_mut::MaybeMut,
@@ -125,6 +122,7 @@ impl<B: Backend> Attention<B> {
                             self.num_q_heads,
                             precalculated_rope,
                             batch_dim.size(),
+                            None::<&dyn GpuBuffer<Backend = B>>,
                             command_buffer,
                         )
                         .map_err(AttentionEncodeError::Backend)?;
@@ -143,6 +141,7 @@ impl<B: Backend> Attention<B> {
                             self.num_q_heads,
                             precalculated_rope,
                             batch_dim.size(),
+                            None::<&dyn GpuBuffer<Backend = B>>,
                             command_buffer,
                         )
                         .map_err(AttentionEncodeError::Backend)?;
@@ -182,11 +181,12 @@ impl<B: Backend> Attention<B> {
         &self,
         mut key_value: impl BufferMut<Backend = B>,
         precalculated_rope: &PrecalculatedRoPE<B>,
-        batch_dim: u32,
+        max_tokens: u32,
+        accepted_length: impl BufferRef<Backend = B>,
         state: &mut AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.projection.norm.encode_key_value(key_value.reborrow(), batch_dim, command_buffer);
+        self.projection.norm.encode_key_value(key_value.reborrow(), max_tokens, command_buffer);
         let prefix_len = state.view().prefix_len();
         match &mut state.kv {
             KVStorage::BF16(kv, _) => {
@@ -197,7 +197,8 @@ impl<B: Backend> Attention<B> {
                     prefix_len,
                     0,
                     Some(precalculated_rope),
-                    batch_dim,
+                    max_tokens,
+                    Some(accepted_length),
                     command_buffer,
                 )?;
             },
@@ -208,12 +209,12 @@ impl<B: Backend> Attention<B> {
                     prefix_len,
                     0,
                     Some(precalculated_rope),
-                    batch_dim,
+                    max_tokens,
+                    Some(accepted_length),
                     command_buffer,
                 )?;
             },
         }
-        state.accept_all(batch_dim, command_buffer)?;
         Ok(())
     }
 
@@ -226,6 +227,7 @@ impl<B: Backend> Attention<B> {
         num_q_heads: u32,
         rope: Option<&PrecalculatedRoPE<B>>,
         suffix_length: u32,
+        accepted_length: Option<impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let (output_keys, output_values) = match (keys, values) {
@@ -241,7 +243,11 @@ impl<B: Backend> Attention<B> {
         let query_count = num_q_heads as usize * suffix_length as usize;
         let mut queries = command_buffer
             .allocate_scratch((query_count * self.head_dim as usize).max(1) * self.data_type.size_in_bytes())?;
-        self.prepare.encode(
+        let (prepare, accepted_length) = match accepted_length {
+            Some(accepted_length) => (&self.gated_prepare, Some(accepted_length)),
+            None => (&self.prepare, None),
+        };
+        prepare.encode(
             qkvg,
             &mut queries,
             output_keys,
@@ -255,6 +261,7 @@ impl<B: Backend> Attention<B> {
             append_kv.then_some(kv_token_offset),
             input_row_stride,
             suffix_length,
+            accepted_length,
             command_buffer,
         );
         Ok(queries)
@@ -268,6 +275,7 @@ impl<B: Backend> Attention<B> {
         num_q_heads: u32,
         rope: Option<&PrecalculatedRoPE<B>>,
         suffix_length: u32,
+        accepted_length: Option<impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         let (k_codes, k_scales, v_codes, v_scales) = match kv {
@@ -288,7 +296,12 @@ impl<B: Backend> Attention<B> {
         // K/V-only calls still need bound query buffers.
         let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
         let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
-        self.prepare_int8.as_ref().expect("INT8 prepare kernel").encode(
+        let prepare_int8 = match accepted_length {
+            Some(_) => self.gated_prepare_int8.as_ref(),
+            None => self.prepare_int8.as_ref(),
+        }
+        .expect("INT8 prepare kernel");
+        prepare_int8.encode(
             qkvg,
             None::<&mut B::ScratchBuffer>,
             Some(&mut query_codes),
@@ -305,6 +318,7 @@ impl<B: Backend> Attention<B> {
             input_row_stride,
             suffix_length,
             num_q_heads / self.num_groups * suffix_length,
+            accepted_length,
             command_buffer,
         );
         Ok((query_codes, query_scales))

@@ -48,8 +48,10 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     #[optional(has_kv)] kv_token_offset: Option<u32>,
     input_row_stride: u32,
     batch_dim: u32,
+    #[optional(has_accepted_length)] accepted_length: Option<*const u32>,
     #[specialize] has_kv: bool,
     #[specialize] has_rope: bool,
+    #[specialize] has_accepted_length: bool,
 ) {
     assert!(num_q_heads > 0 || has_kv, "attention prepare without KV requires at least one query head");
     assert!(head_dim > 0, "attention prepare requires nonzero head_dim");
@@ -60,6 +62,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     assert_eq!(cosines.is_some(), has_rope, "attention prepare cosines presence mismatch");
     assert_eq!(sines.is_some(), has_rope, "attention prepare sines presence mismatch");
     assert_eq!(rope_dim.is_some(), has_rope, "attention prepare rope_dim presence mismatch");
+    assert_eq!(
+        accepted_length.is_some(),
+        has_accepted_length,
+        "attention prepare accepted_length presence mismatch"
+    );
 
     let (keys, values, num_kv_heads, kv_token_offset) =
         if let (Some(keys), Some(values), Some(num_kv_heads), Some(kv_token_offset)) =
@@ -84,6 +91,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     let head_dim = head_dim as usize;
     let batch_dim = batch_dim as usize;
     let input_row_stride = input_row_stride as usize;
+    let batch_limit = if let Some(accepted_length) = accepted_length {
+        (unsafe { *accepted_length }) as usize
+    } else {
+        usize::MAX
+    };
     let total_heads = if has_kv {
         num_q_heads + num_kv_heads * 2
     } else {
@@ -91,7 +103,8 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     };
     assert!(input_row_stride >= total_heads * head_dim, "attention prepare row stride is too small");
 
-    for batch_idx in 0..batch_dim {
+    let batch_count = batch_dim.min(batch_limit);
+    for batch_idx in 0..batch_count {
         for head_idx in 0..total_heads {
             let qkvg_head = unsafe { qkvg.add(batch_idx * input_row_stride + head_idx * head_dim) };
             let is_query = !has_kv || head_idx < num_q_heads;

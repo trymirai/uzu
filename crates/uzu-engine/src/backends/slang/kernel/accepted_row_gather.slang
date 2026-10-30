@@ -5,10 +5,10 @@ import definitions;
   RWStructuredBuffer<uint8_t> dst,
   StructuredBuffer<uint8_t> src,
   StructuredBuffer<uint> accepted_indices,
-  uint num_tokens,
+  uint max_tokens,
   uint dst_stride,
   uint row_bytes,
-  [[Axis("num_tokens * row_bytes", "256")]] uint elem_idx,
+  [[Axis("max_tokens * row_bytes", "256")]] uint elem_idx,
 ) {
   // TODO
 }

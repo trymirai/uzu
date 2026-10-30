@@ -28,6 +28,7 @@ fn run<B: Backend>() -> Output {
         DataType::F32,
         true,
         false,
+        false,
     )
     .expect("Failed to create AttentionPrepareKernel");
     let qkvg = [
@@ -55,6 +56,57 @@ fn run<B: Backend>() -> Output {
         Some(0),
         12,
         2,
+        None::<&B::GlobalGpuBuffer>,
+        &mut command_buffer,
+    );
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
+
+    Output {
+        queries: buffer_to_vec(&*context, &queries),
+        keys: buffer_to_vec(&*context, &keys),
+        values: buffer_to_vec(&*context, &values),
+    }
+}
+
+fn run_gated<B: Backend>() -> Output {
+    let context = block_on(B::Context::new()).expect("Failed to create Context");
+    let kernel = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel::new(
+        &context,
+        DataType::BF16,
+        DataType::F32,
+        true,
+        false,
+        true,
+    )
+    .expect("Failed to create AttentionPrepareKernel");
+    let qkvg = [
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 101.0, 102.0, 103.0, 104.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        17.0, 18.0, 111.0, 112.0, 113.0, 114.0,
+    ]
+    .map(bf16::from_f32);
+    let qkvg = create_buffer_with_data::<B, bf16>(&context, &qkvg);
+    let sentinel = [bf16::from_f32(999.0); 8];
+    let mut queries = create_buffer_with_data::<B, bf16>(&context, &sentinel);
+    let mut keys = create_buffer_with_data::<B, bf16>(&context, &sentinel[0..4]);
+    let mut values = create_buffer_with_data::<B, bf16>(&context, &sentinel[0..4]);
+    let accepted_length = create_buffer_with_data::<B, u32>(&context, &[1]);
+    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
+
+    kernel.encode(
+        &qkvg,
+        &mut queries,
+        Some(&mut keys),
+        Some(&mut values),
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        2,
+        Some(1),
+        2,
+        None,
+        Some(0),
+        12,
+        2,
+        Some(&accepted_length),
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
@@ -87,6 +139,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         DataType::F32,
         false,
         false,
+        false,
     )
     .expect("Failed to create AttentionPrepareKernel");
     let qg = [1.0, 2.0, 3.0, 4.0, 101.0, 102.0, 103.0, 104.0, 11.0, 12.0, 13.0, 14.0, 111.0, 112.0, 113.0, 114.0]
@@ -109,6 +162,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         None,
         8,
         2,
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
@@ -121,6 +175,34 @@ fn test_attention_prepare_uses_qkvg_row_stride() {
     assert_output(run::<Cpu>(), "CPU");
     for_each_non_cpu_backend!(|B| {
         assert_output(run::<B>(), std::any::type_name::<B>());
+    });
+}
+
+#[uzu_test]
+fn test_attention_prepare_accepted_length_gates_writes() {
+    let sentinel = bf16::from_f32(999.0);
+    let expected_queries = vec![
+        bf16::from_f32(1.0),
+        bf16::from_f32(2.0),
+        sentinel,
+        sentinel,
+        bf16::from_f32(3.0),
+        bf16::from_f32(4.0),
+        sentinel,
+        sentinel,
+    ];
+    let expected_keys = vec![bf16::from_f32(5.0), bf16::from_f32(6.0), sentinel, sentinel];
+    let expected_values = vec![bf16::from_f32(7.0), bf16::from_f32(8.0), sentinel, sentinel];
+
+    let assert_gated_output = |output: Output, backend: &str| {
+        assert_eq!(output.queries, expected_queries, "query mismatch on {backend}");
+        assert_eq!(output.keys, expected_keys, "key mismatch on {backend}");
+        assert_eq!(output.values, expected_values, "value mismatch on {backend}");
+    };
+
+    assert_gated_output(run_gated::<Cpu>(), "CPU");
+    for_each_non_cpu_backend!(|B| {
+        assert_gated_output(run_gated::<B>(), std::any::type_name::<B>());
     });
 }
 
@@ -161,6 +243,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
         true,
         1,
         true,
+        false,
     )
     .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
@@ -181,6 +264,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
         (num_q_heads + 2) * DIM as u32,
         1,
         num_q_heads,
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

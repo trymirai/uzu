@@ -56,3 +56,26 @@ fn accepted_row_gather_copies_accepted_rows_in_rank_order() {
         assert_eq!(actual, expected);
     });
 }
+
+#[uzu_test]
+fn accepted_row_gather_skips_rows_beyond_accepted_length() {
+    // 3 rows of 2 bytes each
+    let src: Vec<u8> = vec![1, 1, 2, 2, 3, 3];
+    // `[len][indices...]` sized for the maximum accept; only the first index
+    // is valid, the rest is trash.
+    let accepted_indices: Vec<u32> = vec![1, 2, 7, 7];
+    let max_tokens = 3;
+    let dst_stride = 4;
+    let row_bytes = 2;
+
+    let mut expected = vec![0u8; max_tokens as usize * dst_stride as usize];
+    expected[0..2].copy_from_slice(&[3, 3]);
+
+    let actual = run_accepted_row_gather::<Cpu>(&src, &accepted_indices, max_tokens, dst_stride, row_bytes);
+    assert_eq!(actual, expected);
+
+    for_each_non_cpu_backend!(|B| {
+        let actual = run_accepted_row_gather::<B>(&src, &accepted_indices, max_tokens, dst_stride, row_bytes);
+        assert_eq!(actual, expected);
+    });
+}

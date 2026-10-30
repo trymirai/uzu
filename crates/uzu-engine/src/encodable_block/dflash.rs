@@ -223,18 +223,31 @@ impl<B: Backend> DFlash<B> {
         let accepted_indices = command_buffer
             .allocate_constant_from_slice(&(0..=num_tokens).rev().collect::<Box<[u32]>>())
             .map_err(DFlashEncodeError::Backend)?;
-        self.encode_accept(target_features, &accepted_indices, num_tokens, state, command_buffer)
+        self.encode_accept(target_features, &accepted_indices, state, command_buffer)?;
+        self.commit_accept(state, num_tokens);
+        Ok(())
+    }
+
+    pub fn commit_accept(
+        &self,
+        state: &mut DFlashState<B>,
+        accepted_len: u32,
+    ) {
+        state.context_length += accepted_len;
+        for layer_state in &mut state.layer_states {
+            layer_state.commit_accept(accepted_len);
+        }
     }
 
     pub fn encode_accept(
         &self,
         target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
         accepted_indices: impl BufferRef<Backend = B>,
-        num_tokens: u32,
         state: &mut DFlashState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), DFlashEncodeError<B>> {
-        if num_tokens == 0 {
+        let max_tokens = accepted_indices.size() as u32 / DataType::U32.size_in_bytes() as u32 - 1;
+        if max_tokens == 0 {
             return Ok(());
         }
 
@@ -244,12 +257,12 @@ impl<B: Backend> DFlash<B> {
         assert_eq!(target_features.len() as u32, captured_layer_count);
         let layer_feature_bytes = size_for_shape(&[self.model_dim], self.data_type);
         let packed_row_bytes = size_for_shape(&[self.target_feature_input_dim], self.data_type);
-        let context_length = state.context_length + num_tokens;
+        let context_length = state.context_length + max_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
 
         let mut packed_target_features = command_buffer
-            .allocate_scratch_for_shape(&[num_tokens, self.target_feature_input_dim], self.data_type)
+            .allocate_scratch_for_shape(&[max_tokens, self.target_feature_input_dim], self.data_type)
             .map_err(DFlashEncodeError::Backend)?;
         for (layer_index, features) in target_features.enumerate() {
             assert!(features.size() % layer_feature_bytes == 0);
@@ -257,32 +270,32 @@ impl<B: Backend> DFlash<B> {
                 packed_target_features.subrange_mut(layer_index * layer_feature_bytes..),
                 features,
                 accepted_indices,
-                num_tokens,
+                max_tokens,
                 packed_row_bytes as u32,
                 layer_feature_bytes as u32,
                 command_buffer,
             );
         }
         let projected_features =
-            self.target_feature_projection.encode(packed_target_features, num_tokens, command_buffer)?;
+            self.target_feature_projection.encode(packed_target_features, max_tokens, command_buffer)?;
         let normalized_features = self
             .projected_feature_norm
-            .encode(&projected_features, 0, num_tokens, None::<&mut B::ScratchBuffer>, command_buffer)
+            .encode(&projected_features, 0, max_tokens, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
-        let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
+        let token_positions = (state.context_length..state.context_length + max_tokens).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
-        let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, command_buffer)?;
+        let projected_kv = self.state_kv_projection.encode(normalized_features, max_tokens, command_buffer)?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
         let kv_chunk =
             |chunk_index: usize| Range::from(chunk_index * layer_kv_bytes..(chunk_index + 1) * layer_kv_bytes);
         let mut layer_key_values = (0..self.layers.len())
-            .map(|_| command_buffer.allocate_scratch(num_tokens as usize * layer_kv_bytes))
+            .map(|_| command_buffer.allocate_scratch(max_tokens as usize * layer_kv_bytes))
             .collect::<Result<Box<[_]>, _>>()
             .map_err(DFlashEncodeError::Backend)?;
         for (layer_index, key_value) in layer_key_values.iter_mut().enumerate() {
-            for token_index in 0..num_tokens as usize {
+            for token_index in 0..max_tokens as usize {
                 command_buffer.encode_copy(
                     projected_kv.subrange(kv_chunk(token_index * self.layers.len() + layer_index)),
                     key_value.subrange_mut(kv_chunk(token_index)),
@@ -292,7 +305,7 @@ impl<B: Backend> DFlash<B> {
         for ((layer, mixer_state), mut key_value) in
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
-            mixer_state.prepare(state.context_length, num_tokens).map_err(DFlashEncodeError::Backend)?;
+            mixer_state.prepare(state.context_length, max_tokens).map_err(DFlashEncodeError::Backend)?;
             let attention = (layer.mixer.as_ref() as &dyn Any)
                 .downcast_ref::<Attention<B>>()
                 .expect("DFlash draft layers must use attention mixers");
@@ -300,11 +313,16 @@ impl<B: Backend> DFlash<B> {
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
             attention
-                .append_projected_kv(&mut key_value, &rope, num_tokens, attention_state, command_buffer)
+                .append_projected_kv(
+                    &mut key_value,
+                    &rope,
+                    max_tokens,
+                    accepted_indices.subrange(..DataType::U32.size_in_bytes()),
+                    attention_state,
+                    command_buffer,
+                )
                 .map_err(DFlashEncodeError::Backend)?;
         }
-
-        state.context_length += num_tokens;
 
         Ok(())
     }

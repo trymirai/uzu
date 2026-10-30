@@ -174,12 +174,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         state: &mut DFlashState<B>,
         target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
         accepted_indices: impl BufferRef<Backend = B>,
-        num_tokens: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), DFlashTreeError<B>> {
         self.dflash
-            .encode_accept(target_features, accepted_indices, num_tokens, state, command_buffer)
+            .encode_accept(target_features, accepted_indices, state, command_buffer)
             .map_err(DFlashTreeError::DFlash)
+    }
+
+    pub fn commit_accept(
+        &self,
+        state: &mut DFlashState<B>,
+        accepted_len: u32,
+    ) {
+        self.dflash.commit_accept(state, accepted_len);
     }
 
     pub fn make_shape(

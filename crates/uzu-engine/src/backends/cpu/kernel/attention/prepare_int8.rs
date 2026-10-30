@@ -32,11 +32,22 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     input_row_stride: u32,
     suffix_length: u32,
     query_rows: u32,
+    #[optional(has_accepted_length)] accepted_length: Option<*const u32>,
     #[specialize] has_rope: bool,
     #[specialize] quantize_queries: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] append_kv: bool,
+    #[specialize] has_accepted_length: bool,
 ) {
+    assert_eq!(
+        accepted_length.is_some(),
+        has_accepted_length,
+        "attention prepare int8 accepted_length presence mismatch"
+    );
+    let token_count = match accepted_length {
+        Some(accepted_length) => (unsafe { *accepted_length }).min(suffix_length),
+        None => suffix_length,
+    };
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
         rope_dim.unwrap() as usize
@@ -59,7 +70,7 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
             (_, true) => (head - num_q_heads, k_scales),
             _ => (head - v_head_start, v_scales),
         };
-        for token in 0..suffix_length {
+        for token in 0..token_count {
             let source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {

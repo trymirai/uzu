@@ -359,6 +359,7 @@ fn int8_attention_matches_cpu() {
                 true,
                 kv_heads as u32,
                 append_kv,
+                false,
             )
             .unwrap();
             let mut query_codes = create_buffer::<Metal, i8>(&metal, kv_heads * query_rows * head_dim);
@@ -382,6 +383,7 @@ fn int8_attention_matches_cpu() {
                 stride as u32,
                 suffix as u32,
                 query_rows as u32,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 &mut command_buffer,
             );
             let input = AttentionInput::Int8(Int8Input {

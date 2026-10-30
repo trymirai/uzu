@@ -46,6 +46,8 @@ pub struct Attention<B: Backend> {
     projection: LinearProjection<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
+    gated_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    gated_prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -143,6 +145,16 @@ impl<B: Backend> Attention<B> {
             DataType::F32,
             !is_kv_sharing,
             rope_config.is_some(),
+            false,
+        )
+        .map_err(AttentionNewError::Backend)?;
+        let gated_prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            data_type,
+            DataType::F32,
+            !is_kv_sharing,
+            rope_config.is_some(),
+            true,
         )
         .map_err(AttentionNewError::Backend)?;
         let sinks = if config.has_sinks {
@@ -183,6 +195,24 @@ impl<B: Backend> Attention<B> {
                     true,
                     num_groups,
                     !is_kv_sharing,
+                    false,
+                )
+            })
+            .transpose()
+            .map_err(AttentionNewError::Backend)?;
+        let gated_prepare_int8 = kernel
+            .supports_int8()
+            .then(|| {
+                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+                    context,
+                    data_type,
+                    DataType::F32,
+                    head_dim,
+                    rope_config.is_some(),
+                    true,
+                    num_groups,
+                    !is_kv_sharing,
+                    true,
                 )
             })
             .transpose()
@@ -215,6 +245,8 @@ impl<B: Backend> Attention<B> {
                 },
                 prepare,
                 prepare_int8,
+                gated_prepare,
+                gated_prepare_int8,
                 sinks,
                 kernel,
                 out_projection,

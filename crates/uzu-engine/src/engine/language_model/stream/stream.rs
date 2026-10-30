@@ -700,8 +700,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     self.model_state.speculator_state.as_mut().unwrap(),
                     resolved.hidden_features.as_ref().unwrap().iter(),
                     &accepted_token_indices_buffer,
-                    // TODO: Get this from accepted indices buffer
-                    len,
                     &mut command_buffer,
                 )?;
             }
@@ -736,6 +734,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .transformer_state
                 .commit_accept(accepted_token_indices.len() as u32)
                 .map_err(LanguageModelStreamError::Backend)?;
+
+            if let Some(speculator) = self.model.speculator.as_ref() {
+                speculator.commit_accept(
+                    self.model_state.speculator_state.as_mut().unwrap(),
+                    accepted_token_indices.len() as u32,
+                );
+            }
 
             // Should this be done here instead of `resolve(job)`?
             // self.model_state.transformer_state.commit_accept(len).map_err(LanguageModelStreamError::Backend)?;

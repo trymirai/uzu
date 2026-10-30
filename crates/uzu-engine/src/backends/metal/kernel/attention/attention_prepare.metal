@@ -18,12 +18,18 @@ PUBLIC KERNEL(AttentionPrepare) (
   const constant uint32_t& kv_token_offset OPTIONAL(has_kv),
   const constant uint32_t& input_row_stride,
   const constant uint32_t& batch_dim,
+  const device uint32_t* accepted_length OPTIONAL(has_accepted_length),
   const bool has_kv SPECIALIZE,
   const bool has_rope SPECIALIZE,
+  const bool has_accepted_length SPECIALIZE,
   const uint32_t head_dim_idx AXIS(head_dim, 128),
   const uint32_t head_idx AXIS(num_q_heads + num_kv_heads.unwrap_or(0) * 2, 1),
   const uint32_t batch_idx AXIS(batch_dim, 1)
 ) {
+  if (has_accepted_length && batch_idx >= accepted_length[0]) {
+    return;
+  }
+
   const uint32_t qkvg_head_idx = batch_idx * input_row_stride + head_idx * head_dim;
   const device ElementT* qkvg_head = qkvg + qkvg_head_idx;
   const bool is_query = !has_kv || head_idx < num_q_heads;

@@ -47,10 +47,12 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
+    const device uint* accepted_length OPTIONAL(has_accepted_length),
     const bool has_rope SPECIALIZE,
     const bool quantize_queries SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const bool append_kv SPECIALIZE,
+    const bool has_accepted_length SPECIALIZE,
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
@@ -60,6 +62,9 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
   const ushort lane_index = ushort(lane);
   const bool is_query = head_idx < num_q_heads;
   if (!append_kv && !is_query) {
+    return;
+  }
+  if (has_accepted_length && token_idx >= accepted_length[0]) {
     return;
   }
   const uint32_t gqa_factor = num_q_heads / num_kv_heads;
