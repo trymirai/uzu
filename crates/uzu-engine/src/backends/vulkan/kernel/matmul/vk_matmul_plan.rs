@@ -20,12 +20,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// The INT8 GEMM cores by the device matrices each runs on: GemmInt8, GemmInt8K16 and GemmInt8Nv.
-const INT8_CORES: [Capability; 3] = [
-    Capability::INT8_TENSOR_CORES_K32,
-    Capability::INT8_TENSOR_CORES_K16,
-    Capability::INT8_TENSOR_CORES_K32.union(Capability::INT8_ELEMENT_FOLD),
-];
 /// The fold metadata arrays every Int8Gemm core declares in shared memory.
 const INT8_FOLD_BYTES: u32 = 4 * 2 * INT8_FOLD_ENTRIES;
 /// One dispatch family of the existing matmul kernels with its specialization parameters. A plan's cost is all of its
@@ -43,11 +37,10 @@ pub enum VkMatmulPlan {
         rows: u32,
         input_rows: u32,
     },
-    /// The INT8 GEMM core of `matrices`, one of INT8_CORES: `row_block` rows by 64 columns a workgroup of
-    /// `simdgroups`, staging `stage_depth` K values a step, with K in `splits` partial phases then a reduction phase
-    /// where it splits.
+    /// An INT8 GEMM core, GemmInt8Nv under `element_fold`: `row_block` rows by 64 columns a workgroup of `simdgroups`,
+    /// staging `stage_depth` K values a step, with K in `splits` partial phases then a reduction phase where it splits.
     GemmInt8 {
-        matrices: Capability,
+        element_fold: bool,
         row_block: u32,
         simdgroups: u32,
         stage_depth: u32,
@@ -104,15 +97,9 @@ impl VkMatmulPlan {
         if m <= 8 || !capabilities.prefers_int8_gemm() {
             return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
         }
-        // The element fold, else 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both.
         let element_fold = capabilities.contains(Capability::INT8_ELEMENT_FOLD);
-        let matrices = match (element_fold, capabilities.contains(Capability::INT8_TENSOR_CORES_K32)) {
-            (true, _) => INT8_CORES[2],
-            (false, true) => INT8_CORES[0],
-            (false, false) => INT8_CORES[1],
-        };
         let core = |row_block: u32, stage_depth: u32, splits: u32| Self::GemmInt8 {
-            matrices,
+            element_fold,
             row_block,
             simdgroups: if row_block == 64 || (row_block == 32 && element_fold) {
                 8
@@ -290,11 +277,11 @@ impl VkMatmulPlan {
     pub fn int8_shared_words(&self) -> u32 {
         match *self {
             Self::GemmInt8 {
-                matrices,
+                element_fold,
                 row_block,
                 stage_depth,
                 ..
-            } => match matrices.contains(Capability::INT8_ELEMENT_FOLD) {
+            } => match element_fold {
                 true => 2 * (row_block + 64) * (stage_depth / 16 + 1),
                 false => 2 * (row_block + 64) * 5 + 4 * 64 * (row_block / 16),
             },

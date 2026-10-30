@@ -522,7 +522,7 @@ impl MatmulKernel for VkMatmulKernel {
                 }
             } else {
                 let VkMatmulPlan::GemmInt8 {
-                    matrices,
+                    element_fold,
                     row_block,
                     simdgroups,
                     stage_depth,
@@ -602,13 +602,14 @@ impl MatmulKernel for VkMatmulKernel {
                         }
                     }};
                 }
+                // 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both.
                 for phase in phases {
-                    if matrices.contains(VkDeviceCapabilities::INT8_ELEMENT_FOLD) {
+                    if element_fold {
                         gemm_int8!(self.gemm_int8_nv, GemmInt8NvVulkanKernel, phase, stage_depth);
-                    } else if matrices == VkDeviceCapabilities::INT8_TENSOR_CORES_K16 {
-                        gemm_int8!(self.gemm_int8_k16, GemmInt8K16VulkanKernel, phase);
-                    } else {
+                    } else if capabilities.contains(VkDeviceCapabilities::INT8_TENSOR_CORES_K32) {
                         gemm_int8!(self.gemm_int8, GemmInt8VulkanKernel, phase);
+                    } else {
+                        gemm_int8!(self.gemm_int8_k16, GemmInt8K16VulkanKernel, phase);
                     }
                 }
                 return Ok(());
