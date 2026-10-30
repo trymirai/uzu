@@ -568,12 +568,7 @@ public struct Int8Gemm<
                 let group = (end - 1) / weights.group_size;
                 if (index < uint(BM)) {
                   let input = min(block_row + index, m - 1);
-                  float a_scale;
-                  if (BM == 64 && BK == 64 && weights.group_size == 64 && (stage & 1u) != 0) {
-                    a_scale = int8_fold_rows[128 + index];
-                  } else {
-                    a_scale = activations.scales[input * (k / INT8_SCALE_GROUP) + (end - 1) / INT8_SCALE_GROUP];
-                  }
+                  let a_scale = activations.scales[input * (k / INT8_SCALE_GROUP) + (end - 1) / INT8_SCALE_GROUP];
                   let group_sum = scale_bias ? group_sums[input * (k / weights.group_size) + group] : 0;
                   value = float2(a_scale, a_scale * float(group_sum));
                 } else {
