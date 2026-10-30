@@ -4,7 +4,10 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        kernel::AcceptedRowGatherKernel,
+    },
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
@@ -38,6 +41,7 @@ impl<B: Backend> DFlashState<B> {
 }
 
 pub struct DFlash<B: Backend> {
+    accepted_row_gather: <B::Kernels as Kernels>::AcceptedRowGatherKernel,
     target_feature_projection: Box<dyn Linear<B>>,
     projected_feature_norm: Normalization<B>,
     state_kv_projection: Box<dyn Linear<B>>,
@@ -162,8 +166,11 @@ impl<B: Backend> DFlash<B> {
             context,
         )
         .await?;
+        let accepted_row_gather =
+            <B::Kernels as Kernels>::AcceptedRowGatherKernel::new(context).map_err(DFlashNewError::Backend)?;
 
         Ok(Self {
+            accepted_row_gather,
             target_feature_projection,
             projected_feature_norm,
             state_kv_projection,
@@ -202,23 +209,41 @@ impl<B: Backend> DFlash<B> {
         })
     }
 
-    pub fn encode_accept(
+    pub fn encode_accept_all(
         &self,
         target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
-        accepted_indices: &[u32],
+        num_tokens: u32,
         state: &mut DFlashState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), DFlashEncodeError<B>> {
-        if accepted_indices.is_empty() {
+        if num_tokens == 0 {
+            return Ok(());
+        }
+
+        let accepted_indices = command_buffer
+            .allocate_constant_from_slice(&(0..=num_tokens).rev().collect::<Box<[u32]>>())
+            .map_err(DFlashEncodeError::Backend)?;
+        self.encode_accept(target_features, &accepted_indices, num_tokens, state, command_buffer)
+    }
+
+    pub fn encode_accept(
+        &self,
+        target_features: impl ExactSizeIterator<Item = impl BufferRef<Backend = B>>,
+        accepted_indices: impl BufferRef<Backend = B>,
+        num_tokens: u32,
+        state: &mut DFlashState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), DFlashEncodeError<B>> {
+        if num_tokens == 0 {
             return Ok(());
         }
 
         let command_buffer = &mut *command_buffer.debug_group("dflash accept");
 
-        let num_tokens = accepted_indices.len() as u32;
         let captured_layer_count = self.target_feature_input_dim / self.model_dim;
         assert_eq!(target_features.len() as u32, captured_layer_count);
         let layer_feature_bytes = size_for_shape(&[self.model_dim], self.data_type);
+        let packed_row_bytes = size_for_shape(&[self.target_feature_input_dim], self.data_type);
         let context_length = state.context_length + num_tokens;
         assert!(context_length <= state.context_capacity, "DFlash state capacity exceeded");
         assert!(context_length <= self.max_context_length, "DFlash context exceeds configured RoPE capacity");
@@ -228,16 +253,15 @@ impl<B: Backend> DFlash<B> {
             .map_err(DFlashEncodeError::Backend)?;
         for (layer_index, features) in target_features.enumerate() {
             assert!(features.size() % layer_feature_bytes == 0);
-            for (token_index, &accepted_index) in accepted_indices.iter().enumerate() {
-                let source_start = accepted_index as usize * layer_feature_bytes;
-                assert!(source_start + layer_feature_bytes <= features.size(), "accepted index out of feature bounds");
-                let destination_start =
-                    (token_index * captured_layer_count as usize + layer_index) * layer_feature_bytes;
-                command_buffer.encode_copy(
-                    features.subrange(source_start..source_start + layer_feature_bytes),
-                    packed_target_features.subrange_mut(destination_start..destination_start + layer_feature_bytes),
-                );
-            }
+            self.accepted_row_gather.encode(
+                packed_target_features.subrange_mut(layer_index * layer_feature_bytes..),
+                features,
+                accepted_indices,
+                num_tokens,
+                packed_row_bytes as u32,
+                layer_feature_bytes as u32,
+                command_buffer,
+            );
         }
         let projected_features =
             self.target_feature_projection.encode(packed_target_features, num_tokens, command_buffer)?;

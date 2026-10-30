@@ -1,3 +1,4 @@
+mod accepted_row_gather_test;
 mod activation_test;
 mod activation_transform_test;
 mod attention;

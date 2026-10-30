@@ -301,10 +301,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             if let Some(speculator) = self.model.speculator.as_ref() {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
-                speculator.encode_accept(
+                speculator.encode_accept_all(
                     speculator_state,
                     decoder_output.hidden_features.as_ref().unwrap().iter(),
-                    &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
+                    input_chunk.len() as u32,
                     &mut command_buffer,
                 )?;
             }
@@ -607,10 +607,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             if let Some(speculator) = self.model.speculator.as_ref() {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
-                speculator.encode_accept(
+                speculator.encode_accept_all(
                     speculator_state,
                     decoder_output.hidden_features.as_ref().unwrap().iter(),
-                    &(0..batch_dim.size()).collect::<Box<[u32]>>(),
+                    batch_dim.size(),
                     &mut command_buffer,
                 )?;
             }
@@ -681,8 +681,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 speculator.encode_accept(
                     self.model_state.speculator_state.as_mut().unwrap(),
                     resolved.hidden_features.as_ref().unwrap().iter(),
-                    // TODO: can this be replaced?
-                    accepted_token_indices,
+                    &accepted_token_indices_buffer,
+                    len,
                     &mut command_buffer,
                 )?;
             }
@@ -717,6 +717,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .transformer_state
                 .commit_accept(accepted_token_indices.len() as u32)
                 .map_err(LanguageModelStreamError::Backend)?;
+
+            // Should this be done here instead of `resolve(job)`?
+            // self.model_state.transformer_state.commit_accept(len).map_err(LanguageModelStreamError::Backend)?;
 
             new_job
         };

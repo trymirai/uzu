@@ -3,6 +3,7 @@ use crate::backends::{
     cpu::Cpu,
 };
 
+pub mod accepted_row_gather;
 mod activation;
 pub(crate) mod activation_transform;
 mod attention;
