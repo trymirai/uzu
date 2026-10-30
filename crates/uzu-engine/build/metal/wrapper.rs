@@ -211,7 +211,7 @@ fn kernel_wrappers(
         let (mut wrapper_arguments, condition_definitions): (Vec<_>, Vec<_>) = kernel
             .arguments
             .iter()
-            .filter(|a| matches!(&a.argument_type, MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)))
+            .filter(|a| matches!(&a.argument_type, MetalArgumentType::Device | MetalArgumentType::Constant))
             .enumerate()
             .map(|(i, a)| {
                 let condition_field = format!("__dsl_buffer_condition_{}_{}", wrapper_name, a.name);
@@ -275,8 +275,8 @@ fn kernel_wrappers(
                     MetalArgumentType::Shared(_) if a.condition.is_some() => {
                         format!("({}){}", a.c_type, a.name)
                     },
-                    MetalArgumentType::Buffer(_)
-                    | MetalArgumentType::Constant(_)
+                    MetalArgumentType::Device
+                    | MetalArgumentType::Constant
                     | MetalArgumentType::Shared(_)
                     | MetalArgumentType::Specialize(_) => a.name.to_string(),
                     MetalArgumentType::Axis(..) => {

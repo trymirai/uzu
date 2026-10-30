@@ -18,7 +18,7 @@ use shader_slang::{
 };
 
 use crate::{
-    common::{caching, codegen::write_tokens, kernel::Kernel},
+    common::{caching, codegen::write_tokens, gpu_type_paths::GpuTypePaths, kernel::Kernel},
     debug_log,
     slang::{reflection::SlangKernel, slang_sys_ext::SessionLoadModuleWithDiagnosticsExt, wrapper},
 };
@@ -35,6 +35,7 @@ pub trait SlangTarget: Send + Sync + Clone + 'static {
         linked_component: &ComponentType,
         kernels: &[SlangKernel],
         gpu_type_map: &HashMap<String, String>,
+        gpu_type_paths: &GpuTypePaths,
         constants: &HashMap<String, String>,
         object_file: &Path,
     ) -> anyhow::Result<TokenStream>;
@@ -121,6 +122,7 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
         &self,
         source_path: PathBuf,
         gpu_type_map: Arc<HashMap<String, String>>,
+        gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<(Box<[Box<str>]>, Box<[Kernel]>)> {
         let source_path_relative =
             source_path.strip_prefix(&self.fields.source_directory).context("source is not in src_dir")?;
@@ -174,10 +176,11 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .collect::<anyhow::Result<HashMap<String, [u8; blake3::OUT_LEN]>>>()
             .context("cannot hash dependencies")?;
 
+        let common_gpu_type_map = gpu_type_map.keys().map(|name| (name.clone(), name.clone())).collect();
         let kernels = source_module
             .module_reflection()
             .children()
-            .filter_map(|decl| SlangKernel::from_reflection(decl).transpose())
+            .filter_map(|decl| SlangKernel::from_reflection(decl, &common_gpu_type_map).transpose())
             .collect::<anyhow::Result<Vec<SlangKernel>>>()
             .context("cannot collect kernels")?;
 
@@ -232,13 +235,13 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
 
             T::validate_output(&output_file).with_context(|| format!("cannot validate {}", output_file.display()))?;
 
-            let bindgen_tokens = T::bindgen_file(&linked_component, &kernels, &gpu_type_map, &constants, &output_file)
-                .context("cannot generate bindings")?;
+            let bindgen_tokens =
+                T::bindgen_file(&linked_component, &kernels, &gpu_type_map, gpu_type_paths, &constants, &output_file)
+                    .context("cannot generate bindings")?;
 
             write_tokens(bindgen_tokens, &bindgen_file).context("cannot write bindgen file")?;
         }
 
-        let common_gpu_type_map = gpu_type_map.keys().map(|name| (name.clone(), name.clone())).collect();
         let public_kernels = kernels
             .iter()
             .filter_map(|slang_kernel| {

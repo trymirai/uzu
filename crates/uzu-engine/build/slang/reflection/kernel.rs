@@ -27,7 +27,10 @@ pub struct SlangKernel {
 }
 
 impl SlangKernel {
-    pub fn from_reflection(toplevel_decl: &Decl) -> anyhow::Result<Option<Self>> {
+    pub fn from_reflection(
+        toplevel_decl: &Decl,
+        gpu_type_map: &HashMap<String, String>,
+    ) -> anyhow::Result<Option<Self>> {
         let (generic_decl, function_decl) = if toplevel_decl.kind() == DeclKind::Generic {
             (Some(toplevel_decl), toplevel_decl.as_generic().unwrap().inner_decl().unwrap())
         } else {
@@ -77,7 +80,7 @@ impl SlangKernel {
 
         let arguments = function
             .parameters()
-            .map(SlangArgument::from_reflection)
+            .map(|variable| SlangArgument::from_reflection(variable, gpu_type_map))
             .collect::<anyhow::Result<Vec<SlangArgument>>>()
             .context("cannot collect arguments")?;
 
@@ -158,12 +161,8 @@ impl SlangKernel {
 
                 self.arguments
                     .iter()
-                    .filter_map(|argument| {
-                        SlangArgument::to_common_argument(argument, gpu_type_map, &mut indirect_used)
-                            .with_context(|| format!("cannot convert argument {} to common argument", argument.name))
-                            .transpose()
-                    })
-                    .collect::<anyhow::Result<Box<[KernelArgument]>>>()?
+                    .filter_map(|argument| argument.to_common_argument(&mut indirect_used))
+                    .collect::<Box<[KernelArgument]>>()
             },
         }))
     }

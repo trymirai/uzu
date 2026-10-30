@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::{HashMap, hash_map::Entry},
-};
+use std::collections::{HashMap, hash_map::Entry};
 
 use anyhow::{Context, anyhow, bail};
 use shader_slang::reflection::{UserAttribute, Variable};
@@ -16,9 +13,7 @@ use crate::{
 
 #[derive(Debug)]
 pub enum SlangBufferAccess {
-    Read {
-        is_constant: bool,
-    },
+    Read,
     ReadWrite,
 }
 
@@ -28,7 +23,7 @@ pub enum SlangArgumentType {
         access_type: SlangBufferAccess,
         condition: Option<String>,
     },
-    Constant {
+    Uniform {
         condition: Option<String>,
     },
     Specialize {
@@ -52,10 +47,14 @@ pub struct SlangArgument {
     pub name: String,
     pub slang_type: String,
     pub argument_type: SlangArgumentType,
+    pub binding_type: Option<KernelArgumentType>,
 }
 
 impl SlangArgument {
-    pub fn from_reflection(variable: &Variable) -> anyhow::Result<Self> {
+    pub fn from_reflection(
+        variable: &Variable,
+        gpu_type_map: &HashMap<String, String>,
+    ) -> anyhow::Result<Self> {
         let name = variable.name().unwrap().to_string();
 
         let ty = variable.ty().unwrap();
@@ -93,6 +92,7 @@ impl SlangArgument {
             Ok(())
         };
 
+        let mut binding_type = None;
         let argument_type = if let Some(specialize_attribute) = user_attributes.remove("Specialize") {
             if specialize_attribute.argument_count() != 0 {
                 bail!("specialize expected no argument, found {}", specialize_attribute.argument_count());
@@ -148,18 +148,30 @@ impl SlangArgument {
             SlangArgumentType::ThreadContext
         } else if type_name == "StructuredBuffer" {
             let condition = get_condition(&mut user_attributes)?;
-            let is_constant = user_attributes.remove("Constant").is_some();
+            binding_type = Some(if user_attributes.remove("Constant").is_some() {
+                let element_type = type_full_name
+                    .strip_prefix("StructuredBuffer<")
+                    .and_then(|ty| ty.strip_suffix(", DefaultDataLayout>"))
+                    .with_context(|| format!("value buffer argument doesn't match StructuredBuffer<T, DefaultDataLayout>: {type_full_name}"))?;
+                KernelArgumentType::Value(
+                    slang2rust(&format!("{element_type}[]"), gpu_type_map)
+                        .with_context(|| format!("cannot convert slang {type_full_name} to rust"))?
+                        .into_owned()
+                        .into_boxed_str(),
+                )
+            } else {
+                KernelArgumentType::Buffer(KernelBufferAccess::Read)
+            });
 
             no_attributes(&user_attributes, "buffer (read-only)")?;
 
             SlangArgumentType::Buffer {
-                access_type: SlangBufferAccess::Read {
-                    is_constant,
-                },
+                access_type: SlangBufferAccess::Read,
                 condition,
             }
         } else if type_name == "RWStructuredBuffer" {
             let condition = get_condition(&mut user_attributes)?;
+            binding_type = Some(KernelArgumentType::Buffer(KernelBufferAccess::ReadWrite));
 
             no_attributes(&user_attributes, "buffer (read-write)")?;
 
@@ -170,9 +182,15 @@ impl SlangArgument {
         } else {
             let condition = get_condition(&mut user_attributes)?;
 
-            no_attributes(&user_attributes, "constant")?;
+            no_attributes(&user_attributes, "uniform")?;
+            binding_type = Some(KernelArgumentType::Value(
+                slang2rust(&type_full_name, gpu_type_map)
+                    .with_context(|| format!("cannot convert slang {type_full_name} to rust"))?
+                    .into_owned()
+                    .into_boxed_str(),
+            ));
 
-            SlangArgumentType::Constant {
+            SlangArgumentType::Uniform {
                 condition,
             }
         };
@@ -181,6 +199,7 @@ impl SlangArgument {
             name,
             slang_type: type_full_name,
             argument_type,
+            binding_type,
         })
     }
 
@@ -188,25 +207,7 @@ impl SlangArgument {
         &self,
         gpu_type_map: &HashMap<String, String>,
     ) -> anyhow::Result<Box<str>> {
-        let slang_type = if matches!(
-            self.argument_type,
-            SlangArgumentType::Buffer {
-                access_type: SlangBufferAccess::Read {
-                    is_constant: true,
-                },
-                condition: _,
-            }
-        ) {
-            let element_type = self.slang_type
-                .strip_prefix("StructuredBuffer<")
-                .and_then(|slang_type| slang_type.strip_suffix(", DefaultDataLayout>")).with_context(|| format!("buffer-constant argument doesn't match the StructuredBuffer<T, DefaultDataLayout> template: {}", self.slang_type))?;
-
-            Cow::Owned(format!("{element_type}[]"))
-        } else {
-            Cow::Borrowed(&self.slang_type)
-        };
-
-        Ok(slang2rust(&slang_type, gpu_type_map)
+        Ok(slang2rust(&self.slang_type, gpu_type_map)
             .with_context(|| format!("cannot convert slang {} to rust", self.slang_type))?
             .to_string()
             .into_boxed_str())
@@ -235,52 +236,38 @@ impl SlangArgument {
 
     pub fn to_common_argument(
         &self,
-        gpu_type_map: &HashMap<String, String>,
         indirect_used: &mut bool,
-    ) -> anyhow::Result<Option<KernelArgument>> {
-        match &self.argument_type {
-            SlangArgumentType::Buffer {
-                access_type:
-                    access_type @ (SlangBufferAccess::Read {
-                        is_constant: false,
-                    }
-                    | SlangBufferAccess::ReadWrite),
-                condition,
-            } => Ok(Some(KernelArgument {
+    ) -> Option<KernelArgument> {
+        if let Some(ty) = &self.binding_type {
+            let condition = match &self.argument_type {
+                SlangArgumentType::Buffer {
+                    condition,
+                    ..
+                }
+                | SlangArgumentType::Uniform {
+                    condition,
+                } => condition,
+                _ => unreachable!(),
+            };
+            Some(KernelArgument {
                 name: ArgumentName::from(self.name.clone()),
                 conditional: condition.is_some(),
-                ty: KernelArgumentType::Buffer(match *access_type {
-                    SlangBufferAccess::Read {
-                        is_constant: _,
-                    } => KernelBufferAccess::Read,
-                    SlangBufferAccess::ReadWrite => KernelBufferAccess::ReadWrite,
-                }),
-            })),
-            SlangArgumentType::Constant {
-                condition,
-            }
-            | SlangArgumentType::Buffer {
-                access_type: SlangBufferAccess::Read {
-                    is_constant: true,
-                },
-                condition,
-            } => Ok(Some(KernelArgument {
-                name: ArgumentName::from(self.name.clone()),
-                conditional: condition.is_some(),
-                ty: KernelArgumentType::Constant(self.rust_type(gpu_type_map)?),
-            })),
-            SlangArgumentType::Groups {
-                groups,
-            } if !*indirect_used && groups == "INDIRECT" => {
-                *indirect_used = true;
-
-                Ok(Some(KernelArgument {
-                    name: ArgumentName::from("__dsl_indirect_dispatch_buffer".to_string()),
-                    conditional: false,
-                    ty: KernelArgumentType::Buffer(KernelBufferAccess::Read),
-                }))
-            },
-            _ => Ok(None),
+                ty: ty.clone(),
+            })
+        } else if let SlangArgumentType::Groups {
+            groups,
+        } = &self.argument_type
+            && groups == "INDIRECT"
+            && !*indirect_used
+        {
+            *indirect_used = true;
+            Some(KernelArgument {
+                name: ArgumentName::from("__dsl_indirect_dispatch_buffer".to_string()),
+                conditional: false,
+                ty: KernelArgumentType::Buffer(KernelBufferAccess::Read),
+            })
+        } else {
+            None
         }
     }
 }

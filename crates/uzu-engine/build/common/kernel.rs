@@ -11,7 +11,7 @@ pub enum KernelBufferAccess {
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum KernelArgumentType {
     Buffer(KernelBufferAccess),
-    Constant(Box<str>),
+    Value(Box<str>),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]

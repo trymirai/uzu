@@ -111,7 +111,7 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
                 } => {
                     wrapper.push(format!("  {} {},", specializer.specialize(&argument.slang_type), argument.name));
                 },
-                SlangArgumentType::Constant {
+                SlangArgumentType::Uniform {
                     ..
                 } => {
                     wrapper.push(format!(
@@ -189,7 +189,7 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
                 SlangArgumentType::Buffer {
                     ..
                 }
-                | SlangArgumentType::Constant {
+                | SlangArgumentType::Uniform {
                     ..
                 } => argument.name.to_string(),
                 SlangArgumentType::Specialize {
@@ -241,7 +241,7 @@ fn slang_axis_expr(
                     return None;
                 }
                 match &argument.argument_type {
-                    SlangArgumentType::Constant {
+                    SlangArgumentType::Uniform {
                         condition,
                     } => condition.as_deref(),
                     _ => None,

@@ -121,18 +121,6 @@ fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box
         .collect()
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum MetalBufferAccess {
-    Read,
-    ReadWrite,
-}
-
-#[derive(Debug, Clone)]
-pub enum MetalConstantType {
-    Scalar,
-    Array(Option<Box<str>>),
-}
-
 #[derive(Debug, Clone)]
 pub enum MetalGroupsType {
     Direct(Box<str>),
@@ -141,8 +129,8 @@ pub enum MetalGroupsType {
 
 #[derive(Debug, Clone)]
 pub enum MetalArgumentType {
-    Buffer(MetalBufferAccess),
-    Constant((Box<str>, MetalConstantType)),
+    Device,
+    Constant,
     Shared(Option<Box<str>>),
     Specialize(Box<str>),
     Axis(Box<str>, Box<str>),
@@ -156,6 +144,7 @@ pub struct MetalArgument {
     pub name: ArgumentName,
     pub c_type: Box<str>,
     pub argument_type: MetalArgumentType,
+    pub binding_type: Option<KernelArgumentType>,
     pub condition: Option<Box<str>>,
 }
 
@@ -246,11 +235,35 @@ impl MetalArgument {
 
         let (argument_type, condition) =
             parse_argument_annotation(&c_type, &source, annotation.as_deref(), integer_defines)?;
+        let binding_type = match argument_type {
+            MetalArgumentType::Device => Some(KernelArgumentType::Buffer(if c_type.contains("const") {
+                KernelBufferAccess::Read
+            } else {
+                KernelBufferAccess::ReadWrite
+            })),
+            MetalArgumentType::Constant => {
+                let ty = Self::scalar_type_to_rust(c_type.split_whitespace().nth(2).unwrap())?;
+                let ty = if c_type.ends_with('*') {
+                    if source.contains('[') && source.contains(']') {
+                        let lbracket = source.rfind('[').context("sized constant missing size bracket")? + 1;
+                        let rbracket = source.rfind(']').context("sized constant missing size bracket")?;
+                        format!("&[{ty}; {}]", &source[lbracket..rbracket]).into_boxed_str()
+                    } else {
+                        format!("&[{ty}]").into_boxed_str()
+                    }
+                } else {
+                    ty
+                };
+                Some(KernelArgumentType::Value(ty))
+            },
+            _ => None,
+        };
 
         Ok(Self {
             name: ArgumentName::from(name),
             c_type,
             argument_type,
+            binding_type,
             condition,
         })
     }
@@ -267,6 +280,29 @@ impl MetalArgument {
 
     pub fn is_optional_shared(&self) -> bool {
         matches!(self.argument_type, MetalArgumentType::Shared(_)) && self.condition.is_some()
+    }
+
+    pub fn to_common_argument(
+        &self,
+        indirect_used: &mut bool,
+    ) -> Option<KernelArgument> {
+        if let Some(ty) = &self.binding_type {
+            Some(KernelArgument {
+                name: self.name.clone(),
+                conditional: self.condition.is_some(),
+                ty: ty.clone(),
+            })
+        } else if matches!(self.argument_type, MetalArgumentType::Groups(MetalGroupsType::Indirect)) && !*indirect_used
+        {
+            *indirect_used = true;
+            Some(KernelArgument {
+                name: "__dsl_indirect_dispatch_buffer".into(),
+                conditional: false,
+                ty: KernelArgumentType::Buffer(KernelBufferAccess::Read),
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -295,7 +331,7 @@ fn parse_argument_annotation(
         let argument_type = parse_argument_type(c_type, source, None, integer_defines)?;
         if !matches!(
             argument_type,
-            MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_)
+            MetalArgumentType::Device | MetalArgumentType::Constant | MetalArgumentType::Shared(_)
         ) {
             bail!("Only a buffer, a constant or a threadgroup argument can be optional");
         }
@@ -358,33 +394,11 @@ fn parse_argument_type(
     }
 
     if c_type.contains("device") && c_type.contains('*') && !c_type.contains('&') {
-        return Ok(MetalArgumentType::Buffer(if c_type.contains("const") {
-            MetalBufferAccess::Read
-        } else {
-            MetalBufferAccess::ReadWrite
-        }));
+        return Ok(MetalArgumentType::Device);
     }
 
-    if let ["const", "constant", c_type_scalar, "&"] = c_type.split_whitespace().collect::<Vec<_>>().as_slice() {
-        return Ok(MetalArgumentType::Constant((
-            MetalArgument::scalar_type_to_rust(c_type_scalar)?,
-            MetalConstantType::Scalar,
-        )));
-    }
-
-    if let ["const", "constant", c_type_scalar, "*"] = c_type.split_whitespace().collect::<Vec<_>>().as_slice() {
-        let size = if source.contains('[') && source.contains(']') {
-            let lbracket = source.rfind('[').context("sized constant missing size bracket")? + 1;
-            let rbracket = source.rfind(']').context("sized constant missing size bracket")?;
-            Some(source[lbracket..rbracket].into())
-        } else {
-            None
-        };
-
-        return Ok(MetalArgumentType::Constant((
-            MetalArgument::scalar_type_to_rust(c_type_scalar)?,
-            MetalConstantType::Array(size),
-        )));
+    if let ["const", "constant", _, "&" | "*"] = c_type.split_whitespace().collect::<Vec<_>>().as_slice() {
+        return Ok(MetalArgumentType::Constant);
     }
 
     if c_type.contains("threadgroup") && c_type.contains('*') {
@@ -479,44 +493,7 @@ impl MetalKernelInfo {
                 .into_iter()
                 .chain(self.arguments.iter().filter_map(|a| a.to_parameter()))
                 .collect(),
-            arguments: self
-                .arguments
-                .iter()
-                .filter_map(|a| match &a.argument_type {
-                    MetalArgumentType::Buffer(access) => Some(KernelArgument {
-                        name: a.name.clone(),
-                        conditional: a.condition.is_some(),
-                        ty: KernelArgumentType::Buffer(match access {
-                            MetalBufferAccess::Read => KernelBufferAccess::Read,
-                            MetalBufferAccess::ReadWrite => KernelBufferAccess::ReadWrite,
-                        }),
-                    }),
-                    MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_flag => {
-                        indirect_flag = true;
-                        Some(KernelArgument {
-                            name: "__dsl_indirect_dispatch_buffer".into(),
-                            conditional: false,
-                            ty: KernelArgumentType::Buffer(KernelBufferAccess::Read),
-                        })
-                    },
-                    MetalArgumentType::Constant((ty, MetalConstantType::Scalar)) => Some(KernelArgument {
-                        name: a.name.clone(),
-                        conditional: a.condition.is_some(),
-                        ty: KernelArgumentType::Constant(ty.clone()),
-                    }),
-                    MetalArgumentType::Constant((ty, MetalConstantType::Array(None))) => Some(KernelArgument {
-                        name: a.name.clone(),
-                        conditional: a.condition.is_some(),
-                        ty: KernelArgumentType::Constant(format!("&[{ty}]").into_boxed_str()),
-                    }),
-                    MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size)))) => Some(KernelArgument {
-                        name: a.name.clone(),
-                        conditional: a.condition.is_some(),
-                        ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
-                    }),
-                    _ => None,
-                })
-                .collect(),
+            arguments: self.arguments.iter().filter_map(|a| a.to_common_argument(&mut indirect_flag)).collect(),
         })
     }
 }

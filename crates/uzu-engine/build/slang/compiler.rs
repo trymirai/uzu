@@ -62,7 +62,7 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
     fn build(
         &self,
         gpu_types: &GpuTypes,
-        _gpu_type_paths: &GpuTypePaths,
+        gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         let gpu_type_map = Arc::new(
             gpu_type_gen(&self.fields.source_directory.join("generated"), gpu_types)
@@ -83,8 +83,10 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
         let kernels = slang_sources
             .into_par_iter()
             .map(|path| {
-                self.with_blocking_compiler(|compiler| compiler.compile(path.clone(), gpu_type_map.clone()))
-                    .with_context(|| format!("cannot compile {}", path.display()))
+                self.with_blocking_compiler(|compiler| {
+                    compiler.compile(path.clone(), gpu_type_map.clone(), gpu_type_paths)
+                })
+                .with_context(|| format!("cannot compile {}", path.display()))
             })
             .collect::<anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>>()?;
 
