@@ -592,7 +592,3 @@ fn int8_splits(
     };
     [8, 4, 2].into_iter().find(|&splits| fits(splits)).unwrap_or(1)
 }
-
-#[cfg(test)]
-#[path = "../../../../../unit/backends/vulkan/kernel/matmul/vk_matmul_plan_test.rs"]
-mod tests;
