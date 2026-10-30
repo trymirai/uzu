@@ -60,6 +60,9 @@ impl ModelTask {
                 match initialized {
                     Ok(task) => {
                         let mut progress = task.progress();
+                        // `progress` only reports changes, and an already downloaded model has none:
+                        // announce the state that replaces `Initializing`.
+                        let _ = events.send((identifier.clone(), task.state()));
                         while let Some(state) = progress.next().await {
                             let _ = events.send((identifier.clone(), state));
                         }

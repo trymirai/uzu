@@ -112,6 +112,10 @@ impl RenderedText {
         self.position += next_length.saturating_sub(previous_length);
     }
 
+    pub fn previous_grapheme(&self) -> Option<&str> {
+        self.position.checked_sub(1).and_then(|index| self.original_text.graphemes(true).nth(index))
+    }
+
     pub fn remove_character(&mut self) {
         if self.position == 0 {
             return;

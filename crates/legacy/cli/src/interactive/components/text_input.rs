@@ -6,7 +6,7 @@ use std::{
 use iocraft::prelude::*;
 use tokio::sync::watch;
 
-use crate::interactive::components::RenderedText;
+use crate::interactive::{components::RenderedText, helpers::SYMBOL_LINE_CONTINUATION};
 
 const ENTER_SUBMIT_DELAY: Duration = Duration::from_millis(50);
 
@@ -90,6 +90,18 @@ pub fn TextInput(
                 let Some(mut state) = state.try_write() else {
                     continue;
                 };
+                // Most terminals send Shift+Enter as a plain Enter, so a typed Enter right after `\` starts a new line.
+                // Pasted text never gets here: the next pasted key arrives before the delay ends.
+                if state.previous_grapheme() == Some(SYMBOL_LINE_CONTINUATION) {
+                    state.remove_character();
+                    state.add_character('\n');
+                    let text = state.original_text.clone();
+                    drop(state);
+                    if let Ok(mut handlers) = handlers.lock() {
+                        (handlers.on_change)(text);
+                    }
+                    continue;
+                }
                 let text = state.original_text.clone();
                 state.reset();
                 drop(state);
@@ -185,6 +197,14 @@ pub fn TextInput(
                 state.write().move_position_to_end();
             },
             KeyCode::Enter if modifiers.intersects(KeyModifiers::SHIFT) => {
+                if focus.is_minimal() {
+                    return;
+                }
+                state.write().add_character('\n');
+                notify_change();
+            },
+            // Ctrl+J is a line feed, which every terminal sends as is.
+            KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if focus.is_minimal() {
                     return;
                 }

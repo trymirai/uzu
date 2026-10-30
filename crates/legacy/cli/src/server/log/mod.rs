@@ -1,10 +1,13 @@
 mod file_logger;
 mod log_file;
+mod request_logging_fairing;
 mod request_trace;
+mod response_body_logger;
 
 use std::io;
 
 pub use file_logger::FileLogger;
+pub use request_logging_fairing::RequestLoggingFairing;
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use self::request_trace::{RequestContextLayer, RequestFormatter};

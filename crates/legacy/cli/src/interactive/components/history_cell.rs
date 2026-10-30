@@ -1,12 +1,20 @@
 use iocraft::prelude::*;
 use shoji::types::session::{
-    chat::ChatReplyStats, classification::ClassificationOutput, text_to_speech::TextToSpeechStats,
+    chat::ChatReplyStats,
+    classification::ClassificationOutput,
+    decision::{DecisionAnswer, DecisionQuestion, DecisionResult},
+    text_to_speech::TextToSpeechStats,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::interactive::{
-    components::ApplicationState,
+    components::{ApplicationState, ProgressBar},
     helpers::{SYMBOL_COMMAND, SYMBOL_INPUT, SYMBOL_INPUT_RESULT, SYMBOL_LONG_DASH},
+    sessions::decision::question_title,
 };
+
+const DECISION_CHOICE_LIMIT: usize = 5;
+const DECISION_BAR_WIDTH: u16 = 24;
 
 #[derive(Clone)]
 pub enum TranscriptItem {
@@ -35,6 +43,10 @@ pub enum HistoryCellType {
     },
     ClassificationOutput {
         output: ClassificationOutput,
+    },
+    DecisionOutput {
+        question: DecisionQuestion,
+        result: DecisionResult,
     },
     TextToSpeechOutput {
         stats: TextToSpeechStats,
@@ -108,6 +120,10 @@ pub fn HistoryCell(
         Some(HistoryCellType::ClassificationOutput {
             output,
         }) => classification_output_component(output, theme.subtitle_color, theme.padding()),
+        Some(HistoryCellType::DecisionOutput {
+            question,
+            result,
+        }) => decision_output_component(question, result, theme.accent_color, theme.subtitle_color, theme.padding()),
         Some(HistoryCellType::TextToSpeechOutput {
             stats,
         }) => text_to_speech_output_component(stats, theme.subtitle_color, theme.padding()),
@@ -282,6 +298,174 @@ fn classification_output_component(
                     content: format!("duration: {duration}"),
                     color: subtitle_color,
                 )
+            }
+        }
+    }
+    .into()
+}
+
+fn decision_output_component(
+    question: DecisionQuestion,
+    result: DecisionResult,
+    accent_color: Color,
+    subtitle_color: Color,
+    padding: u16,
+) -> AnyElement<'static> {
+    let tokens_count = result.stats.tokens_count;
+    let duration = result.stats.total_duration;
+
+    element! {
+        View(
+            width: 100pct,
+            border_style: BorderStyle::Single,
+            border_color: subtitle_color,
+            flex_direction: FlexDirection::Column,
+            row_gap: padding,
+            padding_left: padding,
+            padding_right: padding,
+        ) {
+            #(decision_answer_component(question, result.answer, accent_color, subtitle_color, padding))
+            Text(
+                content: format!("{tokens_count} tokens · {duration:.2} s"),
+                color: subtitle_color,
+            )
+        }
+    }
+    .into()
+}
+
+struct DecisionRow {
+    label: String,
+    probability: f64,
+    selected: bool,
+}
+
+// Choice options are listed from most to least probable, score levels in scale order and a yes/no answer as its verdict.
+fn decision_answer_component(
+    question: DecisionQuestion,
+    answer: DecisionAnswer,
+    accent_color: Color,
+    subtitle_color: Color,
+    padding: u16,
+) -> AnyElement<'static> {
+    let title = question_title(&question);
+    let (rows, hidden_count, score) = match (question, answer) {
+        (
+            DecisionQuestion::Choice {
+                options,
+                ..
+            },
+            DecisionAnswer::Choice {
+                index,
+                probabilities,
+                ..
+            },
+        ) => {
+            let mut order = (0..options.len().min(probabilities.len())).collect::<Vec<_>>();
+            // Stable, so tied options keep their order and the chosen one comes first, as `decide` picks it.
+            order.sort_by(|first, second| probabilities[*second].total_cmp(&probabilities[*first]));
+            let hidden_count = order.len().saturating_sub(DECISION_CHOICE_LIMIT);
+            let rows = order
+                .into_iter()
+                .take(DECISION_CHOICE_LIMIT)
+                .map(|option_index| DecisionRow {
+                    label: options[option_index].key.clone(),
+                    probability: probabilities[option_index],
+                    selected: option_index as i64 == index,
+                })
+                .collect();
+            (rows, hidden_count, None)
+        },
+        (
+            DecisionQuestion::Score {
+                levels,
+                ..
+            },
+            DecisionAnswer::Score {
+                probabilities,
+                score,
+            },
+        ) => {
+            let likeliest = (1..probabilities.len()).fold(0, |best, index| {
+                if probabilities[index] > probabilities[best] {
+                    index
+                } else {
+                    best
+                }
+            });
+            let rows = levels
+                .into_iter()
+                .zip(probabilities)
+                .enumerate()
+                .map(|(index, (label, probability))| DecisionRow {
+                    label,
+                    probability,
+                    selected: index == likeliest,
+                })
+                .collect();
+            (rows, 0, Some(score))
+        },
+        (
+            DecisionQuestion::YesNo {
+                ..
+            },
+            DecisionAnswer::YesNo {
+                yes_probability,
+            },
+        ) => {
+            let (label, probability) = if yes_probability >= 0.5 {
+                ("yes", yes_probability)
+            } else {
+                ("no", 1.0 - yes_probability)
+            };
+            let row = DecisionRow {
+                label: label.to_string(),
+                probability,
+                selected: true,
+            };
+            (vec![row], 0, None)
+        },
+        _ => (Vec::new(), 0, None),
+    };
+
+    let label_width = rows.iter().map(|row| UnicodeWidthStr::width(row.label.as_str()) as u16).max().unwrap_or(0);
+    let rows: Vec<AnyElement<'static>> = rows
+        .into_iter()
+        .map(|row| {
+            let label_color = row.selected.then_some(accent_color);
+            let weight = if row.selected {
+                Weight::Bold
+            } else {
+                Weight::Normal
+            };
+            element! {
+                View(flex_direction: FlexDirection::Row, column_gap: padding) {
+                    View(width: label_width) {
+                        Text(content: row.label, color: label_color, weight: weight)
+                    }
+                    View(width: DECISION_BAR_WIDTH) {
+                        ProgressBar(progress: row.probability as f32)
+                    }
+                    Text(content: format!("{:.4}", row.probability), color: label_color, weight: weight)
+                }
+            }
+            .into()
+        })
+        .collect();
+
+    element! {
+        View(width: 100pct, flex_direction: FlexDirection::Column) {
+            View(flex_direction: FlexDirection::Row, column_gap: padding) {
+                Text(content: title, weight: Weight::Bold)
+                #(score.map(|score| element! {
+                    Text(content: format!("{score:.2}"), color: accent_color, weight: Weight::Bold)
+                }))
+            }
+            View(flex_direction: FlexDirection::Column, padding_left: padding) {
+                #(rows.into_iter())
+                #((hidden_count > 0).then(|| element! {
+                    Text(content: format!("+{hidden_count} more"), color: subtitle_color)
+                }))
             }
         }
     }
