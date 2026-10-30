@@ -1,10 +1,10 @@
 use anyhow::{Context, bail, ensure};
 use shader_slang::{
     DeclKind,
-    reflection::{Decl, Function},
+    reflection::{Decl, Function, Type},
 };
 
-use super::{Error, SlangArgument, SlangArgumentType, slang_api};
+use super::{Error, SlangArgument, SlangArgumentType};
 use crate::common::{
     gpu_type_paths::GpuTypePaths,
     identifiers::{ArgumentName, KernelName},
@@ -25,14 +25,9 @@ impl<'a> SlangKernelInfo<'a> {
         decl: &'a Decl,
         gpu_type_paths: &'a GpuTypePaths,
     ) -> Result<Option<Self>, Error> {
-        let (generic_decl, function_decl) = if let DeclKind::Generic = decl.kind() {
-            (
-                Some(decl),
-                decl.as_generic()
-                    .context("generic declaration has no reflection")?
-                    .inner_decl()
-                    .context("generic declaration has no inner declaration")?,
-            )
+        let (generic, function_decl) = if let DeclKind::Generic = decl.kind() {
+            let generic = decl.as_generic().context("generic declaration has no reflection")?;
+            (Some(generic), generic.inner_decl().context("generic declaration has no inner declaration")?)
         } else {
             (None, decl)
         };
@@ -47,23 +42,28 @@ impl<'a> SlangKernelInfo<'a> {
         let name = function.name().context("Slang kernel has no name")?;
         let public = function.user_attributes().any(|attribute| attribute.name() == Some("Public"));
         let mut type_parameters = Vec::new();
-        if let Some(generic) = generic_decl {
-            for (parameter, constraints) in slang_api::get_generic_type_parameters(generic)? {
+        if let Some(generic) = generic {
+            for parameter in generic.type_parameters() {
+                let parameter_name = parameter.name().context("type parameter has no name")?;
+                let constraints = (0..generic.type_parameter_constraint_count(parameter))
+                    .map(|index| generic.type_parameter_constraint_by_index(parameter, index).and_then(Type::name))
+                    .collect::<Option<Vec<_>>>()
+                    .context("type parameter constraint has no name")?;
                 let Some(variants) = constraints.iter().find_map(|constraint| variants_for_constraint(constraint))
                 else {
                     bail!(
-                        "generic kernel '{name}': type parameter '{parameter}' has no known constraint mapping \
+                        "generic kernel '{name}': type parameter '{parameter_name}' has no known constraint mapping \
                          (constraints: {constraints:?})"
                     );
                 };
-                type_parameters.push((parameter, variants));
+                type_parameters.push((parameter_name.to_owned(), variants));
             }
         }
         Ok(Some(Self {
             function,
             name,
             public,
-            generic_decl,
+            generic_decl: generic.map(|_| decl),
             type_parameters,
             gpu_type_paths,
         }))

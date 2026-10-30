@@ -5,12 +5,7 @@ use shader_slang::{
     ComponentType, GenericArg, GenericArgType, Interface, Module, Session,
     reflection::{Decl, Generic, Shader, Type},
 };
-use shader_slang_sys::{
-    IBlobVtable, ISlangBlob, ISlangUnknown__bindgen_vtable, spReflectionDecl_castToGeneric,
-    spReflectionGeneric_GetTypeParameter, spReflectionGeneric_GetTypeParameterConstraintCount,
-    spReflectionGeneric_GetTypeParameterConstraintType, spReflectionGeneric_GetTypeParameterCount,
-    spReflectionType_GetName, spReflectionVariable_GetName,
-};
+use shader_slang_sys::{IBlobVtable, ISlangBlob, ISlangUnknown__bindgen_vtable};
 
 use super::Error;
 
@@ -86,41 +81,4 @@ pub fn create_specialized_generic<'a>(
         .collect();
 
     layout.specialize_generic(generic, &arg_types, &args).ok_or_else(|| anyhow::anyhow!("failed to specialize generic"))
-}
-/// The name and constraint type names of each type parameter of the generic `decl`.
-pub fn get_generic_type_parameters(decl: &Decl) -> Result<Vec<(String, Vec<String>)>, Error> {
-    unsafe {
-        let generic_ptr = spReflectionDecl_castToGeneric(decl as *const _ as *mut _);
-        let generic_ptr =
-            std::ptr::NonNull::new(generic_ptr).context("declaration has no generic reflection")?.as_ptr();
-        let count = spReflectionGeneric_GetTypeParameterCount(generic_ptr);
-        (0..count)
-            .map(|i| {
-                let type_param = spReflectionGeneric_GetTypeParameter(generic_ptr, i);
-                let type_param = std::ptr::NonNull::new(type_param).context("generic has no type parameter")?.as_ptr();
-                let name_ptr = spReflectionVariable_GetName(type_param);
-                let name_ptr =
-                    std::ptr::NonNull::new(name_ptr.cast_mut()).context("type parameter has no name")?.as_ptr();
-                let name = std::ffi::CStr::from_ptr(name_ptr).to_str()?.to_string();
-
-                let constraint_count = spReflectionGeneric_GetTypeParameterConstraintCount(generic_ptr, type_param);
-                let constraints = (0..constraint_count)
-                    .map(|j| {
-                        let constraint_type =
-                            spReflectionGeneric_GetTypeParameterConstraintType(generic_ptr, type_param, j);
-                        let constraint_type = std::ptr::NonNull::new(constraint_type)
-                            .context("type parameter has no constraint type")?
-                            .as_ptr();
-                        let constraint_name_ptr = spReflectionType_GetName(constraint_type);
-                        let constraint_name_ptr = std::ptr::NonNull::new(constraint_name_ptr.cast_mut())
-                            .context("constraint type has no name")?
-                            .as_ptr();
-                        Ok(std::ffi::CStr::from_ptr(constraint_name_ptr).to_str()?.to_string())
-                    })
-                    .collect::<Result<_, Error>>()?;
-
-                Ok((name, constraints))
-            })
-            .collect()
-    }
 }
