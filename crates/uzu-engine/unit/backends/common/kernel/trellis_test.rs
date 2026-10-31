@@ -121,7 +121,8 @@ pub mod projection {
         backends::common::{
             Backend, CommandBuffer, Context, Kernels,
             kernel::matmul::{
-                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TrellisFormat,
+                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, TRELLIS_CODES_TAIL_BYTES,
+                TrellisFormat,
             },
         },
         data_type::DataType,
@@ -132,8 +133,6 @@ pub mod projection {
     #[cfg(backend = "metal")]
     use crate::{backends::metal::Metal, utils::downcast::downcast_ref};
 
-    /// Readable bytes after the last code row, enough for every backend: Metal's GEMM loads whole words past it.
-    pub const CODES_TAIL_BYTES: usize = 16;
     const CODEBOOK: [f32; 5] = [0.0123, 0.3, -0.25, 0.125, -0.0625];
     const PADDING: usize = 24;
     const SENTINEL: u16 = 0x7F7F;
@@ -249,7 +248,7 @@ pub mod projection {
         let activation_scales = create_buffer_with_data::<B, f32>(context, &activation_scales_host);
         // A backend may read past the last row's codes; the tail must not change the result.
         let mut codes_with_tail = stored.clone();
-        codes_with_tail.resize(stored.len() + CODES_TAIL_BYTES, 0xA5);
+        codes_with_tail.resize(stored.len() + TRELLIS_CODES_TAIL_BYTES, 0xA5);
         let codes = create_buffer_with_data::<B, u8>(context, &codes_with_tail);
         let row_scales_buffer = create_buffer_with_data::<B, f32>(context, &row_scales);
         let codebook = create_buffer_with_data::<B, f32>(context, &CODEBOOK);

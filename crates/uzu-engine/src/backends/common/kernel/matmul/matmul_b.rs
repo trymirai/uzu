@@ -15,7 +15,7 @@ pub struct TrellisFormat {
 }
 
 /// Readable bytes past the last code row (the GEMM loads whole words).
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", all(test, backend = "vulkan")))]
 pub const TRELLIS_CODES_TAIL_BYTES: usize = 16;
 
 impl TrellisFormat {

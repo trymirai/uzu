@@ -4,8 +4,8 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::kernel::{
-            matmul::{MatmulShape, TRELLIS_CODES_TAIL_BYTES, TrellisFormat},
-            tests::trellis_test::projection::{CODES_TAIL_BYTES, check_projection, format, whole_blocks},
+            matmul::{MatmulShape, TrellisFormat},
+            tests::trellis_test::projection::{check_projection, format, whole_blocks},
         },
         metal::{
             Metal,
@@ -16,8 +16,6 @@ use crate::{
     data_type::DataType,
     tests::util::shared_metal_context,
 };
-
-const _: () = assert!(CODES_TAIL_BYTES >= TRELLIS_CODES_TAIL_BYTES, "the shared projection check pads too little");
 
 // Ordered as (m, n, k, tiling); every K is whole 64-column blocks.
 const FORCED_PLANS: [(usize, usize, usize, GemmTiling); 5] = [
