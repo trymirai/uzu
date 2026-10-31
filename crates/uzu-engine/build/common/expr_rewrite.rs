@@ -1,7 +1,9 @@
 use syn::{
-    Expr, ExprPath, LitInt, Path,
+    Expr, ExprPath, LitInt, Path, parse_quote,
     visit_mut::{self, VisitMut},
 };
+
+use crate::common::gpu_type_paths::GpuTypePaths;
 
 pub fn rewrite_paths_with<F>(
     expr: &mut Expr,
@@ -13,6 +15,21 @@ pub fn rewrite_paths_with<F>(
         rewriter,
     }
     .visit_expr_mut(expr);
+}
+
+/// `Type::Variant` with the canonical path of the GPU type `Type`; `None` for other paths.
+pub fn qualify_enum_path(
+    path: &Path,
+    gpu_type_paths: &GpuTypePaths,
+) -> Option<Expr> {
+    if path.segments.len() < 2 {
+        return None;
+    }
+    let head = path.segments.first()?;
+    let full_path_text = gpu_type_paths.full_path_for(&head.ident.to_string())?;
+    let prefix: Path = syn::parse_str(full_path_text).ok()?;
+    let suffix: Vec<_> = path.segments.iter().skip(1).cloned().collect();
+    Some(parse_quote! { #prefix #( :: #suffix )* })
 }
 
 struct Walker<F: FnMut(&Path) -> Option<Expr>> {

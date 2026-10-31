@@ -16,7 +16,7 @@ use super::{
     wrapper::specialization_name,
 };
 use crate::common::{
-    expr_rewrite::rewrite_paths_with,
+    expr_rewrite::{qualify_enum_path, rewrite_paths_with},
     gpu_type_paths::{GpuTypeKind, GpuTypePaths},
     gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
     kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
@@ -341,12 +341,7 @@ pub fn bindgen(
     let host_expression = |text: &str| {
         let mut expression = syn::parse_str::<Expr>(text)
             .with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))?;
-        // `Enum::Variant` paths name canonical GPU types.
-        rewrite_paths_with(&mut expression, |path| {
-            let (head, variant) = (path.segments.first()?, path.segments.iter().skip(1));
-            let canonical: syn::Path = syn::parse_str(gpu_type_paths.full_path_for(&head.ident.to_string())?).ok()?;
-            (path.segments.len() > 1).then(|| parse_quote! { #canonical #(:: #variant)* })
-        });
+        rewrite_paths_with(&mut expression, |path| qualify_enum_path(path, gpu_type_paths));
         Ok::<_, Error>(expression)
     };
     for argument in info.arguments() {
