@@ -2,12 +2,11 @@ use std::collections::HashSet;
 
 use anyhow::{Context, bail};
 use itertools::Itertools;
-use quote::{ToTokens, format_ident};
-use syn::{Expr, parse_quote};
+use syn::Expr;
 
 use crate::{
     common::{expr_rewrite::rewrite_paths_with, mangling::static_mangle},
-    slang::{SlangArgumentType, SlangKernel, SlangParameterType, Specializer},
+    slang::{SlangArgumentType, SlangKernel, SlangParameterType, Specializer, slang_axis_expr},
 };
 
 /// Workgroups per row of a folded one-axis grid: Vulkan's minimum maxComputeWorkGroupCount, which wider grids
@@ -73,6 +72,16 @@ pub fn generate_wrappers(
             )
         })
         .collect::<Vec<_>>();
+    // Host expressions name specializations by their constants.
+    let specialization_constants = kernel
+        .arguments
+        .iter()
+        .filter(|a| matches!(a.argument_type, SlangArgumentType::Specialize { .. }))
+        .map(|a| (a.name.as_str(), specialization_name(&kernel.name, &a.name)))
+        .collect::<Vec<_>>();
+    let specialization_constants =
+        specialization_constants.iter().map(|(name, constant)| (*name, constant.as_str())).collect::<Vec<_>>();
+    let host = Specializer::new(&specialization_constants);
 
     for variant in kernel.variants() {
         let types = variant.iter().map(|(_, ty)| ty.to_string()).collect::<Vec<_>>();
@@ -102,7 +111,10 @@ pub fn generate_wrappers(
             .collect::<Vec<_>>()
             .as_slice()
         {
-            [size] => Some(format!("__dsl_axis_idx.x + __dsl_axis_idx.y * ({AXIS_FOLD_GROUPS}u * ({size}))")),
+            [size] => Some(format!(
+                "__dsl_axis_idx.x + __dsl_axis_idx.y * ({AXIS_FOLD_GROUPS}u * ({}))",
+                host.specialize(size)
+            )),
             _ => None,
         };
         let has_groups = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Groups { .. }));
@@ -200,7 +212,23 @@ pub fn generate_wrappers(
                 .join(", ")
         };
 
-        let numthreads = calculate_numthreads(&kernel.name, &arguments)?;
+        let mut numthreads = arguments
+            .iter()
+            .filter_map(|(_, kind, _)| match kind {
+                SlangArgumentType::Axis {
+                    threads_in_group: size,
+                    ..
+                }
+                | SlangArgumentType::Threads {
+                    threads: size,
+                } => Some(host.specialize(size).into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        while numthreads.len() < 3 {
+            numthreads.push("1".to_owned());
+        }
+        let numthreads = numthreads.join(", ");
 
         let guards = arguments
             .iter()
@@ -208,7 +236,7 @@ pub fn generate_wrappers(
                 SlangArgumentType::Axis {
                     threads: total,
                     ..
-                } => Some(total),
+                } => Some(host.specialize(&slang_axis_expr(total, kernel)).into_owned()),
                 _ => None,
             })
             .zip(["x", "y", "z"])
@@ -252,42 +280,4 @@ pub fn specialization_name(
     argument_name: &str,
 ) -> String {
     format!("__dsl_{kernel_name}_{argument_name}")
-}
-
-fn calculate_numthreads(
-    kernel_name: &str,
-    arguments: &[(&str, &SlangArgumentType, impl AsRef<str>)],
-) -> anyhow::Result<String> {
-    let mut threads = arguments
-        .iter()
-        .filter_map(|(_, arg_type, _)| match arg_type {
-            SlangArgumentType::Axis {
-                threads_in_group: threads,
-                ..
-            }
-            | SlangArgumentType::Threads {
-                threads,
-            } => Some(threads.as_str()),
-            _ => None,
-        })
-        .map(|text| {
-            let mut expression = syn::parse_str::<Expr>(text)?;
-            rewrite_paths_with(&mut expression, |path| {
-                let name = path.get_ident()?;
-                arguments
-                    .iter()
-                    .any(|(argument, kind, _)| name == argument && matches!(kind, SlangArgumentType::Specialize { .. }))
-                    .then(|| {
-                        let name = format_ident!("{}", specialization_name(kernel_name, &name.to_string()));
-                        parse_quote! { #name }
-                    })
-            });
-            Ok::<_, anyhow::Error>(expression.into_token_stream().to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    while threads.len() < 3 {
-        threads.push("1".to_owned());
-    }
-    Ok(threads.join(", "))
 }
