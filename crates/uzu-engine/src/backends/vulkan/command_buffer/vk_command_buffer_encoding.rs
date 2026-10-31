@@ -228,12 +228,12 @@ impl VkCommandBufferEncoding {
         self.retained.extend(buffers.map(|(buffer, _)| buffer.clone() as Arc<dyn Send + Sync>));
     }
 
-    pub fn command_buffer(&self) -> vk::CommandBuffer {
+    fn command_buffer(&self) -> vk::CommandBuffer {
         self.resources().command_buffer()
     }
 
     /// Whether commands still record: no error has ended the recording.
-    pub fn is_recording(&self) -> bool {
+    fn is_recording(&self) -> bool {
         self.failure.is_none()
     }
 
