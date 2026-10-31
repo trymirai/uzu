@@ -1,6 +1,9 @@
 #![cfg(backend = "metal")]
 
-use std::time::{Duration, Instant};
+use std::{
+    mem::size_of,
+    time::{Duration, Instant},
+};
 
 use criterion::Criterion;
 use futures::executor::block_on;
@@ -10,7 +13,7 @@ use uzu_engine_macros::uzu_bench;
 use crate::{
     backends::{
         common::{
-            Backend, CommandBufferEncoding, Context, CpuBuffer, Kernels,
+            Backend, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
             kernel::delta_net_tree_verify::DeltaNetTreeVerify,
         },
         metal::Metal,
@@ -55,6 +58,9 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         let mut in_proj = command_buffer.allocate_scratch(tree_size * TOTAL_PROJ_DIM * size_of::<bf16>()).unwrap();
         in_proj.copyin(&vec![bf16::from_f32(0.04); tree_size * TOTAL_PROJ_DIM]);
         let trie_nodes = (0..tree_size as u32).flat_map(|node| [node, tree_size as u32 - 1, node]).collect::<Vec<_>>();
+        let mut trie_staging = context.create_buffer_cpu_gpu(trie_nodes.len() * size_of::<u32>()).unwrap();
+        trie_staging.copyin(&trie_nodes);
+        let trie = trie_staging.handoff();
         let mut log_decay = command_buffer.allocate_scratch(tree_size * V_HEADS * size_of::<f32>()).unwrap();
         log_decay.copyin(&vec![-0.01f32; tree_size * V_HEADS]);
         let mut beta = command_buffer.allocate_scratch(tree_size * V_HEADS * size_of::<f32>()).unwrap();
@@ -62,7 +68,6 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/T{tree_size}");
         group.bench_function(format!("T{tree_size}"), |bencher| {
             iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
-                let trie = command_buffer.allocate_constant_from_slice(&trie_nodes).unwrap();
                 tree_verify
                     .encode(
                         TreeVerifyEncodeArguments {

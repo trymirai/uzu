@@ -17,16 +17,24 @@ use crate::{
         metal::Metal,
     },
     data_type::{DataType, DataTypeRepr},
-    encodable_block::{
-        mixer::attention::{KVCacheView, kv_storage::KVStorage},
-        sampling::PRng,
-    },
+    encodable_block::mixer::attention::{KVCacheView, kv_storage::KVStorage},
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
-    trie::TrieNode,
 };
+
+/// A single chain of `len` nodes, pre-order: row `i` spans `[i, len - 1]` at
+/// height `i`, the linearization `TrieNode::flat` used to produce.
+fn chain_trie(len: u32) -> Vec<GpuTrieNode> {
+    (0..len)
+        .map(|index| GpuTrieNode {
+            trie_start: index,
+            trie_end: len - 1,
+            height: index,
+        })
+        .collect()
+}
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
@@ -107,8 +115,7 @@ fn run_attention_with_kernel<B: Backend>(
 #[uzu_test]
 fn attention_kernel_matches_cpu() {
     const TRIE_SUFFIX_LENGTH: usize = 31;
-    let tokens: Vec<u64> = (0..TRIE_SUFFIX_LENGTH as u64).collect();
-    let trie: Vec<GpuTrieNode> = TrieNode::flat(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect();
+    let trie: Vec<GpuTrieNode> = chain_trie(TRIE_SUFFIX_LENGTH as u32);
     let cpu_context = block_on(<Cpu as Backend>::Context::new()).expect("CPU attention context");
     let metal_context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     for &(head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal, use_trie) in &[
@@ -153,8 +160,7 @@ fn attention_kernel_matches_cpu() {
 #[uzu_test]
 fn attention_kernel_reuses_instance_for_flat_and_trie() {
     let shape = (256, 6, 1, 5, 1024, true);
-    let trie: Vec<GpuTrieNode> =
-        TrieNode::flat(0, &[0, 1, 2, 3, 4], &PRng::new(0)).linearize().token_subtrie_ranges().collect();
+    let trie: Vec<GpuTrieNode> = chain_trie(5);
     let context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     let kernel = <<Metal as Backend>::Kernels as Kernels>::AttentionKernel::new(
         context.as_ref(),
@@ -360,6 +366,7 @@ fn int8_attention_matches_cpu() {
                 kv_heads as u32,
                 append_kv,
                 false,
+                false,
             )
             .unwrap();
             let mut query_codes = create_buffer::<Metal, i8>(&metal, kv_heads * query_rows * head_dim);
@@ -383,6 +390,7 @@ fn int8_attention_matches_cpu() {
                 stride as u32,
                 suffix as u32,
                 query_rows as u32,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 &mut command_buffer,
             );

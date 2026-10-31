@@ -8,10 +8,7 @@ use rand_distr::Normal;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-        gpu_types::trie::TrieNode,
-    },
+    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
     data_type::{DataType, DataTypeRepr},
     encodable_block::{
         batch_topology::BatchTopology,

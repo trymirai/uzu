@@ -38,8 +38,6 @@ pub enum LanguageModelStreamError<B: Backend> {
     Decoder(#[from] DecoderError<B>),
     #[error("Grammar error: {0}")]
     Grammar(#[from] GrammarError),
-    #[error("Trie accept error: {0}")]
-    TrieAccept(#[from] crate::trie::TrieAcceptError),
     #[error("Speculator error: {0}")]
     Speculator(#[from] DFlashTreeError<B>),
     #[error("No seed token (both state and input are empty)")]

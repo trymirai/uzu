@@ -12,7 +12,6 @@ use crate::{
     tests::helpers::{
         buffer_readback, buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend,
     },
-    trie::TrieNode,
 };
 
 struct Verification {
@@ -22,8 +21,34 @@ struct Verification {
     accepted_output_norm: Vec<u8>,
 }
 
+fn flat_trie(rows: &[(u32, u32, u32)]) -> (Vec<GpuTrieNode>, Vec<u32>, Vec<i32>) {
+    let nodes: Vec<GpuTrieNode> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, &(_, height, end))| GpuTrieNode {
+            trie_start: index as u32,
+            trie_end: end,
+            height,
+        })
+        .collect();
+    let token_ids: Vec<u32> = rows.iter().map(|&(token, _, _)| token).collect();
+
+    let mut parents: Vec<i32> = Vec::with_capacity(rows.len());
+    // pre-order: the parent of a row is the nearest previous row one level up
+    let mut path: Vec<usize> = Vec::new();
+    for (index, &(_, height, _)) in rows.iter().enumerate() {
+        path.truncate(height as usize);
+        parents.push(path.last().map_or(-1, |&parent| parent as i32));
+        path.push(index);
+    }
+
+    (nodes, token_ids, parents)
+}
+
 fn run_verify_trie<B: Backend>(
-    trie: &TrieNode,
+    nodes: &[GpuTrieNode],
+    parents: &[i32],
+    token_ids: &[u32],
     sampled_tokens: &[u32],
     norm_row_bytes: usize,
 ) -> Verification {
@@ -31,12 +56,6 @@ fn run_verify_trie<B: Backend>(
     let kernel =
         <<B as Backend>::Kernels as Kernels>::VerifyTrieKernel::new(&context).expect("create verify trie kernel");
 
-    let flat_trie = trie.linearize();
-    let nodes = flat_trie.token_subtrie_ranges().collect::<Box<[_]>>();
-    let batch_dim = BatchTopology::new(nodes.clone());
-    let parents = batch_dim.parents().unwrap().to_vec();
-
-    let token_ids = flat_trie.token_ids().map(|token| token as u32).collect::<Vec<u32>>();
     let num_nodes = nodes.len();
     let max_accepted = nodes.iter().map(|node| node.height).max().unwrap_or_default() as usize + 1;
     let capacity = max_accepted + 1;
@@ -47,11 +66,11 @@ fn run_verify_trie<B: Backend>(
 
     let mut nodes_staging =
         context.create_buffer_cpu_gpu(nodes.len() * std::mem::size_of::<GpuTrieNode>()).expect("stage trie nodes");
-    nodes_staging.copyin(&nodes);
+    nodes_staging.copyin(nodes);
     let nodes_buffer = nodes_staging.handoff();
 
-    let parents_buffer = create_buffer_with_data::<B, i32>(&context, &parents);
-    let token_ids_buffer = create_buffer_with_data::<B, u32>(&context, &token_ids);
+    let parents_buffer = create_buffer_with_data::<B, i32>(&context, parents);
+    let token_ids_buffer = create_buffer_with_data::<B, u32>(&context, token_ids);
     let sampled_tokens_buffer = create_buffer_with_data::<B, u32>(&context, sampled_tokens);
     let norm_buffer = create_buffer_with_data::<B, u8>(&context, &norm_rows);
 
@@ -96,13 +115,31 @@ fn run_verify_trie<B: Backend>(
 }
 
 fn expected_verification(
-    trie: &TrieNode,
+    rows: &[(u32, u32, u32)],
     sampled_tokens: &[u32],
     norm_row_bytes: usize,
 ) -> Verification {
-    let flat_trie = trie.linearize();
-    let sampled_tokens = sampled_tokens.iter().copied().map(|token| token as u64).collect::<Vec<u64>>();
-    let accepted = flat_trie.accept(&sampled_tokens, None).expect("accept");
+    let (nodes, token_ids, _) = flat_trie(rows);
+
+    // walk root-first, descending to the child whose token matches the sample
+    let mut accepted = Vec::new();
+    let mut current = 0;
+    loop {
+        accepted.push((current, token_ids[current] as u64, sampled_tokens[current] as u64));
+        let mut child = current + 1;
+        let mut descended = false;
+        while child <= nodes[current].trie_end as usize {
+            if token_ids[child] == sampled_tokens[current] {
+                current = child;
+                descended = true;
+                break;
+            }
+            child = nodes[child].trie_end as usize + 1;
+        }
+        if !descended {
+            break;
+        }
+    }
 
     let len = accepted.len() as u32;
     let reversed = |mut entries: Vec<u32>| {
@@ -123,20 +160,21 @@ fn expected_verification(
 }
 
 fn assert_verification(
-    trie: &TrieNode,
+    rows: &[(u32, u32, u32)],
     sampled_tokens: &[u32],
     norm_row_bytes: usize,
 ) {
-    let expected = expected_verification(trie, sampled_tokens, norm_row_bytes);
+    let expected = expected_verification(rows, sampled_tokens, norm_row_bytes);
+    let (nodes, token_ids, parents) = flat_trie(rows);
 
-    let actual = run_verify_trie::<Cpu>(trie, sampled_tokens, norm_row_bytes);
+    let actual = run_verify_trie::<Cpu>(&nodes, &parents, &token_ids, sampled_tokens, norm_row_bytes);
     assert_eq!(actual.accepted_indices, expected.accepted_indices, "cpu accepted indices");
     assert_eq!(actual.accepted_input_tokens, expected.accepted_input_tokens, "cpu accepted input tokens");
     assert_eq!(actual.accepted_output_tokens, expected.accepted_output_tokens, "cpu accepted output tokens");
     assert_eq!(actual.accepted_output_norm, expected.accepted_output_norm, "cpu accepted output norm");
 
     for_each_non_cpu_backend!(|B| {
-        let actual = run_verify_trie::<B>(trie, sampled_tokens, norm_row_bytes);
+        let actual = run_verify_trie::<B>(&nodes, &parents, &token_ids, sampled_tokens, norm_row_bytes);
         assert_eq!(actual.accepted_indices, expected.accepted_indices, "accepted indices");
         assert_eq!(actual.accepted_input_tokens, expected.accepted_input_tokens, "accepted input tokens");
         assert_eq!(actual.accepted_output_tokens, expected.accepted_output_tokens, "accepted output tokens");
@@ -147,53 +185,37 @@ fn assert_verification(
 #[uzu_test]
 fn verify_trie_accepts_full_chain() {
     // root(0) -> 1 -> 2 -> 3, sampled tokens walk the whole chain
-    let mut root = TrieNode::new(0, 0, 0.0);
-    let mut chain = TrieNode::new(1, 0, 0.0);
-    let mut deeper = TrieNode::new(2, 0, 0.0);
-    deeper.add(TrieNode::new(3, 0, 0.0)).unwrap();
-    chain.add(deeper).unwrap();
-    root.add(chain).unwrap();
-    root.add(TrieNode::new(4, 0, 0.0)).unwrap();
+    let rows = &[(0, 0, 4), (1, 1, 3), (2, 2, 3), (3, 3, 3), (4, 1, 4)];
 
-    // node order: [0, 1, 2, 3, 4]; the root samples 1, node 1 samples 2, node 2 samples 3
-    assert_verification(&root, &[1, 2, 3, 5, 6], 7);
+    // the root samples 1, node 1 samples 2, node 2 samples 3
+    assert_verification(rows, &[1, 2, 3, 5, 6], 7);
 }
 
 #[uzu_test]
 fn verify_trie_stops_at_mismatch() {
-    let mut root = TrieNode::new(0, 0, 0.0);
-    let mut chain = TrieNode::new(1, 0, 0.0);
-    chain.add(TrieNode::new(2, 0, 0.0)).unwrap();
-    root.add(chain).unwrap();
-    root.add(TrieNode::new(3, 0, 0.0)).unwrap();
+    // root(0) with children 1 (-> 2) and 3
+    let rows = &[(0, 0, 3), (1, 1, 2), (2, 2, 2), (3, 1, 3)];
 
-    // node order: [0, 1, 2, 3]; the root samples 3 (the second child), node 3
-    // has no child matching its sampled token
-    assert_verification(&root, &[3, 9, 9, 9], 3);
+    // the root samples 3 (the second child), node 3 has no child matching its
+    // sampled token
+    assert_verification(rows, &[3, 9, 9, 9], 3);
 }
 
 #[uzu_test]
 fn verify_trie_accepts_root_only() {
-    let mut root = TrieNode::new(0, 0, 0.0);
-    root.add(TrieNode::new(1, 0, 0.0)).unwrap();
+    // root(0) with a single child 1
+    let rows = &[(0, 0, 1), (1, 1, 1)];
 
     // the root samples a token that matches no child
-    assert_verification(&root, &[7, 7], 5);
+    assert_verification(rows, &[7, 7], 5);
 }
 
 #[uzu_test]
 fn verify_trie_skips_sibling_subtree() {
     // root with two children, each with own children; the walk must skip the
     // first child's subtree to reach the second child
-    let mut root = TrieNode::new(0, 0, 0.0);
-    let mut first = TrieNode::new(1, 0, 0.0);
-    first.add(TrieNode::new(2, 0, 0.0)).unwrap();
-    first.add(TrieNode::new(3, 0, 0.0)).unwrap();
-    let mut second = TrieNode::new(4, 0, 0.0);
-    second.add(TrieNode::new(5, 0, 0.0)).unwrap();
-    root.add(first).unwrap();
-    root.add(second).unwrap();
+    let rows = &[(0, 0, 5), (1, 1, 3), (2, 2, 2), (3, 2, 3), (4, 1, 5), (5, 2, 5)];
 
-    // node order: [0, 1, 2, 3, 4, 5]; the root samples 4, node 4 samples 5
-    assert_verification(&root, &[4, 9, 9, 9, 5, 9], 2);
+    // the root samples 4, node 4 samples 5
+    assert_verification(rows, &[4, 9, 9, 9, 5, 9], 2);
 }

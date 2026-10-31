@@ -25,13 +25,8 @@ use crate::{
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{EncodedWeaverTree, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
-    engine::language_model::grammar::Grammar,
     safetensors::{ParameterLoader, ParameterLoaderError},
-    trie::TrieNode,
-    utils::{
-        file,
-        timestamps::{record, wait},
-    },
+    utils::{file, timestamps::record},
 };
 
 #[derive(Debug, Error)]
@@ -513,113 +508,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         Ok((trie, batch_dim, pending))
     }
-
-    /// Grammar path: waits for the proposal and builds the pruned trie on the
-    /// CPU, so the grammar bitmask can be computed host-side. Slower (a device
-    /// sync per decode step) but only used when a grammar is configured.
-    pub async fn propose_tree_with_grammar(
-        &self,
-        state: &mut DFlashState<B>,
-        target_output_norm: impl BufferRef<Backend = B>,
-        target_output_token: impl BufferRef<Backend = B, Buffer = B::GlobalGpuBuffer>,
-        target_embedding: &Embedding<B>,
-        shape: DFlashTfmTreeShape,
-        sampling_method: &SamplingMethod,
-        grammar: &mut Grammar,
-        prng: &PRng,
-        allocation_pool: Arc<B::AllocationPool>,
-        command_buffer_name: Option<&str>,
-        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
-    ) -> Result<TrieNode, DFlashTreeError<B>> {
-        let command_buffer = self
-            .context
-            .create_command_buffer(command_buffer_name, Some(allocation_pool))
-            .map_err(DFlashTreeError::Backend)?;
-        let mut command_buffer = record(command_buffer, timestamps);
-
-        let (source, root_position) = self.encode_proposal(
-            state,
-            target_output_norm,
-            target_output_token,
-            target_embedding,
-            &shape,
-            sampling_method,
-            prng,
-            &mut command_buffer,
-        )?;
-
-        let pending = command_buffer.end_encoding().submit();
-        let completed = wait(pending, timestamps).await.map_err(DFlashTreeError::Backend)?;
-
-        let nodes = match &source {
-            ProposalSource::Argmax {
-                sampled,
-                chain_length,
-            } => {
-                let (root_token, tokens) = futures::future::try_join(
-                    self.context.copyout::<u32>(target_output_token),
-                    self.context.copyout::<u32>(sampled),
-                )
-                .await
-                .map_err(DFlashTreeError::Backend)?;
-                let mut nodes = Vec::with_capacity(shape.tree_budget as usize);
-                nodes.push(ProposalNode {
-                    token_id: root_token[0],
-                    depth: 0,
-                    logprob: 0.0,
-                    child_indices: vec![1],
-                });
-                nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
-                    token_id,
-                    depth,
-                    logprob: 0.0,
-                    child_indices: if depth < *chain_length {
-                        vec![depth as usize + 1]
-                    } else {
-                        Vec::new()
-                    },
-                }));
-                nodes
-            },
-            ProposalSource::Weaver {
-                tree,
-                ..
-            } => tree.read_nodes(&self.context).await.map_err(DFlashTreeError::Backend)?,
-        };
-        drop(completed);
-
-        let mut trie = recursive_build(&nodes, 0, root_position, Some(grammar), prng);
-        trie.prune_to_budget(shape.tree_budget as usize);
-        Ok(trie)
-    }
-}
-
-fn recursive_build(
-    nodes: &[ProposalNode],
-    index: usize,
-    root_position: u32,
-    mut grammar: Option<&mut Grammar>,
-    prng: &PRng,
-) -> TrieNode {
-    let node = &nodes[index];
-    let mut trie_node =
-        TrieNode::new(node.token_id as u64, prng.derive(root_position as u64 + node.depth as u64), node.logprob);
-    for &child_index in &node.child_indices {
-        if let Some(grammar) = grammar.as_mut()
-            && (grammar.is_terminated() || grammar.accept_token(nodes[child_index].token_id as u64).is_err())
-        {
-            continue;
-        }
-
-        let child = recursive_build(nodes, child_index, root_position, grammar.as_deref_mut(), prng);
-
-        if let Some(grammar) = grammar.as_mut() {
-            grammar.rollback(1);
-        }
-
-        trie_node.add(child).expect("tree children are selected without replacement");
-    }
-    trie_node
 }
 
 #[cfg(test)]

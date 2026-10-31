@@ -29,6 +29,7 @@ fn run<B: Backend>() -> Output {
         true,
         false,
         false,
+        false,
     )
     .expect("Failed to create AttentionPrepareKernel");
     let qkvg = [
@@ -57,6 +58,7 @@ fn run<B: Backend>() -> Output {
         12,
         2,
         None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
@@ -77,6 +79,7 @@ fn run_gated<B: Backend>() -> Output {
         true,
         false,
         true,
+        false,
     )
     .expect("Failed to create AttentionPrepareKernel");
     let qkvg = [
@@ -107,6 +110,7 @@ fn run_gated<B: Backend>() -> Output {
         12,
         2,
         Some(&accepted_length),
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
@@ -140,6 +144,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         false,
         false,
         false,
+        false,
     )
     .expect("Failed to create AttentionPrepareKernel");
     let qg = [1.0, 2.0, 3.0, 4.0, 101.0, 102.0, 103.0, 104.0, 11.0, 12.0, 13.0, 14.0, 111.0, 112.0, 113.0, 114.0]
@@ -162,6 +167,7 @@ fn run_query_only<B: Backend>() -> Vec<bf16> {
         None,
         8,
         2,
+        None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
@@ -244,6 +250,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
         1,
         true,
         false,
+        false,
     )
     .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
@@ -264,6 +271,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
         (num_q_heads + 2) * DIM as u32,
         1,
         num_q_heads,
+        None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );

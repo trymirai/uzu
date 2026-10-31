@@ -63,18 +63,6 @@ struct ResolvedJob<B: Backend> {
     batch_dim: BatchTopology<B>,
 }
 
-/// GPU buffers produced by the speculator for the current pass, kept alive
-/// until the job resolves.
-struct Speculation<B: Backend> {
-    token_ids: B::GlobalGpuBuffer,
-    seeds: B::GlobalGpuBuffer,
-    #[allow(dead_code)]
-    count: B::GlobalGpuBuffer,
-    #[allow(dead_code)]
-    pending: Option<Pending<B>>,
-    flat_tokens: Option<Box<[(u64, u32)]>>,
-}
-
 impl<B: Backend> GenerationJob<B> {
     fn output_tokens_buffer(&self) -> &B::GlobalGpuBuffer {
         match self {
