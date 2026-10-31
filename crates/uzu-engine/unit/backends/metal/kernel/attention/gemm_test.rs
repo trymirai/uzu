@@ -19,7 +19,7 @@ use crate::{
     encodable_block::mixer::attention::KVCacheView,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, default_attention_config},
     },
 };
 
@@ -36,7 +36,7 @@ struct Input<T: DataTypeRepr + Float> {
 }
 
 fn attention_config<T: DataTypeRepr + Float>(input: &Input<T>) -> AttentionKernelConfig {
-    super::default_attention_config::<T>(input.head_dim, input.num_heads, input.num_kv_heads, input.do_causal)
+    default_attention_config::<T>(input.head_dim, input.num_heads, input.num_kv_heads, input.do_causal)
 }
 
 fn get_test_data<T: DataTypeRepr + Float>(
