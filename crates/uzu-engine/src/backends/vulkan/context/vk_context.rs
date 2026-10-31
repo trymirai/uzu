@@ -5,7 +5,7 @@ use std::{
     hash::{BuildHasher, BuildHasherDefault, DefaultHasher},
     path::{Path, PathBuf},
     sync::{
-        Arc, Weak,
+        Arc, OnceLock, Weak,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
@@ -70,7 +70,7 @@ pub struct VkContext {
     completion: mpsc::Sender<VkCommandBufferSubmission>,
     /// A failed upload, where the common contract has no error to return (`GlobalBufferCpuGpu::handoff`): every later
     /// command buffer fails with it, as the uploaded buffers hold no data.
-    upload_failure: Mutex<Option<String>>,
+    upload_failure: OnceLock<String>,
 }
 impl VkContext {
     /// `pipeline_cache_path` is where compiled pipelines persist between runs; `None` compiles each one again in every
@@ -149,7 +149,7 @@ impl VkContext {
             queue: Mutex::new(queue),
             queue_family_index,
             completion,
-            upload_failure: Mutex::new(None),
+            upload_failure: OnceLock::new(),
         }))
     }
 
@@ -158,7 +158,7 @@ impl VkContext {
         &self,
         error: Error,
     ) {
-        self.upload_failure.lock().get_or_insert_with(|| error.to_string());
+        self.upload_failure.get_or_init(|| error.to_string());
     }
 
     fn create_readback_buffer(
@@ -364,7 +364,7 @@ impl Context for VkContext {
         name: Option<&str>,
         allocation_pool: Option<Arc<<Vulkan as Backend>::AllocationPool>>,
     ) -> Result<VkCommandBufferEncoding, Error> {
-        if let Some(failure) = self.upload_failure.lock().as_ref() {
+        if let Some(failure) = self.upload_failure.get() {
             return Err(VkContextError::UploadFailed(failure.clone()).into());
         }
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());

@@ -21,6 +21,13 @@ impl VkBufferInitializer {
             buffer: Arc::new(VkBuffer::new(context.clone(), size, VkBufferMemory::Device)?),
         })
     }
+
+    fn submit_copy(&self) -> Result<(), Error> {
+        let mut encoding = self.buffer.context().create_command_buffer(None, None)?;
+        encoding.encode_copy(&self.staging, 0..VkBuffer::size(&self.staging), &self.buffer, 0)?;
+        drop(encoding.end_encoding().try_submit()?);
+        Ok(())
+    }
 }
 
 impl Buffer for VkBufferInitializer {
@@ -34,15 +41,6 @@ impl Buffer for VkBufferInitializer {
 impl CpuBuffer for VkBufferInitializer {
     fn cpu_ptr(&self) -> NonNull<c_void> {
         self.staging.cpu_ptr()
-    }
-}
-
-impl VkBufferInitializer {
-    fn submit_copy(&self) -> Result<(), Error> {
-        let mut encoding = self.buffer.context().create_command_buffer(None, None)?;
-        encoding.encode_copy(&self.staging, 0..VkBuffer::size(&self.staging), &self.buffer, 0)?;
-        drop(encoding.end_encoding().try_submit()?);
-        Ok(())
     }
 }
 
