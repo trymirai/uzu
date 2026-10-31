@@ -48,6 +48,10 @@ pub struct Attention<B: Backend> {
     prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     gated_prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     gated_prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
+    prepare_trie: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    prepare_int8_trie: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
+    gated_prepare_trie: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    gated_prepare_int8_trie: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -146,6 +150,7 @@ impl<B: Backend> Attention<B> {
             !is_kv_sharing,
             rope_config.is_some(),
             false,
+            false,
         )
         .map_err(AttentionNewError::Backend)?;
         let gated_prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
@@ -154,6 +159,27 @@ impl<B: Backend> Attention<B> {
             DataType::F32,
             !is_kv_sharing,
             rope_config.is_some(),
+            true,
+            false,
+        )
+        .map_err(AttentionNewError::Backend)?;
+        let prepare_trie = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            data_type,
+            DataType::F32,
+            !is_kv_sharing,
+            rope_config.is_some(),
+            false,
+            true,
+        )
+        .map_err(AttentionNewError::Backend)?;
+        let gated_prepare_trie = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            data_type,
+            DataType::F32,
+            !is_kv_sharing,
+            rope_config.is_some(),
+            true,
             true,
         )
         .map_err(AttentionNewError::Backend)?;
@@ -196,6 +222,25 @@ impl<B: Backend> Attention<B> {
                     num_groups,
                     !is_kv_sharing,
                     false,
+                    false,
+                )
+            })
+            .transpose()
+            .map_err(AttentionNewError::Backend)?;
+        let prepare_int8_trie = kernel
+            .supports_int8()
+            .then(|| {
+                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+                    context,
+                    data_type,
+                    DataType::F32,
+                    head_dim,
+                    rope_config.is_some(),
+                    true,
+                    num_groups,
+                    !is_kv_sharing,
+                    false,
+                    true,
                 )
             })
             .transpose()
@@ -212,6 +257,25 @@ impl<B: Backend> Attention<B> {
                     true,
                     num_groups,
                     !is_kv_sharing,
+                    true,
+                    false,
+                )
+            })
+            .transpose()
+            .map_err(AttentionNewError::Backend)?;
+        let gated_prepare_int8_trie = kernel
+            .supports_int8()
+            .then(|| {
+                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+                    context,
+                    data_type,
+                    DataType::F32,
+                    head_dim,
+                    rope_config.is_some(),
+                    true,
+                    num_groups,
+                    !is_kv_sharing,
+                    true,
                     true,
                 )
             })
@@ -247,6 +311,10 @@ impl<B: Backend> Attention<B> {
                 prepare_int8,
                 gated_prepare,
                 gated_prepare_int8,
+                prepare_trie,
+                prepare_int8_trie,
+                gated_prepare_trie,
+                gated_prepare_int8_trie,
                 sinks,
                 kernel,
                 out_projection,
@@ -277,7 +345,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {

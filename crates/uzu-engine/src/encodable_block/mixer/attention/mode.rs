@@ -52,7 +52,7 @@ impl<B: Backend> Attention<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<AttentionState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, AttentionEncodeError<B>> {
@@ -123,6 +123,7 @@ impl<B: Backend> Attention<B> {
                             precalculated_rope,
                             batch_dim.size(),
                             None::<&dyn GpuBuffer<Backend = B>>,
+                            batch_dim.heights(),
                             command_buffer,
                         )
                         .map_err(AttentionEncodeError::Backend)?;
@@ -142,6 +143,7 @@ impl<B: Backend> Attention<B> {
                             precalculated_rope,
                             batch_dim.size(),
                             None::<&dyn GpuBuffer<Backend = B>>,
+                            batch_dim.heights(),
                             command_buffer,
                         )
                         .map_err(AttentionEncodeError::Backend)?;
@@ -155,16 +157,13 @@ impl<B: Backend> Attention<B> {
                     })
                 },
             };
-            let trie = (!batch_dim.is_flat())
-                .then(|| command_buffer.allocate_constant_from_slice(batch_dim.nodes().unwrap()))
-                .transpose()
-                .map_err(AttentionEncodeError::Backend)?;
+            let trie = batch_dim.nodes();
             self.kernel
                 .encode(
                     input,
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
-                        trie: trie.as_ref(),
+                        trie,
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,
@@ -199,6 +198,7 @@ impl<B: Backend> Attention<B> {
                     Some(precalculated_rope),
                     max_tokens,
                     Some(accepted_length),
+                    None,
                     command_buffer,
                 )?;
             },
@@ -211,6 +211,7 @@ impl<B: Backend> Attention<B> {
                     Some(precalculated_rope),
                     max_tokens,
                     Some(accepted_length),
+                    None,
                     command_buffer,
                 )?;
             },
@@ -228,6 +229,7 @@ impl<B: Backend> Attention<B> {
         rope: Option<&PrecalculatedRoPE<B>>,
         suffix_length: u32,
         accepted_length: Option<impl BufferRef<Backend = B>>,
+        heights: Option<&B::GlobalGpuBuffer>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         let (output_keys, output_values) = match (keys, values) {
@@ -243,9 +245,11 @@ impl<B: Backend> Attention<B> {
         let query_count = num_q_heads as usize * suffix_length as usize;
         let mut queries = command_buffer
             .allocate_scratch((query_count * self.head_dim as usize).max(1) * self.data_type.size_in_bytes())?;
-        let (prepare, accepted_length) = match accepted_length {
-            Some(accepted_length) => (&self.gated_prepare, Some(accepted_length)),
-            None => (&self.prepare, None),
+        let (prepare, accepted_length) = match (accepted_length, heights.is_some()) {
+            (Some(accepted_length), true) => (&self.gated_prepare_trie, Some(accepted_length)),
+            (Some(accepted_length), false) => (&self.gated_prepare, Some(accepted_length)),
+            (None, true) => (&self.prepare_trie, None),
+            (None, false) => (&self.prepare, None),
         };
         prepare.encode(
             qkvg,
@@ -262,6 +266,7 @@ impl<B: Backend> Attention<B> {
             input_row_stride,
             suffix_length,
             accepted_length,
+            heights,
             command_buffer,
         );
         Ok(queries)
@@ -276,6 +281,7 @@ impl<B: Backend> Attention<B> {
         rope: Option<&PrecalculatedRoPE<B>>,
         suffix_length: u32,
         accepted_length: Option<impl BufferRef<Backend = B>>,
+        heights: Option<&B::GlobalGpuBuffer>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         let (k_codes, k_scales, v_codes, v_scales) = match kv {
@@ -296,9 +302,11 @@ impl<B: Backend> Attention<B> {
         // K/V-only calls still need bound query buffers.
         let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
         let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
-        let prepare_int8 = match accepted_length {
-            Some(_) => self.gated_prepare_int8.as_ref(),
-            None => self.prepare_int8.as_ref(),
+        let prepare_int8 = match (accepted_length.is_some(), heights.is_some()) {
+            (true, true) => self.gated_prepare_int8_trie.as_ref(),
+            (true, false) => self.gated_prepare_int8.as_ref(),
+            (false, true) => self.prepare_int8_trie.as_ref(),
+            (false, false) => self.prepare_int8.as_ref(),
         }
         .expect("INT8 prepare kernel");
         prepare_int8.encode(
@@ -319,6 +327,7 @@ impl<B: Backend> Attention<B> {
             suffix_length,
             num_q_heads / self.num_groups * suffix_length,
             accepted_length,
+            heights,
             command_buffer,
         );
         Ok((query_codes, query_scales))

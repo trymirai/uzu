@@ -48,11 +48,13 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
     const device uint* accepted_length OPTIONAL(has_accepted_length),
+    const device uint* heights OPTIONAL(has_trie_heights),
     const bool has_rope SPECIALIZE,
     const bool quantize_queries SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const bool append_kv SPECIALIZE,
     const bool has_accepted_length SPECIALIZE,
+    const bool has_trie_heights SPECIALIZE,
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
@@ -81,7 +83,8 @@ PUBLIC KERNEL(AttentionPrepareInt8)(
     const uint32_t channel = value_index * METAL_SIMD_SIZE + lane_index;
     ElementT element = head[channel];
     if (has_rope && (is_query || is_key) && channel < rope_dim) {
-      element = apply_rope(head, cosines, sines, token_idx, channel, rope_dim);
+      const uint32_t rope_token_idx = has_trie_heights ? heights[token_idx] : token_idx;
+      element = apply_rope(head, cosines, sines, rope_token_idx, channel, rope_dim);
     }
     values[value_index] = float(element);
   }

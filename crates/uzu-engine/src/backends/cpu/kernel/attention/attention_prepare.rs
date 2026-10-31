@@ -49,9 +49,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     input_row_stride: u32,
     batch_dim: u32,
     #[optional(has_accepted_length)] accepted_length: Option<*const u32>,
+    #[optional(has_trie_heights)] heights: Option<*const u32>,
     #[specialize] has_kv: bool,
     #[specialize] has_rope: bool,
     #[specialize] has_accepted_length: bool,
+    #[specialize] has_trie_heights: bool,
 ) {
     assert!(num_q_heads > 0 || has_kv, "attention prepare without KV requires at least one query head");
     assert!(head_dim > 0, "attention prepare requires nonzero head_dim");
@@ -62,11 +64,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     assert_eq!(cosines.is_some(), has_rope, "attention prepare cosines presence mismatch");
     assert_eq!(sines.is_some(), has_rope, "attention prepare sines presence mismatch");
     assert_eq!(rope_dim.is_some(), has_rope, "attention prepare rope_dim presence mismatch");
-    assert_eq!(
-        accepted_length.is_some(),
-        has_accepted_length,
-        "attention prepare accepted_length presence mismatch"
-    );
+    assert_eq!(accepted_length.is_some(), has_accepted_length, "attention prepare accepted_length presence mismatch");
 
     let (keys, values, num_kv_heads, kv_token_offset) =
         if let (Some(keys), Some(values), Some(num_kv_heads), Some(kv_token_offset)) =
@@ -103,8 +101,16 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     };
     assert!(input_row_stride >= total_heads * head_dim, "attention prepare row stride is too small");
 
+    assert_eq!(heights.is_some(), has_trie_heights, "attention prepare heights presence mismatch");
+    let heights = heights.unwrap_or(std::ptr::null());
+
     let batch_count = batch_dim.min(batch_limit);
     for batch_idx in 0..batch_count {
+        let rope_row = if has_trie_heights {
+            unsafe { *heights.add(batch_idx) as usize }
+        } else {
+            batch_idx
+        };
         for head_idx in 0..total_heads {
             let qkvg_head = unsafe { qkvg.add(batch_idx * input_row_stride + head_idx * head_dim) };
             let is_query = !has_kv || head_idx < num_q_heads;
@@ -113,7 +119,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
             for head_dim_idx in 0..head_dim {
                 let mut element = unsafe { *qkvg_head.add(head_dim_idx) };
                 if has_rope && head_dim_idx < rope_dim && (is_query || is_key) {
-                    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
+                    element = apply_rope(qkvg_head, cosines, sines, rope_row, head_dim_idx, rope_dim);
                 }
 
                 if is_query {

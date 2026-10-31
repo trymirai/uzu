@@ -93,7 +93,7 @@ impl<B: Backend> WeaverLayer<B> {
         )
         .map_err(WeaverNewError::Attention)?;
         let attention_prepare =
-            <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true, false)
+            <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true, false, false)
                 .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
             model_dim,
@@ -188,6 +188,7 @@ impl<B: Backend> WeaverLayer<B> {
             3 * self.model_dim,
             token_count,
             None::<&B::ScratchBuffer>,
+            None::<&B::GlobalGpuBuffer>,
             command_buffer,
         );
         Ok(PreparedPrefixAttention {

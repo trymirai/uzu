@@ -33,11 +33,13 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
     suffix_length: u32,
     query_rows: u32,
     #[optional(has_accepted_length)] accepted_length: Option<*const u32>,
+    #[optional(has_trie_heights)] heights: Option<*const u32>,
     #[specialize] has_rope: bool,
     #[specialize] quantize_queries: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] append_kv: bool,
     #[specialize] has_accepted_length: bool,
+    #[specialize] has_trie_heights: bool,
 ) {
     assert_eq!(
         accepted_length.is_some(),
@@ -71,10 +73,15 @@ pub fn attention_prepare_int8<ElementT: DataTypeRepr + Float, RopeT: DataTypeRep
             _ => (head - v_head_start, v_scales),
         };
         for token in 0..token_count {
+            let rope_row = if has_trie_heights {
+                unsafe { *heights.unwrap().add(token as usize) as usize }
+            } else {
+                token as usize
+            };
             let source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    apply_rope(source, cosines.unwrap(), sines.unwrap(), token as usize, channel, rope_dim)
+                    apply_rope(source, cosines.unwrap(), sines.unwrap(), rope_row, channel, rope_dim)
                 } else {
                     unsafe { *source.add(channel) }
                 }

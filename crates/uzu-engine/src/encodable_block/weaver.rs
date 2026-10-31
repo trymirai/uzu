@@ -41,7 +41,7 @@ pub struct WeaverTreeShape {
 }
 
 impl WeaverTreeShape {
-    fn slot_count(&self) -> u32 {
+    pub fn slot_count(&self) -> u32 {
         1 + self.rounds.saturating_sub(1) * self.expand_per_round
     }
 }
@@ -49,6 +49,16 @@ impl WeaverTreeShape {
 pub struct EncodedWeaverTree<B: Backend> {
     packed_tree: B::GlobalGpuBuffer,
     frontier: B::GlobalGpuBuffer,
+}
+
+impl<B: Backend> EncodedWeaverTree<B> {
+    pub fn packed_tree(&self) -> &B::GlobalGpuBuffer {
+        &self.packed_tree
+    }
+
+    pub fn frontier(&self) -> &B::GlobalGpuBuffer {
+        &self.frontier
+    }
 }
 
 pub struct ProposalNode {
@@ -60,7 +70,7 @@ pub struct ProposalNode {
 
 impl<B: Backend> EncodedWeaverTree<B> {
     pub async fn read_nodes(
-        self,
+        &self,
         context: &B::Context,
     ) -> Result<Vec<ProposalNode>, B::Error> {
         let (packed_tree, frontier) = futures::future::try_join(
@@ -631,9 +641,8 @@ impl<B: Backend> Weaver<B> {
 
             let word_bytes = DataType::U32.size_in_bytes();
             assert_eq!(root_token.size(), word_bytes, "root token must be a single u32");
-            let mut root = command_buffer
-                .allocate_constant_from_slice(&[0u32, 1u32])
-                .map_err(WeaverEncodeError::Backend)?;
+            let mut root =
+                command_buffer.allocate_constant_from_slice(&[0u32, 1u32]).map_err(WeaverEncodeError::Backend)?;
             command_buffer.encode_copy(root_token, root.subrange_mut(..word_bytes));
             let tree_field_bytes = size_for_shape(&[tree_slot_count], DataType::U32);
             let mut packed_tree = command_buffer

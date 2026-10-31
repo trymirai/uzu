@@ -227,31 +227,9 @@ impl<'a> FlatTrie<'a> {
         vocab_size: usize,
         grammar: &mut Grammar,
     ) -> bool {
-        let vocab_size_in_u32s = vocab_size.div_ceil(DataType::U32.size_in_bits());
-        assert!(bitmasks.len() == self.tokens.len() * vocab_size_in_u32s);
-
-        let mut any_non_full = false;
-        let mut last_token_height = 0;
-        for ((token_index, token), bitmask) in
-            self.tokens.iter().enumerate().zip_eq(bitmasks.chunks_exact_mut(vocab_size_in_u32s))
-        {
-            if token_index > 0 {
-                if token.height <= last_token_height {
-                    grammar.rollback(last_token_height - token.height + 1);
-                }
-                grammar.accept_token(token.node.token).expect("flat trie doesn't match grammar");
-            }
-
-            any_non_full |= grammar.next_bitmask(bitmask);
-
-            last_token_height = token.height;
-        }
-
-        if last_token_height > 0 {
-            grammar.rollback(last_token_height);
-        }
-
-        any_non_full
+        let tokens: Box<[(u64, u32)]> =
+            self.tokens.iter().map(|token| (token.node.token, token.height as u32)).collect();
+        fill_bitmasks_flat(&tokens, bitmasks, vocab_size, grammar)
     }
 
     pub fn root(&self) -> Option<&TrieNode> {
@@ -295,6 +273,99 @@ impl<'a> FlatTrie<'a> {
 
         Ok(accepted.into_boxed_slice())
     }
+}
+
+/// Fills one grammar bitmask per flat-trie row. `tokens` is the DFS pre-order
+/// `(token, height)` list, as produced by the GPU linearize kernel or
+/// `FlatTrie`. Returns whether any row's mask is not full.
+pub fn fill_bitmasks_flat(
+    tokens: &[(u64, u32)],
+    bitmasks: &mut [u32],
+    vocab_size: usize,
+    grammar: &mut Grammar,
+) -> bool {
+    let vocab_size_in_u32s = vocab_size.div_ceil(DataType::U32.size_in_bits());
+    assert!(bitmasks.len() == tokens.len() * vocab_size_in_u32s);
+
+    let mut any_non_full = false;
+    let mut last_token_height = 0usize;
+    for ((token_index, &(token, height)), bitmask) in
+        tokens.iter().enumerate().zip_eq(bitmasks.chunks_exact_mut(vocab_size_in_u32s))
+    {
+        let height = height as usize;
+        if token_index > 0 {
+            if height <= last_token_height {
+                grammar.rollback(last_token_height - height + 1);
+            }
+            grammar.accept_token(token).expect("flat trie doesn't match grammar");
+        }
+
+        any_non_full |= grammar.next_bitmask(bitmask);
+
+        last_token_height = height;
+    }
+
+    if last_token_height > 0 {
+        grammar.rollback(last_token_height);
+    }
+
+    any_non_full
+}
+
+pub fn fill_bitmasks(
+    nodes: &[GpuTrieNode],
+    token_ids: &[u32],
+    count: u32,
+    bitmasks: &mut [u32],
+    vocab_size: usize,
+    grammar: &mut Grammar,
+) -> bool {
+    let words = vocab_size.div_ceil(DataType::U32.size_in_bits());
+    let count = count as usize;
+    assert_eq!(nodes.len(), token_ids.len());
+    assert_eq!(bitmasks.len(), nodes.len() * words);
+    assert!(count <= nodes.len());
+
+    bitmasks[count * words..].fill(u32::MAX);
+
+    let mut any_non_full = false;
+    // Height of the path the walk has accepted so far; the matcher always
+    // sits at the current row's parent whenever a row is rejected.
+    let mut path_height = 0usize;
+    let mut row = 0usize;
+    while row < count {
+        let height = nodes[row].height as usize;
+        if row > 0 {
+            assert!(height > 0, "non-root rows sit below the root");
+            if path_height >= height {
+                grammar.rollback(path_height + 1 - height);
+                path_height = height - 1;
+            }
+            if grammar.accept_token(token_ids[row] as u64).is_err() {
+                let end = nodes[row].trie_end as usize;
+                bitmasks[row * words..(end + 1) * words].fill(u32::MAX);
+                row = end + 1;
+                continue;
+            }
+            path_height = height;
+        }
+
+        any_non_full |= grammar.next_bitmask(&mut bitmasks[row * words..(row + 1) * words]);
+
+        if grammar.is_terminated() {
+            let end = nodes[row].trie_end as usize;
+            bitmasks[(row + 1) * words..(end + 1) * words].fill(u32::MAX);
+            row = end + 1;
+            continue;
+        }
+        row += 1;
+    }
+
+    if path_height > 0 {
+        grammar.rollback(path_height);
+    }
+
+    any_non_full
 }
 
 #[cfg(test)]

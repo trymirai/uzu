@@ -44,7 +44,6 @@ enum DeltaNetSuffixStatus<B: Backend> {
         v: B::ScratchBuffer,
         log_decay: B::ScratchBuffer,
         beta: B::ScratchBuffer,
-        parents: Box<[i32]>,
     },
 }
 
@@ -85,22 +84,17 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                 v,
                 log_decay,
                 beta,
-                parents,
+                ..
             } => {
-                assert!(
-                    parents.iter().enumerate().all(|(index, &parent)| parent == index as i32 - 1),
-                    "delta net state full accept requires a chain suffix"
-                );
-
                 let conv_state_size = self.conv_state.size();
-                let accepted_offset = (parents.len() - 1) * conv_state_size;
+                let accepted_offset = (len_accepted as usize - 1) * conv_state_size;
                 command_buffer.encode_copy(
                     conv_states.subrange(accepted_offset..accepted_offset + conv_state_size),
                     &mut self.conv_state,
                 );
 
-                let accepted_indices = command_buffer
-                    .allocate_constant_from_slice(&(0..=parents.len() as u32).rev().collect::<Box<[u32]>>())?;
+                let accepted_indices =
+                    command_buffer.allocate_constant_from_slice(&(0..=len_accepted).rev().collect::<Box<[u32]>>())?;
                 self.state_advance.encode(
                     &k,
                     &v,
@@ -390,18 +384,14 @@ impl<B: Backend> DeltaNet<B> {
     fn encode_tree_verify(
         &self,
         in_projected: impl BufferRef<Backend = B>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: &mut DeltaNetState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
-        let parents = command_buffer
-            .allocate_constant_from_slice(batch_dim.parents().unwrap())
-            .map_err(MixerEncodeError::Backend)?;
-        let trie = command_buffer
-            .allocate_constant_from_slice(batch_dim.nodes().unwrap())
-            .map_err(MixerEncodeError::Backend)?;
+        let parents = batch_dim.parents().unwrap();
+        let trie = batch_dim.nodes().unwrap();
 
         let mut conv_states = command_buffer
             .allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)
@@ -431,7 +421,7 @@ impl<B: Backend> DeltaNet<B> {
             &self.conv_weight,
             self.conv_bias.as_ref(),
             &state.conv_state,
-            &parents,
+            parents,
             &mut tree_projected,
             &mut conv_states,
             tree_size,
@@ -463,7 +453,7 @@ impl<B: Backend> DeltaNet<B> {
                     q: &q,
                     k: &k,
                     v: &v,
-                    trie: &trie,
+                    trie,
                     log_decay: &log_decay,
                     beta: &beta,
                     h0: &state.ssm_state,
@@ -485,7 +475,6 @@ impl<B: Backend> DeltaNet<B> {
             v,
             log_decay,
             beta,
-            parents: batch_dim.parents().unwrap().into(),
         });
         Ok(output)
     }
@@ -494,7 +483,7 @@ impl<B: Backend> DeltaNet<B> {
     fn encode_stateless(
         &self,
         hidden: B::ScratchBuffer,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         assert!(batch_dim.full_accept(), "stateless delta net doesn't support trie");
@@ -709,7 +698,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {

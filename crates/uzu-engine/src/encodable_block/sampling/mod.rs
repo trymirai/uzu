@@ -87,7 +87,7 @@ impl<B: Backend> Sampling<B> {
         bitmask: Option<impl BufferRef<Backend = B>>,
         context_ring: Option<impl BufferRef<Backend = B>>,
         token_ids: Option<impl BufferRef<Backend = B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         sampling_range: Range<u32>,
         sampling_method: &SamplingMethod,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,

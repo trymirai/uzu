@@ -1,8 +1,7 @@
 use std::mem::size_of;
 
 use crate::backends::common::{
-    Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels, gpu_types::trie::TrieNode,
-    kernel::VerifyTrieKernel,
+    Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels, kernel::VerifyTrieKernel,
 };
 
 pub struct TrieVerification<B: Backend> {
@@ -25,33 +24,30 @@ impl<B: Backend> TrieVerifier<B> {
 
     pub fn encode(
         &self,
-        trie_nodes: &[TrieNode],
-        parents: &[i32],
+        trie_nodes: impl BufferRef<Backend = B>,
+        parents: impl BufferRef<Backend = B>,
+        num_nodes: u32,
+        max_accepted: u32,
         token_ids: impl BufferRef<Backend = B>,
         sampled_tokens: impl BufferRef<Backend = B>,
         output_norm: impl BufferRef<Backend = B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TrieVerification<B>, B::Error> {
-        assert_eq!(trie_nodes.len(), parents.len(), "trie nodes and parents must be parallel");
-        assert!(!trie_nodes.is_empty(), "the trie needs at least a root");
+        assert!(num_nodes > 0, "the trie needs at least a root");
 
         let command_buffer = &mut *command_buffer.debug_group("verify trie");
 
-        let num_nodes = trie_nodes.len() as u32;
-        let max_accepted = trie_nodes.iter().map(|node| node.height).max().unwrap_or_default() + 1;
         let capacity = (max_accepted + 1) as usize * size_of::<u32>();
-        let norm_row_bytes = output_norm.size() / trie_nodes.len();
+        let norm_row_bytes = output_norm.size() / num_nodes as usize;
 
-        let trie_nodes = command_buffer.allocate_constant_from_slice(trie_nodes)?;
-        let parents = command_buffer.allocate_constant_from_slice(parents)?;
         let mut accepted_indices = command_buffer.context().create_buffer_gpu(capacity)?;
         let mut accepted_input_tokens = command_buffer.context().create_buffer_gpu(capacity)?;
         let mut accepted_output_tokens = command_buffer.context().create_buffer_gpu(capacity)?;
         let mut accepted_output_norm = command_buffer.allocate_scratch(norm_row_bytes)?;
 
         self.kernel.encode(
-            &trie_nodes,
-            &parents,
+            trie_nodes,
+            parents,
             token_ids,
             sampled_tokens,
             output_norm,

@@ -19,9 +19,11 @@ PUBLIC KERNEL(AttentionPrepare) (
   const constant uint32_t& input_row_stride,
   const constant uint32_t& batch_dim,
   const device uint32_t* accepted_length OPTIONAL(has_accepted_length),
+  const device uint32_t* heights OPTIONAL(has_trie_heights),
   const bool has_kv SPECIALIZE,
   const bool has_rope SPECIALIZE,
   const bool has_accepted_length SPECIALIZE,
+  const bool has_trie_heights SPECIALIZE,
   const uint32_t head_dim_idx AXIS(head_dim, 128),
   const uint32_t head_idx AXIS(num_q_heads + num_kv_heads.unwrap_or(0) * 2, 1),
   const uint32_t batch_idx AXIS(batch_dim, 1)
@@ -34,10 +36,11 @@ PUBLIC KERNEL(AttentionPrepare) (
   const device ElementT* qkvg_head = qkvg + qkvg_head_idx;
   const bool is_query = !has_kv || head_idx < num_q_heads;
   const bool is_key = has_kv && head_idx >= num_q_heads && head_idx < num_q_heads + num_kv_heads;
+  const uint32_t rope_batch_idx = has_trie_heights ? heights[batch_idx] : batch_idx;
 
   ElementT element = qkvg_head[head_dim_idx];
   if (has_rope && head_dim_idx < rope_dim && (is_query || is_key)) {
-    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
+    element = apply_rope(qkvg_head, cosines, sines, rope_batch_idx, head_dim_idx, rope_dim);
   }
 
   if (is_query) {
