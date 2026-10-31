@@ -2,10 +2,11 @@ import definitions;
 import common.activation;
 import common.workgroup_reduction;
 import generated.activation_type;
+import generated.delta_net;
 
 // One workgroup per (token, k head): the head's q and k rows are L2-normalized (delta_net_inverse) and stored scaled by
-// 1 / sqrt(128) and unscaled; its v heads get beta = sigmoid(beta_raw) and the log decay, or its exponential. With
-// write_compact_v the token's raw values are copied in 128-element blocks hk, hk + G, and so on.
+// 1 / sqrt(DELTA_NET_HEAD_K_DIM) and unscaled; its v heads get beta = sigmoid(beta_raw) and the log decay, or its
+// exponential. With write_compact_v the token's raw values are copied in 128-element blocks hk, hk + G, and so on.
 
 static const uint DELTA_NET_PREP_THREADS = 128;
 
@@ -14,22 +15,23 @@ public float delta_net_log_decay(float a_log, float a_raw, float dt_bias) {
   return -exp(a_log) * activate(a_raw + dt_bias, ActivationType.SOFTPLUS);
 }
 
-// The normalized query v inv qs, qs = 1 / sqrt(128).
+// The normalized query v inv qs, qs = 1 / sqrt(DELTA_NET_HEAD_K_DIM).
 public float delta_net_query(float v, float inv) {
-  return v * inv * rsqrt(128.0);
+  return v * inv * rsqrt(float(DELTA_NET_HEAD_K_DIM));
 }
 
-// 1 / sqrt(sum + 1e-6) for the sum of squares of the 128 values at source[offset], one per invocation of the
+// 1 / sqrt(sum + 1e-6) for the sum of squares of the head's values at source[offset], one per invocation of the
 // workgroup. Every invocation must call it.
 float delta_net_inverse<T: IModelFloat>(Ptr<T, Access.Read> source, uint offset, uint tid) {
+  static_assert(DELTA_NET_PREP_THREADS == DELTA_NET_HEAD_K_DIM, "one key per invocation");
   let x = source[offset + tid].toFloat();
   return rms_inverse<DELTA_NET_PREP_THREADS>(x * x, 1, 1e-6);
 }
 
 [[Kernel]] [[Public]]
-[[Precondition("new", "HEAD_K_DIM == 128")]]
+[[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads > 0")]]
-[[Precondition("encode", "suffix_len <= 1 || num_k_heads <= key_dim / 128")]]
+[[Precondition("encode", "suffix_len <= 1 || num_k_heads <= key_dim / crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 public func DeltaNetPrefillPrep<T: IModelFloat, QKT: IModelFloat>(
   Ptr<T, Access.Read> in_proj,
   Ptr<float, Access.Read> a_log,
@@ -62,11 +64,11 @@ public func DeltaNetPrefillPrep<T: IModelFloat, QKT: IModelFloat>(
       compact_v_out[token * value_dim + v] = in_proj[tok_offset + 2 * key_dim + v];
     }
   }
-  let q_base = tok_offset + hk * DELTA_NET_PREP_THREADS;
-  let k_base = tok_offset + key_dim + hk * DELTA_NET_PREP_THREADS;
+  let q_base = tok_offset + hk * DELTA_NET_HEAD_K_DIM;
+  let k_base = tok_offset + key_dim + hk * DELTA_NET_HEAD_K_DIM;
   let q_inv = delta_net_inverse<T>(in_proj, q_base, tid);
   let k_inv = delta_net_inverse<T>(in_proj, k_base, tid);
-  let out_base = token * key_dim + hk * DELTA_NET_PREP_THREADS;
+  let out_base = token * key_dim + hk * DELTA_NET_HEAD_K_DIM;
   q_norm_out[out_base + tid] = QKT.fromFloat(delta_net_query(in_proj[q_base + tid].toFloat(), q_inv));
   k_norm_out[out_base + tid] = QKT.fromFloat(in_proj[k_base + tid].toFloat() * k_inv);
   for (uint group = tid; group < heads_per_group; group += DELTA_NET_PREP_THREADS) {

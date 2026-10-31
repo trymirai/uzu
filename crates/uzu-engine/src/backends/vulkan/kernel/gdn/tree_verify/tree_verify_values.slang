@@ -15,7 +15,8 @@ import generated.trie;
 // first 32 invocations solve a value column each.
 
 static const uint TREE_VERIFY_THREADS = 256;
-static const uint TREE_VERIFY_DIM = 128;
+// The state is square, which the precondition checks.
+static const uint TREE_VERIFY_HEAD_V_DIM = DELTA_NET_HEAD_K_DIM;
 static const uint TREE_VERIFY_TILE = 32;
 static const uint TREE_VERIFY_TOKENS = 2 * TREE_VERIFY_TOKEN_BLOCK;
 static const uint TREE_VERIFY_DEPTH = 32;
@@ -46,7 +47,7 @@ struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
   // Gram entries per invocation, row i / GRAM_SPAN and columns i % GRAM_SPAN + GRAM_SPAN j.
   static const uint GRAM_COLUMNS = TOKENS * TOKENS / TREE_VERIFY_THREADS;
   static const uint GRAM_SPAN = TOKENS / GRAM_COLUMNS;
-  static const uint SLICES = TREE_VERIFY_DIM / TREE_VERIFY_DEPTH;
+  static const uint SLICES = DELTA_NET_HEAD_K_DIM / TREE_VERIFY_DEPTH;
   // The float4s of a slice: keys and queries loaded by invocations below TOKEN_QUADS, h0 by those below H0_QUADS.
   static const uint TOKEN_QUADS = TOKENS * TREE_VERIFY_QUADS;
   static const uint H0_QUADS = TREE_VERIFY_TILE * TREE_VERIFY_QUADS;
@@ -73,13 +74,14 @@ struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
     let lane = i % TREE_VERIFY_TILE;
     let value = tile * TREE_VERIFY_TILE + lane;
     let first = i / TREE_VERIFY_TILE * R;
-    let qk_stride = num_k_heads * TREE_VERIFY_DIM;
-    let qk_base = (batch * tree_size * num_k_heads + hv / (num_v_heads / num_k_heads)) * TREE_VERIFY_DIM;
+    let qk_stride = num_k_heads * DELTA_NET_HEAD_K_DIM;
+    let qk_base = (batch * tree_size * num_k_heads + hv / (num_v_heads / num_k_heads)) * DELTA_NET_HEAD_K_DIM;
     let scalar_base = batch * tree_size * num_v_heads + hv;
-    let value_stride = num_v_heads * TREE_VERIFY_DIM;
-    let value_base = batch * tree_size * value_stride + hv * TREE_VERIFY_DIM + value;
+    let value_stride = num_v_heads * TREE_VERIFY_HEAD_V_DIM;
+    let value_base = batch * tree_size * value_stride + hv * TREE_VERIFY_HEAD_V_DIM + value;
     let h0_quads = bit_cast<Ptr<float4, Access.Read>>(h0);
-    let h0_base = ((batch * num_v_heads + hv) * TREE_VERIFY_DIM + tile * TREE_VERIFY_TILE) * TREE_VERIFY_DIM / 4;
+    let h0_base =
+      ((batch * num_v_heads + hv) * TREE_VERIFY_HEAD_V_DIM + tile * TREE_VERIFY_TILE) * DELTA_NET_HEAD_K_DIM / 4;
 
     // The slices, each invocation's share TREE_VERIFY_PREFETCH slices ahead of the one it stages.
     float4 next_k[TREE_VERIFY_PREFETCH];
@@ -251,14 +253,14 @@ struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
       next_q = load_float4(q, at);
     }
     if (i < H0_QUADS) {
-      next_h0 = h0_quads[h0_base + (row * TREE_VERIFY_DIM + depth) / 4 + quad];
+      next_h0 = h0_quads[h0_base + (row * DELTA_NET_HEAD_K_DIM + depth) / 4 + quad];
     }
   }
 }
 
 [[Kernel]]
 [[Precondition("new", "NB == 1 || NB == 2")]]
-[[Precondition("encode", "tree_size <= crate::backends::vulkan::gpu_types::delta_net::TREE_VERIFY_TOKEN_BLOCK * NB && head_k_dim == 128 && head_v_dim == 128")]]
+[[Precondition("encode", "tree_size <= crate::backends::vulkan::gpu_types::delta_net::TREE_VERIFY_TOKEN_BLOCK * NB && head_k_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM && head_v_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads != 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
 func TreeVerifyValues<T : IModelFloat>(
   Ptr<T, Access.Read> q,

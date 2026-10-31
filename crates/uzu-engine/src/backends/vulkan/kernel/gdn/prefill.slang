@@ -1,5 +1,6 @@
 import definitions;
 import common.workgroup_reduction;
+import generated.delta_net;
 
 // Each simdgroup owns four value rows of v head hv (k head hv / floor(H / G)), lane l keys 4l..4l + 3, held in FP32
 // across all tokens: per token s decays, kv = s . k, s += k beta (v - kv), o = s . q, both summed over the simdgroup.
@@ -10,7 +11,7 @@ static const uint DELTA_NET_PREFILL_DV_PER_SIMDGROUP = 4;
 static const uint DELTA_NET_PREFILL_SIMDGROUPS = DELTA_NET_PREFILL_THREADS / SIMD_SIZE;
 
 [[Kernel]] [[Public]]
-[[Precondition("new", "HEAD_K_DIM == 128")]]
+[[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads > 0")]]
 [[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || num_v_heads <= value_dim / head_v_dim")]]
@@ -48,23 +49,23 @@ func DeltaNetPrefill<T: IModelFloat>(
   let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
   let dk_base = lane * 4;
 
-  var q_offset = hk * 128 + dk_base;
-  var k_offset = hk * 128 + dk_base;
+  var q_offset = hk * DELTA_NET_HEAD_K_DIM + dk_base;
+  var k_offset = hk * DELTA_NET_HEAD_K_DIM + dk_base;
   var beta_offset = hv;
   var decay_offset = hv;
   var v_row = 2 * key_dim + hv * head_v_dim + dv_idx;
   var out_row = hv * head_v_dim + dv_idx;
 
-  // State layout: [Hv, Dv, Dk], contiguous along Dk (128 floats per row).
-  let s_in = (hv * head_v_dim + dv_idx) * 128 + dk_base;
+  // State layout: [Hv, Dv, Dk], contiguous along Dk (DELTA_NET_HEAD_K_DIM floats per row).
+  let s_in = (hv * head_v_dim + dv_idx) * DELTA_NET_HEAD_K_DIM + dk_base;
   var s0 = float4(0.0);
   var s1 = float4(0.0);
   var s2 = float4(0.0);
   var s3 = float4(0.0);
-  if (rows > 0) { s0 = load_aligned<float4, 16>(state, s_in + 0 * 128); }
-  if (rows > 1) { s1 = load_aligned<float4, 16>(state, s_in + 1 * 128); }
-  if (rows > 2) { s2 = load_aligned<float4, 16>(state, s_in + 2 * 128); }
-  if (rows > 3) { s3 = load_aligned<float4, 16>(state, s_in + 3 * 128); }
+  if (rows > 0) { s0 = load_aligned<float4, 16>(state, s_in + 0 * DELTA_NET_HEAD_K_DIM); }
+  if (rows > 1) { s1 = load_aligned<float4, 16>(state, s_in + 1 * DELTA_NET_HEAD_K_DIM); }
+  if (rows > 2) { s2 = load_aligned<float4, 16>(state, s_in + 2 * DELTA_NET_HEAD_K_DIM); }
+  if (rows > 3) { s3 = load_aligned<float4, 16>(state, s_in + 3 * DELTA_NET_HEAD_K_DIM); }
 
   for (uint token = 0; token < suffix_len; token++) {
     let decay = decay_buf[decay_offset];
@@ -107,8 +108,8 @@ func DeltaNetPrefill<T: IModelFloat>(
     out_row += value_dim;
   }
 
-  if (rows > 0) { store_aligned<16>(state, s_in + 0 * 128, s0); }
-  if (rows > 1) { store_aligned<16>(state, s_in + 1 * 128, s1); }
-  if (rows > 2) { store_aligned<16>(state, s_in + 2 * 128, s2); }
-  if (rows > 3) { store_aligned<16>(state, s_in + 3 * 128, s3); }
+  if (rows > 0) { store_aligned<16>(state, s_in + 0 * DELTA_NET_HEAD_K_DIM, s0); }
+  if (rows > 1) { store_aligned<16>(state, s_in + 1 * DELTA_NET_HEAD_K_DIM, s1); }
+  if (rows > 2) { store_aligned<16>(state, s_in + 2 * DELTA_NET_HEAD_K_DIM, s2); }
+  if (rows > 3) { store_aligned<16>(state, s_in + 3 * DELTA_NET_HEAD_K_DIM, s3); }
 }

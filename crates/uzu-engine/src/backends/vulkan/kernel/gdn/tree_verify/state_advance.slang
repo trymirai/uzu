@@ -1,16 +1,18 @@
 import definitions;
 import common.workgroup_reduction;
+import generated.delta_net;
 
 // Advances the [num_v_heads, 128, 128] FP32 state along the accepted path, k head hv / floor(num_v_heads / num_k_heads)
 // as the CPU maps it, also for nondivisible ratios. Each simdgroup holds STATE_ADVANCE_ROWS rows privately, lane l keys
 // 4l..4l + 3; per accepted token s <- s e^log_decay, then s += k beta (v - s . k).
 
 static const uint STATE_ADVANCE_THREADS = 128;
-static const uint STATE_ADVANCE_DIM = 128;
+// The state is square, as Metal's StateAdvance.
+static const uint STATE_ADVANCE_HEAD_V_DIM = DELTA_NET_HEAD_K_DIM;
 static const uint STATE_ADVANCE_ROWS = 4;
 
 [[Kernel]] [[Public]]
-[[Precondition("new", "HEAD_K_DIM == 128")]]
+[[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("new", "num_k_heads != 0 && (num_v_heads == 0 || num_v_heads >= num_k_heads)")]]
 func StateAdvance<T: IModelFloat>(
   Ptr<T, Access.Read> k_norm,
@@ -33,12 +35,12 @@ func StateAdvance<T: IModelFloat>(
   let hk = hv / (num_v_heads / num_k_heads);
   let dv = (row_group * simdgroups + invocation / SIMD_SIZE) * STATE_ADVANCE_ROWS;
   let dk = invocation % SIMD_SIZE * 4;
-  let key_dim = num_k_heads * STATE_ADVANCE_DIM;
-  let value_dim = num_v_heads * STATE_ADVANCE_DIM;
-  let tile = (hv * STATE_ADVANCE_DIM + dv) * STATE_ADVANCE_DIM + dk;
+  let key_dim = num_k_heads * DELTA_NET_HEAD_K_DIM;
+  let value_dim = num_v_heads * STATE_ADVANCE_HEAD_V_DIM;
+  let tile = (hv * STATE_ADVANCE_HEAD_V_DIM + dv) * DELTA_NET_HEAD_K_DIM + dk;
   float4 rows[STATE_ADVANCE_ROWS];
   for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
-    rows[r] = load_aligned<float4, 16>(state, tile + r * STATE_ADVANCE_DIM);
+    rows[r] = load_aligned<float4, 16>(state, tile + r * DELTA_NET_HEAD_K_DIM);
   }
   // The exit test follows the body, as the empty grid for accepted_len 0 allows: lavapipe runs a body whose head test
   // failed with its uniform loads unmasked, which would index the tree through a token past accepted_indices.
@@ -47,7 +49,7 @@ func StateAdvance<T: IModelFloat>(
     let t = accepted_indices[i];
     let lane = t * num_v_heads + hv;
     let decay = exp(log_decay_buf[lane]);
-    let k_offset = t * key_dim + hk * STATE_ADVANCE_DIM + dk;
+    let k_offset = t * key_dim + hk * DELTA_NET_HEAD_K_DIM + dk;
     let k = load_float4(k_norm, k_offset);
     var kv = float4(0.0);
     for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
@@ -55,7 +57,7 @@ func StateAdvance<T: IModelFloat>(
       kv[r] = dot(rows[r], k);
     }
     kv = segment_reduce<VectorSum<4>, STATE_ADVANCE_THREADS>(kv, SIMD_SIZE);
-    let v_row = t * value_dim + hv * STATE_ADVANCE_DIM + dv;
+    let v_row = t * value_dim + hv * STATE_ADVANCE_HEAD_V_DIM + dv;
     let value = load_float4(v, v_row);
     let delta = beta_buf[lane] * (value - kv);
     for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
@@ -64,6 +66,6 @@ func StateAdvance<T: IModelFloat>(
     i++;
   } while (i < accepted_len);
   for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
-    store_aligned<16>(state, tile + r * STATE_ADVANCE_DIM, rows[r]);
+    store_aligned<16>(state, tile + r * DELTA_NET_HEAD_K_DIM, rows[r]);
   }
 }

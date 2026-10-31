@@ -88,8 +88,8 @@ func DeltaNetChunkedPrecompute(
     }
   }
   let query_stage = CHUNKED_PRECOMPUTE_CHUNK * CHUNKED_PRECOMPUTE_STAGE_STRIDE;
-  let key_head = hk * DELTA_NET_CHUNKED_HEAD_K_DIM;
-  for (uint depth = 0; depth < DELTA_NET_CHUNKED_HEAD_K_DIM; depth += CHUNKED_PRECOMPUTE_DEPTH) {
+  let key_head = hk * DELTA_NET_HEAD_K_DIM;
+  for (uint depth = 0; depth < DELTA_NET_HEAD_K_DIM; depth += CHUNKED_PRECOMPUTE_DEPTH) {
     GroupMemoryBarrierWithGroupSync();
     for (uint entry = thread_idx; entry < CHUNKED_PRECOMPUTE_CHUNK * CHUNKED_PRECOMPUTE_DEPTH; entry += CHUNKED_PRECOMPUTE_THREADS) {
       let t = entry / CHUNKED_PRECOMPUTE_DEPTH;

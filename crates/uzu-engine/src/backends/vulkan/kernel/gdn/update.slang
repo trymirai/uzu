@@ -1,16 +1,16 @@
 import definitions;
 import common.activation;
 import gdn.prefill_prep;
+import generated.delta_net;
 
-// State [Hv, Dv, 128]: one workgroup per (v head, 16 rows), 8 invocations owning each row, lane l the 16 keys of
+// State [Hv, Dv, Dk]: one workgroup per (v head, 16 rows), 8 invocations owning each row, lane l the 16 keys of
 // float4s l + 8 c. Each row normalizes q and k itself, so its loads issue together and no sum crosses rows; the sums go
 // through shared memory, which some wide-subgroup GPUs run several times faster than shuffles. Each row stores its
 // updated state and its raw output o_i, and DeltaNetNormGate then applies the head-wide RMS and the gate.
 
-static const uint DELTA_NET_UPDATE_KEYS = 128;
 static const uint DELTA_NET_UPDATE_THREADS = 128;
 static const uint DELTA_NET_UPDATE_LANES = 8;
-static const uint DELTA_NET_UPDATE_CHUNKS = DELTA_NET_UPDATE_KEYS / (4 * DELTA_NET_UPDATE_LANES);
+static const uint DELTA_NET_UPDATE_CHUNKS = DELTA_NET_HEAD_K_DIM / (4 * DELTA_NET_UPDATE_LANES);
 static const uint DELTA_NET_UPDATE_ROWS = DELTA_NET_UPDATE_THREADS / DELTA_NET_UPDATE_LANES;
 
 groupshared float3 delta_net_partials[DELTA_NET_UPDATE_THREADS];
@@ -29,7 +29,7 @@ float3 delta_net_row_sum(float3 value, uint tid) {
 }
 
 [[Kernel]]
-[[Precondition("new", "HEAD_K_DIM == 128")]]
+[[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_v_heads == 0 || num_k_heads > 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
 func DeltaNetUpdate<T: IModelFloat>(
   Ptr<T, Access.Read> in_proj,
@@ -53,9 +53,9 @@ func DeltaNetUpdate<T: IModelFloat>(
   let hv = head_group;
   let conv_dim = 2 * key_dim + value_dim;
   let hk = hv / (num_v_heads / num_k_heads);
-  let q_base = hk * DELTA_NET_UPDATE_KEYS;
-  let k_base = key_dim + hk * DELTA_NET_UPDATE_KEYS;
-  let row = (hv * head_v_dim + i) * DELTA_NET_UPDATE_KEYS;
+  let q_base = hk * DELTA_NET_HEAD_K_DIM;
+  let k_base = key_dim + hk * DELTA_NET_HEAD_K_DIM;
+  let row = (hv * head_v_dim + i) * DELTA_NET_HEAD_K_DIM;
   // The lane's keys of q, k and the state row; a masked row reads no state and adds zeros.
   float4 q[DELTA_NET_UPDATE_CHUNKS];
   float4 k[DELTA_NET_UPDATE_CHUNKS];

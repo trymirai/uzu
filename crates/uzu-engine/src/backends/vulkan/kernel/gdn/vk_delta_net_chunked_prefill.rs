@@ -10,7 +10,7 @@ use crate::{
         vulkan::{
             DeltaNetChunkedOutputAndStateVulkanKernel, DeltaNetChunkedPrecomputeVulkanKernel, Error, VkBuffer,
             VkCommandBufferEncoding, VkContext, Vulkan, VulkanKernels,
-            gpu_types::delta_net::{DELTA_NET_CHUNKED_HEAD_K_DIM, DELTA_NET_CHUNKED_MAX_GROUPS},
+            gpu_types::delta_net::{DELTA_NET_CHUNKED_MAX_GROUPS, DELTA_NET_HEAD_K_DIM},
         },
     },
     data_type::DataType,
@@ -37,7 +37,7 @@ impl DeltaNetChunkedPrefill for VkDeltaNetChunkedPrefill {
         groups_per_head: u32,
     ) -> Result<Option<Self>, Error> {
         if !matches!(outer_data_type, DataType::F32 | DataType::BF16)
-            || head_dim != DELTA_NET_CHUNKED_HEAD_K_DIM
+            || head_dim != DELTA_NET_HEAD_K_DIM
             || groups_per_head > DELTA_NET_CHUNKED_MAX_GROUPS
         {
             return Ok(None);
