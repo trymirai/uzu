@@ -193,6 +193,20 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
         composite_component.link().context("cannot link wrapper module")
     }
 
+    /// Reruns this script when a dependency outside the kernel sources, which it watches, and the output, which it
+    /// writes, changes: a definition another target's sources share.
+    fn rerun_if_changed<'a>(
+        &self,
+        dependencies: impl IntoIterator<Item = &'a String>,
+    ) {
+        for dependency in dependencies {
+            let path = Path::new(dependency);
+            if !path.starts_with(&self.fields.source_directory) && !path.starts_with(&self.fields.output_directory) {
+                println!("cargo::rerun-if-changed={dependency}");
+            }
+        }
+    }
+
     pub fn compile(
         &self,
         source_path: PathBuf,
@@ -229,6 +243,7 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             })
         {
             debug_log!("compile cached: {source_path_relative_str}");
+            self.rerun_if_changed(cached.dependency_hashes.keys());
             return Ok((source_path_relative_segments, cached.public_kernels, cached.private_kernels));
         }
 
@@ -246,6 +261,7 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .map(|d| Ok((d.into(), blake3::hash(&fs::read(d).with_context(|| format!("cannot read {d}"))?).into())))
             .collect::<anyhow::Result<HashMap<String, [u8; blake3::OUT_LEN]>>>()
             .context("cannot hash dependencies")?;
+        self.rerun_if_changed(dependency_hashes.keys());
 
         let common_gpu_type_map = gpu_types.map.keys().map(|name| (name.clone(), name.clone())).collect();
         let kernels = source_module
