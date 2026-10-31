@@ -92,7 +92,10 @@ pub fn generate_types(
                 file_name,
                 declarations.concat()
             );
-            fs::write(&path, contents)?;
+            // Unchanged modules keep their modification time.
+            if !fs::read(&path).is_ok_and(|old| old == contents.as_bytes()) {
+                fs::write(&path, contents)?;
+            }
             written.insert(path);
         }
     }
