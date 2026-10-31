@@ -45,11 +45,3 @@ public float in_place_load<I : IStorageFloat, O : IStorageFloat>(
   }
   return input[index].toFloat();
 }
-
-// A kernel precondition the binding checks, a host expression: phase "new" over specializations, checked by the
-// constructor before creating anything; phase "encode" also over uniforms, checked before recording.
-[[__AttributeUsage(_AttributeTargets.Function)]]
-struct PreconditionAttribute {
-  string phase;
-  string condition;
-};
