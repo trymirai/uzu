@@ -7,7 +7,7 @@ use shader_slang::{
     reflection::{EntryPoint, Shader},
 };
 
-use super::SlangFieldAbi;
+use super::{SlangFieldAbi, SlangStructAbi, SlangStructFieldAbi};
 
 /// Push-constant block and specialization constants of one entry point of the linked wrapper program.
 #[derive(Debug)]
@@ -84,12 +84,22 @@ impl SlangEntryPointAbi {
                                 matches!(element.kind(), TypeKind::Scalar),
                                 "'{name}': field '{field_name}' of '{parameter_name}' is not of scalars"
                             );
-                            let scalar = element.scalar_type().context("scalar has no type")?;
-                            let size = layout.size(ParameterCategory::Uniform);
-                            Ok((field_name, field.offset(ParameterCategory::Uniform), size, scalar, array))
+                            Ok(SlangStructFieldAbi {
+                                name: field_name,
+                                offset: field.offset(ParameterCategory::Uniform),
+                                size: layout.size(ParameterCategory::Uniform),
+                                scalar: element.scalar_type().context("scalar has no type")?,
+                                array,
+                            })
                         })
                         .collect::<anyhow::Result<_>>()?;
-                    Some((pointee.name().context("pointee has no name")?.to_owned(), stride, alignment, fields))
+                    let name = pointee.name().context("pointee has no name")?.to_owned();
+                    Some(SlangStructAbi {
+                        name,
+                        stride,
+                        alignment,
+                        fields,
+                    })
                 },
                 None => None,
             };

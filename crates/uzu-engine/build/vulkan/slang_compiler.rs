@@ -19,7 +19,10 @@ use shader_slang::{
 };
 use walkdir::WalkDir;
 
-use super::{Dephashes, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_types, wrapper};
+use super::{
+    Dephashes, SlangArgumentType, SlangEntryPointAbi, SlangEntryPointVariant, SlangKernelInfo, bindgen, generate_types,
+    wrapper,
+};
 use crate::{
     common::{
         caching,
@@ -230,7 +233,13 @@ impl SlangCompiler {
                                     None
                                 },
                             };
-                            Ok((types.clone(), abi, (artifact_path(&object_file)?, native)))
+                            let spirv = artifact_path(&object_file)?;
+                            Ok(SlangEntryPointVariant {
+                                types: types.clone(),
+                                abi,
+                                spirv,
+                                native_bf16: native,
+                            })
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
                     let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
@@ -412,7 +421,7 @@ fn send_native_bf16_variants<'a>(
     for (name, types) in entry_points {
         let (abi, spirv) = entry_point(&compiled, name, declared)?;
         let stores_bf16 = types.contains(&"bf16")
-            || abi.fields.iter().any(|field| field.layout.as_ref().is_some_and(|(ty, ..)| ty == "bf16"));
+            || abi.fields.iter().any(|field| field.layout.as_ref().is_some_and(|layout| layout.name == "bf16"));
         let native = stores_bf16.then(spirv).transpose()?.map(|spirv| (abi, spirv.as_slice().to_vec()));
         // The receiver stops only on an error of its own.
         if sender.send(Ok(native)).is_err() {

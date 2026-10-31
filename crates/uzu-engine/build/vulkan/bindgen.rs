@@ -12,7 +12,8 @@ use shader_slang::ScalarType;
 use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
 use super::{
-    SlangArgumentType, SlangEntryPointAbi, SlangFieldAbi, SlangKernelInfo, data_type, wrapper::specialization_name,
+    SlangArgumentType, SlangEntryPointAbi, SlangEntryPointVariant, SlangFieldAbi, SlangKernelInfo, data_type,
+    wrapper::specialization_name,
 };
 use crate::common::{
     expr_rewrite::{qualify_enum_path, rewrite_paths_with},
@@ -62,14 +63,16 @@ pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
 pub fn bindgen(
     info: &SlangKernelInfo,
     kernel: &Kernel,
-    variants: &[(Vec<&'static str>, SlangEntryPointAbi, (String, Option<(SlangEntryPointAbi, String)>))],
+    variants: &[SlangEntryPointVariant],
     gpu_type_paths: &GpuTypePaths,
     gpu_types: &[&GpuTypes],
 ) -> anyhow::Result<TokenStream> {
     let kernel_name: &str = &kernel.name;
     let struct_name = format_ident!("{kernel_name}VulkanKernel");
-    let (_, abi, spirv_files) = variants.first().context("kernel has no entry points")?;
-    let abis = || variants.iter().flat_map(|(_, abi, (_, native))| once(abi).chain(native.iter().map(|(abi, _)| abi)));
+    let first = variants.first().context("kernel has no entry points")?;
+    let abi = &first.abi;
+    let abis =
+        || variants.iter().flat_map(|variant| once(&variant.abi).chain(variant.native_bf16.iter().map(|(abi, _)| abi)));
     let layout = |abi: &SlangEntryPointAbi| {
         let fields = abi.fields.iter().map(|field| (field.name.clone(), field.offset, field.size)).collect::<Vec<_>>();
         (abi.block_size, abi.group_size, abi.specialization_ids.clone(), fields)
@@ -164,10 +167,10 @@ pub fn bindgen(
             let buffer = kernel.arguments.iter().any(|argument| {
                 argument.name.as_ref() == field.name && matches!(argument.ty, KernelArgumentType::Buffer(_))
             });
-            if let (true, Some((pointee, stride, ..))) = (buffer, &field.layout)
-                && gpu_type_paths.kind_for(pointee) != Some(GpuTypeKind::Struct)
+            if let (true, Some(pointee)) = (buffer, &field.layout)
+                && gpu_type_paths.kind_for(&pointee.name) != Some(GpuTypeKind::Struct)
             {
-                strides.insert((data_type(pointee)?.to_string(), *stride));
+                strides.insert((data_type(&pointee.name)?.to_string(), pointee.stride));
             }
         }
     }
@@ -183,9 +186,10 @@ pub fn bindgen(
     // The canonical struct `field` holds or points to, checked field by field against Slang's reflected layout.
     let mut layout_checks = Vec::new();
     let mut canonical_struct = |field: &SlangFieldAbi| -> anyhow::Result<Option<(&str, Type, usize, usize)>> {
-        let Some((pointee, stride, alignment, fields)) = &field.layout else {
+        let Some(layout) = &field.layout else {
             return Ok(None);
         };
+        let (pointee, stride, alignment, fields) = (&layout.name, layout.stride, layout.alignment, &layout.fields);
         let Some(path) = gpu_type_paths
             .full_path_for(pointee)
             .filter(|_| gpu_type_paths.kind_for(pointee) == Some(GpuTypeKind::Struct))
@@ -204,7 +208,7 @@ pub fn bindgen(
             })
             .with_context(|| format!("{kernel_name}: no canonical struct '{pointee}'"))?;
         ensure!(
-            canonical.fields.iter().map(|canonical| canonical.name.as_ref()).eq(fields.iter().map(|(name, ..)| name)),
+            canonical.fields.iter().map(|canonical| canonical.name.as_ref()).eq(fields.iter().map(|field| &field.name)),
             "{kernel_name}: '{pointee}' fields differ from the canonical struct"
         );
         let scalar = |text: &str| match text {
@@ -212,7 +216,7 @@ pub fn bindgen(
             "f32" => Some(ScalarType::Float32),
             _ => None,
         };
-        for (canonical, (field_name, _, _, reflected, array)) in canonical.fields.iter().zip(fields) {
+        for (canonical, reflected) in canonical.fields.iter().zip(fields) {
             let (element, length) = match &canonical.ty {
                 GpuTypeStructFieldType::Scalar(element) => (element, None),
                 GpuTypeStructFieldType::Array {
@@ -221,9 +225,11 @@ pub fn bindgen(
                 } => (element, Some((*length, 4))),
             };
             ensure!(
-                scalar(element) == Some(*reflected) && *array == length,
-                "{kernel_name}: field {pointee}.{field_name} is {element} {length:?} in Rust but {reflected:?} {array:?} \
-                 in Slang"
+                scalar(element) == Some(reflected.scalar) && reflected.array == length,
+                "{kernel_name}: field {pointee}.{} is {element} {length:?} in Rust but {:?} {:?} in Slang",
+                reflected.name,
+                reflected.scalar,
+                reflected.array
             );
         }
         let ty: Type = syn::parse_str(path)?;
@@ -231,7 +237,7 @@ pub fn bindgen(
         layout_checks.push(quote! {
             const _: () = assert!(size_of::<#ty>() == #stride && align_of::<#ty>() == #alignment, #message);
         });
-        for (canonical, (field_name, offset, size, ..)) in canonical.fields.iter().zip(fields) {
+        for (canonical, reflected) in canonical.fields.iter().zip(fields) {
             let field_type: Type = match &canonical.ty {
                 GpuTypeStructFieldType::Scalar(element) => syn::parse_str(element)?,
                 GpuTypeStructFieldType::Array {
@@ -239,7 +245,7 @@ pub fn bindgen(
                     length,
                 } => syn::parse_str(&format!("[{element}; {length}]"))?,
             };
-            let field_name = format_ident!("{field_name}");
+            let (field_name, offset, size) = (format_ident!("{}", reflected.name), reflected.offset, reflected.size);
             layout_checks.push(quote! {
                 const _: () = assert!(
                     std::mem::offset_of!(#ty, #field_name) == #offset && size_of::<#field_type>() == #size,
@@ -247,7 +253,7 @@ pub fn bindgen(
                 );
             });
         }
-        Ok(Some((path, ty, *stride, *alignment)))
+        Ok(Some((path, ty, stride, alignment)))
     };
     let mut encode_arguments = Vec::new();
     let mut packing = Vec::new();
@@ -481,7 +487,7 @@ pub fn bindgen(
         specializations.iter().filter(|(name, ..)| references(name)).map(|(name, ty, ..)| (name, ty)).unzip();
 
     // The native-BF16 SPIR-V on devices with the BF16 type.
-    let spirv = |(object, native): &(String, Option<(SlangEntryPointAbi, String)>)| match native {
+    let spirv = |object: &String, native: &Option<(SlangEntryPointAbi, String)>| match native {
         Some((_, native)) => quote! {
             if context.physical_device().capabilities.contains(crate::backends::vulkan::VkDeviceCapabilities::BF16_TYPE) {
                 include_bytes!(#native) as &[u8]
@@ -493,10 +499,10 @@ pub fn bindgen(
     };
     let entry_arms = variants
         .iter()
-        .map(|(types, abi, spirv_files)| {
-            let data_types = types.iter().map(|ty| data_type(ty)).collect::<Result<Vec<_>, _>>()?;
-            let entry_point = &abi.name;
-            let spirv = spirv(spirv_files);
+        .map(|variant| {
+            let data_types = variant.types.iter().map(|ty| data_type(ty)).collect::<Result<Vec<_>, _>>()?;
+            let entry_point = &variant.abi.name;
+            let spirv = spirv(&variant.spirv, &variant.native_bf16);
             Ok(quote! { (#(crate::data_type::DataType::#data_types,)*) => (#entry_point, #spirv) })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -504,7 +510,7 @@ pub fn bindgen(
     let entry_selection = match type_parameters.is_empty() {
         true => {
             let entry_point = &abi.name;
-            let spirv = spirv(spirv_files);
+            let spirv = spirv(&first.spirv, &first.native_bf16);
             quote! { (#entry_point, #spirv) }
         },
         false => quote! {
