@@ -80,9 +80,11 @@ impl VkCommandBufferSubmission {
                     .and_then(|gpu_execution_time| Ok((gpu_execution_time, resources.span_timestamps(&context)?)));
                 unsafe { context.recycle_command_buffer_resources(resources) };
                 drop(retained);
-                // Validation errors fail the next completion, which the work that caused them awaits.
-                context
-                    .take_validation_error()
+                // Validation errors fail the next completion someone awaits: the work that caused them, or the work
+                // after it when nothing awaits that.
+                (!sender.is_canceled())
+                    .then(|| context.take_validation_error())
+                    .flatten()
                     .map_or(completion.map_err(Error::from), |message| Err(Error::Validation(message)))
             },
             // After a failed wait the GPU may still reference the submission, so nothing it uses is freed.

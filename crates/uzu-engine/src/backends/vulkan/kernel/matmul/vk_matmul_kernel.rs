@@ -167,6 +167,7 @@ impl MatmulKernel for VkMatmulKernel {
         // SAFETY: both ranges hold the n x k codes, which the copy above wrote to `rows`; the buffers do not alias.
         unsafe { kernel.encode((&rows, 0..bytes), (&*weights, 0..bytes), k, n, bits / 2, &mut command_buffer) };
         // Nothing waits: the command buffer holds `rows` until the GPU is done with it, and later ones run after it.
+        // As with `VkBufferInitializer::handoff`, later work reports its validation errors; other GPU errors are lost.
         drop(command_buffer.end_encoding().try_submit()?);
         Ok((GemmBLayout::Tiled, prepared_shape.signed_codes))
     }
