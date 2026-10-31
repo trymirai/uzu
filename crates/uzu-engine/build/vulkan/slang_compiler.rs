@@ -19,9 +19,7 @@ use shader_slang::{
 };
 use walkdir::WalkDir;
 
-use super::{
-    Dephashes, Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_types, wrapper,
-};
+use super::{Dephashes, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_types, wrapper};
 use crate::{
     common::{
         caching,
@@ -75,7 +73,7 @@ pub struct SlangCompiler {
 }
 
 impl SlangCompiler {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new() -> anyhow::Result<Self> {
         let src_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("src/backends/vulkan/kernel");
         let out_dir = PathBuf::from(env::var("OUT_DIR")?).join("vulkan");
         let global_session = GlobalSession::new().context("cannot create Slang global session")?;
@@ -94,7 +92,7 @@ impl SlangCompiler {
         source_file: &Path,
         gpu_type_paths: &GpuTypePaths,
         gpu_types: &[&GpuTypes],
-    ) -> Result<(KernelPath, Box<[Kernel]>, Box<[KernelName]>), Error> {
+    ) -> anyhow::Result<(KernelPath, Box<[Kernel]>, Box<[KernelName]>)> {
         let source_relative = source_file.strip_prefix(&self.src_dir)?.with_extension("");
         let kernel_path = source_relative
             .components()
@@ -133,7 +131,7 @@ impl SlangCompiler {
             .map(|path| {
                 Ok((path.into(), blake3::hash(&fs::read(path).with_context(|| format!("cannot read {path}"))?).into()))
             })
-            .collect::<Result<HashMap<String, [u8; blake3::OUT_LEN]>, Error>>()?;
+            .collect::<anyhow::Result<HashMap<String, [u8; blake3::OUT_LEN]>>>()?;
         let kernels = module
             .module_reflection()
             .children()
@@ -234,7 +232,7 @@ impl SlangCompiler {
                             };
                             Ok((types.clone(), abi, (artifact_path(&object_file)?, native)))
                         })
-                        .collect::<Result<Vec<_>, Error>>()?;
+                        .collect::<anyhow::Result<Vec<_>>>()?;
                     let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
                     write_tokens(
                         bindgen::bindgen(info, descriptor, &variants, gpu_type_paths, gpu_types)?,
@@ -242,7 +240,7 @@ impl SlangCompiler {
                     )
                     .with_context(|| format!("cannot write {} binding", descriptor.name))?;
                 }
-                Ok::<_, Error>(())
+                Ok::<_, anyhow::Error>(())
             })?;
         } else if wrapper_file.exists() {
             fs::remove_file(&wrapper_file)?;
@@ -328,7 +326,7 @@ fn check_capabilities(
     preconditions: &[(&str, &str)],
     spirv: &[u8],
     native_bf16: bool,
-) -> Result<(), Error> {
+) -> anyhow::Result<()> {
     const OP_CAPABILITY: u32 = 17;
     const BFLOAT16_TYPE: u32 = 5116;
     let words = spirv.as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect::<Vec<_>>();
@@ -364,7 +362,7 @@ fn session(
     src_dir: &Path,
     out_dir: &Path,
     native_bf16: bool,
-) -> Result<Session, Error> {
+) -> anyhow::Result<Session> {
     let optimization = match env::var("OPT_LEVEL")?.as_str() {
         "0" => OptimizationLevel::Default,
         _ => OptimizationLevel::High,
@@ -406,8 +404,8 @@ fn send_native_bf16_variants<'a>(
     path: &Path,
     entry_points: impl Iterator<Item = &'a (String, Vec<&'static str>)>,
     declared: &BTreeMap<String, ScalarType>,
-    sender: &Sender<Result<Option<(SlangEntryPointAbi, Vec<u8>)>, Error>>,
-) -> Result<(), Error> {
+    sender: &Sender<anyhow::Result<Option<(SlangEntryPointAbi, Vec<u8>)>>>,
+) -> anyhow::Result<()> {
     let global_session = GlobalSession::new().context("cannot create Slang global session")?;
     let session = session(&global_session, src_dir, out_dir, true)?;
     let compiled = link(&session, path)?;
@@ -429,7 +427,7 @@ fn send_native_bf16_variants<'a>(
 fn link(
     session: &Session,
     path: &Path,
-) -> Result<ComponentType, Error> {
+) -> anyhow::Result<ComponentType> {
     let (wrapper, diagnostics) = session.load_module_with_diagnostics(path)?;
     for line in diagnostics.iter().flat_map(|diagnostics| diagnostics.lines()) {
         println!("cargo::warning={line}");
@@ -448,7 +446,7 @@ fn entry_point<'a>(
     compiled: &'a ComponentType,
     name: &str,
     declared: &BTreeMap<String, ScalarType>,
-) -> Result<(SlangEntryPointAbi, impl FnOnce() -> Result<Blob, Error> + 'a), Error> {
+) -> anyhow::Result<(SlangEntryPointAbi, impl FnOnce() -> anyhow::Result<Blob> + 'a)> {
     let program = compiled.layout(0).context("linked Slang program has no layout")?;
     let entry_point = program.find_entry_point_by_name(name).context("entry point not linked")?;
     let index =
@@ -457,7 +455,7 @@ fn entry_point<'a>(
     Ok((SlangEntryPointAbi::from_reflection(program, entry_point, declared)?, spirv))
 }
 
-fn artifact_path(file: &Path) -> Result<String, Error> {
+fn artifact_path(file: &Path) -> anyhow::Result<String> {
     Ok(file.to_str().context("Slang artifact path is not UTF-8")?.to_owned())
 }
 

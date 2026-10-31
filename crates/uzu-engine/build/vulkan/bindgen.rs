@@ -12,8 +12,7 @@ use shader_slang::ScalarType;
 use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
 use super::{
-    Error, SlangArgumentType, SlangEntryPointAbi, SlangFieldAbi, SlangKernelInfo, data_type,
-    wrapper::specialization_name,
+    SlangArgumentType, SlangEntryPointAbi, SlangFieldAbi, SlangKernelInfo, data_type, wrapper::specialization_name,
 };
 use crate::common::{
     expr_rewrite::{qualify_enum_path, rewrite_paths_with},
@@ -66,7 +65,7 @@ pub fn bindgen(
     variants: &[(Vec<&'static str>, SlangEntryPointAbi, (String, Option<(SlangEntryPointAbi, String)>))],
     gpu_type_paths: &GpuTypePaths,
     gpu_types: &[&GpuTypes],
-) -> Result<TokenStream, Error> {
+) -> anyhow::Result<TokenStream> {
     let kernel_name: &str = &kernel.name;
     let struct_name = format_ident!("{kernel_name}VulkanKernel");
     let (_, abi, spirv_files) = variants.first().context("kernel has no entry points")?;
@@ -100,7 +99,7 @@ pub fn bindgen(
         .map(|parameter| format_ident!("{}", parameter.name.as_ref()))
         .collect::<Vec<_>>();
     // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
-    let word = |name: &Ident, ty: &Type, scalars: &[&str]| -> Result<TokenStream, Error> {
+    let word = |name: &Ident, ty: &Type, scalars: &[&str]| -> anyhow::Result<TokenStream> {
         let text = ty.to_token_stream().to_string().replace(" :: ", "::");
         match text.as_str() {
             _ if canonical_enum_name(gpu_type_paths, &text).is_some() => Ok(quote! { (#name as u32) }),
@@ -183,7 +182,7 @@ pub fn bindgen(
     );
     // The canonical struct `field` holds or points to, checked field by field against Slang's reflected layout.
     let mut layout_checks = Vec::new();
-    let mut canonical_struct = |field: &SlangFieldAbi| -> Result<Option<(&str, Type, usize, usize)>, Error> {
+    let mut canonical_struct = |field: &SlangFieldAbi| -> anyhow::Result<Option<(&str, Type, usize, usize)>> {
         let Some((pointee, stride, alignment, fields)) = &field.layout else {
             return Ok(None);
         };
@@ -342,7 +341,7 @@ pub fn bindgen(
         let mut expression = syn::parse_str::<Expr>(text)
             .with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))?;
         rewrite_paths_with(&mut expression, |path| qualify_enum_path(path, gpu_type_paths));
-        Ok::<_, Error>(expression)
+        Ok::<_, anyhow::Error>(expression)
     };
     for argument in info.arguments() {
         let argument_type = argument.argument_type()?;
@@ -458,7 +457,7 @@ pub fn bindgen(
             (false, size) if !axis || size == 1 => Ok(quote! { 1 }),
             (false, size) => bail!("{kernel_name}: reflected group size {size} on undispatched axis {index}"),
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
     // A single axis wider than AXIS_FOLD_GROUPS workgroups folds into rows of them, which the wrapper unfolds.
     let dispatch = if axis && grid.len() == 1 {
         let groups = &dispatch[0];
@@ -500,7 +499,7 @@ pub fn bindgen(
             let spirv = spirv(spirv_files);
             Ok(quote! { (#(crate::data_type::DataType::#data_types,)*) => (#entry_point, #spirv) })
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
     // A kernel without type parameters has its single entry point; the others select one by data types.
     let entry_selection = match type_parameters.is_empty() {
         true => {
@@ -598,7 +597,7 @@ pub fn bindgen(
                     },
                 })
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let (mut trait_arguments, mut conversions, mut call_arguments) = (Vec::new(), Vec::new(), Vec::new());
         for argument in &kernel.arguments {
             let name = format_ident!("{}", argument.name.as_ref());

@@ -6,14 +6,13 @@ use std::{
 
 use anyhow::{Context, bail};
 
-use super::Error;
 use crate::common::gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes};
 
 /// Writes the `generated.<file>` Slang module of each GPU types file's constants, enums and structs.
 pub fn generate_types(
     gpu_types: &[&GpuTypes],
     out_dir: &Path,
-) -> Result<(), Error> {
+) -> anyhow::Result<()> {
     let generated = out_dir.join("generated");
     fs::create_dir_all(&generated)?;
     let mut files: BTreeMap<&str, Vec<&GpuType>> = BTreeMap::new();
@@ -79,7 +78,7 @@ pub fn generate_types(
                             };
                             Ok(format!("  public {ty} {}{length};\n", field.name))
                         })
-                        .collect::<Result<String, Error>>()?;
+                        .collect::<anyhow::Result<String>>()?;
                     declarations.push(format!("public struct {} {{\n{fields}}}\n", gpu_struct.name));
                 },
                 GpuType::OptionSet(_) => {},

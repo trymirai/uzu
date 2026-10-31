@@ -4,7 +4,7 @@ use shader_slang::{
     reflection::{Decl, Function, Type},
 };
 
-use super::{Error, SlangArgument, SlangArgumentType};
+use super::{SlangArgument, SlangArgumentType};
 use crate::common::{
     gpu_type_paths::GpuTypePaths,
     identifiers::{ArgumentName, KernelName},
@@ -24,7 +24,7 @@ impl<'a> SlangKernelInfo<'a> {
     pub fn from_reflection(
         decl: &'a Decl,
         gpu_type_paths: &'a GpuTypePaths,
-    ) -> Result<Option<Self>, Error> {
+    ) -> anyhow::Result<Option<Self>> {
         let (generic, function_decl) = if let DeclKind::Generic = decl.kind() {
             let generic = decl.as_generic().context("generic declaration has no reflection")?;
             (Some(generic), generic.inner_decl().context("generic declaration has no inner declaration")?)
@@ -90,7 +90,7 @@ impl<'a> SlangKernelInfo<'a> {
     }
 
     /// `(phase, condition)` of every `[[Precondition]]`: phase `new` or `encode`, a nonempty host condition.
-    pub fn preconditions(&self) -> Result<Vec<(&'a str, &'a str)>, Error> {
+    pub fn preconditions(&self) -> anyhow::Result<Vec<(&'a str, &'a str)>> {
         let attributes = self.function.user_attributes().filter(|attribute| attribute.name() == Some("Precondition"));
         attributes
             .map(|attribute| {
@@ -108,7 +108,7 @@ impl<'a> SlangKernelInfo<'a> {
     }
 
     /// The `[[RequiredSubgroupSize]]` host expression: the subgroup size the kernel's pipelines require, if any.
-    pub fn required_subgroup_size(&self) -> Result<Option<&'a str>, Error> {
+    pub fn required_subgroup_size(&self) -> anyhow::Result<Option<&'a str>> {
         self.function
             .user_attributes()
             .find(|attribute| attribute.name() == Some("RequiredSubgroupSize"))
@@ -117,7 +117,7 @@ impl<'a> SlangKernelInfo<'a> {
     }
 
     /// The common kernel signature; only public ones are compared against the other backends'.
-    pub fn to_kernel(&self) -> Result<Kernel, Error> {
+    pub fn to_kernel(&self) -> anyhow::Result<Kernel> {
         let mut parameters = self
             .type_parameters
             .iter()

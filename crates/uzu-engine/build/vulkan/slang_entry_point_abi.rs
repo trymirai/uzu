@@ -7,7 +7,7 @@ use shader_slang::{
     reflection::{EntryPoint, Shader},
 };
 
-use super::{Error, SlangFieldAbi};
+use super::SlangFieldAbi;
 
 /// Push-constant block and specialization constants of one entry point of the linked wrapper program.
 #[derive(Debug)]
@@ -25,7 +25,7 @@ impl SlangEntryPointAbi {
         program: &Shader,
         entry_point: &EntryPoint,
         declared: &BTreeMap<String, ScalarType>,
-    ) -> Result<Self, Error> {
+    ) -> anyhow::Result<Self> {
         let name = entry_point.name().context("Slang entry point has no name")?.to_owned();
         let block = entry_point.type_layout().context("Slang entry point has no layout")?;
         let block_size = if block.categories().any(|category| matches!(category, ParameterCategory::PushConstantBuffer))
@@ -88,7 +88,7 @@ impl SlangEntryPointAbi {
                             let size = layout.size(ParameterCategory::Uniform);
                             Ok((field_name, field.offset(ParameterCategory::Uniform), size, scalar, array))
                         })
-                        .collect::<Result<_, Error>>()?;
+                        .collect::<anyhow::Result<_>>()?;
                     Some((pointee.name().context("pointee has no name")?.to_owned(), stride, alignment, fields))
                 },
                 None => None,
@@ -127,7 +127,7 @@ impl SlangEntryPointAbi {
                     u32::try_from(parameter.offset(ParameterCategory::SpecializationConstant))?,
                 ))
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()?;
         // One linked constant per name: a module and an import declaring the same name would size and set different IDs.
         if let Some(global) = specialization_ids.iter().map(|(global, _)| global).duplicates().next() {
             bail!("'{name}': global '{global}' is linked as more than one specialization constant");

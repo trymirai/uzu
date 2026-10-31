@@ -4,20 +4,18 @@ use shader_slang::{
     reflection::{Decl, Generic, Shader, Type},
 };
 
-use super::Error;
-
 pub fn create_specialized_generic<'a>(
     component: &'a ComponentType,
     generic_decl: &Decl,
     concrete_types: &[&str],
-) -> Result<&'a Generic, Error> {
+) -> anyhow::Result<&'a Generic> {
     let layout: &Shader = component.layout(0)?;
     let generic: &Generic = generic_decl.as_generic().context("declaration has no generic reflection")?;
 
     let type_ptrs: Vec<&Type> = concrete_types
         .iter()
         .map(|name| layout.find_type_by_name(name).ok_or_else(|| anyhow::anyhow!("type '{}' not found", name)))
-        .collect::<Result<_, Error>>()?;
+        .collect::<anyhow::Result<_>>()?;
 
     let arg_types: Vec<GenericArgType> =
         std::iter::repeat_n(GenericArgType::SlangGenericArgType, type_ptrs.len()).collect();

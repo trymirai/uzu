@@ -2,10 +2,8 @@ use anyhow::bail;
 use quote::format_ident;
 use syn::Ident;
 
-use super::Error;
-
 /// The `DataType` of a Slang source type.
-pub fn data_type(gpu_type: &str) -> Result<Ident, Error> {
+pub fn data_type(gpu_type: &str) -> anyhow::Result<Ident> {
     Ok(format_ident!(
         "{}",
         match gpu_type {

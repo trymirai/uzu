@@ -5,7 +5,7 @@ use shader_slang::{
     reflection::{Generic, UserAttribute, Variable},
 };
 
-use super::{Error, SlangArgumentType};
+use super::SlangArgumentType;
 use crate::common::{
     gpu_type_paths::{GpuTypeKind, GpuTypePaths},
     kernel::KernelBufferAccess,
@@ -27,11 +27,11 @@ impl<'a> SlangArgument<'a> {
         }
     }
 
-    pub fn name(&self) -> Result<&str, Error> {
+    pub fn name(&self) -> anyhow::Result<&str> {
         self.variable.name().context("Slang argument has no name")
     }
 
-    pub fn slang_type(&self) -> Result<String, Error> {
+    pub fn slang_type(&self) -> anyhow::Result<String> {
         let ty = self.variable.ty().context("Slang argument has no type")?;
         Ok(ty.full_name()?.as_str()?.to_string())
     }
@@ -39,21 +39,21 @@ impl<'a> SlangArgument<'a> {
     pub fn specialized_slang_type(
         &self,
         generic: &Generic,
-    ) -> Result<String, Error> {
+    ) -> anyhow::Result<String> {
         let ty = self.variable.ty().context("Slang argument has no type")?;
         let specialized = ty.apply_specializations(generic).context("cannot specialize Slang argument type")?;
         Ok(specialized.full_name()?.as_str()?.to_string())
     }
 
     /// Host condition under which an `[[Optional]]` argument is present.
-    pub fn condition(&self) -> Result<Option<&'a str>, Error> {
+    pub fn condition(&self) -> anyhow::Result<Option<&'a str>> {
         self.attribute("Optional")
             .map(|optional| optional.argument_value_string(0).context("Optional missing condition"))
             .transpose()
     }
 
     /// Constants and specializations carry their canonical Rust type; an optional specialization is an `Option` of it.
-    pub fn argument_type(&self) -> Result<SlangArgumentType, Error> {
+    pub fn argument_type(&self) -> anyhow::Result<SlangArgumentType> {
         let ty = self.variable.ty().context("Slang argument has no type")?;
         let value = match ty.kind() {
             TypeKind::Scalar => match ty.scalar_type() {
@@ -139,7 +139,7 @@ impl<'a> SlangArgument<'a> {
     }
 
     /// Whether the argument is `[[PipelineVariants]]`, a uniform canonical GPU enum without other annotations.
-    pub fn pipeline_variants(&self) -> Result<bool, Error> {
+    pub fn pipeline_variants(&self) -> anyhow::Result<bool> {
         if self.attribute("PipelineVariants").is_none() {
             return Ok(false);
         }
@@ -163,7 +163,7 @@ impl<'a> SlangArgument<'a> {
     fn rust_type(
         &self,
         text: &str,
-    ) -> Result<Box<str>, Error> {
+    ) -> anyhow::Result<Box<str>> {
         let ty = self.gpu_type_paths.resolve_type(text)?;
         Ok(ty.to_token_stream().to_string().replace(" :: ", "::").into())
     }
@@ -176,7 +176,7 @@ impl<'a> SlangArgument<'a> {
     }
 
     /// Pointee and access mode of a reflected `Ptr<T, Access.X, AddressSpace.Device[, DefaultDataLayout]>`.
-    fn pointer(&self) -> Result<(String, KernelBufferAccess), Error> {
+    fn pointer(&self) -> anyhow::Result<(String, KernelBufferAccess)> {
         let ty = self.slang_type()?;
         let pointer = ty
             .strip_prefix("Ptr<")

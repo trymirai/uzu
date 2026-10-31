@@ -6,7 +6,7 @@ use quote::{ToTokens, format_ident};
 use shader_slang::ComponentType;
 use syn::{Expr, parse_quote};
 
-use super::{Error, SlangArgumentType, SlangKernelInfo, slang_api};
+use super::{SlangArgumentType, SlangKernelInfo, slang_api};
 use crate::common::{expr_rewrite::rewrite_paths_with, mangling::static_mangle};
 
 /// Workgroups per row of a folded one-axis grid: Vulkan's minimum maxComputeWorkGroupCount, which wider grids
@@ -17,7 +17,7 @@ pub fn generate_wrappers(
     kernel: &SlangKernelInfo,
     component: &ComponentType,
     module_globals: &HashSet<&str>,
-) -> Result<(Vec<String>, Vec<(String, Vec<&'static str>)>), Error> {
+) -> anyhow::Result<(Vec<String>, Vec<(String, Vec<&'static str>)>)> {
     // A `[[PipelineVariants]]` argument travels as a specialization constant instead of a push constant.
     let mut variant_arguments = Vec::new();
     for argument in kernel.arguments() {
@@ -64,7 +64,7 @@ pub fn generate_wrappers(
             })
         })
         .filter_map(Result::transpose)
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let type_params = kernel.type_parameters().collect::<Vec<_>>();
 
@@ -99,7 +99,7 @@ pub fn generate_wrappers(
                 };
                 Ok((a.name()?.to_string(), arg_type, specialized_type))
             })
-            .collect::<Result<_, Error>>()?;
+            .collect::<anyhow::Result<_>>()?;
 
         let has_axis = arguments.iter().any(|(_, t, _)| matches!(t, SlangArgumentType::Axis(_, _)));
         // A single axis may arrive folded into rows of AXIS_FOLD_GROUPS workgroups.
@@ -188,7 +188,7 @@ pub fn generate_wrappers(
                         },
                     })
                 })
-                .collect::<Result<Vec<_>, Error>>()?
+                .collect::<anyhow::Result<Vec<_>>>()?
                 .join(", ")
         };
 
@@ -247,7 +247,7 @@ pub fn specialization_name(
 fn calculate_numthreads(
     kernel_name: &str,
     arguments: &[(String, SlangArgumentType, String)],
-) -> Result<String, Error> {
+) -> anyhow::Result<String> {
     let mut threads = arguments
         .iter()
         .filter_map(|(_, arg_type, _)| match arg_type {
@@ -269,7 +269,7 @@ fn calculate_numthreads(
                         parse_quote! { #name }
                     })
             });
-            Ok::<_, Error>(expression.into_token_stream().to_string())
+            Ok::<_, anyhow::Error>(expression.into_token_stream().to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
 
