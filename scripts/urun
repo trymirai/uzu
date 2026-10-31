@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() { echo 'usage: urun --on <host> -- <cmd> [args...]' >&2; exit 2; }
+die()   { echo "urun: $*" >&2; exit 1; }
+quote() { printf '%q ' "$@"; }
+
+[[ $# -ge 4 && $1 == --on && -n $2 && $3 == -- ]] || usage
+host=$2; shift 3
+set -- env "$@"
+
+root=$(jj root 2>/dev/null || git rev-parse --show-toplevel) || die 'not in a jj/git repo'
+root=$(realpath "$root")
+home=$(realpath "$HOME")
+[[ $root == "$home/"* ]] || die "repo must be below \$HOME"
+rel=${root#"$home/"}
+cwd=$(realpath "$PWD")
+
+prefix=''
+if [[ -n ${DIRENV_FILE:-} ]]; then
+  dir=$(realpath "$(dirname "$DIRENV_FILE")" 2>/dev/null) || die 'active direnv directory does not resolve'
+  [[ $dir == "$root" || $dir == "$root/"* ]] || die 'active direnv file is outside the repo'
+  prefix="export DIRENV_LOG_FORMAT= && direnv allow $(quote "$rel${dir#"$root"}/$(basename "$DIRENV_FILE")") && "
+  set -- direnv exec . "$@"
+fi
+
+rsync -a --delete-after --mkpath -h --info=progress2 \
+  --filter=':- .gitignore' --exclude=.git --exclude=.jj --exclude=.direnv \
+  "$root/" "$host:$rel/" || { s=$?; (( s == 24 )) || exit "$s"; }
+
+ssh -t "$host" "${prefix}cd $(quote "$rel${cwd#"$root"}") && exec $(quote "$@")"
