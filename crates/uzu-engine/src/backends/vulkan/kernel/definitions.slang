@@ -1,6 +1,7 @@
 module definitions;
 
-__include definitions.dsl;
+// The kernel DSL is the one the WebGPU kernels use.
+__include "../../slang/kernel/definitions/dsl.slang";
 __include definitions.storage_float;
 __include definitions.bf16;
 __include definitions.subgroup;
