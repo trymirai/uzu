@@ -4,8 +4,6 @@ import definitions;
 // (or +0) over taps j < min(K, t + 1) ascending of (weights[c, K - 1 - j] + coefficient_deltas[t R + j (C / G) + c / G])
 // input[t - j, c], then rounds once. One invocation per output.
 
-static const uint SEPARABLE_CAUSAL_CONV_THREADS = 64;
-
 [[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "group_size > 0")]]
@@ -17,19 +15,13 @@ func SeparableCausalConv<T: IModelFloat16>(
   Ptr<T, Access.ReadWrite> output,
   uint sequence_length,
   uint coefficient_row_stride,
-  [[Groups("model_dim.div_ceil(64)")]] uint channel_group,
-  [[Groups("sequence_length")]] uint token_group,
-  [[Threads("64")]] uint thread_idx,
+  [[Axis("model_dim", "64")]] uint channel,
+  [[Axis("sequence_length", "1")]] uint token,
   [[Specialize]] uint model_dim,
   [[Specialize]] uint kernel_size,
   [[Specialize]] uint group_size,
   [[Specialize]] bool has_bias,
 ) {
-  let channel = channel_group * SEPARABLE_CAUSAL_CONV_THREADS + thread_idx;
-  if (channel >= model_dim) {
-    return;
-  }
-  let token = token_group;
   let num_groups = model_dim / group_size;
   let group = channel / group_size;
   var acc = 0.0;

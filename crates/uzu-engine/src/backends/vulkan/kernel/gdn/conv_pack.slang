@@ -4,8 +4,6 @@ import definitions;
 // is row tile tile_tokens - (KERNEL_SIZE - 1) + tap of [conv state ++ x], so tile 0 copies the state row of channel c
 // and later tiles convert x through FP32. The precondition keeps row tile tile_tokens - (KERNEL_SIZE - 1) in bounds.
 
-static const uint DELTA_NET_CONV_PACK_THREADS = 128;
-
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "KERNEL_SIZE == 4")]]
@@ -18,22 +16,18 @@ func DeltaNetConvPack<T: IModelFloat>(
   uint tile_tokens,
   uint row_stride,
   uint conv_dim,
-  [[Groups("conv_dim.div_ceil(128)")]] uint channel_group,
-  [[Groups("suffix_len.div_ceil(tile_tokens)")]] uint tile,
-  [[Threads("128")]] uint thread_idx,
+  [[Axis("conv_dim", "128")]] uint channel,
+  [[Axis("suffix_len.div_ceil(tile_tokens)", "1")]] uint tile,
   [[Specialize]] uint KERNEL_SIZE,
 ) {
-  let channel = channel_group * DELTA_NET_CONV_PACK_THREADS + thread_idx;
-  if (channel < conv_dim) {
-    let taps = KERNEL_SIZE - 1;
-    for (uint tap = 0; tap < taps; tap++) {
-      var value = 0.0;
-      if (tile == 0) {
-        value = state_in[channel * taps + tap];
-      } else {
-        value = x[(tile * tile_tokens - taps + tap) * row_stride + channel].toFloat();
-      }
-      packed[(tile * taps + tap) * conv_dim + channel] = value;
+  let taps = KERNEL_SIZE - 1;
+  for (uint tap = 0; tap < taps; tap++) {
+    var value = 0.0;
+    if (tile == 0) {
+      value = state_in[channel * taps + tap];
+    } else {
+      value = x[(tile * tile_tokens - taps + tap) * row_stride + channel].toFloat();
     }
+    packed[(tile * taps + tap) * conv_dim + channel] = value;
   }
 }

@@ -7,7 +7,6 @@ import generated.activation_type;
 // the window taps then the token, stores SiLU as T once and slides the token into the window; the last tile writes the
 // window to state_out[c, :]. Columns past conv_dim are untouched.
 
-static const uint DELTA_NET_CONV_SCAN_THREADS = 64;
 static const uint DELTA_NET_CONV_SCAN_TAPS = 3;
 
 [[Variants("T", "float, bf16")]]
@@ -24,16 +23,11 @@ func DeltaNetConvScan<T: IModelFloat>(
   uint tile_tokens,
   uint conv_dim,
   uint out_stride,
-  [[Groups("conv_dim.div_ceil(64)")]] uint channel_group,
-  [[Groups("suffix_len.div_ceil(tile_tokens)")]] uint tile,
-  [[Threads("64")]] uint thread_idx,
+  [[Axis("conv_dim", "64")]] uint channel,
+  [[Axis("suffix_len.div_ceil(tile_tokens)", "1")]] uint tile,
   [[Specialize]] uint KERNEL_SIZE,
   [[Specialize]] bool has_bias,
 ) {
-  let channel = channel_group * DELTA_NET_CONV_SCAN_THREADS + thread_idx;
-  if (channel >= conv_dim) {
-    return;
-  }
   float weights[DELTA_NET_CONV_SCAN_TAPS + 1];
   float window[DELTA_NET_CONV_SCAN_TAPS];
   [ForceUnroll]
