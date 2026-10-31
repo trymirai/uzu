@@ -11,13 +11,16 @@ use crate::{
             },
         },
         cpu::Cpu,
-        metal::{Metal, gpu_types::kv_layout::KVLayout, kernel::attention::tests::default_attention_config},
     },
     data_type::{DataType, DataTypeRepr},
     encodable_block::mixer::attention::{KVCache, KVCacheView},
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, submit_command_buffer},
+        attention::default_attention_config,
+        helpers::{
+            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
+            submit_command_buffer,
+        },
     },
 };
 
@@ -125,8 +128,8 @@ fn run<B: Backend, T: DataTypeRepr>(
     let mut output = create_buffer::<B, T>(&context, (suffix * config.num_q_heads * dim) as usize);
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
-    // MXU also quantizes attention probabilities to u8.
-    let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
+    // Layouts other than the row-major one (Metal's MXU tiles) also quantize attention probabilities to u8.
+    let tolerance = if kernel.kv_layout().backend_opaque_layout != 0 {
         1.5e-2
     } else {
         5e-3
@@ -180,15 +183,17 @@ fn attention_windows_sinks_and_head_dims() {
             };
             for is_trie in [false, true] {
                 let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
-                let (actual, tolerance) = run::<Metal, bf16>(config, cache, nodes, is_trie);
-                assert_eq_float(
-                    &expected,
-                    &actual,
-                    tolerance,
-                    &format!(
-                        "INT8 D{dim} causal={causal} ring={ring} window={window:?} scale={scale:?} trie={is_trie}"
-                    ),
-                );
+                for_each_non_cpu_backend!(|B| {
+                    let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
+                    assert_eq_float(
+                        &expected,
+                        &actual,
+                        tolerance,
+                        &format!(
+                            "INT8 D{dim} causal={causal} ring={ring} window={window:?} scale={scale:?} trie={is_trie}"
+                        ),
+                    );
+                });
             }
         }
     }
@@ -196,41 +201,62 @@ fn attention_windows_sinks_and_head_dims() {
 
 #[uzu_test]
 fn attention_large_tree_and_f32() {
-    let words: Vec<[u32; 3]> = (0..80)
-        .map(|i| {
-            if i == 0 {
-                [0, 79, 0]
-            } else {
-                [i, i, 1]
-            }
-        })
-        .collect();
+    let tree = |nodes: u32| -> Vec<[u32; 3]> {
+        (0..nodes)
+            .map(|i| {
+                if i == 0 {
+                    [0, nodes - 1, 0]
+                } else {
+                    [i, i, 1]
+                }
+            })
+            .collect()
+    };
+    let words = tree(80);
     let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
     let config = default_attention_config::<f32>(128, 8, 2, true);
     let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
-    let (actual, tolerance) = run::<Metal, f32>(config, KVCacheView::full(37), nodes, true);
-    assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
-    for (causal, ring, window) in
-        [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
-    {
-        let mut config = default_attention_config::<bf16>(256, 24, 4, causal);
-        config.has_sinks = true;
-        config.is_kv_cache_ring = ring;
-        config.sliding_window_size = window;
-        let cache = if ring {
-            KVCacheView::ring(37, 11)
-        } else {
-            KVCacheView::full(37)
-        };
-        for is_trie in [false, true] {
-            let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
-            let (actual, tolerance) = run::<Metal, bf16>(config, cache, nodes, is_trie);
-            assert_eq_float(
-                &expected,
-                &actual,
-                tolerance,
-                &format!("INT8 BF16 80 nodes causal={causal} ring={ring} window={window:?} trie={is_trie}"),
-            );
+    for_each_non_cpu_backend!(|B| {
+        let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
+        assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
+    });
+    // A 1024-key cache splits the keys of 16 queries; 16 keys before 64 causal queries leave a split without keys.
+    for (suffix, dim, prefix) in [(80, 64, 37), (80, 256, 37), (80, 512, 37), (16, 256, 1024), (64, 256, 16)] {
+        let words = tree(suffix);
+        let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
+        for (causal, ring, window) in
+            [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
+        {
+            let mut config = default_attention_config::<bf16>(dim, 24, 4, causal);
+            config.has_sinks = true;
+            config.is_kv_cache_ring = ring;
+            config.sliding_window_size = window;
+            let cache = if ring {
+                KVCacheView::ring(prefix, 11)
+            } else {
+                KVCacheView::full(prefix)
+            };
+            for is_trie in [false, true] {
+                let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
+                for_each_non_cpu_backend!(|B| {
+                    let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
+                    // Metal's D512 path lands up to two BF16 steps (7.8e-3 near 0.76) from the CPU.
+                    let tolerance = if dim == 512 {
+                        tolerance.max(1e-2)
+                    } else {
+                        tolerance
+                    };
+                    assert_eq_float(
+                        &expected,
+                        &actual,
+                        tolerance,
+                        &format!(
+                            "INT8 BF16 D{dim} {suffix} nodes prefix={prefix} causal={causal} ring={ring} \
+                             window={window:?} trie={is_trie}"
+                        ),
+                    );
+                });
+            }
         }
     }
 }
@@ -260,13 +286,15 @@ fn attention_single_query() {
                         KVCacheView::full(prefix)
                     };
                     let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, false);
-                    let (actual, tolerance) = run::<Metal, bf16>(config, cache, nodes, false);
-                    assert_eq_float(
-                        &expected,
-                        &actual,
-                        tolerance,
-                        &format!("single-query INT8 D{dim} Q{q_heads} prefix={prefix} ring={ring}"),
-                    );
+                    for_each_non_cpu_backend!(|B| {
+                        let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, false);
+                        assert_eq_float(
+                            &expected,
+                            &actual,
+                            tolerance,
+                            &format!("single-query INT8 D{dim} Q{q_heads} prefix={prefix} ring={ring}"),
+                        );
+                    });
                 }
             }
         }
@@ -289,8 +317,10 @@ fn attention_vector_partial_rows() {
                 KVCacheView::full(prefix)
             };
             let (expected, _) = run::<Cpu, f32>(config, cache, nodes, true);
-            let (actual, tolerance) = run::<Metal, f32>(config, cache, nodes, true);
-            assert_eq_float(&expected, &actual, tolerance, "INT8 vector partial rows, tree, F32, sinks and gate");
+            for_each_non_cpu_backend!(|B| {
+                let (actual, tolerance) = run::<B, f32>(config, cache, nodes, true);
+                assert_eq_float(&expected, &actual, tolerance, "INT8 vector partial rows, tree, F32, sinks and gate");
+            });
         }
     }
 }

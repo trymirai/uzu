@@ -81,6 +81,12 @@ jobs:
             no-default-features: true
             features: ['uzu-engine/webgpu', 'uzu-engine/cpu']
           - host: 'linux'
+            backend: 'vulkan'
+            tests: true
+            crates: ['uzu-engine']
+            no-default-features: true
+            features: ['uzu-engine/vulkan', 'uzu-engine/cpu']
+          - host: 'linux'
             crates: ['cli']
           - host: 'linux'
             target: 'wasm32-unknown-unknown'
@@ -103,6 +109,18 @@ jobs:
       - name: Download test data
         if: ${{ matrix.tests == true }}
         run: cargo tools hanashi-tokenizers
+
+      - name: Use lavapipe
+        if: ${{ matrix.backend == 'vulkan' }}
+        run: |
+          mesa=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)
+          drivers=("$mesa"/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#drivers[@]}" -eq 1 && test -f "${drivers[0]}"
+          echo "VK_DRIVER_FILES=${drivers[0]}" >> "$GITHUB_ENV"
+
+      - name: Lint with clippy
+        if: ${{ matrix.backend == 'vulkan' }}
+        run: cargo +nightly clippy --workspace --exclude mirai-gui --all-targets --locked -- -D warnings
 
       - name: Build crates
         run: |

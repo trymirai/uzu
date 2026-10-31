@@ -39,6 +39,19 @@ webgpu = [
     "dep:wgpu",
 ]
 
+vulkan = [
+    # The kernel traits are generated from the built backends, and Vulkan's kernel set names traits only the CPU defines.
+    "cpu",
+    "dep:ash",
+    "dep:vk-mem",
+    "dep:dirs",
+    "dep:shader-slang",
+    "dep:blake3",
+    "dep:serde_json",
+    "dep:regex",
+    "dep:rayon",
+]
+
 cpu = [] # TODO: move libm here
 
 [build-dependencies]
@@ -87,6 +100,9 @@ futures.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
+ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }

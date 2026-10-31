@@ -12,7 +12,10 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+        helpers::{
+            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
+            supported_kernel,
+        },
     },
 };
 
@@ -24,14 +27,17 @@ const TOP_K: u32 = 8;
 fn run_router_top_k<B: Backend>(
     logits: &[f32],
     batch_dim: u32,
-) -> (Vec<u32>, Vec<f32>) {
+) -> Option<(Vec<u32>, Vec<f32>)> {
     let context = create_context::<B>();
     let logits_buf = create_buffer_with_data::<B, f32>(&context, logits);
     let mut expert_ids = create_buffer::<B, u32>(&context, (batch_dim * TOP_K) as usize);
     let mut expert_weights = create_buffer::<B, f32>(&context, (batch_dim * TOP_K) as usize);
 
-    let kernel =
-        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(&context, DataType::F32, MOE_ROUTER_MAX_TOP_K).unwrap();
+    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::MoeRouterTopKKernel::new(
+        &context,
+        DataType::F32,
+        MOE_ROUTER_MAX_TOP_K,
+    ))?;
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &logits_buf,
@@ -43,7 +49,7 @@ fn run_router_top_k<B: Backend>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    (buffer_to_vec::<B, _>(&context, &expert_ids), buffer_to_vec::<B, _>(&context, &expert_weights))
+    Some((buffer_to_vec::<B, _>(&context, &expert_ids), buffer_to_vec::<B, _>(&context, &expert_weights)))
 }
 
 #[uzu_test]
@@ -55,15 +61,17 @@ fn moe_router_top_k_matches_cpu() {
         logits[3] = 10.0;
         logits[11] = 10.0;
 
-        let expected = run_router_top_k::<Cpu>(&logits, batch_dim);
+        let expected = run_router_top_k::<Cpu>(&logits, batch_dim).unwrap();
         let sums: Vec<f32> =
             expected.1.as_chunks::<{ TOP_K as usize }>().0.iter().map(|row| row.iter().sum()).collect();
         assert_eq_float(&vec![1.0; sums.len()], &sums, 1e-5, "softmax weights should sum to 1.0");
 
         for_each_non_cpu_backend!(|B| {
-            let actual = run_router_top_k::<B>(&logits, batch_dim);
-            assert_eq!(actual.0, expected.0, "expert_ids mismatch for {batch_dim} tokens");
-            assert_eq_float(&expected.1, &actual.1, 1e-5, &format!("expert_weights mismatch for {batch_dim} tokens"));
+            if let Some(actual) = run_router_top_k::<B>(&logits, batch_dim) {
+                assert_eq!(actual.0, expected.0, "expert_ids mismatch for {batch_dim} tokens");
+                let message = format!("expert_weights mismatch for {batch_dim} tokens");
+                assert_eq_float(&expected.1, &actual.1, 1e-5, &message);
+            }
         });
     }
 }
@@ -80,16 +88,17 @@ fn moe_router_top_k_nan_safety() {
         logits[2 * NUM_EXPERTS as usize + i] = (i as f32) * 0.1;
     }
 
-    let expected = run_router_top_k::<Cpu>(&logits, batch_dim);
+    let expected = run_router_top_k::<Cpu>(&logits, batch_dim).unwrap();
     assert_eq!(
         expected.0[2 * TOP_K as usize..],
         [40, 17, 5, 0, 1, 2, 3, 4],
         "NaN logits rank below every finite logit"
     );
     for_each_non_cpu_backend!(|B| {
-        let actual = run_router_top_k::<B>(&logits, batch_dim);
-        assert_eq!(actual.0, expected.0, "expert_ids mismatch under NaN inputs");
-        assert_eq_float(&expected.1, &actual.1, 1e-5, "expert_weights mismatch under NaN inputs");
+        if let Some(actual) = run_router_top_k::<B>(&logits, batch_dim) {
+            assert_eq!(actual.0, expected.0, "expert_ids mismatch under NaN inputs");
+            assert_eq_float(&expected.1, &actual.1, 1e-5, "expert_weights mismatch under NaN inputs");
+        }
     });
 }
 
@@ -106,16 +115,14 @@ fn moe_router_top_k_jax_ties() {
         logits[230] = logit_230;
         let expected_ids: Vec<u32> = top_seven.into_iter().chain([eighth]).collect();
         assert_eq!(
-            run_router_top_k::<Cpu>(&logits, 1).0,
+            run_router_top_k::<Cpu>(&logits, 1).unwrap().0,
             expected_ids,
             "CPU picks with {logit_7} and {logit_230} tied"
         );
         for_each_non_cpu_backend!(|B| {
-            assert_eq!(
-                run_router_top_k::<B>(&logits, 1).0,
-                expected_ids,
-                "Backend picks with {logit_7} and {logit_230} tied"
-            );
+            if let Some((ids, _)) = run_router_top_k::<B>(&logits, 1) {
+                assert_eq!(ids, expected_ids, "Backend picks with {logit_7} and {logit_230} tied");
+            }
         });
     }
 }

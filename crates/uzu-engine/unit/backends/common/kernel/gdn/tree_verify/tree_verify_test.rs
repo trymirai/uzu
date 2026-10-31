@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
@@ -12,12 +10,11 @@ use crate::{
             kernel::TreeVerifyKernel,
         },
         cpu::Cpu,
-        metal::Metal,
     },
     data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer_with_data},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -83,7 +80,9 @@ fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
 #[uzu_test]
 fn test_tree_verify() {
     for n in [1, 16, 17, 32] {
-        assert_eq_float(&run::<Cpu, f32>(n), &run::<Metal, f32>(n), 5e-4, "f32");
-        assert_eq_float(&run::<Cpu, bf16>(n), &run::<Metal, bf16>(n), 1.6e-2, "bf16");
+        for_each_non_cpu_backend!(|B| {
+            assert_eq_float(&run::<Cpu, f32>(n), &run::<B, f32>(n), 5e-4, "f32");
+            assert_eq_float(&run::<Cpu, bf16>(n), &run::<B, bf16>(n), 1.6e-2, "bf16");
+        });
     }
 }

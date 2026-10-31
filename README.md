@@ -1419,6 +1419,7 @@ main().catch((error: unknown) => {
 Supported backends:
 
 - `metal`
+- `vulkan`
 - `cpu`
 
 <br>
@@ -1451,6 +1452,8 @@ You can run `uzu` in CLI mode:
 cargo run --release -p cli
 ```
 
+On Linux and Windows this runs on Vulkan. The CLI names the backend it runs on when it starts.
+
 This launches an interactive app where you can browse, download, and interact with models.
 
 You can also preselect a model with `--model`, passing its identifier or repository id:
@@ -1460,6 +1463,19 @@ cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
 ```
 
 If the model is not downloaded yet, the CLI starts downloading it automatically.
+
+On Linux and Windows, Vulkan needs:
+
+- the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) through `VULKAN_SDK`, or Slang 2026.17 or newer through `SLANG_DIR`, or `SLANG_INCLUDE_DIR` and `SLANG_LIB_DIR`
+- libclang, which Windows finds through `LIBCLANG_PATH`
+- a Vulkan 1.4 driver: a GPU's, or Mesa's lavapipe, which runs Vulkan on the CPU
+- `VK_LAYER_KHRONOS_validation` (part of the SDK) for the library tests
+
+On Linux, `nix develop` provides everything but the GPU driver. To build the CLI for the CPU backend alone, without Vulkan:
+
+```bash
+cargo run --release -p cli --no-default-features --features cpu
+```
 
 A Windows release build that runs without the Visual C++ Redistributable links the C and C++ runtimes statically. Set the flag for the target alone and name the target, so build scripts keep the dynamic runtime: Windows Defender quarantines statically linked build scripts as a false positive.
 

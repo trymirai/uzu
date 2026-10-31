@@ -2,10 +2,15 @@ pub mod bench;
 pub mod harness;
 pub mod quant;
 pub mod shape;
+#[cfg(any(backend = "metal", backend = "vulkan"))]
+pub mod trellis;
 
 pub use bench::{iter_encode_loop, iter_encode_loop_named};
 pub use harness::{Case, cpu_reference, deterministic_input};
-pub use quant::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, transpose_metadata};
+pub use quant::{
+    QuantBuffers, QuantInput, production_quant_input, quant_arguments, quant_tolerance, run_quant_cpu, run_quant_with,
+    transpose_metadata,
+};
 pub use shape::{
     Shape, a8_format, all_correctness_shapes, bench_fp_gemm_shapes, bench_quant_gemm_shapes, bench_quant_gemv_shapes,
     matmul_shape, quantized_matmul_shape, qwen3_layer_shapes,
