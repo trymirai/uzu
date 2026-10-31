@@ -308,8 +308,7 @@ pub fn bindgen(
                 );
                 // The encoder's upload allocator aligns ranges to at most 64 bytes.
                 ensure!(alignment <= 64, "{kernel_name}: '{path}' needs alignment {alignment} above 64");
-                let message = format!("{kernel_name} upload of {name}");
-                packing.push(quote! { let #name = command_buffer.upload(#name).expect(#message); });
+                packing.push(quote! { let #name = command_buffer.upload(#name); });
                 reads.push(quote! { #name.as_ref().map(|(buffer, range)| (buffer, range.clone())) });
                 let address =
                     quote! { #name.as_ref().map_or(0, |(buffer, range)| buffer.device_address() + range.start) };
@@ -579,7 +578,6 @@ pub fn bindgen(
             )
         },
     };
-    let dispatch_message = format!("{kernel_name} dispatch");
     let (read_count, write_count) = (reads.len(), writes.len());
 
     // A public kernel's common trait owns `new` and `encode`, so its raw binding takes other names that never shadow the
@@ -690,7 +688,8 @@ pub fn bindgen(
             }
 
             /// Records one dispatch. Optional-argument presence is asserted before anything is recorded,
-            /// and an empty dispatch records nothing. Contract violations the runtime detects panic.
+            /// and an empty dispatch records nothing. Violated preconditions panic; a failed upload, an
+            /// out-of-bounds range or a grid past the device limit ends the recording, as a device error does.
             ///
             /// # Safety
             /// Every range must start at an element of the constructed data type, aligned to it, and
@@ -724,7 +723,6 @@ pub fn bindgen(
                         __dsl_writes.into_iter().flatten(),
                     )
                 }
-                .expect(#dispatch_message);
             }
         }
 

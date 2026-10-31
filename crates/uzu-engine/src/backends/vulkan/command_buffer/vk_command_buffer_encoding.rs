@@ -39,8 +39,8 @@ const UNREPORTED_UNITS: u64 = 8;
 /// few, and a work budget the heavy kernels draw on keeps each one short of the GPU watchdog. Segments go early only
 /// while no other command buffer of the context is unsubmitted, so none passes one recorded or ended before it; a
 /// command buffer created after a segment went out runs after that segment, even if it is submitted before this one
-/// ends, and dropping the encoding does not recall it. A device error ends the recording: later commands are skipped
-/// and submission reports the error.
+/// ends, and dropping the encoding does not recall it. A device error, a failed upload or a rejected dispatch ends the
+/// recording: later commands are skipped and submission reports the error.
 pub struct VkCommandBufferEncoding {
     context: Arc<VkContext>,
     resources: Option<VkCommandBufferResources>,
@@ -65,7 +65,7 @@ pub struct VkCommandBufferEncoding {
     work_budget: u64,
     /// Debug-group spans, when recording timestamps.
     timestamps: Option<VkTimestampRecorder>,
-    /// The device error that ended the recording.
+    /// The error that ended the recording.
     failure: Option<Error>,
 }
 
@@ -135,16 +135,17 @@ impl VkCommandBufferEncoding {
         Ok(())
     }
 
-    /// Copies `data` into this command buffer's host-coherent memory for dispatches to read; empty data is `None`.
+    /// Copies `data` into this command buffer's host-coherent memory for dispatches to read; empty data is `None`, and
+    /// so is any data once the recording ended, which a failed allocation does.
     pub fn upload<T: NoUninit>(
         &mut self,
         data: &[T],
-    ) -> Result<Option<(Arc<VkBuffer>, Range<u64>)>, Error> {
+    ) -> Option<(Arc<VkBuffer>, Range<u64>)> {
         let size = size_of_val(data);
-        if size == 0 {
-            return Ok(None);
+        if size == 0 || !self.is_recording() {
+            return None;
         }
-        let allocation = self.allocate_constant(size)?;
+        let allocation = self.allocate_constant(size).map_err(|error| self.failure = Some(error)).ok()?;
         let (buffer, range) = (allocation.page().clone(), allocation.range());
         assert!(
             (buffer.device_address() + range.start as u64).is_multiple_of(align_of::<T>() as u64),
@@ -160,7 +161,7 @@ impl VkCommandBufferEncoding {
                 size,
             );
         }
-        Ok(Some((buffer, range.start as u64..range.end as u64)))
+        Some((buffer, range.start as u64..range.end as u64))
     }
 
     pub fn encode_fill(
@@ -195,8 +196,8 @@ impl VkCommandBufferEncoding {
         Ok(())
     }
 
-    /// Records one compute dispatch after checking the group-count limit and the declared ranges. An empty range is
-    /// bounds-checked and retained but not hazard-tracked.
+    /// Records one compute dispatch after checking the group-count limit and the declared ranges, whose failure ends the
+    /// recording. An empty range is bounds-checked and retained but not hazard-tracked.
     ///
     /// # Safety
     /// - `push_constants` must be the exact argument block `pipeline`'s shader expects: every device
@@ -212,24 +213,27 @@ impl VkCommandBufferEncoding {
         groups: [u32; 3],
         reads: impl IntoIterator<Item = (&'b Arc<VkBuffer>, Range<u64>), IntoIter: Clone>,
         writes: impl IntoIterator<Item = (&'b Arc<VkBuffer>, Range<u64>), IntoIter: Clone>,
-    ) -> Result<(), Error> {
+    ) {
         let (reads, writes) = (reads.into_iter(), writes.into_iter());
         let buffers = reads.clone().chain(writes.clone());
         let limits = &self.context.physical_device().properties.limits;
-        if groups.iter().zip(limits.max_compute_work_group_count).any(|(&count, limit)| count > limit) {
-            return Err(VkCommandBufferError::DispatchGroups {
+        let checked = if groups.iter().zip(limits.max_compute_work_group_count).any(|(&count, limit)| count > limit) {
+            Err(VkCommandBufferError::DispatchGroups {
                 groups,
                 limit: limits.max_compute_work_group_count,
             }
-            .into());
-        }
-        for (buffer, range) in buffers.clone() {
-            device_addresses(buffer, &range)?;
+            .into())
+        } else {
+            buffers.clone().try_for_each(|(buffer, range)| device_addresses(buffer, &range).map(drop))
+        };
+        if let Err(error) = checked {
+            self.failure.get_or_insert(error);
+            return;
         }
         // Checked above.
         let address = |(buffer, range): (&Arc<VkBuffer>, Range<u64>)| device_addresses(buffer, &range).ok().flatten();
         if !self.access(false, reads.filter_map(address), writes.filter_map(address)) {
-            return Ok(());
+            return;
         }
         let command_buffer = self.command_buffer();
         let device = self.context.device();
@@ -248,14 +252,13 @@ impl VkCommandBufferEncoding {
         }
         self.retained.push(pipeline.clone());
         self.retained.extend(buffers.map(|(buffer, _)| buffer.clone() as Arc<dyn Send + Sync>));
-        Ok(())
     }
 
     pub fn command_buffer(&self) -> vk::CommandBuffer {
         self.resources().command_buffer()
     }
 
-    /// Whether commands still record: no device error has ended the recording.
+    /// Whether commands still record: no error has ended the recording.
     pub fn is_recording(&self) -> bool {
         self.failure.is_none()
     }
