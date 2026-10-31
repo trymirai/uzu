@@ -8,24 +8,21 @@ mod engine;
 mod memory;
 
 #[cfg(target_vendor = "apple")]
-use clap::Parser;
-
-#[cfg(target_vendor = "apple")]
-use crate::{
-    common::{StdoutRedirect, run_loop},
-    engine::UzuEngine,
-};
-
-#[cfg(target_vendor = "apple")]
-#[derive(Debug, Parser)]
-struct Args {
-    #[arg(short, long)]
-    model: String,
-}
-
-#[cfg(target_vendor = "apple")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    use clap::Parser;
+
+    use crate::{
+        common::{StdoutRedirect, run_loop},
+        engine::UzuEngine,
+    };
+
+    #[derive(Debug, Parser)]
+    struct Args {
+        #[arg(short, long)]
+        model: String,
+    }
+
     let args = Args::parse();
     let mut redirect = StdoutRedirect::to_stderr()?;
     let mut engine = UzuEngine::new(args.model.as_str()).await?;
