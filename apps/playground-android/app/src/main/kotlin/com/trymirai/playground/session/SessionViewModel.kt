@@ -19,7 +19,7 @@ abstract class SessionViewModel<S : AutoCloseable>(load: suspend () -> S) : View
 
     init {
         viewModelScope.launch {
-            _state.value = sessionStateOf {
+            _state.value = sessionStateOf(loaded = false) {
                 session = load()
                 SessionState.Idle
             }
@@ -29,10 +29,10 @@ abstract class SessionViewModel<S : AutoCloseable>(load: suspend () -> S) : View
     /** Runs [block] on the loaded session, unless it is still loading or already generating. */
     protected fun run(block: suspend (S) -> Unit) {
         val session = session ?: return
-        if (_state.value != SessionState.Idle) return
+        if (!_state.value.canStart) return
         _state.value = SessionState.Generating
         generation = viewModelScope.launch {
-            _state.value = sessionStateOf {
+            _state.value = sessionStateOf(loaded = true) {
                 block(session)
                 SessionState.Idle
             }
@@ -51,11 +51,11 @@ abstract class SessionViewModel<S : AutoCloseable>(load: suspend () -> S) : View
 }
 
 /** Runs [block], turning an engine failure into [SessionState.Failed]; cancellation still propagates. */
-private suspend fun sessionStateOf(block: suspend () -> SessionState): SessionState =
+private suspend fun sessionStateOf(loaded: Boolean, block: suspend () -> SessionState): SessionState =
     try {
         block()
     } catch (error: CancellationException) {
         throw error
     } catch (error: Exception) {
-        SessionState.Failed(error.message ?: error.toString())
+        SessionState.Failed(error.message ?: error.toString(), loaded)
     }

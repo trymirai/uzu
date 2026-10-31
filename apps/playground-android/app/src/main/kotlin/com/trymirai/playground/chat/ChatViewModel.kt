@@ -2,7 +2,6 @@ package com.trymirai.playground.chat
 
 import com.trymirai.playground.engine.EngineRepository
 import com.trymirai.playground.session.ChatSessionViewModel
-import com.trymirai.playground.session.SessionState
 import com.trymirai.uzu.assistant
 import com.trymirai.uzu.create
 import com.trymirai.uzu.shoji.ChatMessage
@@ -27,7 +26,7 @@ class ChatViewModel(identifier: String, engine: EngineRepository) : ChatSessionV
 
     fun send(text: String) {
         val content = text.trim()
-        if (content.isEmpty() || state.value != SessionState.Idle) return
+        if (content.isEmpty() || !state.value.canStart) return
         val history = _messages.value + Message(isUser = true, content = content)
         _messages.value = history + Message(isUser = false, content = "")
         val input = history.map {

@@ -38,7 +38,7 @@ fun TextTaskScreen(identifier: String, viewModel: TextTaskViewModel, onBack: () 
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
             ) {
-                PromptField(input, enabled = state == SessionState.Idle, placeholder = task.placeholder, maxLines = 10)
+                PromptField(input, enabled = state.canStart, placeholder = task.placeholder, maxLines = 10)
                 result?.let { reply ->
                     Column(Modifier.padding(start = 16.dp)) {
                         SelectionContainer {
@@ -51,7 +51,7 @@ fun TextTaskScreen(identifier: String, viewModel: TextTaskViewModel, onBack: () 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ActionButton(
                 text = state.label(idle = task.action, generating = "STOP"),
-                enabled = generating || (state == SessionState.Idle && input.text.isNotBlank()),
+                enabled = generating || (state.canStart && input.text.isNotBlank()),
                 onClick = { if (generating) viewModel.stop() else viewModel.run(input.text.toString()) },
                 modifier = Modifier.padding(16.dp),
             )

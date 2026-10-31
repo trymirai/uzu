@@ -78,7 +78,7 @@ fun ChatScreen(identifier: String, viewModel: ChatViewModel, onSend: () -> Unit,
 @Composable
 private fun Composer(state: SessionState, onSend: (String) -> Unit, onStop: () -> Unit) {
     val input = rememberTextFieldState()
-    val canSend = state == SessionState.Idle && input.text.isNotBlank()
+    val canSend = state.canStart && input.text.isNotBlank()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -89,7 +89,7 @@ private fun Composer(state: SessionState, onSend: (String) -> Unit, onStop: () -
     ) {
         PromptField(
             input,
-            enabled = state == SessionState.Idle,
+            enabled = state.canStart,
             placeholder = state.label(idle = "Message…", generating = "Generating…"),
             modifier = Modifier.weight(1f),
             container = Color.Transparent,

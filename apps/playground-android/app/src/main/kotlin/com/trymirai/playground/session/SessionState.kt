@@ -1,13 +1,16 @@
 package com.trymirai.playground.session
 
 sealed interface SessionState {
+    /** Whether a generation can start: the session loaded, and its last generation, if any, has ended. */
+    val canStart: Boolean get() = this == Idle || (this is Failed && loaded)
+
     data object Loading : SessionState
 
     data object Idle : SessionState
 
     data object Generating : SessionState
 
-    data class Failed(val message: String) : SessionState
+    data class Failed(val message: String, val loaded: Boolean) : SessionState
 }
 
 /** What a screen shows for this state, given its own words for [idle] and [generating]. */

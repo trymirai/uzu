@@ -42,13 +42,13 @@ fun TextToSpeechScreen(identifier: String, viewModel: TextToSpeechViewModel, aud
     Scaffold(topBar = { PlaygroundTopBar(onBack, identifier) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                PromptField(input, enabled = state == SessionState.Idle, placeholder = "Enter text for synthesis…")
+                PromptField(input, enabled = state.canStart, placeholder = "Enter text for synthesis…")
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(16.dp)) {
                 ActionButton(
                     text = state.label(idle = "GENERATE", generating = "GENERATING…"),
-                    enabled = state == SessionState.Idle && input.text.isNotBlank(),
+                    enabled = state.canStart && input.text.isNotBlank(),
                     onClick = {
                         // The new synthesis overwrites the file the player may hold open.
                         audio.release()
