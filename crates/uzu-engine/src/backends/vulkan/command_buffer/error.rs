@@ -32,4 +32,6 @@ pub enum VkCommandBufferError {
         groups: [u32; 3],
         limit: [u32; 3],
     },
+    #[error(transparent)]
+    Vulkan(#[from] vk::Result),
 }

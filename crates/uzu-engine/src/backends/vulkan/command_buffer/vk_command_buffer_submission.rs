@@ -7,7 +7,7 @@ use std::{
 use ash::vk;
 use futures::channel::oneshot;
 
-use crate::backends::vulkan::{Error, VkCommandBufferResources, VkContext, VkSegmentResult};
+use crate::backends::vulkan::{Error, VkCommandBufferError, VkCommandBufferResources, VkContext, VkSegmentResult};
 
 /// A submitted command buffer, which the context's completion thread waits for, in submission order, to recycle its
 /// resources, release what it retained and report its GPU time and span timestamps.
@@ -38,7 +38,7 @@ impl VkCommandBufferSubmission {
         context: Arc<VkContext>,
         resources: VkCommandBufferResources,
         retained: Vec<Arc<dyn Send + Sync>>,
-    ) -> Result<oneshot::Receiver<VkSegmentResult>, Error> {
+    ) -> Result<oneshot::Receiver<VkSegmentResult>, VkCommandBufferError> {
         let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(resources.command_buffer())];
         let submits = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffers)];
         let (sender, receiver) = oneshot::channel();
@@ -81,7 +81,9 @@ impl VkCommandBufferSubmission {
                 unsafe { context.recycle_command_buffer_resources(resources) };
                 drop(retained);
                 // Validation errors fail the next completion, which the work that caused them awaits.
-                context.take_validation_error().map_or(completion, |message| Err(Error::Validation(message)))
+                context
+                    .take_validation_error()
+                    .map_or(completion.map_err(Error::from), |message| Err(Error::Validation(message)))
             },
             // After a failed wait the GPU may still reference the submission, so nothing it uses is freed.
             Err(error) => {

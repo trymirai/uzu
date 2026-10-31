@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use ash::vk;
 
-use crate::backends::vulkan::{Error, VkCommandBufferError, VkContext};
+use crate::backends::vulkan::{VkCommandBufferError, VkContext};
 
 /// Timestamps per pool of span timestamps.
 const SPAN_TIMESTAMPS_PER_POOL: u32 = 256;
@@ -24,7 +24,7 @@ impl VkCommandBufferResources {
     pub fn new(
         device: &ash::Device,
         queue_family_index: u32,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, VkCommandBufferError> {
         let pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(queue_family_index)
             .flags(vk::CommandPoolCreateFlags::TRANSIENT);
@@ -85,7 +85,7 @@ impl VkCommandBufferResources {
     pub unsafe fn write_span_timestamp(
         &mut self,
         device: &ash::Device,
-    ) -> Result<u32, Error> {
+    ) -> Result<u32, VkCommandBufferError> {
         let index = self.span_timestamp_count;
         let pool = (index / SPAN_TIMESTAMPS_PER_POOL) as usize;
         if pool == self.span_timestamps.len() {
@@ -107,7 +107,7 @@ impl VkCommandBufferResources {
     pub fn gpu_execution_time(
         &self,
         context: &VkContext,
-    ) -> Result<Duration, Error> {
+    ) -> Result<Duration, VkCommandBufferError> {
         let mut results = [[0u64; 2]; 2];
         read_timestamps(context.device(), self.timestamps, &mut results, 0)?;
         Ok(context.timestamp_duration(results[1][0].wrapping_sub(results[0][0])))
@@ -117,7 +117,7 @@ impl VkCommandBufferResources {
     pub fn span_timestamps(
         &self,
         context: &VkContext,
-    ) -> Result<Box<[u64]>, Error> {
+    ) -> Result<Box<[u64]>, VkCommandBufferError> {
         let mut results = vec![[0u64; 2]; self.span_timestamp_count as usize];
         for (index, (pool, results)) in
             self.span_timestamps.iter().zip(results.chunks_mut(SPAN_TIMESTAMPS_PER_POOL as usize)).enumerate()
@@ -132,7 +132,7 @@ impl VkCommandBufferResources {
     pub fn reset(
         &mut self,
         device: &ash::Device,
-    ) -> Result<(), Error> {
+    ) -> Result<(), VkCommandBufferError> {
         let written_pools = self.span_timestamp_count.div_ceil(SPAN_TIMESTAMPS_PER_POOL) as usize;
         unsafe {
             device.reset_command_pool(self.command_pool, vk::CommandPoolResetFlags::empty())?;
@@ -171,7 +171,7 @@ fn read_timestamps(
     pool: vk::QueryPool,
     results: &mut [[u64; 2]],
     first_query: u32,
-) -> Result<(), Error> {
+) -> Result<(), VkCommandBufferError> {
     let flags = vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WITH_AVAILABILITY;
     // An unavailable timestamp makes the read NOT_READY, which still writes every availability.
     match unsafe { device.get_query_pool_results(pool, 0, results, flags) } {
@@ -181,8 +181,7 @@ fn read_timestamps(
     match results.iter().position(|&[_, available]| available == 0) {
         Some(missing) => Err(VkCommandBufferError::UnexecutedSubmission {
             query: first_query + missing as u32,
-        }
-        .into()),
+        }),
         None => Ok(()),
     }
 }
@@ -191,7 +190,7 @@ fn read_timestamps(
 fn create_timestamp_pool(
     device: &ash::Device,
     count: u32,
-) -> Result<vk::QueryPool, Error> {
+) -> Result<vk::QueryPool, VkCommandBufferError> {
     let query_info = vk::QueryPoolCreateInfo::default().query_type(vk::QueryType::TIMESTAMP).query_count(count);
     let pool = unsafe { device.create_query_pool(&query_info, None) }?;
     unsafe { device.reset_query_pool(pool, 0, count) };

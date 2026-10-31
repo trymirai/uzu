@@ -180,11 +180,11 @@ impl VkContext {
     /// Returns reset command resources: a cached set when one is idle, otherwise a new set.
     pub fn acquire_command_buffer_resources(&self) -> Result<VkCommandBufferResources, Error> {
         let Some(mut resources) = self.command_buffer_resources.lock().pop() else {
-            return VkCommandBufferResources::new(&self.device, self.queue_family_index);
+            return Ok(VkCommandBufferResources::new(&self.device, self.queue_family_index)?);
         };
         if let Err(error) = resources.reset(&self.device) {
             unsafe { resources.destroy(&self.device) };
-            return Err(error);
+            return Err(error.into());
         }
         Ok(resources)
     }

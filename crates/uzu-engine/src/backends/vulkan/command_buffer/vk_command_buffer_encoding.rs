@@ -111,7 +111,7 @@ impl VkCommandBufferEncoding {
         source_range: Range<u64>,
         destination: &Arc<VkBuffer>,
         destination_offset: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<(), VkCommandBufferError> {
         let size = source_range.end.saturating_sub(source_range.start);
         let destination_range = destination_offset..destination_offset.saturating_add(size);
         let (Some(source_addresses), Some(destination_addresses)) =
@@ -120,7 +120,7 @@ impl VkCommandBufferEncoding {
             return Ok(());
         };
         if source_addresses.start < destination_addresses.end && destination_addresses.start < source_addresses.end {
-            return Err(VkCommandBufferError::CopyOverlap.into());
+            return Err(VkCommandBufferError::CopyOverlap);
         }
         if !self.access(true, [source_addresses].into_iter(), [destination_addresses].into_iter()) {
             return Ok(());
@@ -196,13 +196,12 @@ impl VkCommandBufferEncoding {
             Err(VkCommandBufferError::DispatchGroups {
                 groups,
                 limit: limits.max_compute_work_group_count,
-            }
-            .into())
+            })
         } else {
             buffers.clone().try_for_each(|(buffer, range)| device_addresses(buffer, &range).map(drop))
         };
         if let Err(error) = checked {
-            self.failure.get_or_insert(error);
+            self.failure.get_or_insert(error.into());
             return;
         }
         // Checked above.
@@ -308,7 +307,7 @@ impl VkCommandBufferEncoding {
         match unsafe { resources.write_span_timestamp(self.context.device()) } {
             Ok(index) => Some((self.segments.len(), index)),
             Err(error) => {
-                self.failure = Some(error);
+                self.failure = Some(error.into());
                 None
             },
         }
@@ -375,7 +374,7 @@ impl VkCommandBufferEncoding {
     }
 
     /// Begins the current segment after all work submitted before it, with its start timestamp.
-    fn begin_segment(&self) -> Result<(), Error> {
+    fn begin_segment(&self) -> Result<(), VkCommandBufferError> {
         let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { self.context.device().begin_command_buffer(self.command_buffer(), &begin_info)? };
         self.memory_barrier(
@@ -396,7 +395,7 @@ impl VkCommandBufferEncoding {
     }
 
     /// Ends the current segment with its writes visible to the host and its end timestamp.
-    fn end_segment(&self) -> Result<(), Error> {
+    fn end_segment(&self) -> Result<(), VkCommandBufferError> {
         self.memory_barrier(
             shader_and_transfer_stages(),
             vk::AccessFlags2::SHADER_STORAGE_WRITE | vk::AccessFlags2::TRANSFER_WRITE,
@@ -549,7 +548,7 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         if self.named {
             self.end_debug_label();
         }
-        let failure = self.failure.take().or_else(|| self.end_segment().err());
+        let failure = self.failure.take().or_else(|| self.end_segment().err().map(Error::from));
         let resources = self.resources.take().expect("encoding owns resources until it ends");
         unsafe {
             VkCommandBufferExecutable::new(
@@ -573,14 +572,13 @@ fn shader_and_transfer_stages() -> vk::PipelineStageFlags2 {
 fn device_addresses(
     buffer: &VkBuffer,
     range: &Range<u64>,
-) -> Result<Option<Range<u64>>, Error> {
+) -> Result<Option<Range<u64>>, VkCommandBufferError> {
     if range.start > range.end || range.end > buffer.size() {
         return Err(VkCommandBufferError::BufferRange {
             start: range.start,
             end: range.end,
             size: buffer.size(),
-        }
-        .into());
+        });
     }
     Ok((!range.is_empty()).then(|| buffer.device_address() + range.start..buffer.device_address() + range.end))
 }
