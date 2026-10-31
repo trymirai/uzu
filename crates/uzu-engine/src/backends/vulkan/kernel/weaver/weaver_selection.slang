@@ -148,7 +148,7 @@ void weaver_frontier(
     let parent = frontier[uint(FrontierIdx.ParentSlot) * frontier_capacity + slot];
     let token = frontier[uint(FrontierIdx.TokenId) * frontier_capacity + slot];
     let next = uint4(((depth < lookahead_count ? 1u : 0u) << 31) | (score >> 1), parent, token, slot);
-    // The CPU compares only the first three keys against neutral; an exact neutral triple never wins.
+    // Only the first three keys are compared against neutral; an exact neutral triple never wins.
     if (any(next.xyz != neutral.xyz)) { entries[entry] = next; }
   }
   for (uint node = 0; node < node_count; node++) {

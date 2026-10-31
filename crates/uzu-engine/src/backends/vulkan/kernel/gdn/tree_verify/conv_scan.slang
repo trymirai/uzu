@@ -2,9 +2,9 @@ import definitions;
 import common.activation;
 import generated.activation_type;
 
-// The CPU ConvTreeScan: channel c < conv_dim of node `row` accumulates in FP32 from the bias (or +0) over history taps
-// ascending, each sample found by walking parents and then base_state, and stores T(silu(acc)); the first K - 1 samples
-// are recorded raw in suffix_state. Channels from conv_dim on copy their T bits. out_proj must not alias in_proj.
+// Channel c < conv_dim of node `row` accumulates in FP32 from the bias (or +0) over history taps ascending, each
+// sample found by walking parents and then base_state, and stores T(silu(acc)); the first K - 1 samples are recorded
+// raw in suffix_state. Channels from conv_dim on copy their T bits. out_proj must not alias in_proj.
 
 [[Kernel]] [[Public]]
 [[Precondition("new", "kernel_size >= 1")]]

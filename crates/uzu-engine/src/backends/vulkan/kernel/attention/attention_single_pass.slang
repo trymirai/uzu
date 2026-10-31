@@ -4,7 +4,7 @@ import attention.mask;
 import generated.ring;
 import generated.trie;
 
-// One query of one head over strided keys and values, the keys admitted by the CPU mask.
+// One query of one head over strided keys and values, the keys its mask admits.
 struct StridedKeys<T: IModelFloat> : IAttentionKeys {
   Ptr<T, Access.Read> queries;
   Ptr<T, Access.Read> keys;
@@ -35,7 +35,7 @@ struct StridedKeys<T: IModelFloat> : IAttentionKeys {
   }
 }
 
-// One workgroup per query and head; keys the CPU mask rejects are never read.
+// One workgroup per query and head; keys the mask rejects are never read.
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]

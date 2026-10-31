@@ -9,8 +9,8 @@ groupshared uint repetition_penalty_next[REPETITION_PENALTY_THREADS];
 groupshared uint repetition_penalty_tokens[REPETITION_PENALTY_THREADS];
 
 // One workgroup per sample; duplicates read original_logits, never a penalized output. Each token's hash owner writes it
-// throughout a row; a bounded shared list deduplicates each chunk without racing device stores. Unchecked, as on the
-// CPU: output does not alias inputs, tokens are below vocab_size, the ring is valid and its offsets do not overflow.
+// throughout a row; a bounded shared list deduplicates each chunk without racing device stores. Unchecked: output
+// does not alias inputs, tokens are below vocab_size, the ring is valid and its offsets do not overflow.
 [[Kernel]] [[Public]]
 func RepetitionPenalty<T: IModelFloat>(
   Ptr<T, Access.Read> original_logits,
