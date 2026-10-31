@@ -2,6 +2,7 @@ package com.trymirai.playground.chat
 
 import com.trymirai.playground.engine.EngineRepository
 import com.trymirai.playground.session.ChatSessionViewModel
+import com.trymirai.playground.session.SessionState
 import com.trymirai.uzu.assistant
 import com.trymirai.uzu.create
 import com.trymirai.uzu.shoji.ChatMessage
@@ -27,7 +28,9 @@ class ChatViewModel(identifier: String, engine: EngineRepository) : ChatSessionV
     fun send(text: String) {
         val content = text.trim()
         if (content.isEmpty() || !state.value.canStart) return
-        val history = _messages.value + Message(isUser = true, content = content)
+        // A failed turn ends with its user message and unfinished reply; the new message replaces both.
+        val completed = if (state.value is SessionState.Failed) _messages.value.dropLast(2) else _messages.value
+        val history = completed + Message(isUser = true, content = content)
         _messages.value = history + Message(isUser = false, content = "")
         val input = history.map {
             (if (it.isUser) ChatMessage.user() else ChatMessage.assistant()).withText(it.content)
