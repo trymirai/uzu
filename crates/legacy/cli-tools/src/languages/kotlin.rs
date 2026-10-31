@@ -9,7 +9,7 @@ use crate::{
         LanguageBackend, LanguageBackendTarget, generate_kotlin_extensions,
         kotlin_error_renames::apply_kotlin_error_renames,
     },
-    types::{Capability, Command, Configuration, Language},
+    types::{Command, Configuration, Language},
 };
 
 // The SDK runs on a connected Android device, so tests and examples are instrumented tests. They go through the
@@ -104,7 +104,6 @@ impl LanguageBackend for KotlinLanguageBackend {
         &self,
         _configuration: Configuration,
         _target: String,
-        _capabilities: Vec<Capability>,
     ) -> Result<()> {
         let paths = Paths::new()?;
         Command::gradle_connected_android_test(&paths.playground_android_path(), SDK_PROJECT, TESTS_CLASS).run()
@@ -115,7 +114,6 @@ impl LanguageBackend for KotlinLanguageBackend {
         name: &str,
         _configuration: Configuration,
         _target: String,
-        _capabilities: Vec<Capability>,
     ) -> Result<()> {
         let paths = Paths::new()?;
         let method = self.language().convert_command_name(name);
