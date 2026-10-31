@@ -20,7 +20,7 @@ use shader_slang::{
 use syn::{BinOp, Expr};
 use walkdir::WalkDir;
 
-use super::{Dephashes, SlangEntryPointAbi, SlangEntryPointVariant, bindgen, generate_types, wrapper};
+use super::{Dephashes, SlangEntryPointAbi, SlangEntryPointVariant, bindgen, wrapper};
 use crate::{
     common::{
         caching,
@@ -32,7 +32,7 @@ use crate::{
         kernel::Kernel,
     },
     debug_log,
-    slang::{SessionLoadModuleWithDiagnosticsExt, SlangArgumentType, SlangKernel},
+    slang::{SessionLoadModuleWithDiagnosticsExt, SlangArgumentType, SlangKernel, gpu_type_gen},
 };
 
 /// SPIR-V capabilities that device selection guarantees: Shader, Float16, Int16, Int8, GroupNonUniform and its
@@ -289,7 +289,8 @@ impl Compiler for SlangCompiler {
         gpu_type_paths.extend(&private_gpu_types).context("cannot extend Vulkan GPU type paths")?;
         let gpu_types = [gpu_types, &private_gpu_types];
         // Before any module loads or cache check, so cached dependency hashes see the current constants.
-        let gpu_type_map = generate_types(&gpu_types, &self.out_dir).context("cannot generate Slang GPU types")?;
+        let gpu_type_map =
+            gpu_type_gen(&self.out_dir.join("generated"), &gpu_types).context("cannot generate Slang GPU types")?;
         println!("cargo::rerun-if-changed={}", self.src_dir.display());
         println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");
         let mut sources = WalkDir::new(&self.src_dir)

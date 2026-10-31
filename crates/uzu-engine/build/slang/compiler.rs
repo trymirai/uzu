@@ -16,7 +16,7 @@ use crate::{
     },
     slang::{
         compiler_internal::{BlockingSlangCompiler, SlangCompilerFields, SlangTarget},
-        gpu_types::gpu_type_gen,
+        gpu_type_gen,
     },
 };
 
@@ -65,7 +65,7 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
         gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         let gpu_type_map = Arc::new(
-            gpu_type_gen(&self.fields.source_directory.join("generated"), gpu_types)
+            gpu_type_gen(&self.fields.source_directory.join("generated"), &[gpu_types])
                 .context("cannot generate shared gpu types")?,
         );
 
