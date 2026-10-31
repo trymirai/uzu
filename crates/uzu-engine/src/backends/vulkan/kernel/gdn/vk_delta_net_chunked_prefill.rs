@@ -10,7 +10,7 @@ use crate::{
         vulkan::{
             DeltaNetChunkedOutputAndStateVulkanKernel, DeltaNetChunkedPrecomputeVulkanKernel, Error, VkBuffer,
             VkCommandBufferEncoding, VkContext, Vulkan, VulkanKernels,
-            gpu_types::delta_net::{DELTA_NET_CHUNKED_MAX_GROUPS, DELTA_NET_HEAD_K_DIM},
+            gpu_types::delta_net::{DELTA_NET_CHUNKED_CHUNK, DELTA_NET_CHUNKED_MAX_GROUPS, DELTA_NET_HEAD_K_DIM},
         },
     },
     data_type::DataType,
@@ -19,6 +19,7 @@ use crate::{
 /// The shortest suffix worth the chunked kernels' extra dispatches, as Metal's.
 const MIN_SUFFIX_LEN: u32 = 256;
 const INNER_DATA_TYPE: DataType = DataType::F32;
+const _: () = assert!(DELTA_NET_CHUNKED_CHUNK == CHUNK_SIZE, "the chunked kernels split the suffix as the host");
 
 /// The chunked gated delta rule in two stages after DeltaNetPrefillPrep.
 pub struct VkDeltaNetChunkedPrefill {

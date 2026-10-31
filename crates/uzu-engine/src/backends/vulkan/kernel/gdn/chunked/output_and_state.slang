@@ -11,26 +11,23 @@ import generated.delta_net;
 // bank conflicts.
 
 static const uint CHUNKED_OUTPUT_THREADS = 256;
-static const uint CHUNKED_OUTPUT_CHUNK = 64;
 // Values of a workgroup, as four float4 groups; tokens per invocation.
 static const uint CHUNKED_OUTPUT_VT = 16;
 static const uint CHUNKED_OUTPUT_TM = 2;
-// T and qk_scaled are read up to the end of each token's 16-token block.
-static const uint CHUNKED_OUTPUT_TOKEN_TILE = 16;
 static const uint CHUNKED_OUTPUT_DEPTH = 32;
 static const uint CHUNKED_OUTPUT_UPDATE_BATCH = 16;
 // float4s per staged row of a key slice, and of T or qk_scaled.
 static const uint CHUNKED_OUTPUT_SLICE_STRIDE = CHUNKED_OUTPUT_DEPTH / 4 + 1;
-static const uint CHUNKED_OUTPUT_MATRIX_STRIDE = CHUNKED_OUTPUT_CHUNK / 4 + 1;
+static const uint CHUNKED_OUTPUT_MATRIX_STRIDE = DELTA_NET_CHUNKED_CHUNK / 4 + 1;
 
 // S^T[key][value group]; R, then Vnew, [token][value group]; the staged keys then queries [token][depth group], then
 // T, then qk_scaled [token][column group]; each token's beta, e^g and e^(g_last - g).
 groupshared float4 chunked_state_tile[DELTA_NET_HEAD_K_DIM * 4];
-groupshared float4 chunked_new_value[CHUNKED_OUTPUT_CHUNK * 4];
-groupshared float4 chunked_stage[2 * CHUNKED_OUTPUT_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE];
-groupshared float chunked_row_beta[CHUNKED_OUTPUT_CHUNK];
-groupshared float chunked_row_exp_g[CHUNKED_OUTPUT_CHUNK];
-groupshared float chunked_row_decay[CHUNKED_OUTPUT_CHUNK];
+groupshared float4 chunked_new_value[DELTA_NET_CHUNKED_CHUNK * 4];
+groupshared float4 chunked_stage[2 * DELTA_NET_CHUNKED_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE];
+groupshared float chunked_row_beta[DELTA_NET_CHUNKED_CHUNK];
+groupshared float chunked_row_exp_g[DELTA_NET_CHUNKED_CHUNK];
+groupshared float chunked_row_decay[DELTA_NET_CHUNKED_CHUNK];
 
 [[Kernel]]
 [[Precondition("encode", "num_k_heads > 0")]]
@@ -58,7 +55,7 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat>(
   [[Threads("256")]] uint thread_idx,
 ) {
   let hv = hv_group;
-  let chunks = suffix_len / CHUNKED_OUTPUT_CHUNK + (suffix_len % CHUNKED_OUTPUT_CHUNK != 0 ? 1u : 0u);
+  let chunks = suffix_len / DELTA_NET_CHUNKED_CHUNK + (suffix_len % DELTA_NET_CHUNKED_CHUNK != 0 ? 1u : 0u);
   let conv_dim = 2 * key_dim + value_dim;
   let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
   let k_head = hv / (num_v_heads / num_k_heads) * DELTA_NET_HEAD_K_DIM;
@@ -82,14 +79,14 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat>(
     chunked_state_tile[key * 4 + half_groups + c] = loaded;
   }
   for (uint chunk = 0; chunk < chunks; chunk++) {
-    let token_base = chunk * CHUNKED_OUTPUT_CHUNK;
-    let valid_tokens = min(CHUNKED_OUTPUT_CHUNK, suffix_len - token_base);
-    let chunk_head = (chunk * num_v_heads + hv) * CHUNKED_OUTPUT_CHUNK * CHUNKED_OUTPUT_CHUNK;
+    let token_base = chunk * DELTA_NET_CHUNKED_CHUNK;
+    let valid_tokens = min(DELTA_NET_CHUNKED_CHUNK, suffix_len - token_base);
+    let chunk_head = (chunk * num_v_heads + hv) * DELTA_NET_CHUNKED_CHUNK * DELTA_NET_CHUNKED_CHUNK;
     let g_last = g[g_head + token_base + valid_tokens - 1];
     // The tokens a 16-token block's rows read from T and qk_scaled.
-    let block_end = row0 / CHUNKED_OUTPUT_TOKEN_TILE * CHUNKED_OUTPUT_TOKEN_TILE + CHUNKED_OUTPUT_TOKEN_TILE;
+    let block_end = row0 / DELTA_NET_CHUNKED_BLOCK * DELTA_NET_CHUNKED_BLOCK + DELTA_NET_CHUNKED_BLOCK;
 
-    if (thread_idx < CHUNKED_OUTPUT_CHUNK) {
+    if (thread_idx < DELTA_NET_CHUNKED_CHUNK) {
       var row_beta = 0.0;
       var row_exp_g = 0.0;
       var row_decay = 0.0;
@@ -107,10 +104,10 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat>(
 
     // K S^T on the K side, Q S^T on the Q side, over the keys a slice at a time.
     float4 projection[CHUNKED_OUTPUT_TM] = { float4(0.0), float4(0.0) };
-    let operand = side * CHUNKED_OUTPUT_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE;
+    let operand = side * DELTA_NET_CHUNKED_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE;
     for (uint depth_base = 0; depth_base < DELTA_NET_HEAD_K_DIM; depth_base += CHUNKED_OUTPUT_DEPTH) {
       GroupMemoryBarrierWithGroupSync();
-      for (uint entry = thread_idx; entry < CHUNKED_OUTPUT_CHUNK * (CHUNKED_OUTPUT_DEPTH / 4); entry += CHUNKED_OUTPUT_THREADS) {
+      for (uint entry = thread_idx; entry < DELTA_NET_CHUNKED_CHUNK * (CHUNKED_OUTPUT_DEPTH / 4); entry += CHUNKED_OUTPUT_THREADS) {
         let t = entry / (CHUNKED_OUTPUT_DEPTH / 4);
         let q = entry % (CHUNKED_OUTPUT_DEPTH / 4);
         var key_values = float4(0.0);
@@ -121,7 +118,7 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat>(
           query_values = load_aligned<float4, 16>(q_norm, source);
         }
         chunked_stage[t * CHUNKED_OUTPUT_SLICE_STRIDE + q] = key_values;
-        chunked_stage[CHUNKED_OUTPUT_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE + t * CHUNKED_OUTPUT_SLICE_STRIDE + q] = query_values;
+        chunked_stage[DELTA_NET_CHUNKED_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE + t * CHUNKED_OUTPUT_SLICE_STRIDE + q] = query_values;
       }
       GroupMemoryBarrierWithGroupSync();
       for (uint q = 0; q < CHUNKED_OUTPUT_DEPTH / 4; q++) {
@@ -153,12 +150,12 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat>(
     GroupMemoryBarrierWithGroupSync();
 
     // Vnew = T R over each token's causal blocks; rows past the suffix are +0.
-    for (uint entry = thread_idx; entry < CHUNKED_OUTPUT_CHUNK * (CHUNKED_OUTPUT_CHUNK / 4); entry += CHUNKED_OUTPUT_THREADS) {
-      let t = entry / (CHUNKED_OUTPUT_CHUNK / 4);
-      let q = entry % (CHUNKED_OUTPUT_CHUNK / 4);
+    for (uint entry = thread_idx; entry < DELTA_NET_CHUNKED_CHUNK * (DELTA_NET_CHUNKED_CHUNK / 4); entry += CHUNKED_OUTPUT_THREADS) {
+      let t = entry / (DELTA_NET_CHUNKED_CHUNK / 4);
+      let q = entry % (DELTA_NET_CHUNKED_CHUNK / 4);
       var causal = float4(0.0);
       if (t < valid_tokens) {
-        causal = load_aligned<float4, 16>(t_mat, chunk_head + t * CHUNKED_OUTPUT_CHUNK + q * 4);
+        causal = load_aligned<float4, 16>(t_mat, chunk_head + t * DELTA_NET_CHUNKED_CHUNK + q * 4);
       }
       chunked_stage[t * CHUNKED_OUTPUT_MATRIX_STRIDE + q] = causal;
     }
@@ -181,12 +178,12 @@ func DeltaNetChunkedOutputAndState<T: IModelFloat>(
       chunked_new_value[row0 * 4 + value_group] = new_value[0];
       chunked_new_value[(row0 + 1) * 4 + value_group] = new_value[1];
     }
-    for (uint entry = thread_idx; entry < CHUNKED_OUTPUT_CHUNK * (CHUNKED_OUTPUT_CHUNK / 4); entry += CHUNKED_OUTPUT_THREADS) {
-      let t = entry / (CHUNKED_OUTPUT_CHUNK / 4);
-      let q = entry % (CHUNKED_OUTPUT_CHUNK / 4);
+    for (uint entry = thread_idx; entry < DELTA_NET_CHUNKED_CHUNK * (DELTA_NET_CHUNKED_CHUNK / 4); entry += CHUNKED_OUTPUT_THREADS) {
+      let t = entry / (DELTA_NET_CHUNKED_CHUNK / 4);
+      let q = entry % (DELTA_NET_CHUNKED_CHUNK / 4);
       var scores = float4(0.0);
       if (t < valid_tokens) {
-        scores = load_aligned<float4, 16>(qk_scaled, chunk_head + t * CHUNKED_OUTPUT_CHUNK + q * 4);
+        scores = load_aligned<float4, 16>(qk_scaled, chunk_head + t * DELTA_NET_CHUNKED_CHUNK + q * 4);
       }
       chunked_stage[t * CHUNKED_OUTPUT_MATRIX_STRIDE + q] = scores;
     }
