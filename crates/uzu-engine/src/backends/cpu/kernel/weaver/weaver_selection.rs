@@ -39,6 +39,7 @@ pub fn weaver_select<const BLOCK_THREADS: u32>(
     ancestor_stride: u32,
     lookahead_count: u32,
     candidate_depth_count: u32,
+    #[optional(mode != WeaverSelectionMode::Frontier)] children_noise_scale: Option<f32>,
     #[optional(has_prune_noise)] prune_noise_scale: Option<f32>,
     #[specialize] mode: WeaverSelectionMode,
     #[specialize] has_prune_noise: bool,
@@ -53,6 +54,7 @@ pub fn weaver_select<const BLOCK_THREADS: u32>(
     {
         let residual_logits = residual_logits.unwrap();
         let depth_seeds = depth_seeds.unwrap();
+        let children_noise_scale = children_noise_scale.unwrap();
         let (candidate_logits, candidate_ids) = if children_from_pool != 0 {
             (candidate_pool_logits, candidate_pool_ids)
         } else {
@@ -83,15 +85,16 @@ pub fn weaver_select<const BLOCK_THREADS: u32>(
                 .collect::<Vec<_>>();
             let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let log_sum = logits.iter().map(|value| (value - max).exp()).sum::<f32>().ln() + max;
-            let perturbed = (0..candidates)
-                .map(|index| logits[index] + gumbel_float(seed, revidx(token(index), vocab_size)))
-                .collect::<Vec<_>>();
-            // Final pruning weighs each edge by the pool softmax of logits plus the target's noise scaled by 1 / sigma.
+            // The target sampler's noise: children rank by logits plus it scaled by `children_noise_scale`, 0 for greedy
+            // decoding; final pruning weighs each edge by the pool softmax of logits plus it scaled by 1 / sigma.
+            let noise =
+                (0..candidates).map(|index| gumbel_float(seed, revidx(token(index), vocab_size))).collect::<Vec<_>>();
+            let perturbed =
+                (0..candidates).map(|index| logits[index] + children_noise_scale * noise[index]).collect::<Vec<_>>();
             let prune = has_prune_noise.then(|| {
                 let scale = prune_noise_scale.unwrap();
-                let prune_logits = (0..candidates)
-                    .map(|index| logits[index] + scale * gumbel_float(seed, revidx(token(index), vocab_size)))
-                    .collect::<Vec<_>>();
+                let prune_logits =
+                    (0..candidates).map(|index| logits[index] + scale * noise[index]).collect::<Vec<_>>();
                 let prune_max = prune_logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let prune_log_sum =
                     prune_logits.iter().map(|value| (value - prune_max).exp()).sum::<f32>().ln() + prune_max;

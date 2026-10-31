@@ -20,13 +20,17 @@ use crate::{
         mixer::{
             Mixer, MixerEncodeError, MixerState,
             attention::rope::PrecalculatedRoPE,
-            delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
+            delta_net::{
+                accepted_path::AcceptedPath,
+                tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
+            },
         },
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::{maybe_mut::MaybeMut, size_for_shape::size_for_shape},
 };
 
+pub mod accepted_path;
 pub(crate) mod tree_verify;
 
 const INNER_DATA_TYPE: DataType = DataType::F32;
@@ -52,6 +56,7 @@ pub struct DeltaNetState<B: Backend> {
     conv_state: B::GlobalGpuBuffer,
     ssm_state: B::GlobalGpuBuffer,
     suffix_status: Option<DeltaNetSuffixStatus<B>>,
+    accepted_path: Option<AcceptedPath<B>>,
     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
     is_empty: bool,
 }
@@ -98,17 +103,13 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
                     &mut self.conv_state,
                 );
 
-                let accepted_indices_buffer = command_buffer.allocate_constant_from_slice(accepted_indices)?;
-                self.state_advance.encode(
-                    &k,
-                    &v,
-                    &log_decay,
-                    &beta,
-                    &accepted_indices_buffer,
-                    &mut self.ssm_state,
-                    accepted_indices.len() as u32,
-                    command_buffer,
-                );
+                self.accepted_path = Some(AcceptedPath {
+                    k,
+                    v,
+                    log_decay,
+                    beta,
+                    indices: accepted_indices.into(),
+                });
             },
         }
         Ok(())
@@ -353,6 +354,8 @@ impl<B: Backend> DeltaNet<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
+        // Held to the end, so this tree's scratch cannot take the pages the verification reads it from.
+        let accepted_path = state.accepted_path.take();
         let tree_size = batch_dim.size();
         let parents =
             command_buffer.allocate_constant_from_slice(batch_dim.parents()).map_err(MixerEncodeError::Backend)?;
@@ -421,7 +424,8 @@ impl<B: Backend> DeltaNet<B> {
                     trie: &trie,
                     log_decay: &log_decay,
                     beta: &beta,
-                    h0: &state.ssm_state,
+                    h0: &mut state.ssm_state,
+                    advance: accepted_path.as_ref().map(|path| (path, &state.state_advance)),
                     in_proj: &tree_projected,
                     norm_weight: &self.norm_weight,
                     conv_dim: self.conv_dim,
@@ -653,6 +657,7 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             conv_state,
             ssm_state,
             suffix_status: None,
+            accepted_path: None,
             state_advance,
             is_empty: true,
         }))
@@ -693,6 +698,11 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             return Ok(output);
         }
 
+        if let Some(accepted_path) = state.accepted_path.take() {
+            accepted_path
+                .encode_advance(&state.state_advance, &mut state.ssm_state, command_buffer)
+                .map_err(MixerEncodeError::Backend)?;
+        }
         let output = self.encode_flat(
             in_projected,
             batch_dim.size(),

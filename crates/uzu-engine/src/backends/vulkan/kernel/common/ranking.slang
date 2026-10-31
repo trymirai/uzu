@@ -1,12 +1,16 @@
 import definitions;
 import common.workgroup_reduction;
 
-// Weaver ranks use a descending score followed by ascending tie keys. The last key is the physical index.
+// Weaver ranks use a descending score followed by ascending tie keys. A frontier entry's last key is its physical
+// slot; a child's candidate index already makes it unique, so its last key carries the logit bits.
 public struct WeaverRank : IReduction {
   public typealias Value = uint4;
+  // `a` ranks before `b`, by selects: short-circuit operators would branch on every key.
+  public static bool before(uint4 a, uint4 b) {
+    return a.x != b.x ? a.x > b.x : a.y != b.y ? a.y < b.y : a.z != b.z ? a.z < b.z : a.w < b.w;
+  }
   public static uint4 combine(uint4 a, uint4 b) {
-    return b.x > a.x || (b.x == a.x && (b.y < a.y ||
-        (b.y == a.y && (b.z < a.z || (b.z == a.z && b.w < a.w))))) ? b : a;
+    return before(b, a) ? b : a;
   }
   public static uint4 subgroup(uint4 value) {
     uint4 best;

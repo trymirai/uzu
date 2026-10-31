@@ -39,6 +39,7 @@ pub struct WeaverTreeShape {
     pub rounds: u32,
     pub expand_per_round: u32,
     pub expand_width: u32,
+    pub children_noise_scale: f32,
     pub prune_noise_scale: Option<f32>,
 }
 
@@ -61,62 +62,64 @@ pub struct ProposalNode {
 }
 
 impl<B: Backend> EncodedWeaverTree<B> {
-    pub async fn read_nodes(
-        self,
+    pub fn read_nodes(
+        &self,
         context: &B::Context,
-    ) -> Result<Vec<ProposalNode>, B::Error> {
-        let (packed_tree, frontier) = futures::future::try_join(
+    ) -> impl Future<Output = Result<Vec<ProposalNode>, B::Error>> {
+        let readback = futures::future::try_join(
             context.copyout::<u32>(&self.packed_tree),
             context.copyout::<u32>(&self.frontier),
-        )
-        .await?;
+        );
+        async move {
+            let (packed_tree, frontier) = readback.await?;
 
-        let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
-        let frontier_capacity = frontier.len() / FrontierIdx::COUNT;
-        let tree_field = |field: TreeIdx, slot: usize| packed_tree[field as usize * tree_slot_count + slot];
-        let frontier_field = |field: FrontierIdx, slot: usize| frontier[field as usize * frontier_capacity + slot];
+            let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
+            let frontier_capacity = frontier.len() / FrontierIdx::COUNT;
+            let tree_field = |field: TreeIdx, slot: usize| packed_tree[field as usize * tree_slot_count + slot];
+            let frontier_field = |field: FrontierIdx, slot: usize| frontier[field as usize * frontier_capacity + slot];
 
-        let mut slot_to_index = vec![usize::MAX; tree_slot_count];
-        let mut nodes: Vec<ProposalNode> = Vec::new();
-        for slot in 0..tree_slot_count {
-            if tree_field(TreeIdx::Valid, slot) == 0 {
-                continue;
+            let mut slot_to_index = vec![usize::MAX; tree_slot_count];
+            let mut nodes: Vec<ProposalNode> = Vec::new();
+            for slot in 0..tree_slot_count {
+                if tree_field(TreeIdx::Valid, slot) == 0 {
+                    continue;
+                }
+                let parent_slot = tree_field(TreeIdx::ParentSlot, slot) as i32;
+                let parent = (parent_slot >= 0).then(|| {
+                    let parent = slot_to_index[parent_slot as usize];
+                    assert_ne!(parent, usize::MAX, "tree slot {slot} names padding slot {parent_slot} as its parent");
+                    parent
+                });
+                let index = nodes.len();
+                slot_to_index[slot] = index;
+                if let Some(parent) = parent {
+                    nodes[parent].child_indices.push(index);
+                }
+                nodes.push(ProposalNode {
+                    token_id: tree_field(TreeIdx::TokenId, slot),
+                    depth: tree_field(TreeIdx::Depth, slot),
+                    logprob: f32::from_bits(tree_field(TreeIdx::EdgeLogprobBits, slot)),
+                    child_indices: Vec::new(),
+                });
             }
-            let parent_slot = tree_field(TreeIdx::ParentSlot, slot) as i32;
-            let parent = (parent_slot >= 0).then(|| {
-                let parent = slot_to_index[parent_slot as usize];
-                assert_ne!(parent, usize::MAX, "tree slot {slot} names padding slot {parent_slot} as its parent");
-                parent
-            });
-            let index = nodes.len();
-            slot_to_index[slot] = index;
-            if let Some(parent) = parent {
+            for slot in 0..frontier_capacity {
+                if frontier_field(FrontierIdx::Active, slot) == 0 {
+                    continue;
+                }
+                let parent_slot = frontier_field(FrontierIdx::ParentSlot, slot) as usize;
+                let parent = slot_to_index[parent_slot];
+                assert_ne!(parent, usize::MAX, "frontier slot {slot} names padding slot {parent_slot} as its parent");
+                let index = nodes.len();
                 nodes[parent].child_indices.push(index);
+                nodes.push(ProposalNode {
+                    token_id: frontier_field(FrontierIdx::TokenId, slot),
+                    depth: frontier_field(FrontierIdx::Depth, slot),
+                    logprob: f32::from_bits(frontier_field(FrontierIdx::EdgeLogprobBits, slot)),
+                    child_indices: Vec::new(),
+                });
             }
-            nodes.push(ProposalNode {
-                token_id: tree_field(TreeIdx::TokenId, slot),
-                depth: tree_field(TreeIdx::Depth, slot),
-                logprob: f32::from_bits(tree_field(TreeIdx::EdgeLogprobBits, slot)),
-                child_indices: Vec::new(),
-            });
+            Ok(nodes)
         }
-        for slot in 0..frontier_capacity {
-            if frontier_field(FrontierIdx::Active, slot) == 0 {
-                continue;
-            }
-            let parent_slot = frontier_field(FrontierIdx::ParentSlot, slot) as usize;
-            let parent = slot_to_index[parent_slot];
-            assert_ne!(parent, usize::MAX, "frontier slot {slot} names padding slot {parent_slot} as its parent");
-            let index = nodes.len();
-            nodes[parent].child_indices.push(index);
-            nodes.push(ProposalNode {
-                token_id: frontier_field(FrontierIdx::TokenId, slot),
-                depth: frontier_field(FrontierIdx::Depth, slot),
-                logprob: f32::from_bits(frontier_field(FrontierIdx::EdgeLogprobBits, slot)),
-                child_indices: Vec::new(),
-            });
-        }
-        Ok(nodes)
     }
 }
 
@@ -491,6 +494,7 @@ impl<B: Backend> Weaver<B> {
                 shape.max_depth - 1,
                 shape.dflash_depth - 1,
                 None,
+                None,
                 command_buffer,
             );
         }
@@ -606,6 +610,7 @@ impl<B: Backend> Weaver<B> {
             ancestor_stride,
             shape.max_depth - 1,
             shape.dflash_depth - 1,
+            Some(shape.children_noise_scale),
             shape.prune_noise_scale,
             command_buffer,
         );
@@ -641,6 +646,7 @@ impl<B: Backend> Weaver<B> {
                 || shape.expand_width > self.candidate_pool_size
                 || tree_slot_count > FRONTIER_MAX_SLOTS / shape.expand_width
                 || depth_seeds.len() as u32 != self.max_depth
+                || !(shape.children_noise_scale >= 0.0 && shape.children_noise_scale.is_finite())
                 || shape.prune_noise_scale.is_some_and(|scale| !(scale > 0.0 && scale.is_finite()))
             {
                 return Err(WeaverEncodeError::InvalidTreeInput);

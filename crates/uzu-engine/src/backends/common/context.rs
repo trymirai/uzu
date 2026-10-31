@@ -32,6 +32,8 @@ pub trait Context: Sized + Send + Sync {
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
 
+    /// Reads `buffer` as the work submitted before the call leaves it; the result may be polled only after that work
+    /// completes.
     fn copyout<T: AnyBitPattern>(
         &self,
         buffer: impl BufferRef<Backend = Self::Backend, Buffer = <Self::Backend as Backend>::GlobalGpuBuffer>,
