@@ -661,6 +661,7 @@ pub fn bindgen(
     Ok(quote! {
         use crate::backends::vulkan::{
             Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkComputePipelineKey, VkContext,
+            check_work_group,
         };
 
 
@@ -683,7 +684,12 @@ pub fn bindgen(
                 let (entry_point, spirv) = #entry_selection;
                 #(#specialization_conditions)*
                 #(#new_preconditions)*
-                context.check_work_group(#kernel_name, [#group_x, #group_y, #group_z], #required_subgroup_size)?;
+                check_work_group(
+                    context.physical_device(),
+                    #kernel_name,
+                    [#group_x, #group_y, #group_z],
+                    #required_subgroup_size,
+                )?;
                 #pipelines
             }
 
