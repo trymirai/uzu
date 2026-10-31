@@ -73,7 +73,6 @@ void attention_gemm_stage<T : IModelFloat16>(
 
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256")]]
-[[Precondition("new", "context.physical_device().properties.limits.max_compute_shared_memory_size >= crate::backends::vulkan::gpu_types::attention_gemm::ATTENTION_GEMM_SHARED_BYTES")]]
 [[Precondition("encode", "gqa_factor > 0")]]
 [[Precondition("encode", "suffix_length <= sequence_length")]]
 func AttentionGemm<T: IModelFloat16>(

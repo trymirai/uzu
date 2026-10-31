@@ -26,8 +26,8 @@ const GROUPED_MAX_SUFFIX: u32 = 64;
 
 pub struct VkAttentionKernel {
     config: AttentionKernelConfig,
-    /// Without and with a trie, for more than TWO_PASS_MAX_SUFFIX queries of head dimensions AttentionGemm lacks.
-    single_pass: [AttentionSinglePassVulkanKernel; 2],
+    /// Without and with a trie, for more than TWO_PASS_MAX_SUFFIX queries without AttentionGemm.
+    single_pass: Option<[AttentionSinglePassVulkanKernel; 2]>,
     /// Without and with a trie, for more than TWO_PASS_MAX_SUFFIX BF16 queries of 64, 128 or 256 dimensions on devices
     /// with its workgroup memory.
     gemm: Option<[AttentionGemmVulkanKernel; 2]>,
@@ -106,7 +106,7 @@ impl AttentionKernel for VkAttentionKernel {
             && context.physical_device().capabilities.float_tensor_cores(config.data_type);
         Ok(Self {
             config,
-            single_pass: [single_pass(false)?, single_pass(true)?],
+            single_pass: (!has_gemm).then(|| Ok::<_, Error>([single_pass(false)?, single_pass(true)?])).transpose()?,
             gemm: has_gemm.then(|| Ok::<_, Error>([gemm(false)?, gemm(true)?])).transpose()?,
             gate: config
                 .gate_row_stride
@@ -166,8 +166,8 @@ impl AttentionKernel for VkAttentionKernel {
         unsafe {
             if grouped.is_none() && suffix_length > TWO_PASS_MAX_SUFFIX {
                 let output_ref = VkBuffer::resolve_ref(&output);
-                match &self.gemm {
-                    Some(gemm) => gemm[is_trie].encode(
+                match (&self.gemm, &self.single_pass) {
+                    (Some(gemm), _) => gemm[is_trie].encode(
                         queries,
                         keys,
                         values,
@@ -187,7 +187,7 @@ impl AttentionKernel for VkAttentionKernel {
                         suffix_length,
                         command_buffer,
                     ),
-                    None => self.single_pass[is_trie].encode_ranges(
+                    (None, Some(single_pass)) => single_pass[is_trie].encode_ranges(
                         queries,
                         keys,
                         values,
@@ -207,6 +207,7 @@ impl AttentionKernel for VkAttentionKernel {
                         suffix_length,
                         command_buffer,
                     ),
+                    (None, None) => unreachable!("new builds the single-pass kernels without AttentionGemm"),
                 }
                 if let (Some((gate, gate_row_stride)), Some(gate_kernel)) = (gate, &self.gate) {
                     gate_kernel.encode_ranges(
