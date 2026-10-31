@@ -1,0 +1,74 @@
+```kotlin
+package com.trymirai.uzu.examples
+
+import android.content.Context
+import com.trymirai.uzu.Engine
+import com.trymirai.uzu.EngineConfig
+import com.trymirai.uzu.Uzu
+import com.trymirai.uzu.asFlow
+import com.trymirai.uzu.create
+import com.trymirai.uzu.nagare.ForeignTool
+import com.trymirai.uzu.nagare.ForeignToolHandler
+import com.trymirai.uzu.shoji.ChatConfig
+import com.trymirai.uzu.shoji.ChatMessage
+import com.trymirai.uzu.shoji.ChatReplyConfig
+import com.trymirai.uzu.shoji.SamplingMethod
+import com.trymirai.uzu.shoji.ToolFunction
+import com.trymirai.uzu.shoji.Value
+import com.trymirai.uzu.system
+import com.trymirai.uzu.user
+
+private const val COORDINATE_SCHEMA = """
+{
+  "type": "object",
+  "properties": {
+    "latitude": { "type": "number", "description": "Latitude in decimal degrees." },
+    "longitude": { "type": "number", "description": "Longitude in decimal degrees." }
+  },
+  "required": ["latitude", "longitude"]
+}
+"""
+
+private fun tool(name: String, description: String, parameters: String, call: suspend (String) -> String) =
+    ForeignTool(
+        ToolFunction(name, description, Value(parameters), returnDefinition = null),
+        object : ForeignToolHandler {
+            override suspend fun invokeJson(argumentsJson: String) = call(argumentsJson)
+        },
+    )
+
+private val getCurrentLocation = tool(
+    "get_current_location",
+    "Returns current location in coordinates",
+    """{ "type": "object", "properties": {} }""",
+) { """{ "latitude": 51.5074, "longitude": -0.1278 }""" }
+
+private val getCurrentTemperature = tool(
+    "get_current_temperature",
+    "Returns temperature in provided location",
+    COORDINATE_SCHEMA,
+) { "25.0" }
+
+suspend fun runToolCalls(context: Context) {
+    Uzu.initialize(context)
+    val engine = Engine.create(EngineConfig.create())
+    val model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4") ?: error("Model not found")
+    engine.download(model).asFlow().collect { update ->
+        println("Download progress: %.2f%%".format(update.progress() * 100))
+    }
+
+    val session = engine.chat(model, ChatConfig.create())
+    session.addForeignTool(getCurrentLocation)
+    session.addForeignTool(getCurrentTemperature)
+
+    val messages = listOf(
+        ChatMessage.system().withText("You are a helpful assistant"),
+        ChatMessage.user().withText("What temperature is it now at my location?"),
+    )
+    val replyConfig = ChatReplyConfig.create().withSamplingMethod(SamplingMethod.Greedy)
+    val message = session.reply(messages, replyConfig).lastOrNull()?.message ?: return
+
+    println("Reasoning: ${message.reasoning().orEmpty()}")
+    println("Text: ${message.text().orEmpty()}")
+}
+```

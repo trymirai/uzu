@@ -61,6 +61,7 @@ You can run any example via `cargo tools example` \<{% for language in languages
 `uzu` is a native Rust crate with bindings available for:
 
 - `Swift` via [uniffi-rs](https://github.com/mozilla/uniffi-rs)
+- `Kotlin` via [uniffi-rs](https://github.com/mozilla/uniffi-rs)
 - `Python` via [pyo3](https://github.com/PyO3/pyo3)
 - `TypeScript` via [napi-rs](https://github.com/napi-rs/napi-rs)
 

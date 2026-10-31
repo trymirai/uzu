@@ -121,6 +121,11 @@ tracing-appender.workspace = true
 async-openai.workspace = true
 fancy-regex.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-context.workspace = true
+rustls-platform-verifier.workspace = true
+
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
