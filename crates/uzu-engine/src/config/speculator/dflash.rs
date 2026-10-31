@@ -1,9 +1,11 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::{dflash::DFlashDraftConfig, weaver::WeaverConfig};
+use crate::config::{confidence_head::ConfidenceHeadConfig, dflash::DFlashDraftConfig, weaver::WeaverConfig};
 
 #[uzu_config(super::SpeculatorConfig)]
 pub struct DFlashSpeculatorConfig {
     pub draft_config: DFlashDraftConfig,
     pub weaver_config: Option<WeaverConfig>,
+    #[serde(default)]
+    pub confidence_head_config: Option<ConfidenceHeadConfig>,
 }

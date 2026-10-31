@@ -1,6 +1,8 @@
 pub mod activation;
 pub mod classifier;
 pub mod clipping;
+pub mod confidence_head;
+pub mod confidence_head_tree_attention;
 pub mod decoder;
 pub mod dflash;
 pub mod embedding;
