@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// Tokens per chunk of the chunked gated delta rule, on every backend.
-#[cfg(any(backend = "vulkan", test))]
+#[cfg(any(backend = "metal", backend = "vulkan", test))]
 pub const CHUNK_SIZE: u32 = 64;
 
 pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
