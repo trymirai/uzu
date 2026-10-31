@@ -241,35 +241,28 @@ impl VkCommandBufferEncoding {
         self.resources.as_ref().expect("encoding owns resources until it ends")
     }
 
+    /// The debug-label loader, where the instance has debug labels and commands still record.
+    fn debug_utils(&self) -> Option<&ext::debug_utils::Device> {
+        self.context.debug_utils().filter(|_| self.is_recording())
+    }
+
     /// Begins a debug label named `name`, which `end_debug_label` ends.
     pub fn begin_debug_label(
         &self,
         name: &str,
     ) {
-        self.debug_label(name, ext::debug_utils::Device::cmd_begin_debug_utils_label);
-    }
-
-    /// Records `command`, a debug-label begin or insert with a label named `name`, or an end, which ignores it, where the
-    /// instance has debug labels and commands still record.
-    fn debug_label(
-        &self,
-        name: &str,
-        command: unsafe fn(&ext::debug_utils::Device, vk::CommandBuffer, &vk::DebugUtilsLabelEXT<'_>),
-    ) {
-        if let Some(debug_utils) = self.context.debug_utils()
-            && self.is_recording()
-        {
+        if let Some(debug_utils) = self.debug_utils() {
             let name = CString::new(name).expect("debug label contains NUL");
             let label = vk::DebugUtilsLabelEXT::default().label_name(&name);
-            unsafe { command(debug_utils, self.command_buffer(), &label) };
+            unsafe { debug_utils.cmd_begin_debug_utils_label(self.command_buffer(), &label) };
         }
     }
 
     /// Ends the innermost debug label.
     pub fn end_debug_label(&self) {
-        self.debug_label("", |debug_utils, command_buffer, _| unsafe {
-            debug_utils.cmd_end_debug_utils_label(command_buffer)
-        });
+        if let Some(debug_utils) = self.debug_utils() {
+            unsafe { debug_utils.cmd_end_debug_utils_label(self.command_buffer()) };
+        }
     }
 
     /// Declares the multiply-add FLOPs of the commands a heavy kernel records next, so a segment closes before they
@@ -535,7 +528,11 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         &mut self,
         name: &str,
     ) {
-        self.debug_label(name, ext::debug_utils::Device::cmd_insert_debug_utils_label);
+        if let Some(debug_utils) = self.debug_utils() {
+            let name = CString::new(name).expect("debug label contains NUL");
+            let label = vk::DebugUtilsLabelEXT::default().label_name(&name);
+            unsafe { debug_utils.cmd_insert_debug_utils_label(self.command_buffer(), &label) };
+        }
     }
 
     /// Timing debug groups needs the device clock, so without calibrated timestamps waiting for completion fails.
