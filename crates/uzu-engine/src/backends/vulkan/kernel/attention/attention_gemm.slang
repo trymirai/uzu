@@ -120,9 +120,11 @@ func AttentionGemm<T: IModelFloat16>(
   let row_words = HEAD_DIM / 2 + 4;
   let first_query = tile * ATTENTION_GEMM_QUERIES;
   let query = first_query + row;
-  let prefix_length = sequence_length - suffix_length;
-  let suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
-  let query_position = is_trie ? suffix_position + trie[min(query, suffix_length - 1)].height : suffix_position + query;
+  let mask = AttentionMask(
+    sequence_length, suffix_length, ring_params, trie, sliding_window_size, is_kv_cache_ring, is_causal, is_trie,
+    is_sliding_window
+  );
+  let query_position = mask.query_position(min(query, suffix_length - 1));
   let kv_head = head / gqa_factor;
 
   // The queries, scaled in T as Metal scales them.
@@ -157,10 +159,9 @@ func AttentionGemm<T: IModelFloat16>(
   // Under causality no query of the tile sees a key past its last query's position.
   var blocks = (sequence_length + block_keys - 1) / block_keys;
   if (is_causal) {
-    let last_key = prefix_length + min(first_query + ATTENTION_GEMM_QUERIES, suffix_length) - 1;
+    let last_key = mask.prefix_length + min(first_query + ATTENTION_GEMM_QUERIES, suffix_length) - 1;
     blocks = min(blocks, last_key / block_keys + 1);
   }
-  let plain_causal = !is_trie && !is_kv_cache_ring && !is_sliding_window;
   for (uint block = 0; block < blocks; block++) {
     let first_key = block * block_keys;
     GroupMemoryBarrierWithGroupSync();
@@ -189,13 +190,8 @@ func AttentionGemm<T: IModelFloat16>(
       if (j < block_keys / GEMM_ROW_LANES) {
         let key = first_key + lane + GEMM_ROW_LANES * j;
         var used = query < suffix_length && key < sequence_length;
-        if (used && plain_causal) {
-          used = !is_causal || key <= prefix_length + query;
-        } else if (used) {
-          used = attention_use_key(
-            key, query, prefix_length, suffix_position, query_position, ring_params, trie, sliding_window_size,
-            is_kv_cache_ring, is_causal, is_trie, is_sliding_window
-          );
+        if (used) {
+          used = mask.admits(key, query, query_position);
         }
         scores[j] = used ? scores[j] : GEMM_MASKED_SCORE;
         block_max = max(block_max, scores[j]);

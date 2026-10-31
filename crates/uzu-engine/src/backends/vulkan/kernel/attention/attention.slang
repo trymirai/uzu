@@ -4,7 +4,7 @@ import common.workgroup_reduction;
 public static const uint ATTENTION_THREADS = 1024;
 // SIMD_SIZE groups of SIMD_SIZE lanes; a lane owns HEAD_DIM / 32 consecutive dimensions, at most 16.
 static const uint ATTENTION_MAX_HEAD_DIM = 512;
-static const uint ATTENTION_DIMS = ATTENTION_MAX_HEAD_DIM / SIMD_SIZE;
+public static const uint ATTENTION_DIMS = ATTENTION_MAX_HEAD_DIM / SIMD_SIZE;
 
 // The output transpose of the merge.
 groupshared float attention_outputs[ATTENTION_THREADS];

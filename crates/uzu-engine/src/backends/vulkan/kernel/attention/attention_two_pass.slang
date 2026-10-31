@@ -1,5 +1,6 @@
 import definitions;
 import common.activation;
+import attention.attention;
 import attention.mask;
 import common.workgroup_reduction;
 import generated.attention_two_pass;
@@ -12,7 +13,6 @@ import generated.trie;
 // `blocks` blocks, then applies the gate.
 
 static const uint TWO_PASS_SIMDGROUPS = 8;
-static const uint TWO_PASS_MAX_ELEMENTS = 16;
 
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
@@ -58,13 +58,15 @@ func AttentionTwoPass1<T: IModelFloat>(
   let active = head < num_heads;
   let kv_head = (active ? head : 0) / gqa_factor;
   let q_offset = head * suffix_length + query;
-  let prefix_length = sequence_length - suffix_length;
-  let suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
-  let query_position = is_trie ? suffix_position + trie[query].height : suffix_position + query;
+  let mask = AttentionMask(
+    sequence_length, suffix_length, ring_params, trie, sliding_window_size, is_kv_cache_ring, is_causal, is_trie,
+    is_sliding_window
+  );
+  let query_position = mask.query_position(query);
   let first = lane * elements;
 
-  float q[TWO_PASS_MAX_ELEMENTS];
-  float o[TWO_PASS_MAX_ELEMENTS];
+  float q[ATTENTION_DIMS];
+  float o[ATTENTION_DIMS];
   for (uint i = 0; i < elements; i++) {
     q[i] = active ? scale * queries[q_offset * HEAD_DIM + first + i].toFloat() : 0.0;
     o[i] = 0.0;
@@ -78,10 +80,7 @@ func AttentionTwoPass1<T: IModelFloat>(
 
   for (uint key = block; key < sequence_length; key += ATTENTION_TWO_PASS_BLOCKS) {
     // The mask depends only on the query and the key, so it is uniform across the workgroup.
-    if (attention_use_key(
-          key, query, prefix_length, suffix_position, query_position, ring_params, trie, sliding_window_size,
-          is_kv_cache_ring, is_causal, is_trie, is_sliding_window
-        )) {
+    if (mask.admits(key, query, query_position)) {
       let key_row = kv_head * k_head_stride + key * k_seq_stride + first;
       var score = 0.0;
       for (uint j = 0; j < elements; j++) {

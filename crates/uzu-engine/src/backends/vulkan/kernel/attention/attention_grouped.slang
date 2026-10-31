@@ -38,30 +38,15 @@ struct GroupedArguments<T : IModelFloat16> {
   uint k_seq_stride;
   uint v_head_stride;
   uint v_seq_stride;
-  RingParams ring_params;
   float scale;
   uint suffix_length;
-  Ptr<TrieNode, Access.Read> trie;
-  uint sliding_window_size;
   uint splits;
-  bool is_kv_cache_ring;
-  bool is_causal;
-  bool is_trie;
-  bool is_sliding_window;
+  AttentionMask mask;
 
-  // Whether grouped row `row` admits `key`, by attention_use_key of its query.
+  // Whether grouped row `row` admits `key`, by the mask of its query.
   bool admits(uint row, uint key) {
     let query = row % suffix_length;
-    let prefix_length = sequence_length - suffix_length;
-    let suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
-    var query_position = suffix_position + query;
-    if (is_trie && is_sliding_window) {
-      query_position = suffix_position + trie[query].height;
-    }
-    return attention_use_key(
-      key, query, prefix_length, suffix_position, query_position, ring_params, trie, sliding_window_size,
-      is_kv_cache_ring, is_causal, is_trie, is_sliding_window
-    );
+    return mask.admits(key, query, mask.query_position(query));
   }
 
   // Element `element` of a 16-bit operand as a 16 x 16 matrix, rows `stride` apart. Slang's CoopMat.Load takes
@@ -277,8 +262,11 @@ func AttentionGrouped<T: IModelFloat16>(
 ) {
   GroupedArguments<T> arguments = {
     queries, keys, values, partials, sums, maxs, gqa_factor, sequence_length, k_head_stride, k_seq_stride,
-    v_head_stride, v_seq_stride, ring_params, scale, suffix_length, trie, sliding_window_size, splits,
-    is_kv_cache_ring, is_causal, is_trie, is_sliding_window
+    v_head_stride, v_seq_stride, scale, suffix_length, splits,
+    AttentionMask(
+      sequence_length, suffix_length, ring_params, trie, sliding_window_size, is_kv_cache_ring, is_causal, is_trie,
+      is_sliding_window
+    )
   };
   if (HEAD_DIM == 128) {
     GroupedAttention<T, BFloat16, 128>.run(arguments, row_tile, kv_head, split, subgroup_id());

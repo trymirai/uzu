@@ -14,27 +14,16 @@ struct StridedKeys<T: IModelFloat> : IAttentionKeys {
   uint k_seq_stride;
   uint value_base;
   uint v_seq_stride;
+  AttentionMask mask;
   uint query_index;
-  uint prefix_length;
-  uint suffix_position;
   uint query_position;
-  RingParams ring_params;
-  Ptr<TrieNode, Access.Read> trie;
-  uint sliding_window_size;
-  bool is_kv_cache_ring;
-  bool is_causal;
-  bool is_trie;
-  bool is_sliding_window;
 
   float query(uint j) {
     return queries[query_base + j].toFloat();
   }
 
   bool used(uint key) {
-    return attention_use_key(
-      key, query_index, prefix_length, suffix_position, query_position, ring_params, trie, sliding_window_size,
-      is_kv_cache_ring, is_causal, is_trie, is_sliding_window
-    );
+    return mask.admits(key, query_index, query_position);
   }
 
   float key(uint key, uint j) {
@@ -80,12 +69,6 @@ func AttentionSinglePass<T: IModelFloat>(
   [[Specialize]] bool is_sliding_window,
 ) {
   static_assert(ATTENTION_THREADS == 1024, "one workgroup of Threads(1024) per head and query");
-  let prefix_length = sequence_length - suffix_length;
-  let suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
-  var query_position = suffix_position + query;
-  if (is_trie) {
-    query_position = suffix_position + trie[query].height;
-  }
   StridedKeys<T> source;
   source.queries = queries;
   source.keys = keys;
@@ -95,17 +78,12 @@ func AttentionSinglePass<T: IModelFloat>(
   source.k_seq_stride = k_seq_stride;
   source.value_base = head / gqa_factor * v_head_stride;
   source.v_seq_stride = v_seq_stride;
+  source.mask = AttentionMask(
+    sequence_length, suffix_length, ring_params, trie, sliding_window_size, is_kv_cache_ring, is_causal, is_trie,
+    is_sliding_window
+  );
   source.query_index = query;
-  source.prefix_length = prefix_length;
-  source.suffix_position = suffix_position;
-  source.query_position = query_position;
-  source.ring_params = ring_params;
-  source.trie = trie;
-  source.sliding_window_size = sliding_window_size;
-  source.is_kv_cache_ring = is_kv_cache_ring;
-  source.is_causal = is_causal;
-  source.is_trie = is_trie;
-  source.is_sliding_window = is_sliding_window;
+  source.query_position = source.mask.query_position(query);
   var sink = 0.0;
   if (has_sinks) {
     sink = sinks[head].toFloat();
