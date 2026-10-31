@@ -14,5 +14,4 @@ generate_immutable_records = true
 "PlayerError.InvalidPcmBatch.message" = "reason"
 "RegistryError.UnableToCreate.message" = "reason"
 "RegistryError.UnableToGetModels.message" = "reason"
-"SettingsError.BackendError.message" = "reason"
 "StorageError.DownloadManager.message" = "reason"
