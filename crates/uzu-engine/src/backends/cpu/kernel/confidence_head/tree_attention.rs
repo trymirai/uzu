@@ -2,6 +2,7 @@ use half::bf16;
 use uzu_engine_macros::kernel;
 
 use super::tree_relations::ABSENT;
+use crate::backends::common::gpu_types::confidence_head::RELATIONS;
 
 #[kernel(ConfidenceHeadTreeAttention)]
 pub fn confidence_head_tree_attention(
@@ -21,15 +22,18 @@ pub fn confidence_head_tree_attention(
     };
     for query in 0..rows {
         let relation = |key: usize| unsafe { *relations.add(query * rows + key) };
+        let keys = if relation(query) == ABSENT {
+            Vec::new()
+        } else {
+            (0..rows).filter(|&key| relation(key) != ABSENT).collect::<Vec<_>>()
+        };
         for head in 0..heads {
-            let keys =
-                (0..rows).filter(|&key| relation(query) != ABSENT && relation(key) != ABSENT).collect::<Vec<_>>();
             let scores = keys
                 .iter()
                 .map(|&key| {
                     let bias = match relation(key) {
                         0 => 0.0,
-                        code => unsafe { (*relation_bias.add(head * 6 + code as usize - 1)).to_f32() },
+                        code => unsafe { (*relation_bias.add(head * RELATIONS as usize + code as usize - 1)).to_f32() },
                     };
                     (0..head_dim).map(|unit| element(query, 0, head, unit) * element(key, 1, head, unit)).sum::<f32>()
                         * scale

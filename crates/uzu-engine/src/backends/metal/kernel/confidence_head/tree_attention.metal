@@ -1,13 +1,15 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
 #include "../common/dsl.h"
+#include "head.h"
 
 using namespace metal;
 
-#define LANES 32u
 #define QUADS_MAX 16u
-#define ROWS_MAX 1024u
-#define ABSENT 7u
+
+struct TreeAttentionMemory {
+  float weights[TREE_ROWS_MAX];
+};
 
 PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
     const device bfloat* qkv,
@@ -17,9 +19,9 @@ PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
     const constant uint& rows,
     const uint num_heads SPECIALIZE,
     const uint head_dim SPECIALIZE,
-    threadgroup float weights[ROWS_MAX],
+    threadgroup TreeAttentionMemory& memory,
     const uint index GROUPS(rows * num_heads),
-    const uint lane THREADS(LANES)
+    const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
   const uint query = index / num_heads;
   const uint head = index % num_heads;
@@ -27,8 +29,8 @@ PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
   const uint quads = head_dim / 4u;
   const device uint* relation = relations + query * rows;
   device bfloat* out = output + query * width + head * head_dim;
-  if (relation[query] == ABSENT) {
-    for (uint unit = lane; unit < head_dim; unit += LANES) {
+  if (relation[query] == HEAD_RELATION_ABSENT) {
+    for (uint unit = lane; unit < head_dim; unit += METAL_SIMD_SIZE) {
       out[unit] = bfloat(0.0f);
     }
     return;
@@ -42,25 +44,25 @@ PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
   }
 
   float local_max = -INFINITY;
-  for (uint key = lane; key < rows; key += LANES) {
+  for (uint key = lane; key < rows; key += METAL_SIMD_SIZE) {
     const uint code = relation[key];
     float score = -INFINITY;
-    if (code != ABSENT) {
+    if (code != HEAD_RELATION_ABSENT) {
       const device bfloat4* k = reinterpret_cast<const device bfloat4*>(qkv + key * 3 * width + width + head * head_dim);
-      score = code == 0 ? 0.0f : float(relation_bias[head * 6 + code - 1]);
+      score = code == 0 ? 0.0f : float(relation_bias[head * RELATIONS + code - 1]);
       METAL_PRAGMA_UNROLL
       for (uint quad = 0; quad < QUADS_MAX; ++quad) {
         score += quad < quads ? dot(query_values[quad], float4(k[quad])) : 0.0f;
       }
     }
-    weights[key] = score;
+    memory.weights[key] = score;
     local_max = max(local_max, score);
   }
   const float top = simd_max(local_max);
   float local_total = 0.0f;
-  for (uint key = lane; key < rows; key += LANES) {
-    const float weight = exp(weights[key] - top);
-    weights[key] = weight;
+  for (uint key = lane; key < rows; key += METAL_SIMD_SIZE) {
+    const float weight = exp(memory.weights[key] - top);
+    memory.weights[key] = weight;
     local_total += weight;
   }
   const float total = simd_sum(local_total);
@@ -68,13 +70,13 @@ PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
 
   const uint group = lane % quads;
   const uint split = lane / quads;
-  const uint splits = LANES / quads;
+  const uint splits = METAL_SIMD_SIZE / quads;
   float4 value = 0.0f;
   const device bfloat* v = qkv + 2 * width + head * head_dim + 4 * group;
   for (uint key = split; key < rows; key += splits) {
-    value += weights[key] * float4(*reinterpret_cast<const device bfloat4*>(v + key * 3 * width));
+    value += memory.weights[key] * float4(*reinterpret_cast<const device bfloat4*>(v + key * 3 * width));
   }
-  for (uint offset = quads; offset < LANES; offset *= 2) {
+  for (uint offset = quads; offset < METAL_SIMD_SIZE; offset *= 2) {
     value += simd_shuffle_down(value, ushort(offset));
   }
   if (split == 0) {

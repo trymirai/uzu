@@ -7,22 +7,22 @@
 using namespace metal;
 
 struct EdgesMemory {
-  float reduce[4u * HEAD_SIMDGROUPS];
+  float reduce[2u * HEAD_SIMDGROUPS];
   float coefficients[2];
-  float node[HEAD_MODEL_MAX];
-  float tokens[HEAD_CHILDREN_MAX * HEAD_MODEL_MAX];
-  float numbers[HEAD_CHILDREN_MAX * HEAD_SLOT_NUMBERS];
-  float input[HEAD_CHILDREN_MAX * HEAD_EDGE_INPUT_MAX];
-  float state[HEAD_CHILDREN_MAX * HEAD_MODEL_MAX];
-  float block[HEAD_CHILDREN_MAX * HEAD_MODEL_MAX];
-  float raised[HEAD_CHILDREN_MAX * HEAD_EDGE_HIDDEN_MAX];
-  float deltas[HEAD_CHILDREN_MAX];
-  float edges[HEAD_CHILDREN_MAX];
-  uint pools[HEAD_CHILDREN_MAX];
+  float node[MODEL_MAX];
+  float tokens[CHILDREN_MAX * MODEL_MAX];
+  float numbers[CHILDREN_MAX * SLOT_NUMBERS];
+  float input[CHILDREN_MAX * HEAD_EDGE_INPUT_MAX];
+  float state[CHILDREN_MAX * MODEL_MAX];
+  float block[CHILDREN_MAX * MODEL_MAX];
+  float raised[CHILDREN_MAX * EDGE_HIDDEN_MAX];
+  float deltas[CHILDREN_MAX];
+  float edges[CHILDREN_MAX];
+  uint pools[CHILDREN_MAX];
 };
 
 PUBLIC KERNEL(ConfidenceHeadEdges)(
-    const device uint* node_metadata OPTIONAL(refine == false),
+    const device uint* node_metadata OPTIONAL(!refine),
     const device uint* slot_rows,
     const device bfloat* nodes,
     const device bfloat* node_shifts OPTIONAL(refine),
@@ -33,7 +33,7 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     const device float* scores,
     device uint* frontier,
     device uint* packed_tree,
-    device bfloat* child_inputs OPTIONAL(refine == false),
+    device bfloat* child_inputs OPTIONAL(!refine),
     const device bfloat* input_norm_scales,
     const device bfloat* input_norm_biases,
     const device bfloat* entry_weights,
@@ -82,21 +82,21 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     const uint unit = index % model_dim;
     const uint entry = first_entry + child;
     const uint token = frontier[uint(FrontierIdx::TokenId) * capacity + entry];
-    memory.tokens[child * HEAD_MODEL_MAX + unit] =
+    memory.tokens[child * MODEL_MAX + unit] =
         float(token_features[token * model_dim + unit]) +
         (refine ? float(child_shifts[(1 + entry) * model_dim + unit]) : 0.0f);
   }
-  if (lid < children * HEAD_SLOT_NUMBERS) {
-    memory.numbers[lid] = child_numbers[first_entry * HEAD_SLOT_NUMBERS + lid];
+  if (lid < children * SLOT_NUMBERS) {
+    memory.numbers[lid] = child_numbers[first_entry * SLOT_NUMBERS + lid];
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  const uint inputs = 3u * model_dim + HEAD_SLOT_NUMBERS;
+  const uint inputs = 3u * model_dim + SLOT_NUMBERS;
   for (uint index = lid; index < children * inputs; index += HEAD_THREADS) {
     const uint child = index / inputs;
     const uint column = index % inputs;
     const uint unit = column % model_dim;
-    const float token = memory.tokens[child * HEAD_MODEL_MAX + unit];
+    const float token = memory.tokens[child * MODEL_MAX + unit];
     float value;
     if (column < model_dim) {
       value = memory.node[unit];
@@ -105,7 +105,7 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     } else if (column < 3u * model_dim) {
       value = memory.node[unit] * token;
     } else {
-      value = memory.numbers[child * HEAD_SLOT_NUMBERS + column - 3u * model_dim];
+      value = memory.numbers[child * SLOT_NUMBERS + column - 3u * model_dim];
     }
     memory.input[child * HEAD_EDGE_INPUT_MAX + column] = value;
   }
@@ -115,38 +115,38 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
       params.epsilon, context
   );
   head_dense(
-      entry_weights, entry_biases, memory.input, HEAD_EDGE_INPUT_MAX, memory.state, HEAD_MODEL_MAX, inputs, model_dim,
+      entry_weights, entry_biases, memory.input, HEAD_EDGE_INPUT_MAX, memory.state, MODEL_MAX, inputs, model_dim,
       children, false, false, context
   );
   head_layer_norm(
-      memory.state, memory.block, HEAD_MODEL_MAX, model_dim, children, block_norm_scales, block_norm_biases,
+      memory.state, memory.block, MODEL_MAX, model_dim, children, block_norm_scales, block_norm_biases,
       params.epsilon, context
   );
   head_dense(
-      up_weights, up_biases, memory.block, HEAD_MODEL_MAX, memory.raised, HEAD_EDGE_HIDDEN_MAX, model_dim, edge_hidden,
+      up_weights, up_biases, memory.block, MODEL_MAX, memory.raised, EDGE_HIDDEN_MAX, model_dim, edge_hidden,
       children, true, false, context
   );
   head_dense(
-      down_weights, down_biases, memory.raised, HEAD_EDGE_HIDDEN_MAX, memory.state, HEAD_MODEL_MAX, edge_hidden,
+      down_weights, down_biases, memory.raised, EDGE_HIDDEN_MAX, memory.state, MODEL_MAX, edge_hidden,
       model_dim, children, false, true, context
   );
   head_layer_norm(
-      memory.state, memory.state, HEAD_MODEL_MAX, model_dim, children, final_norm_scales, final_norm_biases,
+      memory.state, memory.state, MODEL_MAX, model_dim, children, final_norm_scales, final_norm_biases,
       params.epsilon, context
   );
   const uint simdgroup = context.simdgroup_index;
   const uint lane = context.simd_lane_id;
   if (simdgroup < children) {
-    const float delta = head_simd_dot(output_weights, memory.state + simdgroup * HEAD_MODEL_MAX, model_dim, lane);
+    const float delta = head_simd_dot(output_weights, memory.state + simdgroup * MODEL_MAX, model_dim, lane);
     if (lane == 0) {
       memory.deltas[simdgroup] = delta + float(output_biases[0]);
     }
-  } else if (simdgroup >= HEAD_CHILDREN_MAX && simdgroup < HEAD_CHILDREN_MAX + 2u) {
-    const uint output = simdgroup - HEAD_CHILDREN_MAX;
+  } else if (simdgroup >= CHILDREN_MAX && simdgroup < CHILDREN_MAX + 2u) {
+    const uint output = simdgroup - CHILDREN_MAX;
     const float value =
         head_simd_dot(alpha_beta_weights + output * model_dim, memory.node, model_dim, lane) + float(alpha_beta_biases[output]);
     if (lane == 0) {
-      memory.coefficients[output] = min(max(value, 0.0f) + log(1.0f + exp(-abs(value))), params.logit_cap);
+      memory.coefficients[output] = min(activate_softplus(value), params.logit_cap);
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -158,7 +158,7 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
   for (uint child = 0; child < children; ++child) {
     score += memory.pools[child] == lid ? memory.deltas[child] : 0.0f;
   }
-  const float log_sum = head_log_sum_exp(float2(score, -INFINITY), memory.reduce, context).x;
+  const float log_sum = head_log_sum_exp(score, memory.reduce, context);
   const float parent_path = as_type<float>(packed_tree[uint(TreeIdx::PathLogprobBits) * tree_slot_count + slot]);
   for (uint child = 0; child < children; ++child) {
     if (memory.pools[child] == lid) {
@@ -173,13 +173,13 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     }
   }
   if (!refine) {
-    const uint width = model_dim + HEAD_SLOT_NUMBERS;
+    const uint width = model_dim + SLOT_NUMBERS;
     for (uint index = lid; index < children * width; index += HEAD_THREADS) {
       const uint child = index / width;
       const uint column = index % width;
       child_inputs[(first_entry + child) * width + column] =
-          bfloat(column < model_dim ? memory.tokens[child * HEAD_MODEL_MAX + column]
-                                    : memory.numbers[child * HEAD_SLOT_NUMBERS + column - model_dim]);
+          bfloat(column < model_dim ? memory.tokens[child * MODEL_MAX + column]
+                                    : memory.numbers[child * SLOT_NUMBERS + column - model_dim]);
     }
     return;
   }

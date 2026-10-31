@@ -2,14 +2,20 @@ use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferPending, Context, Kernels,
-        gpu_types::confidence_head::ConfidenceHeadParams,
+        gpu_types::{
+            confidence_head::{
+                CHILDREN_MAX, ConfidenceHeadParams, EDGE_HIDDEN_MAX, MODEL_MAX, POOL_FEATURES, POOL_HIDDEN_MAX,
+                SLOT_NUMBERS,
+            },
+            weaver::CANDIDATES_MAX,
+        },
         kernel::{ConfidenceHeadEdgesKernel, ConfidenceHeadNodesKernel, ConfidenceHeadPoolsKernel},
     },
     config::confidence_head::ConfidenceHeadConfig,
     data_type::DataType,
     encodable_block::{
         confidence_head::{
-            ConfidenceHeadError, SLOT_NUMBERS, TreeAttention, edge_weights::EdgeWeights, linear,
+            ConfidenceHeadError, DATA_TYPE, TreeAttention, edge_weights::EdgeWeights, linear,
             node_weights::NodeWeights, norm,
         },
         embedding::Embedding,
@@ -21,7 +27,6 @@ use crate::{
 };
 
 const TOKEN_CHUNK: u32 = 2048;
-const POOL_FEATURES: u32 = 3;
 
 pub struct ConfidenceHeadStep<B: Backend> {
     draft: B::ScratchBuffer,
@@ -60,7 +65,11 @@ impl<B: Backend> ConfidenceHead<B> {
         context: &B::Context,
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let width = config.model_dim;
-        if width > 64 || config.pool_hidden_dim > 16 || config.edge_hidden_dim > 128 || config.max_depth < tree_depth {
+        if width > MODEL_MAX
+            || config.pool_hidden_dim > POOL_HIDDEN_MAX
+            || config.edge_hidden_dim > EDGE_HIDDEN_MAX
+            || config.max_depth < tree_depth
+        {
             return Err(ConfidenceHeadError::UnsupportedShape(format!(
                 "width {width}, pool width {}, edge width {} and depth {} for trees of depth {tree_depth}",
                 config.pool_hidden_dim, config.edge_hidden_dim, config.max_depth
@@ -105,23 +114,6 @@ impl<B: Backend> ConfidenceHead<B> {
         })
     }
 
-    pub fn params(
-        &self,
-        candidates: u32,
-        children: u32,
-        tree_slot_count: u32,
-        vocab_size: u32,
-    ) -> ConfidenceHeadParams {
-        ConfidenceHeadParams {
-            candidates,
-            children,
-            tree_slot_count,
-            vocab_size,
-            logit_cap: self.config.logit_cap,
-            epsilon: self.config.norm_config.epsilon,
-        }
-    }
-
     pub fn encode_step(
         &self,
         draft_hidden: impl BufferRef<Backend = B>,
@@ -129,10 +121,21 @@ impl<B: Backend> ConfidenceHead<B> {
         candidate_ids: impl BufferRef<Backend = B>,
         depth_seeds: impl BufferRef<Backend = B>,
         depths: u32,
-        params: ConfidenceHeadParams,
+        candidates: u32,
+        children: u32,
+        tree_slot_count: u32,
+        vocab_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<ConfidenceHeadStep<B>, ConfidenceHeadError<B>> {
-        if params.candidates > 512 || params.children > 4 {
+        let params = ConfidenceHeadParams {
+            candidates,
+            children,
+            tree_slot_count,
+            vocab_size,
+            logit_cap: self.config.logit_cap,
+            epsilon: self.config.norm_config.epsilon,
+        };
+        if candidates > CANDIDATES_MAX || children > CHILDREN_MAX {
             return Err(ConfidenceHeadError::UnsupportedShape(format!(
                 "{} candidates and {} children",
                 params.candidates, params.children
@@ -150,9 +153,9 @@ impl<B: Backend> ConfidenceHead<B> {
         };
         let mut pool_features = scratch(&[depths, POOL_FEATURES, params.candidates], DataType::F32)?;
         let scores = scratch(&[slots, 2, params.candidates], DataType::F32)?;
-        let nodes = scratch(&[slots, width], DataType::BF16)?;
-        let node_inputs = scratch(&[slots, width], DataType::BF16)?;
-        let child_inputs = scratch(&[entries, width + SLOT_NUMBERS], DataType::BF16)?;
+        let nodes = scratch(&[slots, width], DATA_TYPE)?;
+        let node_inputs = scratch(&[slots, width], DATA_TYPE)?;
+        let child_inputs = scratch(&[entries, width + SLOT_NUMBERS], DATA_TYPE)?;
         let child_pools = scratch(&[entries], DataType::U32)?;
         let child_numbers = scratch(&[entries, SLOT_NUMBERS], DataType::F32)?;
         let mut slot_rows = scratch(&[slots], DataType::U32)?;
@@ -333,7 +336,7 @@ async fn encode_token_features<B: Backend>(
     context: &B::Context,
 ) -> Result<B::GlobalGpuBuffer, ConfidenceHeadError<B>> {
     let vocab_size = target_embedding.vocab_size();
-    let row_bytes = size_for_shape(&[width], DataType::BF16);
+    let row_bytes = size_for_shape(&[width], DATA_TYPE);
     let mut table = context.create_buffer_gpu(vocab_size as usize * row_bytes).map_err(ConfidenceHeadError::Backend)?;
     for start in (0..vocab_size).step_by(TOKEN_CHUNK as usize) {
         let count = TOKEN_CHUNK.min(vocab_size - start);

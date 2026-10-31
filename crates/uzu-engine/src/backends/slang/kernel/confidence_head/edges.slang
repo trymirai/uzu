@@ -3,7 +3,7 @@ import definitions;
 import generated.confidence_head;
 
 [[Public]] [[Kernel]] func ConfidenceHeadEdges(
-  [[Optional("refine == false")]] StructuredBuffer<uint> node_metadata,
+  [[Optional("!refine")]] StructuredBuffer<uint> node_metadata,
   StructuredBuffer<uint> slot_rows,
   StructuredBuffer<BFloat16> nodes,
   [[Optional("refine")]] StructuredBuffer<BFloat16> node_shifts,
@@ -14,7 +14,7 @@ import generated.confidence_head;
   StructuredBuffer<float> scores,
   RWStructuredBuffer<uint> frontier,
   RWStructuredBuffer<uint> packed_tree,
-  [[Optional("refine == false")]] RWStructuredBuffer<BFloat16> child_inputs,
+  [[Optional("!refine")]] RWStructuredBuffer<BFloat16> child_inputs,
   StructuredBuffer<BFloat16> input_norm_scales,
   StructuredBuffer<BFloat16> input_norm_biases,
   StructuredBuffer<BFloat16> entry_weights,

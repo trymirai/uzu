@@ -1,8 +1,7 @@
 use crate::{
-    backends::common::Backend,
+    backends::common::{Backend, gpu_types::confidence_head::SLOT_NUMBERS},
     config::confidence_head::ConfidenceHeadConfig,
-    data_type::DataType,
-    encodable_block::confidence_head::{ConfidenceHeadError, SLOT_NUMBERS},
+    encodable_block::confidence_head::{ConfidenceHeadError, DATA_TYPE},
     safetensors::ParameterTree,
 };
 
@@ -32,7 +31,7 @@ impl<B: Backend> EdgeWeights<B> {
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let (width, hidden) = (config.model_dim, config.edge_hidden_dim);
         let inputs = 3 * width + SLOT_NUMBERS;
-        let read = async |name: &str, shape: &[u32]| parameter_tree.read_buffer(name, shape, DataType::BF16).await;
+        let read = async |name: &str, shape: &[u32]| parameter_tree.read_buffer(name, shape, DATA_TYPE).await;
         let input_norm_scales = read("edge.input_norm.scales", &[inputs]).await?;
         let input_norm_biases = read("edge.input_norm.biases", &[inputs]).await?;
         let entry_weights = read("edge.entry.weights", &[width, inputs]).await?;

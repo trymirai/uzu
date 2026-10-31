@@ -1,8 +1,10 @@
 use crate::{
-    backends::common::Backend,
+    backends::common::{
+        Backend,
+        gpu_types::confidence_head::{POOL_INPUTS, SLOT_NUMBERS},
+    },
     config::confidence_head::ConfidenceHeadConfig,
-    data_type::DataType,
-    encodable_block::confidence_head::{ConfidenceHeadError, SLOT_NUMBERS},
+    encodable_block::confidence_head::{ConfidenceHeadError, DATA_TYPE},
     safetensors::ParameterTree,
 };
 
@@ -23,8 +25,8 @@ impl<B: Backend> NodeWeights<B> {
         parameter_tree: &ParameterTree<'_, B>,
     ) -> Result<Self, ConfidenceHeadError<B>> {
         let (width, pool) = (config.model_dim, config.pool_hidden_dim);
-        let read = async |name: &str, shape: &[u32]| parameter_tree.read_buffer(name, shape, DataType::BF16).await;
-        let pool_entry_weights = read("pool_set.entry.weights", &[pool, 3]).await?;
+        let read = async |name: &str, shape: &[u32]| parameter_tree.read_buffer(name, shape, DATA_TYPE).await;
+        let pool_entry_weights = read("pool_set.entry.weights", &[pool, POOL_INPUTS]).await?;
         let pool_entry_biases = read("pool_set.entry.biases", &[pool]).await?;
         let pool_hidden_weights = read("pool_set.hidden.weights", &[pool, pool]).await?;
         let pool_hidden_biases = read("pool_set.hidden.biases", &[pool]).await?;
