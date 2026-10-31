@@ -1,3 +1,5 @@
+#![cfg(target_vendor = "apple")]
+
 mod args;
 mod bench;
 mod common;
