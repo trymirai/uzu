@@ -9,8 +9,7 @@ use super::{GemmBPrologue, VkGemvTile, VkMatmulPlan};
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context, CpuBuffer, GlobalBufferCpuGpu,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu,
             gpu_types::{
                 gemm::{GemmBPrologueKind, GemmDTransform},
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
@@ -167,7 +166,8 @@ impl MatmulKernel for VkMatmulKernel {
         let kernel = GemmPrepareBLayoutVulkanKernel::new(&context.arc())?;
         // SAFETY: both ranges hold the n x k codes, which the copy above wrote to `rows`; the buffers do not alias.
         unsafe { kernel.encode((&rows, 0..bytes), (&*weights, 0..bytes), k, n, bits / 2, &mut command_buffer) };
-        wait(command_buffer.end_encoding().submit().wait_until_completed())?;
+        // Nothing waits: the command buffer holds `rows` until the GPU is done with it, and later ones run after it.
+        drop(command_buffer.end_encoding().try_submit()?);
         Ok((GemmBLayout::Tiled, prepared_shape.signed_codes))
     }
 
