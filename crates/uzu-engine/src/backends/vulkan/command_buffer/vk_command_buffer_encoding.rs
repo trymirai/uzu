@@ -315,7 +315,7 @@ impl VkCommandBufferEncoding {
 
     /// Prepares for one more command, a transfer or a dispatch: submits a segment that is full or that the command's
     /// declared work would take past its budget, which the next begins after, or otherwise orders the command after
-    /// the accesses it conflicts with. False once a device error has ended the recording, when the command is skipped.
+    /// the accesses it conflicts with. False once an error has ended the recording, when the command is skipped.
     fn access(
         &mut self,
         transfer: bool,

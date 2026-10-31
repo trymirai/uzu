@@ -21,7 +21,7 @@ pub struct VkCommandBufferExecutable {
     retained: Vec<Arc<dyn Send + Sync>>,
     segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     timestamps: Option<VkTimestampRecorder>,
-    /// The device error that ended the recording, reported instead of submitting the last segment.
+    /// The error that ended the recording, reported instead of submitting the last segment.
     failure: Option<Error>,
 }
 
