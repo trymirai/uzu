@@ -309,14 +309,12 @@ fn parity_bf16_quant_rht(
 ) {
     let context = block_on(MetalContext::new()).expect("Metal context");
     // W4/G64 matches the Qwen short-prefill route; keep the decode anchor at G32.
-    let input = QuantInput::<bf16>::new(m, k, n, group_size, 4, method, 0);
-    let mut input = if group_size == 64 {
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, 4, method, 0).with_output_rht(with_bias);
+    let input = if group_size == 64 {
         input.with_group_output()
     } else {
         input
     };
-    input.output_bias = with_bias.then(|| (0..input.n).map(|j| bf16::from_f32(0.3 + 0.05 * (j % 4) as f32)).collect());
-    input.output_rht_factors = Some((0..input.n).map(|i| 1 - 2 * (i % 2) as i32).collect());
 
     // CPU reference applies the RHT through the CPU matmul kernel.
     let reference = run_quant_cpu::<bf16>(&input);
