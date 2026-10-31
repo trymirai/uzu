@@ -1,7 +1,9 @@
+mod foreign_extensions;
+mod kotlin;
+mod kotlin_error_renames;
 mod python;
 mod rust;
 mod swift;
-mod swift_extensions;
 mod typescript;
 mod wasm;
 
@@ -9,10 +11,11 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use colored::Colorize;
+use foreign_extensions::{generate_kotlin_extensions, generate_swift_extensions};
+pub use kotlin::KotlinLanguageBackend;
 pub use python::PythonLanguageBackend;
 pub use rust::RustLanguageBackend;
 pub use swift::SwiftLanguageBackend;
-pub use swift_extensions::generate_swift_extensions;
 pub use typescript::TypeScriptLanguageBackend;
 pub use wasm::WasmLanguageBackend;
 
