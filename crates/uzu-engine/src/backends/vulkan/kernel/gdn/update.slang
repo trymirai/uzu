@@ -1,32 +1,18 @@
 import definitions;
 import common.activation;
+import common.workgroup_reduction;
 import gdn.prefill_prep;
 import generated.delta_net;
 
-// State [Hv, Dv, Dk]: one workgroup per (v head, 16 rows), 8 invocations owning each row, lane l the 16 keys of
-// float4s l + 8 c. Each row normalizes q and k itself, so its loads issue together and no sum crosses rows; the sums go
-// through shared memory, which some wide-subgroup GPUs run several times faster than shuffles. Each row stores its
-// updated state and its raw output o_i, and DeltaNetNormGate then applies the head-wide RMS and the gate.
+// State [Hv, Dv, Dk]: one workgroup per (v head, 16 rows), 8 invocations in subgroup_invocation order owning each row,
+// lane l the 16 keys of float4s l + 8 c. Each row normalizes q and k itself, so its loads issue together and no sum
+// crosses rows. Each row stores its updated state and its raw output o_i, and DeltaNetNormGate then applies the
+// head-wide RMS and the gate.
 
 static const uint DELTA_NET_UPDATE_THREADS = 128;
 static const uint DELTA_NET_UPDATE_LANES = 8;
 static const uint DELTA_NET_UPDATE_CHUNKS = DELTA_NET_HEAD_K_DIM / (4 * DELTA_NET_UPDATE_LANES);
 static const uint DELTA_NET_UPDATE_ROWS = DELTA_NET_UPDATE_THREADS / DELTA_NET_UPDATE_LANES;
-
-groupshared float3 delta_net_partials[DELTA_NET_UPDATE_THREADS];
-
-// The sum over the DELTA_NET_UPDATE_LANES invocations of tid's row, every one of them reading the row's partials.
-float3 delta_net_row_sum(float3 value, uint tid) {
-  delta_net_partials[tid] = value;
-  GroupMemoryBarrierWithGroupSync();
-  var total = float3(0.0);
-  let first = tid / DELTA_NET_UPDATE_LANES * DELTA_NET_UPDATE_LANES;
-  for (uint lane = 0; lane < DELTA_NET_UPDATE_LANES; lane++) {
-    total += delta_net_partials[first + lane];
-  }
-  GroupMemoryBarrierWithGroupSync();
-  return total;
-}
 
 [[Kernel]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
@@ -44,11 +30,12 @@ func DeltaNetUpdate<T: IModelFloat>(
   uint value_dim,
   [[Groups("num_v_heads")]] uint head_group,
   [[Groups("head_v_dim.div_ceil(16)")]] uint row_group,
-  [[Threads("128")]] uint tid,
+  [[Threads("128")]] uint thread_idx,
   [[Specialize]] uint HEAD_K_DIM,
 ) {
-  let lane = tid % DELTA_NET_UPDATE_LANES;
-  let i = row_group * DELTA_NET_UPDATE_ROWS + tid / DELTA_NET_UPDATE_LANES;
+  let invocation = subgroup_invocation();
+  let lane = invocation % DELTA_NET_UPDATE_LANES;
+  let i = row_group * DELTA_NET_UPDATE_ROWS + invocation / DELTA_NET_UPDATE_LANES;
   let valid = i < head_v_dim;
   let hv = head_group;
   let conv_dim = 2 * key_dim + value_dim;
@@ -71,7 +58,9 @@ func DeltaNetUpdate<T: IModelFloat>(
     q_squares += dot(q[c], q[c]);
     k_squares += dot(k[c], k[c]);
   }
-  let squares = delta_net_row_sum(float3(q_squares, k_squares, 0.0), tid);
+  let squares = segment_reduce<VectorSum<3>, DELTA_NET_UPDATE_THREADS>(
+    float3(q_squares, k_squares, 0.0), DELTA_NET_UPDATE_LANES
+  );
   // As delta_net_inverse: 1 / sqrt(sum of squares + 1e-6).
   let q_inv = rsqrt(squares.x + 1e-6);
   let k_inv = rsqrt(squares.y + 1e-6);
@@ -84,7 +73,7 @@ func DeltaNetUpdate<T: IModelFloat>(
     partial_dots += float3(dot(s[c], q[c]), dot(s[c], k[c]), dot(k[c], q[c]));
   }
   // s . q, s . k and k . q.
-  let dots = delta_net_row_sum(partial_dots, tid);
+  let dots = segment_reduce<VectorSum<3>, DELTA_NET_UPDATE_THREADS>(partial_dots, DELTA_NET_UPDATE_LANES);
   let beta = sigmoid(in_proj[conv_dim + value_dim + hv].toFloat());
   let a_raw = in_proj[conv_dim + value_dim + num_v_heads + hv].toFloat();
   let decay = exp(delta_net_log_decay(a_log[hv], a_raw, dt_bias[hv]));
