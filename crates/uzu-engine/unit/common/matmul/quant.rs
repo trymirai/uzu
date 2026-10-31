@@ -42,6 +42,8 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub x: Vec<T>,
     pub ab_scale: f32,
     pub soft_cap: Option<f32>,
+    pub output_bias: Option<Vec<T>>,
+    pub output_rht_factors: Option<Vec<i32>>,
     pub k: u32,
     pub n: u32,
     pub m: u32,
@@ -51,9 +53,6 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
-    /// Output random Hadamard factors, then an output bias after them, as RHT-wrapped linears finish.
-    pub output_rht_factors: Option<Vec<i32>>,
-    pub output_bias: Option<Vec<T>>,
 }
 
 fn mode_for_bits(bits: u32) -> QuantizationMode {
@@ -174,6 +173,8 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             x,
             ab_scale: 1.0,
             soft_cap: None,
+            output_bias: None,
+            output_rht_factors: None,
             k,
             n,
             m,
@@ -183,8 +184,6 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
             prepared_a: None,
-            output_rht_factors: None,
-            output_bias: None,
         }
     }
 
@@ -326,9 +325,9 @@ pub struct QuantBuffers<B: Backend, T: DataTypeRepr + Float> {
     pub prepared_a: Option<B::GlobalGpuBuffer>,
     pub prepared_a_scales: Option<B::GlobalGpuBuffer>,
     pub prepared_a_group_sums: Option<B::GlobalGpuBuffer>,
-    pub y: B::GlobalGpuBuffer,
-    pub output_rht_factors: Option<B::GlobalGpuBuffer>,
     pub output_bias: Option<B::GlobalGpuBuffer>,
+    pub output_rht_factors: Option<B::GlobalGpuBuffer>,
+    pub y: B::GlobalGpuBuffer,
     pub weights_layout: WeightsLayout<B>,
     _t: std::marker::PhantomData<T>,
 }
@@ -343,44 +342,35 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         let params = QuantParams::new(params_layout, input.n, groups);
         let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
         let zero_point_bytes = params.zero_point_shape(input.mode).into_iter().product::<u32>() as usize;
-        // Group-output metadata planes are transposed on the host before upload.
-        let group_output = params_layout == QuantParamsLayout::GroupOutput;
-        let metadata = |values: &[T], transposed: bool| {
-            let mut plane = pad(values, metadata_elements);
-            if group_output && transposed {
-                let value_bits = size_of::<T>() as u32 * u8::BITS;
-                transpose_metadata(bytemuck::cast_slice_mut(&mut plane), input.n, groups, value_bits);
+        let mut scales = pad(&input.scales, metadata_elements);
+        let mut zp = input.zero_points.as_ref().map(|values| pad(values, zero_point_bytes));
+        let mut bias = input.biases.as_ref().map(|values| pad(values, metadata_elements));
+        if params_layout == QuantParamsLayout::GroupOutput {
+            let value_bits = size_of::<T>() as u32 * u8::BITS;
+            transpose_metadata(bytemuck::cast_slice_mut(&mut scales), input.n, groups, value_bits);
+            if let Some(bias) = &mut bias {
+                transpose_metadata(bytemuck::cast_slice_mut(bias), input.n, groups, value_bits);
             }
-            plane
-        };
+            if let Some(zp) = &mut zp {
+                transpose_metadata(zp, input.n, groups, DataType::from(input.mode).size_in_bits() as u32);
+            }
+        }
         let (x, prepared_a, prepared_a_scales, prepared_a_group_sums) = activations::<B, T>(context, input);
         Self {
             w: create_buffer_with_data::<B, u32>(context, &input.weights_for_upload()),
-            scales: create_buffer_with_data::<B, T>(context, &metadata(&input.scales, true)),
-            zp: input.zero_points.as_ref().map(|zero_points| {
-                let mut plane = pad(zero_points, zero_point_bytes);
-                if group_output && input.quant_method == QuantizationMethod::ScaleZeroPoint {
-                    let correction_bits = DataType::from(input.mode).size_in_bits() as u32;
-                    transpose_metadata(&mut plane, input.n, groups, correction_bits);
-                }
-                create_buffer_with_data::<B, u8>(context, &plane)
-            }),
-            bias: input.biases.as_ref().map(|biases| {
-                create_buffer_with_data::<B, T>(
-                    context,
-                    &metadata(biases, input.quant_method == QuantizationMethod::ScaleBias),
-                )
-            }),
+            scales: create_buffer_with_data::<B, T>(context, &scales),
+            zp: zp.as_ref().map(|values| create_buffer_with_data::<B, u8>(context, values)),
+            bias: bias.as_ref().map(|values| create_buffer_with_data::<B, T>(context, values)),
             x,
             prepared_a,
             prepared_a_scales,
             prepared_a_group_sums,
-            y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
+            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
             output_rht_factors: input
                 .output_rht_factors
                 .as_ref()
                 .map(|factors| create_buffer_with_data::<B, i32>(context, factors)),
-            output_bias: input.output_bias.as_ref().map(|bias| create_buffer_with_data::<B, T>(context, bias)),
+            y: create_buffer::<B, T>(context, (input.m as usize) * (input.n as usize)),
             weights_layout: Default::default(),
             _t: std::marker::PhantomData,
         }
@@ -475,9 +465,9 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
         prepared_a,
         prepared_a_scales,
         prepared_a_group_sums,
-        y,
-        output_rht_factors,
         output_bias,
+        output_rht_factors,
+        y,
         weights_layout,
         ..
     } = buffers;
