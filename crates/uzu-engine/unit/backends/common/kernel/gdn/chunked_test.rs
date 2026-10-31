@@ -13,8 +13,10 @@ use crate::{
         },
     },
     data_type::DataType,
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
+#[cfg(backend = "metal")]
+use crate::{backends::metal::Metal, utils::downcast::downcast_ref};
 
 type BackendKernels<B> = <B as Backend>::Kernels;
 type ChunkedPrefill<B> = <BackendKernels<B> as Kernels>::DeltaNetChunkedPrefill;
@@ -173,14 +175,16 @@ fn check<B: Backend>(
 }
 
 fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>() {
-    let context = block_on(B::Context::new()).expect("context");
-    let Some(chunked) =
+    let context = create_context::<B>();
+    // Metal builds chunked prefill on MXU only.
+    #[cfg(backend = "metal")]
+    if downcast_ref::<<Metal as Backend>::Context>(&*context).is_some_and(|context| !context.supports_mxu) {
+        return;
+    }
+    let chunked =
         ChunkedPrefill::<B>::new(&context, DataType::BF16, HEAD_K_DIM as u32, (NUM_V_HEADS / NUM_K_HEADS) as u32)
             .unwrap()
-    else {
-        eprintln!("{} has no chunked prefill on this device", std::any::type_name::<B>());
-        return;
-    };
+            .expect("chunked prefill");
     let in_proj = random_in_proj(WARMUP_TOKENS + 4096);
     let (warmup, tokens) = in_proj.split_at(WARMUP_TOKENS * TOTAL_PROJ_DIM);
     let mut state = create_buffer_with_data::<B, f32>(&context, &vec![0.0; NUM_V_HEADS * HEAD_V_DIM * HEAD_K_DIM]);
