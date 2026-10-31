@@ -476,7 +476,7 @@ fn shared_kernel(
         }
     }
     for argument in kernel.arguments.iter_mut() {
-        if let KernelArgumentType::Constant(ty) = &mut argument.ty {
+        if let KernelArgumentType::Value(ty) = &mut argument.ty {
             shorten(ty);
         }
     }

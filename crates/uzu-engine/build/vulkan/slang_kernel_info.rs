@@ -132,7 +132,7 @@ impl<'a> SlangKernelInfo<'a> {
             let conditional = argument.condition()?.is_some();
             let ty = match argument.argument_type()? {
                 SlangArgumentType::Ptr(access) => KernelArgumentType::Buffer(access),
-                SlangArgumentType::Constant(ty) => KernelArgumentType::Constant(ty),
+                SlangArgumentType::Constant(ty) => KernelArgumentType::Value(ty),
                 SlangArgumentType::Specialize(ty) => {
                     parameters.push(KernelParameter {
                         name: name.into(),

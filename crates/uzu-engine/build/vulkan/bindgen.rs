@@ -137,7 +137,7 @@ pub fn bindgen(
             continue;
         }
         let name = argument.name()?;
-        let Some(KernelArgumentType::Constant(text)) =
+        let Some(KernelArgumentType::Value(text)) =
             kernel.arguments.iter().find(|candidate| candidate.name.as_ref() == name).map(|argument| &argument.ty)
         else {
             bail!("{kernel_name}: PipelineVariants argument '{name}' is not a uniform");
@@ -257,7 +257,7 @@ pub fn bindgen(
     for argument in &kernel.arguments {
         let name = format_ident!("{}", argument.name.as_ref());
         // The pipeline-selecting argument has no push-constant field.
-        if let (Some((selector, ..)), KernelArgumentType::Constant(text)) = (&pipeline_variants, &argument.ty)
+        if let (Some((selector, ..)), KernelArgumentType::Value(text)) = (&pipeline_variants, &argument.ty)
             && *selector == name
         {
             let ty: Type = syn::parse_str(text)?;
@@ -290,7 +290,7 @@ pub fn bindgen(
                 (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
             },
             // A canonical struct by value: its bytes in the push constants, which an absent optional leaves zero.
-            (KernelArgumentType::Constant(text), Some((path, ty, stride, _))) if text.as_ref() == path => {
+            (KernelArgumentType::Value(text), Some((path, ty, stride, _))) if text.as_ref() == path => {
                 ensure!(field.size == stride, "{kernel_name}: '{name}' of {} bytes is not one {path}", field.size);
                 let cast = quote! { bytemuck::cast::<#ty, [u8; #stride]> };
                 let bytes = if argument.conditional {
@@ -301,7 +301,7 @@ pub fn bindgen(
                 (quote! { #ty }, bytes)
             },
             // A `[[HostSlice]]` is uploaded into the command buffer's memory; an empty slice passes address 0.
-            (KernelArgumentType::Constant(text), Some((path, ty, _, alignment))) => {
+            (KernelArgumentType::Value(text), Some((path, ty, _, alignment))) => {
                 ensure!(
                     field.size == 8 && !argument.conditional && text.as_ref() == format!("&[{path}]"),
                     "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{path}' slice"
@@ -315,7 +315,7 @@ pub fn bindgen(
                     quote! { #name.as_ref().map_or(0, |(buffer, range)| buffer.device_address() + range.start) };
                 (quote! { &[#ty] }, quote! { #address.to_ne_bytes() })
             },
-            (KernelArgumentType::Constant(text), _) => {
+            (KernelArgumentType::Value(text), _) => {
                 ensure!(field.size == 4 && field.layout.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = syn::parse_str(text)?;
                 let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;
@@ -380,10 +380,8 @@ pub fn bindgen(
             KernelParameterType::Type => !constants,
         });
         let parameters = parameters.map(|parameter| parameter.name.as_ref());
-        let uniforms = kernel
-            .arguments
-            .iter()
-            .filter(|argument| constants && matches!(argument.ty, KernelArgumentType::Constant(_)));
+        let uniforms =
+            kernel.arguments.iter().filter(|argument| constants && matches!(argument.ty, KernelArgumentType::Value(_)));
         parameters.chain(uniforms.map(|argument| argument.name.as_ref())).map(str::to_string).collect::<BTreeSet<_>>()
     };
     let is_variant = |path: &syn::Path| {
@@ -628,7 +626,7 @@ pub fn bindgen(
                     });
                     quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
                 },
-                KernelArgumentType::Constant(text) => {
+                KernelArgumentType::Value(text) => {
                     let ty: Type = syn::parse_str(text)?;
                     quote! { #ty }
                 },
