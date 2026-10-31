@@ -98,7 +98,6 @@ impl AttentionKernel for VkAttentionKernel {
             )
         };
         let has_gemm = [64, 128, 256].contains(&config.head_dim)
-            && config.data_type == DataType::BF16
             && context.physical_device().properties.limits.max_compute_shared_memory_size
                 >= ATTENTION_GEMM_SHARED_BYTES;
         let has_grouped = [128, 256].contains(&config.head_dim)
