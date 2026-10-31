@@ -16,7 +16,11 @@ static const uint GEMM_MAX_HEAD_DIM = 256;
 static const uint GEMM_MAX_BLOCK_KEYS = 32;
 // Rows of 16-bit elements in 32-bit words, padded by 16 bytes.
 static const uint GEMM_QUERY_WORDS = ATTENTION_GEMM_QUERIES * (GEMM_MAX_HEAD_DIM / 2 + 4);
-static const uint GEMM_BLOCK_WORDS = 2176;
+// A block of every head dimension's keys: 16 of GEMM_MAX_HEAD_DIM dimensions or GEMM_MAX_BLOCK_KEYS of half as many.
+static const uint GEMM_WIDE_BLOCK_WORDS = 16 * (GEMM_MAX_HEAD_DIM / 2 + 4);
+static const uint GEMM_NARROW_BLOCK_WORDS = GEMM_MAX_BLOCK_KEYS * (GEMM_MAX_HEAD_DIM / 4 + 4);
+static const uint GEMM_BLOCK_WORDS =
+  GEMM_WIDE_BLOCK_WORDS > GEMM_NARROW_BLOCK_WORDS ? GEMM_WIDE_BLOCK_WORDS : GEMM_NARROW_BLOCK_WORDS;
 static const uint GEMM_WEIGHTS = ATTENTION_GEMM_QUERIES * GEMM_MAX_BLOCK_KEYS;
 static const float GEMM_LOG2E = 1.4426950408889634;
 static const float GEMM_MASKED_SCORE = -1e9 * GEMM_LOG2E;
@@ -95,10 +99,6 @@ func AttentionGemm<T: IModelFloat16>(
   [[Specialize]] bool is_sliding_window,
 ) {
   static_assert(GEMM_THREADS == ATTENTION_GEMM_QUERIES * GEMM_ROW_LANES, "four invocations a query row");
-  static_assert(
-    GEMM_BLOCK_WORDS >= 16 * (256 / 2 + 4) && GEMM_BLOCK_WORDS >= 32 * (128 / 2 + 4),
-    "a block of every head dimension's keys"
-  );
   static_assert(
     4 * (GEMM_QUERY_WORDS + GEMM_BLOCK_WORDS + GEMM_WEIGHTS) == ATTENTION_GEMM_SHARED_BYTES,
     "the shared memory the host checks"
