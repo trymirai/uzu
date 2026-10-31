@@ -42,7 +42,7 @@ pub fn build(
         SamplingPolicy::Custom {
             method,
         } => match method {
-            SamplingMethod::Greedy {} => (None, None),
+            SamplingMethod::Greedy {} => (Some(0.0), None),
             SamplingMethod::Stochastic {
                 temperature,
                 top_k: _,
@@ -70,4 +70,61 @@ pub fn build(
     }
 
     Ok(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use async_openai::types::responses::CreateResponse;
+    use shoji::types::{basic::SamplingMethod, session::chat::ChatReplyConfig};
+
+    use super::build;
+
+    /// Builds the request through the crate's public builder, so the temperature
+    /// put on the wire stays pinned to the sampling policy the caller chose.
+    fn request_for(config: &ChatReplyConfig) -> CreateResponse {
+        build("model", config, Vec::new()).expect("the request builds")
+    }
+
+    #[test]
+    fn explicit_greedy_sends_temperature_zero() {
+        let request = request_for(&ChatReplyConfig::default().with_sampling_method(SamplingMethod::Greedy {}));
+
+        assert_eq!(request.temperature, Some(0.0));
+    }
+
+    #[test]
+    fn default_policy_sends_no_temperature() {
+        let request = request_for(&ChatReplyConfig::default());
+
+        assert_eq!(request.temperature, None);
+    }
+
+    #[test]
+    fn stochastic_forwards_temperature_unchanged() {
+        let request = request_for(&ChatReplyConfig::default().with_sampling_method(SamplingMethod::Stochastic {
+            temperature: Some(0.5),
+            top_k: None,
+            top_p: Some(0.75),
+            min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        }));
+
+        assert_eq!(request.temperature, Some(0.5));
+        assert_eq!(request.top_p, Some(0.75));
+    }
+
+    #[test]
+    fn stochastic_without_temperature_sends_none() {
+        let request = request_for(&ChatReplyConfig::default().with_sampling_method(SamplingMethod::Stochastic {
+            temperature: None,
+            top_k: None,
+            top_p: None,
+            min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        }));
+
+        assert_eq!(request.temperature, None);
+    }
 }

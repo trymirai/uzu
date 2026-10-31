@@ -56,7 +56,9 @@ pub fn build(
         SamplingPolicy::Custom {
             method,
         } => match method {
-            SamplingMethod::Greedy {} => {},
+            SamplingMethod::Greedy {} => {
+                request.temperature = Some(0.0);
+            },
             SamplingMethod::Stochastic {
                 temperature,
                 top_k: _,
@@ -78,4 +80,61 @@ fn is_tool_definition_message(message: &ChatMessage) -> bool {
     message.role == ChatRole::Developer {}
         && !message.content.is_empty()
         && message.content.iter().all(|content| matches!(content, ChatContentBlock::Tools { .. }))
+}
+
+#[cfg(test)]
+mod tests {
+    use async_openai::types::chat::CreateChatCompletionRequest;
+    use shoji::types::{basic::SamplingMethod, session::chat::ChatReplyConfig};
+
+    use super::build;
+
+    /// Builds the request through the crate's public builder, so the temperature
+    /// put on the wire stays pinned to the sampling policy the caller chose.
+    fn request_for(config: &ChatReplyConfig) -> CreateChatCompletionRequest {
+        build("model", config, Vec::new()).expect("the request builds")
+    }
+
+    #[test]
+    fn explicit_greedy_sends_temperature_zero() {
+        let request = request_for(&ChatReplyConfig::default().with_sampling_method(SamplingMethod::Greedy {}));
+
+        assert_eq!(request.temperature, Some(0.0));
+    }
+
+    #[test]
+    fn default_policy_sends_no_temperature() {
+        let request = request_for(&ChatReplyConfig::default());
+
+        assert_eq!(request.temperature, None);
+    }
+
+    #[test]
+    fn stochastic_forwards_temperature_unchanged() {
+        let request = request_for(&ChatReplyConfig::default().with_sampling_method(SamplingMethod::Stochastic {
+            temperature: Some(0.5),
+            top_k: None,
+            top_p: Some(0.75),
+            min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        }));
+
+        assert_eq!(request.temperature, Some(0.5));
+        assert_eq!(request.top_p, Some(0.75));
+    }
+
+    #[test]
+    fn stochastic_without_temperature_sends_none() {
+        let request = request_for(&ChatReplyConfig::default().with_sampling_method(SamplingMethod::Stochastic {
+            temperature: None,
+            top_k: None,
+            top_p: None,
+            min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        }));
+
+        assert_eq!(request.temperature, None);
+    }
 }
