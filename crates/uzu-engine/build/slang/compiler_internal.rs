@@ -6,41 +6,66 @@ use std::{
     iter::once,
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use anyhow::Context;
-use itertools::Itertools;
 use proc_macro2::TokenStream;
 use serde::{Deserialize, Serialize};
 use shader_slang::{
-    CompilerOptions, ComponentType, GlobalSession, ModifierID, OptimizationLevel, Session, SessionDesc, TargetDesc,
+    CompilerOptions, ComponentType, GlobalSession, Module, OptimizationLevel, Session, SessionDesc, TargetDesc,
 };
 
 use crate::{
-    common::{caching, codegen::write_tokens, gpu_type_paths::GpuTypePaths, kernel::Kernel},
+    common::{caching, identifiers::KernelName, kernel::Kernel},
     debug_log,
-    slang::{reflection::SlangKernel, slang_sys_ext::SessionLoadModuleWithDiagnosticsExt, wrapper},
+    slang::{SlangGpuTypes, reflection::SlangKernel, slang_sys_ext::SessionLoadModuleWithDiagnosticsExt},
 };
 
 pub trait SlangTarget: Send + Sync + Clone + 'static {
     const TARGET_NAME: &'static str;
-    const OUTPUT_EXTENSION: &'static str;
+    /// The kernel sources, relative to the crate.
+    const SOURCE_DIRECTORY: &'static str;
+    /// The backend whose own GPU types the kernels name besides the common ones.
+    const PRIVATE_GPU_TYPES: Option<&'static str> = None;
+    /// The preprocessor definitions of each session; the first session links every wrapper.
+    const SESSION_DEFINES: &'static [&'static [(&'static str, &'static str)]] = &[&[]];
+
+    fn compiler_options(
+        _global_session: &GlobalSession,
+        options: CompilerOptions,
+    ) -> CompilerOptions {
+        options
+    }
 
     fn create_target_desc<'a>(global_session: &'a GlobalSession) -> TargetDesc<'a>;
 
-    fn validate_output(path: &Path) -> anyhow::Result<()>;
+    /// The directory of the generated GPU type files, which the kernels import as `generated.<file>`.
+    fn gpu_types_directory(fields: &SlangCompilerFields<Self>) -> PathBuf;
 
-    fn bindgen_file(
-        linked_component: &ComponentType,
+    /// The source of the wrapper that declares the entry points of `kernels`, defined by `module` at `source_path`.
+    fn wrapper(
+        fields: &SlangCompilerFields<Self>,
+        source_path: &Path,
+        module: &Module,
         kernels: &[SlangKernel],
-        gpu_type_map: &HashMap<String, String>,
-        gpu_type_paths: &GpuTypePaths,
-        constants: &HashMap<String, String>,
-        object_file: &Path,
-    ) -> anyhow::Result<TokenStream>;
+    ) -> anyhow::Result<String>;
 
-    fn bindgen_global(kernels: &[(impl AsRef<Path>, &[Kernel])]) -> anyhow::Result<TokenStream>;
+    /// Writes the target code and bindings of `kernels` from `linked`, their wrapper at `output_base`.slang linked
+    /// with its entry points in the first session.
+    fn emit(
+        compiler: &BlockingSlangCompiler<Self>,
+        gpu_types: &SlangGpuTypes,
+        module: &Module,
+        kernels: &[SlangKernel],
+        linked: &ComponentType,
+        output_base: &Path,
+    ) -> anyhow::Result<()>;
+
+    /// The bindings of every module with kernels, by output base: its public kernels and private kernel names.
+    fn bindgen_global(
+        fields: &SlangCompilerFields<Self>,
+        modules: &[(PathBuf, &[Kernel], &[KernelName])],
+    ) -> anyhow::Result<TokenStream>;
 }
 
 #[derive(Clone)]
@@ -48,27 +73,37 @@ pub struct SlangCompilerFields<T: SlangTarget> {
     pub source_directory: PathBuf,
     pub output_directory: PathBuf,
     pub optimization_level: OptimizationLevel,
+    /// The build system's hash with the optimization level, which the cache records check.
+    pub buildsystem_hash: [u8; blake3::OUT_LEN],
     _phantom: PhantomData<T>,
 }
 
 impl<T: SlangTarget> SlangCompilerFields<T> {
     pub fn new() -> anyhow::Result<Self> {
         let source_directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("missing CARGO_MANIFEST_DIR")?)
-            .join("src/backends/slang/kernel");
+            .join(T::SOURCE_DIRECTORY);
 
         println!("cargo::rerun-if-changed={}", source_directory.display());
 
         let output_directory = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?).join(T::TARGET_NAME);
 
-        let optimization_level = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
+        let opt_level = env::var("OPT_LEVEL").context("missing OPT_LEVEL")?;
+        let optimization_level = match opt_level.as_str() {
             "0" => OptimizationLevel::Default,
             _ => OptimizationLevel::High,
         };
+
+        let buildsystem_hash = *blake3::Hasher::new()
+            .update(caching::build_system_hash().context("cannot get build system hash")?.as_bytes())
+            .update(opt_level.as_bytes())
+            .finalize()
+            .as_bytes();
 
         Ok(Self {
             source_directory,
             output_directory,
             optimization_level,
+            buildsystem_hash,
             _phantom: PhantomData,
         })
     }
@@ -80,10 +115,12 @@ struct Cached {
     compiler_version: String,
     dependency_hashes: HashMap<String, [u8; blake3::OUT_LEN]>,
     public_kernels: Box<[Kernel]>,
+    /// Kernels bound without a common trait.
+    private_kernels: Box<[KernelName]>,
 }
 
 pub struct BlockingSlangCompiler<T: SlangTarget> {
-    session: Session,
+    sessions: Vec<Session>,
     global_session: GlobalSession,
     fields: SlangCompilerFields<T>,
 }
@@ -94,36 +131,73 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
     pub fn new(fields: SlangCompilerFields<T>) -> anyhow::Result<Self> {
         let global_session = GlobalSession::new().context("cannot create global session")?;
 
-        let compiler_options = CompilerOptions::default()
-            .optimization(fields.optimization_level)
-            .emit_spirv_directly(true)
-            .vulkan_use_entry_point_name(true);
+        // The kernel sources and the output, where generated modules may live.
+        let search_path_strings = [&fields.source_directory, &fields.output_directory]
+            .into_iter()
+            .map(|path| {
+                CString::new(path.to_string_lossy().as_bytes()).context("cannot convert search path to CString")
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let search_paths = search_path_strings.iter().map(|path| path.as_ptr()).collect::<Vec<_>>();
 
-        let search_path = CString::new(fields.source_directory.to_string_lossy().as_bytes())
-            .context("cannot convert src_dir to CString")?;
-        let search_paths = [search_path.as_ptr()];
+        let sessions = T::SESSION_DEFINES
+            .iter()
+            .map(|defines| {
+                let compiler_options = CompilerOptions::default()
+                    .optimization(fields.optimization_level)
+                    .emit_spirv_directly(true)
+                    .vulkan_use_entry_point_name(true);
+                let compiler_options = defines
+                    .iter()
+                    .fold(T::compiler_options(&global_session, compiler_options), |compiler_options, (name, value)| {
+                        compiler_options.macro_define(name, value)
+                    });
 
-        let target_desc = T::create_target_desc(&global_session);
-        let targets = [target_desc];
+                let targets = [T::create_target_desc(&global_session)];
 
-        let session_desc =
-            SessionDesc::default().options(&compiler_options).search_paths(&search_paths).targets(&targets);
+                let session_desc =
+                    SessionDesc::default().options(&compiler_options).search_paths(&search_paths).targets(&targets);
 
-        let session = global_session.create_session(&session_desc).context("cannot create session")?;
+                global_session.create_session(&session_desc).context("cannot create session")
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(Self {
-            session,
+            sessions,
             global_session,
             fields,
         })
     }
 
+    /// The wrapper module at `path` linked in session `session` with its entry points, which must be composed
+    /// explicitly for the linked program to reflect them.
+    pub fn link(
+        &self,
+        session: usize,
+        path: &Path,
+    ) -> anyhow::Result<ComponentType> {
+        let session = &self.sessions[session];
+        let (wrapper_module, wrapper_diagnostics) =
+            session.load_module_with_diagnostics(path).context("cannot load wrapper module")?;
+
+        for wrapper_diagnostics_line in wrapper_diagnostics.iter().flat_map(|diagnostics| diagnostics.lines()) {
+            println!("cargo::warning={wrapper_diagnostics_line}");
+        }
+
+        let entry_points = wrapper_module.entry_points().map(ComponentType::from).collect::<Vec<_>>();
+
+        let composite_component = session
+            .create_composite_component_type(&once(wrapper_module.into()).chain(entry_points).collect::<Vec<_>>())
+            .context("cannot create composite component")?;
+
+        composite_component.link().context("cannot link wrapper module")
+    }
+
     pub fn compile(
         &self,
         source_path: PathBuf,
-        gpu_type_map: Arc<HashMap<String, String>>,
-        gpu_type_paths: &GpuTypePaths,
-    ) -> anyhow::Result<(Box<[Box<str>]>, Box<[Kernel]>)> {
+        gpu_types: &SlangGpuTypes,
+    ) -> anyhow::Result<(Box<[Box<str>]>, Box<[Kernel]>, Box<[KernelName]>)> {
         let source_path_relative =
             source_path.strip_prefix(&self.fields.source_directory).context("source is not in src_dir")?;
         let source_path_relative_str = source_path_relative.to_str().unwrap();
@@ -140,12 +214,9 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .context("cannot create output directory")?;
 
         let wrapper_file = output_base_path.with_extension("slang");
-        let output_file = output_base_path.with_extension(T::OUTPUT_EXTENSION);
-        let bindgen_file = output_base_path.with_extension("rs");
         let cached_file = output_base_path.with_extension("cached");
 
-        let buildsystem_hash: &[u8; blake3::OUT_LEN] =
-            caching::build_system_hash().context("cannot get build system hash")?.as_bytes();
+        let buildsystem_hash = &self.fields.buildsystem_hash;
 
         if let Ok(cached_contents) = fs::read(&cached_file)
             && let Ok(cached) = serde_json::from_slice::<Cached>(&cached_contents)
@@ -158,11 +229,11 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             })
         {
             debug_log!("compile cached: {source_path_relative_str}");
-            return Ok((source_path_relative_segments, cached.public_kernels));
+            return Ok((source_path_relative_segments, cached.public_kernels, cached.private_kernels));
         }
 
         let (source_module, source_diagnostics) =
-            self.session.load_module_with_diagnostics(&source_path).context("cannot load source module")?;
+            self.sessions[0].load_module_with_diagnostics(&source_path).context("cannot load source module")?;
 
         if let Some(source_diagnostics) = source_diagnostics {
             for source_diagnostics_line in source_diagnostics.lines() {
@@ -176,7 +247,7 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .collect::<anyhow::Result<HashMap<String, [u8; blake3::OUT_LEN]>>>()
             .context("cannot hash dependencies")?;
 
-        let common_gpu_type_map = gpu_type_map.keys().map(|name| (name.clone(), name.clone())).collect();
+        let common_gpu_type_map = gpu_types.map.keys().map(|name| (name.clone(), name.clone())).collect();
         let kernels = source_module
             .module_reflection()
             .children()
@@ -185,61 +256,15 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .context("cannot collect kernels")?;
 
         if !kernels.is_empty() {
-            let constants = source_module
-                .module_reflection()
-                .children()
-                .filter_map(|decl| decl.as_variable())
-                .filter(|variable| variable.find_modifier(ModifierID::SlangModifierConst).is_some())
-                .filter_map(|variable| Some((variable.name()?.to_owned(), variable.default_value_int()?.to_string())))
-                .collect();
-            let wrapper_blocks = kernels
-                .iter()
-                .map(|kernel| {
-                    wrapper::kernel_wrappers(kernel)
-                        .with_context(|| format!("cannot generate wrappers for kernel '{}'", kernel.name))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?
-                .into_iter()
-                .flatten();
-
-            let wrapper_contents = once(format!("#include {source_path:?}")).chain(wrapper_blocks).join("\n\n");
+            let wrapper_contents =
+                T::wrapper(&self.fields, &source_path, &source_module, &kernels).context("cannot generate wrappers")?;
 
             fs::write(&wrapper_file, wrapper_contents.as_bytes()).context("cannot write wrapper file")?;
 
-            let (wrapper_module, wrapper_diagnostics) =
-                self.session.load_module_with_diagnostics(&wrapper_file).context("cannot load wrapper module")?;
+            let linked_component = self.link(0, &wrapper_file)?;
 
-            if let Some(wrapper_diagnostics) = wrapper_diagnostics {
-                for wrapper_diagnostics_line in wrapper_diagnostics.lines() {
-                    println!("cargo::warning={wrapper_diagnostics_line}");
-                }
-            }
-
-            let entry_points =
-                wrapper_module.entry_points().map(|entry_point| entry_point.into()).collect::<Vec<ComponentType>>();
-
-            let wrapper_component: ComponentType = wrapper_module.into();
-
-            let composite_component = self
-                .session
-                .create_composite_component_type(
-                    &once(wrapper_component).chain(entry_points).collect::<Vec<ComponentType>>(),
-                )
-                .context("cannot create composite component")?;
-
-            let linked_component = composite_component.link().context("cannot link wrapper module")?;
-
-            let linked_blob = linked_component.target_code(0).context("cannot get target code")?;
-
-            fs::write(&output_file, linked_blob.as_slice()).context("cannot write output file")?;
-
-            T::validate_output(&output_file).with_context(|| format!("cannot validate {}", output_file.display()))?;
-
-            let bindgen_tokens =
-                T::bindgen_file(&linked_component, &kernels, &gpu_type_map, gpu_type_paths, &constants, &output_file)
-                    .context("cannot generate bindings")?;
-
-            write_tokens(bindgen_tokens, &bindgen_file).context("cannot write bindgen file")?;
+            T::emit(self, gpu_types, &source_module, &kernels, &linked_component, &output_base_path)
+                .context("cannot emit kernels")?;
         }
 
         let public_kernels = kernels
@@ -251,6 +276,11 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
                     .with_context(|| format!("cannot convert {} to common kernel", slang_kernel.name))
             })
             .collect::<anyhow::Result<Box<[Kernel]>>>()?;
+        let private_kernels = kernels
+            .iter()
+            .filter(|slang_kernel| !slang_kernel.public)
+            .map(|slang_kernel| KernelName::from(slang_kernel.name.as_str()))
+            .collect::<Box<[KernelName]>>();
 
         fs::write(
             &cached_file,
@@ -259,6 +289,7 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
                 compiler_version: self.global_session.build_tag_string().to_owned(),
                 dependency_hashes,
                 public_kernels: public_kernels.clone(),
+                private_kernels: private_kernels.clone(),
             })
             .context("cannot serialize cache")?,
         )
@@ -266,6 +297,6 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
 
         debug_log!("compile end: {source_path_relative_str}");
 
-        Ok((source_path_relative_segments, public_kernels))
+        Ok((source_path_relative_segments, public_kernels, private_kernels))
     }
 }

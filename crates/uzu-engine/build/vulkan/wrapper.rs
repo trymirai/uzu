@@ -17,7 +17,7 @@ pub const AXIS_FOLD_GROUPS: u32 = 65_535;
 pub fn generate_wrappers(
     kernel: &SlangKernel,
     module_globals: &HashSet<&str>,
-) -> anyhow::Result<(Vec<String>, Vec<(String, Vec<String>)>)> {
+) -> anyhow::Result<Vec<String>> {
     if let Some(parameter) = kernel.parameters.iter().find_map(|parameter| match &parameter.ty {
         SlangParameterType::GroupShared {
             value_type,
@@ -74,7 +74,6 @@ pub fn generate_wrappers(
         })
         .collect::<Vec<_>>();
 
-    let mut entry_points = Vec::new();
     for variant in kernel.variants() {
         let types = variant.iter().map(|(_, ty)| ty.to_string()).collect::<Vec<_>>();
         let wrapper_name = static_mangle(&kernel.name, &types);
@@ -235,10 +234,9 @@ pub fn generate_wrappers(
         );
 
         wrappers.push(wrapper);
-        entry_points.push((wrapper_name, types));
     }
 
-    Ok((wrappers, entry_points))
+    Ok(wrappers)
 }
 
 /// Slang type of a specialization constant: Vulkan specializes only scalars, so enums are `uint`.

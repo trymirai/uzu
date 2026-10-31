@@ -80,7 +80,7 @@ fn main() -> anyhow::Result<ExitCode> {
 
     #[cfg(feature = "vulkan")]
     if backend_vulkan {
-        compilers.push(Box::new(vulkan::SlangCompiler::new()?));
+        compilers.push(Box::new(slang::SlangCompiler::<vulkan::VulkanTarget>::new()?));
     }
 
     if backend_cpu {

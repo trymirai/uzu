@@ -40,7 +40,17 @@ webgpu = [
     "dep:pollster",
 ]
 
-vulkan = ["cpu", "dep:ash", "dep:vk-mem", "dep:dirs", "dep:shader-slang", "dep:blake3", "dep:serde_json", "dep:regex"]
+vulkan = [
+    "cpu",
+    "dep:ash",
+    "dep:vk-mem",
+    "dep:dirs",
+    "dep:shader-slang",
+    "dep:blake3",
+    "dep:serde_json",
+    "dep:regex",
+    "dep:rayon",
+]
 
 cpu = [] # TODO: move libm here
 
