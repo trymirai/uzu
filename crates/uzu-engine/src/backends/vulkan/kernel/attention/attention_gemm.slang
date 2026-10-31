@@ -30,15 +30,6 @@ uint attention_gemm_block_keys(uint head_dim) {
   return head_dim > 128 ? 16 : 32;
 }
 
-float4 attention_gemm_unpack<T : IModelFloat16>(uint2 words) {
-  return float4(
-    T.fromStorageBits(words.x & 0xFFFF).toFloat(),
-    T.fromStorageBits(words.x >> 16).toFloat(),
-    T.fromStorageBits(words.y & 0xFFFF).toFloat(),
-    T.fromStorageBits(words.y >> 16).toFloat()
-  );
-}
-
 uint2 attention_gemm_shared(uint first_word, bool queries) {
   if (queries) {
     return uint2(attention_gemm_queries[first_word], attention_gemm_queries[first_word + 1]);
@@ -135,7 +126,7 @@ func AttentionGemm<T: IModelFloat16>(
     var words = uint2(0, 0);
     if (first_query + chunk_row < suffix_length) {
       let source = load_aligned<uint2, 8>(queries, ((head * suffix_length) + first_query + chunk_row) * HEAD_DIM + 4 * column);
-      let scaled = attention_gemm_unpack<T>(source) * query_scale;
+      let scaled = unpack4<T>(source) * query_scale;
       words.x = T.fromFloat(scaled.x).storageBits() | (T.fromFloat(scaled.y).storageBits() << 16);
       words.y = T.fromFloat(scaled.z).storageBits() | (T.fromFloat(scaled.w).storageBits() << 16);
     }
@@ -173,11 +164,11 @@ func AttentionGemm<T: IModelFloat16>(
       scores[j] = 0.0;
     }
     for (uint word = 0; word < HEAD_DIM / 2; word += 2) {
-      let q = attention_gemm_unpack<T>(attention_gemm_shared(row * row_words + word, true));
+      let q = unpack4<T>(attention_gemm_shared(row * row_words + word, true));
       [unroll]
       for (uint j = 0; j < GEMM_MAX_BLOCK_KEYS / GEMM_ROW_LANES; j++) {
         if (j < block_keys / GEMM_ROW_LANES) {
-          let k = attention_gemm_unpack<T>(attention_gemm_shared((lane + GEMM_ROW_LANES * j) * row_words + word, false));
+          let k = unpack4<T>(attention_gemm_shared((lane + GEMM_ROW_LANES * j) * row_words + word, false));
           scores[j] += dot(q, k);
         }
       }
@@ -224,7 +215,7 @@ func AttentionGemm<T: IModelFloat16>(
       [unroll]
       for (uint m = 0; m < GEMM_MAX_HEAD_DIM / 16; m++) {
         if (m < HEAD_DIM / 16) {
-          let v = attention_gemm_unpack<T>(attention_gemm_shared(key * row_words + 2 * (lane + GEMM_ROW_LANES * m), false));
+          let v = unpack4<T>(attention_gemm_shared(key * row_words + 2 * (lane + GEMM_ROW_LANES * m), false));
           output[4 * m] += weight * v.x;
           output[4 * m + 1] += weight * v.y;
           output[4 * m + 2] += weight * v.z;

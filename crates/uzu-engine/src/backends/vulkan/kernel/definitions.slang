@@ -19,6 +19,14 @@ public float4 load_float4<T : IStorageFloat, Access access>(Ptr<T, access> point
   );
 }
 
+// The four 16-bit values packed in `words`, low halves first, widened.
+public float4 unpack4<T : IStorageFloat>(uint2 words) {
+  return float4(
+    T.fromStorageBits(words.x).toFloat(), T.fromStorageBits(words.x >> 16).toFloat(),
+    T.fromStorageBits(words.y).toFloat(), T.fromStorageBits(words.y >> 16).toFloat()
+  );
+}
+
 public void store_aligned<let ALIGNMENT : int, U, T>(Ptr<T, Access.ReadWrite> pointer, uint element, U value) {
   storeAligned<ALIGNMENT>(Ptr<U>(pointer + element), value);
 }

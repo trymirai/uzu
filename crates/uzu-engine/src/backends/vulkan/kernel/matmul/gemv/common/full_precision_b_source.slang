@@ -9,9 +9,7 @@ float4 gemv_load4<T : IModelFloat>(Ptr<T, Access.Read> source, uint offset, bool
     if (__naturalStrideOf<T>() == 4) {
       return load_aligned<float4, 16>(source, offset);
     }
-    let packed = load_aligned<uint2, 8>(source, offset);
-    return float4(T.fromStorageBits(packed.x).toFloat(), T.fromStorageBits(packed.x >> 16).toFloat(),
-                  T.fromStorageBits(packed.y).toFloat(), T.fromStorageBits(packed.y >> 16).toFloat());
+    return unpack4<T>(load_aligned<uint2, 8>(source, offset));
   }
   return load_float4(source, offset);
 }
