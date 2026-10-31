@@ -6,7 +6,6 @@ import definitions;
 
 static const uint SHORT_CONV_PREFILL_THREADS = 64;
 static const uint SHORT_CONV_PREFILL_ROWS = 4;
-static const uint SHORT_CONV_RECURRENT_THREADS = 64;
 
 // One token of one channel for Decode and Trie: convolves the tap_count samples at `source` and the current gated input,
 // then stores the shifted samples and T(x) at `destination`, which may be the same samples. Returns the gated output.
@@ -114,15 +113,10 @@ T short_conv_step<T: IStorageFloat, WeightT: IFloat32, let SourceAccess : Access
   uint in_proj_stride,
   uint state_stride,
   uint model_dim,
-  [[Groups("if suffix_len == 0 { 0 } else { model_dim.div_ceil(64) }")]] uint channel_group,
-  [[Threads("64")]] uint thread_idx,
+  [[Axis("model_dim", "64")]] uint channel_idx,
   [[Specialize]] bool has_bias,
   [[Specialize]] bool state_in_place,
 ) {
-  let channel_idx = channel_group * SHORT_CONV_RECURRENT_THREADS + thread_idx;
-  if (channel_idx >= model_dim) {
-    return;
-  }
   float bias = 0.0;
   if (has_bias) {
     bias = b[channel_idx].toFloat();
@@ -159,14 +153,9 @@ T short_conv_step<T: IStorageFloat, WeightT: IFloat32, let SourceAccess : Access
   uint in_proj_stride,
   uint state_stride,
   uint model_dim,
-  [[Groups("if suffix_len == 0 { 0 } else { model_dim.div_ceil(64) }")]] uint channel_group,
-  [[Threads("64")]] uint thread_idx,
+  [[Axis("model_dim", "64")]] uint channel_idx,
   [[Specialize]] bool has_bias,
 ) {
-  let channel_idx = channel_group * SHORT_CONV_RECURRENT_THREADS + thread_idx;
-  if (channel_idx >= model_dim) {
-    return;
-  }
   float bias = 0.0;
   if (has_bias) {
     bias = b[channel_idx].toFloat();

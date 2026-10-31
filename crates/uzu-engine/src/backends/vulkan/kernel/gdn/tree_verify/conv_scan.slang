@@ -6,8 +6,6 @@ import generated.activation_type;
 // ascending, each sample found by walking parents and then base_state, and stores T(silu(acc)); the first K - 1 samples
 // are recorded raw in suffix_state. Channels from conv_dim on copy their T bits. out_proj must not alias in_proj.
 
-static const uint CONV_TREE_SCAN_THREADS = 64;
-
 [[Kernel]] [[Public]]
 [[Precondition("new", "kernel_size >= 1")]]
 func ConvTreeScan<T: IModelFloat>(
@@ -21,17 +19,11 @@ func ConvTreeScan<T: IModelFloat>(
   uint suffix_len,
   uint total_proj_dim,
   uint conv_dim,
-  [[Groups("total_proj_dim.div_ceil(64)")]] uint channel_group,
-  [[Groups("suffix_len")]] uint row_group,
-  [[Threads("64")]] uint thread_idx,
+  [[Axis("total_proj_dim", "64")]] uint channel,
+  [[Axis("suffix_len", "1")]] uint row,
   [[Specialize]] uint kernel_size,
   [[Specialize]] bool has_bias,
 ) {
-  let channel = channel_group * CONV_TREE_SCAN_THREADS + thread_idx;
-  if (channel >= total_proj_dim) {
-    return;
-  }
-  let row = row_group;
   let proj = row * total_proj_dim + channel;
   if (channel >= conv_dim) {
     out_proj[proj] = in_proj[proj];
