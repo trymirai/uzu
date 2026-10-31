@@ -46,6 +46,7 @@ impl Registry {
         api_key: Option<String>,
         huggingface_api_key: Option<BearerToken>,
         device: Device,
+        #[builder(default)] share_device_metadata: bool,
         backends: Vec<Backend>,
         #[builder(default)] include_traces: bool,
         cache_path: PathBuf,
@@ -62,7 +63,7 @@ impl Registry {
         let snapshot = Self::load_registry(&cache_path).await.ok().map(|models| (models, false));
 
         Ok(Self {
-            device: (&device).into(),
+            device: CatalogDevice::new(&device, share_device_metadata),
             backends,
             include_traces,
             cache_path,

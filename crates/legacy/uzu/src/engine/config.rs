@@ -27,6 +27,9 @@ pub struct EngineConfig {
     pub xai_api_key: Option<String>,
     pub baseten_api_key: Option<String>,
     pub openrouter_api_key: Option<String>,
+    /// Whether Mirai catalog requests may include the OS, CPU, and total memory.
+    #[serde(default)]
+    pub share_device_metadata: bool,
     pub allow_ollama_usage: bool,
     pub allow_lmstudio_usage: bool,
     #[serde(default)]
@@ -45,6 +48,7 @@ impl Default for EngineConfig {
             xai_api_key: env::var(KEY_XAI_API_KEY).ok(),
             baseten_api_key: env::var(KEY_BASETEN_API_KEY).ok(),
             openrouter_api_key: env::var(KEY_OPENROUTER_API_KEY).ok(),
+            share_device_metadata: false,
             allow_ollama_usage: false,
             allow_lmstudio_usage: false,
             download_manager_type: DownloadManagerType::default(),
@@ -157,6 +161,18 @@ impl EngineConfig {
     ) -> Self {
         Self {
             openrouter_api_key: Some(openrouter_api_key),
+            ..self.clone()
+        }
+    }
+
+    /// Opt in to sharing the OS, CPU, and total memory with the Mirai catalog.
+    #[bindings::export(Method)]
+    pub fn with_share_device_metadata(
+        &self,
+        share_device_metadata: bool,
+    ) -> Self {
+        Self {
+            share_device_metadata,
             ..self.clone()
         }
     }

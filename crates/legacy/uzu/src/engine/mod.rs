@@ -120,6 +120,7 @@ impl Engine {
                     .maybe_api_key(config.mirai_api_key)
                     .maybe_huggingface_api_key(huggingface_api_key)
                     .device(device.clone())
+                    .share_device_metadata(config.share_device_metadata)
                     .backends(vec![MiraiBackend {
                         identifier: uzu_backend_identifier.clone(),
                         version: uzu_backend_version.clone(),

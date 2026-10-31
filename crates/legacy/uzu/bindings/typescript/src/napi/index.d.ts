@@ -1100,12 +1100,15 @@ export declare class EngineConfig {
   xaiApiKey?: string
   basetenApiKey?: string
   openrouterApiKey?: string
+  /** Whether Mirai catalog requests may include the OS, CPU, and total memory. */
+  shareDeviceMetadata: boolean
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
   downloadManagerType: DownloadManagerType
-  constructor(miraiApiKey?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
+  constructor(miraiApiKey?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, shareDeviceMetadata: boolean, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
 
   static create(): EngineConfig
+  /** Opt in to sharing the OS, CPU, and total memory with the Mirai catalog. */
   withMiraiApiKey(miraiApiKey: string): EngineConfig
   withLocalPath(localPath: string): EngineConfig
   withHuggingfaceApiKey(huggingfaceApiKey: string): EngineConfig
@@ -1115,6 +1118,7 @@ export declare class EngineConfig {
   withXaiApiKey(xaiApiKey: string): EngineConfig
   withBasetenApiKey(basetenApiKey: string): EngineConfig
   withOpenrouterApiKey(openrouterApiKey: string): EngineConfig
+  withShareDeviceMetadata(shareDeviceMetadata: boolean): EngineConfig
   withAllowOllamaUsage(allowOllamaUsage: boolean): EngineConfig
   withAllowLmstudioUsage(allowLmstudioUsage: boolean): EngineConfig
   withDownloadManagerType(downloadManagerType: DownloadManagerType): EngineConfig

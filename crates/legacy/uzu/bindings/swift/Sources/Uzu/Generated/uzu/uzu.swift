@@ -1992,13 +1992,20 @@ public struct EngineConfig: Equatable, Hashable, Codable {
     public var xaiApiKey: String?
     public var basetenApiKey: String?
     public var openrouterApiKey: String?
+    /**
+     * Whether Mirai catalog requests may include the OS, CPU, and total memory.
+     */
+    public var shareDeviceMetadata: Bool
     public var allowOllamaUsage: Bool
     public var allowLmstudioUsage: Bool
     public var downloadManagerType: DownloadManagerType
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(miraiApiKey: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
+    public init(miraiApiKey: String?, localPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, 
+        /**
+         * Whether Mirai catalog requests may include the OS, CPU, and total memory.
+         */shareDeviceMetadata: Bool, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
         self.miraiApiKey = miraiApiKey
         self.localPath = localPath
         self.huggingfaceApiKey = huggingfaceApiKey
@@ -2008,6 +2015,7 @@ public struct EngineConfig: Equatable, Hashable, Codable {
         self.xaiApiKey = xaiApiKey
         self.basetenApiKey = basetenApiKey
         self.openrouterApiKey = openrouterApiKey
+        self.shareDeviceMetadata = shareDeviceMetadata
         self.allowOllamaUsage = allowOllamaUsage
         self.allowLmstudioUsage = allowLmstudioUsage
         self.downloadManagerType = downloadManagerType
@@ -2086,6 +2094,9 @@ public func withLocalPath(localPath: String) -> EngineConfig  {
 })
 }
     
+    /**
+     * Opt in to sharing the OS, CPU, and total memory with the Mirai catalog.
+     */
 public func withMiraiApiKey(miraiApiKey: String) -> EngineConfig  {
     return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
     uniffi_uzu_fn_method_engineconfig_with_mirai_api_key(
@@ -2109,6 +2120,15 @@ public func withOpenrouterApiKey(openrouterApiKey: String) -> EngineConfig  {
     uniffi_uzu_fn_method_engineconfig_with_openrouter_api_key(
             FfiConverterTypeEngineConfig_lower(self),
         FfiConverterString.lower(openrouterApiKey),$0
+    )
+})
+}
+    
+public func withShareDeviceMetadata(shareDeviceMetadata: Bool) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_share_device_metadata(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterBool.lower(shareDeviceMetadata),$0
     )
 })
 }
@@ -2146,6 +2166,7 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
                 xaiApiKey: FfiConverterOptionString.read(from: &buf), 
                 basetenApiKey: FfiConverterOptionString.read(from: &buf), 
                 openrouterApiKey: FfiConverterOptionString.read(from: &buf), 
+                shareDeviceMetadata: FfiConverterBool.read(from: &buf), 
                 allowOllamaUsage: FfiConverterBool.read(from: &buf), 
                 allowLmstudioUsage: FfiConverterBool.read(from: &buf), 
                 downloadManagerType: FfiConverterTypeDownloadManagerType.read(from: &buf)
@@ -2162,6 +2183,7 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.xaiApiKey, into: &buf)
         FfiConverterOptionString.write(value.basetenApiKey, into: &buf)
         FfiConverterOptionString.write(value.openrouterApiKey, into: &buf)
+        FfiConverterBool.write(value.shareDeviceMetadata, into: &buf)
         FfiConverterBool.write(value.allowOllamaUsage, into: &buf)
         FfiConverterBool.write(value.allowLmstudioUsage, into: &buf)
         FfiConverterTypeDownloadManagerType.write(value.downloadManagerType, into: &buf)
