@@ -481,11 +481,11 @@ fn create_pipeline_cache(
     device: &ash::Device,
     path: Option<&Path>,
 ) -> Result<(vk::PipelineCache, u64), VkContextError> {
-    let data = match path.map(std::fs::read) {
-        Some(Err(error)) if error.kind() != std::io::ErrorKind::NotFound => {
-            return Err(VkContextError::PipelineCacheRead(error));
+    let data = match path.map(|path| (path, std::fs::read(path))) {
+        Some((path, Err(error))) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(VkContextError::PipelineCacheRead(path.to_owned(), error));
         },
-        Some(Ok(data)) => data,
+        Some((_, Ok(data))) => data,
         _ => Vec::new(),
     };
     let info = vk::PipelineCacheCreateInfo::default().initial_data(&data);

@@ -20,8 +20,8 @@ pub enum VkContextError {
     #[error("cannot create the pipeline cache: {0}")]
     PipelineCacheCreate(#[source] vk::Result),
 
-    #[error("cannot read the pipeline cache: {0}")]
-    PipelineCacheRead(#[source] std::io::Error),
+    #[error("cannot read the pipeline cache {0}: {1}")]
+    PipelineCacheRead(std::path::PathBuf, #[source] std::io::Error),
 
     #[error(transparent)]
     Device(#[from] crate::backends::vulkan::VkDeviceError),
