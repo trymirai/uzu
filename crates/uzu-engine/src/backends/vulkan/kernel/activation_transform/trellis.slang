@@ -10,6 +10,9 @@ import generated.trellis;
 
 static const uint TRELLIS_THREADS = 128;
 static const uint TRELLIS_CAPACITY = 2048;
+// Metal's MAX_DIMENSION, repeated by the TrellisTransform precondition; the retained words are sized for it.
+static const uint TRELLIS_MAX_DIMENSION = 20480;
+static const uint TRELLIS_MAX_WORDS = TRELLIS_MAX_DIMENSION / (2 * TRELLIS_THREADS);
 
 groupshared float trellis_hadamard[TRELLIS_CAPACITY];
 
@@ -68,31 +71,32 @@ void trellis_hadamard_transform<let H : uint, let VALUES : uint>(inout float val
   }
 }
 
-// One row of D = H M columns: VALUES elements per invocation and CALLS = 2 WORDS / VALUES transforms, retaining
-// WORDS words of BF16 pairs.
-void trellis_row<let D : uint, let H : uint, let M : uint, let VALUES : uint, let WORDS : uint>(
+// One row of D = H M columns: VALUES elements per invocation and ceil(M / COLUMNS) transforms, retaining their values
+// as BF16 pairs.
+void trellis_row<let H : uint, let VALUES : uint>(
   Ptr<bf16, Access.Read> input,
   Ptr<float, Access.Read> rht_factors,
   Ptr<float, Access.Read> mixing,
   Ptr<int8_t, Access.ReadWrite> activations,
   Ptr<float, Access.ReadWrite> column_group_sums,
   Ptr<float, Access.ReadWrite> scales,
+  uint dimension,
   uint token,
   uint tid,
 ) {
-  static_assert(H * M == D && H == (D & (0u - D)) && M % 2 == 1, "H is the power-of-two factor of D, M odd");
+  static const uint COLUMNS = TRELLIS_THREADS * VALUES / H;
   static_assert(VALUES % 2 == 0 && TRELLIS_THREADS * VALUES % H == 0, "whole BF16 pairs and whole blocks");
-  static_assert(2 * WORDS == (M + TRELLIS_THREADS * VALUES / H - 1) / (TRELLIS_THREADS * VALUES / H) * VALUES,
-                "WORDS retain every call's values");
-  let row = token * D;
+  static_assert((TRELLIS_MAX_DIMENSION / H + COLUMNS - 1) / COLUMNS * VALUES <= 2 * TRELLIS_MAX_WORDS,
+                "the retained words hold every call's values");
+  let M = dimension / H;
+  let row = token * dimension;
   let invocations = H / VALUES;
-  let columns = TRELLIS_THREADS / invocations;
   let u = tid % invocations;
-  let calls = 2 * WORDS / VALUES;
-  uint retained[WORDS] = {};
+  let calls = (M + COLUMNS - 1) / COLUMNS;
+  uint retained[TRELLIS_MAX_WORDS];
   uint largest = 0;
   for (uint call = 0; call < calls; call++) {
-    let o = call * columns + tid / invocations;
+    let o = call * COLUMNS + tid / invocations;
     float values[VALUES];
     for (uint k = 0; k < VALUES; k++) {
       let h = u * VALUES + k;
@@ -106,7 +110,12 @@ void trellis_row<let D : uint, let H : uint, let M : uint, let VALUES : uint, le
     trellis_hadamard_transform<H, VALUES>(values, tid);
     for (uint k = 0; k < VALUES; k++) {
       let bits = bf16.fromFloat(values[k]).storageBits();
-      retained[(call * VALUES + k) / 2] |= bits << (k % 2 * 16);
+      let word = (call * VALUES + k) / 2;
+      if (k % 2 == 0) {
+        retained[word] = bits;
+      } else {
+        retained[word] |= bits << 16;
+      }
       let magnitude = bits & 0x7fffu;
       largest = max(largest, magnitude > 0x7f80u ? 0u : magnitude);
     }
@@ -115,7 +124,7 @@ void trellis_row<let D : uint, let H : uint, let M : uint, let VALUES : uint, le
   let row_scale = activation_quantization_scale(workgroup_reduce<Max<uint>, TRELLIS_THREADS>(largest << 16));
   int partial[COLUMN_GROUP_COUNT] = {};
   for (uint call = 0; call < calls; call++) {
-    let o = call * columns + tid / invocations;
+    let o = call * COLUMNS + tid / invocations;
     for (uint k = 0; o < M && k < VALUES; k++) {
       let column = (u * VALUES + k) * M + o;
       let bits = retained[(call * VALUES + k) / 2] >> (k % 2 * 16) << 16;
@@ -136,7 +145,7 @@ void trellis_row<let D : uint, let H : uint, let M : uint, let VALUES : uint, le
 }
 
 [[Kernel]] [[Public]]
-[[Precondition("new", "dimension == 2048 || dimension == 2560 || dimension == 3072 || dimension == 3584 || dimension == 4096 || dimension == 5120 || dimension == 6144 || dimension == 6656 || dimension == 7168 || dimension == 9216 || dimension == 10240 || dimension == 12288 || dimension == 14336 || dimension == 17408 || dimension == 18944 || dimension == 19968")]]
+[[Precondition("new", "dimension <= 20480 && (9..=12).contains(&dimension.trailing_zeros())")]]
 func TrellisTransform(
   Ptr<bf16, Access.Read> input,
   Ptr<float, Access.Read> rht_factors,
@@ -149,70 +158,22 @@ func TrellisTransform(
   [[Threads("128")]] uint tid,
   [[Specialize]] uint dimension,
 ) {
-  switch (dimension) {
+  switch (dimension & (0u - dimension)) {
+  case 512:
+    trellis_row<512, 16>(input, rht_factors, mixing, activations, column_group_sums, scales, dimension, token_group,
+                         subgroup_invocation());
+    break;
+  case 1024:
+    trellis_row<1024, 16>(input, rht_factors, mixing, activations, column_group_sums, scales, dimension, token_group,
+                          subgroup_invocation());
+    break;
   case 2048:
-    trellis_row<2048, 2048, 1, 16, 8>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                      token_group, subgroup_invocation());
-    break;
-  case 2560:
-    trellis_row<2560, 512, 5, 16, 16>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                      token_group, subgroup_invocation());
-    break;
-  case 3072:
-    trellis_row<3072, 1024, 3, 16, 16>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 3584:
-    trellis_row<3584, 512, 7, 16, 16>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                      token_group, subgroup_invocation());
+    trellis_row<2048, 16>(input, rht_factors, mixing, activations, column_group_sums, scales, dimension, token_group,
+                          subgroup_invocation());
     break;
   case 4096:
-    trellis_row<4096, 4096, 1, 32, 16>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 5120:
-    trellis_row<5120, 1024, 5, 16, 24>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 6144:
-    trellis_row<6144, 2048, 3, 16, 24>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 6656:
-    trellis_row<6656, 512, 13, 16, 32>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 7168:
-    trellis_row<7168, 1024, 7, 16, 32>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 9216:
-    trellis_row<9216, 1024, 9, 16, 40>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                       token_group, subgroup_invocation());
-    break;
-  case 10240:
-    trellis_row<10240, 2048, 5, 16, 40>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                        token_group, subgroup_invocation());
-    break;
-  case 12288:
-    trellis_row<12288, 4096, 3, 32, 48>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                        token_group, subgroup_invocation());
-    break;
-  case 14336:
-    trellis_row<14336, 2048, 7, 16, 56>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                        token_group, subgroup_invocation());
-    break;
-  case 17408:
-    trellis_row<17408, 1024, 17, 16, 72>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                         token_group, subgroup_invocation());
-    break;
-  case 18944:
-    trellis_row<18944, 512, 37, 16, 80>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                        token_group, subgroup_invocation());
-    break;
-  case 19968:
-    trellis_row<19968, 512, 39, 16, 80>(input, rht_factors, mixing, activations, column_group_sums, scales,
-                                        token_group, subgroup_invocation());
+    trellis_row<4096, 32>(input, rht_factors, mixing, activations, column_group_sums, scales, dimension, token_group,
+                          subgroup_invocation());
     break;
   }
 }
