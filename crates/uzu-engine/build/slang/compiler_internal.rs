@@ -50,13 +50,14 @@ pub trait SlangTarget: Send + Sync + Clone + 'static {
         kernels: &[SlangKernel],
     ) -> anyhow::Result<String>;
 
-    /// Writes the target code and bindings of `kernels` from `linked`, their wrapper at `output_base`.slang linked
-    /// with its entry points in the first session.
+    /// Writes the target code and bindings of `kernels`, described in order by `descriptors`, from `linked`, their
+    /// wrapper at `output_base`.slang linked with its entry points in the first session.
     fn emit(
         compiler: &BlockingSlangCompiler<Self>,
         gpu_types: &SlangGpuTypes,
         module: &Module,
         kernels: &[SlangKernel],
+        descriptors: &[Kernel],
         linked: &ComponentType,
         output_base: &Path,
     ) -> anyhow::Result<()>;
@@ -271,6 +272,14 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .filter_map(|decl| SlangKernel::from_reflection(decl, &common_gpu_type_map).transpose())
             .collect::<anyhow::Result<Vec<SlangKernel>>>()
             .context("cannot collect kernels")?;
+        let descriptors = kernels
+            .iter()
+            .map(|slang_kernel| {
+                slang_kernel
+                    .to_common(&common_gpu_type_map)
+                    .with_context(|| format!("cannot convert {} to common kernel", slang_kernel.name))
+            })
+            .collect::<anyhow::Result<Vec<Kernel>>>()?;
 
         if !kernels.is_empty() {
             let wrapper_contents =
@@ -280,19 +289,15 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
 
             let linked_component = self.link(0, &wrapper_file)?;
 
-            T::emit(self, gpu_types, &source_module, &kernels, &linked_component, &output_base_path)
+            T::emit(self, gpu_types, &source_module, &kernels, &descriptors, &linked_component, &output_base_path)
                 .context("cannot emit kernels")?;
         }
 
         let public_kernels = kernels
             .iter()
-            .filter(|slang_kernel| slang_kernel.public)
-            .map(|slang_kernel| {
-                slang_kernel
-                    .to_common(&common_gpu_type_map)
-                    .with_context(|| format!("cannot convert {} to common kernel", slang_kernel.name))
-            })
-            .collect::<anyhow::Result<Box<[Kernel]>>>()?;
+            .zip(descriptors)
+            .filter_map(|(slang_kernel, descriptor)| slang_kernel.public.then_some(descriptor))
+            .collect::<Box<[Kernel]>>();
         let private_kernels = kernels
             .iter()
             .filter(|slang_kernel| !slang_kernel.public)

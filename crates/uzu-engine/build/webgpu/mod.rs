@@ -81,6 +81,7 @@ impl SlangTarget for WebGPU {
         gpu_types: &SlangGpuTypes,
         module: &Module,
         kernels: &[SlangKernel],
+        _descriptors: &[Kernel],
         linked: &ComponentType,
         output_base: &Path,
     ) -> anyhow::Result<()> {

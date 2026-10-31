@@ -129,6 +129,7 @@ impl SlangTarget for VulkanTarget {
         gpu_types: &SlangGpuTypes,
         _module: &Module,
         kernels: &[SlangKernel],
+        descriptors: &[Kernel],
         linked: &ComponentType,
         output_base: &Path,
     ) -> anyhow::Result<()> {
@@ -148,8 +149,7 @@ impl SlangTarget for VulkanTarget {
         }
         // An entry point that stores BF16 also builds with the native type.
         let native = compiler.link(1, &output_base.with_extension("slang"))?;
-        let short_names = gpu_types.map.keys().map(|name| (name.clone(), name.clone())).collect();
-        for kernel in kernels {
+        for (kernel, descriptor) in kernels.iter().zip(descriptors) {
             let required = kernel
                 .preconditions
                 .iter()
@@ -200,9 +200,8 @@ impl SlangTarget for VulkanTarget {
                     })
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let descriptor = kernel.to_common(&short_names)?;
             write_tokens(
-                bindgen::bindgen(kernel, &descriptor, &variants, &gpu_types.paths, &gpu_types.definitions)?,
+                bindgen::bindgen(kernel, descriptor, &variants, &gpu_types.paths, &gpu_types.definitions)?,
                 bindgen::binding_file(output_base, &kernel.name),
             )
             .with_context(|| format!("cannot write {} binding", kernel.name))?;
