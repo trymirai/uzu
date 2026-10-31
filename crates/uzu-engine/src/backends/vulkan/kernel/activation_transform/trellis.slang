@@ -110,9 +110,9 @@ void trellis_row<let H : uint, let VALUES : uint>(
     trellis_hadamard_transform<H, VALUES>(values, tid);
     for (uint k = 0; k < VALUES; k += 2) {
       uint word = 0;
-      for (uint half = 0; half < 2; half++) {
-        let bits = bf16.fromFloat(values[k + half]).storageBits();
-        word |= bits << (16 * half);
+      for (uint part = 0; part < 2; part++) {
+        let bits = bf16.fromFloat(values[k + part]).storageBits();
+        word |= bits << (16 * part);
         let magnitude = bits & 0x7fffu;
         largest = max(largest, magnitude > 0x7f80u ? 0u : magnitude);
       }
