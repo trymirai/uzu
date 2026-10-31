@@ -10,7 +10,7 @@ mod slang_entry_point_abi;
 mod slang_entry_point_variant;
 mod slang_field_abi;
 mod slang_kernel_info;
-mod slang_struct_abi;
+mod slang_pointee_abi;
 mod slang_struct_field_abi;
 mod wrapper;
 
@@ -24,5 +24,5 @@ pub use slang_entry_point_abi::SlangEntryPointAbi;
 pub use slang_entry_point_variant::SlangEntryPointVariant;
 pub use slang_field_abi::SlangFieldAbi;
 pub use slang_kernel_info::SlangKernelInfo;
-pub use slang_struct_abi::SlangStructAbi;
+pub use slang_pointee_abi::SlangPointeeAbi;
 pub use slang_struct_field_abi::SlangStructFieldAbi;

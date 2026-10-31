@@ -7,7 +7,7 @@ use shader_slang::{
     reflection::{EntryPoint, Shader},
 };
 
-use super::{SlangFieldAbi, SlangStructAbi, SlangStructFieldAbi};
+use super::{SlangFieldAbi, SlangPointeeAbi, SlangStructFieldAbi};
 
 /// Push-constant block and specialization constants of one entry point of the linked wrapper program.
 #[derive(Debug)]
@@ -94,7 +94,7 @@ impl SlangEntryPointAbi {
                         })
                         .collect::<anyhow::Result<_>>()?;
                     let name = pointee.name().context("pointee has no name")?.to_owned();
-                    Some(SlangStructAbi {
+                    Some(SlangPointeeAbi {
                         name,
                         stride,
                         alignment,
