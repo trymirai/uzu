@@ -4,11 +4,13 @@ import { useAppNavigationEvents } from "@/hooks/use-app-navigation-events";
 import { useSaveFailureToast } from "@/hooks/use-save-failure-toast";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { useGlobalDownloadToasts } from "@/hooks/use-global-download-toasts";
+import { platformInfo } from "@/platform/platform-info";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { useEffect } from "react";
 import LeftBar from "@/components/left-bar";
 import { ToastProvider } from "@/components/ui/toast/toast-provider";
+import { WindowControls } from "@/components/window-controls";
 import { useAppInitialization } from "@/hooks/use-app-initialization";
 
 export const Route = createRootRoute({
@@ -31,7 +33,11 @@ function RootComponent() {
 
   return (
     <div className="h-dvh overflow-clip bg-background text-label-title flex">
-      <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
+      <div
+        data-tauri-drag-region={platformInfo.features.windowControls || undefined}
+        className="drag-layer fixed top-0 left-0 right-0 h-10 select-none"
+      />
+      {platformInfo.features.windowControls && <WindowControls />}
       <LeftBar />
       <div className="relative flex-1 min-w-0 flex flex-col overflow-clip">
         <main className="flex-1 min-h-0 overflow-clip">

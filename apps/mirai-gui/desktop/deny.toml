@@ -1,10 +1,18 @@
 [graph]
-targets = ["aarch64-apple-darwin"]
+targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 ignore = [
     "RUSTSEC-2024-0436", # paste via hanashi/tokenizers
     "RUSTSEC-2026-0249", # smartstring via uzu-engine/rhai
+    "RUSTSEC-2024-0370", # proc-macro-error via gtk3-rs glib-macros 0.18 (Linux)
+    "RUSTSEC-2026-0370", # zvariant via tauri-plugin-notification/notify-rust/zbus (Linux)
+    "RUSTSEC-2026-0371", # zbus_names, same path
+    "RUSTSEC-2026-0372", # zvariant_derive, same path
+    "RUSTSEC-2026-0367", # zip 4 via tauri-plugin-updater (Windows), where the app does not update
+    "RUSTSEC-2026-0368", # zip, same path
+    "RUSTSEC-2026-0369", # zip, same path
+    "RUSTSEC-2026-0429", # zip, same path
 ]
 
 [licenses]
@@ -14,6 +22,7 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "MPL-2.0",
     "ISC",
     "Zlib",
@@ -25,3 +34,6 @@ allow = [
 
 [bans]
 multiple-versions = "allow"
+
+[sources]
+allow-git = ["https://github.com/trymirai/slang-rs"]

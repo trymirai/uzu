@@ -1,5 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use uzu::{
+    engine::Engine,
+    storage::{DownloadPhase, DownloadState},
+    types::model::Model,
+};
+
 use super::chats_dir;
 use crate::error::AppResult;
 
@@ -69,36 +75,37 @@ fn dir_size(
     out
 }
 
-// The UI passes resident-session repoIds as the skip list, while
-// download_states is keyed by engine identifier; match against both.
-async fn is_skipped(
-    identifier: &str,
+// The UI passes resident-session repoIds as the skip list; match engine identifiers too.
+fn is_skipped(
+    model: &Model,
     skip: &[String],
 ) -> bool {
-    if skip.is_empty() {
-        return false;
-    }
-    if skip.iter().any(|s| s == identifier) {
-        return true;
-    }
-    match crate::models::find_model_by_identifier(identifier).await {
-        Some(model) => model.repo_ids().iter().any(|repo_id| skip.iter().any(|s| s == repo_id)),
-        None => false,
-    }
+    skip.iter().any(|s| *s == model.identifier || model.repo_ids().iter().any(|repo_id| repo_id == s))
+}
+
+// Only the models the app lists: the model cache is shared with the CLI and other uzu-based apps.
+async fn listed_downloads() -> Option<(Engine, Vec<(Model, DownloadState)>)> {
+    let engine = crate::engine::engine().await.ok()?;
+    let (models, _) = engine.catalog_snapshot().await.ok()?;
+    let mut states = engine.download_states().await;
+    let downloads = models
+        .into_iter()
+        .filter(crate::models::is_listed)
+        .filter_map(|model| states.remove(&model.identifier).map(|state| (model, state)))
+        .collect();
+    Some((engine, downloads))
 }
 
 async fn downloaded_models(skip: &[String]) -> ModelsCategory {
     let mut models = ModelsCategory::default();
-    let Ok(engine) = crate::engine::engine().await else {
+    let Some((_, downloads)) = listed_downloads().await else {
         return models;
     };
-    let states = engine.download_states().await;
-    for (identifier, state) in states.iter() {
-        if !matches!(state.phase, uzu::storage::DownloadPhase::Downloaded {}) || is_skipped(identifier, skip).await {
-            continue;
+    for (model, state) in downloads {
+        if matches!(state.phase, DownloadPhase::Downloaded {}) && !is_skipped(&model, skip) {
+            models.count += 1;
+            models.size_bytes += state.total_bytes.max(0) as u64;
         }
-        models.count += 1;
-        models.size_bytes += state.total_bytes.max(0) as u64;
     }
     models
 }
@@ -162,30 +169,26 @@ pub async fn cleanup_execute(
 
     if categories.contains(&Category::Models) {
         let mut all_deleted = false;
-        if let Ok(engine) = crate::engine::engine().await {
+        if let Some((engine, downloads)) = listed_downloads().await {
             all_deleted = true;
-            let states = engine.download_states().await;
-            for (identifier, state) in states.iter() {
+            for (model, state) in downloads {
                 let is_active = matches!(
                     state.phase,
-                    uzu::storage::DownloadPhase::Initializing {}
-                        | uzu::storage::DownloadPhase::Downloading {}
-                        | uzu::storage::DownloadPhase::Paused {}
-                        | uzu::storage::DownloadPhase::Locked { .. }
+                    DownloadPhase::Initializing {}
+                        | DownloadPhase::Downloading {}
+                        | DownloadPhase::Paused {}
+                        | DownloadPhase::Locked { .. }
                 );
-                let is_removable = matches!(
-                    state.phase,
-                    uzu::storage::DownloadPhase::Downloaded {} | uzu::storage::DownloadPhase::Error { .. }
-                );
-                if is_active || is_skipped(identifier, &skip).await {
-                    models_skipped.push(identifier.clone());
-                } else if is_removable && let Some(model) = crate::models::find_model_by_identifier(identifier).await {
+                let is_removable = matches!(state.phase, DownloadPhase::Downloaded {} | DownloadPhase::Error { .. });
+                if is_active || is_skipped(&model, &skip) {
+                    models_skipped.push(model.identifier.clone());
+                } else if is_removable {
                     match engine.downloader(&model).delete().await {
                         Ok(()) => crate::downloads::forget_download_intent(&model),
                         Err(error) => {
                             crate::logger::error(
                                 "cleanup:model-delete",
-                                Some(serde_json::json!({ "identifier": identifier, "error": error.to_string() })),
+                                Some(serde_json::json!({ "identifier": model.identifier, "error": error.to_string() })),
                             );
                             all_deleted = false;
                         },

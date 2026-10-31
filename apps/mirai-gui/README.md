@@ -5,25 +5,52 @@ Tauri v2, React, Rust.
 
 ## Requirements
 
-- macOS 26.4 or newer, Apple silicon
-- Xcode 26 with the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`)
 - rustup; the first `cargo` run installs the nightly toolchain pinned by
   `rust-toolchain.toml` at the repository root
-- Node.js 26 or newer and pnpm (`corepack enable` picks the version from `package.json`)
+- Node.js 22.19 or newer and pnpm, both on `PATH`: `tauri dev` and `tauri build` start the client with
+  `pnpm run`, and pnpm runs the dependencies' install scripts with `node`. On Node.js 24 and older,
+  `corepack enable` provides the pnpm version `package.json` names; Node.js 25 and newer no longer ship
+  corepack, so install pnpm with its [installer](https://pnpm.io/installation). bun can stand in for
+  Node.js: with a `node` link to `bun` on `PATH`, and pnpm run as `bun x pnpm@12.9.0`, installing,
+  building and the type, lint and format checks work; the client tests need Node.js, as vitest does
+  not run fully under bun
+- macOS 26.4 or newer on Apple silicon, with Xcode 26 and its Metal toolchain
+  (`xcodebuild -downloadComponent MetalToolchain`)
+- Windows or Linux with a Vulkan 1.4 GPU, plus:
+  - the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home), whose Slang compiles the shaders, and libclang;
+    the [CLI section](../../README.md#cli) lists the variables that locate them
+  - Tauri's [prerequisites](https://v2.tauri.app/start/prerequisites/) for the OS
+  - on Linux, the ALSA headers (`libasound2-dev` on Debian and Ubuntu). Bundling the AppImage downloads
+    linuxdeploy and its plugins from GitHub, so it needs the network. Tauri runs them extracted, with
+    or without `libfuse2`, and they leave `/tmp/appimage_extracted_*` directories behind
+
+On Linux the app needs `libvulkan1` and a Vulkan driver at runtime. Mesa's lavapipe, a software
+driver that runs models on the CPU, works too, slowly. Links open in the browser through `xdg-open`
+from `xdg-utils`. The .deb depends on both packages.
 
 ## Run
 
 ```bash
 pnpm install
-pnpm dev      # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
-pnpm build    # .app and .dmg in ../../target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
+pnpm dev      # desktop app; the first build also compiles the engine and its Metal or Slang shaders, later builds are incremental
+pnpm build    # bundles in ../../target/release/bundle/: ad-hoc signed .app and .dmg on macOS, NSIS installer on Windows, .deb and AppImage on Linux
 pnpm web:dev  # frontend in a browser without the engine: no models, no chats
+```
+
+A Windows release build that runs without the Visual C++ Redistributable links the C and C++ runtimes
+statically. Set the flag for the target alone and name the target, so build scripts keep the dynamic runtime:
+Windows Defender quarantines statically linked build scripts as a false positive.
+
+```powershell
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
+pnpm build --target x86_64-pc-windows-msvc  # NSIS installer in ../../target/x86_64-pc-windows-msvc/release/bundle/nsis/
+Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS
 ```
 
 `pnpm check` runs typecheck, ESLint, client tests, clippy and Rust tests;
 `pnpm format` runs Prettier.
 
-## Preview a fresh start
+## Preview a fresh start (macOS)
 
 Quit Mirai, the CLI, and other apps using the shared model cache. From the
 repository root, move the current state into a new backup directory:

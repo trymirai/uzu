@@ -11,7 +11,8 @@ mod transcript;
 use std::collections::HashMap;
 
 use payloads::{MsgIn, RunEvent, RunStreamPayload, SamplingDefaults, TitleGenPayload};
-use session::arm_idle_timer;
+use session::{arm_idle_timer, forget_memory_hints};
+pub use session::{memory_hint, refresh_memory_hints};
 use session_events::emit_session_state;
 use stream::run_stream_inner;
 use tauri::{AppHandle, Manager, ipc::Channel};
@@ -115,6 +116,12 @@ impl ChatState {
         }
     }
 
+    /// Cancels every run: a reloaded page no longer reads them.
+    pub fn cancel_all_runs(&self) {
+        let run_ids: Vec<String> = self.cancels.lock().expect("cancels mutex poisoned").keys().cloned().collect();
+        run_ids.iter().for_each(|run_id| self.request_cancel(run_id));
+    }
+
     fn cancel_requested(
         &self,
         run_id: &str,
@@ -191,6 +198,7 @@ impl ChatState {
         *guard = None;
         self.forget_history();
         if had_session {
+            forget_memory_hints(app);
             emit_session_state(app, false, repo_id, false);
         }
         had_session
@@ -267,6 +275,12 @@ pub fn cancel_run(
 #[tauri::command]
 pub fn cancel_title_gen(state: tauri::State<'_, ChatState>) {
     state.request_cancel(TITLE_GEN_RUN_ID);
+}
+
+/// The model of the loaded session, which outlives a page reload; waits out a load or eject in progress.
+#[tauri::command]
+pub async fn resident_session(state: tauri::State<'_, ChatState>) -> AppResult<Option<String>> {
+    Ok(state.session.lock().await.as_ref().map(|resident| resident.repo_id.clone()))
 }
 
 #[tauri::command]

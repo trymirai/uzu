@@ -11,6 +11,8 @@ type CleanupCategory = "dialogs" | "models" | "logs";
 type Step = "select" | "confirm" | "result";
 
 const ALL_CATEGORIES: CleanupCategory[] = ["dialogs", "models", "logs"];
+// Models take long to download again, and the CLI shares them; deleting them is opted into.
+const DEFAULT_CATEGORIES: CleanupCategory[] = ["dialogs", "logs"];
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
@@ -54,7 +56,7 @@ type Props = {
 
 export function ClearDataDialog({ open, onClose }: Props) {
   const [step, setStep] = useState<Step>("select");
-  const [selected, setSelected] = useState<Set<CleanupCategory>>(new Set(ALL_CATEGORIES));
+  const [selected, setSelected] = useState<Set<CleanupCategory>>(new Set(DEFAULT_CATEGORIES));
   const previewAppliedRef = useRef(false);
 
   const preview = useCleanupStore((s) => s.preview);
@@ -72,7 +74,7 @@ export function ClearDataDialog({ open, onClose }: Props) {
     }
     setStep("select");
     reset();
-    setSelected(new Set(ALL_CATEGORIES));
+    setSelected(new Set(DEFAULT_CATEGORIES));
     const residentRepoId = useRuntimeSessionStore.getState().residentSession?.repoId;
     const residentIdentifiers = residentRepoId ? [residentRepoId] : [];
     void fetchPreview(residentIdentifiers);

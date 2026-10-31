@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use crate::cli_installer::AuthError;
 
 #[derive(Debug, thiserror::Error)]
@@ -6,6 +7,7 @@ pub enum AppError {
     Engine(#[from] uzu::engine::EngineError),
     #[error(transparent)]
     ChatSession(#[from] uzu::session::chat::ChatSessionError),
+    #[cfg(target_os = "macos")]
     #[error(transparent)]
     Authorization(#[from] AuthError),
     #[error(transparent)]
