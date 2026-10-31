@@ -2,7 +2,7 @@
 #include "../../common/dsl.h"
 #include "../../generated/attention.h"
 #include "../../hadamard_transform/hadamard_transform.h"
-#include "../attention_gate.h"
+#include "../../common/sigmoid_gate.h"
 #include "../kv_layout.h"
 
 using namespace metal;
@@ -94,7 +94,7 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
     const uint channel = value_index * METAL_SIMD_SIZE + column;
     T result = static_cast<T>(rotated[value_index] * uzu::kv_layout::rotation_sign(channel));
     if (has_gate) {
-      result = attention_apply_gate(result, gate[query_position * gate_row_stride + q_head_idx * BD + channel]);
+      result = uzu::apply_sigmoid_gate(result, gate[query_position * gate_row_stride + q_head_idx * BD + channel]);
     }
     output_row[channel] = result;
   }

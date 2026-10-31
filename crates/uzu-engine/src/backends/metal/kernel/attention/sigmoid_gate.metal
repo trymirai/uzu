@@ -1,6 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
-#include "attention_gate.h"
+#include "../common/sigmoid_gate.h"
 
 template <typename T>
 VARIANTS(T, bfloat)
@@ -14,5 +14,5 @@ PUBLIC KERNEL(SigmoidGate)(
     const uint batch_idx AXIS(batch_dim, 1)
 ) {
   const uint output_idx = batch_idx * gate_dim + gate_idx;
-  output[output_idx] = attention_apply_gate(output[output_idx], gate[batch_idx * gate_row_stride + gate_idx]);
+  output[output_idx] = uzu::apply_sigmoid_gate(output[output_idx], gate[batch_idx * gate_row_stride + gate_idx]);
 }
