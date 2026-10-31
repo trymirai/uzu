@@ -16,7 +16,7 @@ Tauri v2, React, Rust.
 ```bash
 pnpm install
 pnpm dev      # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
-pnpm build    # .app and .dmg in ../../target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
+pnpm build    # .app and .dmg in ../../target/release/bundle/, ad-hoc signed
 pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 ```
 
