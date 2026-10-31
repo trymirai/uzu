@@ -6,15 +6,15 @@ import generated.trie;
 // height or suffix index, by ancestry or index order under causality; ring prefix keys at their ring position, filled
 // entries only; then the sliding window.
 public struct AttentionMask {
-  public RingParams ring_params;
-  public Ptr<TrieNode, Access.Read> trie;
-  public uint sliding_window_size;
+  RingParams ring_params;
+  Ptr<TrieNode, Access.Read> trie;
+  uint sliding_window_size;
   public uint prefix_length;
-  public uint suffix_position;
-  public bool is_kv_cache_ring;
-  public bool is_causal;
-  public bool is_trie;
-  public bool is_sliding_window;
+  uint suffix_position;
+  bool is_kv_cache_ring;
+  bool is_causal;
+  bool is_trie;
+  bool is_sliding_window;
 
   public __init(
     uint sequence_length,
