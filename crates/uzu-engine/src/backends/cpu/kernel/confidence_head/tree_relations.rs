@@ -1,8 +1,8 @@
 use uzu_engine_macros::kernel;
 
-use crate::backends::common::gpu_types::weaver::FrontierIdx;
+use crate::backends::common::gpu_types::{confidence_head::RELATIONS, weaver::FrontierIdx};
 
-pub const ABSENT: u32 = 7;
+pub const ABSENT: u32 = RELATIONS + 1;
 
 #[kernel(ConfidenceHeadTreeRelations)]
 pub fn confidence_head_tree_relations(

@@ -1,7 +1,10 @@
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::activation_type::ActivationType,
+        gpu_types::{
+            activation_type::ActivationType,
+            confidence_head::{RELATIONS, SLOT_NUMBERS, TREE_ROWS_MAX},
+        },
         kernel::{
             ActivationKernel, ConfidenceHeadTreeAttentionKernel, ConfidenceHeadTreeInputKernel,
             ConfidenceHeadTreeRelationsKernel,
@@ -12,15 +15,12 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        confidence_head::{ConfidenceHeadError, SLOT_NUMBERS, linear, norm},
+        confidence_head::{ConfidenceHeadError, DATA_TYPE, linear, norm},
         linear::Linear,
         normalization::{Normalization, ShortcutMode},
     },
     safetensors::ParameterTree,
 };
-
-const RELATIONS: u32 = 6;
-const ROWS_MAX: u32 = 1024;
 
 struct TreeAttentionLayer<B: Backend> {
     attention_norm: Normalization<B>,
@@ -87,9 +87,9 @@ impl<B: Backend> TreeAttention<B> {
         let node_in = linear(parameter_tree, "node_in", head_config.model_dim, width, context).await?;
         let child_in = linear(parameter_tree, "child_in", head_config.model_dim + SLOT_NUMBERS, width, context).await?;
         let depth_embedding =
-            parameter_tree.read_buffer("depth_embedding", &[head_config.max_depth + 1, width], DataType::BF16).await?;
+            parameter_tree.read_buffer("depth_embedding", &[head_config.max_depth + 1, width], DATA_TYPE).await?;
         let relation_bias =
-            parameter_tree.read_buffer("relation_bias", &[config.num_heads, RELATIONS], DataType::BF16).await?;
+            parameter_tree.read_buffer("relation_bias", &[config.num_heads, RELATIONS], DATA_TYPE).await?;
         let final_norm = norm(parameter_tree, "final_norm", width, final_mode, norm_config, context).await?;
         let couple_node = linear(parameter_tree, "couple_node", width, head_config.model_dim, context).await?;
         let couple_child = linear(parameter_tree, "couple_child", width, head_config.model_dim, context).await?;
@@ -110,7 +110,7 @@ impl<B: Backend> TreeAttention<B> {
             final_norm,
             couple_node,
             couple_child,
-            activation: <B::Kernels as Kernels>::ActivationKernel::new(context, DataType::BF16, true)
+            activation: <B::Kernels as Kernels>::ActivationKernel::new(context, DATA_TYPE, true)
                 .map_err(ConfidenceHeadError::Backend)?,
             input: <B::Kernels as Kernels>::ConfidenceHeadTreeInputKernel::new(context)
                 .map_err(ConfidenceHeadError::Backend)?,
@@ -133,14 +133,14 @@ impl<B: Backend> TreeAttention<B> {
         rows: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), ConfidenceHeadError<B>> {
-        if rows > ROWS_MAX {
+        if rows > TREE_ROWS_MAX {
             return Err(ConfidenceHeadError::UnsupportedShape(format!("tree attention over {rows} rows")));
         }
         let width = self.config.model_dim;
         let child_in = self.child_in.encode(child_inputs, rows - 1, command_buffer)?;
         let node_in = self.node_in.encode(node_inputs, slots, command_buffer)?;
         let mut hidden = command_buffer
-            .allocate_scratch_for_shape(&[rows, width], DataType::BF16)
+            .allocate_scratch_for_shape(&[rows, width], DATA_TYPE)
             .map_err(ConfidenceHeadError::Backend)?;
         self.input.encode(
             &self.depth_embedding,
@@ -167,7 +167,7 @@ impl<B: Backend> TreeAttention<B> {
             command_buffer,
         );
         let mut residual = command_buffer
-            .allocate_scratch_for_shape(&[rows, width], DataType::BF16)
+            .allocate_scratch_for_shape(&[rows, width], DATA_TYPE)
             .map_err(ConfidenceHeadError::Backend)?;
         for layer in &self.layers {
             let normalized = layer
@@ -176,7 +176,7 @@ impl<B: Backend> TreeAttention<B> {
                 .map_err(ConfidenceHeadError::Backend)?;
             let qkv = layer.qkv.encode(normalized, rows, command_buffer)?;
             let mut attended = command_buffer
-                .allocate_scratch_for_shape(&[rows, width], DataType::BF16)
+                .allocate_scratch_for_shape(&[rows, width], DATA_TYPE)
                 .map_err(ConfidenceHeadError::Backend)?;
             self.attention.encode(&qkv, &relations, &self.relation_bias, &mut attended, rows, command_buffer);
             let projected = layer.out.encode(attended, rows, command_buffer)?;

@@ -1,15 +1,7 @@
 use half::bf16;
 
-pub const SLOT_NUMBERS: usize = 4;
 pub const NONE: u32 = u32::MAX;
 pub const LOG_PROB_FLOOR: f32 = -30.0;
-
-pub fn tensor<'a>(
-    values: *const f32,
-    len: usize,
-) -> &'a [f32] {
-    unsafe { std::slice::from_raw_parts(values, len) }
-}
 
 pub fn weights(
     values: *const bf16,
@@ -47,10 +39,6 @@ pub fn layer_norm(
     let variance = input.iter().map(|value| (value - mean).powi(2)).sum::<f32>() / count;
     let scale = (variance + epsilon).sqrt().recip();
     input.iter().zip(scales).zip(biases).map(|((value, gain), bias)| (value - mean) * scale * gain + bias).collect()
-}
-
-pub fn silu(value: f32) -> f32 {
-    value / (1.0 + (-value).exp())
 }
 
 pub fn log_sum(values: &[f32]) -> f32 {

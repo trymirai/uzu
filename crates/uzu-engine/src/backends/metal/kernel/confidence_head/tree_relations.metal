@@ -1,10 +1,10 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "head.h"
 #include "../weaver/weaver_frontier.h"
 
 using namespace metal;
 
-#define ABSENT 7u
 
 struct TreeRow {
   uint depth;
@@ -45,7 +45,7 @@ PUBLIC KERNEL(ConfidenceHeadTreeRelations)(
   const TreeRow key_row = tree_row(frontier, rows - 1, key);
   uint relation = 0;
   if (!query_row.present || !key_row.present) {
-    relation = ABSENT;
+    relation = HEAD_RELATION_ABSENT;
   } else if (query == key) {
     relation = 1;
   } else if (key_row.depth < query_row.depth &&

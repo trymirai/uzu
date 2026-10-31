@@ -713,7 +713,10 @@ impl<B: Backend> Weaver<B> {
                         &candidate_ids,
                         &depth_seeds_buffer,
                         pool_depth_count,
-                        head.params(self.candidate_pool_size, shape.expand_width, tree_slot_count, vocab_size),
+                        self.candidate_pool_size,
+                        shape.expand_width,
+                        tree_slot_count,
+                        vocab_size,
                         command_buffer,
                     )
                 })

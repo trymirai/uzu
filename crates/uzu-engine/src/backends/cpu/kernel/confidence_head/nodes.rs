@@ -1,9 +1,10 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use super::head::{LOG_PROB_FLOOR, SLOT_NUMBERS, dense, log_sum, silu, tensor, weights};
+use super::head::{LOG_PROB_FLOOR, dense, log_sum, weights};
 use crate::backends::common::gpu_types::{
-    confidence_head::ConfidenceHeadParams,
+    activation_type::ActivationType,
+    confidence_head::{ConfidenceHeadParams, POOL_FEATURES, POOL_INPUTS, SLOT_NUMBERS},
     weaver::{FrontierIdx, MetadataIdx, TreeIdx},
 };
 
@@ -42,6 +43,14 @@ pub fn confidence_head_nodes(
         (rows as usize, params.tree_slot_count as usize, params.candidates as usize, params.children as usize);
     let (width, pool) = (model_dim as usize, pool_hidden as usize);
     let capacity = slots * children;
+    let (slot_numbers, features_count) = (SLOT_NUMBERS as usize, POOL_FEATURES as usize * candidates);
+    let entry_weights = weights(pool_entry_weights, POOL_INPUTS as usize * pool);
+    let entry_biases = weights(pool_entry_biases, pool);
+    let hidden_weights = weights(pool_hidden_weights, pool * pool);
+    let hidden_biases = weights(pool_hidden_biases, pool);
+    let out_weights = weights(pool_out_weights, width * 2 * pool);
+    let out_biases = weights(pool_out_biases, width);
+    let (mean_numbers, std_numbers) = (weights(slot_mean, slot_numbers), weights(slot_std, slot_numbers));
     let read = |buffer: *const u32, index: usize| unsafe { *buffer.add(index) };
     for row in 0..rows {
         let slot = read(node_metadata, MetadataIdx::TreeSlot as usize * rows + row) as usize;
@@ -49,7 +58,7 @@ pub fn confidence_head_nodes(
             continue;
         }
         let depth = read(node_metadata, MetadataIdx::Depth as usize * rows + row) as usize;
-        let features = tensor(unsafe { pool_features.add(depth * 3 * candidates) }, 3 * candidates);
+        let features = unsafe { std::slice::from_raw_parts(pool_features.add(depth * features_count), features_count) };
         let logits = (0..candidates)
             .map(|index| unsafe {
                 *candidate_logits.add(depth * candidates + index)
@@ -62,16 +71,11 @@ pub fn confidence_head_nodes(
         for (index, logit) in logits.iter().enumerate() {
             let (log_draft, noise) = (features[index], features[candidates + index]);
             let floored = (logit - log_sum).max(LOG_PROB_FLOOR);
-            let hidden = dense(
-                &weights(pool_entry_weights, 3 * pool),
-                &weights(pool_entry_biases, pool),
-                &[log_draft, floored - log_draft, noise],
-            )
-            .into_iter()
-            .map(silu)
-            .collect::<Vec<_>>();
-            let encoded =
-                dense(&weights(pool_hidden_weights, pool * pool), &weights(pool_hidden_biases, pool), &hidden);
+            let hidden = dense(&entry_weights, &entry_biases, &[log_draft, floored - log_draft, noise])
+                .into_iter()
+                .map(|value| ActivationType::SILU.activate(value))
+                .collect::<Vec<_>>();
+            let encoded = dense(&hidden_weights, &hidden_biases, &hidden);
             for (unit, value) in encoded.into_iter().enumerate() {
                 mean[unit] += (logit - log_sum).exp() * value;
                 peak[unit] = peak[unit].max(value);
@@ -89,15 +93,15 @@ pub fn confidence_head_nodes(
                     unsafe {
                         *child_pools.add(entry) = index as u32;
                         for (number, value) in numbers.into_iter().enumerate() {
-                            *child_numbers.add(entry * SLOT_NUMBERS + number) =
-                                (value - (*slot_mean.add(number)).to_f32()) / (*slot_std.add(number)).to_f32();
+                            *child_numbers.add(entry * slot_numbers + number) =
+                                (value - mean_numbers[number]) / std_numbers[number];
                         }
                     }
                 }
             }
         }
         let summary = mean.into_iter().chain(peak).collect::<Vec<_>>();
-        let node = dense(&weights(pool_out_weights, width * 2 * pool), &weights(pool_out_biases, width), &summary);
+        let node = dense(&out_weights, &out_biases, &summary);
         for (unit, value) in node.into_iter().enumerate() {
             let value = bf16::from_f32(value + unsafe { (*draft.add(depth * width + unit)).to_f32() });
             unsafe {

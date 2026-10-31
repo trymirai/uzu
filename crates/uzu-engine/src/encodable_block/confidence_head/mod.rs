@@ -19,7 +19,7 @@ use crate::{
     safetensors::ParameterTree,
 };
 
-const SLOT_NUMBERS: u32 = 4;
+const DATA_TYPE: DataType = DataType::BF16;
 
 async fn linear<B: Backend>(
     parameter_tree: &ParameterTree<'_, B>,
@@ -28,7 +28,7 @@ async fn linear<B: Backend>(
     outputs: u32,
     context: &B::Context,
 ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-    <dyn Linear<B>>::new(inputs, outputs, DataType::BF16, true, &parameter_tree.subtree(name), context).await
+    <dyn Linear<B>>::new(inputs, outputs, DATA_TYPE, true, &parameter_tree.subtree(name), context).await
 }
 
 async fn norm<B: Backend>(
@@ -41,8 +41,8 @@ async fn norm<B: Backend>(
 ) -> Result<Normalization<B>, NormalizationNewError<B>> {
     Normalization::new(
         element_count,
-        DataType::BF16,
-        DataType::BF16,
+        DATA_TYPE,
+        DATA_TYPE,
         None,
         shortcut_mode,
         PostLayerScalar::None,

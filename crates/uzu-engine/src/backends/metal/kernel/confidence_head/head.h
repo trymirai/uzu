@@ -3,6 +3,7 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
 #include "../common/thread_context.h"
+#include "../activation/activations.h"
 #include "../generated/confidence_head.h"
 
 using namespace metal;
@@ -10,35 +11,29 @@ using namespace uzu::confidence_head;
 
 #define HEAD_THREADS 512u
 #define HEAD_SIMDGROUPS (HEAD_THREADS / 32u)
-#define HEAD_CHILDREN_MAX 4u
-#define HEAD_MODEL_MAX 64u
-#define HEAD_POOL_HIDDEN_MAX 16u
-#define HEAD_EDGE_HIDDEN_MAX 128u
-#define HEAD_SLOT_NUMBERS 4u
-#define HEAD_EDGE_INPUT_MAX (3u * HEAD_MODEL_MAX + HEAD_SLOT_NUMBERS)
-#define HEAD_UNITS_PER_GROUP (HEAD_EDGE_HIDDEN_MAX / HEAD_SIMDGROUPS)
+#define HEAD_EDGE_INPUT_MAX (3u * MODEL_MAX + SLOT_NUMBERS)
+#define HEAD_UNITS_PER_GROUP (EDGE_HIDDEN_MAX / HEAD_SIMDGROUPS)
 #define HEAD_STEPS_MAX ((HEAD_EDGE_INPUT_MAX + 31u) / 32u)
 #define HEAD_NONE 0xffffffffu
+#define HEAD_LOG_PROB_FLOOR (-30.0f)
+#define HEAD_RELATION_ABSENT (RELATIONS + 1u)
 
-METAL_FUNC float2 head_log_sum_exp(float2 value, threadgroup float* reduce, const thread ThreadContext& context) {
-  const float2 top = simd_max(value);
-  const float2 total = simd_sum(select(exp(value - top), float2(0.0f), value == -INFINITY));
+METAL_FUNC float head_log_sum_exp(float value, threadgroup float* reduce, const thread ThreadContext& context) {
+  const float top = simd_max(value);
+  const float total = simd_sum(value == -INFINITY ? 0.0f : exp(value - top));
   if (context.simd_lane_id == 0) {
-    reduce[4 * context.simdgroup_index] = top.x;
-    reduce[4 * context.simdgroup_index + 1] = top.y;
-    reduce[4 * context.simdgroup_index + 2] = total.x;
-    reduce[4 * context.simdgroup_index + 3] = total.y;
+    reduce[2 * context.simdgroup_index] = top;
+    reduce[2 * context.simdgroup_index + 1] = total;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  float2 overall = -INFINITY;
+  float overall = -INFINITY;
   for (uint group = 0; group < HEAD_SIMDGROUPS; ++group) {
-    overall = max(overall, float2(reduce[4 * group], reduce[4 * group + 1]));
+    overall = max(overall, reduce[2 * group]);
   }
-  float2 sum = 0.0f;
+  float sum = 0.0f;
   for (uint group = 0; group < HEAD_SIMDGROUPS; ++group) {
-    const float2 part_top = float2(reduce[4 * group], reduce[4 * group + 1]);
-    const float2 part_total = float2(reduce[4 * group + 2], reduce[4 * group + 3]);
-    sum += select(part_total * exp(part_top - overall), float2(0.0f), part_top == -INFINITY);
+    const float part_top = reduce[2 * group];
+    sum += part_top == -INFINITY ? 0.0f : reduce[2 * group + 1] * exp(part_top - overall);
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   return overall + log(sum);
@@ -88,8 +83,8 @@ METAL_FUNC void head_dense(
   for (uint part = 0; part < HEAD_UNITS_PER_GROUP; ++part) {
     sums[part] = simd_sum(sums[part]);
   }
-  const uint part = lane / HEAD_CHILDREN_MAX;
-  const uint row = lane % HEAD_CHILDREN_MAX;
+  const uint part = lane / CHILDREN_MAX;
+  const uint row = lane % CHILDREN_MAX;
   const uint unit = group + HEAD_SIMDGROUPS * part;
   if (part < HEAD_UNITS_PER_GROUP && unit < outputs && row < rows) {
     float4 picked = sums[0];
@@ -98,7 +93,7 @@ METAL_FUNC void head_dense(
       picked = other == part ? sums[other] : picked;
     }
     float value = (row == 0 ? picked.x : row == 1 ? picked.y : row == 2 ? picked.z : picked.w) + float(biases[unit]);
-    value = activate ? value / (1.0f + exp(-value)) : value;
+    value = activate ? activate_silu(value) : value;
     threadgroup float* target = output + row * output_stride + unit;
     *target = accumulate ? *target + value : value;
   }

@@ -344,19 +344,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
-                let head = match sampling_method {
-                    SamplingMethod::Stochastic {
-                        temperature,
-                        top_k,
-                        ..
-                    } if *temperature != Some(0.0) && *top_k != Some(1) => self.confidence_head.as_ref(),
-                    _ => None,
-                };
-                let prune_sigma = match sampling_method {
-                    SamplingMethod::Greedy => None,
+                let (head, prune_sigma) = match sampling_method {
+                    SamplingMethod::Greedy => (None, None),
                     SamplingMethod::Stochastic {
                         ..
-                    } => prune_sigma.filter(|_| head.is_none()),
+                    } => match &self.confidence_head {
+                        Some(head) => (Some(head), None),
+                        None => (None, prune_sigma),
+                    },
                 };
                 let tree = weaver.encode_tree(
                     target_output_norm,

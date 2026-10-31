@@ -21,7 +21,6 @@ const ROWS: u32 = 15;
 const POOL: u32 = 512;
 const SLOTS: u32 = 61;
 const CHILDREN: u32 = 4;
-const MODEL: u32 = 5120;
 const VOCAB: u32 = 4096;
 const STRIDE: u32 = 15;
 const BUDGET: usize = 16;
@@ -42,17 +41,14 @@ fn kept(
     kept
 }
 
-fn report(
+fn assert_close(
     name: &str,
     actual: &[f32],
     expected: &[f32],
 ) {
-    let mut errors =
-        actual.iter().zip(expected).map(|(actual, expected)| (actual - expected).abs()).collect::<Vec<_>>();
-    errors.sort_by(f32::total_cmp);
+    let errors = actual.iter().zip(expected).map(|(actual, expected)| (actual - expected).abs()).collect::<Vec<_>>();
     let mean = errors.iter().sum::<f32>() / errors.len() as f32;
-    let worst = errors[errors.len() - 1];
-    eprintln!("{name}: |edge - reference| mean {mean}, p95 {}, max {worst}", errors[errors.len() * 95 / 100]);
+    let worst = errors.iter().copied().fold(0.0, f32::max);
     assert!(mean < 0.02 && worst < 0.1, "{name}: |edge - reference| mean {mean}, max {worst}");
 }
 
@@ -64,12 +60,13 @@ async fn check<B: Backend>(
     let config: SpeculatorModelConfig =
         serde_json::from_slice(&std::fs::read(speculator.join("config.json")).unwrap()).unwrap();
     let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
+    let model = config.draft_config.model_dim;
     let weights = ParameterLoader::new(speculator.join("model.safetensors"), &*context).await.unwrap();
     let fixture = ParameterLoader::new(fixture, &*context).await.unwrap();
     let tree = fixture.tree();
     let (embedding, _) = Embedding::new(
         VOCAB,
-        MODEL,
+        model,
         DataType::BF16,
         &serde_json::from_str::<AnyEmbeddingConfig>(
             r#"{"type": "TiedEmbeddingConfig", "input_scale": null, "logit_soft_cap": null, "logit_scale": null}"#,
@@ -94,7 +91,7 @@ async fn check<B: Backend>(
     let candidate_ids = tree.read_slice::<u32>("candidate_ids", &[ROWS, POOL]).await.unwrap();
     let candidate_logits = tree.read_slice::<f32>("candidate_logits", &[ROWS, POOL]).await.unwrap();
     let residuals = tree.read_slice::<bf16>("residuals", &[SLOTS, POOL]).await.unwrap();
-    let draft_rows = tree.read_slice::<bf16>("draft_rows", &[ROWS, MODEL]).await.unwrap();
+    let draft_rows = tree.read_slice::<bf16>("draft_rows", &[ROWS, model]).await.unwrap();
     let depth_seeds = tree.read_slice::<u64>("depth_seeds", &[ROWS]).await.unwrap();
     let slot_token = tree.read_slice::<u32>("slot_token", &[SLOTS]).await.unwrap();
     let slot_parent = tree.read_slice::<i32>("slot_parent", &[SLOTS]).await.unwrap();
@@ -135,7 +132,7 @@ async fn check<B: Backend>(
         metadata[MetadataIdx::TreeSlot as usize * slots + slot] = slot as u32;
     }
     let draft_hidden =
-        std::iter::repeat_n(bf16::ZERO, MODEL as usize).chain(draft_rows.iter().copied()).collect::<Vec<_>>();
+        std::iter::repeat_n(bf16::ZERO, model as usize).chain(draft_rows.iter().copied()).collect::<Vec<_>>();
 
     let u32s = |values: &[u32]| create_buffer_with_data::<B, u32>(&context, values);
     let residuals = create_buffer_with_data::<B, bf16>(&context, &residuals);
@@ -152,15 +149,7 @@ async fn check<B: Backend>(
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let mut step = head
-        .encode_step(
-            &draft_hidden,
-            &logits,
-            &ids,
-            &seeds,
-            ROWS,
-            head.params(POOL, CHILDREN, SLOTS, VOCAB),
-            &mut command_buffer,
-        )
+        .encode_step(&draft_hidden, &logits, &ids, &seeds, ROWS, POOL, CHILDREN, SLOTS, VOCAB, &mut command_buffer)
         .unwrap();
     head.encode_round(
         &mut step,
@@ -187,8 +176,8 @@ async fn check<B: Backend>(
     };
     let backend = std::any::type_name::<B>();
     let (local, full) = (edges(&local_frontier), edges(&frontier));
-    report(&format!("{backend} local"), &local, &expected_local);
-    report(&format!("{backend} full"), &full, &expected);
+    assert_close(&format!("{backend} local"), &local, &expected_local);
+    assert_close(&format!("{backend} full"), &full, &expected);
     assert_eq!(
         kept(&slot_entry, &full),
         kept(&slot_entry, &expected),

@@ -5,15 +5,13 @@
 
 using namespace metal;
 
-#define LOG_PROB_FLOOR (-30.0f)
-
 struct NodesMemory {
-  float4 pool_entry[HEAD_POOL_HIDDEN_MAX];
-  float4 pool_hidden[HEAD_POOL_HIDDEN_MAX * HEAD_POOL_HIDDEN_MAX / 4u];
-  float pool_hidden_biases[HEAD_POOL_HIDDEN_MAX];
-  float reduce[2u * HEAD_SIMDGROUPS * HEAD_POOL_HIDDEN_MAX];
-  float summary[2u * HEAD_POOL_HIDDEN_MAX];
-  float node[HEAD_MODEL_MAX];
+  float4 pool_entry[POOL_HIDDEN_MAX];
+  float4 pool_hidden[POOL_HIDDEN_MAX * POOL_HIDDEN_MAX / 4u];
+  float pool_hidden_biases[POOL_HIDDEN_MAX];
+  float reduce[2u * HEAD_SIMDGROUPS * POOL_HIDDEN_MAX];
+  float summary[2u * POOL_HIDDEN_MAX];
+  float node[MODEL_MAX];
 };
 
 PUBLIC KERNEL(ConfidenceHeadNodes)(
@@ -58,7 +56,7 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
   const uint candidates = params.candidates;
   const uint capacity = params.tree_slot_count * params.children;
   const uint first_entry = slot * params.children;
-  const device float* features = pool_features + depth * 3 * candidates;
+  const device float* features = pool_features + depth * POOL_FEATURES * candidates;
   const bool valid = lid < candidates;
   const float logit =
       valid ? candidate_logits[depth * candidates + lid] + float(residual_logits[row * candidates + lid]) : -INFINITY;
@@ -68,20 +66,20 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     scores[(2 * slot) * candidates + lid] = logit;
     scores[(2 * slot + 1) * candidates + lid] = noise;
   }
-  if (lid < HEAD_POOL_HIDDEN_MAX) {
+  if (lid < POOL_HIDDEN_MAX) {
     const bool used = lid < pool_hidden;
     memory.pool_entry[lid] = used ? float4(
-                                        float(pool_entry_weights[3u * lid]),
-                                        float(pool_entry_weights[3u * lid + 1u]),
-                                        float(pool_entry_weights[3u * lid + 2u]),
+                                        float(pool_entry_weights[POOL_INPUTS * lid]),
+                                        float(pool_entry_weights[POOL_INPUTS * lid + 1u]),
+                                        float(pool_entry_weights[POOL_INPUTS * lid + 2u]),
                                         float(pool_entry_biases[lid])
                                     )
                                   : float4(0.0f);
     memory.pool_hidden_biases[lid] = used ? float(pool_hidden_biases[lid]) : 0.0f;
   }
-  for (uint index = lid; index < HEAD_POOL_HIDDEN_MAX * HEAD_POOL_HIDDEN_MAX; index += HEAD_THREADS) {
-    const uint unit = index / HEAD_POOL_HIDDEN_MAX;
-    const uint inner = index % HEAD_POOL_HIDDEN_MAX;
+  for (uint index = lid; index < POOL_HIDDEN_MAX * POOL_HIDDEN_MAX; index += HEAD_THREADS) {
+    const uint unit = index / POOL_HIDDEN_MAX;
+    const uint inner = index % POOL_HIDDEN_MAX;
     reinterpret_cast<threadgroup float*>(memory.pool_hidden)[index] =
         unit < pool_hidden && inner < pool_hidden ? float(pool_hidden_weights[unit * pool_hidden + inner]) : 0.0f;
   }
@@ -89,25 +87,25 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     memory.node[lid] = float(draft[depth * model_dim + lid]);
   }
 
-  const float log_logit = logit - head_log_sum_exp(float2(logit, -INFINITY), memory.reduce, context).x;
-  const float floored = max(log_logit, LOG_PROB_FLOOR);
+  const float log_logit = logit - head_log_sum_exp(logit, memory.reduce, context);
+  const float floored = max(log_logit, HEAD_LOG_PROB_FLOOR);
   const float weight = valid ? exp(log_logit) : 0.0f;
   const float4 inputs = float4(log_draft, floored - log_draft, noise, 1.0f);
-  float4 hidden[HEAD_POOL_HIDDEN_MAX / 4u];
+  float4 hidden[POOL_HIDDEN_MAX / 4u];
   METAL_PRAGMA_UNROLL
-  for (uint unit = 0; unit < HEAD_POOL_HIDDEN_MAX; ++unit) {
+  for (uint unit = 0; unit < POOL_HIDDEN_MAX; ++unit) {
     const float value = dot(memory.pool_entry[unit], inputs);
-    hidden[unit / 4u][unit % 4u] = unit < pool_hidden ? value / (1.0f + exp(-value)) : 0.0f;
+    hidden[unit / 4u][unit % 4u] = unit < pool_hidden ? activate_silu(value) : 0.0f;
   }
   METAL_PRAGMA_UNROLL
-  for (uint unit = 0; unit < HEAD_POOL_HIDDEN_MAX; ++unit) {
+  for (uint unit = 0; unit < POOL_HIDDEN_MAX; ++unit) {
     if (unit >= pool_hidden) {
       break;
     }
     float value = memory.pool_hidden_biases[unit];
     METAL_PRAGMA_UNROLL
-    for (uint quad = 0; quad < HEAD_POOL_HIDDEN_MAX / 4u; ++quad) {
-      value += dot(memory.pool_hidden[unit * (HEAD_POOL_HIDDEN_MAX / 4u) + quad], hidden[quad]);
+    for (uint quad = 0; quad < POOL_HIDDEN_MAX / 4u; ++quad) {
+      value += dot(memory.pool_hidden[unit * (POOL_HIDDEN_MAX / 4u) + quad], hidden[quad]);
     }
     const float mean = simd_sum(weight * value);
     const float peak = simd_max(valid ? value : -INFINITY);
@@ -119,10 +117,10 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
   for (uint child = 0; child < params.children; ++child) {
     const uint entry = first_entry + child;
     if (valid && candidate_ids[depth * candidates + lid] == frontier[uint(FrontierIdx::TokenId) * capacity + entry]) {
-      const float numbers[HEAD_SLOT_NUMBERS] = {log_draft, floored, noise, features[2 * candidates + lid]};
+      const float numbers[SLOT_NUMBERS] = {log_draft, floored, noise, features[2 * candidates + lid]};
       child_pools[entry] = lid;
-      for (uint number = 0; number < HEAD_SLOT_NUMBERS; ++number) {
-        child_numbers[entry * HEAD_SLOT_NUMBERS + number] = (numbers[number] - float(slot_mean[number])) / float(slot_std[number]);
+      for (uint number = 0; number < SLOT_NUMBERS; ++number) {
+        child_numbers[entry * SLOT_NUMBERS + number] = (numbers[number] - float(slot_mean[number])) / float(slot_std[number]);
       }
     }
   }

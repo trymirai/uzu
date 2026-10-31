@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 #include "../weaver/weaver_frontier.h"
+#include "head.h"
 
 using namespace metal;
 
@@ -25,7 +26,7 @@ PUBLIC KERNEL(ConfidenceHeadTreeInput)(
       value += float(child_in[(row - 1) * width + unit]);
     }
     const uint slot = row_slots[row];
-    if (slot != 0xffffffffu) {
+    if (slot != HEAD_NONE) {
       value += float(node_in[slot * width + unit]);
     }
   }
