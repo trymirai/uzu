@@ -101,6 +101,8 @@ You can run `uzu` in CLI mode:
 cargo run --release -p cli
 ```
 
+On Linux and Windows this runs on the CPU; add `--features vulkan` to run on the GPU.
+
 This launches an interactive app where you can browse, download, and interact with models.
 
 You can also preselect a model with `--model`, passing its identifier or repository id:
