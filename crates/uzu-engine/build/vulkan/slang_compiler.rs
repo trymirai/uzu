@@ -17,6 +17,7 @@ use shader_slang::{
     Blob, CompileTarget, CompilerOptions, ComponentType, DeclKind, GlobalSession, OptimizationLevel, ScalarType,
     Session, SessionDesc, TargetDesc,
 };
+use syn::{BinOp, Expr};
 use walkdir::WalkDir;
 
 use super::{
@@ -41,9 +42,13 @@ use crate::{
 /// Arithmetic, Ballot and Shuffle, SignedZeroInfNanPreserve, RoundingModeRTE, VulkanMemoryModel and its device scope,
 /// PhysicalStorageBufferAddresses, DotProductInput4x8BitPacked and DotProduct.
 const DEVICE_CAPABILITIES: [u32; 15] = [1, 9, 22, 39, 61, 63, 64, 65, 4466, 4467, 5345, 5346, 5347, 6018, 6019];
-/// Capabilities only some devices enable, each with the device capabilities one of which a `new` precondition must test.
+/// Capabilities only some devices enable, with the device capabilities one of which a `new` precondition must require.
 const GATED_CAPABILITIES: [(u32, &str, &[&str]); 4] = [
-    (6022, "CooperativeMatrixKHR", &["TENSOR_CORES", "float_tensor_cores"]),
+    (
+        6022,
+        "CooperativeMatrixKHR",
+        &["BF16_TENSOR_CORES", "INT8_TENSOR_CORES_K32", "INT8_TENSOR_CORES_K16", "float_tensor_cores"],
+    ),
     (5116, "BFloat16TypeKHR", &["BF16_TENSOR_CORES", "float_tensor_cores"]),
     (5118, "BFloat16CooperativeMatrixKHR", &["BF16_TENSOR_CORES", "float_tensor_cores"]),
     (5432, "CooperativeMatrixPerElementOperationsEXT", &["INT8_ELEMENT_FOLD"]),
@@ -209,20 +214,30 @@ impl SlangCompiler {
                 });
                 let compiled = link(&self.session, wrapper_file)?;
                 for ((info, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(wrappers) {
-                    let preconditions = info.preconditions()?;
+                    let required = info
+                        .preconditions()?
+                        .into_iter()
+                        .filter(|(phase, _)| *phase == "new")
+                        .map(|(_, condition)| {
+                            let condition = syn::parse_str(condition)
+                                .with_context(|| format!("{}: malformed Precondition '{condition}'", info.name()))?;
+                            anyhow::Ok(required_capabilities(&condition, false))
+                        })
+                        .flatten_ok()
+                        .collect::<anyhow::Result<HashSet<_>>>()?;
                     let variants = entry_points
                         .iter()
                         .map(|(name, types)| {
                             let (abi, spirv) = entry_point(&compiled, name, declared)?;
                             let spirv = spirv()?;
-                            check_capabilities(name, &preconditions, spirv.as_slice(), false)?;
+                            check_capabilities(name, &required, spirv.as_slice(), false)?;
                             let object_file = output_base.with_file_name(name).with_extension("spv");
                             fs::write(&object_file, spirv.as_slice())?;
                             // Kept where it differs.
                             let native_file = object_file.with_extension("bf16.spv");
                             let native = match natives.recv().context("native BF16 build stopped")?? {
                                 Some((native_abi, native)) if native != spirv.as_slice() => {
-                                    check_capabilities(name, &preconditions, &native, true)?;
+                                    check_capabilities(name, &required, &native, true)?;
                                     fs::write(&native_file, native)?;
                                     Some((native_abi, artifact_path(&native_file)?))
                                 },
@@ -328,11 +343,11 @@ impl Compiler for SlangCompiler {
 }
 
 /// Fails unless each capability `spirv` declares is in DEVICE_CAPABILITIES or gated: a GATED_CAPABILITIES entry one
-/// of whose device capabilities a `new` precondition of the kernel tests; the native BF16 build, which only devices with
-/// the BF16 type load, may also declare BFloat16TypeKHR.
+/// of whose device capabilities is `required`; the native BF16 build, which only devices with the BF16 type load, may
+/// also declare BFloat16TypeKHR.
 fn check_capabilities(
     entry_point: &str,
-    preconditions: &[(&str, &str)],
+    required: &HashSet<String>,
     spirv: &[u8],
     native_bf16: bool,
 ) -> anyhow::Result<()> {
@@ -348,11 +363,7 @@ fn check_capabilities(
             let gated = GATED_CAPABILITIES.iter().find(|(value, ..)| *value == capability);
             let allowed = DEVICE_CAPABILITIES.contains(&capability)
                 || (native_bf16 && capability == BFLOAT16_TYPE)
-                || gated.is_some_and(|(_, _, gates)| {
-                    preconditions
-                        .iter()
-                        .any(|(phase, condition)| *phase == "new" && gates.iter().any(|gate| condition.contains(gate)))
-                });
+                || gated.is_some_and(|(_, _, gates)| gates.iter().any(|gate| required.contains(*gate)));
             anyhow::ensure!(
                 allowed,
                 "{entry_point}: SPIR-V capability {} is neither enabled on every device nor gated by a precondition",
@@ -362,6 +373,30 @@ fn check_capabilities(
         at += count;
     }
     Ok(())
+}
+
+/// The device capabilities a `new` precondition `condition` requires: each `float_tensor_cores` call and each
+/// `VkDeviceCapabilities` flag a `contains` tests, among its `&&` terms; with `flags`, `condition` is `|`-joined flags.
+fn required_capabilities(
+    condition: &Expr,
+    flags: bool,
+) -> Vec<String> {
+    match condition {
+        Expr::Binary(binary) if matches!((&binary.op, flags), (BinOp::And(_), false) | (BinOp::BitOr(_), true)) => {
+            [&binary.left, &binary.right].into_iter().flat_map(|term| required_capabilities(term, flags)).collect()
+        },
+        Expr::Paren(paren) => required_capabilities(&paren.expr, flags),
+        Expr::MethodCall(call) if !flags && call.method == "float_tensor_cores" => vec![call.method.to_string()],
+        Expr::MethodCall(call) if !flags && call.method == "contains" => {
+            call.args.iter().flat_map(|flag| required_capabilities(flag, true)).collect()
+        },
+        Expr::Path(path)
+            if flags && path.path.segments.len() == 2 && path.path.segments[0].ident == "VkDeviceCapabilities" =>
+        {
+            vec![path.path.segments[1].ident.to_string()]
+        },
+        _ => Vec::new(),
+    }
 }
 
 /// A SPIR-V session over the kernel sources and the generated GPU type modules that compiles `bf16` as
