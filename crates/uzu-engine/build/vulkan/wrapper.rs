@@ -7,7 +7,7 @@ use shader_slang::ComponentType;
 use syn::{Expr, parse_quote};
 
 use super::{Error, SlangArgumentType, SlangKernelInfo, slang_api};
-use crate::common::expr_rewrite::rewrite_paths_with;
+use crate::common::{expr_rewrite::rewrite_paths_with, mangling::static_mangle};
 
 /// Workgroups per row of a folded one-axis grid: Vulkan's minimum maxComputeWorkGroupCount, which wider grids
 /// exceed on devices that report only the minimum.
@@ -76,19 +76,16 @@ pub fn generate_wrappers(
     };
 
     for specialization_variant in specialization_variants {
-        let (wrapper_name, underlying_call, specialized_generic) = if let Some(ref type_args) = specialization_variant {
+        let wrapper_name = static_mangle(kernel.name(), specialization_variant.iter().flatten());
+        let (underlying_call, specialized_generic) = if let Some(ref type_args) = specialization_variant {
             let type_args_str = type_args.join(", ");
             let specialized_generic = kernel
                 .generic_decl()
                 .map(|gd| slang_api::create_specialized_generic(component, gd, type_args))
                 .transpose()?;
-            (
-                mangle_name(kernel.name(), type_args),
-                format!("{}<{}>", kernel.name(), type_args_str),
-                specialized_generic,
-            )
+            (format!("{}<{}>", kernel.name(), type_args_str), specialized_generic)
         } else {
-            (mangle_name(kernel.name(), &[]), kernel.name().to_string(), None)
+            (kernel.name().to_string(), None)
         };
 
         let arguments: Vec<_> = kernel
@@ -230,17 +227,6 @@ pub fn generate_wrappers(
     }
 
     Ok((wrappers, entry_points))
-}
-
-fn mangle_name(
-    kernel_name: &str,
-    type_args: &[&str],
-) -> String {
-    let mut result = format!("__dsl_{}{}", kernel_name.len(), kernel_name);
-    for ty in type_args {
-        result.push_str(&format!("_{}{}", ty.len(), ty));
-    }
-    result
 }
 
 /// Slang type of a specialization constant: Vulkan specializes only scalars, so enums are `uint`.

@@ -1,4 +1,4 @@
-#![cfg(any(all(feature = "metal", target_os = "macos"), feature = "webgpu"))]
+#![cfg(any(all(feature = "metal", target_os = "macos"), feature = "webgpu", feature = "vulkan"))]
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use std::iter::repeat_n;
