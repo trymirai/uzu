@@ -9,5 +9,8 @@ bitflags! {
         /// Speculation runs on devices that the speculator's tree shapes do not list, with the listed shape of the
         /// smallest tree budget.
         const UNTUNED_SPECULATION = 1 << 2;
+        /// Tensor cores verify a 16-node speculation tree about as fast as smaller ones, so devices the speculator's
+        /// tree shapes do not list speculate with its tensor-core shape.
+        const TENSOR_CORE_SPECULATION = 1 << 3;
     }
 }

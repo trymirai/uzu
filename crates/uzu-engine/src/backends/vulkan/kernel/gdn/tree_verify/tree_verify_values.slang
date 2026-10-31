@@ -1,4 +1,5 @@
 import definitions;
+import gdn.tree_verify.state_advance;
 import generated.delta_net;
 import generated.trie;
 
@@ -12,7 +13,9 @@ import generated.trie;
 // Every tile of a head builds the grams itself. Invocation i, in subgroup_invocation order, accumulates k h0 and q h0
 // for value i % 32 of the tile over the R rows from R (i / 32): keys, queries and the tile's h0 rows stream through
 // shared memory TREE_VERIFY_DEPTH values at a time, with the next TREE_VERIFY_PREFETCH - 1 slices in flight. Then the
-// first 32 invocations solve a value column each.
+// first 32 invocations solve a value column each. With advance, h0 is the tile's rows of the [num_v_heads, 128, 128]
+// state after they advance in place along the previous tree's accepted path, accepted_len >= 1 of its nodes, as
+// StateAdvance's two workgroups of them would.
 
 static const uint TREE_VERIFY_THREADS = 256;
 // The state is square, which the precondition checks.
@@ -59,7 +62,7 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
     Ptr<TrieNode, Access.Read> trie,
     Ptr<float, Access.Read> log_decay,
     Ptr<float, Access.Read> beta,
-    Ptr<float, Access.Read> h0,
+    Ptr<float4, Access.Read> h0_quads,
     Ptr<T, Access.ReadWrite> o,
     float scale,
     uint tree_size,
@@ -79,7 +82,6 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
     let scalar_base = batch * tree_size * num_v_heads + hv;
     let value_stride = num_v_heads * TREE_VERIFY_HEAD_V_DIM;
     let value_base = batch * tree_size * value_stride + hv * TREE_VERIFY_HEAD_V_DIM + value;
-    let h0_quads = bit_cast<Ptr<float4, Access.Read>>(h0);
     let h0_base =
       ((batch * num_v_heads + hv) * TREE_VERIFY_HEAD_V_DIM + tile * TREE_VERIFY_TILE) * DELTA_NET_HEAD_K_DIM / 4;
 
@@ -263,6 +265,7 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
 [[Precondition("new", "NB == 1 || NB == 2")]]
 [[Precondition("encode", "tree_size <= crate::backends::vulkan::gpu_types::delta_net::TREE_VERIFY_TOKEN_BLOCK * NB && head_k_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM && head_v_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads != 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
+[[Precondition("encode", "!advance || batch_size == 1")]]
 func TreeVerifyValues<T : IStorageFloat>(
   Ptr<T, Access.Read> q,
   Ptr<T, Access.Read> k,
@@ -270,7 +273,13 @@ func TreeVerifyValues<T : IStorageFloat>(
   Ptr<TrieNode, Access.Read> trie,
   Ptr<float, Access.Read> log_decay,
   Ptr<float, Access.Read> beta,
-  Ptr<float, Access.Read> h0,
+  [[Optional("!advance")]] Ptr<float, Access.Read> h0,
+  [[Optional("advance")]] Ptr<float, Access.ReadWrite> state,
+  [[Optional("advance")]] Ptr<T, Access.Read> accepted_k,
+  [[Optional("advance")]] Ptr<T, Access.Read> accepted_v,
+  [[Optional("advance")]] Ptr<float, Access.Read> accepted_log_decay,
+  [[Optional("advance")]] Ptr<float, Access.Read> accepted_beta,
+  [[Optional("advance")]] Ptr<uint, Access.Read> accepted_indices,
   Ptr<T, Access.ReadWrite> o,
   float scale,
   uint batch_size,
@@ -279,20 +288,64 @@ func TreeVerifyValues<T : IStorageFloat>(
   uint num_v_heads,
   uint head_k_dim,
   uint head_v_dim,
+  [[Optional("advance")]] uint accepted_len,
   [[Groups("batch_size")]] uint batch_idx,
   [[Groups("num_v_heads")]] uint hv_idx,
   [[Groups("head_v_dim / 32")]] uint tile,
   [[Threads("256")]] uint tid,
   [[Specialize]] uint NB,
+  [[Specialize]] bool advance,
+) {
+  if (advance) {
+    advance_state<T, TREE_VERIFY_THREADS>(
+      accepted_k, accepted_v, accepted_log_decay, accepted_beta, accepted_indices, state, accepted_len, num_v_heads,
+      num_k_heads, hv_idx, tile * TREE_VERIFY_TILE
+    );
+    static_assert(
+      TREE_VERIFY_THREADS / SIMD_SIZE * STATE_ADVANCE_ROWS == TREE_VERIFY_TILE, "two StateAdvance workgroups per tile"
+    );
+    // The staging below reads rows other invocations advanced.
+    AllMemoryBarrierWithGroupSync();
+    verify<T>(
+      q, k, v, trie, log_decay, beta, bit_cast<Ptr<float4, Access.Read>>(state), o, scale, tree_size,
+      num_k_heads, num_v_heads, batch_idx, hv_idx, tile, NB
+    );
+  } else {
+    verify<T>(
+      q, k, v, trie, log_decay, beta, bit_cast<Ptr<float4, Access.Read>>(h0), o, scale, tree_size, num_k_heads,
+      num_v_heads, batch_idx, hv_idx, tile, NB
+    );
+  }
+}
+
+// h0 as float4s: casting the state's pointer to a float one changes only its access, which Slang lowers through a
+// 64-bit integer.
+void verify<T : IStorageFloat>(
+  Ptr<T, Access.Read> q,
+  Ptr<T, Access.Read> k,
+  Ptr<T, Access.Read> v,
+  Ptr<TrieNode, Access.Read> trie,
+  Ptr<float, Access.Read> log_decay,
+  Ptr<float, Access.Read> beta,
+  Ptr<float4, Access.Read> h0_quads,
+  Ptr<T, Access.ReadWrite> o,
+  float scale,
+  uint tree_size,
+  uint num_k_heads,
+  uint num_v_heads,
+  uint batch_idx,
+  uint hv_idx,
+  uint tile,
+  uint NB,
 ) {
   if (NB == 1) {
     TreeVerifyTile<T, 1>.run(
-      q, k, v, trie, log_decay, beta, h0, o, scale, tree_size, num_k_heads, num_v_heads, batch_idx, hv_idx, tile,
+      q, k, v, trie, log_decay, beta, h0_quads, o, scale, tree_size, num_k_heads, num_v_heads, batch_idx, hv_idx, tile,
       subgroup_invocation()
     );
   } else {
     TreeVerifyTile<T, 2>.run(
-      q, k, v, trie, log_decay, beta, h0, o, scale, tree_size, num_k_heads, num_v_heads, batch_idx, hv_idx, tile,
+      q, k, v, trie, log_decay, beta, h0_quads, o, scale, tree_size, num_k_heads, num_v_heads, batch_idx, hv_idx, tile,
       subgroup_invocation()
     );
   }

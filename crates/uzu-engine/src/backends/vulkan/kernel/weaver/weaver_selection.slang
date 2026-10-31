@@ -4,19 +4,23 @@ import common.ranking;
 import common.workgroup_reduction;
 import generated.weaver;
 
-groupshared uint weaver_select_winners[FRONTIER_MAX_WIDTH];
+// Each subgroup's best children of a row.
+groupshared uint4 weaver_children_best[CANDIDATES_MAX];
+// A row's prune logit bits by candidate, then the frontier's winners: sharing one array keeps the kernel within the
+// 16 KB of shared memory every Vulkan device has.
+groupshared uint weaver_select_scratch[CANDIDATES_MAX];
 
-// A candidate's logit, its Gumbel selection score and its pruning noise.
-float3 weaver_top_values(float candidate, bf16 residual, uint2 key, uint token, uint vocab_size) {
+// A candidate's logit and the Gumbel noise the target sampler adds for its token.
+float2 weaver_top_values(float candidate, bf16 residual, uint2 key, uint token, uint vocab_size) {
   let index = sampling_index(token, vocab_size);
   let word = sampling_words(key, index.x)[index.y];
-  let logit = candidate + residual.toFloat();
-  return float3(logit, logit + sampling_noise(float(word) * (1.0 / 4294967296.0)), sampling_noise(sampling_uniform(word)));
+  return float2(candidate + residual.toFloat(), sampling_noise(sampling_uniform(word)));
 }
 
-// Children: the top `expand_width` children of row `row` into its frontier slots, by the 256 invocations (`lid` of them)
-// holding two candidates each, one workgroup argmax per child in (score, token, index) order; the winner's owner writes
-// the whole frontier slot. Candidates come from the pool where `from_pool`, else from the nodes'.
+// Children: the top `expand_width` children of row `row` into its frontier slots in (score, token, index) order, by the
+// 256 invocations (`lid` of them) holding two candidates each: every subgroup picks its best, and each pick's rank
+// among all the picks places it. Candidates come from the pool where `from_pool`, else from the nodes'. A score is the
+// logit plus the target's noise scaled by `children_noise_scale`, 0 for greedy decoding.
 void weaver_children(
   Ptr<bf16, Access.Read> residual_logits,
   Ptr<uint, Access.Read> depth_seeds,
@@ -36,6 +40,7 @@ void weaver_children(
   uint vocab_size,
   uint frontier_capacity,
   uint tree_slot_count,
+  float children_noise_scale,
   float prune_noise_scale,
   bool has_prune_noise,
 ) {
@@ -59,9 +64,11 @@ void weaver_children(
     let logit = from_pool ? candidate_pool_logits[base + index] : node_candidate_logits[base + index];
     let values = weaver_top_values(asfloat(logit), residual_logits[base + index], key, token, vocab_size);
     logits[cache] = values.x;
-    entries[cache] = uint4(float_order_key(asuint(values.y)), token, index, index);
+    // The unique index settles every tie before the last key, which carries the logit to the slot's writer.
+    let score = float_order_key(asuint(values.x + children_noise_scale * values.y));
+    entries[cache] = uint4(score, token, index, asuint(values.x));
     if (has_prune_noise) {
-      prune_logits[cache] = values.x + prune_noise_scale * values.z;
+      prune_logits[cache] = values.x + prune_noise_scale * values.y;
     }
   }
   let maximum = workgroup_reduce<Max<float>, TOP_CHILDREN_THREADS>(max(logits[0], logits[1]));
@@ -87,24 +94,45 @@ void weaver_children(
   }
   let parent_bits = packed_tree[uint(TreeIdx.PathLogprobBits) * tree_slot_count + tree_slot];
   let child_depth = packed_tree[uint(TreeIdx.Depth) * tree_slot_count + tree_slot] + 1;
-  for (uint child = 0; child < expand_width; child++) {
-    let winner = workgroup_reduce<WeaverRank, TOP_CHILDREN_THREADS>(WeaverRank.combine(entries[0], entries[1]));
-    let slot = frontier_base + child;
+  // Each subgroup's best `picks` by subgroup argmaxes, with no workgroup barrier between children; the row's best
+  // `expand_width` are among them.
+  let picks = min(expand_width, 2 * WaveGetLaneCount());
+  for (uint pick = 0; pick < picks; pick++) {
+    let best = WeaverRank.subgroup(WeaverRank.combine(entries[0], entries[1]));
     for (uint cache = 0; cache < 2; cache++) {
-      if (lid + cache * TOP_CHILDREN_THREADS != winner.z) { continue; }
-      if (slot < frontier_capacity) {
-        let model_logprob = logits[cache] - log_sum;
-        let path_bits = asuint(asfloat(parent_bits) + model_logprob);
-        let edge_logprob = has_prune_noise ? prune_logits[cache] - prune_log_sum : model_logprob;
-        frontier[uint(FrontierIdx.TokenId) * frontier_capacity + slot] = winner.y;
-        frontier[uint(FrontierIdx.ParentSlot) * frontier_capacity + slot] = tree_slot;
-        frontier[uint(FrontierIdx.Depth) * frontier_capacity + slot] = child_depth;
-        frontier[uint(FrontierIdx.PathLogprobBits) * frontier_capacity + slot] = path_bits;
-        frontier[uint(FrontierIdx.EdgeLogprobBits) * frontier_capacity + slot] = asuint(edge_logprob);
-        frontier[uint(FrontierIdx.PathScoreKey) * frontier_capacity + slot] = float_order_key(path_bits);
-        frontier[uint(FrontierIdx.Active) * frontier_capacity + slot] = 1;
-      }
-      entries[cache] = neutral;
+      if (entries[cache].z == best.z) { entries[cache] = neutral; }
+    }
+    if (WaveIsFirstLane()) { weaver_children_best[subgroup_id() * picks + pick] = best; }
+  }
+  if (has_prune_noise) {
+    for (uint cache = 0; cache < 2; cache++) {
+      let index = lid + cache * TOP_CHILDREN_THREADS;
+      if (index < candidates) { weaver_select_scratch[index] = asuint(prune_logits[cache]); }
+    }
+  }
+  GroupMemoryBarrierWithGroupSync();
+  // Each entry's rank: the entries ranking before it, counted by four invocations a quarter each.
+  let ranked = WaveGetNumWaves() * picks;
+  for (uint first = 0; first < ranked; first += TOP_CHILDREN_THREADS / 4) {
+    let entry = first + lid / 4;
+    let child = weaver_children_best[min(entry, ranked - 1)];
+    uint preceding = 0;
+    for (uint other = lid % 4; other < ranked; other += 4) {
+      preceding += WeaverRank.before(weaver_children_best[other], child) ? 1 : 0;
+    }
+    let rank = segment_reduce<Sum<uint>, TOP_CHILDREN_THREADS>(preceding, 4);
+    let slot = frontier_base + rank;
+    if (entry < ranked && lid % 4 == 0 && rank < expand_width && slot < frontier_capacity) {
+      let model_logprob = asfloat(child.w) - log_sum;
+      let path_bits = asuint(asfloat(parent_bits) + model_logprob);
+      let edge_logprob = has_prune_noise ? asfloat(weaver_select_scratch[child.z]) - prune_log_sum : model_logprob;
+      frontier[uint(FrontierIdx.TokenId) * frontier_capacity + slot] = child.y;
+      frontier[uint(FrontierIdx.ParentSlot) * frontier_capacity + slot] = tree_slot;
+      frontier[uint(FrontierIdx.Depth) * frontier_capacity + slot] = child_depth;
+      frontier[uint(FrontierIdx.PathLogprobBits) * frontier_capacity + slot] = path_bits;
+      frontier[uint(FrontierIdx.EdgeLogprobBits) * frontier_capacity + slot] = asuint(edge_logprob);
+      frontier[uint(FrontierIdx.PathScoreKey) * frontier_capacity + slot] = float_order_key(path_bits);
+      frontier[uint(FrontierIdx.Active) * frontier_capacity + slot] = 1;
     }
   }
 }
@@ -157,7 +185,7 @@ void weaver_frontier(
       local = WeaverRank.combine(local, entries[entry]);
     }
     let winner = workgroup_reduce<WeaverRank, FRONTIER_SELECT_THREADS>(local).w;
-    if (tid == 0) { weaver_select_winners[node] = winner; }
+    if (tid == 0) { weaver_select_scratch[node] = winner; }
     for (uint entry = 0; entry < FRONTIER_ENTRIES_PER_THREAD; entry++) {
       if (entries[entry].w == winner) { entries[entry] = neutral; }
     }
@@ -165,7 +193,7 @@ void weaver_frontier(
   GroupMemoryBarrierWithGroupSync();
 
   if (tid < node_count) {
-    let slot = weaver_select_winners[tid];
+    let slot = weaver_select_scratch[tid];
     let real = slot != FRONTIER_NO_WINNER;
     let source = real ? slot : 0;
     let tree_slot = batch_start_slot + tid;
@@ -200,7 +228,7 @@ void weaver_frontier(
   }
 
   for (uint node = 0; node < node_count; node++) {
-    let slot = weaver_select_winners[node];
+    let slot = weaver_select_scratch[node];
     let depth = slot != FRONTIER_NO_WINNER ? frontier[uint(FrontierIdx.Depth) * frontier_capacity + slot] : 0;
     if (depth >= candidate_depth_count) { continue; }
     let source = depth * candidates;
@@ -243,6 +271,7 @@ func WeaverSelect(
   uint ancestor_stride,
   uint lookahead_count,
   uint candidate_depth_count,
+  [[Optional("mode != WeaverSelectionMode::Frontier")]] float children_noise_scale,
   [[Optional("has_prune_noise")]] float prune_noise_scale,
   [[Groups("if mode == WeaverSelectionMode::Children { children_rows } else { 1 }")]] uint group,
   [[Threads("256")]] uint tid,
@@ -252,6 +281,7 @@ func WeaverSelect(
 ) {
   static_assert(TOP_CHILDREN_THREADS == 256 && FRONTIER_SELECT_THREADS == 256, "both steps take the workgroup");
   static_assert(CANDIDATES_MAX == 2 * TOP_CHILDREN_THREADS, "two cached candidates must cover each row");
+  static_assert(FRONTIER_MAX_WIDTH <= CANDIDATES_MAX, "the frontier's winners reuse the children's scratch");
   let invocation = subgroup_invocation();
   if (mode != WeaverSelectionMode.Frontier && candidates != 0 && candidates <= CANDIDATES_MAX && expand_width != 0 &&
       expand_width <= candidates && frontier_capacity != 0 && tree_slot_count != 0) {
@@ -267,7 +297,7 @@ func WeaverSelect(
       weaver_children(residual_logits, depth_seeds, frontier, packed_tree, node_metadata, candidate_pool_ids,
                       candidate_pool_logits, node_candidate_ids, node_candidate_logits, children_from_pool != 0,
                       children_rows, row, invocation, candidates, expand_width, vocab_size, frontier_capacity,
-                      tree_slot_count, prune_noise_scale, has_prune_noise);
+                      tree_slot_count, children_noise_scale, prune_noise_scale, has_prune_noise);
     }
   }
   if (mode == WeaverSelectionMode.Children) { return; }

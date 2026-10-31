@@ -139,10 +139,12 @@ METAL_FUNC float gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
 }
 
 // The noise the target sampler adds for this token: the 24-bit uniform of `uniform_float` keeps it finite.
+// Near one, where fast log may round to zero, the first three series terms give -log(uniform) to FP32 rounding.
 METAL_FUNC float target_gumbel_noise(uint64_t seed, uint logit_idx, uint vocab_size) {
   const metal::uint2 offset_word = gumbel_revidx(logit_idx, vocab_size);
   PhiloxState rng;
   philox_init(&rng, seed, offset_word.x);
   const float uniform = float(metal::max(rng.output[offset_word.y] >> 8, 1u)) * (1.0f / 16777216.0f);
-  return -metal::log(-metal::log(uniform));
+  const float x = 1.0f - uniform;
+  return -metal::log(x <= (1.0f / 1024.0f) ? x * (1.0f + x * (0.5f + x / 3.0f)) : -metal::log(uniform));
 }

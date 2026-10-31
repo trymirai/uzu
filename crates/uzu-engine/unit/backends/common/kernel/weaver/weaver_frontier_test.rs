@@ -75,6 +75,7 @@ fn select<B: Backend>() -> Vec<u32> {
         3,
         4,
         None,
+        None,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

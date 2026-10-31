@@ -60,17 +60,17 @@ const fn lane_default(
     VkGemvTile::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, group / (2 * pack_factor))
 }
 
+/// One gathered row a simdgroup: a readout's few hundred gathered rows, four a simdgroup, fill too few workgroups.
 fn gathered_tile(
     bits: u32,
     group: u32,
-    m: u32,
-    n: u32,
 ) -> Option<VkGemvTile> {
-    if !matches!(bits, 4 | 8) || !matches!(group, 16 | 32 | 64 | 128) || !(1..=8).contains(&m) {
+    if !matches!(bits, 4 | 8) || !matches!(group, 16 | 32 | 64 | 128) {
         return None;
     }
-    let tile = lane_default(bits, group);
-    (n >= tile.results_per_simdgroup).then_some(tile)
+    let mut tile = lane_default(bits, group);
+    tile.results_per_simdgroup = 1;
+    Some(tile)
 }
 
 impl VkGemvTile {
@@ -102,7 +102,7 @@ impl VkGemvTile {
         let general = if bits == 4 && !k.is_multiple_of(2) {
             None
         } else if gathered {
-            gathered_tile(bits, group, m, n)
+            gathered_tile(bits, group)
         } else if matches!(group, 16 | 32 | 64 | 128) {
             // A BF16 tile takes every input row at once, so each weight load serves all of them; fewer output rows per
             // lane bound the accumulators to 16 per lane.
