@@ -3,7 +3,7 @@ import generated.kv_cache_update;
 
 // Applies the first copy_count row copies, in order, to the keys and the values, bit for bit. One thread per column of
 // one plane applies every copy, so chained copies, swaps and repeated destinations see the copies before them.
-[[Variants("T", "float, bf16")]]
+[[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "copy_count as usize <= copies.len()")]]
 func KVCacheUpdate<T: IModelFloat>(

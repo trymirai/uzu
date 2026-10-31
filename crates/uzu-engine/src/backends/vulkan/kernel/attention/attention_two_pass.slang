@@ -14,7 +14,7 @@ import generated.trie;
 
 static const uint TWO_PASS_SIMDGROUPS = 8;
 
-[[Variants("T", "float, bf16")]]
+[[Variants("T", "bf16")]]
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]
@@ -114,7 +114,7 @@ func AttentionTwoPass1<T: IModelFloat>(
   }
 }
 
-[[Variants("T", "float, bf16")]]
+[[Variants("T", "bf16")]]
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "blocks > 0 && blocks <= crate::backends::vulkan::gpu_types::attention_two_pass::ATTENTION_TWO_PASS_BLOCKS")]]
