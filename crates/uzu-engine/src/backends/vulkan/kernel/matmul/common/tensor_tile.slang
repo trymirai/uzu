@@ -287,7 +287,7 @@ public void gemm_tensor_run<
   let SG_N : int,
   let SG_K : int
 >(
-  DenseOperand<B> left,
+  Ptr<B, Access.Read> a,
   Ptr<B, Access.Read> dense,
   QuantizedWeights<B> weights,
   bool quantized,
@@ -300,7 +300,7 @@ public void gemm_tensor_run<
   let TM = BM / (16 * SG_M);
   let TN = BN / (16 * SG_N);
   TensorStager<B, N, S, BM, BN, BK, SG_M * SG_N * SG_K * 32> stager;
-  stager.a = left.values;
+  stager.a = a;
   stager.dense = dense;
   stager.weights = weights;
   stager.quantized = quantized;

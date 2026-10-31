@@ -183,8 +183,8 @@ public void simdgroup_mma_core_run<
 
   var loader_a = ThreadgroupLoader<A>(
     left.values,
-    block_row * params.K,
-    int(params.K),
+    block_row * left.k,
+    int(left.k),
     THREADGROUP_BLOCK_M,
     THREADGROUP_BLOCK_K,
     shared_stride_a,

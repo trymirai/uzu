@@ -78,7 +78,7 @@ public func Gemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
   GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, alignment };
   let position = uint2(column_tile, row_tile);
   if (b_prologue == GemmBPrologueKind.FullPrecision) {
-    FullPrecisionRight<B> right = { Ptr<B, Access.Read>(b), k };
+    FullPrecisionRight<B> right = { { Ptr<B, Access.Read>(b), k } };
     gemm_simdgroup<A, B, D, FullPrecisionRight<B>, GemmStorage<A, 0>, GemmStorage<B, 1>>(
       tiling, left, right, d, bias, params, position, thread_context
     );
@@ -119,7 +119,7 @@ public struct GemmTensorShared<N : ICoopElement> : ITensorShared<N> {
 // The cooperative tilings' instantiations; tiling is a specialization constant, so each pipeline keeps one branch.
 void gemm_tensor_tiling<B : IModelFloat16, N : ICoopElement, D : IModelFloat>(
   GemmTiling tiling,
-  DenseOperand<B> left,
+  Ptr<B, Access.Read> a,
   Ptr<B, Access.Read> dense,
   QuantizedWeights<B> weights,
   bool quantized,
@@ -132,19 +132,19 @@ void gemm_tensor_tiling<B : IModelFloat16, N : ICoopElement, D : IModelFloat>(
   typealias S = GemmTensorShared<N>;
   if (tiling == GemmTiling.Tile16x64x64_Simdgroups1x4x2) {
     gemm_tensor_run<B, N, D, S, 16, 64, 64, 1, 4, 2>(
-      left, dense, weights, quantized, d, bias, params, tile, tid
+      a, dense, weights, quantized, d, bias, params, tile, tid
     );
   } else if (tiling == GemmTiling.Tile32x64x64_Simdgroups1x4x2) {
     gemm_tensor_run<B, N, D, S, 32, 64, 64, 1, 4, 2>(
-      left, dense, weights, quantized, d, bias, params, tile, tid
+      a, dense, weights, quantized, d, bias, params, tile, tid
     );
   } else if (tiling == GemmTiling.Tile64x128x32_Simdgroups2x4x1) {
     gemm_tensor_run<B, N, D, S, 64, 128, 32, 2, 4, 1>(
-      left, dense, weights, quantized, d, bias, params, tile, tid
+      a, dense, weights, quantized, d, bias, params, tile, tid
     );
   } else if (tiling == GemmTiling.Tile128x128x32_Simdgroups2x4x1) {
     gemm_tensor_run<B, N, D, S, 128, 128, 32, 2, 4, 1>(
-      left, dense, weights, quantized, d, bias, params, tile, tid
+      a, dense, weights, quantized, d, bias, params, tile, tid
     );
   }
 }
@@ -188,7 +188,6 @@ public func GemmTensor<B: IModelFloat16, D: IModelFloat>(
   [[Specialize]] uint NUM_SIMDGROUPS,
   [[Specialize]] uint shared_words,
 ) {
-  DenseOperand<B> left = { a, k };
   GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias, has_soft_cap, 0 };
   let dense = Ptr<B, Access.Read>(b);
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
@@ -197,7 +196,7 @@ public func GemmTensor<B: IModelFloat16, D: IModelFloat>(
   let tile = uint2(column_tile, row_tile);
   let tid = simd_group * 32 + simd_lane;
   let quantized = b_prologue != GemmBPrologueKind.FullPrecision;
-  gemm_tensor_tiling<B, BFloat16, D>(tiling, left, dense, weights, quantized, d, bias, params, tile, tid);
+  gemm_tensor_tiling<B, BFloat16, D>(tiling, a, dense, weights, quantized, d, bias, params, tile, tid);
 }
 
 [[SpecializationConstant]] public const uint __dsl_GemmInt8_shared_words = 1;
