@@ -1461,6 +1461,14 @@ cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
 
 If the model is not downloaded yet, the CLI starts downloading it automatically.
 
+A Windows release build that runs without the Visual C++ Redistributable links the C and C++ runtimes statically. Set the flag for the target alone and name the target, so build scripts keep the dynamic runtime: Windows Defender quarantines statically linked build scripts as a false positive.
+
+```powershell
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
+cargo build --release -p cli --target x86_64-pc-windows-msvc  # target\x86_64-pc-windows-msvc\release\cli.exe
+Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS
+```
+
 ## Benchmarks
 
 To run benchmarks, pass a downloaded model path, a benchmark task file, and an output path:
