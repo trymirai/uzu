@@ -19,6 +19,7 @@ default = ["cpu", "metal"]
 cpu = ["uzu-engine/cpu"]
 metal = ["uzu-engine/metal"]
 webgpu = ["uzu-engine/webgpu"]
+vulkan = ["uzu-engine/vulkan"]
 bindings = [
     "bindings-uniffi",
     "bindings-napi",
@@ -119,9 +120,6 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 async-openai.workspace = true
 fancy-regex.workspace = true
-
-[target.'cfg(all(not(target_vendor = "apple"), not(target_family = "wasm")))'.dependencies]
-uzu-engine = { workspace = true, features = ["vulkan"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni.workspace = true

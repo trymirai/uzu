@@ -39,24 +39,23 @@ aliases = ["apple", "maccatalyst"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-unknown-linux-gnu"]
-features = ["cpu"]
+features = ["cpu", "vulkan"]
 aliases = ["linux"]
 
 [targets."x86_64-unknown-linux-gnu"]
-features = ["cpu"]
+features = ["cpu", "vulkan"]
 aliases = ["linux"]
 
 [targets."aarch64-pc-windows-msvc"]
-features = ["cpu"]
+features = ["cpu", "vulkan"]
 aliases = ["windows"]
 
 [targets."x86_64-pc-windows-msvc"]
-features = ["cpu"]
+features = ["cpu", "vulkan"]
 aliases = ["windows"]
 
-# The uzu crate enables Vulkan by target, not by feature, and the engine's Vulkan includes the CPU backend.
 [targets."aarch64-linux-android"]
-features = ["cpu"]
+features = ["cpu", "vulkan"]
 aliases = ["android"]
 required_envs = ["CARGO_NDK_PLATFORM"]
 

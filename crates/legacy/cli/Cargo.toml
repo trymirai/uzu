@@ -17,6 +17,7 @@ default = ["cpu", "metal"]
 cpu = ["uzu/cpu"]
 metal = ["uzu/metal"]
 webgpu = ["uzu/webgpu"]
+vulkan = ["uzu/vulkan"]
 
 [dependencies]
 anyhow.workspace = true

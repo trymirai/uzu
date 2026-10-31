@@ -29,5 +29,8 @@ uuid.workspace = true
 uzu = { workspace = true, features = ["metal"] }
 hanashi.workspace = true
 
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+uzu = { workspace = true, features = ["vulkan"] }
+
 [lints]
 workspace = true
