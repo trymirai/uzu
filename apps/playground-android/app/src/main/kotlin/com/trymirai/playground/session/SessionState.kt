@@ -13,10 +13,9 @@ sealed interface SessionState {
     data class Failed(val message: String, val loaded: Boolean) : SessionState
 }
 
-/** What a screen shows for this state, given its own words for [idle] and [generating]. */
+/** What a screen's prompt or action shows for this state, given its own words for [idle] and [generating]. */
 fun SessionState.label(idle: String, generating: String): String = when (this) {
     SessionState.Loading -> "Loading…"
     SessionState.Generating -> generating
-    is SessionState.Failed -> "Error: $message"
-    SessionState.Idle -> idle
+    SessionState.Idle, is SessionState.Failed -> idle
 }

@@ -39,6 +39,7 @@ fun TextTaskScreen(identifier: String, viewModel: TextTaskViewModel, onBack: () 
                 modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
             ) {
                 PromptField(input, enabled = state.canStart, placeholder = task.placeholder, maxLines = 10)
+                (state as? SessionState.Failed)?.let { Text("Error: ${it.message}", color = MaterialTheme.colorScheme.error) }
                 result?.let { reply ->
                     Column(Modifier.padding(start = 16.dp)) {
                         SelectionContainer {

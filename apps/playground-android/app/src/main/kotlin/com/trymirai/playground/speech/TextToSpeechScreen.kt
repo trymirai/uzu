@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -41,8 +42,9 @@ fun TextToSpeechScreen(identifier: String, viewModel: TextToSpeechViewModel, aud
     val speech = output?.let(AudioSource::File)
     Scaffold(topBar = { PlaygroundTopBar(onBack, identifier) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), Arrangement.spacedBy(16.dp)) {
                 PromptField(input, enabled = state.canStart, placeholder = "Enter text for synthesis…")
+                (state as? SessionState.Failed)?.let { Text("Error: ${it.message}", color = MaterialTheme.colorScheme.error) }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(16.dp)) {

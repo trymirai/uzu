@@ -62,6 +62,9 @@ fun ChatScreen(identifier: String, viewModel: ChatViewModel, onSend: () -> Unit,
             ) {
                 items(messages.asReversed()) { MessageRow(it) }
             }
+            (state as? SessionState.Failed)?.let {
+                Text("Error: ${it.message}", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Composer(
                 state,
