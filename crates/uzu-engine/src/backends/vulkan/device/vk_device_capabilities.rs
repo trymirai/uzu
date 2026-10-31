@@ -6,9 +6,6 @@ bitflags! {
     /// Optional device capabilities that select kernels or that kernels require.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct VkDeviceCapabilities: u32 {
-        /// Round-to-nearest-even and preserved signed zeros, infinities and NaNs for 16- and 32-bit floats, which
-        /// every generated kernel declares.
-        const FLOAT_CONTROLS = 1 << 0;
         /// Compute pipelines may require full subgroups of 32 invocations, which kernels whose algorithm is 32 lanes
         /// wide pin.
         const SUBGROUP_SIZE_32 = 1 << 1;

@@ -3,15 +3,14 @@ use std::ffi::CStr;
 use ash::{amd, arm, ext, khr, nv, vk};
 
 use crate::backends::vulkan::{
-    VkCooperativeMatrix2Features, VkDeviceCapabilities, VkDeviceError, VkPhysicalDeviceFeatures,
-    VkPhysicalDeviceSubgroupProperties, VkShaderBfloat16Features,
+    VkCooperativeMatrix2Features, VkDeviceCapabilities, VkDeviceError, VkPhysicalDeviceSubgroupProperties,
+    VkShaderBfloat16Features,
 };
 
 pub struct VkPhysicalDevice {
     pub device: vk::PhysicalDevice,
     pub properties: vk::PhysicalDeviceProperties,
     pub queue_families: Vec<vk::QueueFamilyProperties>,
-    pub features: VkPhysicalDeviceFeatures,
     pub subgroup_properties: VkPhysicalDeviceSubgroupProperties,
     pub capabilities: VkDeviceCapabilities,
     /// Streaming multiprocessors or compute units, where the device reports them.
@@ -31,11 +30,12 @@ impl VkPhysicalDevice {
             .map(|index| index as u32)
     }
 
+    /// The device's properties and capabilities, or `None` where it lacks a feature the backend requires.
     pub fn new(
         entry: &ash::Entry,
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Self, VkDeviceError> {
+    ) -> Result<Option<Self>, VkDeviceError> {
         let extensions = unsafe { instance.enumerate_device_extension_properties(physical_device) }
             .map_err(VkDeviceError::CapabilityQuery)?;
         let has_extension = |name: &CStr| {
@@ -104,7 +104,6 @@ impl VkPhysicalDevice {
         let subgroup_properties = VkPhysicalDeviceSubgroupProperties {
             size: device_subgroup_properties.subgroup_size,
             max_compute_workgroup_subgroups: vk13properties.max_compute_workgroup_subgroups,
-            supported_operations: device_subgroup_properties.supported_operations,
             // Vulkan 1.3 makes subgroup size control and full subgroups mandatory, but not for compute pipelines.
             requirable_sizes: vk13properties
                 .required_subgroup_size_stages
@@ -140,17 +139,6 @@ impl VkPhysicalDevice {
         let unsigned_dot_product = vk13properties.integer_dot_product4x8_bit_packed_unsigned_accelerated == vk::TRUE
             && vk13properties.integer_dot_product4x8_bit_packed_signed_accelerated != vk::TRUE;
         let capabilities = [
-            (
-                VkDeviceCapabilities::FLOAT_CONTROLS,
-                [
-                    float_controls.shader_rounding_mode_rte_float16,
-                    float_controls.shader_rounding_mode_rte_float32,
-                    float_controls.shader_signed_zero_inf_nan_preserve_float16,
-                    float_controls.shader_signed_zero_inf_nan_preserve_float32,
-                ]
-                .iter()
-                .all(|&supported| supported == vk::TRUE),
-            ),
             (VkDeviceCapabilities::SUBGROUP_SIZE_32, subgroup_properties.requirable(32)),
             (VkDeviceCapabilities::MEMORY_BUDGET, has_extension(ext::memory_budget::NAME)),
             (VkDeviceCapabilities::BF16_TYPE, bf16_type),
@@ -174,23 +162,32 @@ impl VkPhysicalDevice {
         .into_iter()
         .filter_map(|(capability, supported)| supported.then_some(capability))
         .collect();
-        let features = [
-            (VkPhysicalDeviceFeatures::STORAGE_PUSH_CONSTANT8, vk12features.storage_push_constant8),
-            (VkPhysicalDeviceFeatures::STORAGE_PUSH_CONSTANT16, vk11features.storage_push_constant16),
-            (VkPhysicalDeviceFeatures::SHADER_FLOAT16, vk12features.shader_float16),
+        // What Vulkan 1.4 leaves optional and the kernels need: Slang declares StoragePushConstant8 and 16 for modules
+        // with byte and 16-bit pointers, and every generated kernel declares these float controls.
+        let meets_requirements = [
+            vk12features.storage_push_constant8,
+            vk11features.storage_push_constant16,
+            vk12features.shader_float16,
+            float_controls.shader_rounding_mode_rte_float16,
+            float_controls.shader_rounding_mode_rte_float32,
+            float_controls.shader_signed_zero_inf_nan_preserve_float16,
+            float_controls.shader_signed_zero_inf_nan_preserve_float32,
         ]
-        .into_iter()
-        .filter_map(|(feature, supported)| (supported == vk::TRUE).then_some(feature))
-        .collect();
+        .iter()
+        .all(|&supported| supported == vk::TRUE)
+            && device_subgroup_properties.supported_operations.contains(
+                vk::SubgroupFeatureFlags::ARITHMETIC
+                    | vk::SubgroupFeatureFlags::BALLOT
+                    | vk::SubgroupFeatureFlags::SHUFFLE,
+            );
 
-        Ok(Self {
+        Ok(meets_requirements.then_some(Self {
             device: physical_device,
             properties,
-            features,
             subgroup_properties,
             queue_families,
             capabilities,
             compute_units,
-        })
+        }))
     }
 }

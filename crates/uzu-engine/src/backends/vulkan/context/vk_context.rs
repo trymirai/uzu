@@ -25,7 +25,7 @@ use crate::backends::{
         Error, VkBuffer, VkBufferError, VkBufferInitializer, VkBufferMemory, VkCommandBufferEncoding,
         VkCommandBufferError, VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline,
         VkComputePipelineKey, VkContextError, VkCooperativeMatrix2Features, VkDebugMessages, VkDeviceCapabilities,
-        VkKernelError, VkPhysicalDevice, VkPhysicalDeviceFeatures, VkShaderBfloat16Features, VkSparseBuffer, Vulkan,
+        VkKernelError, VkPhysicalDevice, VkShaderBfloat16Features, VkSparseBuffer, Vulkan,
     },
 };
 
@@ -567,15 +567,7 @@ fn get_physical_device(
         .map(|device| VkPhysicalDevice::new(entry, instance, device))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .filter(|physical_device| {
-            physical_device.features.contains(VkPhysicalDeviceFeatures::all())
-                && physical_device.capabilities.contains(VkDeviceCapabilities::FLOAT_CONTROLS)
-                && physical_device.subgroup_properties.supported_operations.contains(
-                    vk::SubgroupFeatureFlags::ARITHMETIC
-                        | vk::SubgroupFeatureFlags::BALLOT
-                        | vk::SubgroupFeatureFlags::SHUFFLE,
-                )
-        })
+        .flatten()
         .filter_map(|physical_device| physical_device.compute_queue_family().map(|queue| (physical_device, queue)))
         .min_by_key(|(physical_device, _)| match physical_device.properties.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => 0,
