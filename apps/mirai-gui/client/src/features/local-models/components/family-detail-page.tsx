@@ -1,7 +1,7 @@
 import { useIsMobile } from "@/hooks/use-media-query";
 import { useModelsStore } from "@/stores/use-models-store";
 import type { PlatformModel } from "@/types/models";
-import { formatModelSize } from "@/utils/format";
+import { formatMemoryHint, formatModelSize } from "@/utils/format";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
 import { ModelCard } from "./model-card";
 import { ModelTable } from "./model-table";
@@ -59,6 +59,7 @@ export function FamilyDetailPage({
         name={model.name}
         logo={<ModelVendorIcon vendor={model.vendor} size={16} className="h-4 w-4" />}
         size={formatModelSize(model.size)}
+        hint={formatMemoryHint(model.freeMemoryBytes)}
         parameters={formatQuantization(model)}
         state={cardState}
         onDownload={() => void onDownload(model)}

@@ -7,11 +7,15 @@ import { Plus } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { v4 as uuidv4 } from "uuid";
 import { ChatsIcon } from "../icons/chats-icon";
+import { HEADER_RIGHT_RESERVE_PX } from "../window-controls";
 import { ModelsIcon } from "../icons/models-icon";
 import SidebarToggleIcon from "../icons/sidebar-toggle-icon";
 import MenuItem from "./menu-item";
 import SavedChats from "@/features/chat-history/components/saved-chats";
 import Settings from "./settings";
+
+// Over a narrow window the sidebar stops short of the caption buttons.
+const MOBILE_WIDTH = `min(280px, calc(100vw - ${HEADER_RIGHT_RESERVE_PX}px))`;
 
 function LeftBar() {
   const location = useLocation();
@@ -88,7 +92,11 @@ function LeftBar() {
       {toggleSidebarButton}
 
       {isMobile && isSidebarOpen && (
-        <div className="fixed top-0 right-0 bottom-0 left-[280px] bg-black/50 z-40 md:hidden" onClick={closeOnMobile} />
+        <div
+          className="fixed top-0 right-0 bottom-0 bg-black/50 z-40 md:hidden"
+          style={{ left: MOBILE_WIDTH }}
+          onClick={closeOnMobile}
+        />
       )}
 
       <div
@@ -98,9 +106,10 @@ function LeftBar() {
         }}
         aria-hidden={!isSidebarOpen}
         data-tauri-drag-region
+        style={isMobile ? { width: MOBILE_WIDTH } : undefined}
         className={twMerge(
           "relative min-h-0 bg-bg-sidebar border-[1px] border-cell-border border-b-0 border-t-0 flex flex-col py-3 overflow-clip transition-transform duration-300 ease-in-out motion-reduce:transition-none",
-          isMobile ? "fixed top-0 left-0 h-dvh w-[280px] z-50" : "h-full w-62",
+          isMobile ? "fixed top-0 left-0 h-dvh z-50" : "h-full w-62",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >

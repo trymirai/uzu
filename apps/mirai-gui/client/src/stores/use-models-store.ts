@@ -113,6 +113,7 @@ export const useModelsStore = create<ModelsState>()(
                   ...(typeof m.paramSize === "number" ? { paramSize: m.paramSize } : {}),
                   family: familyName,
                   ...(m.familyIdentifier ? { familyIdentifier: m.familyIdentifier } : {}),
+                  ...(typeof m.freeMemoryBytes === "number" ? { freeMemoryBytes: m.freeMemoryBytes } : {}),
                   sourceIndex,
                 };
               });

@@ -214,6 +214,13 @@
     pointer-events: none;
     z-index: 50;
   }
+  .drag-layer[data-tauri-drag-region] {
+    /* The frameless Windows window drags here, like VS Code's title-bar drag
+       region: above page headers (z-10), below everything clickable in the top
+       40px (local-models controls z-20, LeftBar z-30, caption buttons z-60). */
+    pointer-events: auto;
+    z-index: 15;
+  }
   .overlay-button {
     pointer-events: auto;
     z-index: 60;

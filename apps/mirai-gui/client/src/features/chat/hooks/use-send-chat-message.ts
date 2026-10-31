@@ -110,7 +110,6 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
           const attachmentIds = userMessage.attachmentIds;
           if (useChatStore.getState().currentChatId === chatId) setScrollTargetId(userMessage.id);
 
-          // Created before the first await so Stop during title generation has a reply to remove.
           const placeholder = useChatStore.getState().addMessageTo(chatId, {
             text: "",
             sender: Roles.Assistant,
@@ -151,25 +150,6 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
             );
             if (canceled()) return;
 
-            if (!modelChatNamingEnabled) {
-              const titleGenResult = await useChatStore.getState().generateChatTitle(chatId, message);
-
-              if (useChatSessionStore.getState().consumeTitleGenAbort(chatId)) {
-                // The placeholder is already on disk; remove it after Stop so it
-                // cannot return as a blank bubble after a reload.
-                session.setCanceledMessage(chatId, null);
-                session.setLoadingMessage(chatId, null);
-                await useChatStore.getState().discardMessage(chatId, placeholder.id);
-                return;
-              }
-
-              if (!titleGenResult.ok && titleGenResult.error) {
-                await failReply(`Error: ${titleGenResult.error}`);
-                return;
-              }
-            }
-            if (canceled()) return;
-
             const result = await startStream({
               signal,
               repoId: modelId,
@@ -203,13 +183,12 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
             });
             if (canceled()) return;
 
-            if (
-              modelChatNamingEnabled &&
-              !history.some((m) => m.sender === Roles.User) &&
-              result?.finishReason === "Stop" &&
-              !result.error &&
-              !result.chatName
-            ) {
+            // The separate naming pass waits for the reply, as the engine serves one at a time. With the naming tool,
+            // it only names a first reply that finished without a name.
+            const titleNeeded = modelChatNamingEnabled
+              ? !history.some((m) => m.sender === Roles.User) && result?.finishReason === "Stop" && !result.chatName
+              : result?.finishReason !== "Cancelled";
+            if (titleNeeded && !result?.error) {
               const titleGenResult = await useChatStore.getState().generateChatTitle(chatId, message);
               session.consumeTitleGenAbort(chatId);
               if (!titleGenResult.ok && titleGenResult.error) {

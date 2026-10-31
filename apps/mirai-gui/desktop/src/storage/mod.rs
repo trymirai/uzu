@@ -4,11 +4,12 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, AppResult};
 
-// Must stay "~/Library/Application Support/mirai": user chats and settings
-// live here, and renaming the directory would strand them.
+// Must stay "~/Library/Application Support/mirai" on macOS: user chats and
+// settings live here, and renaming the directory would strand them. Windows
+// uses %APPDATA%\mirai and Linux ~/.local/share/mirai.
 pub fn mirai_data_dir() -> AppResult<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or_else(|| AppError::msg("HOME not set"))?;
-    Ok(PathBuf::from(home).join("Library/Application Support/mirai"))
+    let data = dirs::data_dir().ok_or_else(|| AppError::msg("no user data directory"))?;
+    Ok(data.join("mirai"))
 }
 
 pub fn chats_dir() -> AppResult<PathBuf> {

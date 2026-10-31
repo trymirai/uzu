@@ -1,11 +1,16 @@
-use tauri::{AppHandle, Manager};
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
+
+use tauri::{AppHandle, Emitter, Manager};
 use uzu::{
-    engine::Engine,
+    engine::{Engine, EngineError},
     session::{
-        chat::{ChatInstance, ChatSession},
+        chat::{ChatInstance, ChatSession, ChatSessionError},
         tool::uzu_tool_function,
     },
-    types::session::chat::ChatConfig,
+    types::{basic::BackendError, model::Model, session::chat::ChatConfig},
 };
 
 use super::{
@@ -114,7 +119,13 @@ pub(super) async fn ensure_session(
     emit_session_loading(app, LoadingStatus::Start, repo_id, None);
     let config = ChatConfig::create();
     let loaded = async {
-        let instance = engine.chat_instance(model.clone(), config).await?;
+        let instance = engine.chat_instance(model.clone(), config).await.map_err(load_error)?;
+        if let Some(notice) = instance.speculation_notice() {
+            crate::logger::info(
+                "session:speculation-off",
+                Some(serde_json::json!({ "repoId": repo_id, "notice": notice })),
+            );
+        }
         let (session, naming) =
             create_session(&engine, &instance, model_chat_naming_enabled, date_time_tool_enabled, chart_tool_enabled)
                 .await?;
@@ -124,10 +135,12 @@ pub(super) async fn ensure_session(
     let (instance, session, naming) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
+            forget_memory_hints(app);
             emit_session_loading(app, LoadingStatus::Error, repo_id, Some(error.to_string()));
             return Err(error);
         },
     };
+    MEMORY_HINTS.lock().expect("memory hints mutex poisoned").insert(model.identifier.clone(), None);
     *guard = Some(ResidentSession {
         repo_id: repo_id.to_string(),
         identifier: model.identifier.clone(),
@@ -141,6 +154,77 @@ pub(super) async fn ensure_session(
     });
     emit_session_state(app, true, repo_id, false);
     Ok((session, support, naming))
+}
+
+// The backend refuses a model too large for the device with an error that explains it; the chat shows the explanation
+// alone.
+fn load_error(error: EngineError) -> AppError {
+    match error {
+        EngineError::ChatSession(ChatSessionError::Backend {
+            error: BackendError::Other {
+                message,
+            },
+        }) => AppError::msg(message),
+        error => error.into(),
+    }
+}
+
+static MEMORY_HINTS: LazyLock<Mutex<HashMap<String, Option<u64>>>> = LazyLock::new(Default::default);
+
+/// The device memory free when the downloaded model `identifier` was found too large for it; the outer `None` until
+/// it is checked.
+pub fn memory_hint(identifier: &str) -> Option<Option<u64>> {
+    MEMORY_HINTS.lock().expect("memory hints mutex poisoned").get(identifier).copied()
+}
+
+/// Forgets every hint, as the memory free changes when a model unloads or fails to load, and has the models listed anew.
+pub fn forget_memory_hints(app: &AppHandle) {
+    MEMORY_HINTS.lock().expect("memory hints mutex poisoned").clear();
+    let _ = app.emit("models-changed", ());
+}
+
+/// Marks the downloaded `models` checked, then checks them against the device memory free, queried once, and announces
+/// the hints. Waits out a load, and skips the check while a session is loaded, whose memory counts as used.
+pub fn refresh_memory_hints(
+    app: AppHandle,
+    engine: Engine,
+    models: Vec<Model>,
+) {
+    MEMORY_HINTS
+        .lock()
+        .expect("memory hints mutex poisoned")
+        .extend(models.iter().map(|model| (model.identifier.clone(), None)));
+    tauri::async_runtime::spawn(async move {
+        if app.state::<ChatState>().session.lock().await.is_some() {
+            return;
+        }
+        let warn = |error: EngineError| {
+            crate::logger::warn("models:memory-hints", Some(serde_json::json!({ "error": error.to_string() })));
+        };
+        let available = match engine.available_memory().await {
+            Ok(Some(available)) => available,
+            Ok(None) => return,
+            Err(error) => return warn(error),
+        };
+        let mut changed = false;
+        for model in models {
+            match engine.memory_check(&model).await {
+                Ok(check) => {
+                    if let Some(shortfall) = check.and_then(|check| check(available)) {
+                        MEMORY_HINTS
+                            .lock()
+                            .expect("memory hints mutex poisoned")
+                            .insert(model.identifier, Some(shortfall.available_bytes));
+                        changed = true;
+                    }
+                },
+                Err(error) => warn(error),
+            }
+        }
+        if changed {
+            let _ = app.emit("models-changed", ());
+        }
+    });
 }
 
 fn resolve_tool_enabled(

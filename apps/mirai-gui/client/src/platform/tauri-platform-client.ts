@@ -5,7 +5,7 @@ import { tauriModels } from "./services/models/tauri";
 import { tauriSession } from "./services/session/tauri";
 import { tauriSettings } from "./services/settings/tauri";
 import { tauriStorage } from "./services/storage/tauri";
-import { ensureExternalLinkInterception, tauriSystem } from "./services/system/tauri";
+import { disableBrowserBehaviour, ensureExternalLinkInterception, tauriSystem } from "./services/system/tauri";
 import { tauriSystemUi } from "./services/system-ui/tauri";
 import { tauriUpdater } from "./services/updater/tauri";
 
@@ -22,5 +22,6 @@ export class TauriPlatformClient implements PlatformClient {
 
   constructor() {
     ensureExternalLinkInterception();
+    disableBrowserBehaviour();
   }
 }

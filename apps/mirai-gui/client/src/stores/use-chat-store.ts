@@ -4,7 +4,8 @@ import { useModelsStore } from "./use-models-store";
 import type { Message, PerfStats } from "@/types/message";
 import type { ChatMetadata } from "@/platform/services/storage";
 import { v4 as uuidv4 } from "uuid";
-import { create } from "zustand";
+import { create, type StateCreator } from "zustand";
+import { persist } from "zustand/middleware";
 import { getPlatform } from "@/platform/platform-singleton";
 import type { LlmAsyncStream, LlmRunParams, SessionOutputStats, TranscriptItem } from "@/types/llm-stream";
 import { finalizeAssistantMessage, persistMessage, persistMessageError, persistMessagePatch } from "./chat/persistence";
@@ -73,7 +74,7 @@ export type ChatState = {
   runChatStream: (params: LlmRunParams) => LlmAsyncStream;
 };
 
-export const useChatStore = create<ChatState>((set, get) => ({
+const chatState: StateCreator<ChatState, [["zustand/persist", unknown]]> = (set, get) => ({
   chatModels: {},
   lastUsedModel: null,
   messages: [],
@@ -318,4 +319,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       reasoningEffort: modelParams.reasoningEffort ?? "default",
     });
   },
-}));
+});
+
+export const useChatStore = create<ChatState>()(
+  persist(chatState, { name: "mirai-chat-store", partialize: (state) => ({ lastUsedModel: state.lastUsedModel }) }),
+);

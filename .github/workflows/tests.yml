@@ -249,7 +249,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app bundle
-        run: pnpm build
+        run: pnpm build --target aarch64-apple-darwin
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v7

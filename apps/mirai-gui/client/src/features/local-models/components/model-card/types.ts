@@ -15,6 +15,7 @@ export type ModelCardProps = {
   logo: ReactNode;
   parameters?: string;
   size?: string;
+  hint?: string;
   state?: ModelCardState;
   onDownload?: () => void;
   onPause?: () => void;

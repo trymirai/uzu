@@ -179,18 +179,39 @@ it("does not read another chat's history when the user navigates during persiste
   expect(useChatStore.getState().messages).toHaveLength(2);
 });
 
-it("does not start a response after Stop during title generation following a remount", async () => {
-  useChatStore.setState({ savedChats: [metadata] });
-  let resolveTitle!: (value: string) => void;
-  generateTitle.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        resolveTitle = resolve;
-      }),
-  );
-  cancelTitleGen.mockImplementation(async () => {
-    resolveTitle("");
+it("starts the reply before a small model names the chat", async () => {
+  const reply = deferred<LlmRunResult>();
+  startStream.mockReturnValueOnce(reply.promise);
+  const hook = renderSend();
+  let sending!: Promise<void>;
+  act(() => {
+    sending = hook.result.current.send("hello");
   });
+  await waitFor(() => expect(startStream).toHaveBeenCalled());
+  expect(generateTitle).not.toHaveBeenCalled();
+
+  await act(async () => {
+    reply.resolve({ text: "Answer", stats: emptyStats(), finishReason: "Stop" });
+    await sending;
+  });
+
+  expect(generateTitle).toHaveBeenCalledTimes(1);
+  expect(chats.get(CHAT_A)?.metadata.title).toBe("Title");
+});
+
+it("does not name the chat after a stopped reply", async () => {
+  startStream.mockResolvedValueOnce({ text: "Partial", stats: emptyStats(), finishReason: "Cancelled" });
+  const hook = renderSend();
+
+  await act(() => hook.result.current.send("hello"));
+
+  expect(generateTitle).not.toHaveBeenCalled();
+});
+
+it("keeps the reply when Stop after a remount cancels the title generation", async () => {
+  const title = deferred<string>();
+  generateTitle.mockReturnValueOnce(title.promise);
+  cancelTitleGen.mockImplementationOnce(async () => title.resolve(""));
   const original = renderSend();
   let sending!: Promise<void>;
   act(() => {
@@ -206,19 +227,15 @@ it("does not start a response after Stop during title generation following a rem
   });
 
   expect(cancelTitleGen).toHaveBeenCalledTimes(1);
-  expect(startStream).not.toHaveBeenCalled();
+  expect(startStream).toHaveBeenCalledTimes(1);
+  expect(chats.get(CHAT_A)?.messages).toHaveLength(2);
   expect(updateChatTitle).not.toHaveBeenCalled();
+  expect(useChatSessionStore.getState().titleGenAbortChatId).toBeNull();
 });
 
 it("keeps the Stop of one chat's title generation when another chat sends meanwhile", async () => {
-  useChatStore.setState({ savedChats: [metadata] });
-  let resolveTitle!: (value: string) => void;
-  generateTitle.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        resolveTitle = resolve;
-      }),
-  );
+  const title = deferred<string>();
+  generateTitle.mockReturnValueOnce(title.promise);
   const a = renderSend(CHAT_A);
   let sending!: Promise<void>;
   act(() => {
@@ -234,11 +251,11 @@ it("keeps the Stop of one chat's title generation when another chat sends meanwh
   expect(toast.error).toHaveBeenCalledWith("Generating chat title, please wait");
 
   await act(async () => {
-    resolveTitle("");
+    title.resolve("Late title");
     await sending;
   });
 
-  expect(startStream).not.toHaveBeenCalled();
+  expect(startStream).toHaveBeenCalledTimes(1);
   expect(updateChatTitle).not.toHaveBeenCalled();
 });
 
@@ -296,7 +313,7 @@ it("keeps a failed save of one chat out of the chat opened meanwhile", async () 
   expect(chats.get(CHAT_A)?.messages.map((m) => m.error)).toEqual(["Error: disk full"]);
 });
 
-it("does not start a reply for a chat deleted during title generation", async () => {
+it("does not name a chat deleted during title generation", async () => {
   const title = deferred<string>();
   generateTitle.mockReturnValueOnce(title.promise);
   const hook = renderSend();
@@ -308,12 +325,12 @@ it("does not start a reply for a chat deleted during title generation", async ()
 
   await act(() => useChatStore.getState().deleteChat(CHAT_A));
   await act(async () => {
-    title.resolve("");
+    title.resolve("Late title");
     await sending;
   });
 
   expect(cancelTitleGen).toHaveBeenCalledTimes(1);
-  expect(startStream).not.toHaveBeenCalled();
+  expect(updateChatTitle).not.toHaveBeenCalled();
   expect(chats.has(CHAT_A)).toBe(false);
 });
 
