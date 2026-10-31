@@ -19,6 +19,7 @@ default = ["cpu", "metal"]
 cpu = ["uzu-engine/cpu"]
 metal = ["uzu-engine/metal"]
 webgpu = ["uzu-engine/webgpu"]
+vulkan = ["uzu-engine/vulkan"]
 bindings = [
     "bindings-uniffi",
     "bindings-napi",

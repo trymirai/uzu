@@ -1,0 +1,89 @@
+import definitions;
+import generated.trie;
+
+// One hash owner and chunk slot per invocation.
+static const uint REPETITION_PENALTY_HASH_BITS = 8;
+static const uint REPETITION_PENALTY_THREADS = 1u << REPETITION_PENALTY_HASH_BITS;
+static const uint REPETITION_PENALTY_EMPTY = 0xffffffffu;
+groupshared uint repetition_penalty_heads[REPETITION_PENALTY_THREADS];
+groupshared uint repetition_penalty_next[REPETITION_PENALTY_THREADS];
+groupshared uint repetition_penalty_tokens[REPETITION_PENALTY_THREADS];
+
+// One workgroup per sample; duplicates read original_logits, never a penalized output. In a trie a sample's window ends
+// with its ancestors, the nearest earlier node at each height. Each token's hash owner writes it throughout a row; a
+// bounded shared list deduplicates each chunk without racing device stores. Unchecked: output does not alias inputs,
+// tokens are below vocab_size, the ring is valid and its offsets do not overflow.
+[[Variants("T", "float, bf16")]]
+[[Kernel]] [[Public]]
+func RepetitionPenalty<T: IStorageFloat>(
+  Ptr<T, Access.Read> original_logits,
+  Ptr<T, Access.ReadWrite> logits_copy,
+  Ptr<uint, Access.Read> context_ring,
+  Ptr<uint, Access.Read> token_ids,
+  [[Optional("is_trie")]] Ptr<TrieNode, Access.Read> trie,
+  float repetition_penalty,
+  uint suffix_repetition_length,
+  uint vocab_size,
+  uint sampling_start,
+  uint sampling_length,
+  [[Groups("if suffix_repetition_length == 0 { 0 } else { sampling_length }")]] uint group,
+  [[Threads("256")]] uint tid,
+  [[Specialize]] bool is_trie,
+) {
+  static_assert(REPETITION_PENALTY_THREADS == 256, "Threads(256)");
+  let capacity = suffix_repetition_length;
+  let ring_offset = context_ring[0];
+  let ring_length = context_ring[1];
+  let batch_index = sampling_start + group;
+  var position = batch_index;
+  if (is_trie) {
+    position = trie[batch_index].height;
+  }
+  let total_length = ring_length + position + 1;
+  let window_length = min(total_length, capacity);
+  let skipped_length = total_length - window_length;
+  for (uint base = 0; base < window_length; base += REPETITION_PENALTY_THREADS) {
+    repetition_penalty_heads[tid] = REPETITION_PENALTY_EMPTY;
+    GroupMemoryBarrierWithGroupSync();
+    if (tid < window_length - base) {
+      let source_index = skipped_length + base + tid;
+      uint token;
+      if (source_index < ring_length) {
+        token = context_ring[2 + (ring_offset + source_index) % capacity];
+      } else {
+        var token_index = source_index - ring_length;
+        if (is_trie) {
+          let height = token_index;
+          token_index = batch_index;
+          while (trie[token_index].height != height) {
+            token_index--;
+          }
+        }
+        token = token_ids[token_index];
+      }
+      repetition_penalty_tokens[tid] = token;
+      uint previous;
+      let bucket = (token * 0x9e3779b9u) >> (32 - REPETITION_PENALTY_HASH_BITS);
+      InterlockedExchange(repetition_penalty_heads[bucket], tid, previous);
+      repetition_penalty_next[tid] = previous;
+    }
+    // Every producer inserted once: predecessor links form a finite list. Publish tokens and links before traversal.
+    GroupMemoryBarrierWithGroupSync();
+    var node = repetition_penalty_heads[tid];
+    while (node != REPETITION_PENALTY_EMPTY) {
+      let token = repetition_penalty_tokens[node];
+      var earlier = repetition_penalty_heads[tid];
+      while (earlier != node && repetition_penalty_tokens[earlier] != token) {
+        earlier = repetition_penalty_next[earlier];
+      }
+      if (earlier == node) {
+        let index = group * vocab_size + token;
+        let logit = original_logits[index].toFloat();
+        let penalized = logit > 0.0 ? logit / repetition_penalty : logit * repetition_penalty;
+        logits_copy[index] = T.fromFloat(penalized);
+      }
+      node = repetition_penalty_next[node];
+    }
+    GroupMemoryBarrierWithGroupSync();
+  }
+}

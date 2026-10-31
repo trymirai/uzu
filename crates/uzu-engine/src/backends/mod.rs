@@ -3,13 +3,19 @@ pub(crate) mod common;
 #[cfg(backend = "metal")]
 pub(crate) mod metal;
 
+#[cfg(backend = "vulkan")]
+pub mod vulkan;
+
 #[cfg(backend = "webgpu")]
 pub(crate) mod webgpu;
 
 #[cfg(backend = "cpu")]
 pub(crate) mod cpu;
 
+mod selected_backend;
+
 pub use common::Backend;
+pub use selected_backend::selected_backend;
 
 pub trait BackendSelection {
     type Output;
@@ -22,20 +28,11 @@ pub async fn select_backend<S: BackendSelection>(
     selection: S,
     unknown: S::Error,
 ) -> Result<S::Output, S::Error> {
-    let default = if cfg!(backend = "metal") {
-        "metal"
-    } else if cfg!(backend = "webgpu") {
-        "webgpu"
-    } else if cfg!(backend = "cpu") {
-        "cpu"
-    } else {
-        unreachable!()
-    };
-
-    // TODO: remove magic env var
-    match std::env::var("UZU_BACKEND").map(|s| s.to_lowercase()).as_deref().unwrap_or(default) {
+    match selected_backend().as_str() {
         #[cfg(backend = "metal")]
         "metal" => selection.select::<metal::Metal>().await,
+        #[cfg(backend = "vulkan")]
+        "vulkan" => selection.select::<vulkan::Vulkan>().await,
         #[cfg(backend = "webgpu")]
         "webgpu" => selection.select::<webgpu::WebGPU>().await,
         #[cfg(backend = "cpu")]

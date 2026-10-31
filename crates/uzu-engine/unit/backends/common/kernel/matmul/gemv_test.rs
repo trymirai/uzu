@@ -23,8 +23,8 @@ use crate::{
     data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
-        matmul::{QuantBuffers, QuantInput},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+        matmul::{Case, QuantBuffers, QuantInput, Shape, cpu_reference, deterministic_input, harness::run},
     },
 };
 
@@ -146,12 +146,46 @@ fn test<T: DataTypeRepr + Float + Debug + Display>(
 #[case::unaligned_n(1, 128, 11)]
 #[case::large(1, 4096, 2048)]
 #[case::small_n(1, 128, 3)]
-fn gemv_bf16(
+#[case::gemm(40, 128, 72)]
+#[case::gemm_tiles(130, 264, 200)]
+#[case::gemm_unaligned_k(40, 33, 72)]
+fn matmul_bf16(
     #[case] m: usize,
     #[case] k: usize,
     #[case] n: usize,
 ) {
     test::<bf16>(m, k, n, 0.1);
+}
+
+#[rstest]
+#[test_attr(uzu_test)]
+#[case::m1(1, 128, 64)]
+#[case::batched(4, 96, 40)]
+#[case::gemm_rows(33, 128, 64)]
+fn matmul_b_not_transposed_bf16(
+    #[case] m: u32,
+    #[case] k: u32,
+    #[case] n: u32,
+) {
+    let input = deterministic_input::<bf16>(Case {
+        b_transpose: false,
+        ..Case::new(Shape::new(m, k, n))
+    });
+    let expected = cpu_reference(&input);
+    for_each_non_cpu_backend!(|B| {
+        let context = create_context::<B>();
+        let mut kernel = <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(
+            &context,
+            bf16::data_type(),
+            bf16::data_type(),
+            bf16::data_type(),
+        )
+        .expect("MatmulKernel");
+        let actual = run::<B, bf16>(&context, &mut kernel, &input, |kernel, arguments, command_buffer| {
+            kernel.encode(arguments, command_buffer).expect("encode failed")
+        });
+        assert_eq_float(&expected, &actual, 0.1, std::any::type_name::<B>());
+    });
 }
 
 #[cfg(backend = "metal")]

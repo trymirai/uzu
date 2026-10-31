@@ -1,0 +1,207 @@
+import definitions;
+import matmul.common.matmul;
+import matmul.common.loader;
+import matmul.common.simdgroup_multiply_accumulate;
+import matmul.common.threadgroup_tile;
+import matmul.gemm.common.operands;
+
+// One workgroup computes a THREADGROUP_BLOCK_M x THREADGROUP_BLOCK_N tile of D = epilogue(A B), staging each
+// THREADGROUP_BLOCK_K slice and accumulating it in FP32 8 x 8 fragments; loads and stores skip bounds checks where the
+// alignment allows.
+
+public static const uint GEMM_ALIGNMENT_M = 1;
+public static const uint GEMM_ALIGNMENT_N = 2;
+public static const uint GEMM_ALIGNMENT_K = 4;
+
+void simdgroup_mma_k_loop<
+  A : IStorageFloat,
+  B : IStorageFloat,
+  BLoader : IThreadgroupLoader<B>,
+  SharedA : IThreadgroupStorage<A>,
+  SharedB : IThreadgroupStorage<B>,
+  let THREADGROUP_BLOCK_M : int,
+  let THREADGROUP_BLOCK_N : int,
+  let THREADGROUP_BLOCK_K : int,
+  let SIMDGROUPS_PER_ROW : int,
+  let SIMDGROUPS_PER_COLUMN : int
+>(
+  uint gemm_alignment,
+  int aligned_k_iterations,
+  inout ThreadgroupLoader<A> loader_a,
+  inout BLoader loader_b,
+  inout ThreadgroupTile<
+    A, B, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N, THREADGROUP_BLOCK_K, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN
+  > accumulator,
+  int tile_block_rows,
+  int tile_block_cols,
+  int leftover_block_depth,
+) {
+  let tile_dimensions_a = int2(THREADGROUP_BLOCK_K, tile_block_rows);
+  let tile_dimensions_b = int2(THREADGROUP_BLOCK_K, tile_block_cols);
+
+  for (int k = 0; k < aligned_k_iterations; k++) {
+    GroupMemoryBarrierWithGroupSync();
+    if ((gemm_alignment & GEMM_ALIGNMENT_M) != 0) {
+      loader_a.load_unsafe<SharedA>();
+    } else {
+      loader_a.load_safe<SharedA>(tile_dimensions_a);
+    }
+    if ((gemm_alignment & GEMM_ALIGNMENT_N) != 0) {
+      loader_b.load_unsafe<SharedB>();
+    } else {
+      loader_b.load_safe<SharedB>(tile_dimensions_b);
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+    accumulator.matmul<SharedA, SharedB>();
+
+    loader_a.next();
+    loader_b.next();
+  }
+
+  if ((gemm_alignment & GEMM_ALIGNMENT_K) == 0 && leftover_block_depth > 0) {
+    GroupMemoryBarrierWithGroupSync();
+
+    let last_tile_dimensions_a = int2(leftover_block_depth, tile_block_rows);
+    let last_tile_dimensions_b = int2(leftover_block_depth, tile_block_cols);
+
+    loader_a.load_safe<SharedA>(last_tile_dimensions_a);
+    loader_b.load_safe<SharedB>(last_tile_dimensions_b);
+
+    GroupMemoryBarrierWithGroupSync();
+    accumulator.matmul<SharedA, SharedB>();
+  }
+}
+
+void simdgroup_mma_finalize<
+  A : IStorageFloat,
+  B : IStorageFloat,
+  D : IStorageFloat,
+  let THREADGROUP_BLOCK_M : int,
+  let THREADGROUP_BLOCK_N : int,
+  let THREADGROUP_BLOCK_K : int,
+  let SIMDGROUPS_PER_ROW : int,
+  let SIMDGROUPS_PER_COLUMN : int
+>(
+  inout ThreadgroupTile<
+    A, B, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N, THREADGROUP_BLOCK_K, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN
+  > accumulator,
+  uint gemm_alignment,
+  Ptr<D, Access.ReadWrite> d,
+  Ptr<B, Access.Read> output_bias,
+  uint block_row,
+  uint block_col,
+  GemmParams params,
+  int tile_block_rows,
+  int tile_block_cols,
+) {
+  let tile_rows = THREADGROUP_BLOCK_M / (8 * SIMDGROUPS_PER_ROW);
+  let tile_cols = THREADGROUP_BLOCK_N / (8 * SIMDGROUPS_PER_COLUMN);
+  let aligned = (gemm_alignment & GEMM_ALIGNMENT_M) != 0 && (gemm_alignment & GEMM_ALIGNMENT_N) != 0;
+  [unroll]
+  for (int i = 0; i < tile_rows; i++) {
+    let row = accumulator.simdgroup_row_offset + i * 8 * SIMDGROUPS_PER_ROW;
+    [unroll]
+    for (int j = 0; j < tile_cols; j++) {
+      [unroll]
+      for (int element = 0; element < 2; element++) {
+        let col = accumulator.simdgroup_col_offset + j * 8 * SIMDGROUPS_PER_COLUMN + element;
+        if (aligned || (row < tile_block_rows && col < tile_block_cols)) {
+          let bias = params.has_bias ? output_bias[block_col + uint(col)].toFloat() : 0.0;
+          let dot = accumulator.c_fragment.fragment_data[i * tile_cols + j][element];
+          accumulator.c_fragment.fragment_data[i * tile_cols + j][element] =
+            gemm_output(dot, bias, params);
+        }
+      }
+    }
+  }
+
+  let d_block = block_row * params.N + block_col;
+  if (aligned) {
+    accumulator.store_result(d, d_block, params.N);
+  } else {
+    accumulator.store_result_safe(d, d_block, params.N, int2(tile_block_cols, tile_block_rows));
+  }
+}
+
+// The tile at threadgroup_position (column tile, row tile). Every invocation of the workgroup must call it.
+public void simdgroup_mma_core_run<
+  A : IStorageFloat,
+  B : IStorageFloat,
+  D : IStorageFloat,
+  R : IRightOperand<B>,
+  SharedA : IThreadgroupStorage<A>,
+  SharedB : IThreadgroupStorage<B>,
+  let THREADGROUP_BLOCK_M : int,
+  let THREADGROUP_BLOCK_N : int,
+  let THREADGROUP_BLOCK_K : int,
+  let SIMDGROUPS_PER_ROW : int,
+  let SIMDGROUPS_PER_COLUMN : int
+>(
+  DenseOperand<A> left,
+  R right,
+  Ptr<D, Access.ReadWrite> d,
+  Ptr<B, Access.Read> output_bias,
+  GemmParams params,
+  uint2 threadgroup_position,
+  ThreadContext thread_context,
+) {
+  let padding_a = 16 / int(sizeof(A));
+  let padding_b = 16 / int(sizeof(B));
+  let shared_stride_a = THREADGROUP_BLOCK_K + padding_a;
+  let shared_stride_b = THREADGROUP_BLOCK_K + padding_b;
+  let threadgroup_threads = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * int(SIMD_SIZE);
+  // QuantizedBlockLoader gives every invocation an equal run of a B tile's packs, one U8 code or two U4 codes each.
+  static_assert(THREADGROUP_BLOCK_K % 2 == 0, "whole U4 packs");
+  static_assert(THREADGROUP_BLOCK_K / 2 * THREADGROUP_BLOCK_N % threadgroup_threads == 0,
+                "U4 packs split evenly over the invocations");
+  static_assert(THREADGROUP_BLOCK_K / 2 * THREADGROUP_BLOCK_N >= threadgroup_threads,
+                "at least one U4 pack per invocation");
+
+  let block_row = threadgroup_position.y * uint(THREADGROUP_BLOCK_M);
+  let block_col = threadgroup_position.x * uint(THREADGROUP_BLOCK_N);
+
+  var loader_a = ThreadgroupLoader<A>(
+    left.values,
+    block_row * left.k,
+    int(left.k),
+    THREADGROUP_BLOCK_M,
+    THREADGROUP_BLOCK_K,
+    shared_stride_a,
+    threadgroup_threads,
+    thread_context
+  );
+  var accumulator = ThreadgroupTile<
+    A, B, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N, THREADGROUP_BLOCK_K, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN
+  >(thread_context);
+
+  let tile_block_rows = min(THREADGROUP_BLOCK_M, int(params.M) - int(block_row));
+  let tile_block_cols = min(THREADGROUP_BLOCK_N, int(params.N) - int(block_col));
+  let aligned_inner_iterations = int(params.K) / THREADGROUP_BLOCK_K;
+  let leftover_block_depth = int(params.K) - aligned_inner_iterations * THREADGROUP_BLOCK_K;
+
+  let gemm_alignment =
+    (params.alignment | (tile_block_rows == THREADGROUP_BLOCK_M ? GEMM_ALIGNMENT_M : 0u)
+     | (tile_block_cols == THREADGROUP_BLOCK_N ? GEMM_ALIGNMENT_N : 0u))
+    & (GEMM_ALIGNMENT_M | GEMM_ALIGNMENT_N | GEMM_ALIGNMENT_K);
+
+  var loader_b = right.make_loader(
+    block_col, THREADGROUP_BLOCK_N, THREADGROUP_BLOCK_K, shared_stride_b, threadgroup_threads, thread_context
+  );
+  simdgroup_mma_k_loop<
+    A, B, R.Loader, SharedA, SharedB, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N, THREADGROUP_BLOCK_K, SIMDGROUPS_PER_ROW,
+    SIMDGROUPS_PER_COLUMN
+  >(
+    gemm_alignment,
+    aligned_inner_iterations,
+    loader_a,
+    loader_b,
+    accumulator,
+    tile_block_rows,
+    tile_block_cols,
+    leftover_block_depth
+  );
+  simdgroup_mma_finalize<
+    A, B, D, THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N, THREADGROUP_BLOCK_K, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN
+  >(accumulator, gemm_alignment, d, output_bias, block_row, block_col, params, tile_block_rows, tile_block_cols);
+}

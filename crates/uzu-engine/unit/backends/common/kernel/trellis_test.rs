@@ -106,3 +106,73 @@ fn transform_matches_cpu(
         });
     }
 }
+
+#[cfg(any(backend = "metal", backend = "vulkan"))]
+mod projection {
+    use rstest::rstest;
+    use uzu_engine_macros::uzu_test;
+
+    use crate::{
+        backends::common::{
+            Backend, Kernels,
+            kernel::matmul::{MatmulKernel, TrellisFormat},
+        },
+        data_type::DataType,
+        tests::{
+            helpers::{create_context, for_each_non_cpu_backend},
+            matmul::trellis::{check_projection, format, whole_blocks},
+        },
+    };
+
+    // Cases are ordered as (m, n, k).
+    const CASES: [(usize, usize, usize); 16] = [
+        (1, 1, 64),
+        (1, 1, 512),
+        (1, 1, 2048),
+        (1, 1, 320),
+        (1, 85, 512),
+        (1, 33, 2048),
+        (1, 17, 5120),
+        (1, 80, 5120),
+        (7, 80, 5120),
+        (17, 80, 5120),
+        (512, 80, 5120),
+        (16, 4096, 2048),
+        (16, 128, 64),
+        (32, 128, 64),
+        (1, 6, 64),
+        (2048, 2048, 128),
+    ];
+
+    #[rstest]
+    #[test_attr(uzu_test)]
+    #[case::v4_t8(format(4, 8, Some(64)))]
+    #[case::v2_t6(format(2, 6, None))]
+    #[case::v2_t4(format(2, 4, None))]
+    #[case::v4_t6(format(4, 6, Some(64)))]
+    #[case::v4_t7(format(4, 7, Some(64)))]
+    #[case::v4_t6_r40(format(4, 6, Some(40)))]
+    #[case::v4_t8_no_restart(format(4, 8, None))]
+    #[case::v2_t1(format(2, 1, None))]
+    #[case::v4_t1(format(4, 1, None))]
+    #[case::v4_t2(format(4, 2, None))]
+    fn trellis_projection_matches_tape_levels(#[case] format: TrellisFormat) {
+        for_each_non_cpu_backend!(|B| trellis_projection_matches_tape_levels_impl::<B>(format));
+    }
+
+    fn trellis_projection_matches_tape_levels_impl<B: Backend>(format: TrellisFormat) {
+        let context = create_context::<B>();
+        for dimensions in CASES.into_iter().filter(|&(_, _, k)| whole_blocks(format, k)) {
+            check_projection::<B>(&context, format, dimensions, |arguments, command_buffer| {
+                let mut matmul = <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(
+                    &context,
+                    DataType::BF16,
+                    DataType::BF16,
+                    DataType::BF16,
+                )
+                .unwrap();
+                matmul.encode(arguments, command_buffer).unwrap();
+            });
+        }
+    }
+}

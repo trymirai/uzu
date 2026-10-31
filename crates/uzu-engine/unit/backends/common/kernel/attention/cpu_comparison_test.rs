@@ -210,15 +210,18 @@ fn attention_windows_sinks_and_head_dims() {
 
 #[uzu_test]
 fn attention_large_tree_and_f32() {
-    let words: Vec<[u32; 3]> = (0..80)
-        .map(|i| {
-            if i == 0 {
-                [0, 79, 0]
-            } else {
-                [i, i, 1]
-            }
-        })
-        .collect();
+    let tree = |nodes: u32| -> Vec<[u32; 3]> {
+        (0..nodes)
+            .map(|i| {
+                if i == 0 {
+                    [0, nodes - 1, 0]
+                } else {
+                    [i, i, 1]
+                }
+            })
+            .collect()
+    };
+    let words = tree(80);
     let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
     let config = AttentionKernelConfig {
         head_dim: 128,
@@ -237,37 +240,51 @@ fn attention_large_tree_and_f32() {
         let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
         assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
     });
-    for (causal, ring, window) in
-        [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
-    {
-        let config = AttentionKernelConfig {
-            head_dim: 256,
-            num_groups: 4,
-            num_q_heads: 24,
-            has_sinks: true,
-            gate_row_stride: None,
-            is_kv_cache_ring: ring,
-            is_causal: causal,
-            sliding_window_size: window,
-            scale: Some(1.0 / 256.0_f32.sqrt()),
-            data_type: DataType::BF16,
-        };
-        let cache = if ring {
-            KVCacheView::ring(37, 11)
-        } else {
-            KVCacheView::full(37)
-        };
-        for is_trie in [false, true] {
-            for_each_non_cpu_backend!(|B| {
-                let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
-                let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
-                assert_eq_float(
-                    &expected,
-                    &actual,
-                    tolerance,
-                    &format!("INT8 BF16 80 nodes causal={causal} ring={ring} window={window:?} trie={is_trie}"),
-                );
-            });
+    // A 1024-key cache splits the keys of 16 queries; 16 keys before 64 causal queries leave a split without keys.
+    for (suffix, dim, prefix) in [(80, 64, 37), (80, 256, 37), (80, 512, 37), (16, 256, 1024), (64, 256, 16)] {
+        let words = tree(suffix);
+        let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
+        for (causal, ring, window) in
+            [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
+        {
+            let config = AttentionKernelConfig {
+                head_dim: dim,
+                num_groups: 4,
+                num_q_heads: 24,
+                has_sinks: true,
+                gate_row_stride: None,
+                is_kv_cache_ring: ring,
+                is_causal: causal,
+                sliding_window_size: window,
+                scale: Some(1.0 / (dim as f32).sqrt()),
+                data_type: DataType::BF16,
+            };
+            let cache = if ring {
+                KVCacheView::ring(prefix, 11)
+            } else {
+                KVCacheView::full(prefix)
+            };
+            for is_trie in [false, true] {
+                for_each_non_cpu_backend!(|B| {
+                    let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
+                    let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
+                    // Metal's D512 path lands up to two BF16 steps (7.8e-3 near 0.76) from the CPU.
+                    let tolerance = if dim == 512 {
+                        tolerance.max(1e-2)
+                    } else {
+                        tolerance
+                    };
+                    assert_eq_float(
+                        &expected,
+                        &actual,
+                        tolerance,
+                        &format!(
+                            "INT8 BF16 D{dim} {suffix} nodes prefix={prefix} causal={causal} ring={ring} \
+                             window={window:?} trie={is_trie}"
+                        ),
+                    );
+                });
+            }
         }
     }
 }

@@ -37,6 +37,7 @@ use crate::{
     },
     data_type::{DataType, DataTypeRepr},
     tests::{
+        assert::assert_parity,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data},
         matmul::{QuantBuffers, QuantInput, quant::run_quant_cpu, quant_arguments},
     },
@@ -132,23 +133,6 @@ fn quant_params_layout_table() {
         assert_eq!(strides(params.zero_point_strides(QuantizationMode::U8)), scale_strides);
         assert_eq!(params.zero_point_shape(QuantizationMode::U4), u4_shape);
         assert_eq!(strides(params.zero_point_strides(QuantizationMode::U4)), u4_strides);
-    }
-}
-
-fn assert_parity<T: DataTypeRepr + Float + Debug + Display>(
-    label: &str,
-    reference: &[T],
-    actual: &[T],
-    rel_tol: f64,
-    abs_tol: f64,
-) {
-    assert_eq!(reference.len(), actual.len(), "{label}: length mismatch");
-    for (i, (&expected, &actual)) in reference.iter().zip(actual).enumerate() {
-        let expected = expected.to_f32().unwrap();
-        let actual = actual.to_f32().unwrap();
-        let diff = f64::from((expected - actual).abs());
-        let tolerance = abs_tol.max(f64::from(expected.abs()) * rel_tol);
-        assert!(diff <= tolerance, "{label}[{i}]: expected {expected}, got {actual}, diff {diff} > {tolerance}");
     }
 }
 
@@ -334,14 +318,12 @@ fn parity_bf16_quant_rht(
 ) {
     let context = block_on(MetalContext::new()).expect("Metal context");
     // W4/G64 matches the Qwen short-prefill route; keep the decode anchor at G32.
-    let input = QuantInput::<bf16>::new(m, k, n, group_size, 4, method, 0);
-    let mut input = if group_size == 64 {
+    let input = QuantInput::<bf16>::new(m, k, n, group_size, 4, method, 0).with_output_rht(with_bias);
+    let input = if group_size == 64 {
         input.with_group_output()
     } else {
         input
     };
-    input.output_bias = with_bias.then(|| (0..input.n).map(|j| bf16::from_f32(0.3 + 0.05 * (j % 4) as f32)).collect());
-    input.output_rht_factors = Some((0..input.n).map(|i| 1 - 2 * (i % 2) as i32).collect());
 
     // CPU reference applies the RHT through the CPU matmul kernel.
     let reference = run_quant_cpu::<bf16>(&input);

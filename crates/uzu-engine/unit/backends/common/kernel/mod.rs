@@ -2,6 +2,7 @@ mod activation_test;
 mod activation_transform_test;
 mod attention;
 mod confidence_head_test;
+mod context_ring_update_test;
 mod embedding;
 mod gated_act_mul_test;
 mod gdn;
