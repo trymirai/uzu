@@ -171,38 +171,6 @@ impl VkCommandBufferEncoding {
         Some((buffer, range.start as u64..range.end as u64))
     }
 
-    pub fn encode_fill(
-        &mut self,
-        destination: &Arc<VkBuffer>,
-        range: Range<u64>,
-        value: u8,
-    ) -> Result<(), Error> {
-        let Some(addresses) = device_addresses(destination, &range)? else {
-            return Ok(());
-        };
-        if !range.start.is_multiple_of(4) || !range.end.is_multiple_of(4) {
-            return Err(VkCommandBufferError::FillAlignment {
-                start: range.start,
-                end: range.end,
-            }
-            .into());
-        }
-        if !self.access(true, std::iter::empty(), [addresses].into_iter()) {
-            return Ok(());
-        }
-        unsafe {
-            self.context.device().cmd_fill_buffer(
-                self.command_buffer(),
-                destination.buffer(),
-                range.start,
-                range.end - range.start,
-                u32::from_ne_bytes([value; 4]),
-            );
-        }
-        self.retained.push(destination.clone());
-        Ok(())
-    }
-
     /// Records one compute dispatch after checking the group-count limit and the declared ranges, whose failure ends the
     /// recording. An empty range is bounds-checked and retained but not hazard-tracked.
     ///
@@ -522,9 +490,6 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         let (source, source_range) = src.parts();
         let (destination, destination_range) = dst.parts();
         assert_eq!(source_range.iter().len(), destination_range.iter().len(), "copy ranges differ in size");
-        if source_range.iter().len() == 0 {
-            return;
-        }
         let (source, source_range) = VkBuffer::resolve(source, source_range);
         let (destination, destination_range) = VkBuffer::resolve(destination, destination_range);
         VkCommandBufferEncoding::encode_copy(self, source, source_range, destination, destination_range.start)
@@ -537,11 +502,27 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         value: u8,
     ) {
         let (destination, range) = dst.parts();
-        if range.iter().len() == 0 {
+        let (destination, range) = VkBuffer::resolve(destination, range);
+        let Some(addresses) = device_addresses(destination, &range).expect("Vulkan fill") else {
+            return;
+        };
+        assert!(
+            range.start.is_multiple_of(4) && range.end.is_multiple_of(4),
+            "fill range {range:?} is not 4-byte aligned"
+        );
+        if !self.access(true, std::iter::empty(), [addresses].into_iter()) {
             return;
         }
-        let (destination, range) = VkBuffer::resolve(destination, range);
-        VkCommandBufferEncoding::encode_fill(self, destination, range, value).expect("Vulkan fill");
+        unsafe {
+            self.context.device().cmd_fill_buffer(
+                self.command_buffer(),
+                destination.buffer(),
+                range.start,
+                range.end - range.start,
+                u32::from_ne_bytes([value; 4]),
+            );
+        }
+        self.retained.push(destination.clone());
     }
 
     fn debug_group(

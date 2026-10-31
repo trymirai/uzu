@@ -12,11 +12,6 @@ pub enum VkCommandBufferError {
     },
     #[error("copy ranges overlap within the same buffer")]
     CopyOverlap,
-    #[error("fill range {start}..{end} must be 4-byte aligned")]
-    FillAlignment {
-        start: u64,
-        end: u64,
-    },
     #[error("timestamps need VK_KHR_calibrated_timestamps with the device time domain to read the device clock")]
     UncalibratedTimestamps,
     #[error("cannot read the device clock: {0}")]
