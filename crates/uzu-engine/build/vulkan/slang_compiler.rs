@@ -20,10 +20,7 @@ use shader_slang::{
 use syn::{BinOp, Expr};
 use walkdir::WalkDir;
 
-use super::{
-    Dephashes, SlangArgumentType, SlangEntryPointAbi, SlangEntryPointVariant, SlangKernelInfo, bindgen, generate_types,
-    wrapper,
-};
+use super::{Dephashes, SlangEntryPointAbi, SlangEntryPointVariant, bindgen, generate_types, wrapper};
 use crate::{
     common::{
         caching,
@@ -32,10 +29,10 @@ use crate::{
         gpu_type_paths::GpuTypePaths,
         gpu_types::GpuTypes,
         identifiers::{KernelName, KernelPath},
-        kernel::{Kernel, KernelArgumentType, KernelParameterType},
+        kernel::Kernel,
     },
     debug_log,
-    slang::SessionLoadModuleWithDiagnosticsExt,
+    slang::{SessionLoadModuleWithDiagnosticsExt, SlangArgumentType, SlangKernel},
 };
 
 /// SPIR-V capabilities that device selection guarantees: Shader, Float16, Int16, Int8, GroupNonUniform and its
@@ -98,6 +95,7 @@ impl SlangCompiler {
     fn compile(
         &self,
         source_file: &Path,
+        gpu_type_map: &HashMap<String, String>,
         gpu_type_paths: &GpuTypePaths,
         gpu_types: &[&GpuTypes],
     ) -> anyhow::Result<(KernelPath, Box<[Kernel]>, Box<[KernelName]>)> {
@@ -140,19 +138,17 @@ impl SlangCompiler {
                 Ok((path.into(), blake3::hash(&fs::read(path).with_context(|| format!("cannot read {path}"))?).into()))
             })
             .collect::<anyhow::Result<HashMap<String, [u8; blake3::OUT_LEN]>>>()?;
+        // Kernel signatures name GPU types by their short names, as the CPU compiler records them.
+        let short_names = gpu_type_map.keys().map(|name| (name.clone(), name.clone())).collect();
         let kernels = module
             .module_reflection()
             .children()
-            .map(|decl| SlangKernelInfo::from_reflection(decl, gpu_type_paths))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        let descriptors = kernels.iter().map(SlangKernelInfo::to_kernel).collect::<Result<Vec<_>, _>>()?;
+            .filter_map(|decl| SlangKernel::from_reflection(decl, &short_names).transpose())
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let descriptors = kernels.iter().map(|kernel| kernel.to_common(&short_names)).collect::<Result<Vec<_>, _>>()?;
         let (public, private): (Vec<_>, Vec<_>) =
-            kernels.iter().zip(descriptors.iter().cloned()).partition(|(info, _)| info.is_public());
-        let public_kernels =
-            public.into_iter().map(|(_, kernel)| shared_kernel(kernel, gpu_type_paths)).collect::<Box<[Kernel]>>();
+            kernels.iter().zip(descriptors.iter().cloned()).partition(|(kernel, _)| kernel.public);
+        let public_kernels = public.into_iter().map(|(_, kernel)| kernel).collect::<Box<[Kernel]>>();
         let private_kernels = private.into_iter().map(|(_, kernel)| kernel.name).collect::<Box<[_]>>();
 
         // A wrapper does not redeclare a specialization the module declares itself.
@@ -163,10 +159,9 @@ impl SlangCompiler {
             .filter_map(|decl| decl.as_variable()?.name())
             .collect::<HashSet<_>>();
         if !kernels.is_empty() {
-            let component = ComponentType::from(module.clone());
             let wrappers = kernels
                 .iter()
-                .map(|kernel| wrapper::generate_wrappers(kernel, &component, &module_globals))
+                .map(|kernel| wrapper::generate_wrappers(kernel, &module_globals))
                 .collect::<Result<Vec<_>, _>>()?;
             // The wrapper names the generated types the kernels' signatures use, so it imports what the source does.
             let generated = self.out_dir.join("generated");
@@ -186,16 +181,16 @@ impl SlangCompiler {
             fs::write(&wrapper_file, contents)?;
             // Specialization constants of the module's kernels with their wire types.
             let mut declared = BTreeMap::new();
-            for info in &kernels {
-                for argument in info.arguments() {
-                    if matches!(argument.argument_type()?, SlangArgumentType::Specialize(_))
-                        || argument.pipeline_variants()?
+            for kernel in &kernels {
+                for argument in &kernel.arguments {
+                    if matches!(argument.argument_type, SlangArgumentType::Specialize { .. })
+                        || argument.pipeline_variants
                     {
-                        let wire = match wrapper::specialization_wire_type(&argument.slang_type()?) {
+                        let wire = match wrapper::specialization_wire_type(&argument.slang_type) {
                             "bool" => ScalarType::Bool,
                             _ => ScalarType::Uint32,
                         };
-                        declared.insert(wrapper::specialization_name(info.name(), argument.name()?), wire);
+                        declared.insert(wrapper::specialization_name(&kernel.name, &argument.name), wire);
                     }
                 }
             }
@@ -213,14 +208,14 @@ impl SlangCompiler {
                     }
                 });
                 let compiled = link(&self.session, wrapper_file)?;
-                for ((info, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(wrappers) {
-                    let required = info
-                        .preconditions()?
-                        .into_iter()
-                        .filter(|(phase, _)| *phase == "new")
+                for ((kernel, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(wrappers) {
+                    let required = kernel
+                        .preconditions
+                        .iter()
+                        .filter(|(phase, _)| phase == "new")
                         .map(|(_, condition)| {
                             let condition = syn::parse_str(condition)
-                                .with_context(|| format!("{}: malformed Precondition '{condition}'", info.name()))?;
+                                .with_context(|| format!("{}: malformed Precondition '{condition}'", kernel.name))?;
                             anyhow::Ok(required_capabilities(&condition, false))
                         })
                         .flatten_ok()
@@ -259,7 +254,7 @@ impl SlangCompiler {
                         .collect::<anyhow::Result<Vec<_>>>()?;
                     let binding_file = bindgen::binding_file(&output_base, &descriptor.name);
                     write_tokens(
-                        bindgen::bindgen(info, descriptor, &variants, gpu_type_paths, gpu_types)?,
+                        bindgen::bindgen(kernel, descriptor, &variants, gpu_type_paths, gpu_types)?,
                         &binding_file,
                     )
                     .with_context(|| format!("cannot write {} binding", descriptor.name))?;
@@ -294,7 +289,7 @@ impl Compiler for SlangCompiler {
         gpu_type_paths.extend(&private_gpu_types).context("cannot extend Vulkan GPU type paths")?;
         let gpu_types = [gpu_types, &private_gpu_types];
         // Before any module loads or cache check, so cached dependency hashes see the current constants.
-        generate_types(&gpu_types, &self.out_dir).context("cannot generate Slang GPU types")?;
+        let gpu_type_map = generate_types(&gpu_types, &self.out_dir).context("cannot generate Slang GPU types")?;
         println!("cargo::rerun-if-changed={}", self.src_dir.display());
         println!("cargo::rerun-if-env-changed=LD_LIBRARY_PATH");
         let mut sources = WalkDir::new(&self.src_dir)
@@ -312,7 +307,7 @@ impl Compiler for SlangCompiler {
         for source in sources {
             if !fs::read(&source)?.starts_with(b"implementing") {
                 let (path, public, private) = self
-                    .compile(&source, &gpu_type_paths, &gpu_types)
+                    .compile(&source, &gpu_type_map, &gpu_type_paths, &gpu_types)
                     .with_context(|| format!("cannot compile {}", source.display()))?;
                 let names =
                     public.iter().map(|kernel| (&kernel.name, true)).chain(private.iter().map(|name| (name, false)));
@@ -446,7 +441,7 @@ fn send_native_bf16_variants<'a>(
     src_dir: &Path,
     out_dir: &Path,
     path: &Path,
-    entry_points: impl Iterator<Item = &'a (String, Vec<&'static str>)>,
+    entry_points: impl Iterator<Item = &'a (String, Vec<String>)>,
     declared: &BTreeMap<String, ScalarType>,
     sender: &Sender<anyhow::Result<Option<(SlangEntryPointAbi, Vec<u8>)>>>,
 ) -> anyhow::Result<()> {
@@ -455,7 +450,7 @@ fn send_native_bf16_variants<'a>(
     let compiled = link(&session, path)?;
     for (name, types) in entry_points {
         let (abi, spirv) = entry_point(&compiled, name, declared)?;
-        let stores_bf16 = types.contains(&"bf16")
+        let stores_bf16 = types.iter().any(|ty| ty == "bf16")
             || abi.fields.iter().any(|field| field.layout.as_ref().is_some_and(|layout| layout.name == "bf16"));
         let native = stores_bf16.then(spirv).transpose()?.map(|spirv| (abi, spirv.as_slice().to_vec()));
         // The receiver stops only on an error of its own.
@@ -501,31 +496,4 @@ fn entry_point<'a>(
 
 fn artifact_path(file: &Path) -> anyhow::Result<String> {
     Ok(file.to_str().context("Slang artifact path is not UTF-8")?.to_owned())
-}
-
-/// A public kernel with GPU types by their short names, as the CPU compiler records them.
-fn shared_kernel(
-    mut kernel: Kernel,
-    gpu_type_paths: &GpuTypePaths,
-) -> Kernel {
-    let full_paths =
-        gpu_type_paths.full_paths().sorted_unstable_by_key(|path| std::cmp::Reverse(path.len())).collect_vec();
-    let shorten = |text: &mut Box<str>| {
-        let mut shortened = text.to_string();
-        for path in &full_paths {
-            shortened = shortened.replace(path, path.rsplit_once("::").map_or(*path, |(_, name)| name));
-        }
-        *text = shortened.into();
-    };
-    for parameter in kernel.parameters.iter_mut() {
-        if let KernelParameterType::Value(ty) = &mut parameter.ty {
-            shorten(ty);
-        }
-    }
-    for argument in kernel.arguments.iter_mut() {
-        if let KernelArgumentType::Value(ty) = &mut argument.ty {
-            shorten(ty);
-        }
-    }
-    kernel
 }

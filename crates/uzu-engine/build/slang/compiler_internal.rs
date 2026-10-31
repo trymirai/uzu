@@ -244,11 +244,11 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
 
         let public_kernels = kernels
             .iter()
-            .filter_map(|slang_kernel| {
+            .filter(|slang_kernel| slang_kernel.public)
+            .map(|slang_kernel| {
                 slang_kernel
                     .to_common(&common_gpu_type_map)
                     .with_context(|| format!("cannot convert {} to common kernel", slang_kernel.name))
-                    .transpose()
             })
             .collect::<anyhow::Result<Box<[Kernel]>>>()?;
 

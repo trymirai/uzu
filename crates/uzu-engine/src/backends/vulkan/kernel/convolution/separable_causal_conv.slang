@@ -6,6 +6,7 @@ import definitions;
 
 static const uint SEPARABLE_CAUSAL_CONV_THREADS = 64;
 
+[[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "group_size > 0")]]
 func SeparableCausalConv<T: IModelFloat16>(

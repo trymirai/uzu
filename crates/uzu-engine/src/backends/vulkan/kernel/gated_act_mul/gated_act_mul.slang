@@ -8,6 +8,7 @@ import generated.gated_act_mul;
 // One workgroup per tile of a row. The clipped gate, its activation, the clipped value and their product are each
 // rounded to T; the Hadamard transform and quantization run in FP32. Tiles past the row hold zeros so every invocation
 // reaches every barrier.
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 // Packed-half activations feed Metal's matmuls only; no Vulkan plan reads them.
 [[Precondition("new", "ops != GatedActMulOp::PackHalf")]]

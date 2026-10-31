@@ -1,6 +1,7 @@
 import definitions;
 
 // Mean over the sequence of [batch, seq_len, hidden_dim] into [batch, hidden_dim], summed in sequence order in FP32.
+[[Variants("T", "float, half, bf16")]]
 [[Kernel]] [[Public]] func PoolingMean<T: IStorageFloat>(
   Ptr<T, Access.Read> input,
   Ptr<T, Access.ReadWrite> output,

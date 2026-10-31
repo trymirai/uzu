@@ -222,6 +222,7 @@ struct GroupedAttention<T : IModelFloat16, N : ICoopElement, let HEAD_DIM : int>
   }
 }
 
+[[Variants("T", "bf16")]]
 [[Kernel]]
 [[RequiredSubgroupSize("32")]]
 [[Precondition("new", "context.physical_device().capabilities.float_tensor_cores(T)")]]

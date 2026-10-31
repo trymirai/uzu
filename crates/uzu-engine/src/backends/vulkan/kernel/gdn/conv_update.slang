@@ -6,6 +6,7 @@ import generated.activation_type;
 // SiLU as T once, then shifts its state row down one tap and appends the input. The first precondition keeps the tap
 // count from underflowing (kernel_size 0) and channel 0's last tap in bounds (kernel_size 1).
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "kernel_size >= 2 || kernel_size == 1 && conv_dim == 0")]]
 [[Precondition("encode", "conv_dim <= 1 || state_stride >= kernel_size - 1")]]

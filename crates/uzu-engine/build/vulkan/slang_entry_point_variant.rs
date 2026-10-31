@@ -2,7 +2,7 @@ use super::SlangEntryPointAbi;
 
 /// One entry point of a kernel, built for the data types `types`.
 pub struct SlangEntryPointVariant {
-    pub types: Vec<&'static str>,
+    pub types: Vec<String>,
     pub abi: SlangEntryPointAbi,
     /// The SPIR-V file.
     pub spirv: String,

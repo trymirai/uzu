@@ -13,6 +13,7 @@ static const uint INPUT_EMBEDDING_LOOKUP_TILE = 256;
 // scale, and quantized codes dequantized then scaled, each round to T; D4S4 multiplies in FP32. The output Hadamard
 // transform runs in FP32 before the factors and the final rounding. A token outside the vocabulary, uniform over the
 // workgroup, gives +0 without reading any table and returns before the transform's barriers.
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "group_size.unwrap_or(1) > 0")]]
 [[Precondition("encode", "quantization_mode != QuantizationMode::U4.into() || model_dim.is_multiple_of(2)")]]

@@ -2,6 +2,7 @@ import definitions;
 import common.activation;
 
 // Multiplies each output element in place by the sigmoid of its gate, read from rows of gate_row_stride.
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 func SigmoidGate<T: IModelFloat>(
   Ptr<T, Access.Read> gate,

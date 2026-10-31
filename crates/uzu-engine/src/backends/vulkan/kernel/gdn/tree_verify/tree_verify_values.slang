@@ -258,6 +258,7 @@ struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
   }
 }
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "NB == 1 || NB == 2")]]
 [[Precondition("encode", "tree_size <= crate::backends::vulkan::gpu_types::delta_net::TREE_VERIFY_TOKEN_BLOCK * NB && head_k_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM && head_v_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]

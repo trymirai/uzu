@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     iter::once,
     path::{Path, PathBuf},
 };
@@ -11,15 +11,15 @@ use quote::{ToTokens, format_ident, quote};
 use shader_slang::ScalarType;
 use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
-use super::{
-    SlangArgumentType, SlangEntryPointAbi, SlangEntryPointVariant, SlangFieldAbi, SlangKernelInfo, data_type,
-    wrapper::specialization_name,
-};
-use crate::common::{
-    expr_rewrite::{qualify_enum_path, rewrite_paths_with},
-    gpu_type_paths::{GpuTypeKind, GpuTypePaths},
-    gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
-    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
+use super::{SlangEntryPointAbi, SlangEntryPointVariant, SlangFieldAbi, wrapper::specialization_name};
+use crate::{
+    common::{
+        expr_rewrite::{qualify_enum_path, rewrite_paths_with},
+        gpu_type_paths::{GpuTypeKind, GpuTypePaths},
+        gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
+        kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    },
+    slang::{SlangArgumentType, SlangKernel, slang2rust},
 };
 
 /// Generated file holding a kernel's binding type, next to its SPIR-V.
@@ -61,7 +61,7 @@ pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
 /// Raw typed binding of a kernel: the common `Kernel` signature over each entry point's reflected ABI, with its SPIR-V
 /// and, for an entry point that stores BF16, the ABI and SPIR-V built with the native BF16 type.
 pub fn bindgen(
-    info: &SlangKernelInfo,
+    info: &SlangKernel,
     kernel: &Kernel,
     variants: &[SlangEntryPointVariant],
     gpu_type_paths: &GpuTypePaths,
@@ -118,7 +118,7 @@ pub fn bindgen(
             continue;
         };
         let name = format_ident!("{}", parameter.name.as_ref());
-        let ty: Type = syn::parse_str(text)?;
+        let ty: Type = gpu_type_paths.resolve_type(text)?;
         let value = match option_inner(&ty) {
             Some(inner) => match syn::parse2(word(&name, inner, &["u32"])?)? {
                 Expr::Paren(inner) => {
@@ -134,20 +134,18 @@ pub fn bindgen(
 
     // `(argument, variant paths, specialization constant id)` of the `[[PipelineVariants]]` argument.
     let mut pipeline_variants = None;
-    for argument in info.arguments() {
-        if !argument.pipeline_variants()? {
-            continue;
-        }
-        let name = argument.name()?;
+    for argument in info.arguments.iter().filter(|argument| argument.pipeline_variants) {
+        let name = argument.name.as_str();
         let Some(KernelArgumentType::Value(text)) =
             kernel.arguments.iter().find(|candidate| candidate.name.as_ref() == name).map(|argument| &argument.ty)
         else {
             bail!("{kernel_name}: PipelineVariants argument '{name}' is not a uniform");
         };
-        let ty: Type = syn::parse_str(text)?;
-        let short = canonical_enum_name(gpu_type_paths, text).with_context(|| {
-            format!("{kernel_name}: PipelineVariants argument '{name}' has type '{text}', not a canonical GPU enum")
-        })?;
+        let ty = gpu_type_paths.resolve_type(text)?;
+        let short =
+            (gpu_type_paths.kind_for(text) == Some(GpuTypeKind::Enum)).then_some(&**text).with_context(|| {
+                format!("{kernel_name}: PipelineVariants argument '{name}' has type '{text}', not a canonical GPU enum")
+            })?;
         let canonical = canonical_enum(short).with_context(|| format!("{kernel_name}: no canonical enum '{short}'"))?;
         let paths = canonical
             .variants
@@ -265,7 +263,7 @@ pub fn bindgen(
         if let (Some((selector, ..)), KernelArgumentType::Value(text)) = (&pipeline_variants, &argument.ty)
             && *selector == name
         {
-            let ty: Type = syn::parse_str(text)?;
+            let ty: Type = gpu_type_paths.resolve_type(text)?;
             encode_arguments.push(quote! { #name: #ty });
             continue;
         }
@@ -295,7 +293,9 @@ pub fn bindgen(
                 (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
             },
             // A canonical struct by value: its bytes in the push constants, which an absent optional leaves zero.
-            (KernelArgumentType::Value(text), Some((path, ty, stride, _))) if text.as_ref() == path => {
+            (KernelArgumentType::Value(text), Some((path, ty, stride, _)))
+                if gpu_type_paths.full_path_for(text) == Some(path) =>
+            {
                 ensure!(field.size == stride, "{kernel_name}: '{name}' of {} bytes is not one {path}", field.size);
                 let cast = quote! { bytemuck::cast::<#ty, [u8; #stride]> };
                 let bytes = if argument.conditional {
@@ -305,10 +305,12 @@ pub fn bindgen(
                 };
                 (quote! { #ty }, bytes)
             },
-            // A `[[HostSlice]]` is uploaded into the command buffer's memory; an empty slice passes address 0.
+            // A `[[Constant]]` pointer is uploaded into the command buffer's memory; an empty slice passes address 0.
             (KernelArgumentType::Value(text), Some((path, ty, _, alignment))) => {
                 ensure!(
-                    field.size == 8 && !argument.conditional && text.as_ref() == format!("&[{path}]"),
+                    field.size == 8
+                        && !argument.conditional
+                        && gpu_type_paths.resolve_type(text)? == parse_quote! { &[#ty] },
                     "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{path}' slice"
                 );
                 // The encoder's upload allocator aligns ranges to at most 64 bytes.
@@ -321,7 +323,7 @@ pub fn bindgen(
             },
             (KernelArgumentType::Value(text), _) => {
                 ensure!(field.size == 4 && field.layout.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
-                let ty: Type = syn::parse_str(text)?;
+                let ty: Type = gpu_type_paths.resolve_type(text)?;
                 let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;
                 // An absent optional constant leaves its bytes zero.
                 let bytes = if argument.conditional {
@@ -349,25 +351,50 @@ pub fn bindgen(
         rewrite_paths_with(&mut expression, |path| qualify_enum_path(path, gpu_type_paths));
         Ok::<_, anyhow::Error>(expression)
     };
-    for argument in info.arguments() {
-        let argument_type = argument.argument_type()?;
-        match &argument_type {
-            SlangArgumentType::Axis(total, size) => {
+    for argument in &info.arguments {
+        let condition = match &argument.argument_type {
+            SlangArgumentType::Axis {
+                threads: total,
+                threads_in_group: size,
+            } => {
                 axes.push(host_expression(total)?);
                 group_sizes.push(host_expression(size)?);
+                &None
             },
-            SlangArgumentType::Groups(count) => groups.push(host_expression(count)?),
-            SlangArgumentType::Threads(size) => group_sizes.push(host_expression(size)?),
-            _ => {},
-        }
-        if let Some(condition) = argument.condition()? {
-            let name = format_ident!("{}", argument.name()?);
+            SlangArgumentType::Groups {
+                groups: count,
+            } => {
+                groups.push(host_expression(count)?);
+                &None
+            },
+            SlangArgumentType::Threads {
+                threads: size,
+            } => {
+                group_sizes.push(host_expression(size)?);
+                &None
+            },
+            SlangArgumentType::Buffer {
+                condition,
+                ..
+            }
+            | SlangArgumentType::Uniform {
+                condition,
+            }
+            | SlangArgumentType::Specialize {
+                condition,
+            } => condition,
+            SlangArgumentType::ThreadContext => &None,
+        };
+        if let Some(condition) = condition {
+            let name = format_ident!("{}", argument.name);
             let condition = host_expression(condition)?;
             let message =
                 format!("{kernel_name}: argument '{name}' must be present exactly when {}", quote! { #condition });
             let check = quote! { assert_eq!(#name.is_some(), #condition, "{}", #message); };
-            match argument_type {
-                SlangArgumentType::Specialize(_) => specialization_conditions.push(check),
+            match argument.argument_type {
+                SlangArgumentType::Specialize {
+                    ..
+                } => specialization_conditions.push(check),
                 _ => conditions.push(check),
             }
         }
@@ -403,7 +430,8 @@ pub fn bindgen(
         })
     };
     let (mut new_preconditions, mut encode_preconditions) = (Vec::new(), Vec::new());
-    for (phase, text) in info.preconditions()? {
+    for (phase, text) in &info.preconditions {
+        let (phase, text) = (phase.as_str(), text.as_str());
         let construction = phase == "new";
         let mut known = names(!construction);
         if construction {
@@ -531,7 +559,7 @@ pub fn bindgen(
     let block_size = abi.block_size;
     let block_size_u32 = u32::try_from(block_size)?;
     // A pinned subgroup size, which the workgroup must fill with whole subgroups within the device's subgroup limit.
-    let required_subgroup_size = match info.required_subgroup_size()?.map(host_expression).transpose()? {
+    let required_subgroup_size = match info.required_subgroup_size.as_deref().map(host_expression).transpose()? {
         Some(size) => quote! { Some(#size) },
         None => quote! { None },
     };
@@ -582,13 +610,13 @@ pub fn bindgen(
 
     // A public kernel's common trait owns `new` and `encode`, so its raw binding takes other names that never shadow the
     // trait methods on the concrete type.
-    let (new_fn, encode_fn) = if info.is_public() {
+    let (new_fn, encode_fn) = if info.public {
         (format_ident!("create"), format_ident!("encode_ranges"))
     } else {
         (format_ident!("new"), format_ident!("encode"))
     };
     // A public kernel implements its common trait through the raw binding.
-    let trait_impl = if info.is_public() {
+    let trait_impl = if info.public {
         let kernel_trait = format_ident!("{kernel_name}Kernel");
         let new_parameters = kernel
             .parameters
@@ -598,7 +626,7 @@ pub fn bindgen(
                 Ok(match &parameter.ty {
                     KernelParameterType::Type => quote! { #name: crate::data_type::DataType },
                     KernelParameterType::Value(text) => {
-                        let ty: Type = syn::parse_str(text)?;
+                        let ty: Type = gpu_type_paths.resolve_type(text)?;
                         quote! { #name: #ty }
                     },
                 })
@@ -625,7 +653,7 @@ pub fn bindgen(
                     quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
                 },
                 KernelArgumentType::Value(text) => {
-                    let ty: Type = syn::parse_str(text)?;
+                    let ty: Type = gpu_type_paths.resolve_type(text)?;
                     quote! { #ty }
                 },
             };
@@ -734,6 +762,13 @@ pub fn bindgen(
 
         #trait_impl
     })
+}
+
+/// The `DataType` of a Slang scalar type.
+fn data_type(slang_type: &str) -> anyhow::Result<Ident> {
+    slang2rust(slang_type, &HashMap::new())
+        .map(|rust_type| format_ident!("{}", rust_type.to_uppercase()))
+        .with_context(|| format!("no DataType for GPU type '{slang_type}'"))
 }
 
 fn binding_module(kernel_name: &str) -> Ident {

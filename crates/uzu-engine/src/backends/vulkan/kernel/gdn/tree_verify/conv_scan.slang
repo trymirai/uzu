@@ -6,6 +6,7 @@ import generated.activation_type;
 // sample found by walking parents and then base_state, and stores T(silu(acc)); the first K - 1 samples are recorded
 // raw in suffix_state. Channels from conv_dim on copy their T bits. out_proj must not alias in_proj.
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "kernel_size >= 1")]]
 func ConvTreeScan<T: IModelFloat>(

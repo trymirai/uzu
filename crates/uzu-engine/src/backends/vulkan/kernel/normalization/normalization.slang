@@ -8,6 +8,10 @@ import common.workgroup_reduction;
 
 static const uint NORMALIZATION_THREADS = 1024;
 
+[[Variants("InputT", "float, half, bf16")]]
+[[Variants("AffineT", "float, half, bf16")]]
+[[Variants("OutputT", "float, half, bf16")]]
+[[Variants("AccumT", "float")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "copy_to_shortcut || !residual_add")]]
 func Normalization<

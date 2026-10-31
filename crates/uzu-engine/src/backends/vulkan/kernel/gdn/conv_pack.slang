@@ -6,6 +6,7 @@ import definitions;
 
 static const uint DELTA_NET_CONV_PACK_THREADS = 128;
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "KERNEL_SIZE == 4")]]
 [[Precondition("encode", "suffix_len <= tile_tokens || tile_tokens >= KERNEL_SIZE - 1")]]

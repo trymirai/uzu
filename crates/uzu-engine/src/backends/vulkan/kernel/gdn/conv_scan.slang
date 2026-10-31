@@ -10,6 +10,7 @@ import generated.activation_type;
 static const uint DELTA_NET_CONV_SCAN_THREADS = 64;
 static const uint DELTA_NET_CONV_SCAN_TAPS = 3;
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "KERNEL_SIZE == 4")]]
 [[Precondition("encode", "suffix_len <= 1 || conv_dim <= out_stride")]]

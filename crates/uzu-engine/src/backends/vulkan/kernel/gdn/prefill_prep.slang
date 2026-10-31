@@ -28,6 +28,8 @@ float delta_net_inverse<T: IModelFloat>(Ptr<T, Access.Read> source, uint offset,
   return rms_inverse<DELTA_NET_PREP_THREADS>(x * x, 1, 1e-6);
 }
 
+[[Variants("T", "float, bf16")]]
+[[Variants("QKT", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads > 0")]]

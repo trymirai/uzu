@@ -6,6 +6,10 @@ static const uint QKV_NORM_THREADS = 128;
 // FP32 RMS normalization of head_count heads from head head_offset of each row, one workgroup per head, other elements
 // untouched. Without scales the result rounds to OutputT; with them, full_layer multiplies by scale + scale_offset in
 // FP32, otherwise both round to OutputT and so does their product.
+[[Variants("InputT", "float, bf16")]]
+[[Variants("ScaleT", "float, bf16")]]
+[[Variants("OutputT", "float, bf16")]]
+[[Variants("AccumT", "float")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "!in_place || InputT == OutputT")]]
 [[Precondition("encode", "batch_size == 0 || head_count == 0 || head_dim == 0 || head_offset <= input_row_stride / head_dim && head_count <= input_row_stride / head_dim - head_offset")]]

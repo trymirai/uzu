@@ -1,24 +1,38 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::Path,
 };
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 
-use crate::common::gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes};
+use crate::{
+    common::gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
+    slang::rust2slang,
+};
 
-/// Writes the `generated.<file>` Slang module of each GPU types file's constants, enums and structs.
+/// Writes the `generated.<file>` Slang module of each GPU types file's constants, enums and structs, and returns the
+/// canonical path of each named type.
 pub fn generate_types(
     gpu_types: &[&GpuTypes],
     out_dir: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<HashMap<String, String>> {
     let generated = out_dir.join("generated");
     fs::create_dir_all(&generated)?;
     let mut files: BTreeMap<&str, Vec<&GpuType>> = BTreeMap::new();
+    let mut gpu_type_map = HashMap::new();
     for gpu_types in gpu_types {
         for file in &gpu_types.files {
             files.entry(&file.name).or_default().extend(file.types.iter());
+            for gpu_type in &file.types {
+                let name = match gpu_type {
+                    GpuType::Enum(gpu_enum) => &*gpu_enum.name,
+                    GpuType::Struct(gpu_struct) => &*gpu_struct.name,
+                    GpuType::OptionSet(option_set) => &*option_set.name,
+                    GpuType::Constant(_) => continue,
+                };
+                gpu_type_map.insert(name.to_string(), format!("{}::{}::{name}", gpu_types.module_path, file.name));
+            }
         }
     }
     let mut written = HashSet::new();
@@ -27,16 +41,12 @@ pub fn generate_types(
         for gpu_type in types {
             match gpu_type {
                 GpuType::Constant(constant) => {
-                    let ty = match constant.ty.as_ref() {
-                        "i16" => "int16_t",
-                        "u32" => "uint",
-                        "f32" => "float",
-                        other => bail!(
-                            "gpu_types/{}.rs: constant {} has unsupported type '{other}'",
-                            file_name,
-                            constant.name
-                        ),
-                    };
+                    let ty = rust2slang(&constant.ty).with_context(|| {
+                        format!(
+                            "gpu_types/{file_name}.rs: constant {} has unsupported type '{}'",
+                            constant.name, constant.ty
+                        )
+                    })?;
                     let array_suffix =
                         constant.array_length.as_ref().map(|length| format!("[{length}]")).unwrap_or_default();
                     declarations.push(format!(
@@ -65,17 +75,12 @@ pub fn generate_types(
                                     length,
                                 } => (element, format!("[{length}]")),
                             };
-                            let ty = match element.as_ref() {
-                                "u32" => "uint",
-                                "f32" => "float",
-                                "bool" => "bool",
-                                other => bail!(
-                                    "gpu_types/{}.rs: field {}.{} has unsupported type '{other}'",
-                                    file_name,
-                                    gpu_struct.name,
-                                    field.name
-                                ),
-                            };
+                            let ty = rust2slang(element).with_context(|| {
+                                format!(
+                                    "gpu_types/{file_name}.rs: field {}.{} has unsupported type '{element}'",
+                                    gpu_struct.name, field.name
+                                )
+                            })?;
                             Ok(format!("  public {ty} {}{length};\n", field.name))
                         })
                         .collect::<anyhow::Result<String>>()?;
@@ -106,5 +111,5 @@ pub fn generate_types(
             fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
         }
     }
-    Ok(())
+    Ok(gpu_type_map)
 }

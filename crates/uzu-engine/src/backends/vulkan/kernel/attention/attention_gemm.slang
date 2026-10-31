@@ -66,6 +66,7 @@ void attention_gemm_stage<T : IModelFloat16>(
   }
 }
 
+[[Variants("T", "bf16")]]
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256")]]
 [[Precondition("encode", "gqa_factor > 0")]]

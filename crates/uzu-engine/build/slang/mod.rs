@@ -6,10 +6,8 @@ mod compiler;
 mod compiler_internal;
 #[cfg(feature = "webgpu")]
 mod gpu_types;
-#[cfg(feature = "webgpu")]
 mod reflection;
 mod slang_sys_ext;
-#[cfg(feature = "webgpu")]
 mod types;
 #[cfg(feature = "webgpu")]
 mod wrapper;
@@ -18,8 +16,9 @@ mod wrapper;
 pub use compiler::SlangCompiler;
 #[cfg(feature = "webgpu")]
 pub use compiler_internal::SlangTarget;
-#[cfg(feature = "webgpu")]
-pub use reflection::{SlangArgumentType, SlangBufferAccess, SlangKernel, SlangParameterType};
+pub use reflection::{SlangArgumentType, SlangKernel, SlangParameterType};
+#[cfg(feature = "vulkan")]
 pub use slang_sys_ext::SessionLoadModuleWithDiagnosticsExt;
-#[cfg(feature = "webgpu")]
+#[cfg(feature = "vulkan")]
+pub use types::rust2slang;
 pub use types::{Specializer, slang2rust};

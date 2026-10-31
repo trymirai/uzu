@@ -136,6 +136,7 @@ void unified_sampling_sweep<T : IModelFloat>(
 // Candidate refinement under independent top-k, top-p and min-p filters: while a filter rejects the Gumbel argmax, the
 // next is the argmax among the tokens outranking it, up to 64 candidates, the last returned unfiltered. Token 0 where no
 // candidate is defined or a filter retains nothing.
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]] [[Precondition("encode", "vocab_size > 0")]]
 func UnifiedSampling<T : IModelFloat>(
   Ptr<T, Access.Read> logits,

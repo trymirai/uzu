@@ -3,6 +3,7 @@ import common.activation;
 import generated.activation_type;
 
 // FP32 math rounded to T at the store; IDENTITY copies the stored bits.
+[[Variants("T", "float, half, bf16")]]
 [[Kernel]] [[Public]] func Activation<T: IStorageFloat>(
   [[Optional("!in_place")]] Ptr<T, Access.Read> input,
   Ptr<T, Access.ReadWrite> output,

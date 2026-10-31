@@ -21,6 +21,7 @@ struct SoftmaxCombine : IReduction {
   }
 }
 
+[[Variants("T", "float, half, bf16")]]
 [[Kernel]] [[Public]] func Softmax<T: IStorageFloat>(
   Ptr<T, Access.ReadWrite> values,
   [[Optional("has_sinks")]] Ptr<T, Access.Read> sinks,

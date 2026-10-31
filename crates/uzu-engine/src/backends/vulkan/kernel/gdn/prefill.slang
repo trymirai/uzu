@@ -10,6 +10,7 @@ static const uint DELTA_NET_PREFILL_THREADS = 128;
 static const uint DELTA_NET_PREFILL_DV_PER_SIMDGROUP = 4;
 static const uint DELTA_NET_PREFILL_SIMDGROUPS = DELTA_NET_PREFILL_THREADS / SIMD_SIZE;
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads > 0")]]

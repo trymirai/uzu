@@ -40,6 +40,7 @@ T short_conv_step<T: IStorageFloat, WeightT: IFloat32, let SourceAccess : Access
   return T.fromFloat(acc * post_gate);
 }
 
+[[Variants("T", "float, half, bf16")]]
 [[Kernel]] [[Public]] func ShortConvPack<T: IStorageFloat>(
   Ptr<T, Access.Read> state_in,
   Ptr<T, Access.Read> in_proj,
@@ -62,6 +63,8 @@ T short_conv_step<T: IStorageFloat, WeightT: IFloat32, let SourceAccess : Access
 
 // Rows below suffix_len are outputs, convolving padded rows row..row + kernel_size - 1; the kernel_size - 1 rows after
 // them copy padded rows suffix_len.. into each channel's first state elements, also for an empty suffix.
+[[Variants("T", "float, half, bf16")]]
+[[Variants("WeightT", "float")]]
 [[Kernel]] [[Public]] func ShortConvPrefill<T: IStorageFloat, WeightT: IFloat32>(
   Ptr<T, Access.Read> padded,
   Ptr<T, Access.Read> in_proj,
@@ -101,6 +104,8 @@ T short_conv_step<T: IStorageFloat, WeightT: IFloat32, let SourceAccess : Access
 }
 
 // Tokens run in order; each one after the first continues the state the previous one stored.
+[[Variants("T", "float, half, bf16")]]
+[[Variants("WeightT", "float")]]
 [[Kernel]] [[Public]] func ShortConvDecode<T: IStorageFloat, WeightT: IFloat32>(
   Ptr<T, Access.Read> in_proj,
   Ptr<WeightT, Access.Read> w,
@@ -140,6 +145,8 @@ T short_conv_step<T: IStorageFloat, WeightT: IFloat32, let SourceAccess : Access
 }
 
 // Nodes run in order; a negative parent continues base_state, any other an earlier node's suffix_state.
+[[Variants("T", "float, half, bf16")]]
+[[Variants("WeightT", "float")]]
 [[Kernel]] [[Public]] func ShortConvTrie<T: IStorageFloat, WeightT: IFloat32>(
   Ptr<T, Access.Read> in_proj,
   Ptr<WeightT, Access.Read> w,

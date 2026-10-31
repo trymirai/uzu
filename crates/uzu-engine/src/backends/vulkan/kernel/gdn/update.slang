@@ -14,6 +14,7 @@ static const uint DELTA_NET_UPDATE_LANES = 8;
 static const uint DELTA_NET_UPDATE_CHUNKS = DELTA_NET_HEAD_K_DIM / (4 * DELTA_NET_UPDATE_LANES);
 static const uint DELTA_NET_UPDATE_ROWS = DELTA_NET_UPDATE_THREADS / DELTA_NET_UPDATE_LANES;
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_v_heads == 0 || num_k_heads > 0 && num_v_heads.is_multiple_of(num_k_heads)")]]

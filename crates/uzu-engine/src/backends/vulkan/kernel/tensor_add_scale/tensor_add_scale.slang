@@ -1,5 +1,6 @@
 import definitions;
 
+[[Variants("T", "float, half, bf16")]]
 [[Kernel]] [[Public]] func TensorAddScale<T: IStorageFloat>(
   [[Optional("!in_place")]] Ptr<T, Access.Read> input,
   Ptr<T, Access.Read> bias,

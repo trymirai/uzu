@@ -29,6 +29,9 @@ public struct GemmStorage<T, let ROLE : int> : IThreadgroupStorage<T> {
   public static void write(uint index, T value) { data[index] = value; }
 }
 
+[[Variants("A", "float, bf16")]]
+[[Variants("B", "float, bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "!tiling.is_tensor() && NUM_SIMDGROUPS == tiling.simdgroups()")]]
 [[Precondition("new", "alignment < 8")]]
@@ -149,6 +152,8 @@ void gemm_tensor_tiling<B : IModelFloat16, N : ICoopElement, D : IModelFloat>(
   }
 }
 
+[[Variants("B", "bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[RequiredSubgroupSize("32")]]
 [[Precondition("new", "context.physical_device().capabilities.float_tensor_cores(B)")]]
@@ -340,6 +345,8 @@ void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IModelFloat, D : IMo
 
 // A8 activations (MatmulA::Int8Symmetric) on INT8 tensor cores against U4 codes or U8 symmetric codes. ROW_BLOCK is 16
 // or 32 for verification batches, 64 beyond; a grid too narrow for the device splits K in two phases through `partials`.
+[[Variants("B", "float, bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[RequiredSubgroupSize("32")]]
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
@@ -400,6 +407,8 @@ public func GemmInt8<B: IModelFloat, D: IModelFloat>(
   );
 }
 
+[[Variants("B", "float, bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[RequiredSubgroupSize("32")]]
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
@@ -462,6 +471,8 @@ public func GemmInt8K16<B: IModelFloat, D: IModelFloat>(
 
 // GemmInt8 folding each weight group in registers by VK_NV_cooperative_matrix2 per-element operations; the 16-row tile
 // stages `stage_depth` 64 or 128 values deep, 128 needing weight groups of whole 64-value halves.
+[[Variants("B", "float, bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[RequiredSubgroupSize("32")]]
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]

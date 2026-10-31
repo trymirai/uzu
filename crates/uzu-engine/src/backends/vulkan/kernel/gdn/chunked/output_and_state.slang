@@ -29,6 +29,7 @@ groupshared float chunked_row_beta[DELTA_NET_CHUNKED_CHUNK];
 groupshared float chunked_row_exp_g[DELTA_NET_CHUNKED_CHUNK];
 groupshared float chunked_row_decay[DELTA_NET_CHUNKED_CHUNK];
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("encode", "num_k_heads > 0")]]
 [[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]

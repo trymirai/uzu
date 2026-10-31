@@ -11,6 +11,7 @@ static const uint STATE_ADVANCE_THREADS = 128;
 static const uint STATE_ADVANCE_HEAD_V_DIM = DELTA_NET_HEAD_K_DIM;
 static const uint STATE_ADVANCE_ROWS = 4;
 
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("new", "num_k_heads != 0 && (num_v_heads == 0 || num_v_heads >= num_k_heads)")]]

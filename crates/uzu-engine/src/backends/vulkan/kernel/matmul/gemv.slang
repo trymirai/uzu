@@ -74,6 +74,9 @@ void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmul
   }
 }
 
+[[Variants("A", "float, bf16")]]
+[[Variants("B", "float, bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "b_prologue == GemmBPrologueKind::FullPrecision || (group_size > 0 && quantization_mode != QuantizationMode::I8)")]]
 [[Precondition("new", "METAL_LAYOUT || (OUTPUT_ROW_TILE == 8 && NUM_SIMDGROUPS == 8 && INPUT_ROW_TILE == 1)")]]
@@ -202,6 +205,8 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
 // Otherwise a simdgroup holds its ROWS rows, its lanes every 32nd run, which segment_reduce sums. `has_rht`, of one
 // input, finishes with ActivationTransform's output transform of the workgroup's whole 32-row blocks, then the bias:
 // the outputs, rounded as stored, pass through shared memory to the transform's invocations.
+[[Variants("B", "float, bf16")]]
+[[Variants("D", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "b_prologue != GemmBPrologueKind::FullPrecision && [32, 64, 128].contains(&group_size)")]]
 [[Precondition("new", "quantization_mode == QuantizationMode::U4 || (quantization_mode == QuantizationMode::U8 && b_prologue == GemmBPrologueKind::ScaleSymmetricDequant)")]]

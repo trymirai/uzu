@@ -1,5 +1,7 @@
 import definitions;
 
+[[Variants("T", "float, half, bf16")]]
+[[Variants("BiasT", "float, half, bf16")]]
 [[Kernel]] [[Public]] func TensorAddBias<T: IStorageFloat, BiasT: IStorageFloat>(
   [[Optional("!in_place")]] Ptr<T, Access.Read> input,
   Ptr<BiasT, Access.Read> bias,

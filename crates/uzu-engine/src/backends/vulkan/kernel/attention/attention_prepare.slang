@@ -6,6 +6,8 @@ static const uint ATTENTION_PREPARE_TILE = 128;
 // Splits packed qkvg rows into queries [head, token, head_dim] and, with has_kv, keys and values
 // [kv_token_offset + token, head, head_dim]; any trailing gate is unread. The first rope_dim elements of query and key
 // heads are rotated (rope_rotated) and rounded to ElementT; every other element is copied bit for bit.
+[[Variants("ElementT", "bf16")]]
+[[Variants("RopeT", "float")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "head_dim > 0")]]
 [[Precondition("encode", "num_kv_heads.unwrap_or(1) > 0")]]

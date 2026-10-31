@@ -36,6 +36,7 @@ struct StridedKeys<T: IModelFloat> : IAttentionKeys {
 }
 
 // One workgroup per query and head; keys the mask rejects are never read.
+[[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]
