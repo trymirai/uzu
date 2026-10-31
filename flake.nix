@@ -107,6 +107,8 @@
             nodejs_26
             pnpm_12
             wasm-bindgen-cli_0_2_129 # Keep in sync with Cargo.toml.
+            (pkgs.callPackage ./scripts/safetensors-explorer.nix {})
+            (pkgs.callPackage ./scripts/urun.nix {})
             evcxr
             cargo-deny
             cargo-nextest
@@ -118,7 +120,12 @@
             critcmp
           ]
           ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [bindgen-env vulkan-env vulkan-tools shaderc spirv-tools lldb])
-          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [cargo-swift tuist]);
+          ++ (with pkgs;
+            lib.optionals stdenv.hostPlatform.isDarwin [
+              (pkgs.callPackage ./scripts/cargo-instruments.nix {})
+              cargo-swift
+              tuist
+            ]);
         hostToolchainDevshellPackages = commonDevshellPackages ++ [rustShimHostCC];
         nixToolchainDevshellPackages = commonDevshellPackages ++ [rustShimNixCC];
 
