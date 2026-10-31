@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
-use ash::vk;
+use ash::{ext, vk};
 use bytemuck::NoUninit;
 use futures::channel::oneshot;
 
@@ -65,6 +65,8 @@ pub struct VkCommandBufferEncoding {
     work_budget: u64,
     /// Debug-group spans, when recording timestamps.
     timestamps: Option<VkTimestampRecorder>,
+    /// Whether a debug label named after the command buffer encloses its commands.
+    named: bool,
     /// The error that ended the recording.
     failure: Option<Error>,
 }
@@ -73,6 +75,7 @@ impl VkCommandBufferEncoding {
     pub fn new(
         context: Arc<VkContext>,
         allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
+        name: Option<&str>,
     ) -> Result<Self, Error> {
         let resources = context.acquire_command_buffer_resources()?;
         context.unsubmitted_command_buffers().fetch_add(1, Ordering::Relaxed);
@@ -92,9 +95,13 @@ impl VkCommandBufferEncoding {
             declared_work: 0,
             work_budget: units * SEGMENT_WORK_PER_UNIT,
             timestamps: None,
+            named: name.is_some(),
             failure: None,
         };
         encoding.begin_segment()?;
+        if let Some(name) = name {
+            encoding.begin_debug_label(name);
+        }
         Ok(encoding)
     }
 
@@ -265,6 +272,37 @@ impl VkCommandBufferEncoding {
 
     fn resources(&self) -> &VkCommandBufferResources {
         self.resources.as_ref().expect("encoding owns resources until it ends")
+    }
+
+    /// Begins a debug label named `name`, which `end_debug_label` ends.
+    pub fn begin_debug_label(
+        &self,
+        name: &str,
+    ) {
+        self.debug_label(name, ext::debug_utils::Device::cmd_begin_debug_utils_label);
+    }
+
+    /// Records `command`, a debug-label begin or insert with a label named `name`, or an end, which ignores it, where the
+    /// instance has debug labels and commands still record.
+    fn debug_label(
+        &self,
+        name: &str,
+        command: unsafe fn(&ext::debug_utils::Device, vk::CommandBuffer, &vk::DebugUtilsLabelEXT<'_>),
+    ) {
+        if let Some(debug_utils) = self.context.debug_utils()
+            && self.is_recording()
+        {
+            let name = CString::new(name).expect("debug label contains NUL");
+            let label = vk::DebugUtilsLabelEXT::default().label_name(&name);
+            unsafe { command(debug_utils, self.command_buffer(), &label) };
+        }
+    }
+
+    /// Ends the innermost debug label.
+    pub fn end_debug_label(&self) {
+        self.debug_label("", |debug_utils, command_buffer, _| unsafe {
+            debug_utils.cmd_end_debug_utils_label(command_buffer)
+        });
     }
 
     /// Declares the multiply-add FLOPs of the commands a heavy kernel records next, so a segment closes before they
@@ -517,13 +555,7 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         &mut self,
         name: &str,
     ) {
-        if let Some(debug_utils) = self.context.debug_utils()
-            && self.is_recording()
-        {
-            let name = CString::new(name).expect("debug point name contains NUL");
-            let label = vk::DebugUtilsLabelEXT::default().label_name(&name);
-            unsafe { debug_utils.cmd_insert_debug_utils_label(self.command_buffer(), &label) };
-        }
+        self.debug_label(name, ext::debug_utils::Device::cmd_insert_debug_utils_label);
     }
 
     /// Timing debug groups needs the device clock, so without calibrated timestamps waiting for completion fails.
@@ -533,6 +565,9 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
     }
 
     fn end_encoding(mut self) -> VkCommandBufferExecutable {
+        if self.named {
+            self.end_debug_label();
+        }
         let failure = self.failure.take().or_else(|| self.end_segment().err());
         let resources = self.resources.take().expect("encoding owns resources until it ends");
         unsafe {

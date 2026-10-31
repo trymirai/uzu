@@ -48,7 +48,7 @@ pub struct VkContext {
     pipeline_cache_file: Option<(PathBuf, usize)>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
-    /// Command-buffer labels, available with validation.
+    /// Command-buffer labels, where the instance has VK_EXT_debug_utils.
     debug_utils_device: Option<ext::debug_utils::Device>,
     timestamp_valid_bits: u32,
     /// Reads the device clock, where the device has calibrated timestamps.
@@ -83,7 +83,7 @@ impl VkContext {
         let debug_messages = Box::new(VkDebugMessages::default());
 
         let entry = unsafe { ash::Entry::load() }.map_err(VkContextError::EntryLoad)?;
-        let instance = create_instance(&entry, with_validation.then_some(&*debug_messages))?;
+        let (instance, debug_labels) = create_instance(&entry, with_validation.then_some(&*debug_messages))?;
         let debug_utils = ext::debug_utils::Instance::new(&entry, &instance);
         let debug_messenger = if with_validation {
             Some(
@@ -119,7 +119,7 @@ impl VkContext {
                 device.destroy_device(None);
                 dispose_instance();
             })?;
-        let debug_utils_device = with_validation.then(|| ext::debug_utils::Device::new(&instance, &device));
+        let debug_utils_device = debug_labels.then(|| ext::debug_utils::Device::new(&instance, &device));
         let calibrated_timestamps = physical_device
             .capabilities
             .contains(VkDeviceCapabilities::CALIBRATED_TIMESTAMPS)
@@ -395,14 +395,14 @@ impl Context for VkContext {
 
     fn create_command_buffer(
         &self,
-        _name: Option<&str>,
+        name: Option<&str>,
         allocation_pool: Option<Arc<<Vulkan as Backend>::AllocationPool>>,
     ) -> Result<VkCommandBufferEncoding, Error> {
         if let Some(failure) = self.upload_failure.lock().as_ref() {
             return Err(VkContextError::UploadFailed(failure.clone()).into());
         }
         let allocation_pool = allocation_pool.unwrap_or_else(|| self.create_allocation_pool());
-        VkCommandBufferEncoding::new(self.arc(), allocation_pool)
+        VkCommandBufferEncoding::new(self.arc(), allocation_pool, name)
     }
 
     fn create_buffer_gpu(
@@ -470,10 +470,12 @@ impl Context for VkContext {
         DeviceCapabilities::UNTUNED_SPECULATION
     }
 }
+/// The instance, with VK_EXT_debug_utils for validation messages and debug labels wherever it is available, and whether
+/// it has the extension.
 fn create_instance(
     entry: &ash::Entry,
     validation: Option<&VkDebugMessages>,
-) -> Result<ash::Instance, VkContextError> {
+) -> Result<(ash::Instance, bool), VkContextError> {
     let mut instance_extensions: Vec<*const c_char> = Vec::new();
 
     let mut instance_layers: Vec<*const c_char> = Vec::new();
@@ -483,9 +485,15 @@ fn create_instance(
         if !is_layer_supported(entry, VK_LAYER_KHRONOS_VALIDATION)? {
             return Err(VkContextError::ValidationNotSupported);
         }
-        instance_extensions.push(vk::EXT_DEBUG_UTILS_NAME.as_ptr());
         instance_layers.push(VK_LAYER_KHRONOS_VALIDATION.as_ptr());
         messenger_info = Some(debug_messenger_info(messages));
+    }
+    let extensions =
+        unsafe { entry.enumerate_instance_extension_properties(None) }.map_err(VkContextError::InstanceEnumeration)?;
+    let debug_utils = validation.is_some()
+        || extensions.iter().any(|extension| extension.extension_name_as_c_str() == Ok(vk::EXT_DEBUG_UTILS_NAME));
+    if debug_utils {
+        instance_extensions.push(vk::EXT_DEBUG_UTILS_NAME.as_ptr());
     }
 
     let app_info = vk::ApplicationInfo::default().api_version(API_VERSION_1_4);
@@ -498,7 +506,8 @@ fn create_instance(
         instance_info = instance_info.push_next(next);
     }
 
-    unsafe { entry.create_instance(&instance_info, None) }.map_err(VkContextError::InstanceCreate)
+    let instance = unsafe { entry.create_instance(&instance_info, None) }.map_err(VkContextError::InstanceCreate)?;
+    Ok((instance, debug_utils))
 }
 /// The pipeline cache `path` holds and its size; empty without a file, and the driver ignores another device's data.
 fn create_pipeline_cache(
@@ -662,7 +671,7 @@ fn is_layer_supported(
     layer: &CStr,
 ) -> Result<bool, VkContextError> {
     let layer_properties =
-        unsafe { entry.enumerate_instance_layer_properties() }.map_err(VkContextError::LayerEnumeration)?;
+        unsafe { entry.enumerate_instance_layer_properties() }.map_err(VkContextError::InstanceEnumeration)?;
     Ok(layer_properties.iter().any(|properties| properties.layer_name_as_c_str().is_ok_and(|name| name == layer)))
 }
 
