@@ -8,7 +8,7 @@ use common::{compiler::Compiler, envs, gpu_type_paths::GpuTypePaths, gpu_types::
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
-#[cfg(feature = "webgpu")]
+#[cfg(any(feature = "webgpu", feature = "vulkan"))]
 mod slang;
 
 #[cfg(feature = "webgpu")]

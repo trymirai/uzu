@@ -20,8 +20,7 @@ use shader_slang::{
 use walkdir::WalkDir;
 
 use super::{
-    Dephashes, Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_types, slang_api,
-    wrapper,
+    Dephashes, Error, SlangArgumentType, SlangEntryPointAbi, SlangKernelInfo, bindgen, generate_types, wrapper,
 };
 use crate::{
     common::{
@@ -34,6 +33,7 @@ use crate::{
         kernel::{Kernel, KernelArgumentType, KernelParameterType},
     },
     debug_log,
+    slang::SessionLoadModuleWithDiagnosticsExt,
 };
 
 /// SPIR-V capabilities that device selection guarantees: Shader, Float16, Int16, Int8, GroupNonUniform and its
@@ -124,7 +124,10 @@ impl SlangCompiler {
         }
 
         let source_path = source_file.to_str().context("Slang source path is not UTF-8")?;
-        let module = slang_api::load_module(&self.session, source_path)?;
+        let (module, diagnostics) = self.session.load_module_with_diagnostics(source_file)?;
+        for line in diagnostics.iter().flat_map(|diagnostics| diagnostics.lines()) {
+            println!("cargo::warning={line}");
+        }
         let dependency_hashes = module
             .dependency_file_paths()
             .map(|path| {
@@ -175,7 +178,6 @@ impl SlangCompiler {
             let contents =
                 once(imports).chain(wrappers.iter().flat_map(|(blocks, _)| blocks.iter().cloned())).join("\n\n");
             fs::write(&wrapper_file, contents)?;
-            let wrapper_path = wrapper_file.to_str().context("Slang wrapper path is not UTF-8")?;
             // Specialization constants of the module's kernels with their wire types.
             let mut declared = BTreeMap::new();
             for info in &kernels {
@@ -191,20 +193,20 @@ impl SlangCompiler {
                     }
                 }
             }
-            let (src_dir, out_dir, declared, wrappers) =
-                (self.src_dir.as_path(), self.out_dir.as_path(), &declared, &wrappers);
+            let (src_dir, out_dir, wrapper_file, declared, wrappers) =
+                (self.src_dir.as_path(), self.out_dir.as_path(), wrapper_file.as_path(), &declared, &wrappers);
             thread::scope(|scope| {
                 // An entry point that stores BF16 also builds with the native type, alongside on another thread.
                 let (sender, natives) = mpsc::channel();
                 scope.spawn(move || {
                     let entry_points = wrappers.iter().flat_map(|(_, entry_points)| entry_points);
                     if let Err(error) =
-                        send_native_bf16_variants(src_dir, out_dir, wrapper_path, entry_points, declared, &sender)
+                        send_native_bf16_variants(src_dir, out_dir, wrapper_file, entry_points, declared, &sender)
                     {
                         sender.send(Err(error)).ok();
                     }
                 });
-                let compiled = link(&self.session, wrapper_path)?;
+                let compiled = link(&self.session, wrapper_file)?;
                 for ((info, descriptor), (_, entry_points)) in kernels.iter().zip(&descriptors).zip(wrappers) {
                     let preconditions = info.preconditions()?;
                     let variants = entry_points
@@ -401,7 +403,7 @@ fn session(
 fn send_native_bf16_variants<'a>(
     src_dir: &Path,
     out_dir: &Path,
-    path: &str,
+    path: &Path,
     entry_points: impl Iterator<Item = &'a (String, Vec<&'static str>)>,
     declared: &BTreeMap<String, ScalarType>,
     sender: &Sender<Result<Option<(SlangEntryPointAbi, Vec<u8>)>, Error>>,
@@ -426,9 +428,12 @@ fn send_native_bf16_variants<'a>(
 /// to reflect them.
 fn link(
     session: &Session,
-    path: &str,
+    path: &Path,
 ) -> Result<ComponentType, Error> {
-    let wrapper = slang_api::load_module(session, path)?;
+    let (wrapper, diagnostics) = session.load_module_with_diagnostics(path)?;
+    for line in diagnostics.iter().flat_map(|diagnostics| diagnostics.lines()) {
+        println!("cargo::warning={line}");
+    }
     let components =
         once(wrapper.clone().into()).chain(wrapper.entry_points().map(ComponentType::from)).collect::<Vec<_>>();
     session

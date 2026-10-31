@@ -5,7 +5,7 @@ use std::{
     ptr::{NonNull, null_mut},
 };
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use shader_slang::{Blob, Interface, Module, Session};
 
 pub trait SessionLoadModuleWithDiagnosticsExt {
@@ -20,14 +20,14 @@ impl SessionLoadModuleWithDiagnosticsExt for Session {
         &self,
         path: &Path,
     ) -> anyhow::Result<(Module, Option<String>)> {
-        let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
+        let path_cstr = CString::new(path.to_str().context("Slang module path is not UTF-8")?)?;
         let mut diagnostics_ptr = null_mut();
 
         let module_ptr = vcall!(self, loadModule(path_cstr.as_ptr(), &mut diagnostics_ptr));
 
         let diagnostics = NonNull::new(diagnostics_ptr as *mut c_void)
             .map(|diagnostics_ptr_nn| -> Blob { unsafe { mem::transmute(diagnostics_ptr_nn) } })
-            .map(|blob| blob.as_str().unwrap().to_owned());
+            .map(|blob| String::from_utf8_lossy(blob.as_slice()).into_owned());
 
         let Some(module_ptr_nn) = NonNull::new(module_ptr as *mut c_void) else {
             return Err(anyhow!("{}", diagnostics.as_deref().unwrap_or("<no diagnostics>")));
