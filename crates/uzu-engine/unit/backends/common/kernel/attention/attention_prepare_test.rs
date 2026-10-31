@@ -2,18 +2,18 @@ use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use crate::backends::common::kernel::AttentionPrepareInt8Kernel;
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::AttentionPrepareKernel,
+            kernel::{AttentionPrepareInt8Kernel, AttentionPrepareKernel},
         },
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
+    tests::helpers::{
+        buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend, supported_kernel,
+    },
 };
 
 struct Output {
@@ -135,15 +135,13 @@ fn test_attention_prepare_uses_query_gate_row_stride() {
     });
 }
 
-#[cfg(backend = "metal")]
 #[derive(Debug, PartialEq)]
 struct Int8Output {
     codes: [Vec<u8>; 3],
     scales: [Vec<bf16>; 3],
 }
 
-#[cfg(backend = "metal")]
-fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
+fn run_int8<B: Backend>(num_q_heads: u32) -> Option<Int8Output> {
     const DIM: usize = 256;
     const CACHE_TOKENS: usize = 64;
     let code_bytes = CACHE_TOKENS * DIM;
@@ -156,7 +154,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     let mut v_codes = create_buffer_with_data::<B, u8>(&context, &vec![0; code_bytes]);
     let mut k_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
     let mut v_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
-    let kernel = <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
+    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
         &context,
         DataType::BF16,
         DataType::F32,
@@ -165,8 +163,7 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
         true,
         1,
         true,
-    )
-    .unwrap();
+    ))?;
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &qkvg,
@@ -189,19 +186,20 @@ fn run_int8<B: Backend>(num_q_heads: u32) -> Int8Output {
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
-    Int8Output {
+    Some(Int8Output {
         codes: [&q_codes, &k_codes, &v_codes].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
         scales: [&q_scales, &k_scales, &v_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
-    }
+    })
 }
 
-#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_attention_prepare_int8() {
     for num_q_heads in [0, 1] {
         let cpu = run_int8::<Cpu>(num_q_heads);
         for_each_non_cpu_backend!(|B| {
-            assert_eq!(cpu, run_int8::<B>(num_q_heads), "INT8 prepare mismatch on {}", std::any::type_name::<B>());
+            if let Some(output) = run_int8::<B>(num_q_heads) {
+                assert_eq!(cpu, Some(output), "INT8 prepare mismatch on {}", std::any::type_name::<B>());
+            }
         });
     }
 }

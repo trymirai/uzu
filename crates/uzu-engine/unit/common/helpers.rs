@@ -9,6 +9,8 @@ use crate::{
     },
     data_type::DataTypeRepr,
 };
+#[cfg(backend = "vulkan")]
+use crate::{backends::vulkan, utils::downcast::downcast_ref};
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
 macro_rules! for_each_backend {
@@ -114,6 +116,18 @@ pub fn buffer_prefix_to_vec<B: Backend, T: DataTypeRepr>(
 pub fn create_context<B: Backend>() -> Arc<<B as Backend>::Context> {
     block_on(B::Context::new())
         .unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
+}
+
+/// `kernel` once built, or `None` where its backend does not support it, so a shared test skips that backend. Vulkan
+/// builds the kernels it lacks as `Unsupported`, which fails with `NotSupported`.
+pub fn supported_kernel<B: Backend, K>(kernel: Result<K, B::Error>) -> Option<K> {
+    #[cfg(backend = "vulkan")]
+    if let Err(error) = &kernel
+        && let Some(vulkan::Error::NotSupported) = downcast_ref::<vulkan::Error>(error)
+    {
+        return None;
+    }
+    Some(kernel.expect("kernel"))
 }
 
 pub fn submit_command_buffer<E: CommandBufferEncoding>(command_buffer: E) {

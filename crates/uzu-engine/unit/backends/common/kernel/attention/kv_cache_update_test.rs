@@ -5,20 +5,19 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use crate::backends::common::kernel::{KVCacheUpdateInt8Kernel, kv_layout::Int8KVLayout};
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::kv_cache_update::Copy, kernel::KVCacheUpdateKernel,
+            gpu_types::kv_cache_update::Copy,
+            kernel::{KVCacheUpdateInt8Kernel, KVCacheUpdateKernel, kv_layout::Int8KVLayout},
         },
         cpu::Cpu,
     },
     data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend, supported_kernel},
     },
 };
 
@@ -242,17 +241,17 @@ fn test_large_bf16() {
     test_large_internal::<bf16>();
 }
 
-#[cfg(backend = "metal")]
 #[uzu_test]
 fn test_int8_copy() {
     let expected = get_int8_output::<Cpu>();
     for_each_non_cpu_backend!(|B| {
-        assert_eq!(expected, get_int8_output::<B>(), "INT8 cache update mismatch on {}", std::any::type_name::<B>());
+        if let Some(output) = get_int8_output::<B>() {
+            assert_eq!(expected, Some(output), "INT8 cache update mismatch on {}", std::any::type_name::<B>());
+        }
     });
 }
 
-#[cfg(backend = "metal")]
-fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
+fn get_int8_output<B: Backend>() -> Option<([Vec<u8>; 2], [Vec<bf16>; 2])> {
     let layout = Int8KVLayout::new(256, 2);
     let scale_count = 64 * layout.num_kv_heads as usize;
     let code_bytes = scale_count * layout.head_dim as usize;
@@ -269,8 +268,11 @@ fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
     let mut values = create_buffer_with_data::<B, u8>(&context, &v_codes);
     let mut key_scales = create_buffer_with_data::<B, bf16>(&context, &k_scales);
     let mut value_scales = create_buffer_with_data::<B, bf16>(&context, &v_scales);
-    let kernel =
-        <B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(&context, layout.head_dim, layout.num_kv_heads).unwrap();
+    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::KVCacheUpdateInt8Kernel::new(
+        &context,
+        layout.head_dim,
+        layout.num_kv_heads,
+    ))?;
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &mut keys,
@@ -282,8 +284,8 @@ fn get_int8_output<B: Backend>() -> ([Vec<u8>; 2], [Vec<bf16>; 2]) {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    (
+    Some((
         [&keys, &values].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
         [&key_scales, &value_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
-    )
+    ))
 }
