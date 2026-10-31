@@ -4,7 +4,7 @@ import generated.delta_net;
 
 // Each simdgroup owns four value rows of v head hv (k head hv / floor(H / G)), lane l keys 4l..4l + 3, held in FP32
 // across all tokens: per token s decays, kv = s . k, s += k beta (v - kv), o = s . q, both summed over the simdgroup.
-// Rows from head_v_dim on stay zero and touch no memory but join every reduction. num_dv_groups is ignored.
+// Rows from head_v_dim on stay zero and touch no memory but join every reduction.
 
 static const uint DELTA_NET_PREFILL_THREADS = 128;
 static const uint DELTA_NET_PREFILL_DV_PER_SIMDGROUP = 4;
@@ -31,11 +31,14 @@ func DeltaNetPrefill<T: IModelFloat>(
   uint value_dim,
   uint suffix_len,
   uint num_dv_groups,
-  [[Groups("if suffix_len == 0 { 0 } else { head_v_dim.div_ceil(16) }")]] uint row_group,
+  [[Groups("if suffix_len == 0 { 0 } else { num_dv_groups }")]] uint row_group,
   [[Groups("num_v_heads")]] uint head_group,
   [[Threads("128")]] uint thread_idx,
   [[Specialize]] uint HEAD_K_DIM,
 ) {
+  static_assert(
+    DELTA_NET_PREFILL_SIMDGROUPS * DELTA_NET_PREFILL_DV_PER_SIMDGROUP == 16, "num_dv_groups is head_v_dim.div_ceil(16)"
+  );
   let invocation = subgroup_invocation();
   let simd = invocation / SIMD_SIZE;
   let lane = invocation % SIMD_SIZE;
