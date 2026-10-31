@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     ffi::{CStr, c_char, c_void},
+    hash::{BuildHasher, BuildHasherDefault, DefaultHasher},
     path::{Path, PathBuf},
     sync::{
         Arc, Weak,
@@ -43,9 +44,9 @@ pub struct VkContext {
     command_buffer_resources: Mutex<Vec<VkCommandBufferResources>>,
     /// Generated pipelines by recipe, held weakly: each lives while an owner or pending command buffer keeps it.
     compute_pipelines: Mutex<HashMap<VkComputePipelineKey, Weak<VkComputePipeline>>>,
-    /// Compiled pipelines, loaded from the file and saved back to it with the data size it loaded.
+    /// Compiled pipelines, loaded from the file and saved back to it when they differ from the data it held, by hash.
     pipeline_cache: vk::PipelineCache,
-    pipeline_cache_file: Option<(PathBuf, usize)>,
+    pipeline_cache_file: Option<(PathBuf, u64)>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     /// Command-buffer labels, where the instance has VK_EXT_debug_utils.
@@ -106,7 +107,7 @@ impl VkContext {
         let device =
             get_logical_device(&instance, &physical_device, queue_family_index).inspect_err(|_| dispose_instance())?;
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let (pipeline_cache, pipeline_cache_size) = create_pipeline_cache(&device, pipeline_cache_path.as_deref())
+        let (pipeline_cache, loaded_hash) = create_pipeline_cache(&device, pipeline_cache_path.as_deref())
             .inspect_err(|_| unsafe {
                 device.destroy_device(None);
                 dispose_instance();
@@ -134,7 +135,7 @@ impl VkContext {
             command_buffer_resources: Mutex::new(Vec::new()),
             compute_pipelines: Mutex::new(HashMap::new()),
             pipeline_cache,
-            pipeline_cache_file: pipeline_cache_path.map(|path| (path, pipeline_cache_size)),
+            pipeline_cache_file: pipeline_cache_path.map(|path| (path, loaded_hash)),
             debug_utils,
             debug_messenger,
             debug_utils_device,
@@ -364,8 +365,8 @@ impl Drop for VkContext {
             for resources in self.command_buffer_resources.get_mut().drain(..) {
                 resources.destroy(&self.device);
             }
-            if let Some((path, loaded_size)) = &self.pipeline_cache_file {
-                save_pipeline_cache(&self.device, self.pipeline_cache, path, *loaded_size);
+            if let Some((path, loaded_hash)) = &self.pipeline_cache_file {
+                save_pipeline_cache(&self.device, self.pipeline_cache, path, *loaded_hash);
             }
             self.device.destroy_pipeline_cache(self.pipeline_cache, None);
             self.memory_allocator = None;
@@ -509,44 +510,45 @@ fn create_instance(
     let instance = unsafe { entry.create_instance(&instance_info, None) }.map_err(VkContextError::InstanceCreate)?;
     Ok((instance, debug_utils))
 }
-/// The pipeline cache `path` holds and its size; empty without a file, and the driver ignores another device's data.
+/// The pipeline cache `path` holds and the hash of its data; empty where the file does not exist, and the driver ignores
+/// another device's data.
 fn create_pipeline_cache(
     device: &ash::Device,
     path: Option<&Path>,
-) -> Result<(vk::PipelineCache, usize), VkContextError> {
-    let data = match path.map(|path| (path, std::fs::read(path))) {
-        Some((_, Ok(data))) => data,
-        Some((path, Err(error))) if error.kind() != std::io::ErrorKind::NotFound => {
-            eprintln!("[Warning]: ignoring the unreadable pipeline cache {}: {error}", path.display());
-            Vec::new()
+) -> Result<(vk::PipelineCache, u64), VkContextError> {
+    let data = match path.map(std::fs::read) {
+        Some(Err(error)) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(VkContextError::PipelineCacheRead(error));
         },
+        Some(Ok(data)) => data,
         _ => Vec::new(),
     };
     let info = vk::PipelineCacheCreateInfo::default().initial_data(&data);
     let cache = unsafe { device.create_pipeline_cache(&info, None) }.map_err(VkContextError::PipelineCacheCreate)?;
-    Ok((cache, data.len()))
+    Ok((cache, BuildHasherDefault::<DefaultHasher>::default().hash_one(&data)))
 }
-/// Replaces `path` through a temporary file, so no reader sees a partial cache; a cache of the loaded size is unchanged.
+/// Replaces `path` through a temporary file, so no reader sees a partial cache, unless the data hashes as loaded. The
+/// cache only spares the next process its compiles, so a failed save is dropped by design.
 fn save_pipeline_cache(
     device: &ash::Device,
     cache: vk::PipelineCache,
     path: &Path,
-    loaded_size: usize,
+    loaded_hash: u64,
 ) {
     static SAVES: AtomicUsize = AtomicUsize::new(0);
-    let saved = unsafe { device.get_pipeline_cache_data(cache) }.map_err(std::io::Error::other).and_then(|data| {
-        if data.len() == loaded_size {
-            return Ok(());
-        }
-        let save = SAVES.fetch_add(1, Ordering::Relaxed);
-        let temporary = path.with_extension(format!("{}-{save}.tmp", std::process::id()));
-        std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))?;
-        std::fs::write(&temporary, &data).and_then(|()| std::fs::rename(&temporary, path)).inspect_err(|_| {
-            let _ = std::fs::remove_file(&temporary);
-        })
-    });
-    if let Err(error) = saved {
-        eprintln!("[Warning]: pipeline cache {} not saved: {error}", path.display());
+    let Ok(data) = (unsafe { device.get_pipeline_cache_data(cache) }) else {
+        return;
+    };
+    if BuildHasherDefault::<DefaultHasher>::default().hash_one(&data) == loaded_hash {
+        return;
+    }
+    let save = SAVES.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("{}-{save}.tmp", std::process::id()));
+    let saved = std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))
+        .and_then(|()| std::fs::write(&temporary, &data))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if saved.is_err() {
+        let _ = std::fs::remove_file(&temporary);
     }
 }
 fn create_memory_allocator(

@@ -16,13 +16,7 @@ impl VkDebugMessages {
         message_type: vk::DebugUtilsMessageTypeFlagsEXT,
         message: &CStr,
     ) {
-        let types = match message_type {
-            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => "[General]",
-            vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => "[Performance]",
-            vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION => "[Validation]",
-            _ => "",
-        };
-        let message = format!("{types}{message:?}");
+        let message = format!("{message_type:?}: {}", message.to_string_lossy());
         if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
             eprintln!("[Error]: {message}");
             self.first_error.lock().get_or_insert(message);
