@@ -5,7 +5,7 @@ use crate::{
     data_type::DataType,
 };
 
-/// Tokens per chunk of the chunked gated delta rule, on every backend.
+/// Tokens per chunk of the chunked gated delta rule, shared by the Metal and Vulkan kernels.
 #[cfg(any(backend = "metal", backend = "vulkan", test))]
 pub const CHUNK_SIZE: u32 = 64;
 
