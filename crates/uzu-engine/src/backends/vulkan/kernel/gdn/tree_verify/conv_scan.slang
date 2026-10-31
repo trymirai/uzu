@@ -9,7 +9,7 @@ import generated.activation_type;
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "kernel_size >= 1")]]
-func ConvTreeScan<T: IModelFloat>(
+func ConvTreeScan<T: IStorageFloat>(
   Ptr<T, Access.Read> in_proj,
   Ptr<float, Access.Read> conv_weight,
   [[Optional("has_bias")]] Ptr<float, Access.Read> bias,

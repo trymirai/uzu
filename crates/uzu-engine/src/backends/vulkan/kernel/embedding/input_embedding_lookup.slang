@@ -19,7 +19,7 @@ static const uint INPUT_EMBEDDING_LOOKUP_TILE = 256;
 [[Precondition("encode", "quantization_mode != QuantizationMode::U4.into() || model_dim.is_multiple_of(2)")]]
 [[Precondition("encode", "!use_hadamard || model_dim.is_multiple_of(32)")]]
 [[Precondition("encode", "table_kind != EmbeddingTableKind::D4S4 || model_dim.is_multiple_of(64)")]]
-func InputEmbeddingLookup<T: IModelFloat>(
+func InputEmbeddingLookup<T: IStorageFloat>(
   Ptr<uint, Access.Read> token_ids,
   Ptr<uint8_t, Access.Read> values,
   [[Optional("table_kind != EmbeddingTableKind::Dense")]] Ptr<T, Access.Read> scales,

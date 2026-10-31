@@ -22,7 +22,7 @@ import matmul.gemv.common.tile;
 
 // Full-precision B element (row, inner) at row row_stride + inner inner_stride, the CPU MatmulKernel's index for
 // transposed B of any leading dimension (stride ld, 1) and for B that is not transposed (1, ld).
-struct StridedOperand<T : IModelFloat> : IMatmulOperand {
+struct StridedOperand<T : IStorageFloat> : IMatmulOperand {
   Ptr<T, Access.Read> values;
   uint row_stride;
   uint inner_stride;
@@ -37,7 +37,7 @@ static const uint GEMV_THREADS = 256;
 static const uint GEMV_OUTPUTS = 8;
 static const uint GEMV_LANES = GEMV_THREADS / GEMV_OUTPUTS;
 
-void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmulOperand>(
+void gemv_body<X : IMatmulOperand, B : IStorageFloat, D : IStorageFloat, W : IMatmulOperand>(
   W weights,
   X activations,
   Ptr<D, Access.ReadWrite> d,
@@ -92,7 +92,7 @@ void gemv_body<X : IMatmulOperand, B : IModelFloat, D : IModelFloat, W : IMatmul
 [[Precondition("encode", "!METAL_LAYOUT || !INPUT_ALIGNED || k.is_multiple_of(if b_prologue == GemmBPrologueKind::FullPrecision { 128 } else { group_size })")]]
 [[Precondition("encode", "!METAL_LAYOUT || !FULL_TILE || (n.is_multiple_of(OUTPUT_ROW_TILE) && m.is_multiple_of(INPUT_ROW_TILE))")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || (b_prologue != GemmBPrologueKind::FullPrecision && n.is_multiple_of(32) && k.is_multiple_of(128))")]]
-func Gemv<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
+func Gemv<A: IStorageFloat, B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   [[Optional("b_prologue != GemmBPrologueKind::FullPrecision")]] Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
@@ -214,7 +214,7 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
 [[Precondition("new", "!has_rht || INPUT_ROWS == 1 && ROWS >= 4")]]
 [[Precondition("encode", "k.is_multiple_of(128) && (b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32))")]]
 [[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
-func GemvInt8<B: IModelFloat, D: IModelFloat>(
+func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,

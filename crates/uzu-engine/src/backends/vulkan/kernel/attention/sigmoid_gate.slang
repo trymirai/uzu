@@ -4,7 +4,7 @@ import common.activation;
 // Multiplies each output element in place by the sigmoid of its gate, read from rows of gate_row_stride.
 [[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
-func SigmoidGate<T: IModelFloat>(
+func SigmoidGate<T: IStorageFloat>(
   Ptr<T, Access.Read> gate,
   Ptr<T, Access.ReadWrite> output,
   uint gate_dim,

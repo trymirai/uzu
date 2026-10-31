@@ -33,8 +33,8 @@ public float gemm_output(float dot, float bias, GemmParams params) {
 }
 
 void simdgroup_mma_k_loop<
-  A : IModelFloat,
-  B : IModelFloat,
+  A : IStorageFloat,
+  B : IStorageFloat,
   BLoader : IThreadgroupLoader<B>,
   SharedA : IThreadgroupStorage<A>,
   SharedB : IThreadgroupStorage<B>,
@@ -99,9 +99,9 @@ void simdgroup_mma_k_loop<
 }
 
 void simdgroup_mma_finalize<
-  A : IModelFloat,
-  B : IModelFloat,
-  D : IModelFloat,
+  A : IStorageFloat,
+  B : IStorageFloat,
+  D : IStorageFloat,
   let THREADGROUP_BLOCK_M : int,
   let THREADGROUP_BLOCK_N : int,
   let THREADGROUP_BLOCK_K : int,
@@ -151,9 +151,9 @@ void simdgroup_mma_finalize<
 
 // The tile at threadgroup_position (column tile, row tile). Every invocation of the workgroup must call it.
 public void simdgroup_mma_core_run<
-  A : IModelFloat,
-  B : IModelFloat,
-  D : IModelFloat,
+  A : IStorageFloat,
+  B : IStorageFloat,
+  D : IStorageFloat,
   R : IRightOperand<B>,
   SharedA : IThreadgroupStorage<A>,
   SharedB : IThreadgroupStorage<B>,

@@ -15,7 +15,7 @@ public interface IThreadgroupLoader<T> {
 }
 
 // Its shape is constructor arguments, constants at every call site.
-public struct ThreadgroupLoader<T : IModelFloat> : IThreadgroupLoader<T> {
+public struct ThreadgroupLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
   int threadgroup_tile_rows;
   int destination_leading_dimension;
   int reads_per_thread;
@@ -101,14 +101,14 @@ public struct ThreadgroupLoader<T : IModelFloat> : IThreadgroupLoader<T> {
 }
 
 // value rounded to U, as every 16-bit operation of the staged loaders rounds its result.
-public float round_to<U : IModelFloat>(float value) {
+public float round_to<U : IStorageFloat>(float value) {
   return U.fromFloat(value).toFloat();
 }
 
 // The codes of code byte `byte` times scale plus bias in U arithmetic: two U4 values, the low nibble first and the high
 // one read in place, 16 times its code, against the scale over 16; or one U8 value. Signed codes are stored with the top
 // bit flipped.
-public void dequantize_code<U : IModelFloat>(
+public void dequantize_code<U : IStorageFloat>(
   uint byte,
   float scale,
   float bias,
@@ -129,11 +129,11 @@ public void dequantize_code<U : IModelFloat>(
 }
 
 // The staged weight of a product and bias, each rounded to U.
-public U staged_weight<U : IModelFloat>(float product, float bias) {
+public U staged_weight<U : IStorageFloat>(float product, float bias) {
   return U.fromFloat(round_to<U>(product) + bias);
 }
 
 // The bias a weight group's codes stage with in U: the ScaleBias bias, otherwise -scale zero_point rounded to U.
-public float staged_bias<U : IModelFloat>(WeightGroup group, QuantizationMethod method) {
+public float staged_bias<U : IStorageFloat>(WeightGroup group, QuantizationMethod method) {
   return method == QuantizationMethod.ScaleBias ? group.bias : round_to<U>(-group.scale * float(group.zero_point));
 }

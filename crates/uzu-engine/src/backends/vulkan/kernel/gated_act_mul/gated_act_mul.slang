@@ -20,7 +20,7 @@ import generated.gated_act_mul;
 [[Precondition("encode", "ops != GatedActMulOp::QuantizeWithGroupSums || gated_dim.is_multiple_of(sum_group_size)")]]
 [[Precondition("encode", "!clip_gate || gate_clip_min <= gate_clip_max")]]
 [[Precondition("encode", "!clip_value || value_clip_min <= value_clip_max")]]
-func GatedActMul<T: IModelFloat>(
+func GatedActMul<T: IStorageFloat>(
   Ptr<T, Access.Read> act_operand,
   [[Optional("!interleaved")]] Ptr<T, Access.Read> value_operand,
   [[Optional("ops == GatedActMulOp::FullPrecision")]] Ptr<T, Access.ReadWrite> fp_out,

@@ -43,7 +43,7 @@ public struct QuantSlice {
   }
 
   [mutating]
-  public void load_weights<B : IModelFloat>(
+  public void load_weights<B : IStorageFloat>(
     QuantPosition position,
     QuantizedWeights<B> quantized,
     uint weight_row_indices[GEMV_MAX_ROWS_PER_LANE],
@@ -69,7 +69,7 @@ public struct QuantSlice {
     }
   }
 
-  public void accumulate<A : IModelFloat, B : IModelFloat, D : IModelFloat>(
+  public void accumulate<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat>(
     inout float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE],
     QuantPosition position,
     GemvOperands<A, B, D> ops,

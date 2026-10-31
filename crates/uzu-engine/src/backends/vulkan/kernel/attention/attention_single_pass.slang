@@ -5,7 +5,7 @@ import generated.ring;
 import generated.trie;
 
 // One query of one head over strided keys and values, the keys its mask admits.
-struct StridedKeys<T: IModelFloat> : IAttentionKeys {
+struct StridedKeys<T: IStorageFloat> : IAttentionKeys {
   Ptr<T, Access.Read> queries;
   Ptr<T, Access.Read> keys;
   Ptr<T, Access.Read> values;
@@ -41,7 +41,7 @@ struct StridedKeys<T: IModelFloat> : IAttentionKeys {
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]
 [[Precondition("encode", "suffix_length <= sequence_length")]]
-func AttentionSinglePass<T: IModelFloat>(
+func AttentionSinglePass<T: IStorageFloat>(
   Ptr<T, Access.Read> queries,
   Ptr<T, Access.Read> keys,
   Ptr<T, Access.Read> values,

@@ -10,7 +10,7 @@ public interface IMatmulOperand {
 }
 
 // Full-precision rows of k elements.
-public struct DenseOperand<T : IModelFloat> : IMatmulOperand {
+public struct DenseOperand<T : IStorageFloat> : IMatmulOperand {
   public Ptr<T, Access.Read> values;
   public uint k;
 
@@ -48,7 +48,7 @@ public struct WeightGroup {
 // Packed U4 or U8 codes of B rows of k elements in `layout`, stored signed codes with their top bit flipped. Scales,
 // biases and zero points (nibbles for U4) of group inner / group_size sit at row output_stride + group group_stride;
 // without zero points the offset is the midpoint, 8 or 128.
-public struct QuantizedWeights<B : IModelFloat> : IMatmulOperand {
+public struct QuantizedWeights<B : IStorageFloat> : IMatmulOperand {
   public Ptr<uint8_t, Access.Read> codes;
   public Ptr<B, Access.Read> scales;
   public Ptr<B, Access.Read> biases;

@@ -15,7 +15,7 @@ static const uint ATTENTION_PREPARE_TILE = 128;
 [[Precondition("encode", "rope_dim.unwrap_or(0) <= head_dim")]]
 [[Precondition("encode", "rope_dim.unwrap_or(0).is_multiple_of(2)")]]
 [[Precondition("encode", "num_q_heads <= input_row_stride / head_dim && num_kv_heads.unwrap_or(0) <= (input_row_stride / head_dim - num_q_heads) / 2")]]
-func AttentionPrepare<ElementT: IModelFloat16, RopeT: IFloat32>(
+func AttentionPrepare<ElementT: IStorageFloat, RopeT: IStorageFloat>(
   Ptr<ElementT, Access.Read> qkvg,
   Ptr<ElementT, Access.ReadWrite> queries,
   [[Optional("has_kv")]] Ptr<ElementT, Access.ReadWrite> keys,

@@ -14,7 +14,7 @@ uint unified_sampling_key(float value) {
 }
 
 // A token's logit masked to -infinity, then scaled by the inverse temperature.
-float unified_sampling_value<T : IModelFloat>(
+float unified_sampling_value<T : IStorageFloat>(
   Ptr<T, Access.Read> logits,
   uint logits_offset,
   Ptr<uint, Access.Read> mask,
@@ -49,7 +49,7 @@ struct UnifiedSamplingArgmax : IReduction {
 // One sweep over the row by this invocation: tokens outranking `rank` (by value, then lower index; (0, 0) admits every
 // number) compete by Gumbel-perturbed score for `best`. The first sweep gathers the running (maximum, normalizer), later
 // ones count competitors and sum exp(value - maximum). Tokens column + 1024 w share one Philox counter (sampling_index).
-void unified_sampling_sweep<T : IModelFloat>(
+void unified_sampling_sweep<T : IStorageFloat>(
   Ptr<T, Access.Read> logits,
   uint logits_offset,
   Ptr<uint, Access.Read> mask,
@@ -138,7 +138,7 @@ void unified_sampling_sweep<T : IModelFloat>(
 // candidate is defined or a filter retains nothing.
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]] [[Precondition("encode", "vocab_size > 0")]]
-func UnifiedSampling<T : IModelFloat>(
+func UnifiedSampling<T : IStorageFloat>(
   Ptr<T, Access.Read> logits,
   Ptr<uint, Access.ReadWrite> output,
   [[Optional("is_stochastic")]] Ptr<uint, Access.Read> seeds,

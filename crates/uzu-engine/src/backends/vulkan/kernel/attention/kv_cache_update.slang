@@ -6,7 +6,7 @@ import generated.kv_cache_update;
 [[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "copy_count as usize <= copies.len()")]]
-func KVCacheUpdate<T: IModelFloat>(
+func KVCacheUpdate<T: IStorageFloat>(
   Ptr<T, Access.ReadWrite> in_place_keys,
   Ptr<T, Access.ReadWrite> in_place_values,
   [[Constant]] Ptr<Copy, Access.Read> copies,

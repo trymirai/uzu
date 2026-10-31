@@ -10,7 +10,7 @@ import generated.activation_type;
 [[Kernel]] [[Public]]
 [[Precondition("encode", "kernel_size >= 2 || kernel_size == 1 && conv_dim == 0")]]
 [[Precondition("encode", "conv_dim <= 1 || state_stride >= kernel_size - 1")]]
-func DeltaNetConvUpdate<T: IModelFloat>(
+func DeltaNetConvUpdate<T: IStorageFloat>(
   Ptr<float, Access.Read> conv_weight,
   [[Optional("has_bias")]] Ptr<float, Access.Read> bias,
   Ptr<T, Access.ReadWrite> in_out,

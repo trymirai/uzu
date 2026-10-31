@@ -18,7 +18,7 @@ static const uint DELTA_NET_UPDATE_ROWS = DELTA_NET_UPDATE_THREADS / DELTA_NET_U
 [[Kernel]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_v_heads == 0 || num_k_heads > 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
-func DeltaNetUpdate<T: IModelFloat>(
+func DeltaNetUpdate<T: IStorageFloat>(
   Ptr<T, Access.Read> in_proj,
   Ptr<float, Access.Read> a_log,
   Ptr<float, Access.Read> dt_bias,

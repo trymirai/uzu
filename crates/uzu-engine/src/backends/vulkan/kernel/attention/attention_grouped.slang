@@ -25,7 +25,7 @@ typealias GroupedTile = CoopMat<float, MemoryScope.Subgroup, 16, 16, CoopMatMatr
 groupshared float grouped_scores[2 * ATTENTION_GROUPED_ROWS * ATTENTION_GROUPED_KEYS];
 groupshared uint16_t grouped_weights[ATTENTION_GROUPED_ROWS * ATTENTION_GROUPED_KEYS];
 
-struct GroupedArguments<T : IModelFloat16> {
+struct GroupedArguments<T : IStorageFloat> {
   Ptr<T, Access.Read> queries;
   Ptr<T, Access.Read> keys;
   Ptr<T, Access.Read> values;
@@ -63,7 +63,7 @@ struct GroupedArguments<T : IModelFloat16> {
   }
 }
 
-struct GroupedAttention<T : IModelFloat16, N : ICoopElement, let HEAD_DIM : int> {
+struct GroupedAttention<T : IStorageFloat, N : ICoopElement, let HEAD_DIM : int> {
   static const int DEPTH_TILES = HEAD_DIM / 32;
   static const int SLICE_TILES = HEAD_DIM / 16 / int(GROUPED_SUBGROUPS);
 
@@ -230,7 +230,7 @@ struct GroupedAttention<T : IModelFloat16, N : ICoopElement, let HEAD_DIM : int>
 [[Precondition("encode", "gqa_factor > 0 && num_heads.is_multiple_of(gqa_factor) && gqa_factor * suffix_length >= 16")]]
 [[Precondition("encode", "sequence_length >= 64 && suffix_length <= sequence_length")]]
 [[Precondition("encode", "splits > 0 && splits <= sequence_length.div_ceil(64)")]]
-func AttentionGrouped<T: IModelFloat16>(
+func AttentionGrouped<T: IStorageFloat>(
   Ptr<T, Access.Read> queries,
   Ptr<T, Access.Read> keys,
   Ptr<T, Access.Read> values,

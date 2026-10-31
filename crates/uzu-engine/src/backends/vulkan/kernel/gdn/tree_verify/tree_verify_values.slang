@@ -40,7 +40,7 @@ groupshared float tree_verify_beta[TREE_VERIFY_TOKENS];
 groupshared uint tree_verify_start[TREE_VERIFY_TOKENS];
 groupshared uint tree_verify_end[TREE_VERIFY_TOKENS];
 
-struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
+struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
   static const uint TOKENS = TREE_VERIFY_TOKEN_BLOCK * NB;
   // Rows per invocation: eight groups of 32 cover the tokens.
   static const uint R = TOKENS / 8;
@@ -263,7 +263,7 @@ struct TreeVerifyTile<T : IModelFloat, let NB : uint> {
 [[Precondition("new", "NB == 1 || NB == 2")]]
 [[Precondition("encode", "tree_size <= crate::backends::vulkan::gpu_types::delta_net::TREE_VERIFY_TOKEN_BLOCK * NB && head_k_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM && head_v_dim == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads != 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
-func TreeVerifyValues<T : IModelFloat>(
+func TreeVerifyValues<T : IStorageFloat>(
   Ptr<T, Access.Read> q,
   Ptr<T, Access.Read> k,
   Ptr<T, Access.Read> v,

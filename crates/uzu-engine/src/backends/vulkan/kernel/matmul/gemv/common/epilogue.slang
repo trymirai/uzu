@@ -4,7 +4,7 @@ import matmul.gemv.common.arguments;
 import matmul.gemv.common.tile;
 
 public struct Epilogue {
-  public static void store<A : IModelFloat, B : IModelFloat, D : IModelFloat>(
+  public static void store<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat>(
     float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE],
     GemvOperands<A, B, D> ops,
     GemvParams params,

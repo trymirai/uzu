@@ -20,7 +20,7 @@ public interface IRightOperand<B> {
 }
 
 // Full-precision B.
-public struct FullPrecisionRight<B : IModelFloat> : IRightOperand<B> {
+public struct FullPrecisionRight<B : IStorageFloat> : IRightOperand<B> {
   public DenseOperand<B> dense;
 
   public typealias Loader = ThreadgroupLoader<B>;
@@ -47,7 +47,7 @@ public struct FullPrecisionRight<B : IModelFloat> : IRightOperand<B> {
 }
 
 // U4/U8 B of K-element rows under any scheme.
-public struct QuantizedRight<B : IModelFloat> : IRightOperand<B> {
+public struct QuantizedRight<B : IStorageFloat> : IRightOperand<B> {
   public QuantizedWeights<B> weights;
 
   public typealias Loader = QuantizedBlockLoader<B>;
@@ -68,7 +68,7 @@ public struct QuantizedRight<B : IModelFloat> : IRightOperand<B> {
 
 // Stages a block_n x block_k tile of quantized B, each invocation dequantizing reads_per_thread consecutive packs of one
 // row with its group's scale and staged bias in T arithmetic.
-public struct QuantizedBlockLoader<T : IModelFloat> : IThreadgroupLoader<T> {
+public struct QuantizedBlockLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
   QuantizedWeights<T> weights;
   int threadgroup_tile_rows;
   int pack_factor;

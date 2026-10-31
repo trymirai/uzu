@@ -22,7 +22,7 @@ public float delta_net_query(float v, float inv) {
 
 // 1 / sqrt(sum + 1e-6) for the sum of squares of the head's values at source[offset], one per invocation of the
 // workgroup. Every invocation must call it.
-float delta_net_inverse<T: IModelFloat>(Ptr<T, Access.Read> source, uint offset, uint tid) {
+float delta_net_inverse<T: IStorageFloat>(Ptr<T, Access.Read> source, uint offset, uint tid) {
   static_assert(DELTA_NET_PREP_THREADS == DELTA_NET_HEAD_K_DIM, "one key per invocation");
   let x = source[offset + tid].toFloat();
   return rms_inverse<DELTA_NET_PREP_THREADS>(x * x, 1, 1e-6);
@@ -34,7 +34,7 @@ float delta_net_inverse<T: IModelFloat>(Ptr<T, Access.Read> source, uint offset,
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads > 0")]]
 [[Precondition("encode", "suffix_len <= 1 || num_k_heads <= key_dim / crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
-public func DeltaNetPrefillPrep<T: IModelFloat, QKT: IModelFloat>(
+public func DeltaNetPrefillPrep<T: IStorageFloat, QKT: IStorageFloat>(
   Ptr<T, Access.Read> in_proj,
   Ptr<float, Access.Read> a_log,
   Ptr<float, Access.Read> dt_bias,

@@ -53,7 +53,7 @@ float attention_score<Keys: IAttentionKeys>(
 // Attention of one query over `sequence_length` keys by one workgroup, written to `out[out_base + j]`: group g takes keys
 // g + 32 n with its own online softmax, then the groups merge through a transpose. A sink is a zero-valued key of group
 // 0. Groups reduce in uniform rounds of 32 keys, so unused keys are never read and every invocation reaches every barrier.
-public void attention_single_query<T: IModelFloat, Keys: IAttentionKeys>(
+public void attention_single_query<T: IStorageFloat, Keys: IAttentionKeys>(
   Keys source,
   uint head_dim,
   uint sequence_length,

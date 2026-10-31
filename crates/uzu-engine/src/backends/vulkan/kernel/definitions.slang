@@ -3,7 +3,6 @@ module definitions;
 __include definitions.dsl;
 __include definitions.storage_float;
 __include definitions.bf16;
-__include definitions.float_variants;
 __include definitions.subgroup;
 
 // One access of a U at `element` of `pointer`, whose ALIGNMENT-byte alignment callers guarantee.

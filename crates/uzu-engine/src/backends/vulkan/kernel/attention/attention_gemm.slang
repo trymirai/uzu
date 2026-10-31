@@ -42,7 +42,7 @@ uint2 attention_gemm_shared(uint first_word, bool queries) {
 }
 
 // Block `block` of `rows` rows of `source` at `stride` into the block tile, rows at or past `valid_rows` zero.
-void attention_gemm_stage<T : IModelFloat16>(
+void attention_gemm_stage<T : IStorageFloat>(
   Ptr<T, Access.Read> source,
   uint base,
   uint stride,
@@ -71,7 +71,7 @@ void attention_gemm_stage<T : IModelFloat16>(
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256")]]
 [[Precondition("encode", "gqa_factor > 0")]]
 [[Precondition("encode", "suffix_length <= sequence_length")]]
-func AttentionGemm<T: IModelFloat16>(
+func AttentionGemm<T: IStorageFloat>(
   Ptr<T, Access.Read> queries,
   Ptr<T, Access.Read> keys,
   Ptr<T, Access.Read> values,

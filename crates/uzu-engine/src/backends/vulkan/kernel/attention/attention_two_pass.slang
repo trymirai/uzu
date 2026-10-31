@@ -19,7 +19,7 @@ static const uint TWO_PASS_SIMDGROUPS = 8;
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]
 [[Precondition("encode", "suffix_length <= sequence_length")]]
-func AttentionTwoPass1<T: IModelFloat>(
+func AttentionTwoPass1<T: IStorageFloat>(
   Ptr<T, Access.Read> queries,
   Ptr<T, Access.Read> keys,
   Ptr<T, Access.Read> values,
@@ -118,7 +118,7 @@ func AttentionTwoPass1<T: IModelFloat>(
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "blocks > 0 && blocks <= crate::backends::vulkan::gpu_types::attention_two_pass::ATTENTION_TWO_PASS_BLOCKS")]]
-func AttentionTwoPass2<T: IModelFloat>(
+func AttentionTwoPass2<T: IStorageFloat>(
   Ptr<float, Access.Read> partials,
   Ptr<float, Access.Read> sums,
   Ptr<float, Access.Read> maxs,

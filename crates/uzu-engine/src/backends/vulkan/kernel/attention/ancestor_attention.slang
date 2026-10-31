@@ -7,7 +7,7 @@ static const uint ANCESTOR_ATTENTION_VALUE = 2;
 
 // One row of one head: the prefix keys, the row's ancestor slots, then its own key, each [.., num_heads, HEAD_DIM] in
 // planes of keys then values. The query and key are rotated at depth + 1 and rounded to T before attending.
-struct AncestorKeys<T : IModelFloat16> : IAttentionKeys {
+struct AncestorKeys<T : IStorageFloat> : IAttentionKeys {
   Ptr<T, Access.Read> prefix_kv;
   Ptr<T, Access.ReadWrite> node_kv;
   Ptr<T, Access.Read> current_qkv;

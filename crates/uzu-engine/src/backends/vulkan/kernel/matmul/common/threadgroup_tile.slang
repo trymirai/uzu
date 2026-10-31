@@ -9,8 +9,8 @@ import matmul.common.simdgroup_multiply_accumulate;
 // row s / SIMDGROUPS_PER_COLUMN + i SIMDGROUPS_PER_ROW and column s % SIMDGROUPS_PER_COLUMN + j SIMDGROUPS_PER_COLUMN.
 // A and B are staged as rows of BLOCK_DEPTH padded by 16 bytes.
 public struct ThreadgroupTile<
-  A : IModelFloat,
-  B : IModelFloat,
+  A : IStorageFloat,
+  B : IStorageFloat,
   let BLOCK_ROWS : int,
   let BLOCK_COLS : int,
   let BLOCK_DEPTH : int,
@@ -96,7 +96,7 @@ public struct ThreadgroupTile<
   }
 
   // The tile from element `d_offset` of `d`.
-  public void store_result<D : IModelFloat>(Ptr<D, Access.ReadWrite> d, uint d_offset, uint leading_dimension_d) {
+  public void store_result<D : IStorageFloat>(Ptr<D, Access.ReadWrite> d, uint d_offset, uint leading_dimension_d) {
     let destination = d_offset + uint(simdgroup_row_offset) * leading_dimension_d + uint(simdgroup_col_offset);
 
     fragment_store<D, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN, TILE_ROWS, TILE_COLS>(
@@ -104,7 +104,7 @@ public struct ThreadgroupTile<
     );
   }
 
-  public void store_result_safe<D : IModelFloat>(
+  public void store_result_safe<D : IStorageFloat>(
     Ptr<D, Access.ReadWrite> d,
     uint d_offset,
     uint leading_dimension_d,

@@ -18,7 +18,7 @@ func Normalization<
   InputT: IStorageFloat,
   AffineT: IStorageFloat,
   OutputT: IStorageFloat,
-  AccumT: IFloat32
+  AccumT: IStorageFloat
 >(
   [[Optional("!in_place")]] Ptr<InputT, Access.Read> input,
   [[Optional("has_scales")]] Ptr<AffineT, Access.Read> scales,

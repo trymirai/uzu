@@ -7,7 +7,7 @@ import definitions;
 [[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "group_size > 0")]]
-func SeparableCausalConv<T: IModelFloat16>(
+func SeparableCausalConv<T: IStorageFloat>(
   Ptr<T, Access.Read> input,
   Ptr<T, Access.Read> coefficient_deltas,
   Ptr<T, Access.Read> weights,

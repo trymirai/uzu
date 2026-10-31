@@ -3,7 +3,7 @@ import common.activation;
 
 // The scaled logit rounds to T before the soft cap.
 [[Variants("T", "float, bf16")]]
-[[Kernel]] [[Public]] func LogitTransform<T: IModelFloat>(
+[[Kernel]] [[Public]] func LogitTransform<T: IStorageFloat>(
   Ptr<T, Access.ReadWrite> logits,
   uint length,
   float scale,

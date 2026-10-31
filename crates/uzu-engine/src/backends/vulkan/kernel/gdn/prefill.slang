@@ -17,7 +17,7 @@ static const uint DELTA_NET_PREFILL_SIMDGROUPS = DELTA_NET_PREFILL_THREADS / SIM
 [[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || num_v_heads <= value_dim / head_v_dim")]]
 [[Precondition("encode", "suffix_len <= 1 || key_dim.is_multiple_of(4)")]]
-func DeltaNetPrefill<T: IModelFloat>(
+func DeltaNetPrefill<T: IStorageFloat>(
   Ptr<float, Access.Read> q_norm,
   Ptr<float, Access.Read> k_norm,
   Ptr<float, Access.Read> beta_buf,

@@ -8,7 +8,7 @@ import matmul.common.threadgroup_tile;
 
 // The simdgroup tilings: each GemmTiling's block M x N x K and simdgroups per row x column. tiling is a specialization
 // constant, so each pipeline keeps one branch.
-public void gemm_simdgroup<A : IModelFloat, B : IModelFloat, D : IModelFloat, R : IRightOperand<B>, SA : IThreadgroupStorage<A>, SB : IThreadgroupStorage<B>>(
+public void gemm_simdgroup<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat, R : IRightOperand<B>, SA : IThreadgroupStorage<A>, SB : IThreadgroupStorage<B>>(
   GemmTiling tiling,
   DenseOperand<A> left,
   R right,

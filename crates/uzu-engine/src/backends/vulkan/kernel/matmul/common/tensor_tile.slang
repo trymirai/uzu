@@ -109,7 +109,7 @@ uint4 or_component(uint4 word, uint index, uint bits) {
 
 // One workgroup's staging of A and B. Chunks of a stage are 8 values of A or full-precision B, or 16 quantized values
 // of B in one group, chunk c of a stage belonging to invocation c mod THREADS. Values past M, N or K stage as +0.
-struct TensorStager<B : IModelFloat16, N : ICoopElement, S : ITensorShared<N>, let BM : int, let BN : int, let BK : int, let THREADS : int> {
+struct TensorStager<B : IStorageFloat, N : ICoopElement, S : ITensorShared<N>, let BM : int, let BN : int, let BK : int, let THREADS : int> {
   static const uint STRIDE = uint(BK + 8) / 8;
   static const uint STAGE = uint(BM + BN) * STRIDE;
   static const uint A_COUNT = uint(BM * BK / 8);
@@ -287,9 +287,9 @@ struct TensorStager<B : IModelFloat16, N : ICoopElement, S : ITensorShared<N>, l
 // The block at `tile` (column tile, row tile), staging `dense` or, when `quantized`, `weights`. Every invocation of the
 // workgroup must call it.
 public void gemm_tensor_run<
-  B : IModelFloat16,
+  B : IStorageFloat,
   N : ICoopElement,
-  D : IModelFloat,
+  D : IStorageFloat,
   S : ITensorShared<N>,
   let BM : int,
   let BN : int,
@@ -426,8 +426,8 @@ Int8Sums int8_element_fold(Int8Sums sums, Int8Dots dots, uint slot, uint row_bas
 public struct Int8Gemm<
   let MMA_K : int,
   S : IInt8Shared<MMA_K>,
-  B : IModelFloat,
-  D : IModelFloat,
+  B : IStorageFloat,
+  D : IStorageFloat,
   let BM : int,
   let SG_M : int,
   let SG_N : int,

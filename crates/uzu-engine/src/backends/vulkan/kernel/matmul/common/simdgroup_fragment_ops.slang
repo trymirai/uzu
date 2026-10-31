@@ -7,7 +7,7 @@ import matmul.common.loader;
 // simdgroup sits SIMDGROUP_STRIDE_X fragment rows and SIMDGROUP_STRIDE_Y columns from (i - 1, j) and (i, j - 1).
 
 // To `destination` from its element `first`, this lane's first element, rows leading_dimension apart.
-public void fragment_store<U : IModelFloat, let SIMDGROUP_STRIDE_X : int, let SIMDGROUP_STRIDE_Y : int, let ROWS : int, let COLS : int>(
+public void fragment_store<U : IStorageFloat, let SIMDGROUP_STRIDE_X : int, let SIMDGROUP_STRIDE_Y : int, let ROWS : int, let COLS : int>(
   Fragment<ROWS, COLS> frag,
   Ptr<U, Access.ReadWrite> destination,
   uint first,
@@ -27,7 +27,7 @@ public void fragment_store<U : IModelFloat, let SIMDGROUP_STRIDE_X : int, let SI
 
 // fragment_store of the elements in rows below destination_tile_dimensions.y and columns below .x, both relative to
 // this lane's first element.
-public void fragment_store_safe<U : IModelFloat, let SIMDGROUP_STRIDE_X : int, let SIMDGROUP_STRIDE_Y : int, let ROWS : int, let COLS : int>(
+public void fragment_store_safe<U : IStorageFloat, let SIMDGROUP_STRIDE_X : int, let SIMDGROUP_STRIDE_Y : int, let ROWS : int, let COLS : int>(
   Fragment<ROWS, COLS> frag,
   Ptr<U, Access.ReadWrite> destination,
   uint first,

@@ -35,7 +35,7 @@ groupshared float chunked_row_decay[DELTA_NET_CHUNKED_CHUNK];
 [[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]
 [[Precondition("encode", "head_v_dim.is_multiple_of(16)")]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || num_v_heads <= value_dim / head_v_dim")]]
-func DeltaNetChunkedOutputAndState<T: IModelFloat>(
+func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
   Ptr<float, Access.Read> q_norm,
   Ptr<float, Access.Read> k_norm,
   Ptr<T, Access.Read> in_proj,

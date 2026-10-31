@@ -42,7 +42,7 @@ public struct GemmStorage<T, let ROLE : int> : IThreadgroupStorage<T> {
 [[Precondition("encode", "(alignment & 1) == 0 || m.is_multiple_of(tiling.block_m())")]]
 [[Precondition("encode", "(alignment & 2) == 0 || n.is_multiple_of(tiling.block_n())")]]
 [[Precondition("encode", "(alignment & 4) == 0 || k.is_multiple_of(tiling.block_k())")]]
-public func Gemm<A: IModelFloat, B: IModelFloat, D: IModelFloat>(
+public func Gemm<A: IStorageFloat, B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   [[Optional("b_prologue != GemmBPrologueKind::FullPrecision")]] Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
@@ -120,7 +120,7 @@ public struct GemmTensorShared<N : ICoopElement> : ITensorShared<N> {
 }
 
 // The cooperative tilings' instantiations; tiling is a specialization constant, so each pipeline keeps one branch.
-void gemm_tensor_tiling<B : IModelFloat16, N : ICoopElement, D : IModelFloat>(
+void gemm_tensor_tiling<B : IStorageFloat, N : ICoopElement, D : IStorageFloat>(
   GemmTiling tiling,
   Ptr<B, Access.Read> a,
   Ptr<B, Access.Read> dense,
@@ -161,7 +161,7 @@ void gemm_tensor_tiling<B : IModelFloat16, N : ICoopElement, D : IModelFloat>(
 [[Precondition("new", "shared_words == tiling.tensor_staging()")]]
 [[Precondition("new", "b_prologue == GemmBPrologueKind::FullPrecision || (quantization_mode != QuantizationMode::I8 && group_size > 0 && group_size.is_multiple_of(16))")]]
 [[Precondition("encode", "b_prologue == GemmBPrologueKind::FullPrecision || quantization_mode != QuantizationMode::U4 || k.is_multiple_of(2)")]]
-public func GemmTensor<B: IModelFloat16, D: IModelFloat>(
+public func GemmTensor<B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   [[Optional("b_prologue != GemmBPrologueKind::FullPrecision")]] Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
@@ -270,7 +270,7 @@ public struct GemmInt8K16Shared : IInt8Shared<16> {
 
 // The A8 body of the GemmInt8 entry points: ROW_BLOCK rows by 64 columns per workgroup, folding weight groups in
 // registers where ELEMENT_FOLD.
-void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IModelFloat, D : IModelFloat, let ELEMENT_FOLD : bool>(
+void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IStorageFloat, D : IStorageFloat, let ELEMENT_FOLD : bool>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
   Ptr<B, Access.Read> biases,
@@ -358,7 +358,7 @@ void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IModelFloat, D : IMo
 [[Precondition("encode", "k.is_multiple_of(128 * splits)")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32)")]]
 [[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
-public func GemmInt8<B: IModelFloat, D: IModelFloat>(
+public func GemmInt8<B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
@@ -420,7 +420,7 @@ public func GemmInt8<B: IModelFloat, D: IModelFloat>(
 [[Precondition("encode", "k.is_multiple_of(128 * splits)")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32)")]]
 [[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
-public func GemmInt8K16<B: IModelFloat, D: IModelFloat>(
+public func GemmInt8K16<B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,
@@ -485,7 +485,7 @@ public func GemmInt8K16<B: IModelFloat, D: IModelFloat>(
 [[Precondition("encode", "k.is_multiple_of(128 * splits)")]]
 [[Precondition("encode", "b_layout == GemmBLayout::RowMajor || n.is_multiple_of(32)")]]
 [[Precondition("encode", "!has_rht || n.is_multiple_of(32)")]]
-public func GemmInt8Nv<B: IModelFloat, D: IModelFloat>(
+public func GemmInt8Nv<B: IStorageFloat, D: IStorageFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
   [[Optional("b_prologue == GemmBPrologueKind::ScaleBiasDequant")]] Ptr<B, Access.Read> biases,

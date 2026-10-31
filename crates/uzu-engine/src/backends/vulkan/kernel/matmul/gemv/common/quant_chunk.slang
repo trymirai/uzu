@@ -31,7 +31,7 @@ public struct QuantChunk {
   }
 
   // Values `offset` to offset + 7 of row `row` of `extent` values of `source`.
-  public static void load<A : IModelFloat>(
+  public static void load<A : IStorageFloat>(
     bool ALIGNED,
     Ptr<A, Access.Read> source,
     out float values[VALUES],
@@ -79,7 +79,7 @@ public struct QuantChunk {
     }
   }
 
-  static void load_values<A : IModelFloat>(
+  static void load_values<A : IStorageFloat>(
     bool BOUNDED,
     bool PACKED_16,
     Ptr<A, Access.Read> source,

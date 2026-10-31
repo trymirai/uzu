@@ -18,7 +18,7 @@ public struct QuantMetadata {
   }
 
   [mutating]
-  public void load<B : IModelFloat>(
+  public void load<B : IStorageFloat>(
     uint group_index,
     uint weight_rows[GEMV_MAX_ROWS_PER_LANE],
     QuantizedWeights<B> weights,

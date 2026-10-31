@@ -13,7 +13,7 @@ static const uint DELTA_NET_CONV_SCAN_TAPS = 3;
 [[Kernel]] [[Public]]
 [[Precondition("new", "KERNEL_SIZE == 4")]]
 [[Precondition("encode", "suffix_len <= 1 || conv_dim <= out_stride")]]
-func DeltaNetConvScan<T: IModelFloat>(
+func DeltaNetConvScan<T: IStorageFloat>(
   Ptr<float, Access.Read> packed,
   Ptr<float, Access.Read> conv_weight,
   [[Optional("has_bias")]] Ptr<float, Access.Read> bias,

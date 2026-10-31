@@ -2,7 +2,7 @@ implementing definitions;
 
 // BF16 in uint16 storage, converted natively in the NATIVE_BF16 modules (VK_KHR_shader_bfloat16 devices), otherwise
 // widened exactly and rounded to nearest even like half::bf16::from_f32, which quiets NaNs.
-public struct bf16 : IModelFloat16 {
+public struct bf16 : IStorageFloat {
     uint16_t bits;
 
 #ifdef NATIVE_BF16

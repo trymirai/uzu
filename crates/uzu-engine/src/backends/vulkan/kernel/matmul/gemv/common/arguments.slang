@@ -7,7 +7,7 @@ import generated.quantization_method;
 
 // b is a word pointer the full-precision B source reads as B; quantized B is read through QuantizedWeights.
 
-public struct GemvOperands<A : IModelFloat, B : IModelFloat, D : IModelFloat> {
+public struct GemvOperands<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat> {
   public Ptr<uint, Access.Read> b;
   public Ptr<A, Access.Read> a;
   public Ptr<D, Access.ReadWrite> d;
@@ -39,7 +39,7 @@ public QuantizationMethod gemm_quantization_method(GemmBPrologueKind prologue) {
   }
 }
 
-public QuantizedWeights<B> gemm_weights<B : IModelFloat>(
+public QuantizedWeights<B> gemm_weights<B : IStorageFloat>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
   Ptr<B, Access.Read> biases,

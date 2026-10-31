@@ -13,7 +13,7 @@ static const uint QKV_NORM_THREADS = 128;
 [[Kernel]] [[Public]]
 [[Precondition("new", "!in_place || InputT == OutputT")]]
 [[Precondition("encode", "batch_size == 0 || head_count == 0 || head_dim == 0 || head_offset <= input_row_stride / head_dim && head_count <= input_row_stride / head_dim - head_offset")]]
-func QKVNorm<InputT: IModelFloat, ScaleT: IModelFloat, OutputT: IModelFloat, AccumT: IFloat32>(
+func QKVNorm<InputT: IStorageFloat, ScaleT: IStorageFloat, OutputT: IStorageFloat, AccumT: IStorageFloat>(
   [[Optional("!in_place")]] Ptr<InputT, Access.Read> qkvg_input,
   [[Optional("has_scales")]] Ptr<ScaleT, Access.Read> scales,
   Ptr<OutputT, Access.ReadWrite> qkvg_output,

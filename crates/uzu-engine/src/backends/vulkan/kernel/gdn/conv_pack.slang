@@ -8,7 +8,7 @@ import definitions;
 [[Kernel]] [[Public]]
 [[Precondition("new", "KERNEL_SIZE == 4")]]
 [[Precondition("encode", "suffix_len <= tile_tokens || tile_tokens >= KERNEL_SIZE - 1")]]
-func DeltaNetConvPack<T: IModelFloat>(
+func DeltaNetConvPack<T: IStorageFloat>(
   Ptr<float, Access.Read> state_in,
   Ptr<T, Access.Read> x,
   Ptr<float, Access.ReadWrite> packed,

@@ -13,7 +13,7 @@ groupshared uint repetition_penalty_tokens[REPETITION_PENALTY_THREADS];
 // does not alias inputs, tokens are below vocab_size, the ring is valid and its offsets do not overflow.
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
-func RepetitionPenalty<T: IModelFloat>(
+func RepetitionPenalty<T: IStorageFloat>(
   Ptr<T, Access.Read> original_logits,
   Ptr<T, Access.ReadWrite> logits_copy,
   Ptr<uint, Access.Read> context_ring,

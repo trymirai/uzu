@@ -11,7 +11,7 @@ static const uint DELTA_NET_NORM_GATE_THREADS = 128;
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads == 0 || head_v_dim == 0 || num_v_heads <= value_dim / head_v_dim")]]
-func DeltaNetNormGate<T: IModelFloat>(
+func DeltaNetNormGate<T: IStorageFloat>(
   Ptr<T, Access.ReadWrite> in_out,
   Ptr<T, Access.Read> in_proj,
   Ptr<float, Access.Read> norm_weight,

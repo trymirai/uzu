@@ -4,7 +4,7 @@ import matmul.gemv.common.tile;
 
 // The 4 values at element `offset` of `source` in FP32, one load where `vector`: rows of a K that is not a multiple of
 // 4 are not 4-value aligned.
-float4 gemv_load4<T : IModelFloat>(Ptr<T, Access.Read> source, uint offset, bool vector) {
+float4 gemv_load4<T : IStorageFloat>(Ptr<T, Access.Read> source, uint offset, bool vector) {
   if (vector) {
     if (__naturalStrideOf<T>() == 4) {
       return load_aligned<float4, 16>(source, offset);
@@ -15,7 +15,7 @@ float4 gemv_load4<T : IModelFloat>(Ptr<T, Access.Read> source, uint offset, bool
 }
 
 public struct FullPrecisionBSource {
-  public static void accumulate<A : IModelFloat, B : IModelFloat, D : IModelFloat>(
+  public static void accumulate<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat>(
     inout float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE],
     GemvOperands<A, B, D> ops,
     GemvParams params,

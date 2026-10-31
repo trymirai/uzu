@@ -6,7 +6,7 @@ import matmul.gemv.common.quant_slice;
 import matmul.gemv.common.tile;
 
 public struct QuantBSource {
-  public static void accumulate<A : IModelFloat, B : IModelFloat, D : IModelFloat>(
+  public static void accumulate<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat>(
     inout float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE],
     QuantizedWeights<B> weights,
     GemvOperands<A, B, D> ops,

@@ -17,7 +17,7 @@ import generated.activation_transform;
 [[Precondition("encode", "element_count.is_multiple_of(32)")]]
 [[Precondition("encode", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || element_count.is_multiple_of(activation_scale_group_size)")]]
 [[Precondition("encode", "ops != ActivationTransformOp::QuantizeWithGroupSums || element_count.is_multiple_of(sum_group_size)")]]
-func ActivationTransform<T: IModelFloat, BiasT: IModelFloat>(
+func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   [[Optional("!in_place")]] Ptr<T, Access.Read> input,
   [[Optional("ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht")]]
   Ptr<T, Access.ReadWrite> fp_out,
@@ -91,7 +91,7 @@ func ActivationTransform<T: IModelFloat, BiasT: IModelFloat>(
 [[Precondition("new", "activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "sum_group_size == 0 || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
 [[Precondition("encode", "element_count.is_multiple_of(activation_scale_group_size) && element_count.is_multiple_of(sum_group_size.max(1))")]]
-func ActivationQuantize<T: IModelFloat>(
+func ActivationQuantize<T: IStorageFloat>(
   Ptr<T, Access.Read> input,
   Ptr<int8_t, Access.ReadWrite> q_out,
   Ptr<float, Access.ReadWrite> scales_out,
