@@ -108,16 +108,15 @@ void trellis_row<let H : uint, let VALUES : uint>(
       }
     }
     trellis_hadamard_transform<H, VALUES>(values, tid);
-    for (uint k = 0; k < VALUES; k++) {
-      let bits = bf16.fromFloat(values[k]).storageBits();
-      let word = (call * VALUES + k) / 2;
-      if (k % 2 == 0) {
-        retained[word] = bits;
-      } else {
-        retained[word] |= bits << 16;
+    for (uint k = 0; k < VALUES; k += 2) {
+      uint word = 0;
+      for (uint half = 0; half < 2; half++) {
+        let bits = bf16.fromFloat(values[k + half]).storageBits();
+        word |= bits << (16 * half);
+        let magnitude = bits & 0x7fffu;
+        largest = max(largest, magnitude > 0x7f80u ? 0u : magnitude);
       }
-      let magnitude = bits & 0x7fffu;
-      largest = max(largest, magnitude > 0x7f80u ? 0u : magnitude);
+      retained[(call * VALUES + k) / 2] = word;
     }
   }
   // BF16 magnitude bits widen exactly.
