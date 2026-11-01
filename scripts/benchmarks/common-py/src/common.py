@@ -17,8 +17,9 @@ class InferenceEngine(ABC):
 
 
 def get_model_path(model: str | Path) -> str:
-    if isinstance(model, Path):
-        return model.expanduser().as_posix()
+    local = Path(model).expanduser()
+    if isinstance(model, Path) or local.is_dir():
+        return local.as_posix()
 
     cache_dir = Path("~/.cache/huggingface/hub").expanduser()
     try:

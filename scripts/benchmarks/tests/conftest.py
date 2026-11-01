@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import ios, llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash, uzu
+from tests.engines import ios, llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash, uzu, vllm
 
 ENGINE_TEST_CLASSES = {
     "ios": "TestIOS",
@@ -16,6 +16,7 @@ ENGINE_TEST_CLASSES = {
     "omlx": "TestOMLX",
     "splash": "TestSplash",
     "uzu": "TestUzu",
+    "vllm": "TestVLLM",
 }
 
 
@@ -38,6 +39,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     omlx.add_options(parser)
     splash.add_options(parser)
     uzu.add_options(parser)
+    vllm.add_options(parser)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -46,7 +48,7 @@ def pytest_configure(config: pytest.Config) -> None:
     test_file = Path(__file__).with_name("test_engines.py")
     if "engines" in config.args:
         config.args[:] = [str(test_file) if arg == "engines" else arg for arg in config.args]
-        engines.extend(name for name in ENGINE_TEST_CLASSES if name not in engines and name != "ios")
+        engines.extend(name for name in ENGINE_TEST_CLASSES if name not in engines and name not in ("ios", "vllm"))
 
     for name, test_class in ENGINE_TEST_CLASSES.items():
         if name not in config.args:

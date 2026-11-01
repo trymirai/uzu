@@ -121,6 +121,36 @@ Current configuration enables DFlash only on M5, M5 Pro, and M5 Max
 cargo run --release -p benchmarks-uzu -- -m "trymirai/Qwen3.5-9B-M"
 ```
 
+On Windows the adapter runs on Vulkan. Its memory fields are the process's private commit (`memory_phys_footprint`),
+working set (`memory_resident`) and the local video memory DXGI attributes to it on its GPU
+(`memory_graphics_total`): the largest across hardware adapters, since DXGI can list one GPU under several LUIDs, as a
+Remote Desktop session does. Linux builds only report that they are unsupported.
+
+### [vLLM](https://github.com/vllm-project/vllm)
+
+Linux and CUDA only; on Windows it runs inside WSL. Install [uv](https://docs.astral.sh/uv/) in WSL first.
+```bash
+uv run --project engine-vllm bench-vllm -m "Qwen/Qwen3-0.6B"
+```
+
+Pass a DFlash draft with `--draft-model` (or `-d`) for speculative decoding. The proposed tokens per step default to
+the draft's DFlash block size minus one; `--speculative-depth` overrides them for the engine's lifetime, so requests may
+only omit `speculative_depth` or repeat that value. `--max-model-len` (default 16384) and `--gpu-memory-utilization`
+(default 0.9) size the KV cache.
+```bash
+uv run --project engine-vllm bench-vllm -m "Ar4ikov/Qwen3.8-27B-AWQ-W4A16-ASYM" -d "syvai/Qwen3.8-27B-DFlash2-W4A16"
+```
+
+The engine core runs in the adapter's process with prefix caching off. Time to first token and decode throughput come
+from vLLM's own per-request timestamps (arrival to first token, then first to last token). `tokens_per_forward_pass`
+divides the generated tokens by the target forwards: the prefill plus one verification per draft, from vLLM's
+speculative-decoding counters. `memory_graphics_total` is the peak CUDA memory PyTorch reserved, without the CUDA context,
+because WSL has no per-process GPU accounting, so it shows the pool `--gpu-memory-utilization` reserves up front, not
+the memory vLLM uses.
+
+From Windows, the tests and `compare/` start it through `wsl.exe` with its virtual environment under
+`~/.cache/uzu-benchmarks` inside WSL, so model paths must be Hugging Face ids or paths WSL can open.
+
 ## iOS
 
 [platform-ios](platform-ios) runs these engines inside the [iOS app](../../apps/benchmarks-ios) on an iPhone or iPad:
@@ -128,6 +158,19 @@ cargo run --release -p benchmarks-uzu -- -m "trymirai/Qwen3.5-9B-M"
 uv run --project platform-ios bench-ios run -e llamacpp -m "unsloth/Qwen3.5-0.8B-GGUF:Q4_K_M"
 ```
 Setup, device selection, model downloads and pushes are in the [app's README](../../apps/benchmarks-ios/README.md). `pytest engines` leaves it out because it needs a device; test it with `uv run pytest --engine ios --ios-engine ENGINE --ios-model MODEL`, adding `--ios-device UDID` or `--ios-host HOST` as needed.
+
+## Compare
+
+[./compare](./compare) runs the same requests through two engines and prints their averages. Each engine first answers
+one run of the first request as a warmup, then, unless `--no-wait-cooldown`, waits for the CPU and GPU (macOS) or the
+NVIDIA GPU (elsewhere) to cool to 60°C before each measured request.
+
+uzu against vLLM on one NVIDIA GPU, each with its own speculative decoding, on Windows only: uzu runs natively and vLLM
+in WSL. vLLM's default target, `Ar4ikov/Qwen3.8-27B-AWQ-W4A16-ASYM`, is a 4-bit Qwen3.8-27B checkpoint that fits the GPU
+next to its draft with a 2048-token context, so each prompt plus `--max-tokens` must fit in 2048 tokens:
+```bash
+uv run compare/uzu_vllm.py
+```
 
 ## Server
 
@@ -139,7 +182,7 @@ uv run bench-server uzu \
     --num-runs 3
 ```
 Output will show average metrics.
-By default, each run waits until CPU and GPU temperatures are at or below 60°C.
+By default, each run waits until the CPU and GPU (macOS) or the NVIDIA GPU (elsewhere) are at or below 60°C.
 Add `--no-wait-cooldown` to send requests without waiting for cooling.
 
 TensorFold requires Zig 0.17.
@@ -159,3 +202,6 @@ Specific engine test
 ```bash
 uv run pytest --engine uzu
 ```
+
+`pytest engines` leaves vLLM out because it needs CUDA; test it with `uv run pytest --engine vllm`. On Windows,
+`--engine uzu` builds and runs uzu natively and `--engine vllm` runs vLLM inside WSL.

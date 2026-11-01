@@ -9,10 +9,22 @@ use crate::{
 };
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
+    // Windows throttles a process without a focused window onto efficiency cores, which slows host-side recording of
+    // GPU work by about 8%. High priority exempts the engine, as for a foreground app.
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Threading::{GetCurrentProcess, HIGH_PRIORITY_CLASS, SetPriorityClass};
+        // SAFETY: the pseudo handle of the current process.
+        unsafe { SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) }?;
+    }
     let mut redirect = StdoutRedirect::to_stderr()?;
     let mut engine = UzuEngine::new(&args.model).await?;
     redirect.restore()?;
-    run_loop(&mut engine).await
+    let result = run_loop(&mut engine).await;
+    // Release DXGI adapters before the engine unloads its graphics driver.
+    #[cfg(windows)]
+    crate::memory::MemoryCounters::release_thread_cache();
+    result
 }
 
 #[unsafe(no_mangle)]

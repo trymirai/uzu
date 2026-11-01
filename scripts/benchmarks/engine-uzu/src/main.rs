@@ -1,4 +1,4 @@
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", windows))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use benchmarks_uzu::Args;
@@ -7,10 +7,10 @@ async fn main() -> anyhow::Result<()> {
     benchmarks_uzu::run(Args::parse()).await
 }
 
-// Apple platforms only: the memory counters read mach task info and the engine runs on Metal. Elsewhere the binary
-// only says so, which keeps workspace-wide builds working on Windows and Linux.
-#[cfg(not(target_vendor = "apple"))]
+// Apple platforms read mach task info and run on Metal; Windows reads its process and DXGI counters and runs on
+// Vulkan. Elsewhere the binary only says so, which keeps workspace-wide builds working on Linux.
+#[cfg(not(any(target_vendor = "apple", windows)))]
 fn main() {
-    eprintln!("benchmarks-uzu runs on Apple platforms only");
+    eprintln!("benchmarks-uzu runs on Apple platforms and Windows only");
     std::process::exit(1);
 }

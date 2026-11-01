@@ -3,6 +3,7 @@
 import os
 import signal
 import subprocess
+import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -10,7 +11,6 @@ from queue import Empty, Queue
 from threading import Thread
 from typing import NoReturn
 
-import pytest
 from bench import BenchRequest, BenchResponse
 from pydantic import TypeAdapter, ValidationError
 
@@ -30,7 +30,7 @@ class EngineProcess:
         with self.stderr_log.open("rb") as log:
             log.seek(max(0, log.seek(0, os.SEEK_END) - 8192))
             tail = log.read().decode("utf-8", errors="replace")
-        pytest.fail(f"{message}\nEngine stderr: {self.stderr_log}\n{tail}", pytrace=False)
+        raise RuntimeError(f"{message}\nEngine stderr: {self.stderr_log}\n{tail}")
 
     def read_stdout(self) -> None:
         assert self.process.stdout is not None
@@ -44,7 +44,7 @@ class EngineProcess:
 
     def request(self, request: BenchRequest) -> list[BenchResponse]:
         if self.failed:
-            pytest.fail("Engine is unavailable after an earlier protocol failure", pytrace=False)
+            raise RuntimeError("Engine is unavailable after an earlier protocol failure")
         if self.process.poll() is not None:
             self.fail(f"Engine exited before request (exit code {self.process.returncode})")
         assert self.process.stdin is not None
@@ -70,6 +70,10 @@ class EngineProcess:
 
 
 def kill_process_group(process: subprocess.Popen[str]) -> None:
+    if sys.platform == "win32":
+        # taskkill /T ends the engine's process tree as killpg ends its group; an exited engine only fails it.
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False)
+        return
     # run.sh can have CMake/compiler children before it execs the engine.
     try:
         os.killpg(process.pid, signal.SIGKILL)
@@ -97,7 +101,7 @@ def run_engine(command: Sequence[str], cwd: Path, stderr_log: Path, timeout: flo
                 start_new_session=True,
             )
         except OSError as error:
-            pytest.fail(f"Could not start engine {command[0]}: {error}", pytrace=False)
+            raise RuntimeError(f"Could not start engine {command[0]}: {error}") from error
         engine = EngineProcess(process, stderr_log, timeout)
         reader = Thread(target=engine.read_stdout, daemon=True)
         reader.start()

@@ -8,10 +8,6 @@ from bench import BenchResponse
 from pydantic import BaseModel
 
 from .engine import ServerEngine, ServerEngineType
-from .engine.magnitude import MagnitudeServerEngine
-from .engine.splash import SplashServerEngine
-from .engine.tensorfold import TensorFoldServerEngine
-from .engine.uzu import UzuServerEngine
 from .util import await_cooldown, load_input
 
 DEFAULT_HOST = "127.0.0.1"
@@ -62,7 +58,8 @@ def run_engine(
     wait_cooling: Annotated[
         bool,
         typer.Option(
-            "--wait-cooldown/--no-wait-cooldown", help="Wait until CPU and GPU are at or below 60°C before each run."
+            "--wait-cooldown/--no-wait-cooldown",
+            help="Wait until the CPU and GPU (macOS) or the NVIDIA GPU (elsewhere) cool to 60°C before each run.",
         ),
     ] = True,
 ) -> None:
@@ -71,12 +68,20 @@ def run_engine(
 
     engine: ServerEngine
     if engine_type == ServerEngineType.UZU:
+        from .engine.uzu import UzuServerEngine
+
         engine = UzuServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     elif engine_type == ServerEngineType.TENSORFOLD:
+        from .engine.tensorfold import TensorFoldServerEngine
+
         engine = TensorFoldServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     elif engine_type == ServerEngineType.MAGNITUDE:
+        from .engine.magnitude import MagnitudeServerEngine
+
         engine = MagnitudeServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     elif engine_type == ServerEngineType.SPLASH:
+        from .engine.splash import SplashServerEngine
+
         engine = SplashServerEngine(DEFAULT_HOST, DEFAULT_PORT, model)
     else:
         raise ValueError(f"Engine {engine_type} is not supported")

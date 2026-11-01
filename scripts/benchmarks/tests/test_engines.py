@@ -9,6 +9,7 @@ from .engines.mtplx import TestMTPLX
 from .engines.omlx import TestOMLX
 from .engines.splash import TestSplash
 from .engines.uzu import TestUzu
+from .engines.vllm import TestVLLM
 
 __all__ = [
     "TestIOS",
@@ -20,4 +21,5 @@ __all__ = [
     "TestOMLX",
     "TestSplash",
     "TestUzu",
+    "TestVLLM",
 ]

@@ -12,17 +12,29 @@ publish = false
 [lints]
 workspace = true
 
-[target.'cfg(target_vendor = "apple")'.dependencies]
+[target.'cfg(any(target_vendor = "apple", windows))'.dependencies]
 anyhow.workspace = true
 clap.workspace = true
 futures.workspace = true
 hanashi.workspace = true
-libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+libc.workspace = true
 uzu = { workspace = true, features = ["metal"] }
+
+[target.'cfg(windows)'.dependencies]
+uzu = { workspace = true, features = ["vulkan"] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_System_Console",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
 
 [build-dependencies]
 cc = "1"
