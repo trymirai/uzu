@@ -120,7 +120,8 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
       const float numbers[SLOT_NUMBERS] = {log_draft, floored, noise, features[2 * candidates + lid]};
       child_pools[entry] = lid;
       for (uint number = 0; number < SLOT_NUMBERS; ++number) {
-        child_numbers[entry * SLOT_NUMBERS + number] = (numbers[number] - float(slot_mean[number])) / float(slot_std[number]);
+        child_numbers[entry * SLOT_NUMBERS + number] =
+            (numbers[number] - float(slot_mean[number])) / float(slot_std[number]);
       }
     }
   }
@@ -136,7 +137,18 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   head_dense(
-      pool_out_weights, pool_out_biases, memory.summary, 0, memory.node, 0, 2u * pool_hidden, model_dim, 1, false, true, context
+      pool_out_weights,
+      pool_out_biases,
+      memory.summary,
+      0,
+      memory.node,
+      0,
+      2u * pool_hidden,
+      model_dim,
+      1,
+      false,
+      true,
+      context
   );
   if (lid < model_dim) {
     nodes[slot * model_dim + lid] = bfloat(memory.node[lid]);

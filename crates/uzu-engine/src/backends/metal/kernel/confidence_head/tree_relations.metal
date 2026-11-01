@@ -5,7 +5,6 @@
 
 using namespace metal;
 
-
 struct TreeRow {
   uint depth;
   uint parent;
@@ -37,7 +36,7 @@ PUBLIC KERNEL(ConfidenceHeadTreeRelations)(
     device uint* relations,
     const constant uint& rows,
     const constant uint& ancestor_stride,
-    const uint index AXIS(rows * rows, 256)
+    const uint index AXIS(rows* rows, 256)
 ) {
   const uint query = index / rows;
   const uint key = index % rows;

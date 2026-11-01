@@ -82,9 +82,8 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     const uint unit = index % model_dim;
     const uint entry = first_entry + child;
     const uint token = frontier[uint(FrontierIdx::TokenId) * capacity + entry];
-    memory.tokens[child * MODEL_MAX + unit] =
-        float(token_features[token * model_dim + unit]) +
-        (refine ? float(child_shifts[(1 + entry) * model_dim + unit]) : 0.0f);
+    memory.tokens[child * MODEL_MAX + unit] = float(token_features[token * model_dim + unit]) +
+                                              (refine ? float(child_shifts[(1 + entry) * model_dim + unit]) : 0.0f);
   }
   if (lid < children * SLOT_NUMBERS) {
     memory.numbers[lid] = child_numbers[first_entry * SLOT_NUMBERS + lid];
@@ -111,28 +110,79 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   head_layer_norm(
-      memory.input, memory.input, HEAD_EDGE_INPUT_MAX, inputs, children, input_norm_scales, input_norm_biases,
-      params.epsilon, context
+      memory.input,
+      memory.input,
+      HEAD_EDGE_INPUT_MAX,
+      inputs,
+      children,
+      input_norm_scales,
+      input_norm_biases,
+      params.epsilon,
+      context
   );
   head_dense(
-      entry_weights, entry_biases, memory.input, HEAD_EDGE_INPUT_MAX, memory.state, MODEL_MAX, inputs, model_dim,
-      children, false, false, context
+      entry_weights,
+      entry_biases,
+      memory.input,
+      HEAD_EDGE_INPUT_MAX,
+      memory.state,
+      MODEL_MAX,
+      inputs,
+      model_dim,
+      children,
+      false,
+      false,
+      context
   );
   head_layer_norm(
-      memory.state, memory.block, MODEL_MAX, model_dim, children, block_norm_scales, block_norm_biases,
-      params.epsilon, context
+      memory.state,
+      memory.block,
+      MODEL_MAX,
+      model_dim,
+      children,
+      block_norm_scales,
+      block_norm_biases,
+      params.epsilon,
+      context
   );
   head_dense(
-      up_weights, up_biases, memory.block, MODEL_MAX, memory.raised, EDGE_HIDDEN_MAX, model_dim, edge_hidden,
-      children, true, false, context
+      up_weights,
+      up_biases,
+      memory.block,
+      MODEL_MAX,
+      memory.raised,
+      EDGE_HIDDEN_MAX,
+      model_dim,
+      edge_hidden,
+      children,
+      true,
+      false,
+      context
   );
   head_dense(
-      down_weights, down_biases, memory.raised, EDGE_HIDDEN_MAX, memory.state, MODEL_MAX, edge_hidden,
-      model_dim, children, false, true, context
+      down_weights,
+      down_biases,
+      memory.raised,
+      EDGE_HIDDEN_MAX,
+      memory.state,
+      MODEL_MAX,
+      edge_hidden,
+      model_dim,
+      children,
+      false,
+      true,
+      context
   );
   head_layer_norm(
-      memory.state, memory.state, MODEL_MAX, model_dim, children, final_norm_scales, final_norm_biases,
-      params.epsilon, context
+      memory.state,
+      memory.state,
+      MODEL_MAX,
+      model_dim,
+      children,
+      final_norm_scales,
+      final_norm_biases,
+      params.epsilon,
+      context
   );
   const uint simdgroup = context.simdgroup_index;
   const uint lane = context.simd_lane_id;
@@ -143,8 +193,8 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     }
   } else if (simdgroup >= CHILDREN_MAX && simdgroup < CHILDREN_MAX + 2u) {
     const uint output = simdgroup - CHILDREN_MAX;
-    const float value =
-        head_simd_dot(alpha_beta_weights + output * model_dim, memory.node, model_dim, lane) + float(alpha_beta_biases[output]);
+    const float value = head_simd_dot(alpha_beta_weights + output * model_dim, memory.node, model_dim, lane) +
+                        float(alpha_beta_biases[output]);
     if (lane == 0) {
       memory.coefficients[output] = min(activate_softplus(value), params.logit_cap);
     }
@@ -177,9 +227,10 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     for (uint index = lid; index < children * width; index += HEAD_THREADS) {
       const uint child = index / width;
       const uint column = index % width;
-      child_inputs[(first_entry + child) * width + column] =
-          bfloat(column < model_dim ? memory.tokens[child * MODEL_MAX + column]
-                                    : memory.numbers[child * SLOT_NUMBERS + column - model_dim]);
+      child_inputs[(first_entry + child) * width + column] = bfloat(
+          column < model_dim ? memory.tokens[child * MODEL_MAX + column]
+                             : memory.numbers[child * SLOT_NUMBERS + column - model_dim]
+      );
     }
     return;
   }

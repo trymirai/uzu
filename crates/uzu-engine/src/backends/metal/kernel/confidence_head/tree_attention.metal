@@ -20,7 +20,7 @@ PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
     const uint num_heads SPECIALIZE,
     const uint head_dim SPECIALIZE,
     threadgroup TreeAttentionMemory& memory,
-    const uint index GROUPS(rows * num_heads),
+    const uint index GROUPS(rows* num_heads),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
   const uint query = index / num_heads;
@@ -48,7 +48,8 @@ PUBLIC KERNEL(ConfidenceHeadTreeAttention)(
     const uint code = relation[key];
     float score = -INFINITY;
     if (code != HEAD_RELATION_ABSENT) {
-      const device bfloat4* k = reinterpret_cast<const device bfloat4*>(qkv + key * 3 * width + width + head * head_dim);
+      const device bfloat4* k =
+          reinterpret_cast<const device bfloat4*>(qkv + key * 3 * width + width + head * head_dim);
       score = code == 0 ? 0.0f : float(relation_bias[head * RELATIONS + code - 1]);
       METAL_PRAGMA_UNROLL
       for (uint quad = 0; quad < QUADS_MAX; ++quad) {

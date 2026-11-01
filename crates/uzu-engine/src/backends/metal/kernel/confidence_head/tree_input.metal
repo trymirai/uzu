@@ -14,7 +14,7 @@ PUBLIC KERNEL(ConfidenceHeadTreeInput)(
     device bfloat* output,
     const constant uint& rows,
     const constant uint& width,
-    const uint index AXIS(rows * width, 256)
+    const uint index AXIS(rows* width, 256)
 ) {
   const uint row = index / width;
   const uint unit = index % width;
