@@ -15,10 +15,6 @@ typedef struct {
   uint32_t q_len;
   uint32_t k_len;
   uint32_t q_off;
-  uint32_t nq_aligned;
-  uint32_t q_rem;
   uint32_t nk;
-  uint32_t nk_aligned;
-  uint32_t k_rem;
 } AttnParams;
 } // namespace uzu::attention
