@@ -41,6 +41,7 @@ struct StreamEnqueuer<'a, B: Backend> {
     allocation_pool: Arc<B::AllocationPool>,
     context_ring: Option<B::GlobalGpuBuffer>,
     metrics: TokenStreamMetrics,
+    extra_pending: Option<<<B as Backend>::CommandBuffer as CommandBuffer>::Pending>,
 }
 
 enum GenerationJob<B: Backend> {
@@ -144,6 +145,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             allocation_pool,
             context_ring,
             metrics,
+            extra_pending: None,
         })
     }
 
@@ -679,7 +681,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             self.model_state.tokens.extend(accepted_output_token_ids);
             self.metrics.num_tokens_accepted += accepted_token_indices.len();
 
-            command_buffer.end_encoding().submit();
+            self.extra_pending = Some(command_buffer.end_encoding().submit());
 
             new_job
         };
@@ -766,6 +768,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     }
 
     pub async fn close(&mut self) -> Result<(), LanguageModelStreamError<B>> {
+        if let Some(pending) = self.submitter.extra_pending.take() {
+            wait(pending, self.submitter.options.timestamps.as_ref())
+                .await
+                .map_err(LanguageModelStreamError::Backend)?;
+        }
+
         let Some(job) = self.job.take() else {
             return Ok(());
         };
