@@ -5,7 +5,7 @@
 #include "../common/thread_context.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
-#include "attention_gate.h"
+#include "../common/sigmoid_gate.h"
 #include "mask.h"
 
 #define TOTAL_BLOCKS_COUNT 32
@@ -204,7 +204,7 @@ KERNEL(AttentionTwoPass2)(
       T result = static_cast<T>(o[i] / sum_exp_score);
       if (has_gate) {
         const uint channel = thread_context.simdgroup_index * elements_per_thread + i;
-        result = attention_apply_gate(result, gate[q_seq_idx * gate_row_stride + head_idx * HEAD_DIM + channel]);
+        result = uzu::apply_sigmoid_gate(result, gate[q_seq_idx * gate_row_stride + head_idx * HEAD_DIM + channel]);
       }
       out[i] = result;
     }

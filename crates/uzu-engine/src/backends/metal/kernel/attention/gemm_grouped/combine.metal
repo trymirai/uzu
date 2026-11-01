@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 #include "../../common/dsl.h"
 #include "../../generated/attention.h"
-#include "../attention_gate.h"
+#include "../../common/sigmoid_gate.h"
 
 using namespace metal;
 using namespace uzu::attention;
@@ -58,7 +58,7 @@ KERNEL(AttentionGemmGroupedCombine)(
   const float mean = denominator > 0.0f ? numerator / denominator : 0.0f;
   T result = static_cast<T>(mean);
   if (has_gate) {
-    result = attention_apply_gate(result, gate[query_position * gate_row_stride + q_head_idx * BD + column]);
+    result = uzu::apply_sigmoid_gate(result, gate[query_position * gate_row_stride + q_head_idx * BD + column]);
   }
   o += size_t(q_head_idx) * params.o_strides[1] + size_t(query_position) * params.o_strides[2] + column;
   o[0] = result;
