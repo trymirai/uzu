@@ -10,11 +10,15 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context, Kernels, gpu_types::weaver::MetadataIdx, kernel::AncestorAttentionKernel,
+            Context, GpuBuffer, Kernels,
+            gpu_types::weaver::MetadataIdx,
+            kernel::{AncestorAttentionKernel, AttentionPrepareKernel, kv_layout::Int8KVLayout},
         },
         cpu::Cpu,
         metal::Metal,
     },
+    data_type::DataType,
+    encodable_block::mixer::attention::Int8KV,
     tests::{
         assert::assert_eq_float,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context},
@@ -28,8 +32,8 @@ const MAX_DEPTH: u32 = 8;
 struct Runner<B: Backend> {
     context: Arc<B::Context>,
     kernel: <B::Kernels as Kernels>::AncestorAttentionKernel,
-    prefix_kv: B::GlobalGpuBuffer,
-    node_kv: B::GlobalGpuBuffer,
+    prefix_kv: Int8KV<B>,
+    node_kv: Int8KV<B>,
     current_qkv: B::GlobalGpuBuffer,
     cosines: B::GlobalGpuBuffer,
     sines: B::GlobalGpuBuffer,
@@ -50,6 +54,7 @@ impl<B: Backend> Runner<B> {
         prefix_length: usize,
         ancestor_stride: usize,
         nodes: usize,
+        use_mxu: bool,
     ) -> Self {
         assert!(rows < nodes && ancestor_stride > 0);
         let model_dim = NUM_HEADS as usize * HEAD_DIM;
@@ -90,12 +95,70 @@ impl<B: Backend> Runner<B> {
         }
 
         let context = create_context::<B>();
-        let kernel =
-            <B::Kernels as Kernels>::AncestorAttentionKernel::new(context.as_ref(), HEAD_DIM as u32, NUM_HEADS)
-                .unwrap();
+        let kernel = <B::Kernels as Kernels>::AncestorAttentionKernel::new(
+            context.as_ref(),
+            HEAD_DIM as u32,
+            NUM_HEADS,
+            use_mxu,
+        )
+        .unwrap();
+        let prepare_cache = |length: usize, offset| {
+            let mut command = context.create_command_buffer(None, None).unwrap();
+            let mut kv = Int8KV::<B>::allocate_scratch(
+                Int8KVLayout::new(HEAD_DIM as u32, NUM_HEADS, use_mxu),
+                length as u32,
+                &mut command,
+            )
+            .unwrap();
+            let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+                &context,
+                DataType::BF16,
+                DataType::F32,
+                HEAD_DIM as u32,
+                false,
+                NUM_HEADS,
+                use_mxu,
+                true,
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+            let data = create_buffer_with_data::<B, bf16>(&context, &values(length * kv_width, offset));
+            command.encode_fill(kv.k_codes.as_mut(), 0);
+            command.encode_fill(kv.v_codes.as_mut(), 128);
+            command.encode_fill(kv.k_scales.as_mut(), 0);
+            command.encode_fill(kv.v_scales.as_mut(), 0);
+            let mut q = create_buffer::<B, i8>(&context, 1);
+            let mut qs = create_buffer::<B, bf16>(&context, 1);
+            prepare.encode(
+                &data,
+                &mut q,
+                &mut qs,
+                Some(kv.k_codes.as_mut()),
+                Some(kv.k_scales.as_mut()),
+                Some(kv.v_codes.as_mut()),
+                Some(kv.v_scales.as_mut()),
+                None::<&B::GlobalGpuBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                Default::default(),
+                0,
+                None,
+                0,
+                kv_width as u32,
+                length as u32,
+                0,
+                &mut command,
+            );
+            block_on(command.end_encoding().submit().wait_until_completed()).unwrap();
+            kv
+        };
         Self {
-            prefix_kv: create_buffer_with_data::<B, bf16>(&context, &values(prefix_length * kv_width, 0)),
-            node_kv: create_buffer_with_data::<B, bf16>(&context, &values(nodes * kv_width, 11)),
+            prefix_kv: prepare_cache(prefix_length, 0),
+            node_kv: prepare_cache(nodes, 11),
             current_qkv: create_buffer_with_data::<B, bf16>(&context, &values(rows * qkv_width, 29)),
             cosines: create_buffer_with_data::<B, f32>(&context, &cosines),
             sines: create_buffer_with_data::<B, f32>(&context, &sines),
@@ -120,8 +183,14 @@ impl<B: Backend> Runner<B> {
         let mut command_buffer = self.context.create_command_buffer(None, None).unwrap();
         for _ in 0..repetitions {
             self.kernel.encode(
-                &self.prefix_kv,
-                &mut self.node_kv,
+                self.prefix_kv.k_codes.as_ref(),
+                self.prefix_kv.k_scales.as_ref(),
+                self.prefix_kv.v_codes.as_ref(),
+                self.prefix_kv.v_scales.as_ref(),
+                self.node_kv.k_codes.as_mut(),
+                self.node_kv.k_scales.as_mut(),
+                self.node_kv.v_codes.as_mut(),
+                self.node_kv.v_scales.as_mut(),
                 &self.current_qkv,
                 &self.cosines,
                 &self.sines,
@@ -143,20 +212,38 @@ impl<B: Backend> Runner<B> {
     }
 }
 
+fn download<B: Backend>(
+    context: &B::Context,
+    buffer: &dyn GpuBuffer<Backend = B>,
+) -> Vec<u8> {
+    let mut copy = create_buffer::<B, u8>(context, buffer.size());
+    let mut command = context.create_command_buffer(None, None).unwrap();
+    command.encode_copy(buffer, &mut copy);
+    block_on(command.end_encoding().submit().wait_until_completed()).unwrap();
+    buffer_to_vec::<B, u8>(context, &copy)
+}
+
 #[uzu_test]
 fn ancestor_attention_matches_cpu() {
-    let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
-    cpu.encode(1);
-    let expected_output = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
-    let expected_node_kv = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.node_kv);
+    for use_mxu in [false, true] {
+        let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16, use_mxu);
+        cpu.encode(1);
+        let expected_output = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
 
-    let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
-    metal.encode(1);
-    let actual_output = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.output);
-    let actual_node_kv = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.node_kv);
+        let mut metal = Runner::<Metal>::new(4, 5, 3, 16, use_mxu);
+        metal.encode(1);
+        let actual_output = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.output);
 
-    assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
-    assert_eq!(actual_node_kv, expected_node_kv);
+        assert_eq_float(&expected_output, &actual_output, 0.02, "AncestorAttention output");
+        for (actual, expected) in [
+            (metal.node_kv.k_codes.as_ref(), cpu.node_kv.k_codes.as_ref()),
+            (metal.node_kv.v_codes.as_ref(), cpu.node_kv.v_codes.as_ref()),
+            (metal.node_kv.k_scales.as_ref(), cpu.node_kv.k_scales.as_ref()),
+            (metal.node_kv.v_scales.as_ref(), cpu.node_kv.v_scales.as_ref()),
+        ] {
+            assert_eq!(download::<Metal>(&metal.context, actual), download::<Cpu>(&cpu.context, expected));
+        }
+    }
 }
 
 #[uzu_test]
@@ -165,7 +252,7 @@ fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
 
-    let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
+    let mut runner = Runner::<Metal>::new(8, 16, 8, 65, true);
     let mut run = || runner.encode(BATCH).div_f64(BATCH as f64);
     let warmup = std::time::Instant::now();
     while warmup.elapsed() < std::time::Duration::from_millis(500) {

@@ -1,16 +1,10 @@
 use std::error::Error;
 
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, Kernels},
+    backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::Int8KVLayout},
     data_type::DataType,
     encodable_block::mixer::attention::KVCacheView,
 };
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum KVFormat {
-    BF16,
-    INT8,
-}
 
 pub trait AttentionKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<AttentionKernel = Self>>;
@@ -21,9 +15,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
         config: AttentionKernelConfig,
     ) -> Result<Self, Self::Error>;
 
-    fn supports_int8(&self) -> bool {
-        false
-    }
+    fn kv_layout(&self) -> Int8KVLayout;
 
     fn encode(
         &self,
@@ -65,20 +57,7 @@ pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: Bu
 }
 
 #[derive(Clone, Copy)]
-pub enum AttentionInput<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
-    FullPrecision(FullPrecisionInput<QT, KT, VT>),
-    Int8(Int8Input<QT, KT, VT>),
-}
-
-#[derive(Clone, Copy)]
-pub struct FullPrecisionInput<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
-    pub queries: QT,
-    pub keys: KT,
-    pub values: VT,
-}
-
-#[derive(Clone, Copy)]
-pub struct Int8Input<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
+pub struct AttentionInput<QT: BufferRef, KT: BufferRef, VT: BufferRef> {
     pub query_codes: QT,
     pub query_scales: QT,
     pub k_codes: KT,

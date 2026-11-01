@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Kernels,
-        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareInt8Kernel, AttentionPrepareKernel},
+        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
@@ -13,23 +13,18 @@ use crate::{
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::{
             Mixer, MixerEncodeError, MixerState,
-            attention::{
-                mode::LinearProjection,
-                qkv_norm::{QKVNorm, QKVNormError},
-                rope::PrecalculatedRoPE,
-            },
+            attention::{qkv_norm::QKVNorm, rope::PrecalculatedRoPE},
         },
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
 
-pub mod kv_storage;
-mod mode;
+mod encode;
 mod qkv_norm;
 mod state;
 
-pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
+pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, Int8KV, KVCacheView};
 
 pub mod rope;
 
@@ -43,9 +38,9 @@ pub struct Attention<B: Backend> {
     data_type: DataType,
     has_gate: bool,
     projection_dim: u32,
-    projection: LinearProjection<B>,
+    projection: Box<dyn Linear<B>>,
+    qkv_norm: QKVNorm<B>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -61,8 +56,6 @@ pub enum AttentionNewError<B: Backend> {
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
-    #[error("QKVNorm error: {0}")]
-    QKVNorm(#[from] QKVNormError<B>),
 }
 
 #[derive(Debug, Error)]
@@ -123,28 +116,9 @@ impl<B: Backend> Attention<B> {
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
         let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
-        let qkv_norm = QKVNorm::new(
-            num_q_heads,
-            num_kv_heads,
-            projection_dim,
-            head_dim,
-            data_type,
-            query_norm_config,
-            key_norm_config,
-            value_norm_config,
-            parameter_tree,
-            context,
-        )
-        .await?;
+        let qkv_norm =
+            QKVNorm::new(head_dim, query_norm_config, key_norm_config, value_norm_config, parameter_tree).await?;
 
-        let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
-            context,
-            data_type,
-            DataType::F32,
-            !is_kv_sharing,
-            rope_config.is_some(),
-        )
-        .map_err(AttentionNewError::Backend)?;
         let sinks = if config.has_sinks {
             Some(parameter_tree.read_buffer("sinks", &[num_q_heads], data_type).await?)
         } else {
@@ -171,22 +145,20 @@ impl<B: Backend> Attention<B> {
             },
         )
         .map_err(AttentionNewError::Kernel)?;
-        let prepare_int8 = kernel
-            .supports_int8()
-            .then(|| {
-                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
-                    context,
-                    data_type,
-                    DataType::F32,
-                    head_dim,
-                    rope_config.is_some(),
-                    true,
-                    num_groups,
-                    !is_kv_sharing,
-                )
-            })
-            .transpose()
-            .map_err(AttentionNewError::Backend)?;
+        let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            data_type,
+            DataType::F32,
+            head_dim,
+            rope_config.is_some(),
+            num_groups,
+            kernel.kv_layout().use_mxu,
+            !is_kv_sharing,
+            qkv_norm.scales[0].is_some(),
+            qkv_norm.scales[1].is_some(),
+            qkv_norm.scales[2].is_some(),
+        )
+        .map_err(AttentionNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
@@ -209,12 +181,9 @@ impl<B: Backend> Attention<B> {
                 data_type,
                 has_gate: config.has_gate,
                 projection_dim,
-                projection: LinearProjection {
-                    lin: projection,
-                    norm: qkv_norm,
-                },
+                projection,
+                qkv_norm,
                 prepare,
-                prepare_int8,
                 sinks,
                 kernel,
                 out_projection,

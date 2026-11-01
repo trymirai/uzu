@@ -3,8 +3,14 @@ import definitions;
 
 [[Variants("HEAD_DIM", "128")]]
 [[Public]] [[Kernel]] func AncestorAttention<let HEAD_DIM: uint32_t>(
-  StructuredBuffer<BFloat16> prefix_kv,
-  RWStructuredBuffer<BFloat16> node_kv,
+  StructuredBuffer<int8_t> prefix_k_codes,
+  StructuredBuffer<BFloat16> prefix_k_scales,
+  StructuredBuffer<uint8_t> prefix_v_codes,
+  StructuredBuffer<BFloat16> prefix_v_scales,
+  RWStructuredBuffer<int8_t> node_k_codes,
+  RWStructuredBuffer<BFloat16> node_k_scales,
+  RWStructuredBuffer<uint8_t> node_v_codes,
+  RWStructuredBuffer<BFloat16> node_v_scales,
   StructuredBuffer<BFloat16> current_qkv,
   StructuredBuffer<float> cosines,
   StructuredBuffer<float> sines,
@@ -20,6 +26,7 @@ import definitions;
   uint32_t max_depth,
   float scale,
   [[Specialize]] uint32_t num_heads,
+  [[Specialize]] bool use_mxu_layout,
   ThreadContext thread_context,
   [[Groups("(rows * num_heads).div_ceil(4)")]] uint32_t group,
   [[Threads("(4 * 32)")]] uint32_t lid,

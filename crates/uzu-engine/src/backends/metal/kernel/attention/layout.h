@@ -1,10 +1,10 @@
 #pragma once
 
 #include <metal_stdlib>
-#include "../../common/defines.h"
-#include "../../common/dsl.h"
-#include "../../matmul/common/mxu_fragment/ops.h"
-#include "../../matmul/common/simdgroup_fragment_ops.h"
+#include "../common/defines.h"
+#include "../common/dsl.h"
+#include "../matmul/common/mxu_fragment/ops.h"
+#include "../matmul/common/simdgroup_fragment_ops.h"
 
 using namespace metal;
 
@@ -20,7 +20,4 @@ struct AttentionGemmGroupedLayout {
   UZU_CONST int BANDS = SIMDGROUPS / int(HEAD_DIM_SLICES);
   UZU_CONST int BLOCK_ROWS = BANDS * TILE_ROWS;
   UZU_CONST int SCORE_TILE_ELEMENTS = TILE_ROWS * int(BK);
-  UZU_CONST int SHARED_KV_ROW_STRIDE = int(BD) + 8;
-  UZU_CONST int THREADGROUP_SCRATCH_FLOATS =
-      HEAD_DIM_SLICES == 1 ? int(BK) * SHARED_KV_ROW_STRIDE / 2 : SIMDGROUPS * SCORE_TILE_ELEMENTS;
 };

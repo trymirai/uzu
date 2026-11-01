@@ -23,7 +23,10 @@ static METAL_FUNC void simdgroup_hadamard_transform(ushort lane_index, thread fl
       LANES <= METAL_SIMD_SIZE && (LANES & (LANES - 1)) == 0,
       "lanes must be a power of two within a simdgroup"
   );
-  static_assert(SIZE == 32 || SIZE == 64 || SIZE == 128 || SIZE == 256, "transform size must be 32, 64, 128 or 256");
+  static_assert(
+      SIZE == 32 || SIZE == 64 || SIZE == 128 || SIZE == 256 || SIZE == 512,
+      "transform size must be 32, 64, 128, 256 or 512"
+  );
   METAL_PRAGMA_UNROLL
   for (ushort stride = 1; stride < VALUES_PER_LANE; stride <<= 1) {
     METAL_PRAGMA_UNROLL
