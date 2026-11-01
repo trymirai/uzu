@@ -62,7 +62,7 @@ def locked_package(project: Path, package: str) -> dict:
     return matches[0]
 
 
-@pytest.mark.parametrize("engine,package", [("mlx", "mlx"), ("mlx", "mlx-lm"), ("mtplx", "mtplx")])
+@pytest.mark.parametrize("engine,package", [("mlx", "mlx"), ("mlx", "mlx-lm"), ("mtplx", "mtplx"), ("vllm", "vllm")])
 def test_pypi_engine_uses_latest_version(engine: str, package: str) -> None:
     project = ROOT / f"engine-{engine}"
     dependencies = [Requirement(value) for value in read_toml(project / "pyproject.toml")["project"]["dependencies"]]

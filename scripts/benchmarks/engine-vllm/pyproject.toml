@@ -1,0 +1,22 @@
+[project]
+name = "benchmarks-vllm"
+version = "0.0.1"
+requires-python = ">=3.13.7,<3.14"
+dependencies = ["benchmarks-common", "typer>=0.27.2", "vllm==0.32.0"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+bench-vllm = "bench_vllm:main"
+
+[tool.setuptools]
+py-modules = ["bench_vllm"]
+
+[tool.uv]
+# vLLM publishes CUDA wheels for Linux only; on Windows it runs inside WSL.
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+benchmarks-common = { path = "../common-py", editable = true }

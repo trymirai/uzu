@@ -7,8 +7,7 @@ from typing import ClassVar
 
 import pytest
 from bench import BenchRequest, BenchResponse, BenchSampling, ChatMessage
-
-from .engine_process import EngineProcess, run_engine
+from engine_process import EngineProcess, run_engine
 
 ROOT = Path(__file__).resolve().parents[2]
 
