@@ -1,7 +1,6 @@
 use crate::backends::common::Backend;
 
 mod error;
-mod fallback;
 mod gemm;
 mod gemm_grouped;
 mod int8;
@@ -58,7 +57,6 @@ pub struct AttentionMetalKernel {
     grouped: Option<gemm_grouped::AttentionGemmGrouped>,
     int8: Option<int8::Int8Attention>,
     gemm: Option<gemm::AttentionGemm>,
-    fallback: Option<fallback::AttentionFallback>,
     two_pass: two_pass::AttentionTwoPass,
     single_pass: single_pass::AttentionSinglePass,
 }
@@ -78,9 +76,6 @@ impl AttentionKernel for AttentionMetalKernel {
             .transpose()
             .map_err(AttentionMetalError::Backend)?;
         let gemm = gemm::AttentionGemm::is_supported(&config).then(|| gemm::AttentionGemm::new(&config));
-        let fallback = fallback::AttentionFallback::is_supported(&config)
-            .then(|| fallback::AttentionFallback::new(&config, context))
-            .transpose()?;
         let gate = config
             .gate_row_stride
             .map(|stride| SigmoidGateMetalKernel::new(context, config.data_type).map(|kernel| (kernel, stride)))
@@ -91,7 +86,6 @@ impl AttentionKernel for AttentionMetalKernel {
             grouped,
             int8,
             gemm,
-            fallback,
             two_pass: two_pass::AttentionTwoPass::new(&config),
             single_pass: single_pass::AttentionSinglePass::new(&config),
         })
@@ -169,13 +163,10 @@ impl AttentionMetalKernel {
             return grouped.encode(mask, input, arguments, command_buffer).map_err(AttentionMetalError::Backend);
         }
 
-        if suffix_length > 8 {
-            if let Some(gemm) = &self.gemm {
-                return Ok((gemm.encode(input, arguments, command_buffer)?, false));
-            }
-            if !is_trie && let Some(fallback) = &self.fallback {
-                return Ok((fallback.encode(input, arguments, command_buffer)?, false));
-            }
+        if suffix_length > 8
+            && let Some(gemm) = &self.gemm
+        {
+            return Ok((gemm.encode(input, arguments, command_buffer)?, false));
         }
 
         if kv_length > SINGLE_PASS_KV_THRESHOLD {
