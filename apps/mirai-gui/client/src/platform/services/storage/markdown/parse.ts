@@ -68,6 +68,7 @@ const parsePerf = (block: string): PerfStats | undefined => {
     tps: toNum(scope.match(/\*\*TPS:\*\*\s*([0-9]+(?:\.[0-9]+)?)/m)),
     totalSec: toNum(scope.match(/\*\*Total:\*\*\s*([0-9]+(?:\.[0-9]+)?)s/m)),
     tokensOut: toNum(scope.match(/\*\*TokensOut:\*\*\s*([0-9]+)/m)),
+    tokensPerForwardPass: toNum(scope.match(/\*\*TokensPerForwardPass:\*\*\s*([0-9]+(?:\.[0-9]+)?)/m)),
   };
   return Object.values(perf).some((v) => typeof v === "number") ? perf : undefined;
 };

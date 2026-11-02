@@ -3,22 +3,22 @@ import definitions;
 
 [[Variants("T", "float, BFloat16")]]
 [[Variants("HEAD_K_DIM", "128")]]
-[[Public]] [[Kernel]] func DeltaNetUpdate<T, let HEAD_K_DIM: uint>(
+[[Public]] [[Kernel]] func DeltaNetUpdate<T, let HEAD_K_DIM: uint32_t>(
   StructuredBuffer<T> in_proj,
   StructuredBuffer<float> a_log,
   StructuredBuffer<float> dt_bias,
   StructuredBuffer<float> norm_weight,
   RWStructuredBuffer<float> state,
   RWStructuredBuffer<T> out,
-  uint num_v_heads,
-  uint num_k_heads,
-  uint head_v_dim,
-  uint key_dim,
-  uint value_dim,
+  uint32_t num_v_heads,
+  uint32_t num_k_heads,
+  uint32_t head_v_dim,
+  uint32_t key_dim,
+  uint32_t value_dim,
   float norm_epsilon,
   ThreadContext thread_context,
-  [[Groups("num_v_heads")]] uint hv_idx,
-  [[Threads("512")]] uint tid,
+  [[Groups("num_v_heads")]] uint32_t hv_idx,
+  [[Threads("512")]] uint32_t tid,
 ) {
   // TODO
 }

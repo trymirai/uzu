@@ -3,20 +3,20 @@ import definitions;
 
 [[Variants("T", "float, BFloat16")]]
 [[Variants("HEAD_K_DIM", "128")]]
-[[Public]] [[Kernel]] func StateAdvance<T, let HEAD_K_DIM: uint>(
+[[Public]] [[Kernel]] func StateAdvance<T, let HEAD_K_DIM: uint32_t>(
   StructuredBuffer<T> k_norm,
   StructuredBuffer<T> v,
   StructuredBuffer<float> log_decay_buf,
   StructuredBuffer<float> beta_buf,
-  StructuredBuffer<uint> accepted_indices,
+  StructuredBuffer<uint32_t> accepted_indices,
   RWStructuredBuffer<float> state,
-  uint accepted_len,
-  [[Specialize]] uint num_v_heads,
-  [[Specialize]] uint num_k_heads,
+  uint32_t accepted_len,
+  [[Specialize]] uint32_t num_v_heads,
+  [[Specialize]] uint32_t num_k_heads,
   ThreadContext thread_context,
-  [[Groups("num_v_heads")]] uint hv_idx,
-  [[Groups("8")]] uint dv_group_idx,
-  [[Threads("128")]] uint thread_idx,
+  [[Groups("num_v_heads")]] uint32_t hv_idx,
+  [[Groups("8")]] uint32_t dv_group_idx,
+  [[Threads("128")]] uint32_t thread_idx,
 ) {
   // TODO
 }

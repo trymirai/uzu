@@ -169,7 +169,7 @@ export function ChatPage() {
             isLoadingStream={isLoading}
             isTitleGeneratingForChat={isTitleGeneratingForChat}
             isModelLoading={isModelLoading}
-            hasResidentModel={Boolean(residentSession)}
+            hasResidentModel={residentSession?.repoId === currentModelId}
             scrollTargetId={scrollTargetId}
             onScrolled={() => setScrollTargetId(null)}
             loadingMessageId={loadingMessageId}

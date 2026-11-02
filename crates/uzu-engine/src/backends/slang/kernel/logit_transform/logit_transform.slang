@@ -4,10 +4,10 @@ import definitions;
 [[Variants("T", "float, BFloat16")]]
 [[Public]] [[Kernel]] func LogitTransform<T>(
   RWStructuredBuffer<T> logits,
-  uint length,
+  uint32_t length,
   float scale,
   float soft_cap,
-  [[Axis("length", "256")]] uint position,
+  [[Axis("length", "256")]] uint32_t position,
   [[Specialize]] bool has_soft_cap,
 ) {
   // TODO

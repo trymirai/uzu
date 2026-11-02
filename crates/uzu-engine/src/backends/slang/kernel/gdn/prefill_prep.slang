@@ -4,7 +4,7 @@ import definitions;
 [[Variants("T", "float, BFloat16")]]
 [[Variants("QKT", "float, BFloat16")]]
 [[Variants("HEAD_K_DIM", "128")]]
-[[Public]] [[Kernel]] func DeltaNetPrefillPrep<T, QKT, let HEAD_K_DIM: uint>(
+[[Public]] [[Kernel]] func DeltaNetPrefillPrep<T, QKT, let HEAD_K_DIM: uint32_t>(
   StructuredBuffer<T> in_proj,
   StructuredBuffer<float> a_log,
   StructuredBuffer<float> dt_bias,
@@ -13,16 +13,16 @@ import definitions;
   [[Optional("write_compact_v")]] RWStructuredBuffer<T> compact_v_out,
   RWStructuredBuffer<float> beta_out,
   RWStructuredBuffer<float> decay_out,
-  uint num_v_heads,
-  uint num_k_heads,
-  uint key_dim,
-  uint value_dim,
-  uint suffix_len,
-  [[Groups("suffix_len")]] uint token_idx,
-  [[Groups("num_k_heads")]] uint hk_idx,
+  uint32_t num_v_heads,
+  uint32_t num_k_heads,
+  uint32_t key_dim,
+  uint32_t value_dim,
+  uint32_t suffix_len,
+  [[Groups("suffix_len")]] uint32_t token_idx,
+  [[Groups("num_k_heads")]] uint32_t hk_idx,
   [[Specialize]] bool write_log_decay,
   [[Specialize]] bool write_compact_v,
-  [[Threads("32")]] uint lane,
+  [[Threads("32")]] uint32_t lane,
 ) {
   // TODO
 }

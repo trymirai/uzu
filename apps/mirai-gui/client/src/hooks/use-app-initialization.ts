@@ -9,19 +9,18 @@ import { useDownloadWiring } from "./use-download-wiring";
 import { useUpdateInitialization } from "./use-update-initialization";
 import { useAppTheme } from "./use-app-theme";
 
-export const useAppInitialization = (enabled: boolean = true) => {
+export const useAppInitialization = () => {
   useAppTheme();
-  useSessionWiring(enabled);
-  useDownloadWiring(enabled);
-  useUpdateInitialization(enabled && platformInfo.features.autoUpdate);
+  useSessionWiring();
+  useDownloadWiring();
+  useUpdateInitialization(platformInfo.features.autoUpdate);
 
   useEffect(() => {
-    if (!enabled) return;
     attachmentStorage.cleanup();
     void useModelParamsStore.getState().load();
     void useModelsStore.getState().fetchModels();
     if (platformInfo.isTauri) {
       void useAppStore.getState().fetchVersion();
     }
-  }, [enabled]);
+  }, []);
 };

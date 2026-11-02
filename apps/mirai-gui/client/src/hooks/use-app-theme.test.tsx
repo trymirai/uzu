@@ -2,13 +2,9 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAppStore } from "@/stores/use-app-store";
 import { useAppTheme } from "./use-app-theme";
-import { useAppInitialization } from "./use-app-initialization";
 
 const setWindowTheme = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("@/platform/platform-singleton", () => ({ getPlatform: () => ({ systemUi: { setWindowTheme } }) }));
-vi.mock("./session-wiring", () => ({ useSessionWiring: vi.fn() }));
-vi.mock("./use-download-wiring", () => ({ useDownloadWiring: vi.fn() }));
-vi.mock("./use-update-initialization", () => ({ useUpdateInitialization: vi.fn() }));
 const defaults = useAppStore.getState();
 let systemDark = false;
 let listeners: Set<(event: { matches: boolean }) => void>;
@@ -79,12 +75,4 @@ it("keeps explicit Light and Dark modes through OS changes, then resumes System 
   expect(document.documentElement.classList.contains("dark")).toBe(true);
   expect(useAppStore.getState().isDarkMode).toBe(true);
   expect(setWindowTheme).toHaveBeenLastCalledWith("system");
-});
-
-it("still follows the system on the welcome screen while app initialization is disabled", () => {
-  renderHook(() => useAppInitialization(false));
-  changeSystemTheme(true);
-  expect(document.documentElement.classList.contains("dark")).toBe(true);
-  expect(useAppStore.getState().isDarkMode).toBe(true);
-  expect(setWindowTheme).toHaveBeenCalledWith("system");
 });

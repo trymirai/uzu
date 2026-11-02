@@ -11,6 +11,7 @@ export type PerfStats = {
   totalSec?: number;
   tps?: number;
   tokensOut?: number;
+  tokensPerForwardPass?: number;
 };
 
 export type MessageVersion = {

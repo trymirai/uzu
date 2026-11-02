@@ -477,15 +477,7 @@ impl StreamingState<'_> {
         &mut self,
         last_stat: bool,
     ) -> Result<ChatReplyStats, ChatSessionError> {
-        let speculator_stats = if let Some(metrics) = self.metrics.as_ref() {
-            let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
-            (num_forward_passes > 0).then(|| ChatReplySpeculatorStats {
-                tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / num_forward_passes as f64,
-                num_decode_forward_passes: num_forward_passes as u32,
-            })
-        } else {
-            None
-        };
+        let speculator_stats = self.metrics.as_ref().and_then(speculator_stats);
 
         let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
         let ttft_duration =
@@ -535,6 +527,14 @@ impl StreamingState<'_> {
     }
 }
 
+fn speculator_stats(metrics: &TokenStreamMetrics) -> Option<ChatReplySpeculatorStats> {
+    let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
+    (num_forward_passes > 0 && metrics.num_tokens_proposed > num_forward_passes).then(|| ChatReplySpeculatorStats {
+        tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / num_forward_passes as f64,
+        num_decode_forward_passes: num_forward_passes as u32,
+    })
+}
+
 fn calculate_rate(
     tokens: usize,
     duration: Option<Duration>,
@@ -549,4 +549,32 @@ fn calculate_rate(
     }
 
     Some((tokens - 1) as f64 / duration.as_secs_f64())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acceptance_is_reported_only_after_speculative_proposals() {
+        assert!(speculator_stats(&TokenStreamMetrics::default()).is_none());
+        let metrics = TokenStreamMetrics {
+            num_prefill_forward_passes: 1,
+            num_decode_forward_passes: 3,
+            num_tokens_proposed: 4,
+            num_tokens_accepted: 4,
+            ..Default::default()
+        };
+        assert!(speculator_stats(&metrics).is_none());
+        for accepted in [4, 10] {
+            let speculative = TokenStreamMetrics {
+                num_tokens_proposed: 16,
+                num_tokens_accepted: accepted,
+                ..metrics.clone()
+            };
+            let stats = speculator_stats(&speculative).unwrap();
+            assert_eq!(stats.tokens_per_forward_pass, accepted as f64 / 4.0);
+            assert_eq!(stats.num_decode_forward_passes, 4);
+        }
+    }
 }

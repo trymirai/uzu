@@ -7,11 +7,11 @@ import definitions;
   [[Optional("has_bias")]] StructuredBuffer<float> bias,
   RWStructuredBuffer<T> in_out,
   RWStructuredBuffer<float> state,
-  uint kernel_size,
-  uint conv_dim,
-  uint state_stride,
+  uint32_t kernel_size,
+  uint32_t conv_dim,
+  uint32_t state_stride,
   [[Specialize]] bool has_bias,
-  [[Axis("conv_dim", "256")]] uint channel_idx,
+  [[Axis("conv_dim", "256")]] uint32_t channel_idx,
 ) {
   // TODO
 }
