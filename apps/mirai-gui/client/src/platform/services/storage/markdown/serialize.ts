@@ -17,6 +17,7 @@ const formatPerfToMarkdown = (perf?: PerfStats): string[] => {
     ["TPS", perf.tps, (v: number) => `${Math.round(v)}`],
     ["Total", perf.totalSec, (v: number) => `${v.toFixed(3)}s`],
     ["TokensOut", perf.tokensOut, (v: number) => `${v}`],
+    ["TokensPerForwardPass", perf.tokensPerForwardPass, (v: number) => `${v}`],
   ] as const;
   const lines = entries
     .filter(([, value]) => typeof value === "number" && (value as number) > 0)

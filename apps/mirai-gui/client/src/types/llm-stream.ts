@@ -13,6 +13,7 @@ export type LlmRunParams = {
 };
 
 export type SessionOutputStats = {
+  tokensPerForwardPass?: number;
   prefillStats: {
     duration: number;
     tokensCount: number;

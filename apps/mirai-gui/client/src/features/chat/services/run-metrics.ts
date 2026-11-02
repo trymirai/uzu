@@ -5,6 +5,7 @@ export type RunMetrics = {
   totalSec?: number;
   tps?: number;
   tokensOut: number;
+  tokensPerForwardPass?: number;
 };
 
 export function getRunMetrics(stats: SessionOutputStats): RunMetrics {
@@ -13,5 +14,6 @@ export function getRunMetrics(stats: SessionOutputStats): RunMetrics {
     totalSec: stats.totalStats.duration,
     tps: stats.generateStats?.tokensPerSecond,
     tokensOut: stats.totalStats.tokensCountOutput,
+    tokensPerForwardPass: stats.tokensPerForwardPass,
   };
 }

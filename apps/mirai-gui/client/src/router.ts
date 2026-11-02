@@ -1,9 +1,8 @@
 import { createBrowserHistory, createRouter } from "@tanstack/react-router";
 import { routeTree } from "./route-tree.gen";
 
-export const createAppRouter = (initialPath: string) => {
+export const createAppRouter = () => {
   const history = createBrowserHistory();
-  if (window.location.pathname === "/") history.replace(initialPath);
   return createRouter({ routeTree, history, notFoundMode: "root" });
 };
 

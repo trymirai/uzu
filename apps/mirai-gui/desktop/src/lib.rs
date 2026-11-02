@@ -95,7 +95,6 @@ pub fn run() {
             }
             chat::restore_auto_eject_config(app.handle());
             app.state::<analytics::AnalyticsState>().restore();
-            cli_installer::trigger_if_needed(app.handle());
             // Warm the engine so the first models/chat request doesn't pay init latency.
             tauri::async_runtime::spawn(async {
                 let _ = engine::engine().await;

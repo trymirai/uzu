@@ -13,11 +13,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("defaults to Medium and persists the pixel width with existing preferences", () => {
   expect(useAppStore.getState().chatWidth).toBe(1000);
-  useAppStore.setState({ theme: "light", isDarkMode: false, skipWelcome: true });
+  useAppStore.setState({ theme: "light", isDarkMode: false });
   useAppStore.getState().setChatWidth(1200);
   expect(JSON.parse(localStorage.getItem(APP_STORE_KEY)!).state).toEqual({
     theme: "light",
-    skipWelcome: true,
     chatWidth: 1200,
   });
 });
@@ -32,12 +31,9 @@ it.each([800, 1000, 1200])("restores the saved %s pixel width on hydration", asy
 it.each([undefined, null, 799, 1201, "1000"])(
   "uses Medium for missing or invalid stored width %s",
   async (chatWidth) => {
-    localStorage.setItem(
-      APP_STORE_KEY,
-      JSON.stringify({ state: { chatWidth, isDarkMode: false, skipWelcome: true }, version: 0 }),
-    );
+    localStorage.setItem(APP_STORE_KEY, JSON.stringify({ state: { chatWidth, isDarkMode: false }, version: 0 }));
     await useAppStore.persist.rehydrate();
-    expect(useAppStore.getState()).toMatchObject({ chatWidth: 1000, isDarkMode: false, skipWelcome: true });
+    expect(useAppStore.getState()).toMatchObject({ chatWidth: 1000, isDarkMode: false });
   },
 );
 
@@ -47,12 +43,12 @@ it.each([799, 1201, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid sett
   expect(JSON.parse(localStorage.getItem(APP_STORE_KEY)!).state.chatWidth).toBe(1000);
 });
 
-it("preserves legacy appearance and welcome migration while adding the wider default", async () => {
+it("preserves legacy appearance and removes obsolete auth storage while adding the wider default", async () => {
   localStorage.setItem("mirai-electron-store", JSON.stringify({ state: { isDarkMode: false }, version: 0 }));
-  localStorage.setItem("mirai-auth-store", JSON.stringify({ state: { skipWelcome: true }, version: 0 }));
+  localStorage.setItem("mirai-auth-store", JSON.stringify({ state: {}, version: 0 }));
   migrateAppStorage();
   await useAppStore.persist.rehydrate();
-  expect(useAppStore.getState()).toMatchObject({ chatWidth: 1000, isDarkMode: false, skipWelcome: true });
+  expect(useAppStore.getState()).toMatchObject({ chatWidth: 1000, isDarkMode: false });
   expect(localStorage.getItem("mirai-electron-store")).toBeNull();
   expect(localStorage.getItem("mirai-auth-store")).toBeNull();
 });

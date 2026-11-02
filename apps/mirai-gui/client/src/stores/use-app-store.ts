@@ -23,8 +23,6 @@ export const isDarkTheme = (
 const isChatWidth = (value: unknown): value is ChatWidth => value === 800 || value === 1000 || value === 1200;
 
 type AppState = {
-  skipWelcome: boolean;
-  completeWelcome: () => void;
   isDarkMode: boolean;
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
@@ -41,13 +39,11 @@ migrateAppStorage();
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
-      skipWelcome: false,
       theme: "system",
       isDarkMode: isDarkTheme("system"),
       chatWidth: DEFAULT_CHAT_WIDTH,
       appVersion: "",
 
-      completeWelcome: () => set({ skipWelcome: true }),
       setChatWidth: (width) => set({ chatWidth: isChatWidth(width) ? width : DEFAULT_CHAT_WIDTH }),
 
       setTheme: (theme) => set({ theme, isDarkMode: isDarkTheme(theme) }),
@@ -65,7 +61,6 @@ export const useAppStore = create<AppState>()(
       name: APP_STORE_KEY,
       partialize: (state) => ({
         theme: state.theme,
-        skipWelcome: state.skipWelcome,
         chatWidth: state.chatWidth,
       }),
       merge: (persisted, current) => {
@@ -74,7 +69,6 @@ export const useAppStore = create<AppState>()(
         const { chatWidth } = stored;
         return {
           ...current,
-          skipWelcome: stored.skipWelcome ?? current.skipWelcome,
           theme,
           isDarkMode: isDarkTheme(theme),
           chatWidth: isChatWidth(chatWidth) ? chatWidth : DEFAULT_CHAT_WIDTH,

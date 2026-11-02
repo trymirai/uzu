@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ChatsRouteImport } from './routes/chats'
 import { Route as LocalModelsRouteImport } from './routes/local-models'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as ChatChatIdRouteImport } from './routes/chat/$chatId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -36,11 +35,6 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WelcomeRoute = WelcomeRouteImport.update({
-  id: '/welcome',
-  path: '/welcome',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ChatChatIdRoute = ChatChatIdRouteImport.update({
   id: '/chat/$chatId',
   path: '/chat/$chatId',
@@ -52,7 +46,6 @@ export interface FileRoutesByFullPath {
   '/chats': typeof ChatsRoute
   '/local-models': typeof LocalModelsRoute
   '/settings': typeof SettingsRoute
-  '/welcome': typeof WelcomeRoute
   '/chat/$chatId': typeof ChatChatIdRoute
 }
 export interface FileRoutesByTo {
@@ -60,7 +53,6 @@ export interface FileRoutesByTo {
   '/chats': typeof ChatsRoute
   '/local-models': typeof LocalModelsRoute
   '/settings': typeof SettingsRoute
-  '/welcome': typeof WelcomeRoute
   '/chat/$chatId': typeof ChatChatIdRoute
 }
 export interface FileRoutesById {
@@ -69,33 +61,19 @@ export interface FileRoutesById {
   '/chats': typeof ChatsRoute
   '/local-models': typeof LocalModelsRoute
   '/settings': typeof SettingsRoute
-  '/welcome': typeof WelcomeRoute
   '/chat/$chatId': typeof ChatChatIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/chats'
-    | '/local-models'
-    | '/settings'
-    | '/welcome'
-    | '/chat/$chatId'
+  fullPaths: '/' | '/chats' | '/local-models' | '/settings' | '/chat/$chatId'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/chats'
-    | '/local-models'
-    | '/settings'
-    | '/welcome'
-    | '/chat/$chatId'
+  to: '/' | '/chats' | '/local-models' | '/settings' | '/chat/$chatId'
   id:
     | '__root__'
     | '/'
     | '/chats'
     | '/local-models'
     | '/settings'
-    | '/welcome'
     | '/chat/$chatId'
   fileRoutesById: FileRoutesById
 }
@@ -104,7 +82,6 @@ export interface RootRouteChildren {
   ChatsRoute: typeof ChatsRoute
   LocalModelsRoute: typeof LocalModelsRoute
   SettingsRoute: typeof SettingsRoute
-  WelcomeRoute: typeof WelcomeRoute
   ChatChatIdRoute: typeof ChatChatIdRoute
 }
 
@@ -138,13 +115,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/welcome': {
-      id: '/welcome'
-      path: '/welcome'
-      fullPath: '/welcome'
-      preLoaderRoute: typeof WelcomeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/chat/$chatId': {
       id: '/chat/$chatId'
       path: '/chat/$chatId'
@@ -160,7 +130,6 @@ const rootRouteChildren: RootRouteChildren = {
   ChatsRoute: ChatsRoute,
   LocalModelsRoute: LocalModelsRoute,
   SettingsRoute: SettingsRoute,
-  WelcomeRoute: WelcomeRoute,
   ChatChatIdRoute: ChatChatIdRoute,
 }
 export const routeTree = rootRouteImport

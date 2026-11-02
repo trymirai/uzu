@@ -120,6 +120,8 @@ pub struct SessionOutputStats {
     pub prefill_stats: RunStatsSection,
     pub generate_stats: RunStatsSection,
     pub total_stats: TotalStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_per_forward_pass: Option<f64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -198,6 +200,7 @@ pub(super) fn map_reply_stats(reply: Option<&ChatReply>) -> SessionOutputStats {
             tokens_count_input: input_tokens,
             tokens_count_output: output_tokens,
         },
+        tokens_per_forward_pass: stats.and_then(|s| s.speculator_stats.as_ref()).map(|s| s.tokens_per_forward_pass),
     }
 }
 
@@ -260,6 +263,32 @@ pub(super) fn test_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_inference_timing_and_optional_acceptance() {
+        use uzu::types::session::chat::{ChatMessage, ChatReplySpeculatorStats, ChatReplyStats};
+
+        let mut reply = ChatReply {
+            message: ChatMessage::assistant(),
+            stats: ChatReplyStats {
+                duration: 2.25,
+                time_to_first_token: Some(0.25),
+                ..Default::default()
+            },
+            finish_reason: None,
+        };
+        let stats = map_reply_stats(Some(&reply));
+        assert_eq!(stats.prefill_stats.duration, 0.25);
+        assert_eq!(stats.generate_stats.duration, 2.0);
+        assert!(serde_json::to_value(stats).unwrap().get("tokensPerForwardPass").is_none());
+
+        reply.stats.speculator_stats = Some(ChatReplySpeculatorStats {
+            tokens_per_forward_pass: 2.5,
+            num_decode_forward_passes: 4,
+        });
+        let stats = serde_json::to_value(map_reply_stats(Some(&reply))).unwrap();
+        assert_eq!(stats["tokensPerForwardPass"], 2.5);
+    }
 
     #[test]
     fn omitted_tool_preferences_remain_distinct_from_explicit_choices() {

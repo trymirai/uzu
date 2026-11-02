@@ -26,12 +26,9 @@ const migrateAppStorage = (): void => {
     }
 
     const legacyApp = readState(LEGACY_APP_STORE_KEY);
-    const legacyAuth = readState(LEGACY_AUTH_STORE_KEY);
 
     const state: Record<string, unknown> = {};
     if (typeof legacyApp?.isDarkMode === "boolean") state.isDarkMode = legacyApp.isDarkMode;
-    const skipWelcome = legacyApp?.skipWelcome ?? legacyAuth?.skipWelcome;
-    if (typeof skipWelcome === "boolean") state.skipWelcome = skipWelcome;
 
     if (Object.keys(state).length > 0) {
       localStorage.setItem(APP_STORE_KEY, JSON.stringify({ state, version: 0 }));
