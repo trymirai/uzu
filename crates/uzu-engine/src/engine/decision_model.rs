@@ -1,6 +1,6 @@
 use std::{io, path::Path, sync::Arc, time::Instant};
 
-use shoji::{traits::backend::decision::DecisionProbabilities, types::session::classification::TokenCodecConfig};
+use shoji::{traits::backend::decision::DecisionSessionOutput, types::session::classification::TokenCodecConfig};
 use thiserror::Error;
 use tokenizers::Tokenizer;
 
@@ -67,7 +67,7 @@ impl<B: Backend> DecisionModel<B> {
         &self,
         input: &[u64],
         option_count: usize,
-    ) -> Result<DecisionProbabilities, DecisionModelError<B>> {
+    ) -> Result<DecisionSessionOutput, DecisionModelError<B>> {
         if input.is_empty() {
             return Err(DecisionModelError::EmptyInput);
         }
@@ -115,7 +115,7 @@ impl<B: Backend> DecisionModel<B> {
         let exps = scaled.iter().map(|logit| (logit - max).exp()).collect::<Vec<_>>();
         let sum = exps.iter().sum::<f32>();
         let probabilities = exps.into_iter().map(|value| value / sum).collect();
-        Ok(DecisionProbabilities {
+        Ok(DecisionSessionOutput {
             probabilities,
             prefill_duration,
             memory_used_bytes: self.context.peak_memory_usage(),

@@ -1,3 +1,6 @@
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::util::power::Error as EnergyError;
+
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
@@ -23,4 +26,13 @@ pub enum DecisionSessionError {
     UnableToPerformOperationInCurrentState {},
     #[error("No response")]
     NoResponse {},
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl From<EnergyError> for DecisionSessionError {
+    fn from(error: EnergyError) -> Self {
+        Self::Backend {
+            message: error.to_string(),
+        }
+    }
 }

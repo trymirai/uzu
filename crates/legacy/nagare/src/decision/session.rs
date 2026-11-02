@@ -1,6 +1,8 @@
 use std::{sync::Arc, time::Instant};
 
 use hanashi::{DecisionEncoding, DecisionEncodingError};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use keisoku::KeisokuError;
 use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{Backend, backend::decision::DecisionInstance},
@@ -14,6 +16,8 @@ use shoji::{
 use tokio::sync::{Mutex, mpsc};
 
 pub use crate::decision::error::DecisionSessionError;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::util::power::{EnergyRecorder, Error as EnergyError};
 
 #[bindings::export(Enumeration)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -25,6 +29,8 @@ pub enum DecisionSessionState {
 struct DecisionInstanceHolder {
     instance: Box<dyn DecisionInstance>,
     encoding: DecisionEncoding,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    energy_recorder: EnergyRecorder,
 }
 
 #[bindings::export(Class)]
@@ -54,9 +60,11 @@ impl DecisionSession {
             let encoding = DecisionEncoding::new(instance.token_codec_config(), instance.tokenizer())
                 .map_err(|_| DecisionSessionError::UnsupportedModel {})?;
 
-            Ok(DecisionInstanceHolder {
+            Ok::<_, DecisionSessionError>(DecisionInstanceHolder {
                 instance,
                 encoding,
+                #[cfg(any(target_os = "macos", target_os = "ios"))]
+                energy_recorder: EnergyRecorder::new(),
             })
         })
         .await
@@ -71,7 +79,7 @@ impl DecisionSession {
     }
 
     async fn execute(
-        holder: &DecisionInstanceHolder,
+        holder: &mut DecisionInstanceHolder,
         input: &DecisionInput,
     ) -> Result<Vec<DecisionResult>, DecisionSessionError> {
         if input.questions.is_empty() {
@@ -107,17 +115,33 @@ impl DecisionSession {
             let time_start = Instant::now();
             let tokens_count = prompt.len();
             let tokens = prompt.into_iter().map(u64::from).collect::<Vec<_>>();
+
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            holder.energy_recorder.begin()?;
+
             let output = holder.instance.probabilities(&tokens, option_count(question)).await.map_err(|error| {
                 DecisionSessionError::Backend {
                     message: error.to_string(),
                 }
             })?;
+
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            let energy = match holder.energy_recorder.finish() {
+                Ok(energy) => Some(energy),
+                Err(EnergyError::Keisoku(KeisokuError::PowerReadingUnavailable)) => None,
+                Err(error) => return Err(error.into()),
+            };
+
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            let energy = None;
+
             results.push(DecisionResult {
                 answer: answer(question, output.probabilities),
                 stats: DecisionStats {
                     tokens_count: tokens_count as i64,
                     prefill_duration: output.prefill_duration.as_secs_f64(),
                     total_duration: (encoding_duration + time_start.elapsed()).as_secs_f64(),
+                    energy,
                 },
             });
         }
@@ -156,8 +180,8 @@ impl DecisionSession {
             }
 
             let result = {
-                let holder = holder.lock().await;
-                Self::execute(&holder, &input).await
+                let mut holder = holder.lock().await;
+                Self::execute(&mut holder, &input).await
             };
             let output = result.map(|results| DecisionOutput {
                 results,

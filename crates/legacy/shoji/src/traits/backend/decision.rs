@@ -4,7 +4,7 @@ use tokenizers::Tokenizer;
 
 use crate::{traits::backend::Error, types::session::classification::TokenCodecConfig};
 
-pub struct DecisionProbabilities {
+pub struct DecisionSessionOutput {
     pub probabilities: Vec<f32>,
     pub prefill_duration: Duration,
     pub memory_used_bytes: Option<usize>,
@@ -33,5 +33,5 @@ pub trait DecisionInstance: Send + Sync {
         &'a self,
         input: &'a [u64],
         option_count: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<DecisionProbabilities, Error>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<DecisionSessionOutput, Error>> + Send + 'a>>;
 }
