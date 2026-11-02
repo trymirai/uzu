@@ -99,8 +99,8 @@ impl<B: Backend> TransformedLinear<B> {
             input_data_type,
             output_data_type,
         };
-        let mut groups = Vec::new();
         let parts = row_stack_parts(spec, output_dimension, weights_tree.clone())?;
+        let mut groups = Vec::with_capacity(parts.len());
         for (rows, spec, tree) in parts {
             let AnyWeightMatrixSpec::HybridSpec(hybrid) = spec else {
                 return Err(unsupported(format!("{spec:?} as a row-stack part")));
@@ -166,8 +166,8 @@ impl<B: Backend> TransformedLinear<B> {
                     signs,
                     mixing,
                 };
-                let mut blocks = Vec::new();
                 let parts = row_stack_parts(*quantization_spec, rows, quantized_tree)?;
+                let mut blocks = Vec::with_capacity(parts.len());
                 for (rows, spec, tree) in parts {
                     if !matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) {
                         return Err(unsupported(format!("{spec:?} in a Kronecker linear")));
