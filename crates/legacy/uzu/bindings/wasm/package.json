@@ -1,0 +1,34 @@
+{
+    "name": "@trymirai/uzu-wasm",
+    "version": "0.6.15",
+    "description": "A high-performance inference engine for AI models",
+    "author": "Mirai Tech Inc. <contact@getmirai.co>",
+    "types": "dist/index.d.ts",
+    "main": "dist/index.js",
+    "type": "module",
+    "repository": "https://github.com/trymirai/uzu",
+    "license": "MIT",
+    "packageManager": "pnpm@12.9.0",
+    "files": [
+        "**/*"
+    ],
+    "private": false,
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "build": "./scripts/build",
+        "lint": "./scripts/lint"
+    },
+    "devDependencies": {
+        "publint": "^0.2.12",
+        "typescript": "5.8.3"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./wasm/*": "./dist/wasm/*"
+    }
+}

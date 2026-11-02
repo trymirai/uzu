@@ -55,7 +55,11 @@ impl LanguageBackend for WasmLanguageBackend {
         self.check_wasm_bindgen()?;
 
         let paths = Paths::new()?;
-        let output_path = paths.bindings_for_language_path(self.language());
+        let bindings_path = paths.bindings_for_language_path(self.language());
+        let output_path = paths.wasm_output_path();
+
+        Command::pnpm_install().with_current_path(&bindings_path).run()?;
+
         for target in targets {
             Command::cargo_build(paths.main_crate.clone(), target.name.clone(), target.features.clone(), configuration)
                 .with_envs(self.config.required_envs_for_target(target.name.clone())?)
@@ -63,6 +67,7 @@ impl LanguageBackend for WasmLanguageBackend {
             let wasm_path =
                 paths.target_profile_path(&target.name, configuration).join(format!("{}.wasm", paths.main_crate));
             Command::wasm_bindgen(wasm_path, output_path.clone(), paths.main_crate.clone()).run()?;
+            Command::pnpm_run("build").with_current_path(&bindings_path).run()?;
         }
         Ok(())
     }

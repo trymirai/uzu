@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Building"
+./scripts/build
+
+echo "==> Checking types"
+./node_modules/.bin/tsc
+
+echo "==> Running publint"
+./node_modules/.bin/publint dist

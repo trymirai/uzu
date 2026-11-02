@@ -9,7 +9,17 @@ use crate::{
     types::Language,
 };
 
-pub struct PackageJsonSyncTask;
+pub struct PackageJsonSyncTask {
+    language: Language,
+}
+
+impl PackageJsonSyncTask {
+    pub fn new(language: Language) -> Self {
+        Self {
+            language,
+        }
+    }
+}
 
 impl SyncTask for PackageJsonSyncTask {
     fn process(
@@ -27,15 +37,20 @@ impl SyncTask for PackageJsonSyncTask {
         output = replace_string_field(&output, "repository", &package.repository)?;
         output = replace_string_field(&output, "license", &package.license)?;
 
-        let typescript_targets = platforms
+        // Runs in the browser, so the package is not restricted to any os / cpu
+        if self.language == Language::Wasm {
+            return Ok(output);
+        }
+
+        let targets = platforms
             .languages
-            .get(&Language::TypeScript)
-            .context("Missing [languages.typescript] in platforms.toml")?
+            .get(&self.language)
+            .with_context(|| format!("Missing [languages.{}] in platforms.toml", self.language.name()))?
             .targets
             .clone();
 
-        let cpu = unique(typescript_targets.iter().map(|target| target_cpu(target)).collect::<Result<Vec<_>>>()?);
-        let os = unique(typescript_targets.iter().map(|target| target_os(target)).collect::<Result<Vec<_>>>()?);
+        let cpu = unique(targets.iter().map(|target| target_cpu(target)).collect::<Result<Vec<_>>>()?);
+        let os = unique(targets.iter().map(|target| target_os(target)).collect::<Result<Vec<_>>>()?);
 
         output = replace_string_array_field(&output, "cpu", cpu)?;
         output = replace_string_array_field(&output, "os", os)?;

@@ -106,6 +106,10 @@ impl Paths {
         self.bindings_for_language_path(Language::TypeScript).join("src").join("napi")
     }
 
+    pub fn wasm_output_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Wasm).join("src").join("wasm")
+    }
+
     pub fn swift_xcframework_path(&self) -> PathBuf {
         self.bindings_for_language_path(Language::Swift).join(format!("{}.xcframework", self.main_crate))
     }
