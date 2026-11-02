@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::backends::metal::{error::MetalError, kernel::matmul::MatmulMetalError};
+use crate::backends::metal::error::MetalError;
 
 #[derive(Debug, Error)]
 pub enum AttentionMetalError {
@@ -8,6 +8,4 @@ pub enum AttentionMetalError {
     UnsupportedInt8KV,
     #[error("Backend error: {0}")]
     Backend(#[from] MetalError),
-    #[error("Matmul error: {0}")]
-    Matmul(#[from] MatmulMetalError),
 }
