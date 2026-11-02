@@ -124,6 +124,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
     }
 }
 
+#[derive(Clone)]
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
     prefix: String,
@@ -138,6 +139,13 @@ impl<B: Backend> ParameterTree<'_, B> {
             loader: self.loader,
             prefix: format!("{}{name}.", self.prefix),
         }
+    }
+
+    pub fn tensor_shape(&self, name: &str) -> Result<Box<[u32]>, ParameterLoaderError<B>> {
+        let key = format!("{}{name}", self.prefix);
+        let tensor =
+            self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
+        Ok(tensor.shape.clone())
     }
 
     pub fn metadata<T: DeserializeStrictOwned>(
@@ -204,14 +212,26 @@ impl<B: Backend> ParameterTree<'_, B> {
         shape: &[u32],
         dtype: DataType,
     ) -> Result<B::GlobalGpuBuffer, ParameterLoaderError<B>> {
+        self.read_buffer_with_tail(name, shape, dtype, 0).await
+    }
+
+    pub async fn read_buffer_with_tail(
+        &self,
+        name: &str,
+        shape: &[u32],
+        dtype: DataType,
+        tail: usize,
+    ) -> Result<B::GlobalGpuBuffer, ParameterLoaderError<B>> {
         let tensor = self.tensor(name, shape, dtype)?;
         let (start, end) = tensor.data_offsets;
-        let mut buffer = self
-            .loader
-            .context
-            .create_buffer_cpu_gpu((end - start) as usize)
-            .map_err(ParameterLoaderError::BackendError)?;
-        self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.loader.data_offset + start).await?;
+        let size = (end - start) as usize;
+        let mut buffer =
+            self.loader.context.create_buffer_cpu_gpu(size + tail).map_err(ParameterLoaderError::BackendError)?;
+        self.loader
+            .file
+            .read_exact_at(&mut buffer.as_slice_mut::<u8>()[..size], self.loader.data_offset + start)
+            .await?;
+        buffer.as_slice_mut::<u8>()[size..].fill(0);
         tensor.read.store(true, Ordering::Relaxed);
         Ok(buffer.handoff())
     }
@@ -230,3 +250,7 @@ impl<B: Backend> ParameterTree<'_, B> {
         Ok(data.into_boxed_slice())
     }
 }
+
+#[cfg(test)]
+#[path = "../unit/safetensors_test.rs"]
+mod tests;

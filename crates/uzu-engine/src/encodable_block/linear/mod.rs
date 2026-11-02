@@ -4,10 +4,12 @@ use thiserror::Error;
 mod input_rht;
 mod matmul;
 mod rht_wrapper;
+mod transformed_linear;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
+pub use transformed_linear::{TransformedLinear, TransformedLinearError};
 pub use untied_readout::UntiedReadout;
 
 use crate::{
@@ -18,7 +20,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HadamardSpec, HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -72,6 +74,8 @@ pub enum LinearBlockError<B: Backend> {
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("TransformedLinear error: {0}")]
+    TransformedLinearError(#[from] TransformedLinearError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
@@ -111,12 +115,11 @@ impl<B: Backend> dyn Linear<B> {
                 Ok(Box::new(block))
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                incoherence_spec:
-                    Some(HadamardSpec {
-                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                        processing_mode: IncoherenceProcessingMode::InputOutput,
-                        ..
-                    }),
+                incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
+                    ..
+                })),
                 ..
             }) => Ok(Box::new(
                 RHTLinearWrapper::new(
@@ -127,6 +130,24 @@ impl<B: Backend> dyn Linear<B> {
                     output_data_type,
                     has_biases,
                     parameter_tree,
+                    context,
+                )
+                .await?,
+            )),
+            spec @ (AnyWeightMatrixSpec::OutputStackSpec(_)
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                incoherence_spec: Some(AnyIncoherenceProcessorSpec::KroneckerSpec(_)),
+                ..
+            })) => Ok(Box::new(
+                TransformedLinear::new(
+                    input_dimension,
+                    output_dimension,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    has_biases,
+                    spec,
+                    &weights_tree,
                     context,
                 )
                 .await?,
