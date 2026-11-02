@@ -10,7 +10,7 @@
 
 #include "engine.hpp"
 
-int main(
+extern "C" int benchmarks_llamacpp_main(
     int argc,
     char* argv[]
 ) {
@@ -45,4 +45,11 @@ int main(
     llama_backend_free();
 
     return ret;
+}
+
+int main(
+    int argc,
+    char* argv[]
+) {
+    return benchmarks_llamacpp_main(argc, argv);
 }

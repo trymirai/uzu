@@ -22,7 +22,7 @@ ABSL_FLAG(
     "Directory with weights extracted by extract_weights_hf.py"
 );
 
-int main(
+extern "C" int benchmarks_mldrift_main(
     int argc,
     char* argv[]
 ) {
@@ -38,4 +38,11 @@ int main(
         return 1;
     }
     return 0;
+}
+
+int main(
+    int argc,
+    char* argv[]
+) {
+    return benchmarks_mldrift_main(argc, argv);
 }
