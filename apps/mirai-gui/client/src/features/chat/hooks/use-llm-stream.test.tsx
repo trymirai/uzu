@@ -175,14 +175,26 @@ describe("useLlmStream", () => {
     act(() => {
       emit({ type: "chunk", delta: "Hello" });
       emit({ type: "chunk", delta: " world" });
-      emit({ type: "done", text: "Hello world", stats, finishReason: "Stop", parsed: { response: "Hello world" } });
+      emit({
+        type: "done",
+        text: "Hello world",
+        stats: { ...stats, tokensPerForwardPass: 2.75 },
+        finishReason: "Stop",
+        parsed: { response: "Hello world" },
+      });
     });
     await act(() => run);
 
     expect(messageText()).toBe("Hello world");
     const message = useChatStore.getState().messages.find((m) => m.id === MESSAGE_ID);
     expect(message?.output?.text?.parsed).toEqual({ chainOfThought: "let me think", response: "Hello world" });
-    expect(message?.perf).toEqual({ ttftSec: 0.25, totalSec: 2.25, tps: 20, tokensOut: 40 });
+    expect(message?.perf).toEqual({
+      ttftSec: 0.25,
+      totalSec: 2.25,
+      tps: 20,
+      tokensOut: 40,
+      tokensPerForwardPass: 2.75,
+    });
     expect(finalizeAssistantMessage).toHaveBeenCalledWith(
       CHAT_ID,
       MESSAGE_ID,

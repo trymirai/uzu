@@ -23,6 +23,30 @@ pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 `pnpm check` runs typecheck, ESLint, client tests, clippy and Rust tests;
 `pnpm format` runs Prettier.
 
+## Preview a fresh start
+
+Quit Mirai, the CLI, and other apps using the shared model cache. From the
+repository root, move the current state into a new backup directory:
+
+```bash
+python3 scripts/mirai-data.py backup ~/mirai-preview-backup
+```
+
+This moves chats, settings, logs, the model cache, and Mirai's WebView data
+aside. Add `--keep-cache` to leave `~/.cache/mirai` available, for testing a
+fresh app with existing models. Moves require the backup and data to be on
+the same filesystem; model files are not copied.
+
+After testing, quit the app and restore:
+
+```bash
+python3 scripts/mirai-data.py restore-overwrite ~/mirai-preview-backup
+```
+
+Restore replaces the test state and consumes the backup. If the backup used
+`--keep-cache`, restore leaves the current cache untouched, including models
+downloaded during testing. No live data is changed if the backup is incomplete.
+
 ## Signed builds without a release
 
 In GitHub Actions, open **Build / release mirai-gui**, choose **Run workflow**,
@@ -44,7 +68,7 @@ use this workflow to build and publish the app automatically.
 ```text
 client/src/            React app, shared by desktop and web
   components/          app shell, icons and generic UI primitives (components/ui)
-  features/            chat, chat-history, local-models, settings, welcome, runtime; each owns its page
+  features/            chat, chat-history, local-models, settings, runtime; each owns its page
   routes/              thin TanStack route glue
   platform/            platform contract + tauri/web adapters, the only way to the backend
   stores/              zustand stores
