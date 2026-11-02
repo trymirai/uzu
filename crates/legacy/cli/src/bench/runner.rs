@@ -5,13 +5,12 @@ use std::{
 
 use anyhow::{Context, Result};
 use shoji::types::model::{ModelFamily, ModelSource};
-use sysinfo::System;
 use uzu::{
     engine::{Engine, EngineConfig},
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy},
+        session::chat::{ChatConfig, ChatReplyConfig, ReplyEnergy},
     },
 };
 use uzu_engine::VERSION;
@@ -64,7 +63,7 @@ impl BenchRunner {
         }
 
         let messages = self.task.to_chat_messages(ThinkingSupport::for_model(&model))?;
-        let device = self.get_device_info();
+        let device = BenchDevice::current();
 
         let session_config = ChatConfig::default();
         let session = engine.chat(model, session_config).await?;
@@ -144,21 +143,6 @@ impl BenchRunner {
         Ok(results)
     }
 
-    fn get_device_info(&self) -> BenchDevice {
-        let mut system_info = System::new_all();
-        system_info.refresh_all();
-
-        let os_name = System::long_os_version();
-        let cpu_name = system_info.cpus().first().map(|cpu| cpu.brand().to_string());
-        let memory_total = system_info.total_memory();
-
-        BenchDevice {
-            os_name,
-            cpu_name,
-            memory_total,
-        }
-    }
-
     async fn get_remote_model_family(
         &self,
         model_path: &Path,
@@ -199,6 +183,6 @@ impl BenchRunner {
     }
 }
 
-fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
+fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ReplyEnergy>) -> Option<ReplyEnergy> {
     energy.into_iter().cloned().reduce(|total, energy| total + energy)
 }
