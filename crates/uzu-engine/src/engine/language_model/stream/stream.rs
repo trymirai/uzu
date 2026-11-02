@@ -187,8 +187,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     Some((accepted_token_indicies, accepted_input_token_ids))
                 } else {
                     if let Some(grammar) = self.options.grammar.as_mut() {
-                        for &token_id in &gpu_tokens {
-                            grammar.accept_token(token_id as u64)?
+                        for &token_id in &output_tokens {
+                            grammar.accept_token(token_id)?
                         }
                     }
                     None
@@ -410,7 +410,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     pub async fn get_and_queue_pass(
         &mut self,
         mut last_job: GenerationJob<B>,
-    ) -> Result<(ResolvedJob<B>, GenerationJob<B>), LanguageModelStreamError<B>> {
+    ) -> Result<(Box<[u64]>, GenerationJob<B>), LanguageModelStreamError<B>> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
@@ -704,7 +704,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             *_input_token_source = resolved_job.output_tokens_buffer.take();
         }
 
-        Ok((resolved_job, new_job))
+        Ok((resolved_job.output_tokens, new_job))
     }
 }
 
@@ -752,10 +752,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             return Ok(Some(token));
         }
 
-        let (resolved, new_job) = self.submitter.get_and_queue_pass(job).await?;
+        let (tokens, new_job) = self.submitter.get_and_queue_pass(job).await?;
 
         self.job = Some(new_job);
-        self.queued_tokens = resolved.output_tokens.iter().rev().copied().collect();
+        self.queued_tokens = tokens.iter().rev().copied().collect();
 
         // unwrap safe, should have generated at least one token.
         let token = self.queued_tokens.pop().unwrap();
