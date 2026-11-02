@@ -23,8 +23,8 @@ use shoji::{
         basic::{SamplingParameters, Token, TokenId},
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyEnergy, ChatReplyFinishReason,
-            ChatReplySpeculatorStats, ChatReplyStats,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason,
+            ChatReplySpeculatorStats, ChatReplyStats, ReplyEnergy,
         },
     },
 };
@@ -432,7 +432,7 @@ struct StreamingState<'a> {
     time_last_token: Option<Instant>,
     time_prefill_start: Instant,
     time_first_token: Option<Instant>,
-    input_energy: Option<ChatReplyEnergy>,
+    input_energy: Option<ReplyEnergy>,
     total_tokens_input: usize,
     cached_tokens_input: usize,
     total_tokens_output: usize,

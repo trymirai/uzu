@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::chat::ChatReplyEnergy;
+use crate::types::session::chat::ReplyEnergy;
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct DecisionStats {
     pub tokens_count: i64,
     pub prefill_duration: f64,
     pub total_duration: f64,
-    pub energy: Option<ChatReplyEnergy>,
+    pub energy: Option<ReplyEnergy>,
 }
 
 #[bindings::export(Structure(Class))]

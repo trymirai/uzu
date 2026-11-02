@@ -376,19 +376,6 @@ export declare class ChatReplyConfig {
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
 }
 
-export declare class ChatReplyEnergyComponents {
-  cpu: number
-  gpu: number
-  ane: number
-  dram: number
-  constructor(cpu: number, gpu: number, ane: number, dram: number)
-}
-
-export declare class ChatReplyEnergyTotal {
-  total: number
-  constructor(total: number)
-}
-
 export declare class ChatReplyJoulesPerTokenComponents {
   cpu: number
   gpu: number
@@ -418,9 +405,9 @@ export declare class ChatReplyStats {
   tokensCountOutput?: number
   memoryUsedBytes?: number
   speculatorStats?: ChatReplySpeculatorStats
-  inputEnergy?: ChatReplyEnergy
-  outputEnergy?: ChatReplyEnergy
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, inputEnergy?: ChatReplyEnergy, outputEnergy?: ChatReplyEnergy)
+  inputEnergy?: ReplyEnergy
+  outputEnergy?: ReplyEnergy
+  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, inputEnergy?: ReplyEnergy, outputEnergy?: ReplyEnergy)
   get tokensCount(): number | null
   get totalJoules(): number | null
   get inputJoulesPerToken(): ChatReplyJoulesPerToken | null
@@ -566,7 +553,8 @@ export declare class DecisionStats {
   tokensCount: number
   prefillDuration: number
   totalDuration: number
-  constructor(tokensCount: number, prefillDuration: number, totalDuration: number)
+  energy?: ReplyEnergy
+  constructor(tokensCount: number, prefillDuration: number, totalDuration: number, energy?: ReplyEnergy)
 }
 
 export declare class Feature {
@@ -762,6 +750,19 @@ export declare class PcmBatch {
   saveAsWav(path: string): void
 }
 
+export declare class ReplyEnergyComponents {
+  cpu: number
+  gpu: number
+  ane: number
+  dram: number
+  constructor(cpu: number, gpu: number, ane: number, dram: number)
+}
+
+export declare class ReplyEnergyTotal {
+  total: number
+  constructor(total: number)
+}
+
 export declare class Repository {
   identifier: string
   commitHash?: string
@@ -901,9 +902,6 @@ export interface ChatMessageMetadata {
   values: Record<string, Value>
 }
 
-export type ChatReplyEnergy =
-  ChatReplyEnergyTotal | ChatReplyEnergyComponents
-
 export declare const enum ChatReplyFinishReason {
   Stop = 'Stop',
   Length = 'Length',
@@ -980,6 +978,9 @@ export declare const enum ReasoningEffort {
   High = 'High',
   XHigh = 'XHigh'
 }
+
+export type ReplyEnergy =
+  ReplyEnergyTotal | ReplyEnergyComponents
 
 export type SamplingMethod =
   SamplingMethodGreedy | SamplingMethodStochastic

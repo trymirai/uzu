@@ -13,7 +13,7 @@ use tokio::fs;
 use uzu::{
     engine::{Engine, EngineConfig},
     types::session::{
-        chat::ChatReplyEnergy,
+        chat::ReplyEnergy,
         decision::{DecisionInput, DecisionResult},
     },
 };
@@ -45,7 +45,7 @@ pub struct DecisionBenchResult {
     pub prefill_duration: f64,
     pub total_duration: f64,
     pub prefill_tokens_per_second: Option<f64>,
-    pub energy: Option<ChatReplyEnergy>,
+    pub energy: Option<ReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub results: IndexMap<String, DecisionResult>,
 }
@@ -94,7 +94,7 @@ pub async fn run(
             .iter()
             .map(|result| result.stats.energy.clone())
             .collect::<Option<Vec<_>>>()
-            .and_then(|energy| energy.into_iter().reduce(ChatReplyEnergy::add));
+            .and_then(|energy| energy.into_iter().reduce(ReplyEnergy::add));
         let joules_per_token =
             energy.as_ref().and_then(|energy| (tokens_count > 0).then(|| energy.total() / tokens_count as f64));
 
@@ -131,7 +131,7 @@ pub async fn run(
     let prefill_tokens_per_second_list =
         results.iter().filter_map(|result| result.prefill_tokens_per_second).collect::<Vec<f64>>();
     let energy_joules_list =
-        results.iter().filter_map(|result| result.energy.as_ref().map(ChatReplyEnergy::total)).collect::<Vec<f64>>();
+        results.iter().filter_map(|result| result.energy.as_ref().map(ReplyEnergy::total)).collect::<Vec<f64>>();
     let joules_per_token_list = results.iter().filter_map(|result| result.joules_per_token).collect::<Vec<f64>>();
 
     let prefill_duration_metric = calculate_metric(&prefill_duration_list);

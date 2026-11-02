@@ -10,7 +10,7 @@ use uzu::{
     types::{
         basic::SamplingMethod,
         model::ModelAccessibility,
-        session::chat::{ChatConfig, ChatReplyConfig, ChatReplyEnergy},
+        session::chat::{ChatConfig, ChatReplyConfig, ReplyEnergy},
     },
 };
 use uzu_engine::VERSION;
@@ -183,6 +183,6 @@ impl BenchRunner {
     }
 }
 
-fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
+fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ReplyEnergy>) -> Option<ReplyEnergy> {
     energy.into_iter().cloned().reduce(|total, energy| total + energy)
 }

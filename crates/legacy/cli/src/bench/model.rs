@@ -3,7 +3,7 @@ use rocket::serde::{Deserialize, Serialize};
 use sysinfo::System;
 use uzu::types::{
     basic::ReasoningEffort,
-    session::chat::{ChatMessage, ChatReply, ChatReplyEnergy, ChatRole},
+    session::chat::{ChatMessage, ChatReply, ChatRole, ReplyEnergy},
 };
 
 use crate::{
@@ -129,8 +129,8 @@ pub struct BenchResult {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
-    pub input_energy: Option<ChatReplyEnergy>,
-    pub output_energy: Option<ChatReplyEnergy>,
+    pub input_energy: Option<ReplyEnergy>,
+    pub output_energy: Option<ReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
