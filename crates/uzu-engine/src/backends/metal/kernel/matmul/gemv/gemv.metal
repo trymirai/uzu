@@ -65,7 +65,8 @@ CONSTRAINT(
     ((B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant ||
       B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) &&
      BITS == 4 && GROUP_SIZE != 0) ||
-    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE != 0))
+    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && GROUP_SIZE != 0 &&
+     (BITS == 8 || (BITS == 4 && INPUT_ROW_TILE == 1 && GROUP_SIZE == 64 && AT == "bfloat" && DT == "bfloat"))))
 CONSTRAINT(INPUT_ROW_TILE == 1 || GEMV_BATCHED_INPUT)
 CONSTRAINT(
     GEMV_FULL_PRECISION_TILE ||
