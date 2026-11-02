@@ -198,6 +198,11 @@ impl<B: Backend> Embedding<B> {
                 output,
                 ..
             } => {
+                if gather_indices.is_some() && output.has_output_hadamard_factors() {
+                    return Err(EmbeddingError::UnsupportedConfiguration(
+                        "gathered readout cannot apply output-Hadamard factors, which mix blocks of adjacent output rows and take their signs by output position".into(),
+                    ));
+                }
                 let gather = gather_indices.map(|indices| Gather {
                     indices,
                     output_dim,

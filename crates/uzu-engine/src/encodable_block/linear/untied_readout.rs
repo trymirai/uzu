@@ -9,8 +9,12 @@ use crate::{
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
-    encodable_block::linear::{
-        Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+    encodable_block::{
+        embedding_table::read_output_signs,
+        linear::{
+            Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError,
+            input_rht::InputRht,
+        },
     },
     safetensors::ParameterTree,
 };
@@ -32,7 +36,8 @@ impl<B: Backend> UntiedReadout<B> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-            incoherence_processing_mode: IncoherenceProcessingMode::Input,
+            incoherence_processing_mode:
+                mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
             ..
         }) = spec
         else {
@@ -45,6 +50,11 @@ impl<B: Backend> UntiedReadout<B> {
             });
         };
 
+        let output_factors = if mode == IncoherenceProcessingMode::InputOutput {
+            Some(read_output_signs(tree, vocab_size).await?)
+        } else {
+            None
+        };
         let mut linear = LinearMatmul::load(
             model_dim,
             vocab_size,
@@ -52,7 +62,7 @@ impl<B: Backend> UntiedReadout<B> {
             data_type,
             data_type,
             *quantization_spec,
-            None,
+            output_factors,
             &tree.subtree("quantized"),
             None,
             context,
@@ -72,6 +82,10 @@ impl<B: Backend> UntiedReadout<B> {
             linear,
             input_rht: Some(input_rht),
         })
+    }
+
+    pub fn has_output_hadamard_factors(&self) -> bool {
+        self.linear.has_output_hadamard_factors()
     }
 
     pub fn encode(

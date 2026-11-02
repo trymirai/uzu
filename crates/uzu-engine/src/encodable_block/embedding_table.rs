@@ -229,8 +229,8 @@ async fn load_d4s4<B: Backend>(
 
 pub(super) async fn read_output_signs<B: Backend>(
     tree: &ParameterTree<'_, B>,
-    embedding_dim: u32,
-) -> Result<B::GlobalGpuBuffer, EmbeddingTableError<B>> {
+    output_dim: u32,
+) -> Result<B::GlobalGpuBuffer, ParameterLoaderError<B>> {
     let signs = tree.subtree("incoherence_signs");
-    Ok(signs.read_buffer("output_signs", &[embedding_dim], DataType::I32).await?)
+    signs.read_buffer("output_signs", &[output_dim], DataType::I32).await
 }

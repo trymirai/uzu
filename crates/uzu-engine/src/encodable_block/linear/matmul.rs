@@ -130,6 +130,10 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(self.prepared_activation_format)
     }
 
+    pub(super) fn has_output_hadamard_factors(&self) -> bool {
+        self.output_hadamard_factors.is_some()
+    }
+
     pub(super) fn encode_with_a(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
