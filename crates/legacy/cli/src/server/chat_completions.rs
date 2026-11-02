@@ -230,12 +230,20 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     }
 }
 
+/// OpenAI's `developer` message is its system message for newer models; the
+/// engine's developer role is the slot for the tool declarations instead.
+fn oai_role(role: &str) -> ChatRole {
+    if role == "developer" {
+        return ChatRole::System {};
+    }
+    ChatRole::from_str(role).unwrap_or(ChatRole::User {})
+}
+
 pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
         .map(|message| {
-            let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
-            let mut chat_message = ChatMessage::for_role(role);
+            let mut chat_message = ChatMessage::for_role(oai_role(&message.role));
             // Block order matches how the session stores generated replies
             // (reasoning, then text, then tool calls) so a client that echoes
             // reasoning back keeps the message prefix intact.

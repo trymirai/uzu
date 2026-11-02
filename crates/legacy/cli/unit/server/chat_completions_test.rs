@@ -115,6 +115,29 @@ fn reasoning_effort_merges_into_leading_system_message() {
 }
 
 #[test]
+fn developer_role_is_the_system_message() {
+    let messages = to_chat_messages(
+        &request(r#"{"messages":[{"role":"developer","content":"be brief"},{"role":"user","content":"hi"}]}"#).messages,
+    );
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].role, ChatRole::System {});
+    assert_eq!(messages[0].text().as_deref(), Some("be brief"));
+    assert_eq!(messages[1].role, ChatRole::User {});
+}
+
+#[test]
+fn reasoning_effort_merges_into_leading_developer_message() {
+    let messages = messages_with_support(
+        r#"{"messages":[{"role":"developer","content":"be brief"},{"role":"user","content":"hi"}],"reasoning_effort":"high"}"#,
+        any_levels(),
+    );
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].role, ChatRole::System {});
+    assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::High));
+    assert_eq!(messages[0].text().as_deref(), Some("be brief"));
+}
+
+#[test]
 fn reasoning_effort_default_emits_no_system_message() {
     for body in [
         r#"{"messages":[{"role":"user","content":"hi"}]}"#,
