@@ -238,6 +238,32 @@ async fn failures(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::
 
 #[rstest]
 #[case::universal(DownloadManagerType::Universal)]
+#[tokio::test(flavor = "multi_thread")]
+async fn download_error_preserves_resume_artifact(
+    #[case] kind: DownloadManagerType
+) -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+
+    let dir = tempfile::tempdir()?;
+    let destination = dir.path().join("file.bin");
+    let artifact = artifact_path(&destination, "part");
+    tokio::fs::write(&artifact, b"partial").await?;
+
+    let manager = manager(kind);
+    let task =
+        manager.download_task(file_request(&format!("{}/file.bin", server.uri()), &destination, Some(100))).await?;
+    let mut progress = task.progress();
+    task.download().await?;
+
+    let state = wait_for_state(&task, &mut progress, |s| matches!(s.phase, DownloadPhase::Error { .. })).await;
+    assert_eq!(state.downloaded_bytes, b"partial".len() as i64);
+    assert_eq!(tokio::fs::read(&artifact).await?, b"partial");
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(DownloadManagerType::Universal)]
 #[cfg_attr(target_vendor = "apple", case::native(DownloadManagerType::Native))]
 #[tokio::test(flavor = "multi_thread")]
 async fn declared_size_must_match(#[case] kind: DownloadManagerType) -> Result<(), Box<dyn std::error::Error>> {
