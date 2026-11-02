@@ -11,6 +11,7 @@ use crate::{
     configs::{Paths, PlatformsConfig, WorkspaceManifest},
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
+        WasmLanguageBackend,
     },
     sync::run_sync,
     types::{Command, Language},
@@ -57,5 +58,6 @@ fn backend_for_language(
         Language::Python => Box::new(PythonLanguageBackend::new(config)),
         Language::Swift => Box::new(SwiftLanguageBackend::new(config)),
         Language::TypeScript => Box::new(TypeScriptLanguageBackend::new(config)),
+        Language::Wasm => Box::new(WasmLanguageBackend::new(config)),
     }
 }

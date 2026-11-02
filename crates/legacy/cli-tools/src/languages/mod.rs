@@ -3,6 +3,7 @@ mod rust;
 mod swift;
 mod swift_extensions;
 mod typescript;
+mod wasm;
 
 use std::path::Path;
 
@@ -13,9 +14,10 @@ pub use rust::RustLanguageBackend;
 pub use swift::SwiftLanguageBackend;
 pub use swift_extensions::generate_swift_extensions;
 pub use typescript::TypeScriptLanguageBackend;
+pub use wasm::WasmLanguageBackend;
 
 use crate::{
-    configs::PlatformsConfig,
+    configs::{HOST_TARGET, PlatformsConfig},
     types::{Configuration, Language},
 };
 
@@ -44,6 +46,10 @@ pub trait LanguageBackend {
 
     fn expects_prebuild_for_run(&self) -> bool {
         true
+    }
+
+    fn default_targets(&self) -> Vec<String> {
+        vec![HOST_TARGET.to_string()]
     }
 
     fn install(&self) -> Result<()> {

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
-use crate::types::Language;
+use crate::types::{Configuration, Language};
 
 pub struct Paths {
     pub manifest_path: PathBuf,
@@ -37,6 +37,14 @@ impl Paths {
         self.target_path().join("wheels")
     }
 
+    pub fn target_profile_path(
+        &self,
+        target: &str,
+        configuration: Configuration,
+    ) -> PathBuf {
+        self.target_path().join(target).join(configuration.name())
+    }
+
     pub fn artifacts_path(&self) -> PathBuf {
         self.target_path().join("cli-tools")
     }
@@ -59,6 +67,10 @@ impl Paths {
 
     pub fn workspace_manifest_path(&self) -> PathBuf {
         self.root_path.join("Cargo.toml")
+    }
+
+    pub fn cargo_lock_path(&self) -> PathBuf {
+        self.root_path.join("Cargo.lock")
     }
 
     pub fn bindings_path(&self) -> PathBuf {

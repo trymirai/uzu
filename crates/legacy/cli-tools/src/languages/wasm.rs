@@ -1,0 +1,69 @@
+use anyhow::{Result, anyhow};
+
+use crate::{
+    configs::{ALL_TARGET, CargoLock, Paths, PlatformsConfig},
+    languages::{LanguageBackend, LanguageBackendTarget},
+    types::{Command, Configuration, Language},
+};
+
+pub struct WasmLanguageBackend {
+    config: PlatformsConfig,
+}
+
+impl WasmLanguageBackend {
+    pub fn new(config: PlatformsConfig) -> Self {
+        Self {
+            config,
+        }
+    }
+
+    fn check_wasm_bindgen(&self) -> Result<()> {
+        let required_version = CargoLock::load()?.package_version("wasm-bindgen")?;
+        let install_hint =
+            format!("Install it with: cargo install wasm-bindgen-cli --version {required_version} --locked");
+        let (output, _) = Command::wasm_bindgen_version()
+            .output()
+            .map_err(|_| anyhow!("wasm-bindgen-cli is not installed. {install_hint}"))?;
+        let installed_version = output.split_whitespace().nth(1);
+        if installed_version != Some(required_version.as_str()) {
+            return Err(anyhow!(
+                "wasm-bindgen-cli {required_version} is required (matches the `wasm-bindgen` crate in Cargo.lock), found `{output}`. {install_hint}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl LanguageBackend for WasmLanguageBackend {
+    fn config(&self) -> PlatformsConfig {
+        self.config.clone()
+    }
+
+    fn language(&self) -> Language {
+        Language::Wasm
+    }
+
+    fn default_targets(&self) -> Vec<String> {
+        vec![ALL_TARGET.to_string()]
+    }
+
+    fn build_targets(
+        &self,
+        configuration: Configuration,
+        targets: Vec<LanguageBackendTarget>,
+    ) -> Result<()> {
+        self.check_wasm_bindgen()?;
+
+        let paths = Paths::new()?;
+        let output_path = paths.bindings_for_language_path(self.language());
+        for target in targets {
+            Command::cargo_build(paths.main_crate.clone(), target.name.clone(), target.features.clone(), configuration)
+                .with_envs(self.config.required_envs_for_target(target.name.clone())?)
+                .run()?;
+            let wasm_path =
+                paths.target_profile_path(&target.name, configuration).join(format!("{}.wasm", paths.main_crate));
+            Command::wasm_bindgen(wasm_path, output_path.clone(), paths.main_crate.clone()).run()?;
+        }
+        Ok(())
+    }
+}

@@ -468,6 +468,25 @@ impl Command {
 }
 
 impl Command {
+    pub fn wasm_bindgen_version() -> Self {
+        Self::new("wasm-bindgen").with_argument("--version")
+    }
+
+    pub fn wasm_bindgen(
+        input_path: PathBuf,
+        output_path: PathBuf,
+        output_name: String,
+    ) -> Self {
+        Self::new("wasm-bindgen")
+            .with_argument(&input_path.to_string_lossy())
+            .with_arguments(vec!["--target".to_string(), "web".to_string()])
+            .with_arguments(vec!["--out-dir".to_string(), output_path.to_string_lossy().to_string()])
+            .with_arguments(vec!["--out-name".to_string(), output_name])
+            .with_argument("--typescript")
+    }
+}
+
+impl Command {
     pub fn git_status_porcelain() -> Self {
         Self::new("git").with_argument("status").with_argument("--porcelain")
     }
