@@ -13,9 +13,12 @@ use crate::{
             buffer::CpuBufferExt,
             command_buffer::CpuCommandBufferEncoding,
             context::CpuContext,
-            kernel::matmul::{
-                MatmulCpuError,
-                reference::{WeightData, load, store},
+            kernel::{
+                dequant::{dequantize_weight, read_packed_code, read_zero_point},
+                matmul::{
+                    MatmulCpuError,
+                    reference::{WeightData, load, store},
+                },
             },
         },
     },
@@ -225,47 +228,34 @@ impl MatmulKernel for MatmulCpuKernel {
                                     group_size,
                                     signed_codes,
                                 } => {
-                                    let pack_factor = 32 / *bits;
                                     let weight_linear_index = b_col * k_u + inner;
-                                    let word_index = weight_linear_index / pack_factor;
-                                    let code_index_in_word = weight_linear_index % pack_factor;
-                                    let bit_offset = code_index_in_word * *bits;
-                                    let weights_words = weights.as_ptr() as *const u32;
-                                    let word = weights_words.add(word_index).read_unaligned();
-                                    let code_mask = (1u32 << bits) - 1;
-                                    let mut weight_code = ((word >> bit_offset) & code_mask) as u8;
-                                    if *signed_codes {
-                                        weight_code ^= 1u8 << (bits - 1);
-                                    }
-                                    let quantized_value = f32::from(weight_code);
                                     let group_index = inner / group_size;
                                     let metadata_index = b_col * scale_strides.output_stride as usize
                                         + group_index * scale_strides.group_stride as usize;
                                     let scale = load(scales.as_ptr(), weights_data_type, metadata_index);
-                                    let midpoint = (1u32 << (bits - 1)) as f32;
                                     let zero_point = zero_points.as_ref().map(|(zp, strides)| {
                                         let zero_point_index = b_col * strides.output_stride as usize
                                             + group_index * strides.group_stride as usize;
-                                        if *bits == 4 {
-                                            let byte_index = zero_point_index / 2;
-                                            let byte_value = *zp.as_ptr().add(byte_index);
-                                            if zero_point_index.is_multiple_of(2) {
-                                                (byte_value & 0x0F) as f32
-                                            } else {
-                                                ((byte_value >> 4) & 0x0F) as f32
-                                            }
-                                        } else {
-                                            *zp.as_ptr().add(zero_point_index) as f32
-                                        }
+                                        read_zero_point(zp.as_ptr(), zero_point_index, *bits)
                                     });
-                                    let bias_term = if let Some(zp) = zero_point {
-                                        -scale * zp
-                                    } else if let Some(b) = biases {
-                                        load(b.as_ptr(), weights_data_type, metadata_index)
+                                    if let Some(b) = biases {
+                                        let mut code = read_packed_code(weights.as_ptr() as *const u32, weight_linear_index, *bits);
+                                        if *signed_codes {
+                                            code ^= 1u8 << (bits - 1);
+                                        }
+                                        let quantized_value = f32::from(code);
+                                        let bias_term = load(b.as_ptr(), weights_data_type, metadata_index);
+                                        scale * quantized_value + bias_term
                                     } else {
-                                        -scale * midpoint
-                                    };
-                                    scale * quantized_value + bias_term
+                                        dequantize_weight(
+                                            weights.as_ptr() as *const u32,
+                                            weight_linear_index,
+                                            *bits,
+                                            *signed_codes,
+                                            scale,
+                                            zero_point,
+                                        )
+                                    }
                                 },
                             };
                             accumulator += a_value * b_value;

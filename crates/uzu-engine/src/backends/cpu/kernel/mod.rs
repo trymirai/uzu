@@ -5,6 +5,7 @@ use crate::backends::{
 
 mod activation;
 pub(crate) mod activation_transform;
+pub(crate) mod dequant;
 mod attention;
 mod convolution;
 mod embedding;
