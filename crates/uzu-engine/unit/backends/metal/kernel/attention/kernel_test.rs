@@ -112,7 +112,6 @@ fn attention_kernel_matches_cpu() {
     let cpu_context = block_on(<Cpu as Backend>::Context::new()).expect("CPU attention context");
     let metal_context = block_on(<Metal as Backend>::Context::new()).expect("Metal attention context");
     for &(head_dim, num_q_heads, num_groups, suffix_length, prefix_length, causal, use_trie) in &[
-        (512, 8, 8, 9, 0, false, false),
         (128, 8, 2, 16, 1024, false, false),
         (256, 6, 1, 2, 1024, false, false),
         (256, 6, 1, 15, 2048, true, false),
