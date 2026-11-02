@@ -215,11 +215,7 @@ class SplashEngine(InferenceEngine):
         # A benchmark needs fresh snapshots around its single request.
         event = self.runtime.status()
         snapshot = json.loads(event.json)
-        if (
-            event.schema_version != self._wire.STATUS_SCHEMA_VERSION
-            or not isinstance(snapshot, dict)
-            or snapshot.get("schema_version") != self._wire.STATUS_SCHEMA_VERSION
-        ):
+        if not isinstance(snapshot, dict) or snapshot.get("schema_version") != self._wire.STATUS_SCHEMA_VERSION:
             raise RuntimeError("Splash status does not match the current schema")
         return snapshot
 
@@ -247,14 +243,11 @@ class SplashEngine(InferenceEngine):
         next_memory_sample = time.monotonic() + MEMORY_SAMPLE_INTERVAL
         chunks = []
         submitted = False
-        submission_complete = False
         terminal = False
 
         try:
-            submitted = self.backend.submit(job)
-            submission_complete = True
-            if not submitted:
-                raise RuntimeError("Splash request capacity is exhausted")
+            self.backend.submit(job)
+            submitted = True
 
             while True:
                 remaining = job.deadline - time.monotonic()
@@ -291,9 +284,9 @@ class SplashEngine(InferenceEngine):
                 elif kind not in (None, "start", "progress"):
                     raise RuntimeError(f"Unexpected Splash backend event: {kind}")
         except BaseException as error:
-            if not submission_complete:
+            if not submitted:
                 self.close()
-            elif submitted and not terminal:
+            elif not terminal:
                 self._cancel_and_drain(job, timed_out=isinstance(error, TimeoutError))
             raise
 
