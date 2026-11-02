@@ -3,15 +3,15 @@ import definitions;
 
 [[Variants("T", "float")]]
 [[Variants("MAX_TOP_K", "8")]]
-[[Public]] [[Kernel]] func MoeRouterTopK<T, let MAX_TOP_K: uint>(
+[[Public]] [[Kernel]] func MoeRouterTopK<T, let MAX_TOP_K: uint32_t>(
   StructuredBuffer<T> logits,
-  RWStructuredBuffer<uint> expert_ids,
+  RWStructuredBuffer<uint32_t> expert_ids,
   RWStructuredBuffer<float> expert_weights,
-  uint num_experts,
-  uint top_k,
-  uint batch_size,
-  [[Groups("batch_size")]] uint token_idx,
-  [[Threads("32")]] uint lane,
+  uint32_t num_experts,
+  uint32_t top_k,
+  uint32_t batch_size,
+  [[Groups("batch_size")]] uint32_t token_idx,
+  [[Threads("32")]] uint32_t lane,
 ) {
   // TODO
 }

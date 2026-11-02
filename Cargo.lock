@@ -6172,12 +6172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pollster"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
-
-[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10087,7 +10081,6 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "parking_lot",
- "pollster",
  "prettyplease 0.3.0",
  "proc-macro2",
  "proptest",

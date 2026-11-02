@@ -7,9 +7,9 @@ import generated.kv_cache_update;
   RWStructuredBuffer<T> in_place_keys,
   RWStructuredBuffer<T> in_place_values,
   [[Constant]] StructuredBuffer<Copy> copies,
-  uint copy_count,
-  uint element_dim,
-  [[Axis("element_dim", "256")]] uint element_idx,
+  uint32_t copy_count,
+  uint32_t element_dim,
+  [[Axis("element_dim", "256")]] uint32_t element_idx,
 ) {
   // TODO
 }
@@ -20,10 +20,10 @@ import generated.kv_cache_update;
   RWStructuredBuffer<BFloat16> in_place_k_scales,
   RWStructuredBuffer<BFloat16> in_place_v_scales,
   [[Constant]] StructuredBuffer<Copy> copies,
-  uint copy_count,
-  [[Specialize]] uint head_dim,
-  [[Specialize]] uint num_kv_heads,
-  [[Axis("num_kv_heads* head_dim", "256")]] uint element,
+  uint32_t copy_count,
+  [[Specialize]] uint32_t head_dim,
+  [[Specialize]] uint32_t num_kv_heads,
+  [[Axis("num_kv_heads* head_dim", "256")]] uint32_t element,
 ) {
   // TODO
 }

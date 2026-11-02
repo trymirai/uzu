@@ -4,15 +4,15 @@ import definitions;
 [[Variants("T", "float, BFloat16")]]
 [[Public]] [[Kernel]] func UnifiedSampling<T>(
   StructuredBuffer<T> logits,
-  RWStructuredBuffer<uint> output,
+  RWStructuredBuffer<uint32_t> output,
   [[Optional("is_stochastic")]] StructuredBuffer<uint64_t> seeds,
-  [[Optional("has_bitmask")]] StructuredBuffer<uint> bitmask,
+  [[Optional("has_bitmask")]] StructuredBuffer<uint32_t> bitmask,
   [[Optional("has_temperature")]] float temperature,
-  [[Optional("has_top_k")]] uint top_k,
+  [[Optional("has_top_k")]] uint32_t top_k,
   [[Optional("has_top_p")]] float top_p,
   [[Optional("has_min_p")]] float min_p,
-  uint vocab_size,
-  uint batch_size,
+  uint32_t vocab_size,
+  uint32_t batch_size,
   [[Specialize]] bool is_stochastic,
   [[Specialize]] bool has_bitmask,
   [[Specialize]] bool has_temperature,
@@ -20,8 +20,8 @@ import definitions;
   [[Specialize]] bool has_top_p,
   [[Specialize]] bool has_min_p,
   ThreadContext thread_context,
-  [[Groups("batch_size")]] uint batch_idx,
-  [[Threads("1024")]] uint thread_idx,
+  [[Groups("batch_size")]] uint32_t batch_idx,
+  [[Threads("1024")]] uint32_t thread_idx,
 ) {
   // TODO
 }

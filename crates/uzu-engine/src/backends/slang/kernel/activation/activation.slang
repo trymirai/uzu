@@ -6,10 +6,10 @@ import generated.activation_type;
 [[Public]] [[Kernel]] func Activation<T>(
   [[Optional("!in_place")]] StructuredBuffer<T> input,
   RWStructuredBuffer<T> output,
-  uint n,
+  uint32_t n,
   ActivationType act_type,
   [[Specialize]] bool in_place,
-  [[Axis("n", "256")]] uint tid,
+  [[Axis("n", "256")]] uint32_t tid,
 ) {
   // TODO
 }

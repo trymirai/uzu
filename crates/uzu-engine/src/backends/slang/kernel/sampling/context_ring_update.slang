@@ -2,11 +2,11 @@
 import definitions;
 
 [[Public]] [[Kernel]] func ContextRingUpdate(
-  StructuredBuffer<uint> input,
-  RWStructuredBuffer<uint> context_ring,
-  uint suffix_repetition_length,
-  uint input_length,
-  [[Threads("256")]] uint thread_index,
+  StructuredBuffer<uint32_t> input,
+  RWStructuredBuffer<uint32_t> context_ring,
+  uint32_t suffix_repetition_length,
+  uint32_t input_length,
+  [[Threads("256")]] uint32_t thread_index,
 ) {
   // TODO
 }
