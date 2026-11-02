@@ -9,7 +9,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
@@ -36,15 +36,17 @@ pub struct RHTLinearWrapper<B: Backend> {
     inner_linear: LinearMatmul<B>,
 }
 
-fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
-    matches!(
-        spec,
+fn input_rht_spec(spec: &AnyWeightMatrixSpec) -> Option<bool> {
+    match spec {
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            incoherence_block_size: Some(block_size),
-            incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+            incoherence_processing_mode:
+                mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
+            incoherence_kind: IncoherenceKind::Hadamard,
             ..
-        }) if *block_size == HADAMARD_TRANSFORM_BLOCK_SIZE
-    )
+        }) => Some(*mode == IncoherenceProcessingMode::InputOutput),
+        _ => None,
+    }
 }
 
 impl<B: Backend> RHTLinearWrapper<B> {
@@ -124,7 +126,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
     ) -> Result<Option<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>)>, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !has_input_output_rht(&spec) {
+        if input_rht_spec(&spec).is_none() {
             return Ok(None);
         }
 
@@ -165,17 +167,20 @@ impl<B: Backend> RHTLinearWrapper<B> {
     ) -> Result<(B::GlobalGpuBuffer, LinearMatmul<B>, ActivationFormat), RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !has_input_output_rht(&spec) {
-            return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
-        }
+        let output_rht = match input_rht_spec(&spec) {
+            Some(output_rht) if restore_output_basis || output_rht => output_rht,
+            _ => return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}"))),
+        };
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let rht_signs =
             weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?;
-        let output_factors = if restore_output_basis {
+        let output_factors = if output_rht && restore_output_basis {
             Some(weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?)
         } else {
-            weights_tree.ignore("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
+            if output_rht {
+                weights_tree.ignore("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
+            }
             None
         };
         let mut inner_linear = LinearMatmul::load(
