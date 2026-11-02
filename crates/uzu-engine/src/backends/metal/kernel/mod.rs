@@ -1,5 +1,8 @@
 use crate::backends::{
-    common::{Kernels, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
+    common::{
+        Kernels,
+        gpu_types::{hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, matmul::MXU_TILED_PREPARE_THREADS},
+    },
     metal::{
         Metal,
         buffer::MetalBufferExt,

@@ -74,8 +74,8 @@ VARIANTS(
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(BITS, 0, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 32, 64)
+VARIANTS(BITS, 0, 2, 4, 8)
+VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
@@ -95,7 +95,8 @@ CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 2 || BITS == 4)
+CONSTRAINT((BITS == 2) == (GROUP_SIZE == 128) && (BITS != 2 || A_IS_INT8))
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
     (TRANSPOSE_B &&
@@ -156,6 +157,7 @@ KERNEL(Gemm)(
     const GemmAlignment alignment SPECIALIZE,
     const bool signed_codes SPECIALIZE,
     const GemmBLayout gemm_b_layout SPECIALIZE,
+    const bool hoist_row_metadata SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
@@ -181,8 +183,15 @@ KERNEL(Gemm)(
       "kernel bindings and operand correction policy must agree"
   );
   const auto left_storage = operands::pack_left<LeftOperand, AT>(a, a_int8, a_scales, a_group_sums, a_packed_half);
-  const auto right_storage =
-      operands::pack_right<RightOperand, BT>(b, scales, biases, zero_points, signed_codes, gemm_b_layout);
+  const auto right_storage = operands::pack_right<RightOperand, BT>(
+      b,
+      scales,
+      biases,
+      zero_points,
+      signed_codes,
+      hoist_row_metadata,
+      gemm_b_layout
+  );
 
   if constexpr (USE_MXU) {
     using Core = MxuMmaCore<DT, GEMM_TILING, TRANSPOSE_B, LeftOperand, RightOperand>;

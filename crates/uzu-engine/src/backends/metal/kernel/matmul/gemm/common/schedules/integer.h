@@ -55,6 +55,7 @@ struct MetadataContext {
   uint left_group_count;
   uint right_group_count;
   uint right_scale_group_stride;
+  uint padded_output_count;
 };
 
 template <typename LeftOperand, typename RightOperand>
@@ -143,7 +144,7 @@ struct IntegerSchedule {
         uint right_scale_column_start = metadata_context.right_column_base + uint(right_column_offset);
         if constexpr (!ALIGNED_N) {
           right_scale_column_start =
-              clamp_group_output_column(right_scale_column_start, metadata_context.right_scale_group_stride);
+              clamp_group_output_column(right_scale_column_start, metadata_context.padded_output_count);
         }
         scales[tile_n] = *reinterpret_cast<const device ScaleVector*>(
             right.scales + right_group_index * metadata_context.right_scale_group_stride + right_scale_column_start
@@ -175,9 +176,9 @@ struct IntegerSchedule {
   }
 
   template <typename Core>
-  static constexpr bool prefetches_int4_chunks() {
+  static constexpr bool prefetches_packed_chunks() {
     return (Core::TILES_M == 1 || (Core::TILES_M == 2 && Core::TILES_N == 2 && CENTER_RIGHT_ZERO_POINTS)) &&
-           chunks_per_k_group<Core>() > 1 && RightOperand::BITS == 4;
+           chunks_per_k_group<Core>() > 1 && (RightOperand::BITS == 2 || RightOperand::BITS == 4);
   }
 
   template <typename Core, bool ALIGNED_M, bool ALIGNED_N>
@@ -238,26 +239,24 @@ struct IntegerSchedule {
   ) {
     GroupProducts<Core> group_product;
     group_product.clear();
-    if constexpr (prefetches_int4_chunks<Core>()) {
+    if constexpr (prefetches_packed_chunks<Core>()) {
       for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
         auto left_tile = left_cursor.load(uint(chunk));
         auto right_tile = right_cursor.decode(packed_right_chunks[chunk]);
         uzu::matmul::fragment_mma(group_product, left_tile, right_tile);
-        left_cursor.advance();
-        right_cursor.advance();
       });
     } else {
       decltype(right_cursor.load(0u)) right_tiles[CHUNKS_PER_K_GROUP];
       for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
         right_tiles[chunk] = right_cursor.load(uint(chunk));
-        right_cursor.advance();
       });
       for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
         auto left_tile = left_cursor.load(uint(chunk));
         uzu::matmul::fragment_mma(group_product, left_tile, right_tiles[chunk]);
-        left_cursor.advance();
       });
     }
+    left_cursor.advance(CHUNKS_PER_K_GROUP);
+    right_cursor.advance(CHUNKS_PER_K_GROUP);
     return group_product;
   }
 
@@ -266,10 +265,19 @@ struct IntegerSchedule {
       thread typename Core::AccumFragment& accumulator,
       thread GroupProducts<Core>& group_product,
       const thread LeftMetadata<Core, ALIGNED_M>& left_metadata,
-      const thread RightMetadata<Core, ALIGNED_N>& right_metadata
+      const thread RightMetadata<Core, ALIGNED_N>& right_metadata,
+      thread float (&row_correction_sums)[LeftMetadata<Core, ALIGNED_M>::LEFT_VALUE_COUNT],
+      const bool hoist_row_metadata
   ) {
     using Ops = typename Core::FragmentOps;
 
+    if constexpr (HAS_BIAS) {
+      if (hoist_row_metadata) {
+        for_each_static_index<int(LeftMetadata<Core, ALIGNED_M>::LEFT_VALUE_COUNT)>([&](const ushort index) {
+          row_correction_sums[index] += left_metadata.group_corrections[index];
+        });
+      }
+    }
     for_each_fragment(
         accumulator,
         group_product,
@@ -278,6 +286,11 @@ struct IntegerSchedule {
               [&](const ushort element) {
                 const ushort right_column = element % Ops::THREAD_ELEMENT_COLS;
                 const ushort left_row = tile_m * Ops::THREAD_ELEMENT_ROWS + element / Ops::THREAD_ELEMENT_COLS;
+                if (hoist_row_metadata) {
+                  accumulated[element] =
+                      fma(left_metadata.scales[left_row], float(group_product_value[element]), accumulated[element]);
+                  return;
+                }
                 const float right_scale = float(right_metadata.scales[tile_n][right_column]);
                 accumulated[element] =
                     fma(left_metadata.scales[left_row] * right_scale,
@@ -293,6 +306,28 @@ struct IntegerSchedule {
           );
         }
     );
+  }
+
+  template <typename Core, bool ALIGNED_N>
+  static METAL_FUNC UZU_ALWAYS_INLINE void apply_row_metadata(
+      thread typename Core::AccumFragment& accumulator,
+      const thread RightMetadata<Core, ALIGNED_N>& right_metadata,
+      const thread float (&row_correction_sums)[Core::TILES_M * Core::FragmentOps::THREAD_ELEMENT_ROWS]
+  ) {
+    using Ops = typename Core::FragmentOps;
+    for_each_static_index<int(Core::TILES_N)>([&](const ushort tile_n) {
+      for_each_static_index<int(Core::TILES_M)>([&](const ushort tile_m) {
+        thread auto& accumulated = accumulator.fragment_at(tile_m, tile_n);
+        for_each_static_index<int(Ops::THREAD_ELEMENT_ROWS) * int(Ops::THREAD_ELEMENT_COLS)>([&](const ushort element) {
+          const ushort right_column = element % Ops::THREAD_ELEMENT_COLS;
+          const ushort left_row = tile_m * Ops::THREAD_ELEMENT_ROWS + element / Ops::THREAD_ELEMENT_COLS;
+          accumulated[element] =
+              fma(float(right_metadata.bias_offsets[tile_n][right_column]),
+                  row_correction_sums[left_row],
+                  float(right_metadata.scales[tile_n][right_column]) * accumulated[element]);
+        });
+      });
+    });
   }
 
   template <typename Core, bool ALIGNED_M, bool ALIGNED_N>
@@ -333,6 +368,8 @@ struct IntegerSchedule {
         uint(params->K) / uint(LeftOperand::GROUP_SIZE),
         uint(params->K) / RIGHT_GROUP_SIZE,
         params->scale_group_stride,
+        (uint(params->N) + uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT - 1) &
+            ~(uzu::matmul::QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT - 1),
     };
     const uint first_right_group = tile.k_offset / RIGHT_GROUP_SIZE;
 
@@ -341,14 +378,21 @@ struct IntegerSchedule {
     typename Core::AccumFragment accumulator;
     accumulator.clear();
 
+    const bool hoist_row_metadata = right_storage.hoist_row_metadata;
+    float row_correction_sums[LeftMetadata<Core, ALIGNED_M>::LEFT_VALUE_COUNT] = {};
+
     const int right_group_count = int(params->aligned_inner_iterations);
     constexpr int CHUNKS_PER_K_GROUP = chunks_per_k_group<Core>();
-    constexpr bool PREFETCH_INT4_CHUNKS = prefetches_int4_chunks<Core>();
+    constexpr bool PREFETCH_PACKED_CHUNKS = prefetches_packed_chunks<Core>();
+
+    if (hoist_row_metadata) {
+      right_metadata.load(right_storage, metadata_context, first_right_group);
+    }
 
     METAL_PRAGMA_NO_UNROLL
     for (int right_group_index = 0; right_group_index < right_group_count; ++right_group_index) {
       typename decltype(right_cursor)::PackedChunk packed_right_chunks[CHUNKS_PER_K_GROUP];
-      if constexpr (PREFETCH_INT4_CHUNKS) {
+      if constexpr (PREFETCH_PACKED_CHUNKS) {
         for_each_static_index<CHUNKS_PER_K_GROUP>([&](const ushort chunk) {
           packed_right_chunks[chunk] = right_cursor.fetch(uint(chunk));
         });
@@ -358,9 +402,11 @@ struct IntegerSchedule {
       right_cursor.begin_k_group(right_group_offset);
       auto load_metadata = [&]() {
         left_metadata.load(left_storage, metadata_context, tile.k_offset + right_group_offset);
-        right_metadata.load(right_storage, metadata_context, first_right_group + uint(right_group_index));
+        if (!hoist_row_metadata) {
+          right_metadata.load(right_storage, metadata_context, first_right_group + uint(right_group_index));
+        }
       };
-      if constexpr (!PREFETCH_INT4_CHUNKS) {
+      if constexpr (!PREFETCH_PACKED_CHUNKS) {
         load_metadata();
       }
       GroupProducts<Core> group_product;
@@ -379,12 +425,24 @@ struct IntegerSchedule {
       } else {
         group_product = multiply_k_group<Core>(left_cursor, right_cursor, packed_right_chunks);
       }
-      if constexpr (PREFETCH_INT4_CHUNKS) {
+      if constexpr (PREFETCH_PACKED_CHUNKS) {
         load_metadata();
       }
-      accumulate_group<Core, ALIGNED_M, ALIGNED_N>(accumulator, group_product, left_metadata, right_metadata);
+      accumulate_group<Core, ALIGNED_M, ALIGNED_N>(
+          accumulator,
+          group_product,
+          left_metadata,
+          right_metadata,
+          row_correction_sums,
+          hoist_row_metadata
+      );
     }
 
+    if constexpr (HAS_BIAS) {
+      if (hoist_row_metadata) {
+        apply_row_metadata<Core, ALIGNED_N>(accumulator, right_metadata, row_correction_sums);
+      }
+    }
     return accumulator;
   }
 };

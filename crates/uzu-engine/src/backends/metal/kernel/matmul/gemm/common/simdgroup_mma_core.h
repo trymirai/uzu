@@ -166,6 +166,8 @@ struct SimdgroupMmaCore {
       threadgroup_barrier(mem_flags::mem_device);
       apply_output_random_hadamard_transform(
           d,
+          params->leading_dimension_d,
+          d,
           rht_factors_block,
           bias_block,
           needs_bias,
@@ -193,9 +195,10 @@ struct SimdgroupMmaCore {
   ) {
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_row = thread_context.threadgroup_position.y;
-    const uint2 tile = tile_id(uint2(thread_context.threadgroup_position.x, tile_row), params);
+    constexpr bool MAY_USE_MORTON = !Right::QUANTIZED;
+    const uint2 tile = tile_id<MAY_USE_MORTON>(uint2(thread_context.threadgroup_position.x, tile_row), params);
     const auto geometry = ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile, params);
-    if (geometry.out_of_bounds) {
+    if (MAY_USE_MORTON && geometry.out_of_bounds) {
       return;
     }
 

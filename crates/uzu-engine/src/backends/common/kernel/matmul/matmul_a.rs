@@ -18,8 +18,8 @@ impl Int8CodeLayout {
 
     pub const fn for_right_bits(bits: u32) -> Option<Self> {
         match bits {
+            2 | 8 => Some(Self::Sequential),
             4 => Some(Self::GroupedByNibble),
-            8 => Some(Self::Sequential),
             _ => None,
         }
     }

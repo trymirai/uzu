@@ -7,6 +7,7 @@
 #include "../../../common/fragment.h"
 #include "../../../common/quant_pack.h"
 #include "../../../common/quant_unpack.h"
+#include "../mxu_tiled_layout.h"
 #include "../schedules/tile_context.h"
 
 using namespace metal;
@@ -30,6 +31,11 @@ static METAL_FUNC void for_each_fragment_row(Visitor visitor) {
     }
   }
 }
+
+template <bool ALIGNED>
+static METAL_FUNC short clamp_to_live_row(const short row_offset, const short row_limit) {
+  return ALIGNED ? row_offset : min(row_offset, short(row_limit - 1));
+}
 } // namespace
 
 template <typename Fragment, bool ALIGNED, bool CODES_GROUPED_BY_NIBBLE>
@@ -42,11 +48,10 @@ load_int8_tile(const device int8_t* src, const int row_stride, const short simdg
     const device int8_t* base = src + int(position.y) * row_stride + int(get_pack_factor<W4_BITS>()) * int(position.x);
     const short row_limit = simdgroup_limit - position.y;
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
-      vec<uint, Fragment::COL_FRAGMENTS> packed_chunk(0u);
-      if (ALIGNED || row_offset < row_limit) {
-        packed_chunk =
-            *reinterpret_cast<const device vec<uint, Fragment::COL_FRAGMENTS>*>(base + int(row_offset) * row_stride);
-      }
+      const vec<uint, Fragment::COL_FRAGMENTS> packed_chunk =
+          *reinterpret_cast<const device vec<uint, Fragment::COL_FRAGMENTS>*>(
+              base + int(clamp_to_live_row<ALIGNED>(row_offset, row_limit)) * row_stride
+          );
       METAL_PRAGMA_UNROLL
       for (ushort fragment_column = 0; fragment_column < Fragment::COL_FRAGMENTS; ++fragment_column) {
         reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, fragment_column))[row_slot] =
@@ -65,12 +70,10 @@ load_int8_tile(const device int8_t* src, const int row_stride, const short simdg
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
       METAL_PRAGMA_UNROLL
       for (ushort fragment_column = 0; fragment_column < Fragment::COL_FRAGMENTS; ++fragment_column) {
-        char4 codes(0);
-        if (ALIGNED || row_offset < row_limit) {
-          codes = *reinterpret_cast<const device packed_char4*>(
-              base + int(row_offset) * row_stride + int(fragment_column) * Ops::FRAGMENT_COLS
-          );
-        }
+        const char4 codes = *reinterpret_cast<const device packed_char4*>(
+            base + int(clamp_to_live_row<ALIGNED>(row_offset, row_limit)) * row_stride +
+            int(fragment_column) * Ops::FRAGMENT_COLS
+        );
         reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, fragment_column))[row_slot] =
             as_type<uint>(codes);
       }
@@ -93,11 +96,12 @@ struct Int8Cursor {
   GemmBLayout gemm_b_layout;
   uint chunk_stride;
 
-  METAL_FUNC Fragment load(const uint) const thread {
+  METAL_FUNC Fragment load(const uint chunk) const thread {
+    const device int8_t* chunk_address = address + chunk * chunk_stride;
     if (gemm_b_layout == GemmBLayout::MxuTiled) {
       Fragment tile;
-      const uint4 low = *reinterpret_cast<const device uint4*>(address);
-      const uint4 high = *reinterpret_cast<const device uint4*>(address + sizeof(uint4));
+      const uint4 low = *reinterpret_cast<const device uint4*>(chunk_address);
+      const uint4 high = *reinterpret_cast<const device uint4*>(chunk_address + sizeof(uint4));
       const uint words[8] = {low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w};
       for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short) {
         METAL_PRAGMA_UNROLL
@@ -109,25 +113,27 @@ struct Int8Cursor {
       return tile;
     }
     return load_int8_tile<Fragment, ALIGNED, CODES_GROUPED_BY_NIBBLE>(
-        address,
+        chunk_address,
         row_stride,
         simdgroup_limit,
         simd_lane_id
     );
   }
 
-  METAL_FUNC void advance() thread { address += chunk_stride; }
+  METAL_FUNC void advance(const uint chunks) thread { address += chunks * chunk_stride; }
 
   METAL_FUNC void begin_k_group(const uint) thread {}
 };
 
 template <typename Fragment, typename Operand, bool ALIGNED>
-struct W4Cursor {
+struct PackedCursor {
   using Ops = typename Fragment::FragmentOpsType;
+  UZU_CONST ushort BITS = Operand::BITS;
+  UZU_CONST uint CODE_MASK = ((1u << BITS) - 1) * 0x01010101u;
   UZU_CONST short BLOCK_K = short(Fragment::COL_FRAGMENTS * Ops::FRAGMENT_ROWS);
   UZU_CONST bool HAS_ZERO_POINTS = Operand::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant;
 
-  UZU_CONST uint CHUNK_BYTES = uint(BLOCK_K) * uint(get_bytes_per_pack<W4_BITS>()) / uint(get_pack_factor<W4_BITS>());
+  UZU_CONST uint CHUNK_BYTES = uint(BLOCK_K) * uint(get_bytes_per_pack<BITS>()) / uint(get_pack_factor<BITS>());
 
   struct PackedChunk {
     UZU_CONST ushort WORD_COUNT = Fragment::ROW_FRAGMENTS * Ops::THREAD_ELEMENT_ROWS;
@@ -150,6 +156,19 @@ struct W4Cursor {
 
   METAL_FUNC PackedChunk fetch(const uint chunk_index) const thread {
     if (gemm_b_layout == GemmBLayout::MxuTiled) {
+      if constexpr (BITS == 2) {
+        const device uint8_t* lane_vector = current + (chunk_index & ~1u) * chunk_stride;
+        const uint block_stride = MxuTiledLayout<BITS>::BLOCK_ROWS * uint(row_stride_bytes);
+        PackedChunk packed_chunk;
+        METAL_PRAGMA_UNROLL
+        for (ushort fragment_row = 0; fragment_row < Fragment::ROW_FRAGMENTS; ++fragment_row) {
+          const uint4 vector = *reinterpret_cast<const device uint4*>(lane_vector + fragment_row * block_stride);
+          const uint2 words = chunk_index % 2 ? vector.zw : vector.xy;
+          packed_chunk.words[PackedChunk::word_index(fragment_row, 0)] = words.x;
+          packed_chunk.words[PackedChunk::word_index(fragment_row, 1)] = words.y;
+        }
+        return packed_chunk;
+      }
       const uint4 words = *reinterpret_cast<const device uint4*>(current + chunk_index * chunk_stride);
       return {{words.x, words.y, words.z, words.w}};
     }
@@ -174,6 +193,14 @@ struct W4Cursor {
     for_each_fragment_row<Fragment>([&](ushort fragment_row, ushort row_slot, short row_offset) {
       const uint word =
           packed_chunk.words[PackedChunk::word_index(fragment_row, row_slot)] ^ (signed_codes ? W4_SIGN_MASK : 0u);
+      if constexpr (BITS == 2) {
+        METAL_PRAGMA_UNROLL
+        for (ushort fragment_column = 0; fragment_column < Fragment::COL_FRAGMENTS; ++fragment_column) {
+          reinterpret_cast<thread uint*>(&tile.fragment_at(fragment_row, fragment_column))[row_slot] =
+              (word >> (BITS * fragment_column)) & CODE_MASK;
+        }
+        return;
+      }
       uint low = word & W4_NIBBLE_MASK;
       uint high = (word >> W4_BITS) & W4_NIBBLE_MASK;
       if constexpr (HAS_ZERO_POINTS) {
@@ -197,9 +224,9 @@ struct W4Cursor {
     return tile;
   }
 
-  METAL_FUNC Fragment load(const uint) const thread { return decode(fetch(0)); }
+  METAL_FUNC Fragment load(const uint chunk) const thread { return decode(fetch(chunk)); }
 
-  METAL_FUNC void advance() thread { current += chunk_stride; }
+  METAL_FUNC void advance(const uint chunks) thread { current += chunks * chunk_stride; }
 
   METAL_FUNC void begin_k_group(const uint k_offset) thread {
     if constexpr (HAS_ZERO_POINTS) {
@@ -243,21 +270,18 @@ static METAL_FUNC auto make_right_cursor(
   const device uint8_t* current =
       source.codes + size_t(tile.block_col + tile.tile_col_offset) * size_t(row_stride_bytes) +
       size_t(tile.k_offset) * size_t(get_bytes_per_pack<Operand::BITS>()) / size_t(get_pack_factor<Operand::BITS>());
-  static_assert(Core::SIMDGROUP_BLOCK_N == 2 * Ops::FRAGMENT_ROWS, "the MxuTiled layout holds 32-row blocks");
-  const uint mxu_tiled_lane_bytes = Operand::BITS == 4 ? 16 : 32;
-  const uint mxu_tiled_chunk_bytes = METAL_SIMD_SIZE * mxu_tiled_lane_bytes;
+  using Layout = MxuTiledLayout<Operand::BITS>;
+  static_assert(Core::SIMDGROUP_BLOCK_N % Layout::BLOCK_ROWS == 0, "a simdgroup tile covers whole MxuTiled blocks");
   if (source.gemm_b_layout == GemmBLayout::MxuTiled) {
-    const uint chunk_count = uint(params->K) / uint(Core::SIMDGROUP_BLOCK_K);
-    const uint row_block = uint(tile.block_col + tile.tile_col_offset) / uint(Core::SIMDGROUP_BLOCK_N);
-    current =
-        source.codes +
-        (size_t(row_block) * chunk_count + tile.k_offset / uint(Core::SIMDGROUP_BLOCK_K)) * mxu_tiled_chunk_bytes +
-        thread_context.simd_lane_id * mxu_tiled_lane_bytes;
+    constexpr uint LANE_VECTOR_K = Layout::LANE_VECTOR_CHUNKS * Operand::MMA_BLOCK_K;
+    current = source.codes + size_t(tile.block_col + tile.tile_col_offset) * size_t(row_stride_bytes) +
+              size_t(tile.k_offset / LANE_VECTOR_K) * Layout::BLOCK_CHUNK_BYTES +
+              thread_context.simd_lane_id * Layout::LANE_BYTES;
   }
 
-  if constexpr (Operand::BITS == 4) {
-    static_assert(Core::TILES_K == get_pack_factor<Operand::BITS>(), "W4 requires two K fragments");
-    using Cursor = W4Cursor<Fragment, Operand, ALIGNED>;
+  if constexpr (Operand::BITS == 2 || Operand::BITS == 4) {
+    static_assert(Core::TILES_K == get_pack_factor<Operand::BITS>(), "packed codes need one K fragment per code");
+    using Cursor = PackedCursor<Fragment, Operand, ALIGNED>;
     const device uint8_t* zero_points = nullptr;
     const uint zero_point_group_stride_bytes = params->zero_point_group_stride / get_pack_factor<W4_BITS>();
     if constexpr (Cursor::HAS_ZERO_POINTS) {
@@ -273,10 +297,11 @@ static METAL_FUNC auto make_right_cursor(
         zero_points,
         zero_point_group_stride_bytes,
         source.gemm_b_layout,
-        source.gemm_b_layout == GemmBLayout::MxuTiled ? mxu_tiled_chunk_bytes : Cursor::CHUNK_BYTES
+        source.gemm_b_layout == GemmBLayout::MxuTiled ? Layout::BLOCK_CHUNK_BYTES / Layout::LANE_VECTOR_CHUNKS
+                                                      : Cursor::CHUNK_BYTES
     };
   } else {
-    static_assert(Operand::BITS == 8, "integer tile cursors support 4-bit and 8-bit codes");
+    static_assert(Operand::BITS == 8, "integer tile cursors support 2-bit, 4-bit and 8-bit codes");
     const device int8_t* origin_int8 = reinterpret_cast<const device int8_t*>(current);
     return Int8Cursor<Fragment, ALIGNED, false>{
         origin_int8,
@@ -284,7 +309,7 @@ static METAL_FUNC auto make_right_cursor(
         tile.simdgroup_limit_n,
         ushort(thread_context.simd_lane_id),
         source.gemm_b_layout,
-        source.gemm_b_layout == GemmBLayout::MxuTiled ? mxu_tiled_chunk_bytes
+        source.gemm_b_layout == GemmBLayout::MxuTiled ? Layout::BLOCK_CHUNK_BYTES
                                                       : uint(Int8Cursor<Fragment, ALIGNED, false>::BLOCK_K)
     };
   }
