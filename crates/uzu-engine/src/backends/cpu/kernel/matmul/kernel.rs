@@ -239,7 +239,11 @@ impl MatmulKernel for MatmulCpuKernel {
                                         read_zero_point(zp.as_ptr(), zero_point_index, *bits)
                                     });
                                     if let Some(b) = biases {
-                                        let mut code = read_packed_code(weights.as_ptr() as *const u32, weight_linear_index, *bits);
+                                        let mut code = read_packed_code(
+                                            weights.as_ptr() as *const u32,
+                                            weight_linear_index,
+                                            *bits,
+                                        );
                                         if *signed_codes {
                                             code ^= 1u8 << (bits - 1);
                                         }

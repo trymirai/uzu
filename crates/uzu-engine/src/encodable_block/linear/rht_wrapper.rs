@@ -207,4 +207,38 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
         Ok(output)
     }
+
+    fn encode_ref(
+        &self,
+        input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
+
+        let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
+        assert!(format != ActivationFormat::Bf16, "an RHT linear reads a borrowed input only to quantize it");
+        let input =
+            self.input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
+        self.inner_linear.encode_with_a(input.as_ref(), batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)
+    }
+
+    fn encode_prerotated_bf16(
+        &self,
+        rotated_input: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
+
+        self.inner_linear.encode_ref(rotated_input, batch_dim, command_buffer)
+    }
+
+    fn select_activation_format(
+        &self,
+        batch_dim: u32,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        self.inner_linear.select_activation_format(batch_dim, context)
+    }
 }

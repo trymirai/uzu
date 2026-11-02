@@ -38,6 +38,11 @@ pub enum ParameterLoaderError<B: Backend> {
         expected_shape: Box<[u32]>,
         expected_data_type: DataType,
     },
+    #[error("Tensor {key:?} is read as a unit mixture, but its shape {shape:?} has no leading expert dimension of 1")]
+    NotUnitMixture {
+        key: String,
+        shape: Box<[u32]>,
+    },
     #[error(
         "Invalid representation for tensor {key:?}: {shape:?} @ {data_type:?} requires {expected_size} bytes, global_offset={global_offset}, begin={begin}, end={end}"
     )]
@@ -104,6 +109,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         ParameterTree {
             loader: self,
             prefix: String::new(),
+            unit_mixture: false,
         }
     }
 
@@ -127,6 +133,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
     prefix: String,
+    unit_mixture: bool,
 }
 
 impl<B: Backend> ParameterTree<'_, B> {
@@ -137,6 +144,18 @@ impl<B: Backend> ParameterTree<'_, B> {
         Self {
             loader: self.loader,
             prefix: format!("{}{name}.", self.prefix),
+            unit_mixture: self.unit_mixture,
+        }
+    }
+
+    /// Reads this tree as a mixture of one expert: every tensor below it is stored with a leading expert dimension of
+    /// 1, which reads drop. InvalidTensor shows the shape as read, while NotUnitMixture and InvalidTensorRepresentation
+    /// show the stored shape.
+    pub fn unit_mixture(&self) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: self.prefix.clone(),
+            unit_mixture: true,
         }
     }
 
@@ -162,10 +181,16 @@ impl<B: Backend> ParameterTree<'_, B> {
         let key = format!("{}{name}", self.prefix);
         let tensor =
             self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
-        if (tensor.shape.as_ref(), tensor.dtype) != (shape, dtype) {
-            return Err(ParameterLoaderError::InvalidTensor {
+        let Some(shape_as_read) = shape_as_read(&tensor.shape, self.unit_mixture) else {
+            return Err(ParameterLoaderError::NotUnitMixture {
                 key,
                 shape: tensor.shape.clone(),
+            });
+        };
+        if (shape_as_read, tensor.dtype) != (shape, dtype) {
+            return Err(ParameterLoaderError::InvalidTensor {
+                key,
+                shape: shape_as_read.into(),
                 data_type: tensor.dtype,
                 expected_shape: shape.into(),
                 expected_data_type: dtype,
@@ -219,3 +244,20 @@ impl<B: Backend> ParameterTree<'_, B> {
         Ok(data.into_boxed_slice())
     }
 }
+
+/// The shape a tensor stored as `stored_shape` is read with, or `None` for a unit mixture tensor stored without the
+/// leading expert dimension of 1.
+fn shape_as_read(
+    stored_shape: &[u32],
+    unit_mixture: bool,
+) -> Option<&[u32]> {
+    if unit_mixture {
+        stored_shape.strip_prefix(&[1])
+    } else {
+        Some(stored_shape)
+    }
+}
+
+#[cfg(test)]
+#[path = "../unit/safetensors_test.rs"]
+mod tests;

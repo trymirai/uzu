@@ -89,14 +89,7 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
                     None
                 };
                 let b_val = unsafe {
-                    dequantize_weight(
-                        expert_b as *const u32,
-                        weight_linear_index,
-                        bits,
-                        false,
-                        scale,
-                        zero_point,
-                    )
+                    dequantize_weight(expert_b as *const u32, weight_linear_index, bits, false, scale, zero_point)
                 };
                 acc += a_val * b_val;
             }
