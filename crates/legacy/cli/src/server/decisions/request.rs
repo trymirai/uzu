@@ -1,6 +1,8 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
-use shoji::types::session::decision::{DecisionInput, DecisionOption, DecisionQuestion};
+use shoji::types::session::decision::DecisionInput;
+
+use crate::common::decision::DecisionRequestQuestion;
 
 // The System One request of vLLM Semantic Router and d3's `d3_server.py`, text only:
 // `state` must be a string and there are no `images` or `videos`.
@@ -15,72 +17,6 @@ pub struct DecisionRequest {
     pub state: Option<String>,
     // Raw values, so a malformed question is reported under its id.
     pub questions: IndexMap<String, serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum DecisionRequestQuestion {
-    Choice {
-        instructions: Option<String>,
-        // Option order is answer-code order, so it must survive parsing.
-        criteria: IndexMap<String, Option<String>>,
-    },
-    Noul {
-        instructions: Option<String>,
-        criteria: Option<NoulCriteria>,
-    },
-    Score {
-        instructions: Option<String>,
-        criteria: Vec<String>,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NoulCriteria {
-    #[serde(rename = "false")]
-    no: Option<String>,
-    #[serde(rename = "true")]
-    yes: Option<String>,
-}
-
-impl From<DecisionRequestQuestion> for DecisionQuestion {
-    fn from(question: DecisionRequestQuestion) -> Self {
-        match question {
-            DecisionRequestQuestion::Choice {
-                instructions,
-                criteria,
-            } => DecisionQuestion::Choice {
-                instructions,
-                options: criteria
-                    .into_iter()
-                    .map(|(key, description)| DecisionOption {
-                        key,
-                        description,
-                    })
-                    .collect(),
-            },
-            DecisionRequestQuestion::Noul {
-                instructions,
-                criteria,
-            } => {
-                let (no_description, yes_description) =
-                    criteria.map_or((None, None), |criteria| (criteria.no, criteria.yes));
-                DecisionQuestion::YesNo {
-                    instructions,
-                    no_description,
-                    yes_description,
-                }
-            },
-            DecisionRequestQuestion::Score {
-                instructions,
-                criteria,
-            } => DecisionQuestion::Score {
-                instructions,
-                levels: criteria,
-            },
-        }
-    }
 }
 
 pub struct InvalidQuestion {
