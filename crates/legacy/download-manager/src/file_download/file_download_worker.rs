@@ -133,10 +133,7 @@ impl FileDownloadWorker {
                 self.set(DownloadPhase::Downloading {}, downloaded_bytes, None);
                 Ok(())
             },
-            Err(error) => {
-                let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
-                Err(self.fail(error.into()))
-            },
+            Err(error) => Err(self.fail(error.into())),
         }
     }
 
@@ -152,7 +149,8 @@ impl FileDownloadWorker {
             self.complete().await;
         } else {
             let downloaded_bytes = self.backend.read_resume_progress(&self.config.resume_artifact_path).await;
-            self.set(DownloadPhase::Paused {}, downloaded_bytes, None);
+            let total_bytes = (self.state.total_bytes > 0).then_some(self.state.total_bytes as u64);
+            self.set(DownloadPhase::Paused {}, downloaded_bytes, total_bytes);
         }
         Ok(())
     }
@@ -246,13 +244,14 @@ impl FileDownloadWorker {
                 ..
             } => {
                 task.cancel().await;
-                let _ = fs::asyn::remove_file(&self.config.resume_artifact_path).await;
+                let downloaded_bytes = self.backend.read_resume_progress(&self.config.resume_artifact_path).await;
+                let total_bytes = (self.state.total_bytes > 0).then_some(self.state.total_bytes as u64);
                 self.set(
                     DownloadPhase::Error {
                         message,
                     },
-                    0,
-                    None,
+                    downloaded_bytes,
+                    total_bytes,
                 );
             },
         }
@@ -292,12 +291,13 @@ impl FileDownloadWorker {
         &mut self,
         error: FileDownloadError,
     ) -> FileDownloadError {
+        let total_bytes = (self.state.total_bytes > 0).then_some(self.state.total_bytes as u64);
         self.set(
             DownloadPhase::Error {
                 message: error.to_string(),
             },
-            0,
-            None,
+            self.state.downloaded_bytes.max(0) as u64,
+            total_bytes,
         );
         error
     }
