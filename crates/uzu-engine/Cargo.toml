@@ -37,7 +37,6 @@ webgpu = [
     "dep:regex",
     "dep:naga",
     "dep:wgpu",
-    "dep:pollster",
 ]
 
 cpu = [] # TODO: move libm here
@@ -88,7 +87,6 @@ futures.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
-pollster = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }

@@ -3,7 +3,7 @@ import definitions;
 
 [[Variants("T", "float, BFloat16")]]
 [[Variants("HEAD_K_DIM", "128")]]
-[[Public]] [[Kernel]] func DeltaNetPrefill<T, let HEAD_K_DIM: uint>(
+[[Public]] [[Kernel]] func DeltaNetPrefill<T, let HEAD_K_DIM: uint32_t>(
   StructuredBuffer<float> q_norm,
   StructuredBuffer<float> k_norm,
   StructuredBuffer<float> beta_buf,
@@ -11,16 +11,16 @@ import definitions;
   StructuredBuffer<T> in_proj,
   RWStructuredBuffer<float> state,
   RWStructuredBuffer<T> out,
-  uint num_v_heads,
-  uint num_k_heads,
-  uint head_v_dim,
-  uint key_dim,
-  uint value_dim,
-  uint suffix_len,
-  uint num_dv_groups,
-  [[Groups("num_v_heads")]] uint hv_idx,
-  [[Groups("num_dv_groups")]] uint dv_group,
-  [[Threads("128")]] uint tid,
+  uint32_t num_v_heads,
+  uint32_t num_k_heads,
+  uint32_t head_v_dim,
+  uint32_t key_dim,
+  uint32_t value_dim,
+  uint32_t suffix_len,
+  uint32_t num_dv_groups,
+  [[Groups("num_v_heads")]] uint32_t hv_idx,
+  [[Groups("num_dv_groups")]] uint32_t dv_group,
+  [[Threads("128")]] uint32_t tid,
 ) {
   // TODO
 }

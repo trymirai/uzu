@@ -4,7 +4,7 @@ import generated.trie;
 
 [[Variants("T", "float, BFloat16")]]
 [[Variants("NB", "1, 2")]]
-[[Public]] [[Kernel]] func TreeVerify<T, let NB: uint>(
+[[Public]] [[Kernel]] func TreeVerify<T, let NB: uint32_t>(
   StructuredBuffer<T> q,
   StructuredBuffer<T> k,
   StructuredBuffer<T> v,
@@ -17,18 +17,18 @@ import generated.trie;
   RWStructuredBuffer<T> o,
   float scale,
   float norm_epsilon,
-  uint batch_size,
-  uint tree_size,
-  uint num_k_heads,
-  uint num_v_heads,
-  uint head_k_dim,
-  uint head_v_dim,
-  uint conv_dim,
-  uint total_proj_dim,
+  uint32_t batch_size,
+  uint32_t tree_size,
+  uint32_t num_k_heads,
+  uint32_t num_v_heads,
+  uint32_t head_k_dim,
+  uint32_t head_v_dim,
+  uint32_t conv_dim,
+  uint32_t total_proj_dim,
   ThreadContext thread_context,
-  [[Groups("batch_size")]] uint batch_idx,
-  [[Groups("num_v_heads")]] uint hv_idx,
-  [[Threads("(8 + NB) * 32")]] uint thread_idx,
+  [[Groups("batch_size")]] uint32_t batch_idx,
+  [[Groups("num_v_heads")]] uint32_t hv_idx,
+  [[Threads("(8 + NB) * 32")]] uint32_t thread_idx,
 ) {
   // TODO
 }

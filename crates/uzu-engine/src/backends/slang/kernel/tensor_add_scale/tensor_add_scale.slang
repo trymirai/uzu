@@ -6,10 +6,10 @@ import definitions;
   [[Optional("!in_place")]] StructuredBuffer<T> input,
   StructuredBuffer<T> bias,
   RWStructuredBuffer<T> output,
-  uint num_cols,
-  uint length,
+  uint32_t num_cols,
+  uint32_t length,
   float scale,
-  [[Axis("length", "32")]] uint position,
+  [[Axis("length", "32")]] uint32_t position,
   [[Specialize]] bool in_place,
 ) {
   // TODO

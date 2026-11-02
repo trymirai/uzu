@@ -3,16 +3,16 @@ import definitions;
 
 [[Variants("T", "float, BFloat16")]]
 [[Variants("KERNEL_SIZE", "4")]]
-[[Public]] [[Kernel]] func DeltaNetConvPack<T, let KERNEL_SIZE: uint>(
+[[Public]] [[Kernel]] func DeltaNetConvPack<T, let KERNEL_SIZE: uint32_t>(
   StructuredBuffer<float> state_in,
   StructuredBuffer<T> x,
   RWStructuredBuffer<float> packed,
-  uint suffix_len,
-  uint tile_tokens,
-  uint row_stride,
-  uint conv_dim,
-  [[Axis("conv_dim", "128")]] uint channel_idx,
-  [[Axis("suffix_len.div_ceil(tile_tokens)", "1")]] uint tile_idx,
+  uint32_t suffix_len,
+  uint32_t tile_tokens,
+  uint32_t row_stride,
+  uint32_t conv_dim,
+  [[Axis("conv_dim", "128")]] uint32_t channel_idx,
+  [[Axis("suffix_len.div_ceil(tile_tokens)", "1")]] uint32_t tile_idx,
 ) {
   // TODO
 }

@@ -2,27 +2,27 @@
 import definitions;
 
 [[Variants("HEAD_DIM", "128")]]
-[[Public]] [[Kernel]] func AncestorAttention<let HEAD_DIM: uint>(
+[[Public]] [[Kernel]] func AncestorAttention<let HEAD_DIM: uint32_t>(
   StructuredBuffer<BFloat16> prefix_kv,
   RWStructuredBuffer<BFloat16> node_kv,
   StructuredBuffer<BFloat16> current_qkv,
   StructuredBuffer<float> cosines,
   StructuredBuffer<float> sines,
-  StructuredBuffer<uint> node_metadata,
-  StructuredBuffer<uint> ancestor_indices,
-  StructuredBuffer<uint> ancestor_counts,
-  StructuredBuffer<uint> node_indices,
+  StructuredBuffer<uint32_t> node_metadata,
+  StructuredBuffer<uint32_t> ancestor_indices,
+  StructuredBuffer<uint32_t> ancestor_counts,
+  StructuredBuffer<uint32_t> node_indices,
   RWStructuredBuffer<BFloat16> output,
-  uint rows,
-  uint prefix_length,
-  uint ancestor_stride,
-  uint node_capacity,
-  uint max_depth,
+  uint32_t rows,
+  uint32_t prefix_length,
+  uint32_t ancestor_stride,
+  uint32_t node_capacity,
+  uint32_t max_depth,
   float scale,
-  [[Specialize]] uint num_heads,
+  [[Specialize]] uint32_t num_heads,
   ThreadContext thread_context,
-  [[Groups("(rows * num_heads).div_ceil(4)")]] uint group,
-  [[Threads("(4 * 32)")]] uint lid,
+  [[Groups("(rows * num_heads).div_ceil(4)")]] uint32_t group,
+  [[Threads("(4 * 32)")]] uint32_t lid,
 ) {
   // TODO
 }
