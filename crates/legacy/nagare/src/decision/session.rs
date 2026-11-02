@@ -123,10 +123,16 @@ impl DecisionSession {
                 DecisionSessionError::Backend {
                     message: error.to_string(),
                 }
-            })?;
+            });
+
+            // Stop sampling before propagating an inference error.
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            let energy = holder.energy_recorder.finish();
+
+            let output = output?;
 
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            let energy = match holder.energy_recorder.finish() {
+            let energy = match energy {
                 Ok(energy) => Some(energy),
                 Err(EnergyError::Keisoku(KeisokuError::PowerReadingUnavailable)) => None,
                 Err(error) => return Err(error.into()),
