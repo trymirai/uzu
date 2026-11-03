@@ -154,13 +154,7 @@ impl GemmKernel {
         shape: MatmulShape,
         context: &MetalContext,
     ) -> GemmProblem {
-        GemmProblem::new(
-            shape,
-            self.weights_data_type,
-            self.output_data_type,
-            context.supports_mxu,
-            context.apple_gpu_family,
-        )
+        GemmProblem::new(shape, self.weights_data_type, self.output_data_type, context.supports_mxu)
     }
 
     #[cfg(test)]

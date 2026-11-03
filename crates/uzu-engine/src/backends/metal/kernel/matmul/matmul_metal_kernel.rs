@@ -1,5 +1,3 @@
-use metal::MTLGPUFamily;
-
 use crate::{
     backends::{
         common::{
@@ -84,13 +82,12 @@ impl MatmulMetalKernel {
         shape: &MatmulShape,
         gemm_b_layout: GemmBLayout,
         gpu_core_count: u32,
-        apple_gpu_family: MTLGPUFamily,
         supports_mxu: bool,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> MatmulDispatch {
-        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu, apple_gpu_family);
+        let problem = GemmProblem::new(*shape, weights_data_type, output_data_type, supports_mxu);
         if shape.b_is_trellis {
             return MatmulDispatch::Gemm(problem.select_plan());
         }
@@ -138,7 +135,6 @@ impl MatmulMetalKernel {
             shape,
             gemm_b_layout,
             context.gpu_core_count,
-            context.apple_gpu_family,
             context.supports_mxu,
             self.weights_data_type,
             self.input_data_type,

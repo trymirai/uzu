@@ -1,5 +1,4 @@
 use futures::executor::block_on;
-use metal::MTLGPUFamily;
 use uzu_engine_macros::uzu_test;
 
 use super::*;
@@ -27,7 +26,7 @@ fn problem(
     shape: MatmulShape,
     output_data_type: DataType,
 ) -> GemmProblem {
-    GemmProblem::new(shape, DataType::BF16, output_data_type, true, MTLGPUFamily::Apple7)
+    GemmProblem::new(shape, DataType::BF16, output_data_type, true)
 }
 
 #[uzu_test]
@@ -56,17 +55,22 @@ fn policy_boundaries_are_preserved() {
         assert_eq!(policy::mxu_fp_tile(m, n, k), expected);
     }
 
-    for (m, n, family, expected) in [
-        (16, 4096, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
-        (8, 4096, MTLGPUFamily::Apple8, Tile8x32x32_Simdgroups1x1),
-        (9, 4096, MTLGPUFamily::Apple8, Tile32x32x32_Simdgroups2x2),
-        (9, 4096, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
-        (31, 4096, MTLGPUFamily::Apple9, Tile8x32x32_Simdgroups1x1),
-        (32, 4096, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
-        (64, 6143, MTLGPUFamily::Apple9, Tile32x32x32_Simdgroups2x2),
-        (64, 6144, MTLGPUFamily::Apple9, Tile64x64x32_Simdgroups2x2),
+    for (m, expected) in [
+        (8, Tile8x32x32_Simdgroups1x1),
+        (16, Tile8x32x32_Simdgroups1x1),
+        (17, Tile32x32x32_Simdgroups2x2),
+        (31, Tile32x32x32_Simdgroups2x2),
+        (32, Tile32x32x32_Simdgroups2x2),
+        (64, Tile64x64x32_Simdgroups2x2),
+        (96, Tile32x32x32_Simdgroups2x2),
+        (97, Tile64x64x32_Simdgroups2x2),
+        (128, Tile64x64x32_Simdgroups2x2),
+        (129, Tile32x32x32_Simdgroups2x2),
+        (160, Tile32x32x32_Simdgroups2x2),
+        (161, Tile64x64x32_Simdgroups2x2),
+        (1024, Tile64x64x32_Simdgroups2x2),
     ] {
-        assert_eq!(policy::simdgroup_quant_tile(m, n, family), expected);
+        assert_eq!(policy::simdgroup_quant_tile(m), expected);
     }
 }
 
@@ -118,10 +122,7 @@ fn selection_fallbacks_and_split_k_are_preserved() {
     let mut biased = quant(shape(16, 4096, 4096));
     biased.a = a8_format();
     biased.d_transform = GemmDTransform::BIAS;
-    assert_eq!(
-        GemmProblem::new(biased, DataType::BF16, DataType::F32, true, MTLGPUFamily::Apple7).select_plan().split_k,
-        1
-    );
+    assert_eq!(GemmProblem::new(biased, DataType::BF16, DataType::F32, true).select_plan().split_k, 1);
 
     let mut zero = quant(shape(0, 1, 1));
     zero.b_prologue = GemmBPrologueKind::ScaleZeroPointDequant;
@@ -157,8 +158,7 @@ fn trellis_plan_matches_projection_cases() {
 fn forced_engine_errors_are_preserved() {
     let huge = shape(u32::MAX, u32::MAX, u32::MAX);
     assert_eq!(
-        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false, MTLGPUFamily::Apple7)
-            .select_plan_for_engine(GemmEngine::Mxu),
+        GemmProblem::new(huge, DataType::BF16, DataType::BF16, false).select_plan_for_engine(GemmEngine::Mxu),
         Err(GemmPlanError::MxuUnavailable)
     );
 
@@ -179,7 +179,7 @@ fn gemv_gemm_route_boundaries_are_preserved() {
         (shape(3, 4096, 8192), DataType::BF16, false),
         (shape(5, 4096, 8192), DataType::BF16, false),
     ] {
-        let plan = GemmProblem::new(shape, data_type, data_type, true, MTLGPUFamily::Apple7).select_plan();
+        let plan = GemmProblem::new(shape, data_type, data_type, true).select_plan();
         assert_eq!(MatmulMetalKernel::prefer_gemm_over_gemv(shape, plan, data_type, data_type, data_type), prefer_gemm);
     }
     let mut gathered = shape(4, 4096, 8192);

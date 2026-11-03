@@ -1,4 +1,3 @@
-use metal::MTLGPUFamily;
 use thiserror::Error;
 
 use crate::{
@@ -29,7 +28,6 @@ pub struct GemmProblem {
     weights_data_type: DataType,
     output_data_type: DataType,
     supports_mxu: bool,
-    apple_gpu_family: MTLGPUFamily,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -80,14 +78,12 @@ impl GemmProblem {
         weights_data_type: DataType,
         output_data_type: DataType,
         supports_mxu: bool,
-        apple_gpu_family: MTLGPUFamily,
     ) -> Self {
         Self {
             shape,
             weights_data_type,
             output_data_type,
             supports_mxu,
-            apple_gpu_family,
         }
     }
 
@@ -100,7 +96,7 @@ impl GemmProblem {
         } else {
             GemmEngine::Simdgroup
         };
-        self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family))
+        self.finish_plan(engine, select_tiling(self.shape, engine))
     }
 
     pub fn small_batch_plan(
@@ -131,7 +127,7 @@ impl GemmProblem {
             return Ok(plan);
         }
         self.validate_engine(engine)?;
-        Ok(self.finish_plan(engine, select_tiling(self.shape, engine, self.apple_gpu_family)))
+        Ok(self.finish_plan(engine, select_tiling(self.shape, engine)))
     }
 
     pub(super) fn validate_engine(
@@ -266,11 +262,10 @@ fn mxu_is_eligible(shape: MatmulShape) -> bool {
 fn select_tiling(
     shape: MatmulShape,
     engine: GemmEngine,
-    apple_gpu_family: MTLGPUFamily,
 ) -> GemmTiling {
     match engine {
-        GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m, shape.n, apple_gpu_family),
-        GemmEngine::Simdgroup => policy::simdgroup_fp_tile(shape.m, shape.n, shape.k),
+        GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m),
+        GemmEngine::Simdgroup => policy::SIMDGROUP_FP_TILE,
         GemmEngine::Mxu if shape.a_is_quantized() => match policy::mxu_int8_gemm_tile(shape.m, shape.n) {
             tiling
                 if tiling.simdgroups_k() > 1

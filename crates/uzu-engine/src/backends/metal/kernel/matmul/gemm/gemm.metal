@@ -54,7 +54,6 @@ VARIANTS(
     GEMM_TILING,
     GemmTiling::Tile8x32x32_Simdgroups1x1,
     GemmTiling::Tile64x32x32_Simdgroups2x2,
-    GemmTiling::Tile64x64x16_Simdgroups2x2,
     GemmTiling::Tile64x64x32_Simdgroups2x2,
     GemmTiling::Tile32x32x32_Simdgroups2x2,
     GemmTiling::Tile16x32x256_Simdgroups1x1,
@@ -98,13 +97,9 @@ CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 4)
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
-    (TRANSPOSE_B &&
-     GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2 &&
-     GEMM_TILING != GemmTiling::Tile64x32x32_Simdgroups2x2))
+    (TRANSPOSE_B && GEMM_TILING != GemmTiling::Tile64x32x32_Simdgroups2x2))
 CONSTRAINT(
-    B_PROLOGUE != GemmBPrologueKind::FullPrecision || USE_MXU ||
-    GEMM_TILING == GemmTiling::Tile64x64x16_Simdgroups2x2 ||
-    GEMM_TILING == GemmTiling::Tile64x32x32_Simdgroups2x2)
+    B_PROLOGUE != GemmBPrologueKind::FullPrecision || USE_MXU || GEMM_TILING == GemmTiling::Tile64x32x32_Simdgroups2x2)
 CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile16x32x256_Simdgroups1x1 ||
     (TRANSPOSE_B &&
