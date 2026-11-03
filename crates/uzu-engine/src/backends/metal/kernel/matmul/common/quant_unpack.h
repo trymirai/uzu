@@ -84,37 +84,34 @@ METAL_FUNC float magic_code_float(uint code) {
 
 METAL_FUNC float magic_dequant_bias(float scale) { return -12582912.0f * scale; }
 
+// fma(code, scale, bias) in f32, rounded once to U, stored in pairs.
 template <typename U, int N, int bits>
-inline void dequantize(const device uint8_t* w, U scale, U bias, threadgroup U* w_local, const bool signed_codes) {
+inline void dequantize(
+    const device uint8_t* w,
+    float scale,
+    float bias,
+    threadgroup U* w_local,
+    const bool signed_codes
+) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
-
+  static_assert(bits == 8 || N % 2 == 0, "int4 values are unpacked in pairs");
+  threadgroup vec<U, 2>* pairs = reinterpret_cast<threadgroup vec<U, 2>*>(w_local);
   if constexpr (bits == 4) {
-    U s0 = scale;
-    U s1 = scale / static_cast<U>(16.0f);
-    // Keeping literal masks in each arm lets the compiler vectorize the unpack.
-    if (signed_codes) {
-      for (int i = 0; i < (N / 2); i++) {
-        const uint8_t word = w[i] ^ uint8_t(0x88u);
-        w_local[2 * i] = s0 * (word & 0x0f) + bias;
-        w_local[2 * i + 1] = s1 * (word & 0xf0) + bias;
-      }
-    } else {
-      for (int i = 0; i < (N / 2); i++) {
-        w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
-        w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
-      }
+    const uint sign_flip = signed_codes ? 0x88u : 0u;
+    for (int i = 0; i < (N / 2); i++) {
+      const uint code = uint(w[i]) ^ sign_flip;
+      pairs[i] = vec<U, 2>(vec<float, 2>(fma(float(code & 0x0fu), scale, bias), fma(float(code >> 4), scale, bias)));
     }
-  } else if constexpr (bits == 8) {
-    if (signed_codes) {
-      const device int8_t* signed_weights = reinterpret_cast<const device int8_t*>(w);
-      const U adjusted_bias = bias + scale * U(128);
-      for (int i = 0; i < N; i++) {
-        w_local[i] = scale * U(signed_weights[i]) + adjusted_bias;
-      }
-    } else {
-      for (int i = 0; i < N; i++) {
-        w_local[i] = scale * U(w[i]) + bias;
-      }
+  } else {
+    const uint sign_flip = signed_codes ? 0x80u : 0u;
+    for (int i = 0; i < (N / 2); i++) {
+      pairs[i] = vec<U, 2>(vec<float, 2>(
+          fma(float(uint(w[2 * i]) ^ sign_flip), scale, bias),
+          fma(float(uint(w[2 * i + 1]) ^ sign_flip), scale, bias)
+      ));
+    }
+    if constexpr (N % 2 == 1) {
+      w_local[N - 1] = U(fma(float(uint(w[N - 1]) ^ sign_flip), scale, bias));
     }
   }
 }
