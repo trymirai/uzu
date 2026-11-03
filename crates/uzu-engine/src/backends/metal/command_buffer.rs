@@ -10,9 +10,10 @@ use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
     MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
-    MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
+    MTL4VisibilityOptions, MTLDeviceExt, MTLEvent, MTLSharedEvent, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use parking_lot::Mutex;
 use rangemap::RangeSet;
 
 use crate::backends::{
@@ -57,9 +58,18 @@ pub struct MetalCommandBufferEncoding {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
     timestamps: Option<MetalTimestampRecorder>,
+    debug_groups: Vec<String>,
+    handoffs: Option<Arc<Handoffs>>,
 }
 
 unsafe impl Send for MetalCommandBufferEncoding {}
+
+/// State shared by the command buffers an encoding was cut into by [`MetalCommandBufferEncoding::handoff`].
+#[derive(Default)]
+struct Handoffs {
+    first_gpu_start: Mutex<Option<f64>>,
+    error: Mutex<Option<String>>,
+}
 
 impl MetalCommandBufferEncoding {
     pub fn new(
@@ -67,25 +77,11 @@ impl MetalCommandBufferEncoding {
         name: Option<&str>,
         allocation_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
     ) -> Result<Self, MetalError> {
-        let command_allocator = if let Some(command_allocator) = context.command_allocator_cache.lock().pop() {
-            command_allocator.reset();
-            command_allocator
-        } else {
-            context.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)?
-        };
+        let command_allocator = new_command_allocator(&context)?;
 
         let command_buffer = context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
         command_buffer.begin_command_buffer_with_allocator(&command_allocator);
         command_buffer.set_label(name);
-
-        let compute_encoder = command_buffer.compute_command_encoder().unwrap();
-        ProtocolObject::<dyn MTL4CommandEncoder>::set_label(compute_encoder.as_ref(), name);
-
-        compute_encoder.barrier_after_queue_stages_before_stages_visibility_options(
-            MTLStages::Dispatch | MTLStages::ResourceState,
-            MTLStages::Dispatch,
-            MTL4VisibilityOptions::Device,
-        );
 
         let argument_table_descriptor = MTL4ArgumentTableDescriptor::new();
         argument_table_descriptor.set_label(name.map(|name| format!("{name} argument table")).as_deref());
@@ -94,7 +90,7 @@ impl MetalCommandBufferEncoding {
             .device
             .new_argument_table_with_descriptor(&argument_table_descriptor)
             .map_err(|error| MetalError::CannotCreateArgumentTable(error.to_string()))?;
-        compute_encoder.set_argument_table(Some(&argument_table));
+        let compute_encoder = begin_compute_encoder(&command_buffer, &argument_table, name);
 
         let constant_allocator = BumpAllocator::new(256 * 1024, 1);
 
@@ -111,7 +107,75 @@ impl MetalCommandBufferEncoding {
             allocation_pool,
             context,
             timestamps: None,
+            debug_groups: Vec::new(),
+            handoffs: None,
         })
+    }
+
+    /// Hands the GPU timeline over to another engine at this point of the encoding.
+    ///
+    /// Everything encoded so far is submitted; the queue then signals `event` to `signal` once that
+    /// work completes and holds everything encoded afterwards until `event` reaches `wait`. Encoding
+    /// continues transparently (debug groups and timestamps carry over). An encoding that never hands
+    /// off is submitted exactly as before.
+    pub fn handoff(
+        &mut self,
+        event: &ProtocolObject<dyn MTLSharedEvent>,
+        signal: Option<u64>,
+        wait: Option<u64>,
+    ) -> Result<(), MetalError> {
+        let handoffs = self.handoffs.get_or_insert_with(Arc::default).clone();
+
+        for _ in &self.debug_groups {
+            self.compute_encoder.pop_debug_group();
+        }
+        self.finish_command_buffer();
+        sync_sparse_queue(&self.context);
+
+        let command_allocator = self.command_allocator.clone();
+        let command_buffer = self.command_buffer.clone();
+        let context = self.context.clone();
+        let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
+            if let Some(error) = feedback.error() {
+                handoffs.error.lock().get_or_insert(error.to_string());
+            }
+            handoffs.first_gpu_start.lock().get_or_insert(feedback.gpu_start_time());
+            context.command_allocator_cache.lock().push(command_allocator.clone());
+            let _keep_alive = &command_buffer;
+        };
+        let options = MTL4CommitOptions::new();
+        options.add_feedback_handler(&MTL4CommitFeedbackHandler::new(feedback_handler));
+        self.context.command_queue.commit_with_options(&[&self.command_buffer], &options);
+
+        let event: &ProtocolObject<dyn MTLEvent> = ProtocolObject::from_ref(event);
+        if let Some(signal) = signal {
+            self.context.command_queue.signal_event_value(event, signal);
+        }
+        if let Some(wait) = wait {
+            self.context.command_queue.wait_for_event_value(event, wait);
+        }
+
+        self.command_allocator = new_command_allocator(&self.context)?;
+        self.command_buffer =
+            self.context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        self.command_buffer.begin_command_buffer_with_allocator(&self.command_allocator);
+        self.compute_encoder = begin_compute_encoder(&self.command_buffer, &self.argument_table, None);
+        self.reads.clear();
+        self.writes.clear();
+        for name in &self.debug_groups {
+            ProtocolObject::<dyn MTL4CommandEncoder>::push_debug_group(self.compute_encoder.as_ref(), name);
+        }
+        Ok(())
+    }
+
+    fn finish_command_buffer(&mut self) {
+        self.compute_encoder.barrier_after_stages_before_queue_stages_visibility_options(
+            MTLStages::Dispatch,
+            MTLStages::Dispatch | MTLStages::ResourceState,
+            MTL4VisibilityOptions::Device,
+        );
+        self.compute_encoder.end_encoding();
+        self.command_buffer.end_command_buffer();
     }
 
     pub(super) fn access(
@@ -138,6 +202,44 @@ impl MetalCommandBufferEncoding {
                 self.reads.insert(access.range.into());
             }
         }
+    }
+}
+
+fn new_command_allocator(
+    context: &MetalContext
+) -> Result<Retained<ProtocolObject<dyn MTL4CommandAllocator>>, MetalError> {
+    if let Some(command_allocator) = context.command_allocator_cache.lock().pop() {
+        command_allocator.reset();
+        Ok(command_allocator)
+    } else {
+        context.device.new_command_allocator().ok_or(MetalError::CannotCreateCommandBuffer)
+    }
+}
+
+fn begin_compute_encoder(
+    command_buffer: &ProtocolObject<dyn MTL4CommandBuffer>,
+    argument_table: &ProtocolObject<dyn MTL4ArgumentTable>,
+    name: Option<&str>,
+) -> Retained<ProtocolObject<dyn MTL4ComputeCommandEncoder>> {
+    let compute_encoder = command_buffer.compute_command_encoder().unwrap();
+    ProtocolObject::<dyn MTL4CommandEncoder>::set_label(compute_encoder.as_ref(), name);
+    compute_encoder.barrier_after_queue_stages_before_stages_visibility_options(
+        MTLStages::Dispatch | MTLStages::ResourceState,
+        MTLStages::Dispatch,
+        MTL4VisibilityOptions::Device,
+    );
+    compute_encoder.set_argument_table(Some(argument_table));
+    compute_encoder
+}
+
+fn sync_sparse_queue(context: &MetalContext) {
+    let mut sparse_state_locked = context.sparse_state.lock();
+    if sparse_state_locked.did_ops {
+        sparse_state_locked.did_ops = false;
+        sparse_state_locked.event_value += 1;
+        let value = sparse_state_locked.event_value;
+        context.sparse_queue.signal_event_value(&context.sparse_event, value);
+        context.command_queue.wait_for_event_value(&context.sparse_event, value);
     }
 }
 
@@ -209,6 +311,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         name: &str,
     ) -> MetalDebugGroupSpan<'_> {
         ProtocolObject::<dyn MTL4CommandEncoder>::push_debug_group(self.compute_encoder.as_ref(), name);
+        self.debug_groups.push(name.to_owned());
         if let Some(timestamps) = &mut self.timestamps {
             timestamps.start(name, &self.context.device, &self.compute_encoder);
         }
@@ -240,19 +343,14 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             allocation_pool: self.allocation_pool.clone(),
             context: self.context.clone(),
             timestamps: self.timestamps.take(),
+            handoffs: self.handoffs.take(),
         }
     }
 }
 
 impl Drop for MetalCommandBufferEncoding {
     fn drop(&mut self) {
-        self.compute_encoder.barrier_after_stages_before_queue_stages_visibility_options(
-            MTLStages::Dispatch,
-            MTLStages::Dispatch | MTLStages::ResourceState,
-            MTL4VisibilityOptions::Device,
-        );
-        self.compute_encoder.end_encoding();
-        self.command_buffer.end_command_buffer();
+        self.finish_command_buffer();
     }
 }
 
@@ -280,6 +378,7 @@ impl Drop for MetalDebugGroupSpan<'_> {
         if let Some(timestamps) = &mut command_buffer.timestamps {
             timestamps.end(&command_buffer.context.device, &command_buffer.compute_encoder);
         }
+        command_buffer.debug_groups.pop();
         command_buffer.compute_encoder.pop_debug_group();
     }
 }
@@ -291,21 +390,14 @@ pub struct MetalCommandBufferExecutable {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     context: Arc<MetalContext>,
     timestamps: Option<MetalTimestampRecorder>,
+    handoffs: Option<Arc<Handoffs>>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
     type CommandBuffer = MetalCommandBuffer;
 
     fn submit(self) -> MetalCommandBufferPending {
-        let mut sparse_state_locked = self.context.sparse_state.lock();
-        if sparse_state_locked.did_ops {
-            sparse_state_locked.did_ops = false;
-            sparse_state_locked.event_value += 1;
-            let value = sparse_state_locked.event_value;
-            self.context.sparse_queue.signal_event_value(&self.context.sparse_event, value);
-            self.context.command_queue.wait_for_event_value(&self.context.sparse_event, value);
-        }
-        drop(sparse_state_locked);
+        sync_sparse_queue(&self.context);
 
         let (sender, receiver) = mpsc::unbounded();
 
@@ -316,14 +408,23 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
+        let handoffs = self.handoffs;
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
-            let message = if let Some(error) = feedback.error() {
-                Err(MetalError::CommandBufferExecution(error.to_string()))
+            let mut error = feedback.error().map(|error| error.to_string());
+            let mut gpu_start_time = feedback.gpu_start_time();
+            if let Some(handoffs) = &handoffs {
+                error = error.or_else(|| handoffs.error.lock().take());
+                if let Some(first_gpu_start) = *handoffs.first_gpu_start.lock() {
+                    gpu_start_time = first_gpu_start;
+                }
+            }
+            let message = if let Some(error) = error {
+                Err(MetalError::CommandBufferExecution(error))
             } else {
                 timestamps
                     .as_ref()
                     .map_or_else(|| Ok(Box::default()), |timestamps| timestamps.resolve(&context_clone.device))
-                    .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), spans))
+                    .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - gpu_start_time), spans))
             };
             let _ = sender.unbounded_send(message);
             context_clone.command_allocator_cache.lock().push(command_allocator.clone());
@@ -373,3 +474,7 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
         &self.timestamps
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/backends/metal/command_buffer_handoff_test.rs"]
+mod handoff_tests;
