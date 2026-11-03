@@ -51,18 +51,28 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     let hadamard_factors = create_buffer_with_data::<B, i32>(&context, case.hadamard_factors);
     let mut output = create_buffer::<B, bf16>(&context, (num_routes * out_dim) as usize);
 
-    let kernel =
-        <B::Kernels as Kernels>::MoeGemvKernel::new(&context, DataType::BF16, GROUP_SIZE, case.bits, case.a_per_token)
-            .unwrap();
+    let kernel = <B::Kernels as Kernels>::MoeGemvKernel::new(
+        &context,
+        DataType::BF16,
+        GROUP_SIZE,
+        case.bits,
+        case.a_per_token,
+        false,
+    )
+    .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &weights,
         &scales,
         zero_points.as_ref(),
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         &input,
         &expert_ids,
         &mut output,
         &hadamard_factors,
+        None::<&B::GlobalGpuBuffer>,
         in_dim,
         out_dim,
         num_routes,
@@ -75,6 +85,7 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
         out_dim,
         1,
         out_dim,
+        num_routes,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

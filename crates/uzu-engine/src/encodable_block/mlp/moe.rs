@@ -300,10 +300,15 @@ struct RoutedProjection<B: Backend> {
     weights: B::GlobalGpuBuffer,
     scales: B::GlobalGpuBuffer,
     zero_points: Option<B::GlobalGpuBuffer>,
+    shared_weights: Option<B::GlobalGpuBuffer>,
+    shared_scales: Option<B::GlobalGpuBuffer>,
+    shared_zero_points: Option<B::GlobalGpuBuffer>,
     output_hadamard_factors: B::GlobalGpuBuffer,
+    shared_output_hadamard_factors: Option<B::GlobalGpuBuffer>,
     input_dim: u32,
     output_dim: u32,
     data_type: DataType,
+    has_shared: bool,
     b_expert_stride_bytes: u32,
     scale_expert_stride: u32,
     zero_point_expert_stride: u32,
@@ -321,6 +326,7 @@ impl<B: Backend> RoutedProjection<B> {
         data_type: DataType,
         a_per_token: bool,
         tree: &ParameterTree<'_, B>,
+        shared_tree: Option<&ParameterTree<'_, B>>,
         context: &B::Context,
     ) -> Result<(Self, Box<[i32]>), MoeMlpNewError<B>> {
         let weights_tree = tree.subtree("weights");
@@ -361,9 +367,35 @@ impl<B: Backend> RoutedProjection<B> {
                 (None, 0, QuantParamsStrides::default())
             };
 
-        let kernel =
-            <B::Kernels as Kernels>::MoeGemvKernel::new(context, data_type, MOE_GEMV_GROUP_SIZE, bits, a_per_token)
-                .map_err(MoeMlpNewError::Backend)?;
+        let has_shared = shared_tree.is_some();
+        let (shared_weights, shared_scales, shared_zero_points, shared_output_hadamard_factors) = if let Some(st) =
+            shared_tree
+        {
+            let st_weights = st.subtree("weights");
+            let st_quant = st_weights.subtree("quantized");
+            let sw = st_quant.read_buffer("weights", &[output_dim, input_dim / packing_divisor], storage_type).await?;
+            let ss = st_quant.read_buffer("scales", &[scale_rows, scale_columns], data_type).await?;
+            let szp = if quantization.method == QuantizationMethod::ScaleZeroPoint {
+                let [zero_point_rows, zero_point_columns] = params.zero_point_shape(quantization.mode);
+                Some(st_quant.read_buffer("zero_points", &[zero_point_rows, zero_point_columns], storage_type).await?)
+            } else {
+                None
+            };
+            let sohf = st_weights.read_buffer("incoherence_signs.output_signs", &[output_dim], DataType::I32).await?;
+            (Some(sw), Some(ss), szp, Some(sohf))
+        } else {
+            (None, None, None, None)
+        };
+
+        let kernel = <B::Kernels as Kernels>::MoeGemvKernel::new(
+            context,
+            data_type,
+            MOE_GEMV_GROUP_SIZE,
+            bits,
+            a_per_token,
+            has_shared,
+        )
+        .map_err(MoeMlpNewError::Backend)?;
 
         Ok((
             Self {
@@ -371,10 +403,15 @@ impl<B: Backend> RoutedProjection<B> {
                 weights,
                 scales,
                 zero_points,
+                shared_weights,
+                shared_scales,
+                shared_zero_points,
                 output_hadamard_factors,
+                shared_output_hadamard_factors,
                 input_dim,
                 output_dim,
                 data_type,
+                has_shared,
                 b_expert_stride_bytes,
                 scale_expert_stride: scale_rows * scale_columns,
                 zero_point_expert_stride,
@@ -390,6 +427,7 @@ impl<B: Backend> RoutedProjection<B> {
         input: impl BufferRef<Backend = B>,
         expert_ids: impl BufferRef<Backend = B>,
         num_routes: u32,
+        num_routed_routes: u32,
         active_experts_per_token: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
@@ -398,10 +436,14 @@ impl<B: Backend> RoutedProjection<B> {
             &self.weights,
             &self.scales,
             self.zero_points.as_ref(),
+            self.shared_weights.as_ref(),
+            self.shared_scales.as_ref(),
+            self.shared_zero_points.as_ref(),
             input,
             expert_ids,
             &mut output,
             &self.output_hadamard_factors,
+            self.shared_output_hadamard_factors.as_ref(),
             self.input_dim,
             self.output_dim,
             num_routes,
@@ -414,6 +456,7 @@ impl<B: Backend> RoutedProjection<B> {
             self.scale_strides.group_stride,
             self.zero_point_strides.output_stride,
             self.zero_point_strides.group_stride,
+            num_routed_routes,
             command_buffer,
         );
 
@@ -459,6 +502,7 @@ impl<B: Backend> MoeMlp<B> {
 
         // The up projection reads one input row per token, the down projection one row per route.
         let routed_tree = parameter_tree.subtree("routed_experts");
+        let shared_tree = parameter_tree.subtree("shared_experts").unit_mixture();
         let (routed_up, input_signs) = RoutedProjection::load(
             num_experts,
             model_dimension,
@@ -466,6 +510,7 @@ impl<B: Backend> MoeMlp<B> {
             data_type,
             /* a_per_token */ true,
             &routed_tree.subtree("up_projection"),
+            Some(&shared_tree.subtree("up_projection")),
             context,
         )
         .await?;
@@ -476,6 +521,7 @@ impl<B: Backend> MoeMlp<B> {
             data_type,
             /* a_per_token */ false,
             &routed_tree.subtree("down_projection"),
+            Some(&shared_tree.subtree("down_projection")),
             context,
         )
         .await?;
@@ -492,8 +538,6 @@ impl<B: Backend> MoeMlp<B> {
             context,
         )
         .map_err(MoeMlpNewError::Backend)?;
-
-        let shared_tree = parameter_tree.subtree("shared_experts").unit_mixture();
         check_reads_routed_rotation(&shared_tree.subtree("up_projection"), &input_signs, "shared expert").await?;
         let shared_expert = DenseMlp::new_self_contained(
             model_dimension,
@@ -579,13 +623,21 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             self.model_dimension,
             command_buffer,
         );
+        let num_routed_routes = num_routes;
+        let total_routes = num_routed_routes
+            + if self.routed_up.has_shared {
+                batch_dim
+            } else {
+                0
+            };
+
         let fused_up = self
             .routed_up
-            .encode(&input, &expert_ids, num_routes, top_k, command_buffer)
+            .encode(&input, &expert_ids, total_routes, num_routed_routes, top_k, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
         let down_input = self
             .routed_activation
-            .encode_for_linear(&fused_up, num_routes, ActivationFormat::Bf16, command_buffer)
+            .encode_for_linear(&fused_up, total_routes, ActivationFormat::Bf16, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
         let MatmulA::FullPrecision {
             values: down_input,
@@ -596,29 +648,48 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         };
         let routed_outputs = self
             .routed_down
-            .encode(&down_input, &expert_ids, num_routes, top_k, command_buffer)
+            .encode(&down_input, &expert_ids, total_routes, num_routed_routes, top_k, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
 
-        let shared_output = match quantized_shared_output {
-            Some(shared_output) => shared_output,
-            None => self.shared_expert.encode_prerotated_bf16(&input, batch_dim, command_buffer)?,
-        };
         let shared_gate = self.shared_gate.encode_ref(&input, batch_dim, command_buffer)?;
 
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)
             .map_err(MlpEncodeError::Backend)?;
-        self.combine.encode(
-            &routed_outputs,
-            &expert_weights,
-            &shared_output,
-            &shared_gate,
-            &mut output,
-            self.model_dimension,
-            top_k,
-            batch_dim,
-            command_buffer,
-        );
+
+        if self.routed_down.has_shared {
+            let elem_size = self.data_type.size_in_bytes();
+            let routed_bytes = (num_routed_routes * self.model_dimension) as usize * elem_size;
+            let total_bytes = (total_routes * self.model_dimension) as usize * elem_size;
+            let shared_slice = (&routed_outputs).subrange(routed_bytes..total_bytes);
+            self.combine.encode(
+                &routed_outputs,
+                &expert_weights,
+                shared_slice,
+                &shared_gate,
+                &mut output,
+                self.model_dimension,
+                top_k,
+                batch_dim,
+                command_buffer,
+            );
+        } else {
+            let shared_output = match quantized_shared_output {
+                Some(shared_output) => shared_output,
+                None => self.shared_expert.encode_prerotated_bf16(&input, batch_dim, command_buffer)?,
+            };
+            self.combine.encode(
+                &routed_outputs,
+                &expert_weights,
+                &shared_output,
+                &shared_gate,
+                &mut output,
+                self.model_dimension,
+                top_k,
+                batch_dim,
+                command_buffer,
+            );
+        }
 
         Ok(output)
     }
