@@ -260,7 +260,8 @@ fn check_stage_rows(
     let post_buffer = upload(&context, &post);
     let mut staged = zeros(&context, rows * staged_row_stride);
     let mut row_scales = zeros(&context, rows * row_scale_stride * 2);
-    let kernel = AneStageRowsMetalKernel::new(&context, block as u32, with_post_signs).unwrap();
+    let kernel =
+        AneStageRowsMetalKernel::new(&context, block as u32, (columns / 4096) as u32, with_post_signs).unwrap();
     run(&context, |encoding| {
         kernel.encode(
             &codes_buffer,
@@ -272,7 +273,6 @@ fn check_stage_rows(
             &mut row_scales,
             row_offset as u32,
             rows as u32,
-            columns as u32,
             weights.scale_stride as u32,
             staged_row_stride as u32,
             row_scale_stride as u32,

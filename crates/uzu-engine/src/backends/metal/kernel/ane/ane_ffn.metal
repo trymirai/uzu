@@ -15,31 +15,115 @@ using namespace metal;
 #define ANE_CHUNK 4096
 #define ANE_TILE 32
 
-// Normalized Walsh-Hadamard transform of every consecutive `block` values of `values[0..count)`,
-// in place in threadgroup memory. Each stage pairs indices within 2h-aligned chunks, so blocks never mix.
-static void threadgroup_hadamard(threadgroup float* values, uint count, uint block, uint thread_id) {
-  for (uint half_span = 1; half_span < block; half_span <<= 1) {
-    for (uint pair = thread_id; pair < count / 2; pair += ANE_THREADS) {
-      const uint index = (pair / half_span) * 2 * half_span + pair % half_span;
-      const float left = values[index];
-      const float right = values[index + half_span];
-      values[index] = left + right;
-      values[index + half_span] = left - right;
+// Register-resident Walsh-Hadamard transforms over a 4096-value chunk held by a 256-thread
+// threadgroup: thread t owns values [16 t, 16 t + 16), so simdgroup s owns [512 s, 512 s + 512).
+// Stages of span 1..8 run within a thread, 16..256 across lanes (simd shuffles), 512..2048 across
+// simdgroups (one threadgroup-memory exchange).
+#define ANE_VALUES 16
+
+static void hadamard_in_thread(thread float* values) {
+  METAL_PRAGMA_UNROLL
+  for (ushort span = 1; span < ANE_VALUES; span <<= 1) {
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < ANE_VALUES; ++index) {
+      if (!(index & span)) {
+        const float left = values[index];
+        const float right = values[index + span];
+        values[index] = left + right;
+        values[index + span] = left - right;
+      }
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
   }
-  const float scale = rsqrt(float(block));
-  for (uint index = thread_id; index < count; index += ANE_THREADS) {
-    values[index] *= scale;
+}
+
+// Spans 16 * lane_stride for lane_stride in [1, lane_strides).
+static void hadamard_across_lanes(thread float* values, ushort lane, ushort lane_strides) {
+  for (ushort stride = 1; stride < lane_strides; stride <<= 1) {
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < ANE_VALUES; ++index) {
+      const float partner = simd_shuffle_xor(values[index], stride);
+      values[index] = (lane & stride) ? (partner - values[index]) : (partner + values[index]);
+    }
+  }
+}
+
+// Spans 512, 1024 and 2048: an 8-point transform across the simdgroups, through `shared`.
+static void hadamard_across_simdgroups(thread float* values, threadgroup float* shared, uint thread_id) {
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    shared[thread_id * ANE_VALUES + index] = values[index];
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
+  for (uint position = thread_id; position < 512; position += ANE_THREADS) {
+    float column[8];
+    METAL_PRAGMA_UNROLL
+    for (ushort group = 0; group < 8; ++group) {
+      column[group] = shared[group * 512 + position];
+    }
+    METAL_PRAGMA_UNROLL
+    for (ushort span = 1; span < 8; span <<= 1) {
+      METAL_PRAGMA_UNROLL
+      for (ushort group = 0; group < 8; ++group) {
+        if (!(group & span)) {
+          const float left = column[group];
+          const float right = column[group + span];
+          column[group] = left + right;
+          column[group + span] = left - right;
+        }
+      }
+    }
+    METAL_PRAGMA_UNROLL
+    for (ushort group = 0; group < 8; ++group) {
+      shared[group * 512 + position] = column[group];
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    values[index] = shared[thread_id * ANE_VALUES + index];
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+// Normalized transform of every consecutive `block` (32, 64, ..., 4096) of the thread's chunk values.
+static void block_hadamard(thread float* values, uint block, ushort lane, threadgroup float* shared, uint thread_id) {
+  hadamard_in_thread(values);
+  hadamard_across_lanes(values, lane, ushort(min(block, 512u) / ANE_VALUES));
+  if (block > 512) {
+    hadamard_across_simdgroups(values, shared, thread_id);
+  }
+  const float scale = rsqrt(float(block));
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    values[index] *= scale;
+  }
 }
 
 static float threadgroup_peak(float value, threadgroup float* partials, const thread ThreadContext& thread_context) {
   return threadgroup_cooperative_reduce<SimdReduceMax<float>, ANE_THREADS>(value, partials, thread_context);
 }
 
-// Per token: a = H_hidden(signs * x), int8 codes with one scale per token.
+static float values_peak(const thread float* values) {
+  float peak = 0.0f;
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    peak = max(peak, fabs(values[index]));
+  }
+  return peak;
+}
+
+static void store_codes(device char* destination, const thread float* values, float inverse) {
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; index += 4) {
+    *reinterpret_cast<device packed_char4*>(destination + index) = char4(clamp(
+        rint(float4(values[index], values[index + 1], values[index + 2], values[index + 3]) * inverse),
+        -127.0f,
+        127.0f
+    ));
+  }
+}
+
+// Per token: a = H_4096(signs * x), int8 codes with one scale per token (hidden must be 4096).
 // Writes token-major codes (transposed into the ANE surface by AneTransposeCodes) and the
 // token scale (x128, the ANE program's dequantize convention) into the `tx` surface.
 KERNEL(AnePack)(
@@ -49,29 +133,22 @@ KERNEL(AnePack)(
     device half* token_scales,
     constant uint& hidden,
     constant uint& tokens,
-    threadgroup float values[ANE_CHUNK],
+    threadgroup float shared[ANE_CHUNK],
     threadgroup float partials[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint token GROUPS(tokens),
     const uint thread_id THREADS(ANE_THREADS)
 ) {
-  const device bfloat* row = input + ulong(token) * hidden;
-  for (uint index = thread_id; index < hidden; index += ANE_THREADS) {
-    values[index] = float(row[index]) * signs[index];
+  const uint base = thread_id * ANE_VALUES;
+  const device bfloat* row = input + ulong(token) * hidden + base;
+  float values[ANE_VALUES];
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    values[index] = float(row[index]) * signs[base + index];
   }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  threadgroup_hadamard(values, hidden, hidden, thread_id);
-
-  float peak = 0.0f;
-  for (uint index = thread_id; index < hidden; index += ANE_THREADS) {
-    peak = max(peak, fabs(values[index]));
-  }
-  peak = max(threadgroup_peak(peak, partials, thread_context), 1e-20f);
-  const float inverse = 127.0f / peak;
-  device char* destination = codes + ulong(token) * hidden;
-  for (uint index = thread_id; index < hidden; index += ANE_THREADS) {
-    destination[index] = char(clamp(rint(values[index] * inverse), -127.0f, 127.0f));
-  }
+  block_hadamard(values, hidden, thread_context.simd_lane_id, shared, thread_id);
+  const float peak = max(threadgroup_peak(values_peak(values), partials, thread_context), 1e-20f);
+  store_codes(codes + ulong(token) * hidden + base, values, 127.0f / peak);
   if (thread_id == 0) {
     token_scales[token] = half(peak / 127.0f * 128.0f);
   }
@@ -158,8 +235,7 @@ KERNEL(AneUnpack)(
 // [groups, scale_stride/2] low nibble = even row), then
 //   r' = post_signs * H_block(pre_signs * H32(r))
 // and quantize to int8 with one scale per row (written x128 into a [rows, 1] fp16 surface).
-// Rows longer than ANE_CHUNK are processed in ANE_CHUNK pieces (block must divide ANE_CHUNK), twice:
-// once for the row peak, once to write the codes.
+// The row (chunks * 4096 columns, chunks <= 3) stays in registers; block divides 4096.
 KERNEL(AneStageRows)(
     const device uchar* weight_codes,
     const device bfloat* weight_scales,
@@ -170,69 +246,57 @@ KERNEL(AneStageRows)(
     device half* row_scales,
     constant uint& source_row_offset,
     constant uint& rows,
-    constant uint& columns,
     constant uint& scale_stride,
     constant uint& staged_row_stride,
     constant uint& row_scale_stride,
     const uint block SPECIALIZE,
+    const uint chunks SPECIALIZE,
     const bool has_post_signs SPECIALIZE,
-    threadgroup float values[ANE_CHUNK],
+    threadgroup float shared[ANE_CHUNK],
     threadgroup float partials[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint row GROUPS(rows),
     const uint thread_id THREADS(ANE_THREADS)
 ) {
   const uint source_row = source_row_offset + row;
+  const uint columns = chunks * ANE_CHUNK;
   const device uchar* row_codes = weight_codes + ulong(source_row) * (columns / 2);
-  const uint chunk = min(columns, uint(ANE_CHUNK));
-  const uint chunks = columns / chunk;
-  float peak = 0.0f;
-  device char* destination = staged + ulong(row) * staged_row_stride;
+  const ushort lane = thread_context.simd_lane_id;
+  const uint zero_shift = (source_row & 1) * 4;
 
-  for (uint pass = 0; pass < 2; ++pass) {
-    const float inverse = pass == 0 ? 0.0f : 127.0f / peak;
-    for (uint piece = 0; piece < chunks; ++piece) {
-      const uint base = piece * chunk;
-      if (pass == 1 && chunks == 1) {
-        // The single chunk is still in threadgroup memory.
-      } else {
-        for (uint index = thread_id; index < chunk; index += ANE_THREADS) {
-          const uint column = base + index;
-          const uint group = column / 32;
-          const uint code = (row_codes[column / 2] >> ((column & 1) * 4)) & 0xF;
-          const uint zero =
-              (zero_points[ulong(group) * (scale_stride / 2) + source_row / 2] >> ((source_row & 1) * 4)) & 0xF;
-          const float scale = float(weight_scales[ulong(group) * scale_stride + source_row]);
-          values[index] = scale * (float(code) - float(zero));
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        threadgroup_hadamard(values, chunk, 32, thread_id);
-        for (uint index = thread_id; index < chunk; index += ANE_THREADS) {
-          values[index] *= pre_signs[base + index];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        threadgroup_hadamard(values, chunk, block, thread_id);
-        if (has_post_signs) {
-          for (uint index = thread_id; index < chunk; index += ANE_THREADS) {
-            values[index] *= post_signs[base + index];
-          }
-          threadgroup_barrier(mem_flags::mem_threadgroup);
-        }
-      }
-      if (pass == 0) {
-        for (uint index = thread_id; index < chunk; index += ANE_THREADS) {
-          peak = max(peak, fabs(values[index]));
-        }
-      } else {
-        for (uint index = thread_id; index < chunk; index += ANE_THREADS) {
-          destination[base + index] = char(clamp(rint(values[index] * inverse), -127.0f, 127.0f));
-        }
-      }
-      threadgroup_barrier(mem_flags::mem_threadgroup);
+  float values[3][ANE_VALUES];
+  float peak = 0.0f;
+  for (uint chunk = 0; chunk < chunks; ++chunk) {
+    const uint base = chunk * ANE_CHUNK + thread_id * ANE_VALUES;
+    const uint group = base / 32;
+    const float scale = float(weight_scales[ulong(group) * scale_stride + source_row]);
+    const float zero = float((zero_points[ulong(group) * (scale_stride / 2) + source_row / 2] >> zero_shift) & 0xF);
+    const uint2 packed = *reinterpret_cast<const device uint2*>(row_codes + base / 2);
+    thread float* chunk_values = values[chunk];
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < ANE_VALUES; ++index) {
+      const uint word = index < 8 ? packed.x : packed.y;
+      const uint code = (word >> ((index % 8) * 4)) & 0xF;
+      chunk_values[index] = scale * (float(code) - zero);
     }
-    if (pass == 0) {
-      peak = max(threadgroup_peak(peak, partials, thread_context), 1e-20f);
+    block_hadamard(chunk_values, 32, lane, shared, thread_id);
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < ANE_VALUES; ++index) {
+      chunk_values[index] *= pre_signs[base + index];
     }
+    block_hadamard(chunk_values, block, lane, shared, thread_id);
+    if (has_post_signs) {
+      METAL_PRAGMA_UNROLL
+      for (ushort index = 0; index < ANE_VALUES; ++index) {
+        chunk_values[index] *= post_signs[base + index];
+      }
+    }
+    peak = max(peak, values_peak(chunk_values));
+  }
+  peak = max(threadgroup_peak(peak, partials, thread_context), 1e-20f);
+  device char* destination = staged + ulong(row) * staged_row_stride;
+  for (uint chunk = 0; chunk < chunks; ++chunk) {
+    store_codes(destination + chunk * ANE_CHUNK + thread_id * ANE_VALUES, values[chunk], 127.0f / peak);
   }
   if (thread_id == 0) {
     row_scales[ulong(row) * row_scale_stride] = half(peak / 127.0f * 128.0f);

@@ -51,6 +51,7 @@ const ROWS: [u32; 4] = [256, 512, 768, 1024];
 /// Smaller batches stay on the GPU: the ANE's fixed cost per call dominates them.
 pub const MIN_TOKENS: u32 = 128;
 const SEGMENT: u32 = 2048;
+const CHUNK: u32 = 4096;
 const INTERMEDIATE_ROTATION_BLOCK: u32 = 512;
 const UP_ROTATION_BLOCK: u32 = 32;
 /// Requests in flight per program are capped by the ANE service (127).
@@ -198,12 +199,8 @@ impl AneFfn {
         }
         let hidden = read_signs(weights.up.input_rht_signs.unwrap()).len() as u32;
         let intermediate = read_signs(weights.down.input_rht_signs.unwrap()).len() as u32;
-        if hidden > 4096
-            || !hidden.is_power_of_two()
-            || !hidden.is_multiple_of(SEGMENT)
-            || !intermediate.is_multiple_of(SEGMENT)
-            || !intermediate.is_multiple_of(INTERMEDIATE_ROTATION_BLOCK)
-        {
+        // The GPU kernels hold a token (and a staged row) as 4096-value chunks in registers.
+        if hidden != CHUNK || !intermediate.is_multiple_of(CHUNK) || intermediate > 3 * CHUNK {
             return Ok(None);
         }
         let up_output_signs = read_signs(weights.up.output_rht_signs.unwrap());
@@ -272,8 +269,8 @@ impl AneFfn {
             pack: AnePackMetalKernel::new(context).map_err(kernel_error)?,
             transpose: AneTransposeCodesMetalKernel::new(context).map_err(kernel_error)?,
             unpack: AneUnpackMetalKernel::new(context).map_err(kernel_error)?,
-            stage_up: AneStageRowsMetalKernel::new(context, hidden, false).map_err(kernel_error)?,
-            stage_down: AneStageRowsMetalKernel::new(context, INTERMEDIATE_ROTATION_BLOCK, true)
+            stage_up: AneStageRowsMetalKernel::new(context, hidden, hidden / CHUNK, false).map_err(kernel_error)?,
+            stage_down: AneStageRowsMetalKernel::new(context, INTERMEDIATE_ROTATION_BLOCK, intermediate / CHUNK, true)
                 .map_err(kernel_error)?,
         };
         let pack_signs = random_signs(hidden as usize, 1);
@@ -391,7 +388,6 @@ impl AneFfn {
                 scales.buffer_mut(),
                 row_offset,
                 intermediate,
-                hidden,
                 up_scale_stride,
                 staged_row_stride,
                 scale_stride,
@@ -409,7 +405,6 @@ impl AneFfn {
             sd.buffer_mut(),
             0,
             hidden,
-            intermediate,
             down_scale_stride,
             wd_row_stride,
             sd_stride,

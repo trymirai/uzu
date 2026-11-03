@@ -45,10 +45,13 @@ def int8_rows(matrix):
     return np.clip(np.round(matrix / scale), -127, 127), scale
 
 
+import os
+
+MID_BLOCK = int(os.environ.get("MID_BLOCK", "512"))
+INTERMEDIATE_INT8 = os.environ.get("INTERMEDIATE_INT8", "1") == "1"
 rng = np.random.default_rng(20261103)
 D_a = np.where(rng.random(H_DIM) < 0.5, -1.0, 1.0)
-D_m = np.where(rng.random(512) < 0.5, -1.0, 1.0)
-D_m_full = np.tile(D_m, I_DIM // 512)
+D_m_full = np.where(rng.random(I_DIM) < 0.5, -1.0, 1.0)
 
 layers = [int(value) for value in sys.argv[1].split(",")] if len(sys.argv) > 1 else [8, 16]
 count = int(sys.argv[2]) if len(sys.argv) > 2 else 64
@@ -78,7 +81,7 @@ for layer in layers:
 
     # --- GPU staging ---
     up_staged = fwht(D_a * sign["in"] * fwht(up, 32), H_DIM)
-    down_staged = D_m_full * fwht(sign["din"] * fwht(down, 32), 512)
+    down_staged = D_m_full * fwht(sign["din"] * fwht(down, 32), MID_BLOCK)
     up_codes, up_scales = int8_rows(up_staged)
     down_codes, down_scales = int8_rows(down_staged)
     value_codes, gate_codes = up_codes[:I_DIM], up_codes[I_DIM:]
@@ -98,10 +101,14 @@ for layer in layers:
     value = fp16(sign["out"][:I_DIM] * fwht(value_rot, 32))
     gate_t = fp16(gate * t)
     h = fp16(fp16(gate_t * 0.5 * (1 + np.tanh(gate_t * 0.5))) * value)  # = true_h / t
-    z = fp16(D_m_full * fwht(h, 512))
-    z_codes, p = int8_rows(z)
-    p = fp16(p * 128)
-    y_rot = fp16(fp16(fp16(z_codes / 128) @ fp16(down_codes / 128).T) * fp16(down_scales[:, 0] * 128))
+    z = fp16(D_m_full * fwht(h, MID_BLOCK))
+    if INTERMEDIATE_INT8:
+        z_codes, p = int8_rows(z)
+        p = fp16(p * 128)
+        y_rot = fp16(fp16(fp16(z_codes / 128) @ fp16(down_codes / 128).T) * fp16(down_scales[:, 0] * 128))
+    else:
+        p = np.ones((z.shape[0], 1))
+        y_rot = fp16(fp16(z @ fp16(down_codes / 128).T) * fp16(down_scales[:, 0] * 128))
 
     # --- GPU unpack ---
     output = sign["dout"] * fwht(y_rot * p * t, 32)
