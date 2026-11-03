@@ -40,6 +40,7 @@ fn run_router_top_k<B: Backend>(
         NUM_EXPERTS,
         TOP_K,
         batch_dim,
+        NUM_EXPERTS,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

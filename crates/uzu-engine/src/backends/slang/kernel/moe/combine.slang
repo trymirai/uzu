@@ -7,11 +7,12 @@ import definitions;
   StructuredBuffer<T> expert_outputs,
   StructuredBuffer<float> expert_weights,
   StructuredBuffer<T> shared_output,
-  StructuredBuffer<T> shared_gate,
+  StructuredBuffer<float> shared_gate,
   RWStructuredBuffer<T> output,
   uint32_t model_dim,
   uint32_t top_k,
   uint32_t batch_size,
+  uint32_t gate_stride,
   [[Axis("model_dim", "BD")]] uint32_t dim_idx,
   [[Axis("batch_size", "1")]] uint32_t token_idx,
 ) {

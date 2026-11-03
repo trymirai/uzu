@@ -3,6 +3,7 @@
 use std::mem::size_of_val;
 
 use derive_more::Debug;
+use half::bf16;
 use thiserror::Error;
 
 use crate::{
@@ -227,6 +228,105 @@ async fn load_shared_gate<B: Backend>(
     Ok(gate)
 }
 
+fn hadamard_transform_slice(values: &mut [f32]) {
+    let mut stride = 1;
+    while stride < values.len() {
+        for lane in 0..values.len() {
+            if lane & stride == 0 {
+                let a = values[lane];
+                let b = values[lane | stride];
+                values[lane] = a + b;
+                values[lane | stride] = a - b;
+            }
+        }
+        stride <<= 1;
+    }
+    let scale = 1.0 / (values.len() as f32).sqrt();
+    for v in values.iter_mut() {
+        *v *= scale;
+    }
+}
+
+async fn load_dequantized_unrotated_gate<B: Backend>(
+    gate_tree: &ParameterTree<'_, B>,
+    model_dimension: u32,
+) -> Result<Option<Vec<bf16>>, MoeMlpNewError<B>> {
+    let weights_tree = gate_tree.subtree("weights");
+    let Ok(spec) = weights_tree.metadata::<AnyWeightMatrixSpec>("spec") else {
+        return Ok(None);
+    };
+
+    match spec {
+        AnyWeightMatrixSpec::HybridSpec(hybrid) => {
+            if hybrid.incoherence_block_size != Some(HADAMARD_TRANSFORM_BLOCK_SIZE)
+                || hybrid.incoherence_processing_mode != IncoherenceProcessingMode::Input
+            {
+                return Ok(None);
+            }
+            let AnyWeightMatrixSpec::IntSpec(int_spec) = *hybrid.quantization_spec else {
+                return Ok(None);
+            };
+            if int_spec.bits != 4 || int_spec.group_size != 64 {
+                return Ok(None);
+            }
+
+            let input_signs = weights_tree
+                .read_slice::<i32>("incoherence_signs.input_signs", &[model_dimension])
+                .await
+                .map_err(MoeMlpNewError::Parameter)?;
+            let quant_tree = weights_tree.subtree("quantized");
+            let packed_weights = quant_tree
+                .read_slice::<u8>("weights", &[1, model_dimension / 2])
+                .await
+                .map_err(MoeMlpNewError::Parameter)?;
+            let num_groups = model_dimension.div_ceil(64);
+            let scales =
+                quant_tree.read_slice::<bf16>("scales", &[num_groups, 4]).await.map_err(MoeMlpNewError::Parameter)?;
+            let zero_points = quant_tree
+                .read_slice::<u8>("zero_points", &[num_groups, 2])
+                .await
+                .map_err(MoeMlpNewError::Parameter)?;
+
+            let mut dequantized = vec![0.0f32; model_dimension as usize];
+            for (k, val) in dequantized.iter_mut().enumerate() {
+                let byte_idx = k / 2;
+                let b_val = packed_weights[byte_idx];
+                let code = if k % 2 == 0 {
+                    b_val & 0x0F
+                } else {
+                    (b_val >> 4) & 0x0F
+                };
+                let g = k / 64;
+                let scale = scales[g * 4].to_f32();
+                let zp_byte = zero_points[g * 2];
+                let zp = (zp_byte & 0x0F) as f32;
+                *val = scale * (code as f32 - zp);
+            }
+
+            let mut unrotated = vec![bf16::ZERO; model_dimension as usize];
+            let block_size = HADAMARD_TRANSFORM_BLOCK_SIZE as usize;
+            for stripe_start in (0..model_dimension as usize).step_by(block_size) {
+                let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
+                stripe.copy_from_slice(&dequantized[stripe_start..stripe_start + block_size]);
+                hadamard_transform_slice(&mut stripe);
+                for lane in 0..block_size {
+                    let sign = input_signs[stripe_start + lane] as f32;
+                    unrotated[stripe_start + lane] = bf16::from_f32(stripe[lane] * sign);
+                }
+            }
+            Ok(Some(unrotated))
+        },
+        AnyWeightMatrixSpec::FullPrecisionSpec(_) => {
+            let weights = weights_tree
+                .read_slice::<bf16>("weights", &[1, model_dimension])
+                .await
+                .map_err(MoeMlpNewError::Parameter)?;
+            Ok(Some(weights.to_vec()))
+        },
+        _ => Ok(None),
+    }
+}
+
 /// One projection of all routed experts, stored as `[num_experts, ...]` planes and rotated on both sides.
 struct RoutedProjection<B: Backend> {
     kernel: <B::Kernels as Kernels>::MoeGemvKernel,
@@ -443,7 +543,8 @@ pub struct MoeMlp<B: Backend> {
     routed_down: RoutedProjection<B>,
     shared_expert: DenseMlp<B>,
     shared_input_rht: Option<InputRht<B>>,
-    shared_gate: LinearMatmul<B>,
+    shared_gate: Option<LinearMatmul<B>>,
+    has_folded_gate: bool,
     combine: <B::Kernels as Kernels>::MoeCombineKernel,
     model_dimension: u32,
     num_routed_experts: u32,
@@ -464,8 +565,42 @@ impl<B: Backend> MoeMlp<B> {
         let hidden_dimension = config.expert_hidden_dim;
         let expert_config = &config.expert_config;
 
-        let router =
-            load_router(num_experts, model_dimension, data_type, &parameter_tree.subtree("router"), context).await?;
+        let gate_tree = parameter_tree.subtree("gate");
+        let gate_row = load_dequantized_unrotated_gate(&gate_tree, model_dimension).await?;
+
+        let router_tree = parameter_tree.subtree("router");
+        let router_weights_tree = router_tree.subtree("weights");
+        let router_spec = router_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+
+        let (router, has_folded_gate) =
+            if let (Some(gate_row), AnyWeightMatrixSpec::FullPrecisionSpec(_)) = (&gate_row, &router_spec) {
+                let router_slice = router_weights_tree
+                    .read_slice::<bf16>("weights", &[num_experts, model_dimension])
+                    .await
+                    .map_err(MoeMlpNewError::Parameter)?;
+                let total_rows = num_experts + 1;
+                let mut folded_weights = Vec::with_capacity((total_rows * model_dimension) as usize);
+                folded_weights.extend_from_slice(&router_slice);
+                folded_weights.extend_from_slice(gate_row);
+                let mut buffer = context
+                    .create_buffer_cpu_gpu(folded_weights.len() * std::mem::size_of::<bf16>())
+                    .map_err(MoeMlpNewError::Backend)?;
+                buffer.copyin(&folded_weights);
+                let router_matmul = LinearMatmul::new_full_precision(
+                    buffer.handoff(),
+                    model_dimension,
+                    total_rows,
+                    data_type,
+                    data_type,
+                    DataType::F32,
+                    context,
+                )
+                .map_err(|e| MoeMlpNewError::Linear(e.into()))?;
+                (router_matmul, true)
+            } else {
+                let r = load_router(num_experts, model_dimension, data_type, &router_tree, context).await?;
+                (r, false)
+            };
         let router_top_k =
             <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, MOE_ROUTER_MAX_TOP_K)
                 .map_err(MoeMlpNewError::Backend)?;
@@ -522,9 +657,11 @@ impl<B: Backend> MoeMlp<B> {
             .map(|preparation| InputRht::new(data_type, preparation, false, context))
             .transpose()
             .map_err(MoeMlpNewError::Backend)?;
-        let shared_gate =
-            load_shared_gate(model_dimension, data_type, &input_signs, &parameter_tree.subtree("gate"), context)
-                .await?;
+        let shared_gate = if has_folded_gate {
+            None
+        } else {
+            Some(load_shared_gate(model_dimension, data_type, &input_signs, &gate_tree, context).await?)
+        };
 
         let combine = <B::Kernels as Kernels>::MoeCombineKernel::new(context, data_type, MOE_COMBINE_BLOCK_DIM)
             .map_err(MoeMlpNewError::Backend)?;
@@ -541,6 +678,7 @@ impl<B: Backend> MoeMlp<B> {
             shared_expert,
             shared_input_rht,
             shared_gate,
+            has_folded_gate,
             combine,
             model_dimension,
             num_routed_experts: num_experts,
@@ -573,6 +711,11 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         let mut expert_weights = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, top_k], DataType::F32)
             .map_err(MlpEncodeError::Backend)?;
+        let logit_stride = if self.has_folded_gate {
+            self.num_routed_experts + 1
+        } else {
+            self.num_routed_experts
+        };
         self.router_top_k.encode(
             &router_logits,
             &mut expert_ids,
@@ -580,6 +723,7 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             self.num_routed_experts,
             top_k,
             batch_dim,
+            logit_stride,
             command_buffer,
         );
 
@@ -636,12 +780,21 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             .encode(&down_input, &expert_ids, total_routes, num_routed_routes, top_k, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
 
-        let shared_gate = self.shared_gate.encode_with_a(
-            MatmulA::full_precision(&input),
-            batch_dim,
-            None::<Gather<&B::ScratchBuffer>>,
-            command_buffer,
-        )?;
+        let fallback_gate;
+        let (gate_buf, gate_stride) = if self.has_folded_gate {
+            let f32_size = std::mem::size_of::<f32>();
+            let gate_offset = (self.num_routed_experts as usize) * f32_size;
+            let gate_slice = (&router_logits).subrange(gate_offset..);
+            (gate_slice, self.num_routed_experts + 1)
+        } else {
+            fallback_gate = self.shared_gate.as_ref().unwrap().encode_with_a(
+                MatmulA::full_precision(&input),
+                batch_dim,
+                None::<Gather<&B::ScratchBuffer>>,
+                command_buffer,
+            )?;
+            (fallback_gate.subrange(0..), 1)
+        };
 
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)
@@ -656,11 +809,12 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
                 &routed_outputs,
                 &expert_weights,
                 shared_slice,
-                &shared_gate,
+                gate_buf,
                 &mut output,
                 self.model_dimension,
                 top_k,
                 batch_dim,
+                gate_stride,
                 command_buffer,
             );
         } else {
@@ -673,11 +827,12 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
                 &routed_outputs,
                 &expert_weights,
                 &shared_output,
-                &shared_gate,
+                gate_buf,
                 &mut output,
                 self.model_dimension,
                 top_k,
                 batch_dim,
+                gate_stride,
                 command_buffer,
             );
         }
