@@ -1,34 +1,10 @@
 use half::bf16;
-use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{backends::common::kernel::kv_layout::Int8KVLayout, data_type::DataTypeRepr};
+use crate::backends::common::kernel::kv_layout::Int8KVLayout;
 
 #[kernel(KVCacheUpdate)]
-#[variants(T, f32, bf16)]
-pub fn kv_cache_update<T: DataTypeRepr + Float>(
-    in_place_keys: *mut T,
-    in_place_values: *mut T,
-    copies: &[crate::backends::common::gpu_types::kv_cache_update::Copy],
-    copy_count: u32,
-    element_dim: u32,
-) {
-    let element_dim = element_dim as usize;
-
-    for element_idx in 0..element_dim {
-        for i in 0..copy_count as usize {
-            let source_idx = (copies[i].source as usize) * element_dim + element_idx;
-            let dest_idx = (copies[i].destination as usize) * element_dim + element_idx;
-            unsafe {
-                *in_place_keys.add(dest_idx) = *in_place_keys.add(source_idx);
-                *in_place_values.add(dest_idx) = *in_place_values.add(source_idx);
-            }
-        }
-    }
-}
-
-#[kernel(KVCacheUpdateInt8)]
-pub fn kv_cache_update_int8(
+pub fn kv_cache_update(
     in_place_k_codes: *mut i8,
     in_place_v_codes: *mut u8,
     in_place_k_scales: *mut bf16,
@@ -37,8 +13,9 @@ pub fn kv_cache_update_int8(
     copy_count: u32,
     #[specialize] head_dim: u32,
     #[specialize] num_kv_heads: u32,
+    #[specialize] use_mxu_layout: bool,
 ) {
-    let layout = Int8KVLayout::new(head_dim, num_kv_heads);
+    let layout = Int8KVLayout::new(head_dim, num_kv_heads, use_mxu_layout);
     for copy in copies.iter().take(copy_count as usize) {
         for head in 0..num_kv_heads {
             for channel in 0..head_dim {

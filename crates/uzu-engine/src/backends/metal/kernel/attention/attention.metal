@@ -1,17 +1,18 @@
 #include <metal_stdlib>
-#include "../../common/dsl.h"
-#include "../../common/conversion.h"
-#include "../../common/thread_context.h"
-#include "../../matmul/common/fragment.h"
-#include "../../generated/attention.h"
-#include "../../generated/trie.h"
-#include "../kv_layout.h"
+#include "../common/dsl.h"
+#include "../common/conversion.h"
+#include "../common/thread_context.h"
+#include "../matmul/common/fragment.h"
+#include "../generated/attention.h"
+#include "../generated/trie.h"
+#include "kv_layout.h"
 #include "layout.h"
+#include "simd.h"
 
 using namespace metal;
 using namespace uzu::matmul;
 
-template <uint HEAD_DIM>
+template <uint HEAD_DIM, bool USE_MXU = true, uint NUM_SIMDGROUPS = ATTENTION_GQA_SIMDGROUPS>
 struct Int8Scratch {
   using Layout = AttentionGemmGroupedLayout<uzu::kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / uzu::kv_layout::SLICE_DIMS>;
 
@@ -23,6 +24,8 @@ struct Int8Scratch {
 
   UZU_CONST int QUERY_VECTORS_PER_BAND = int(HEAD_DIM) / (2 * uzu::kv_layout::TILE_DIMS) * METAL_SIMD_SIZE;
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
+  UZU_CONST int EXCHANGE_FLOATS = USE_MXU ? 2 * SLOT_FLOATS : NUM_SIMDGROUPS * 8 * (HEAD_DIM == 512 ? 16 : 32);
+  UZU_CONST int STAGING_VECTORS = USE_MXU ? QUERY_VECTORS : (HEAD_DIM == 512 ? 16 : 32) * (HEAD_DIM + 8) / 8;
 };
 
 template <class Ops, int DEPTH_FRAGMENTS>
@@ -112,10 +115,15 @@ struct Int8Softmax {
   }
 };
 
-template <typename ScaleType, uint HEAD_DIM>
+template <typename ScaleType, uint HEAD_DIM, bool USE_MXU, uint NUM_SIMDGROUPS>
 VARIANTS(ScaleType, bfloat)
-VARIANTS(HEAD_DIM, 128, 256)
-KERNEL(AttentionGemmGroupedInt8)(
+VARIANTS(HEAD_DIM, 64, 128, 256, 512)
+VARIANTS(USE_MXU, false, true)
+VARIANTS(NUM_SIMDGROUPS, 1, 2, 4, 6, 8)
+CONSTRAINT(!USE_MXU || (NUM_SIMDGROUPS == 8 && (HEAD_DIM == 128 || HEAD_DIM == 256)))
+CONSTRAINT(HEAD_DIM != 256 || NUM_SIMDGROUPS % 2 == 0)
+CONSTRAINT(HEAD_DIM != 512 || NUM_SIMDGROUPS % 4 == 0)
+KERNEL(AttentionGemmGrouped)(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
     const device int8_t* key_codes,
@@ -123,6 +131,8 @@ KERNEL(AttentionGemmGroupedInt8)(
     const device uchar* value_codes,
     const device ScaleType* value_scales,
     const device uzu::trie::TrieNode* trie OPTIONAL(is_trie),
+    const constant uzu::ring::RingParams& ring_params OPTIONAL(is_kv_cache_ring),
+    const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
     device bfloat* partial_values,
     device float* partial_maxima,
     device float* partial_denominators,
@@ -132,17 +142,51 @@ KERNEL(AttentionGemmGroupedInt8)(
     const constant uint& split_base,
     const constant uint& split_count,
     const constant uint& trie_nodes,
+    const bool is_causal SPECIALIZE,
+    const bool is_kv_cache_ring SPECIALIZE,
+    const bool is_sliding_window SPECIALIZE,
     const bool mask_free SPECIALIZE,
     const bool is_trie SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
-    threadgroup float probability_exchange[2 * Int8Scratch<HEAD_DIM>::SLOT_FLOATS],
+    threadgroup float probability_exchange[Int8Scratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS>::EXCHANGE_FLOATS],
     threadgroup ulong row_masks[Int8Scratch<HEAD_DIM>::ROW_MASKS],
-    threadgroup uint4 query_stage[Int8Scratch<HEAD_DIM>::QUERY_VECTORS],
+    threadgroup uint4 query_stage[Int8Scratch<HEAD_DIM, USE_MXU>::STAGING_VECTORS],
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
     const uint kv_head_index GROUPS(num_kv_heads),
-    const uint thread_index THREADS(ATTENTION_GQA_SIMDGROUPS * METAL_SIMD_SIZE)
+    const uint thread_index THREADS(NUM_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
+  if constexpr (!USE_MXU) {
+    attention_int8_simd<ScaleType, HEAD_DIM, NUM_SIMDGROUPS>(
+        query_codes,
+        query_scales,
+        key_codes,
+        key_scales,
+        value_codes,
+        value_scales,
+        trie,
+        ring_params,
+        sliding_window_size,
+        is_causal,
+        is_kv_cache_ring,
+        is_sliding_window,
+        partial_values,
+        partial_maxima,
+        partial_denominators,
+        params,
+        query_tiles,
+        num_splits,
+        trie_nodes,
+        is_trie,
+        num_kv_heads,
+        probability_exchange,
+        reinterpret_cast<threadgroup half*>(query_stage),
+        thread_context,
+        tile_split_index,
+        kv_head_index
+    );
+    return;
+  }
   using Layout = AttentionGemmGroupedLayout<uzu::kv_layout::TILE_KEYS, HEAD_DIM, HEAD_DIM / uzu::kv_layout::SLICE_DIMS>;
   using Scratch = Int8Scratch<HEAD_DIM>;
   using Ops = typename Layout::Ops;
@@ -235,12 +279,10 @@ KERNEL(AttentionGemmGroupedInt8)(
   const uint last_query_position = (tile_first_row / params.q_len == tile_last_row / params.q_len)
                                        ? (tile_last_row % params.q_len)
                                        : (params.q_len - 1u);
-  const uint split_end_block = ((split_index + 1u) * params.nk) / num_splits;
   const uint end_block =
-      min(split_end_block,
+      min(((split_index + 1u) * params.nk) / num_splits,
           (prefix_length + last_query_position + uint(uzu::kv_layout::TILE_KEYS)) / uint(uzu::kv_layout::TILE_KEYS));
   const uint block_count = end_block > first_block ? end_block - first_block : 0u;
-  const bool has_tail_block = (params.k_rem != 0u) && (block_count > 0u) && (end_block == params.nk);
 
   key_codes += size_t(first_block) * key_block_stride;
   value_tiles += size_t(first_block) * value_block_stride;
@@ -250,7 +292,7 @@ KERNEL(AttentionGemmGroupedInt8)(
 
   const uint scales_per_block = uint(uzu::kv_layout::TILE_KEYS) * num_kv_heads;
   const size_t first_scale_index =
-      uzu::kv_layout::Int8KVShape{HEAD_DIM, num_kv_heads}.scale_index(first_key, kv_head_index);
+      uzu::kv_layout::Int8KVShape{HEAD_DIM, num_kv_heads, true}.scale_index(first_key, kv_head_index);
   const device ScaleType* block_key_scales = key_scales + first_scale_index;
   const device ScaleType* block_value_scales = value_scales + first_scale_index;
 
@@ -283,7 +325,6 @@ KERNEL(AttentionGemmGroupedInt8)(
                                    threadgroup float2* slot_sums,
                                    threadgroup uchar* slot_codes) UZU_ALWAYS_INLINE {
     const uint key_block = block_index + uint(channel_slice);
-    const bool is_tail_block = has_tail_block && (key_block + 1u == block_count);
     const uint key_base = first_key + key_block * uint(uzu::kv_layout::TILE_KEYS);
     const device int8_t* block_keys = key_codes + key_block * key_block_stride;
 
@@ -347,7 +388,7 @@ KERNEL(AttentionGemmGroupedInt8)(
         score
     );
 
-    if (!mask_free && (is_tail_block || (key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length))) {
+    if (!mask_free && key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length) {
       scores.map_coords(lane, [&](short row, short column, AccumType value) UZU_ALWAYS_INLINE {
         const ulong row_mask = row_masks[query_band_offset + uint(row)];
         const uint key = key_base + uint(column);

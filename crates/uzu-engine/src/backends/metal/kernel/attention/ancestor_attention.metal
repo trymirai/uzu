@@ -1,60 +1,29 @@
-#include <metal_simdgroup>
 #include <metal_stdlib>
 #include "../common/defines.h"
-#include "../common/integral_constant.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
+#include "../hadamard_transform/hadamard_transform.h"
 #include "../weaver/weaver_frontier.h"
+#include "int8_quantization.h"
+#include "kv_layout.h"
+#include "rope.h"
 
 using namespace metal;
 
 #define SIMD_GROUPS_PER_THREADGROUP 4
 #define THREADS_PER_THREADGROUP (SIMD_GROUPS_PER_THREADGROUP * METAL_SIMD_SIZE)
 
-constant uint VALUES_PER_VECTOR = 4;
-constant uint QKV_COMPONENTS = 3;
-constant uint KEY_COMPONENT = 1;
-constant uint VALUE_COMPONENT = 2;
-
-template <ushort UNROLL_COUNT, typename GetPtrBaseFn>
-METAL_FUNC void attend_qkv(
-    float4 query,
-    uint key_offset,
-    uint value_offset,
-    thread float4& values,
-    thread float& max_score,
-    thread float& sum,
-    GetPtrBaseFn get_ptr_base
-) {
-  float4 keys[UNROLL_COUNT];
-  float4 position_values[UNROLL_COUNT];
-  uzu::const_for_loop<0, UNROLL_COUNT, 1>([&](auto position) {
-    const device bfloat4* vectors = get_ptr_base(position);
-    keys[position] = float4(vectors[key_offset]);
-    position_values[position] = float4(vectors[value_offset]);
-  });
-  float scores[UNROLL_COUNT];
-  uzu::const_for_loop<0, UNROLL_COUNT, 1>([&](auto position) {
-    scores[position] = simd_sum(dot(query, keys[position]));
-  });
-  float new_max = max_score;
-  uzu::const_for_loop<0, UNROLL_COUNT, 1>([&](auto position) { new_max = max(new_max, scores[position]); });
-  const float old_factor = fast::exp(max_score - new_max);
-  sum *= old_factor;
-  values *= old_factor;
-  uzu::const_for_loop<0, UNROLL_COUNT, 1>([&](auto position) {
-    const float factor = fast::exp(scores[position] - new_max);
-    sum += factor;
-    values += factor * position_values[position];
-  });
-  max_score = new_max;
-}
-
 template <uint HEAD_DIM>
 VARIANTS(HEAD_DIM, 128)
 PUBLIC KERNEL(AncestorAttention)(
-    const device bfloat* prefix_kv,
-    device bfloat* node_kv,
+    const device int8_t* prefix_k_codes,
+    const device bfloat* prefix_k_scales,
+    const device uchar* prefix_v_codes,
+    const device bfloat* prefix_v_scales,
+    device int8_t* node_k_codes,
+    device bfloat* node_k_scales,
+    device uchar* node_v_codes,
+    device bfloat* node_v_scales,
     const device bfloat* current_qkv,
     const device float* cosines,
     const device float* sines,
@@ -70,101 +39,91 @@ PUBLIC KERNEL(AncestorAttention)(
     constant uint& max_depth,
     constant float& scale,
     const uint num_heads SPECIALIZE,
+    const bool use_mxu_layout SPECIALIZE,
     const ThreadContext thread_context,
     const uint group GROUPS((rows * num_heads).div_ceil(SIMD_GROUPS_PER_THREADGROUP)),
     const uint lid THREADS(THREADS_PER_THREADGROUP)
 ) {
   const uint row_head = group * SIMD_GROUPS_PER_THREADGROUP + thread_context.simdgroup_index;
-  if (row_head >= rows * num_heads) {
+  if (row_head >= rows * num_heads)
     return;
-  }
-
-  constexpr uint vectors_per_head = HEAD_DIM / VALUES_PER_VECTOR;
-  constexpr ushort unroll_count = 4;
+  constexpr ushort N = HEAD_DIM / METAL_SIMD_SIZE;
   const uint row = row_head / num_heads;
   const uint head = row_head % num_heads;
-  const uint lane = thread_context.simd_lane_id;
-  const uint model_vectors = num_heads * vectors_per_head;
-  const uint qkv_vectors = QKV_COMPONENTS * num_heads * vectors_per_head;
-  const uint head_offset = head * vectors_per_head + lane;
-  const uint current_key_offset = KEY_COMPONENT * model_vectors + head_offset;
-  const uint current_value_offset = VALUE_COMPONENT * model_vectors + head_offset;
-  const uint prefix_value_offset = prefix_length * model_vectors + head_offset;
-  const uint node_value_offset = node_capacity * model_vectors + head_offset;
-  const device bfloat4* prefix_vectors = (const device bfloat4*)prefix_kv;
-  device bfloat4* node_vectors = (device bfloat4*)node_kv;
-  const device bfloat4* current_row = (const device bfloat4*)current_qkv + row * qkv_vectors;
-
-  // Rotate this node's query and key by its position, here rather than in a
-  // pass of its own. The rotation pairs every channel with one from the other
-  // half of the head, and a thread 16 lanes over already holds that half, so we
-  // ask it directly instead of reading the buffer a second time.
-  static_assert(vectors_per_head == METAL_SIMD_SIZE, "one lane per head vector");
-  const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
-  const uint rope_position = depth + 1u;
-  const device float4* cosine_row = (const device float4*)(cosines + rope_position * HEAD_DIM);
-  const device float4* sine_row = (const device float4*)(sines + rope_position * HEAD_DIM);
-  const float4 cosine = cosine_row[lane];
-  const float4 sine = sine_row[lane];
-  const bool low_half = lane < (vectors_per_head / 2);
-
-  const float4 raw_query = float4(current_row[head_offset]);
-  const float4 paired_query = simd_shuffle_xor(raw_query, ushort(vectors_per_head / 2));
-  const float4 rotated_query =
-      low_half ? (raw_query * cosine - paired_query * sine) : (raw_query * cosine + paired_query * sine);
-
-  const float4 raw_key = float4(current_row[current_key_offset]);
-  const float4 paired_key = simd_shuffle_xor(raw_key, ushort(vectors_per_head / 2));
-  const float4 rotated_key = low_half ? (raw_key * cosine - paired_key * sine) : (raw_key * cosine + paired_key * sine);
-
-  const float4 query = rotated_query * scale;
-
-  // prefix_length >= 1 (the u0 token): seed the online softmax from position 0.
-  float max_score = simd_sum(dot(query, float4(prefix_vectors[head_offset])));
-  float4 values = float4(prefix_vectors[prefix_value_offset]);
-  float sum = 1.0f;
-
-  uint position = 1;
-  for (; position + unroll_count - 1 < prefix_length; position += unroll_count) {
-    attend_qkv<unroll_count>(query, head_offset, prefix_value_offset, values, max_score, sum, [&](int step) {
-      return prefix_vectors + (position + step) * model_vectors;
-    });
+  const ushort lane = ushort(thread_context.simd_lane_id);
+  const uint model_dim = num_heads * HEAD_DIM;
+  const uint position = node_metadata[uint(MetadataIdx::Depth) * rows + row] + 1;
+  const device bfloat* qkv = current_qkv + row * 3 * model_dim + head * HEAD_DIM;
+  const uzu::kv_layout::Int8KVShape shape{HEAD_DIM, num_heads, use_mxu_layout};
+  float query[N], key[N], value[N];
+  METAL_PRAGMA_UNROLL
+  for (ushort i = 0; i < N; ++i) {
+    const uint channel = i * METAL_SIMD_SIZE + lane;
+    const float sign = uzu::kv_layout::rotation_sign(channel);
+    query[i] = float(apply_rope(qkv, cosines, sines, position, channel, HEAD_DIM)) * sign;
+    key[i] = float(apply_rope(qkv + model_dim, cosines, sines, position, channel, HEAD_DIM)) * sign;
+    value[i] = float(qkv[2 * model_dim + channel]) * sign;
   }
-  for (; position < prefix_length; ++position) {
-    attend_qkv<1>(query, head_offset, prefix_value_offset, values, max_score, sum, [&](int) {
-      return prefix_vectors + position * model_vectors;
-    });
+  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, query);
+  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, key);
+  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, value);
+  int q[N], k[N], v[N];
+  const float qs = float(kv_quantize_row<N>(query, q));
+  const bfloat ks = kv_quantize_row<N>(key, k);
+  const bfloat vs = kv_quantize_row<N>(value, v);
+  float result[N] = {};
+  float maximum = -INFINITY;
+  float denominator = 0.0f;
+  const uint ancestors = ancestor_counts[row];
+  for (uint index = 0; index < prefix_length + ancestors + 1; ++index) {
+    const bool own = index == prefix_length + ancestors;
+    const bool prefix = index < prefix_length;
+    const uint slot = prefix || own ? index : ancestor_indices[row * ancestor_stride + index - prefix_length];
+    const device int8_t* kc = prefix ? prefix_k_codes : node_k_codes;
+    const device uchar* vc = prefix ? prefix_v_codes : node_v_codes;
+    const float key_scale =
+        own ? float(ks) : float((prefix ? prefix_k_scales : node_k_scales)[shape.scale_index(slot, head)]);
+    const float value_scale =
+        own ? float(vs) : float((prefix ? prefix_v_scales : node_v_scales)[shape.scale_index(slot, head)]);
+    int dot = 0;
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < N; ++i) {
+      const uint channel = i * METAL_SIMD_SIZE + lane;
+      dot += q[i] * (own ? k[i] : int(kc[shape.k_code_index(slot, head, channel)]));
+    }
+    const float score = float(simd_sum(dot)) * qs * key_scale * scale;
+    const float next_max = max(maximum, score);
+    const float correction = fast::exp(maximum - next_max);
+    const float probability = fast::exp(score - next_max);
+    denominator = denominator * correction + probability;
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < N; ++i) {
+      const uint channel = i * METAL_SIMD_SIZE + lane;
+      const int code = own ? v[i] : int(vc[shape.v_code_index(slot, head, channel)]) - 128;
+      result[i] = result[i] * correction + probability * value_scale * float(code);
+    }
+    maximum = next_max;
   }
-
-  const uint ancestor_count = ancestor_counts[row];
-  const device uint* row_ancestors = ancestor_indices + row * ancestor_stride;
-  uint offset = 0;
-  for (; offset + unroll_count - 1 < ancestor_count; offset += unroll_count) {
-    attend_qkv<unroll_count>(query, head_offset, node_value_offset, values, max_score, sum, [&](int step) {
-      return node_vectors + row_ancestors[offset + step] * model_vectors;
-    });
-  }
-  for (; offset < ancestor_count; ++offset) {
-    attend_qkv<1>(query, head_offset, node_value_offset, values, max_score, sum, [&](int) {
-      return node_vectors + row_ancestors[offset] * model_vectors;
-    });
-  }
-
-  const float own_score = simd_sum(dot(query, rotated_key));
-  const float4 own_value = float4(current_row[current_value_offset]);
-  const float own_max = max(max_score, own_score);
-  const float rescale = fast::exp(max_score - own_max);
-  const float own_factor = fast::exp(own_score - own_max);
-  sum = sum * rescale + own_factor;
-  values = values * rescale + own_factor * own_value;
-  max_score = own_max;
-
-  if (node_capacity > 0u) {
+  if (node_capacity > 0) {
     const uint node = node_indices[row];
-
-    node_vectors[node * model_vectors + head_offset] = bfloat4(rotated_key);
-    node_vectors[node_value_offset + node * model_vectors] = current_row[current_value_offset];
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < N; ++i) {
+      const uint channel = i * METAL_SIMD_SIZE + lane;
+      node_k_codes[shape.k_code_index(node, head, channel)] = int8_t(k[i]);
+      node_v_codes[shape.v_code_index(node, head, channel)] = uchar(v[i] + 128);
+    }
+    if (lane == 0) {
+      node_k_scales[shape.scale_index(node, head)] = ks;
+      node_v_scales[shape.scale_index(node, head)] = vs;
+    }
   }
-
-  ((device bfloat4*)output)[(row * num_heads + head) * vectors_per_head + lane] = bfloat4(values / sum);
+  METAL_PRAGMA_UNROLL
+  for (ushort i = 0; i < N; ++i)
+    result[i] /= denominator;
+  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, result);
+  METAL_PRAGMA_UNROLL
+  for (ushort i = 0; i < N; ++i) {
+    const uint channel = i * METAL_SIMD_SIZE + lane;
+    output[row_head * HEAD_DIM + channel] = bfloat(result[i] * uzu::kv_layout::rotation_sign(channel));
+  }
 }

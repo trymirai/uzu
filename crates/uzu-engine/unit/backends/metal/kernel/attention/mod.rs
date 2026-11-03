@@ -1,9 +1,8 @@
 #![cfg(backend = "metal")]
 
-use super::gemm;
 use crate::{backends::common::kernel::AttentionKernelConfig, data_type::DataTypeRepr};
 
-mod gemm_test;
+mod int8_test;
 mod kernel_test;
 
 fn default_attention_config<T: DataTypeRepr>(

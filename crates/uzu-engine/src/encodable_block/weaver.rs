@@ -9,8 +9,8 @@ use crate::{
             WeaverSelectionMode::{Children, Frontier, Fused},
         },
         kernel::{
-            AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel, FullPrecisionInput,
-            WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
+            AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel, WeaverSelectKernel,
+            radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
@@ -18,7 +18,7 @@ use crate::{
     encodable_block::{
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
+        mixer::attention::{Int8KV, KVCacheView, rope::PrecalculatedRoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
@@ -326,7 +326,7 @@ impl<B: Backend> Weaver<B> {
         rope: &PrecalculatedRoPE<B>,
         depth: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<Vec<B::ScratchBuffer>, WeaverEncodeError<B>> {
+    ) -> Result<Vec<Int8KV<B>>, WeaverEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("weaver prefix");
 
         let hidden_row_bytes = size_for_shape(&[self.target_model_dim], DATA_TYPE);
@@ -350,19 +350,22 @@ impl<B: Backend> Weaver<B> {
         let mut prefix_kv_layers = Vec::with_capacity(self.layers.len());
         for layer in preceding_layers {
             let PreparedPrefixAttention {
-                queries,
+                query_codes,
+                query_scales,
                 kv_cache,
             } = layer.encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)?;
             let cache = KVCacheView::full(0);
-            let kv_plane_bytes = size_for_shape(&[depth, self.model_dim], DATA_TYPE);
             let attention_output = layer
                 .prefix_attention
                 .encode(
-                    AttentionInput::FullPrecision(FullPrecisionInput {
-                        queries: &queries,
-                        keys: &kv_cache,
-                        values: kv_cache.subrange(kv_plane_bytes..),
-                    }),
+                    AttentionInput {
+                        query_codes: &query_codes,
+                        query_scales: &query_scales,
+                        k_codes: kv_cache.k_codes.as_ref(),
+                        k_scales: kv_cache.k_scales.as_ref(),
+                        v_codes: kv_cache.v_codes.as_ref(),
+                        v_scales: kv_cache.v_scales.as_ref(),
+                    },
                     AttentionArguments {
                         suffix_length: depth,
                         trie: None::<&B::ConstantBuffer>,
@@ -386,12 +389,12 @@ impl<B: Backend> Weaver<B> {
         Ok(prefix_kv_layers)
     }
 
-    fn encode_step<Ids: BufferRef<Backend = B>, Logits: BufferRef<Backend = B>>(
+    fn encode_step<'a, Ids: BufferRef<Backend = B>, Logits: BufferRef<Backend = B>>(
         &self,
         target_embedding: &Embedding<B>,
-        mut prefix_kv_layers: impl Iterator<Item = impl BufferRef<Backend = B>>,
+        mut prefix_kv_layers: impl Iterator<Item = &'a Int8KV<B>>,
         rope: &PrecalculatedRoPE<B>,
-        mut node_kv_layers: impl Iterator<Item = impl BufferMut<Backend = B>>,
+        mut node_kv_layers: impl Iterator<Item = &'a mut Int8KV<B>>,
         mut packed_tree: impl BufferMut<Backend = B>,
         mut frontier: impl BufferMut<Backend = B>,
         mut slot_ancestors: impl BufferMut<Backend = B>,
@@ -474,9 +477,17 @@ impl<B: Backend> Weaver<B> {
             let mut attention_output = command_buffer
                 .allocate_scratch_for_shape(&[batch_node_count, self.model_dim], DATA_TYPE)
                 .map_err(WeaverEncodeError::Backend)?;
+            let prefix_kv = prefix_kv_layers.next().expect("missing prefix KV layer");
+            let node_kv = node_kv_layers.next().expect("missing node KV layer");
             layer.ancestor_attention.encode(
-                prefix_kv_layers.next().expect("missing prefix KV layer"),
-                node_kv_layers.next().expect("missing node KV layer"),
+                prefix_kv.k_codes.as_ref(),
+                prefix_kv.k_scales.as_ref(),
+                prefix_kv.v_codes.as_ref(),
+                prefix_kv.v_scales.as_ref(),
+                node_kv.k_codes.as_mut(),
+                node_kv.k_scales.as_mut(),
+                node_kv.v_codes.as_mut(),
+                node_kv.v_scales.as_mut(),
                 &current_qkv,
                 &rope.cosines,
                 &rope.sines,
@@ -623,9 +634,9 @@ impl<B: Backend> Weaver<B> {
                 self.encode_prefix(target_hidden, draft_hidden, &rope, shape.dflash_depth, command_buffer)?;
 
             // Per-layer KV cache for tree nodes, one slot per packed-tree slot.
-            let node_kv_size = size_for_shape(&[2, tree_slot_count, self.model_dim], DATA_TYPE);
-            let mut node_kv_layers = (0..self.layers.len())
-                .map(|_| command_buffer.allocate_scratch(node_kv_size))
+            let mut node_kv_layers = prefix_kv_layers
+                .iter()
+                .map(|prefix| Int8KV::allocate_scratch(prefix.layout, tree_slot_count, command_buffer))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(WeaverEncodeError::Backend)?;
 

@@ -1,21 +1,22 @@
 #include <metal_stdlib>
-#include "../../common/dsl.h"
-#include "../../generated/attention.h"
-#include "../../hadamard_transform/hadamard_transform.h"
-#include "../../common/sigmoid_gate.h"
-#include "../kv_layout.h"
+#include "../common/dsl.h"
+#include "../generated/attention.h"
+#include "../hadamard_transform/hadamard_transform.h"
+#include "../common/sigmoid_gate.h"
+#include "kv_layout.h"
 
 using namespace metal;
 
 template <typename T, uint BD>
-VARIANTS(T, bfloat)
-VARIANTS(BD, 128, 256)
-KERNEL(AttentionGemmGroupedInt8Combine)(
+VARIANTS(T, bfloat, float)
+VARIANTS(BD, 64, 128, 256, 512)
+KERNEL(AttentionGemmGroupedCombine)(
     const device bfloat* partials,
     const device float* partial_maxs,
     const device float* partial_sums,
     device T* o,
     const device T* gate OPTIONAL(has_gate),
+    const device T* sinks OPTIONAL(has_sinks),
     const constant uzu::attention::AttnParams& params,
     const constant uint& grouped_rows,
     const constant uint& padded_rows,
@@ -23,6 +24,7 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
     const constant uint& num_splits,
     const constant uint& gate_row_stride OPTIONAL(has_gate),
     const bool has_gate SPECIALIZE,
+    const bool has_sinks SPECIALIZE,
     threadgroup float rotation[BD],
     const uint grouped_row_idx GROUPS(grouped_rows),
     const uint kv_head_idx GROUPS(kv_heads),
@@ -40,7 +42,8 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
   float numerator = 0.0f;
   float denominator = 0.0f;
   constexpr uint SIMDGROUPS = BD / METAL_SIMD_SIZE;
-  float global_max = -metal::numeric_limits<float>::infinity();
+  const float sink = has_sinks ? float(sinks[q_head_idx]) * M_LOG2E_F : -INFINITY;
+  float global_max = sink;
   for (uint s = column; s < num_splits; s += BD) {
     if (row_sums[s * split_rows] > 0.0f) {
       global_max = metal::max(global_max, row_maxs[s * split_rows]);
@@ -57,6 +60,7 @@ KERNEL(AttentionGemmGroupedInt8Combine)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
+  denominator = has_sinks ? fast::exp2(sink - global_max) : 0.0f;
   threadgroup float* split_weights = rotation;
   for (uint chunk_start = 0; chunk_start < num_splits; chunk_start += BD) {
     const uint split = chunk_start + column;

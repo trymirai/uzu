@@ -2,19 +2,23 @@ use half::bf16;
 
 use crate::backends::common::gpu_types::kv_layout;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Int8KVLayout {
     pub head_dim: u32,
     pub num_kv_heads: u32,
+    pub use_mxu: bool,
 }
 
 impl Int8KVLayout {
     pub fn new(
         head_dim: u32,
         num_kv_heads: u32,
+        use_mxu: bool,
     ) -> Self {
         Self {
             head_dim,
             num_kv_heads,
+            use_mxu,
         }
     }
 
@@ -50,6 +54,9 @@ impl Int8KVLayout {
         head: u32,
         channel: u32,
     ) -> usize {
+        if !self.use_mxu {
+            return self.scale_index(key, head) * self.head_dim as usize + channel as usize;
+        }
         let row = key % kv_layout::TILE_KEYS;
         let lane = mma_lane(row % kv_layout::GROUP_ROWS, channel % kv_layout::TILE_DIMS / kv_layout::LANE_COLS);
         let lane_offset = row / kv_layout::GROUP_ROWS * kv_layout::LANE_COLS + channel % kv_layout::LANE_COLS;
@@ -65,6 +72,9 @@ impl Int8KVLayout {
         head: u32,
         channel: u32,
     ) -> usize {
+        if !self.use_mxu {
+            return self.k_code_index(key, head, channel);
+        }
         let (row, slice_channel) = (key % kv_layout::TILE_KEYS, channel % kv_layout::SLICE_DIMS);
         let tile = slice_channel / kv_layout::TILE_DIMS;
         let tiles = kv_layout::SLICE_DIMS / kv_layout::TILE_DIMS;
