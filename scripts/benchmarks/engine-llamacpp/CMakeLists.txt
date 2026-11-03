@@ -36,11 +36,18 @@ FetchContent_MakeAvailable(cli11)
 add_subdirectory(../common-cpp common-cpp)
 
 # sources
-add_executable(${PROJECT_NAME}
+set(SOURCES
     src/engine.cpp
     src/main.cpp
     src/util.cpp
 )
+if(IOS)
+    add_library(${PROJECT_NAME} SHARED ${SOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME BenchmarksLlamacpp)
+    target_link_options(${PROJECT_NAME} PRIVATE -Wl,-exported_symbol,_benchmarks_llamacpp_main)
+else()
+    add_executable(${PROJECT_NAME} ${SOURCES})
+endif()
 
 # libraries
 target_link_libraries(${PROJECT_NAME}

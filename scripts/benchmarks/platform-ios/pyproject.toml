@@ -1,0 +1,18 @@
+[project]
+name = "benchmarks-ios"
+version = "0.0.1"
+requires-python = ">=3.13.7"
+dependencies = [
+    "huggingface-hub>=0.36",
+    "typer>=0.27.2",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+bench-ios = "bench_ios:main"
+
+[tool.setuptools]
+py-modules = ["bench_ios"]

@@ -14,10 +14,36 @@ index 266bf65..0f4a148 100644
  # Avoid XNNPACK using `-mavxvnniint8` (needs clang-16+/gcc-13+)
  build --define=xnn_enable_avxvnniint8=false
 diff --git a/MODULE.bazel b/MODULE.bazel
-index 098b839..e8cc263 100644
+index 098b839..242562a 100644
 --- a/MODULE.bazel
 +++ b/MODULE.bazel
-@@ -266,3 +266,16 @@ http_archive(
+@@ -217,7 +217,10 @@ bazel_dep(
+ )
+ 
+ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+-rust.toolchain(edition = "2021")
++rust.toolchain(
++    edition = "2021",
++    extra_target_triples = ["aarch64-apple-ios"],
++)
+ use_repo(rust, "rust_toolchains")
+ 
+ register_toolchains("@rust_toolchains//:all")
+@@ -238,7 +241,12 @@ crate.spec(
+     package = "serde_json",
+     version = "1.0",
+ )
+-crate.from_specs()
++crate.from_specs(
++    supported_platform_triples = [
++        "aarch64-apple-darwin",
++        "aarch64-apple-ios",
++    ],
++)
+ use_repo(crate, crate_index = "crates")
+ 
+ http_archive(
+@@ -266,3 +274,16 @@ http_archive(
      strip_prefix = "tokenizers-cpp-0.1.1",
      url = "https://github.com/mlc-ai/tokenizers-cpp/archive/refs/tags/v0.1.1.tar.gz",
  )

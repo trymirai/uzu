@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import queue
 import secrets
 import subprocess
@@ -65,10 +66,13 @@ def sampling_options(sampling: BenchSampling | None) -> dict[str, float | int]:
 
 class SplashEngine(InferenceEngine):
     def __init__(self, model: str | Path):
-        subprocess.run([str(SPLASH_BINARY), "device-check"], check=True)
-
         sys.path.insert(0, str(SPLASH_DIR.parent))
         sys.path.insert(0, str(SPLASH_DIR))
+        from splash.install import models, paths
+
+        self._processes = models.processes
+        self._processes.run([str(paths.BINARY), "device-check"], check=True)
+
         from splash.server import protocol as wire
         from splash.server.backend import Job, NativeBackend
         from splash.server.chat_templates import ChatTemplates
@@ -96,7 +100,7 @@ class SplashEngine(InferenceEngine):
         )
         validate_tokenizer(self.tokenizer)
         chat_templates = ChatTemplates(self.tokenizer)
-        self._command = [str(SPLASH_BINARY), "serve-native", str(root), "auto", "auto"]
+        self._command = [str(paths.BINARY), "serve-native", str(root), "auto", "auto"]
         try:
             self.runtime = MultiplexedRuntime(
                 self._command,
@@ -148,7 +152,7 @@ class SplashEngine(InferenceEngine):
             self.process = None
 
     def _start_process(self) -> subprocess.Popen:
-        self.process = subprocess.Popen(
+        self.process = self._processes.Popen(
             self._command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -215,11 +219,7 @@ class SplashEngine(InferenceEngine):
         # A benchmark needs fresh snapshots around its single request.
         event = self.runtime.status()
         snapshot = json.loads(event.json)
-        if (
-            event.schema_version != self._wire.STATUS_SCHEMA_VERSION
-            or not isinstance(snapshot, dict)
-            or snapshot.get("schema_version") != self._wire.STATUS_SCHEMA_VERSION
-        ):
+        if not isinstance(snapshot, dict) or snapshot.get("schema_version") != self._wire.STATUS_SCHEMA_VERSION:
             raise RuntimeError("Splash status does not match the current schema")
         return snapshot
 
@@ -228,6 +228,8 @@ class SplashEngine(InferenceEngine):
         if process is None or process.poll() is not None:
             raise RuntimeError("Splash process is not running")
         memory = get_memory_counters()
+        if process.pid == os.getpid():
+            return memory
         child = get_memory_counters(pid=process.pid)
         # Include Python's tokenizer/frontend as well as the native engine,
         # matching the scope of the other in-process benchmark adapters.
@@ -247,14 +249,11 @@ class SplashEngine(InferenceEngine):
         next_memory_sample = time.monotonic() + MEMORY_SAMPLE_INTERVAL
         chunks = []
         submitted = False
-        submission_complete = False
         terminal = False
 
         try:
-            submitted = self.backend.submit(job)
-            submission_complete = True
-            if not submitted:
-                raise RuntimeError("Splash request capacity is exhausted")
+            self.backend.submit(job)
+            submitted = True
 
             while True:
                 remaining = job.deadline - time.monotonic()
@@ -291,9 +290,9 @@ class SplashEngine(InferenceEngine):
                 elif kind not in (None, "start", "progress"):
                     raise RuntimeError(f"Unexpected Splash backend event: {kind}")
         except BaseException as error:
-            if not submission_complete:
+            if not submitted:
                 self.close()
-            elif submitted and not terminal:
+            elif not terminal:
                 self._cancel_and_drain(job, timed_out=isinstance(error, TimeoutError))
             raise
 
@@ -343,7 +342,7 @@ class SplashEngine(InferenceEngine):
 
 
 def run(model: Annotated[str, typer.Option("-m", "--model")]) -> None:
-    if not SPLASH_BINARY.is_file():
+    if sys.platform != "ios" and not SPLASH_BINARY.is_file():
         subprocess.run([str(PROJECT_DIR / "bootstrap.sh")], check=True, stdout=sys.stderr)
 
     engine: SplashEngine
