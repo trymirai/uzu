@@ -11,16 +11,17 @@ pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     expert_outputs: *const T,
     expert_weights: *const f32,
     shared_output: *const T,
-    shared_gate: *const T,
+    shared_gate: *const f32,
     output: *mut T,
     model_dim: u32,
     top_k: u32,
     batch_size: u32,
+    gate_stride: u32,
 ) {
     let model_dim_u = model_dim as usize;
     let top_k_u = top_k as usize;
     for token_idx in 0..batch_size as usize {
-        let g = unsafe { *shared_gate.add(token_idx) }.to_f32().unwrap();
+        let g = unsafe { *shared_gate.add(token_idx * gate_stride as usize) };
         let shared_w = 1.0f32 / (1.0f32 + (-g).exp());
 
         for dim_idx in 0..model_dim_u {

@@ -16,10 +16,11 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const constant uint& num_experts,
     const constant uint& top_k,
     const constant uint& batch_size,
+    const constant uint& logit_stride,
     const uint token_idx GROUPS(batch_size),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  const device T* row = logits + token_idx * num_experts;
+  const device T* row = logits + token_idx * logit_stride;
   uint keys[MOE_ROUTER_MAX_PER_LANE];
   for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
     const uint expert_idx = lane + i * METAL_SIMD_SIZE;

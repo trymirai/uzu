@@ -13,16 +13,18 @@ pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     num_experts: u32,
     top_k: u32,
     batch_size: u32,
+    logit_stride: u32,
 ) {
     // The Metal kernel holds up to 256 experts, 8 in each of its 32 lanes.
     assert!(num_experts <= 256);
     assert!(top_k > 0 && top_k <= MAX_TOP_K && top_k <= num_experts);
     let num_experts_usize = num_experts as usize;
     let top_k_usize = top_k as usize;
+    let logit_stride_usize = logit_stride as usize;
     for token_idx in 0..batch_size as usize {
         let mut pairs: Vec<(f32, u32)> = (0..num_experts_usize)
             .map(|expert_idx| {
-                let mut v = unsafe { *logits.add(token_idx * num_experts_usize + expert_idx) }.to_f32().unwrap();
+                let mut v = unsafe { *logits.add(token_idx * logit_stride_usize + expert_idx) }.to_f32().unwrap();
                 if v.is_nan() {
                     v = f32::NEG_INFINITY;
                 }

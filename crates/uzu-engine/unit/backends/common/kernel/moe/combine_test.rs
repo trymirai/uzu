@@ -26,14 +26,14 @@ fn run_moe_combine<B: Backend>(
     routed_outputs: &[bf16],
     expert_weights: &[f32],
     shared_output: &[bf16],
-    shared_gate: &[bf16],
+    shared_gate: &[f32],
     batch_dim: u32,
 ) -> Vec<bf16> {
     let context = create_context::<B>();
     let routed_buf = create_buffer_with_data::<B, bf16>(&context, routed_outputs);
     let weights_buf = create_buffer_with_data::<B, f32>(&context, expert_weights);
     let shared_out_buf = create_buffer_with_data::<B, bf16>(&context, shared_output);
-    let shared_gate_buf = create_buffer_with_data::<B, bf16>(&context, shared_gate);
+    let shared_gate_buf = create_buffer_with_data::<B, f32>(&context, shared_gate);
     let mut output_buf = create_buffer::<B, bf16>(&context, (batch_dim * MODEL_DIM) as usize);
 
     let kernel =
@@ -48,6 +48,7 @@ fn run_moe_combine<B: Backend>(
         MODEL_DIM,
         ACTIVE_EXPERTS,
         batch_dim,
+        1,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -68,7 +69,7 @@ fn moe_combine_matches_cpu() {
         let shared_output: Vec<bf16> = (0..(batch_dim * MODEL_DIM) as usize)
             .map(|i| bf16::from_f32((((i * 17 + 11) % 43) as f32 - 21.0) * 0.05))
             .collect();
-        let shared_gate: Vec<bf16> = (0..batch_dim as usize).map(|i| bf16::from_f32((i as f32 - 1.5) * 0.7)).collect();
+        let shared_gate: Vec<f32> = (0..batch_dim as usize).map(|i| (i as f32 - 1.5) * 0.7).collect();
 
         let expected =
             run_moe_combine::<Cpu>(&routed_outputs, &expert_weights, &shared_output, &shared_gate, batch_dim);
