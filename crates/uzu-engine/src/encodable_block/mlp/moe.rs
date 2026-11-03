@@ -40,7 +40,7 @@ use crate::{
 };
 
 // Limits of the MoE kernels, from backends/metal/kernel/moe/common.h, their VARIANTS lists and the contract above
-// MoeGemv: the router scores up to METAL_SIMD_SIZE x MOE_ROUTER_MAX_PER_LANE experts and picks up to MAX_TOP_K, the
+// MoeGemv: the router scores up to METAL_SIMD_SIZE x MOE_ROUTER_NUM_SIMDGROUPS experts and picks up to MAX_TOP_K, the
 // GEMV runs GROUP_SIZE 64 over whole input blocks and output tiles, and the combine runs BD 256.
 const MOE_ROUTER_MAX_TOP_K: u32 = 8;
 const MOE_ROUTER_MAX_EXPERTS: u32 = 256;

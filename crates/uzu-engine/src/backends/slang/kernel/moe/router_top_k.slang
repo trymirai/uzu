@@ -13,6 +13,7 @@ import definitions;
   uint32_t logit_stride,
   [[Groups("batch_size")]] uint32_t token_idx,
   [[Threads("32")]] uint32_t lane,
+  [[Threads("8")]] uint32_t simd_group,
 ) {
   // TODO
 }
