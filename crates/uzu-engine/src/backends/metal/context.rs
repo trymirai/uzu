@@ -412,4 +412,8 @@ impl Context for MetalContext {
             },
         }
     }
+
+    fn pipelines_prefill_chunks(&self) -> bool {
+        self.ane_pipelining_available()
+    }
 }

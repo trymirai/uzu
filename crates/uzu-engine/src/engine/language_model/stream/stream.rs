@@ -124,6 +124,48 @@ enum DecodingState<B: Backend> {
     Closed,
 }
 
+// NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
+const MAX_PREFILL_CHUNK_SIZE: usize = 1024;
+/// Row granularity of the batch sizes a pipelining backend runs its MLPs at efficiently.
+const PIPELINED_CHUNK_GRANULARITY: usize = 256;
+
+/// Chunk lengths of a prefill whose chunks the backend overlaps (see `pipelines_prefill_chunks`).
+///
+/// Chunk c's MLPs overlap chunk c+1's mixers, so a prompt needs at least two chunks to gain
+/// anything, and the last chunk's MLPs are an unhidden tail, so it should be the small one: short
+/// and medium prompts are split into a large first and a smaller second chunk. Long prompts use full
+/// chunks. A tail chunk too small to be worth a pass is rebalanced into its neighbours.
+fn pipelined_prefill_chunk_lengths(prompt_length: usize) -> Vec<usize> {
+    if prompt_length <= 2 * PIPELINED_CHUNK_GRANULARITY {
+        return vec![prompt_length];
+    }
+    let mut first = MAX_PREFILL_CHUNK_SIZE;
+    if prompt_length <= 2 * MAX_PREFILL_CHUNK_SIZE {
+        first =
+            (prompt_length * 3).div_ceil(5).next_multiple_of(PIPELINED_CHUNK_GRANULARITY).min(MAX_PREFILL_CHUNK_SIZE);
+    }
+    let number_of_chunks = prompt_length.div_ceil(first);
+    let tail = prompt_length - (number_of_chunks - 1) * first;
+    if tail < PIPELINED_CHUNK_GRANULARITY {
+        first = prompt_length.div_ceil(number_of_chunks);
+    }
+    (0..prompt_length).step_by(first).map(|start| first.min(prompt_length - start)).collect()
+}
+
+fn prefill_chunk_lengths(
+    prompt_length: usize,
+    pipelined: bool,
+) -> Vec<usize> {
+    if pipelined {
+        pipelined_prefill_chunk_lengths(prompt_length)
+    } else {
+        (0..prompt_length)
+            .step_by(MAX_PREFILL_CHUNK_SIZE)
+            .map(|start| MAX_PREFILL_CHUNK_SIZE.min(prompt_length - start))
+            .collect()
+    }
+}
+
 fn prefill_chunk_parts(
     input_chunk: &[u64],
     last_batch: bool,
@@ -201,15 +243,32 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let _capture_span = CAPTURE_MATCHER.capture::<B>(&model.engine.context, "prefill")?;
             model_state.last_output_token.take();
 
-            // NOTE: this is required for attention correctness (hardcoded suffix 1024). This is really bad design, attention should be rewritten to allow on-demand suffix length
-            let max_batch_size = 1024;
-            let number_of_batches = input.len().div_ceil(max_batch_size);
+            // Chunk c's layer-L mixer needs only chunk c-1's layer-L mixer (flat prefill accepts
+            // nothing), so a backend may overlap a chunk's mixers with the previous chunk's MLPs.
+            // Ring caches, speculators and the suffix-repetition ring add chunk-tail dependencies.
+            let pipelinable = model.speculator.is_none()
+                && options.sampling_method.suffix_repetition_length().is_none()
+                && model.decoder.supports_layerwise_prefill_pipelining();
+            let chunk_lengths =
+                prefill_chunk_lengths(input.len(), pipelinable && model.engine.context.pipelines_prefill_chunks());
+            let number_of_batches = chunk_lengths.len();
+            let pipelined = pipelinable && number_of_batches > 1;
+            let mut rest = input;
+            let input_chunks: Vec<&[u64]> = chunk_lengths
+                .iter()
+                .map(|length| {
+                    let (chunk, tail) = rest.split_at(*length);
+                    rest = tail;
+                    chunk
+                })
+                .collect();
 
             model_state
                 .transformer_state
                 .prepare(
-                    model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
-                    usize::min(max_batch_size, input.len()) as u32,
+                    model_state.transformer_state.context_length()
+                        + (input.len() - chunk_lengths[number_of_batches - 1]) as u32,
+                    *chunk_lengths.iter().max().unwrap() as u32,
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
@@ -232,17 +291,10 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let split_logits_row = model.decoder.prefill_cache_skips_trailing_layers();
             let hidden_feature_layer_indices =
                 model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
-            // Chunk c's layer-L mixer needs only chunk c-1's layer-L mixer (flat prefill accepts
-            // nothing), so a backend may overlap a chunk's mixers with the previous chunk's MLPs.
-            // Ring caches, speculators and the suffix-repetition ring add chunk-tail dependencies.
-            let pipelined = number_of_batches > 1
-                && model.speculator.is_none()
-                && options.sampling_method.suffix_repetition_length().is_none()
-                && model.decoder.supports_layerwise_prefill_pipelining();
             let mut first_chunk = true;
 
-            for (input_chunk, sample_last) in input
-                .chunks(max_batch_size)
+            for (input_chunk, sample_last) in input_chunks
+                .into_iter()
                 .enumerate()
                 .flat_map(|(batch_idx, input_chunk)| {
                     prefill_chunk_parts(input_chunk, batch_idx == number_of_batches - 1, split_logits_row)
@@ -938,3 +990,7 @@ impl<'a, B: Backend> Drop for LanguageModelStream<'a, B> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../unit/engine/language_model/stream_chunking_test.rs"]
+mod chunking_tests;

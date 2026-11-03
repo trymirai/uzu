@@ -61,4 +61,10 @@ pub trait Context: Sized + Send + Sync {
     ) -> Box<dyn Mlp<Self::Backend>> {
         Box::new(mlp)
     }
+
+    /// Whether the backend overlaps consecutive prefill chunks (`begin_independent_chunk`), so
+    /// that prefill gains from splitting short prompts into several chunks. Default: no.
+    fn pipelines_prefill_chunks(&self) -> bool {
+        false
+    }
 }

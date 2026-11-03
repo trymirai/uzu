@@ -301,6 +301,67 @@ fn prefill_kl_pipelined() {
         100.0 * agree as f64 / positions as f64,
     );
 }
+// Ignored: needs UZU_PREFILL_MODEL; loads the model twice.
+//
+// A prompt of one chunk's worth (default 1024 tokens) is split by the stream into two pipelined
+// chunks (768 + 256) on the ANE engine: KL of the final logits of the split prefill against the
+// GPU-only single-chunk prefill, and agreement of the greedy continuation produced through the
+// stream (single chunk on the GPU-only engine, split chunks on the ANE engine).
+#[uzu_test]
+#[ignore]
+fn prefill_kl_split_single_chunk() {
+    let model_path = PathBuf::from(std::env::var("UZU_PREFILL_MODEL").expect("set UZU_PREFILL_MODEL"));
+    let tokens: usize = std::env::var("UZU_KL_TOKENS").map_or(1024, |value| value.parse().unwrap());
+    let continuation: usize = 16;
+    // The first chunk of the stream's two-chunk split of 1024 tokens (768 + 256).
+    const SPLIT_CHUNK: usize = 768;
+    // SAFETY: test-only; the variable is read when a Metal context is created.
+    unsafe { std::env::set_var("UZU_ANE", "0") };
+    let gpu_engine = block_on(Engine::<Metal>::new()).unwrap();
+    let gpu = block_on(gpu_engine.load_language_model(&model_path)).unwrap();
+    unsafe { std::env::remove_var("UZU_ANE") };
+    let ane_engine = block_on(Engine::<Metal>::new()).unwrap();
+    let ane = block_on(ane_engine.load_language_model(&model_path)).unwrap();
+    assert!(ane_engine.context.pipelines_prefill_chunks(), "the ANE engine must pipeline prefill chunks");
+    assert!(!gpu_engine.context.pipelines_prefill_chunks(), "the GPU-only engine must not");
+
+    let (mut kl_sum, mut positions, mut agree, mut worst) = (0.0f64, 0usize, 0usize, 0.0f64);
+    let (mut final_agree, mut prompts_run, mut tokens_agree, mut tokens_total) = (0usize, 0usize, 0usize, 0usize);
+    for (name, ids) in prompts(&gpu, tokens) {
+        let reference = chunked_prompt_logits(&gpu, &ids, 1024);
+        let candidate = chunked_prompt_logits(&ane, &ids, SPLIT_CHUNK);
+        // Rows of the candidate's last (shorter or equal) chunk line up with the reference's tail.
+        let offset = reference.len() - candidate.len();
+        let mut prompt_kl = 0.0;
+        for (p, q) in reference[offset..].iter().zip(&candidate) {
+            let kl = kl_divergence(p, q);
+            prompt_kl += kl;
+            worst = worst.max(kl);
+            agree += usize::from(argmax(p) == argmax(q));
+        }
+        final_agree += usize::from(argmax(reference.last().unwrap()) == argmax(candidate.last().unwrap()));
+
+        let reference_tokens = greedy_tokens(&gpu, &ids, continuation);
+        let candidate_tokens = greedy_tokens(&ane, &ids, continuation);
+        let matching = reference_tokens.iter().zip(&candidate_tokens).filter(|(a, b)| a == b).count();
+        println!(
+            "{name}: tail mean KL {:.2e}, final-position KL {:.2e}, greedy continuation {matching}/{continuation} equal",
+            prompt_kl / candidate.len() as f64,
+            kl_divergence(reference.last().unwrap(), candidate.last().unwrap()),
+        );
+        kl_sum += prompt_kl;
+        positions += candidate.len();
+        prompts_run += 1;
+        tokens_agree += matching;
+        tokens_total += continuation;
+    }
+    println!(
+        "OVERALL ({tokens} tokens, split in two): tail mean KL {:.2e}, max KL {worst:.2e}, top-1 agreement {:.2}% ({positions} positions), final-position top-1 {final_agree}/{prompts_run}, greedy continuation {tokens_agree}/{tokens_total}",
+        kl_sum / positions as f64,
+        100.0 * agree as f64 / positions as f64,
+    );
+}
+
 /// [`greedy_tokens`] that reports errors instead of panicking.
 fn try_greedy_tokens(
     model: &LanguageModel<Metal>,
