@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use derive_more::Debug;
 use thiserror::Error;
 
@@ -42,7 +44,7 @@ pub struct Normalization<B: Backend> {
     scales: Option<B::GlobalGpuBuffer>,
     biases: Option<B::GlobalGpuBuffer>,
     element_count: u32,
-    hadamard_factors: Option<B::GlobalGpuBuffer>,
+    hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
     post_layer_scalar_value: f32,
     input_data_type: DataType,
     output_data_type: DataType,
@@ -54,7 +56,7 @@ impl<B: Backend> Normalization<B> {
         element_count: u32,
         input_data_type: DataType,
         output_data_type: DataType,
-        hadamard_factors: Option<B::GlobalGpuBuffer>,
+        hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         shortcut_mode: ShortcutMode,
         post_layer_scalar: PostLayerScalar,
         config: &NormalizationConfig,
@@ -136,7 +138,7 @@ impl<B: Backend> Normalization<B> {
             self.biases.as_ref(),
             &mut output,
             shortcut,
-            self.hadamard_factors.as_ref(),
+            self.hadamard_factors.as_deref(),
             row_count,
             self.element_count,
             self.epsilon,

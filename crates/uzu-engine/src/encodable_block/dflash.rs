@@ -1,4 +1,4 @@
-use std::{any::Any, range::Range};
+use std::{any::Any, range::Range, sync::Arc};
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -94,6 +94,7 @@ impl<B: Backend> DFlash<B> {
     pub async fn new(
         data_type: DataType,
         config: &DFlashDraftConfig,
+        readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, DFlashNewError<B>> {
@@ -156,7 +157,7 @@ impl<B: Backend> DFlash<B> {
             config.model_dim,
             data_type,
             data_type,
-            None,
+            readout_input_hadamard_factors,
             ShortcutMode::Add,
             PostLayerScalar::None,
             &config.output_norm_config,

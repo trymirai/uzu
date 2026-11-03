@@ -120,23 +120,30 @@ impl<B: Backend> Sampling<B> {
             has_min_p: min_p.is_some(),
         };
 
-        // TODO: repetition penalty is vibe coded garbage, remove or rewrite properly
         let penalized_logits = if let Some(repetition_penalty) = repetition_penalty {
-            assert!(batch_dim.is_flat(), "repetition_penalty currently only supports flat batches");
             let suffix_repetition_length =
                 suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty");
+            let trie = if batch_dim.is_flat() {
+                None
+            } else {
+                Some(command_buffer.allocate_constant_from_slice(batch_dim.nodes())?)
+            };
 
             let mut logits_copy = command_buffer.allocate_scratch(logits.size())?;
             let copy_size = self.vocab_size as usize * sampling_length as usize * self.data_type.size_in_bytes();
             command_buffer.encode_copy(logits.subrange(..copy_size), logits_copy.subrange_mut(..copy_size));
 
-            let repetition_penalty_kernel =
-                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(command_buffer.context(), self.data_type)?;
+            let repetition_penalty_kernel = <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(
+                command_buffer.context(),
+                self.data_type,
+                trie.is_some(),
+            )?;
             repetition_penalty_kernel.encode(
                 logits,
                 &mut logits_copy,
                 context_ring.expect("context_ring is required for repetition_penalty"),
                 token_ids.expect("token_ids is required for repetition_penalty"),
+                trie.as_ref(),
                 repetition_penalty,
                 suffix_repetition_length,
                 self.vocab_size,
