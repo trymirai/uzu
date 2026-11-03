@@ -45,6 +45,20 @@ use crate::{
 const INTERMEDIATE_ROTATION_BLOCK: u32 = 512;
 const UP_ROTATION_BLOCK: u32 = 32;
 
+/// `UZU_ANE_FFN_PRECISION` (`int8` by default; `fp16_in`, `fp16_mid`, `fp16` for fp16 FFN inputs, intermediates
+/// or both) trades the ANE's faster int8 matmuls for the accuracy of unrounded activations.
+fn precision() -> String {
+    std::env::var("UZU_ANE_FFN_PRECISION").unwrap_or_default()
+}
+
+fn half_input() -> bool {
+    matches!(precision().as_str(), "fp16_in" | "fp16")
+}
+
+fn half_intermediate() -> bool {
+    matches!(precision().as_str(), "fp16_mid" | "fp16")
+}
+
 /// Per-layer constants of an ANE-run MLP.
 pub struct AneLayer {
     /// Position among the model's ANE call sites: orders the layer's segment across pipelined
@@ -211,6 +225,8 @@ impl AneFfn {
             gate_rotation: signed_hadamard_blocks(&up_output_signs[intermediate as usize..], UP_ROTATION_BLOCK),
             single_weight_surfaces: true,
             single_input_surface: true,
+            half_input: half_input(),
+            half_intermediate: half_intermediate(),
         };
 
         let runtime = AneRuntime::new()?;
@@ -218,6 +234,7 @@ impl AneFfn {
         let program = AneProgram::new(runtime, &mil, &blob)?;
 
         let lanes = [LaneResources::new(context, &shape, &program)?, LaneResources::new(context, &shape, &program)?];
+        let kernels = AneKernels::new(context, true, shape.inputs()[0].element)?;
 
         let kernel_error = |error: MetalError| AneError::Unavailable(error.to_string());
         let pack_signs = random_signs(hidden as usize, 1);
@@ -228,7 +245,7 @@ impl AneFfn {
             shape,
             program,
             lanes,
-            kernels: AneKernels::new(context, true)?,
+            kernels,
             stage_down: AneStageDownRowsMetalKernel::new(context, intermediate / CHUNK).map_err(kernel_error)?,
             pack_signs_buffer: upload(context, &pack_signs).map_err(kernel_error)?,
             pack_signs,

@@ -68,6 +68,12 @@ pub struct FfnShape {
     pub single_weight_surfaces: bool,
     /// Whether the input is one surface `x` `[hidden, max_rows]` rather than one per segment.
     pub single_input_surface: bool,
+    /// Whether the input `x` is fp16 (the int8 codes over 128, unrounded) instead of int8 codes;
+    /// needs `single_input_surface`.
+    pub half_input: bool,
+    /// Whether the intermediate `h` reaches the down projection unrounded (fp16) instead of as
+    /// per-token int8 codes.
+    pub half_intermediate: bool,
 }
 
 /// A surface a program reads or writes: its name, rows and width (elements).
@@ -128,7 +134,12 @@ impl FfnShape {
     pub fn inputs(&self) -> Vec<FfnSurfaceSpec> {
         let mut inputs = Vec::new();
         if self.single_input_surface {
-            inputs.push(FfnSurfaceSpec::new("x".to_string(), self.hidden, self.max_rows, AneElement::Int8, true));
+            let element = if self.half_input {
+                AneElement::Float16
+            } else {
+                AneElement::Int8
+            };
+            inputs.push(FfnSurfaceSpec::new("x".to_string(), self.hidden, self.max_rows, element, true));
         } else {
             for k in 0..self.input_segments() {
                 inputs.push(FfnSurfaceSpec::new(format!("x{k}"), self.segment, self.max_rows, AneElement::Int8, true));
@@ -400,14 +411,19 @@ impl FunctionWriter<'_> {
         }
 
         if shape.single_input_surface {
-            self.f16("x_d", shape.hidden, &format!("dequantize(input = x_t, scale = {unit})"));
+            let x_d = if shape.half_input {
+                "x_t"
+            } else {
+                self.f16("x_d", shape.hidden, &format!("dequantize(input = x_t, scale = {unit})"));
+                "x_d"
+            };
             for k in 0..shape.input_segments() {
                 let begin = k * shape.segment;
                 self.f16(
                     &format!("x{k}_d"),
                     shape.segment,
                     &format!(
-                        "slice_by_size(x = x_d, begin = tensor<int32, [4]>([0, 0, {begin}, 0]), size = tensor<int32, [4]>({}))",
+                        "slice_by_size(x = {x_d}, begin = tensor<int32, [4]>([0, 0, {begin}, 0]), size = tensor<int32, [4]>({}))",
                         dims(shape.segment.into(), rows.into())
                     ),
                 );
@@ -453,11 +469,15 @@ impl FunctionWriter<'_> {
         self.f16("floor", 1, &format!("maximum(x = peak, y = {})", fp16_literal(INTERMEDIATE_FLOOR)));
         self.f16("inverse", 1, &format!("real_div(x = {}, y = floor)", fp16_literal(INT8_PEAK)));
         self.f16("hs", channels, "mul(x = hr, y = inverse)");
-        self.line(&format!(
-            "{} hq = quantize(input = hs, scale = fp16(1), output_dtype = string(\"int8\"))",
-            tensor("int8", channels.into(), rows.into())
-        ));
-        self.f16("hd", channels, &format!("dequantize(input = hq, scale = {unit})"));
+        if shape.half_intermediate {
+            self.f16("hd", channels, &format!("mul(x = hs, y = {unit})"));
+        } else {
+            self.line(&format!(
+                "{} hq = quantize(input = hs, scale = fp16(1), output_dtype = string(\"int8\"))",
+                tensor("int8", channels.into(), rows.into())
+            ));
+            self.f16("hd", channels, &format!("dequantize(input = hq, scale = {unit})"));
+        }
         self.f16("hscale", 1, &format!("mul(x = floor, y = {})", fp16_literal(INT8_UNIT / INT8_PEAK)));
 
         for i in 0..shape.down_segments() {

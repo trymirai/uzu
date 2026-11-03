@@ -69,8 +69,18 @@ fn template_shape(output: u32) -> LinearShape {
         segment: SEGMENT,
         rows: ROWS.to_vec(),
         max_rows: *ROWS.last().unwrap(),
-        activations: AneElement::Int8,
+        activations: activations(),
         weights: AneElement::Int8,
+    }
+}
+
+/// The element type of the linear programs' activations: fp16 rounds them only to fp16, int8 (the
+/// ANE's faster W8A8 path) to 127 levels per token. `UZU_ANE_ACTIVATIONS=int8` selects int8.
+fn activations() -> AneElement {
+    if std::env::var("UZU_ANE_ACTIVATIONS").is_ok_and(|value| value == "int8") {
+        AneElement::Int8
+    } else {
+        AneElement::Float16
     }
 }
 
@@ -95,7 +105,7 @@ impl AneLinears {
         let pack_signs = random_signs(CHUNK as usize, 1);
         Ok(Self {
             surfaces: [lane_surfaces()?, lane_surfaces()?],
-            kernels: AneKernels::new(context, false)?,
+            kernels: AneKernels::new(context, false, activations())?,
             pack_signs_buffer: upload(context, &pack_signs).map_err(kernel_error)?,
             pack_signs,
             health,

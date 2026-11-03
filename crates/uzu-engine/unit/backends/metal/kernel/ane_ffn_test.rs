@@ -116,8 +116,7 @@ fn assert_codes_close(
     assert!(off_by_one * 100 <= actual.len(), "{what}: {off_by_one} of {} codes differ", actual.len());
 }
 
-#[uzu_test]
-fn ane_pack_rotates_and_quantizes_per_token() {
+fn check_pack(half_values: bool) {
     let context = create_context::<Metal>();
     let mut rng = StdRng::seed_from_u64(1);
     let (hidden, tokens) = (4096usize, 37usize);
@@ -134,9 +133,18 @@ fn ane_pack_rotates_and_quantizes_per_token() {
     let sign = signs(&mut rng, hidden);
     let input_buffer = upload(&context, &input);
     let sign_buffer = upload(&context, &sign);
-    let mut codes = zeros(&context, hidden * tokens);
+    let mut codes = zeros(
+        &context,
+        hidden
+            * tokens
+            * if half_values {
+                2
+            } else {
+                1
+            },
+    );
     let mut scales = zeros(&context, tokens * 2);
-    let kernel = AnePackMetalKernel::new(&context).unwrap();
+    let kernel = AnePackMetalKernel::new(&context, half_values).unwrap();
     run(&context, |encoding| {
         kernel.encode(&input_buffer, &sign_buffer, &mut codes, &mut scales, hidden as u32, tokens as u32, encoding)
     });
@@ -146,31 +154,83 @@ fn ane_pack_rotates_and_quantizes_per_token() {
             (0..hidden).map(|index| input[token * hidden + index].to_f32() as f64 * sign[index] as f64).collect();
         hadamard(&mut values, hidden);
         let (expected, scale) = quantize_row(&values);
-        let actual = &read::<i8>(&codes)[token * hidden..(token + 1) * hidden];
-        assert_codes_close(actual, &expected, "pack");
+        if half_values {
+            // fp16 values a / peak * 127 / 128: the codes before rounding, over 128.
+            let actual = &read::<f16>(&codes)[token * hidden..(token + 1) * hidden];
+            for (index, (value, code)) in actual.iter().zip(&expected).enumerate() {
+                let exact = values[index] / scale / 128.0;
+                assert!(
+                    (value.to_f32() as f64 - exact).abs() <= 1e-3 * exact.abs() + 1e-5,
+                    "pack[{token},{index}] {value} vs {exact} (code {code})"
+                );
+            }
+        } else {
+            let actual = &read::<i8>(&codes)[token * hidden..(token + 1) * hidden];
+            assert_codes_close(actual, &expected, "pack");
+        }
         let actual_scale = read::<f16>(&scales)[token].to_f32() as f64 / 128.0;
         assert!((actual_scale - scale).abs() <= scale * 1e-3, "token scale {actual_scale} vs {scale}");
     }
 }
 
 #[uzu_test]
-fn ane_transpose_codes_to_channel_major_surface() {
+fn ane_pack_rotates_and_quantizes_per_token() {
+    check_pack(false);
+}
+
+#[uzu_test]
+fn ane_pack_rotates_per_token_into_half_values() {
+    check_pack(true);
+}
+
+fn check_transpose(wide: bool) {
     let context = create_context::<Metal>();
     let mut rng = StdRng::seed_from_u64(2);
     let (channels, tokens, row_stride) = (256usize, 45usize, 128usize);
-    let codes: Vec<i8> = (0..channels * tokens).map(|_| rng.random::<i8>()).collect();
-    let codes_buffer = upload(&context, &codes);
-    let mut surface = zeros(&context, channels * row_stride);
-    let kernel = AneTransposeCodesMetalKernel::new(&context).unwrap();
+    let codes: Vec<u16> = (0..channels * tokens)
+        .map(|_| {
+            rng.random::<u16>()
+                & if wide {
+                    0xffff
+                } else {
+                    0xff
+                }
+        })
+        .collect();
+    let bytes: Vec<u8> = if wide {
+        codes.iter().flat_map(|code| code.to_le_bytes()).collect()
+    } else {
+        codes.iter().map(|code| *code as u8).collect()
+    };
+    let element = if wide {
+        2
+    } else {
+        1
+    };
+    let codes_buffer = upload(&context, &bytes);
+    let mut surface = zeros(&context, channels * row_stride * element);
+    let kernel = AneTransposeCodesMetalKernel::new(&context, wide).unwrap();
     run(&context, |encoding| {
         kernel.encode(&codes_buffer, &mut surface, channels as u32, tokens as u32, row_stride as u32, encoding)
     });
-    let actual = read::<i8>(&surface);
+    let actual = read::<u8>(&surface);
     for channel in 0..channels {
         for token in 0..tokens {
-            assert_eq!(actual[channel * row_stride + token], codes[token * channels + channel]);
+            let at = (channel * row_stride + token) * element;
+            let expected = &bytes[(token * channels + channel) * element..][..element];
+            assert_eq!(&actual[at..at + element], expected);
         }
     }
+}
+
+#[uzu_test]
+fn ane_transpose_codes_to_channel_major_surface() {
+    check_transpose(false);
+}
+
+#[uzu_test]
+fn ane_transpose_wide_values_to_channel_major_surface() {
+    check_transpose(true);
 }
 
 fn check_unpack(scale_row: bool) {

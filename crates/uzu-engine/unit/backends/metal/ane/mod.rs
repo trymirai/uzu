@@ -124,6 +124,8 @@ fn shape(
         gate_rotation,
         single_weight_surfaces: layout.single_weight_surfaces,
         single_input_surface: layout.single_input_surface,
+        half_input: false,
+        half_intermediate: false,
     }
 }
 

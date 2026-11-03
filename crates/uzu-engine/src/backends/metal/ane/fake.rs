@@ -190,7 +190,12 @@ pub fn run_ffn_reference(
         let peak = (0..rotated.channels).map(|channel| rotated.row(channel)[token].abs()).fold(0.0f32, f32::max);
         let floor = peak.max(INTERMEDIATE_FLOOR as f32);
         for channel in 0..rotated.channels {
-            let code = (rotated.row(channel)[token] * INT8_PEAK as f32 / floor).round().clamp(-127.0, 127.0);
+            let scaled = rotated.row(channel)[token] * INT8_PEAK as f32 / floor;
+            let code = if shape.half_intermediate {
+                scaled
+            } else {
+                scaled.round().clamp(-127.0, 127.0)
+            };
             quantized.row_mut(channel)[token] = code / INT8_UNIT as f32;
         }
         intermediate_scales[token] = floor * (INT8_UNIT / INT8_PEAK) as f32;

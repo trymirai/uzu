@@ -213,7 +213,9 @@ static void store_codes_columns(
 
 // Per token: a = H_4096(signs * x), int8 codes with one scale per token (hidden must be 4096).
 // Writes token-major codes (transposed into the ANE surface by AneTransposeCodes) and the
-// token scale (x128, the ANE program's dequantize convention) into the `tx` surface.
+// token scale (x128, the ANE program's dequantize convention) into the `tx` surface. With
+// `half_values` the codes are not rounded: `codes` holds the fp16 values a / peak * 127 / 128, what the
+// program's dequantize makes of the int8 codes, without the rounding error.
 KERNEL(AnePack)(
     const device bfloat* input,
     const device float* signs,
@@ -221,6 +223,7 @@ KERNEL(AnePack)(
     device half* token_scales,
     constant uint& hidden,
     constant uint& tokens,
+    const bool half_values SPECIALIZE,
     threadgroup float shared[ANE_CHUNK],
     threadgroup float partials[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
@@ -236,20 +239,31 @@ KERNEL(AnePack)(
   }
   block_hadamard(values, hidden, thread_context.simd_lane_id, shared, thread_id);
   const float peak = max(threadgroup_peak(values_peak(values), partials, thread_context), 1e-20f);
-  store_codes(codes + ulong(token) * hidden + base, values, 127.0f / peak);
+  const float inverse = 127.0f / peak;
+  if (half_values) {
+    device half* destination = reinterpret_cast<device half*>(codes) + ulong(token) * hidden + base;
+    METAL_PRAGMA_UNROLL
+    for (ushort index = 0; index < ANE_VALUES; ++index) {
+      destination[index] = half(values[index] * inverse * (1.0f / 128.0f));
+    }
+  } else {
+    store_codes(codes + ulong(token) * hidden + base, values, inverse);
+  }
   if (thread_id == 0) {
     token_scales[token] = half(peak / 127.0f * 128.0f);
   }
 }
 
-// Token-major int8 [tokens, channels] -> channel-major surface rows [channels, row_stride].
+// Token-major int8 (or, with `wide`, fp16) [tokens, channels] -> channel-major surface rows
+// [channels, row_stride], `row_stride` in elements.
 KERNEL(AneTransposeCodes)(
     const device char* codes,
     device char* surface,
     constant uint& channels,
     constant uint& tokens,
     constant uint& row_stride,
-    threadgroup char tile[ANE_TILE * (ANE_TILE + 1)],
+    const bool wide SPECIALIZE,
+    threadgroup ushort tile[ANE_TILE * (ANE_TILE + 1)],
     const uint channel_tile GROUPS(channels.div_ceil(32)),
     const uint token_tile GROUPS(tokens.div_ceil(32)),
     const uint thread_id THREADS(ANE_THREADS)
@@ -259,9 +273,10 @@ KERNEL(AneTransposeCodes)(
   for (uint index = thread_id; index < ANE_TILE * ANE_TILE; index += ANE_THREADS) {
     const uint token = index / ANE_TILE;
     const uint channel = index % ANE_TILE;
-    char value = 0;
+    ushort value = 0;
     if (token_base + token < tokens && channel_base + channel < channels) {
-      value = codes[ulong(token_base + token) * channels + channel_base + channel];
+      const ulong source = ulong(token_base + token) * channels + channel_base + channel;
+      value = wide ? reinterpret_cast<const device ushort*>(codes)[source] : ushort(uchar(codes[source]));
     }
     tile[channel * (ANE_TILE + 1) + token] = value;
   }
@@ -270,7 +285,13 @@ KERNEL(AneTransposeCodes)(
     const uint channel = index / ANE_TILE;
     const uint token = index % ANE_TILE;
     if (token_base + token < tokens && channel_base + channel < channels) {
-      surface[ulong(channel_base + channel) * row_stride + token_base + token] = tile[channel * (ANE_TILE + 1) + token];
+      const ulong destination = ulong(channel_base + channel) * row_stride + token_base + token;
+      const ushort value = tile[channel * (ANE_TILE + 1) + token];
+      if (wide) {
+        reinterpret_cast<device ushort*>(surface)[destination] = value;
+      } else {
+        surface[destination] = char(value);
+      }
     }
   }
 }

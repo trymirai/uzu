@@ -19,7 +19,7 @@ use crate::{
         },
         metal::{
             Metal,
-            ane::{AneBinding, AneError, AneProgram, AneSurface},
+            ane::{AneBinding, AneElement, AneError, AneProgram, AneSurface},
             command_buffer::{Handoffs, MetalCommandBufferEncoding},
             context::{MetalContext, MetalLane},
             error::MetalError,
@@ -210,6 +210,7 @@ pub fn scale_stride(matrix: &WeightMatrix<Metal>) -> u32 {
 
 /// The GPU kernels around an ANE program: activation packing, row staging and output unpacking.
 pub struct AneKernels {
+    activations: AneElement,
     pack: AnePackMetalKernel,
     transpose: AneTransposeCodesMetalKernel,
     unpack: AneUnpackMetalKernel,
@@ -218,15 +219,19 @@ pub struct AneKernels {
 
 impl AneKernels {
     /// `scale_row`: whether the program's output carries a per-token scale in the row after its
-    /// channels (the FFN's intermediate scale), which unpacking applies.
+    /// channels (the FFN's intermediate scale), which unpacking applies. `activations`: the element
+    /// type of the program's input `x`.
     pub fn new(
         context: &MetalContext,
         scale_row: bool,
+        activations: AneElement,
     ) -> Result<Self, AneError> {
+        let half_values = activations == AneElement::Float16;
         let kernel_error = |error: MetalError| AneError::Unavailable(error.to_string());
         Ok(Self {
-            pack: AnePackMetalKernel::new(context).map_err(kernel_error)?,
-            transpose: AneTransposeCodesMetalKernel::new(context).map_err(kernel_error)?,
+            pack: AnePackMetalKernel::new(context, half_values).map_err(kernel_error)?,
+            transpose: AneTransposeCodesMetalKernel::new(context, half_values).map_err(kernel_error)?,
+            activations,
             unpack: AneUnpackMetalKernel::new(context, scale_row).map_err(kernel_error)?,
             stage_up: AneStageUpRowsMetalKernel::new(context).map_err(kernel_error)?,
         })
@@ -243,9 +248,9 @@ impl AneKernels {
         tx: &mut AneSurface,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MetalError> {
-        let mut codes = command_buffer.allocate_scratch((tokens * CHUNK) as usize)?;
+        let mut codes = command_buffer.allocate_scratch((tokens * CHUNK) as usize * self.activations.bytes())?;
         self.pack.encode(input, signs, &mut codes, tx.buffer_mut(), CHUNK, tokens, command_buffer);
-        let x_row_stride = x.row_stride_bytes() as u32;
+        let x_row_stride = x.row_stride_elements() as u32;
         self.transpose.encode(&codes, x.buffer_mut(), CHUNK, tokens, x_row_stride, command_buffer);
         Ok(())
     }
