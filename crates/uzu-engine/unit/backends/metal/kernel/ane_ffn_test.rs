@@ -11,7 +11,10 @@ use crate::{
         },
         metal::{
             Metal,
-            kernel::{AnePackMetalKernel, AneStageRowsMetalKernel, AneTransposeCodesMetalKernel, AneUnpackMetalKernel},
+            kernel::{
+                AnePackMetalKernel, AneStageDownRowsMetalKernel, AneStageUpRowsMetalKernel,
+                AneTransposeCodesMetalKernel, AneUnpackMetalKernel,
+            },
         },
     },
     tests::helpers::create_context,
@@ -27,6 +30,16 @@ fn upload<T: bytemuck::NoUninit + bytemuck::AnyBitPattern>(
     buffer.as_slice_mut::<u8>().fill(0);
     buffer.as_slice_mut::<u8>()[..size_of_val(values)].copy_from_slice(bytemuck::cast_slice(values));
     buffer.handoff()
+}
+
+/// +-1 signs as the bit mask `AneStageRows` reads (bit `i % 16` of u16 `i / 16` set for negative signs).
+fn sign_bits(signs: &[f32]) -> Vec<u16> {
+    signs
+        .chunks(16)
+        .map(|group| {
+            group.iter().enumerate().fold(0u16, |bits, (index, sign)| bits | (u16::from(*sign < 0.0) << index))
+        })
+        .collect()
 }
 
 fn zeros(
@@ -256,29 +269,48 @@ fn check_stage_rows(
     let codes_buffer = upload(&context, &weights.codes);
     let scales_buffer = upload(&context, &weights.scales);
     let zero_buffer = upload(&context, &weights.zero_points);
-    let pre_buffer = upload(&context, &pre);
-    let post_buffer = upload(&context, &post);
     let mut staged = zeros(&context, rows * staged_row_stride);
     let mut row_scales = zeros(&context, rows * row_scale_stride * 2);
-    let kernel =
-        AneStageRowsMetalKernel::new(&context, block as u32, (columns / 4096) as u32, with_post_signs).unwrap();
-    run(&context, |encoding| {
-        kernel.encode(
-            &codes_buffer,
-            &scales_buffer,
-            &zero_buffer,
-            &pre_buffer,
-            with_post_signs.then_some(&post_buffer),
-            &mut staged,
-            &mut row_scales,
-            row_offset as u32,
-            rows as u32,
-            weights.scale_stride as u32,
-            staged_row_stride as u32,
-            row_scale_stride as u32,
-            encoding,
-        )
-    });
+    if with_post_signs {
+        let kernel = AneStageDownRowsMetalKernel::new(&context, (columns / 4096) as u32).unwrap();
+        let (pre_buffer, post_buffer) = (upload(&context, &sign_bits(&pre)), upload(&context, &sign_bits(&post)));
+        run(&context, |encoding| {
+            kernel.encode(
+                &codes_buffer,
+                &scales_buffer,
+                &zero_buffer,
+                &pre_buffer,
+                &post_buffer,
+                &mut staged,
+                &mut row_scales,
+                row_offset as u32,
+                rows as u32,
+                weights.scale_stride as u32,
+                staged_row_stride as u32,
+                row_scale_stride as u32,
+                encoding,
+            )
+        });
+    } else {
+        let kernel = AneStageUpRowsMetalKernel::new(&context).unwrap();
+        let pre_buffer = upload(&context, &pre);
+        run(&context, |encoding| {
+            kernel.encode(
+                &codes_buffer,
+                &scales_buffer,
+                &zero_buffer,
+                &pre_buffer,
+                &mut staged,
+                &mut row_scales,
+                row_offset as u32,
+                rows as u32,
+                weights.scale_stride as u32,
+                staged_row_stride as u32,
+                row_scale_stride as u32,
+                encoding,
+            )
+        });
+    }
     for row in 0..rows {
         let mut values = dequantized_row(&weights, row_offset + row, columns);
         hadamard(&mut values, 32);
@@ -303,4 +335,94 @@ fn ane_stage_rows_up_projection_layout() {
 #[uzu_test]
 fn ane_stage_rows_down_projection_layout() {
     check_stage_rows(12288, 512, true);
+}
+
+/// Stages the 9B layer's up (2 x 12288 rows x 4096 columns, block 4096) and down (4096 rows x 12288
+/// columns, block 512) weights `LAYERS` times in one command buffer; reports ms and GB/s per layer.
+#[uzu_test]
+#[ignore]
+fn ane_stage_rows_perf() {
+    use crate::backends::common::CommandBufferCompleted;
+
+    const LAYERS: usize = 8;
+    let context = create_context::<Metal>();
+    let mut rng = StdRng::seed_from_u64(7);
+    let (intermediate, hidden, up_columns, down_columns) = (12288usize, 4096usize, 4096usize, 12288usize);
+    let up = random_w4(&mut rng, 2 * intermediate, up_columns);
+    let down = random_w4(&mut rng, hidden, down_columns);
+    let up_codes = upload(&context, &up.codes);
+    let up_scales = upload(&context, &up.scales);
+    let up_zeros = upload(&context, &up.zero_points);
+    let down_codes = upload(&context, &down.codes);
+    let down_scales = upload(&context, &down.scales);
+    let down_zeros = upload(&context, &down.zero_points);
+    let up_signs = upload(&context, &signs(&mut rng, up_columns));
+    let down_pre = upload(&context, &sign_bits(&signs(&mut rng, down_columns)));
+    let down_post = upload(&context, &sign_bits(&signs(&mut rng, down_columns)));
+    let mut wu = zeros(&context, intermediate * up_columns);
+    let mut wg = zeros(&context, intermediate * up_columns);
+    let mut wd = zeros(&context, hidden * down_columns);
+    let mut su = zeros(&context, intermediate * 64);
+    let mut sg = zeros(&context, intermediate * 64);
+    let mut sd = zeros(&context, hidden * 64);
+    let stage_up = AneStageUpRowsMetalKernel::new(&context).unwrap();
+    let stage_down = AneStageDownRowsMetalKernel::new(&context, 3).unwrap();
+    let up_bytes = up.codes.len() + up.scales.len() * 2 + up.zero_points.len() + 2 * intermediate * up_columns;
+    let down_bytes = down.codes.len() + down.scales.len() * 2 + down.zero_points.len() + hidden * down_columns;
+    let mut totals = [f64::MAX; 3];
+    for iteration in 0..15 {
+        let (run_up, run_down) = [(true, false), (false, true), (true, true)][iteration % 3];
+        let mut encoding = context.create_command_buffer(None, None).unwrap();
+        for _ in 0..LAYERS {
+            for (staged, scales, offset) in [(&mut wu, &mut su, 0u32), (&mut wg, &mut sg, intermediate as u32)] {
+                if !run_up {
+                    break;
+                }
+                stage_up.encode(
+                    &up_codes,
+                    &up_scales,
+                    &up_zeros,
+                    &up_signs,
+                    staged,
+                    scales,
+                    offset,
+                    intermediate as u32,
+                    up.scale_stride as u32,
+                    up_columns as u32,
+                    32,
+                    &mut encoding,
+                );
+            }
+            if !run_down {
+                continue;
+            }
+            stage_down.encode(
+                &down_codes,
+                &down_scales,
+                &down_zeros,
+                &down_pre,
+                &down_post,
+                &mut wd,
+                &mut sd,
+                0,
+                hidden as u32,
+                down.scale_stride as u32,
+                down_columns as u32,
+                32,
+                &mut encoding,
+            );
+        }
+        let completed = block_on(encoding.end_encoding().submit().wait_until_completed()).unwrap();
+        let ms = completed.gpu_execution_time().unwrap().as_secs_f64() * 1e3 / LAYERS as f64;
+        totals[iteration % 3] = totals[iteration % 3].min(ms);
+    }
+    for (name, ms, bytes) in
+        [("up", totals[0], up_bytes), ("down", totals[1], down_bytes), ("both", totals[2], up_bytes + down_bytes)]
+    {
+        let gigabytes = bytes as f64 / 1e9;
+        println!(
+            "ane_stage_rows_perf {name}: {ms:.3} ms/layer, {gigabytes:.3} GB/layer, {:.1} GB/s",
+            gigabytes / (ms / 1e3)
+        );
+    }
 }

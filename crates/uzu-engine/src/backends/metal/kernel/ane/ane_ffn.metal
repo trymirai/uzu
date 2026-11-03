@@ -14,6 +14,7 @@ using namespace metal;
 #define ANE_THREADS 256
 #define ANE_CHUNK 4096
 #define ANE_TILE 32
+#define ANE_DOWN_BLOCK 512
 
 // Register-resident Walsh-Hadamard transforms over a 4096-value chunk held by a 256-thread
 // threadgroup: thread t owns values [16 t, 16 t + 16), so simdgroup s owns [512 s, 512 s + 512).
@@ -39,10 +40,10 @@ static void hadamard_in_thread(thread float* values) {
 // Spans 16 * lane_stride for lane_stride in [1, lane_strides).
 static void hadamard_across_lanes(thread float* values, ushort lane, ushort lane_strides) {
   for (ushort stride = 1; stride < lane_strides; stride <<= 1) {
+    const float sign = (lane & stride) ? -1.0f : 1.0f;
     METAL_PRAGMA_UNROLL
     for (ushort index = 0; index < ANE_VALUES; ++index) {
-      const float partner = simd_shuffle_xor(values[index], stride);
-      values[index] = (lane & stride) ? (partner - values[index]) : (partner + values[index]);
+      values[index] = fma(values[index], sign, simd_shuffle_xor(values[index], stride));
     }
   }
 }
@@ -85,6 +86,49 @@ static void hadamard_across_simdgroups(thread float* values, threadgroup float* 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 }
 
+// Spans 512, 1024 and 2048 for a 4096-value chunk as a single threadgroup-memory transpose. Thread
+// (simdgroup s, lane l) writes its 16 values transposed (value v of thread t at v * 256 + t, so both
+// the writes and the reads below are bank-conflict-free), then owns the 8-point columns
+// {g * 512 + 16 l + 2 s + j}, g in [0, 8), j in [0, 2). Returns them as values[2 * g + j]; the chunk
+// stays in this layout (see store_codes_columns) so no transpose back is needed.
+static void hadamard_across_simdgroups_columns(
+    thread float* values,
+    threadgroup float* shared,
+    uint thread_id,
+    ushort lane,
+    ushort simdgroup
+) {
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    shared[index * ANE_THREADS + thread_id] = values[index];
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  METAL_PRAGMA_UNROLL
+  for (ushort j = 0; j < 2; ++j) {
+    float column[8];
+    METAL_PRAGMA_UNROLL
+    for (ushort group = 0; group < 8; ++group) {
+      column[group] = shared[(2 * simdgroup + j) * ANE_THREADS + group * METAL_SIMD_SIZE + lane];
+    }
+    METAL_PRAGMA_UNROLL
+    for (ushort span = 1; span < 8; span <<= 1) {
+      METAL_PRAGMA_UNROLL
+      for (ushort group = 0; group < 8; ++group) {
+        if (!(group & span)) {
+          const float left = column[group];
+          const float right = column[group + span];
+          column[group] = left + right;
+          column[group + span] = left - right;
+        }
+      }
+    }
+    METAL_PRAGMA_UNROLL
+    for (ushort group = 0; group < 8; ++group) {
+      values[2 * group + j] = column[group];
+    }
+  }
+}
+
 // Normalized transform of every consecutive `block` (32, 64, ..., 4096) of the thread's chunk values.
 static void block_hadamard(thread float* values, uint block, ushort lane, threadgroup float* shared, uint thread_id) {
   hadamard_in_thread(values);
@@ -97,6 +141,25 @@ static void block_hadamard(thread float* values, uint block, ushort lane, thread
   for (ushort index = 0; index < ANE_VALUES; ++index) {
     values[index] *= scale;
   }
+}
+
+// Unnormalized transform of every 4096 values for block 4096, leaving the chunk in the
+// hadamard_across_simdgroups_columns layout.
+static void block_hadamard_columns(
+    thread float* values,
+    ushort lane,
+    ushort simdgroup,
+    threadgroup float* shared,
+    uint thread_id
+) {
+  hadamard_in_thread(values);
+  hadamard_across_lanes(values, lane, 512 / ANE_VALUES);
+  hadamard_across_simdgroups_columns(values, shared, thread_id, lane, simdgroup);
+}
+
+// `value` negated where bit `index` of `bits` is set (the +-1 sign vectors are stored as bit masks).
+static float flip_sign(float value, uint bits, ushort index) {
+  return as_type<float>(as_type<uint>(value) ^ ((bits << (31 - index)) & 0x80000000u));
 }
 
 static float threadgroup_peak(float value, threadgroup float* partials, const thread ThreadContext& thread_context) {
@@ -112,14 +175,39 @@ static float values_peak(const thread float* values) {
   return peak;
 }
 
+// round-to-nearest-even int8 codes by adding 1.5 * 2^23: the sum's low byte is the code in two's complement.
+#define ANE_ROUNDING_MAGIC 12582912.0f
+
 static void store_codes(device char* destination, const thread float* values, float inverse) {
   METAL_PRAGMA_UNROLL
   for (ushort index = 0; index < ANE_VALUES; index += 4) {
-    *reinterpret_cast<device packed_char4*>(destination + index) = char4(clamp(
-        rint(float4(values[index], values[index + 1], values[index + 2], values[index + 3]) * inverse),
-        -127.0f,
-        127.0f
-    ));
+    const uint4 bits = as_type<uint4>(
+        fma(float4(values[index], values[index + 1], values[index + 2], values[index + 3]),
+            float4(inverse),
+            float4(ANE_ROUNDING_MAGIC))
+    );
+    uint packed = bits.w << 24;
+    packed = insert_bits(packed, bits.z, 16, 8);
+    packed = insert_bits(packed, bits.y, 8, 8);
+    packed = insert_bits(packed, bits.x, 0, 8);
+    *reinterpret_cast<device uint*>(destination + index) = packed;
+  }
+}
+
+static void store_codes_columns(
+    device char* destination,
+    const thread float* values,
+    float inverse,
+    ushort lane,
+    ushort simdgroup
+) {
+  METAL_PRAGMA_UNROLL
+  for (ushort group = 0; group < 8; ++group) {
+    const uint2 bits = as_type<uint2>(
+        fma(float2(values[2 * group], values[2 * group + 1]), float2(inverse), float2(ANE_ROUNDING_MAGIC))
+    );
+    *reinterpret_cast<device ushort*>(destination + group * 512 + lane * ANE_VALUES + simdgroup * 2) =
+        ushort(insert_bits(bits.x, bits.y, 8, 8));
   }
 }
 
@@ -230,18 +318,36 @@ KERNEL(AneUnpack)(
   }
 }
 
-// One staged weight row for the ANE: dequantize a W4 asymmetric group-32 row (mirai "output_input"
+// Dequantize and transform one thread's 16 values of a W4 asymmetric group-32 row chunk:
+// H32(scale * (code - zero)) up to the 1/sqrt(32) normalization, which is returned as the factor
+// (scale / sqrt(32)) the caller folds into its sign multiply. The zero point only moves the DC term,
+// so the transform runs on the raw (exact) integer codes.
+static float dequantized_h32(thread float* values, uint2 packed, float scale, float zero, ushort lane) {
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    const uint word = index < 8 ? packed.x : packed.y;
+    values[index] = float((word >> ((index % 8) * 4)) & 0xF);
+  }
+  hadamard_in_thread(values);
+  hadamard_across_lanes(values, lane, 2);
+  values[0] -= (lane & 1) ? 0.0f : 32.0f * zero;
+  return scale * rsqrt(32.0f);
+}
+
+// Staged weight rows for the ANE: dequantize a W4 asymmetric group-32 row (mirai "output_input"
 // layout: codes [rows, columns/2] low nibble first, scales [groups, scale_stride] bf16, zero points
 // [groups, scale_stride/2] low nibble = even row), then
 //   r' = post_signs * H_block(pre_signs * H32(r))
-// and quantize to int8 with one scale per row (written x128 into a [rows, 1] fp16 surface).
-// The row (chunks * 4096 columns, chunks <= 3) stays in registers; block divides 4096.
-KERNEL(AneStageRows)(
+// and quantize to int8 with one scale per row (written x128 into a [rows, 1] fp16 surface). The
+// second transform's normalization is folded into the quantization (peak and inverse scale).
+
+// Up projection: a 4096-column row, block 4096, no post signs. Float pre signs (their 16 KB per row
+// stay cache resident, and the float multiply is what keeps this kernel ALU-light).
+KERNEL(AneStageUpRows)(
     const device uchar* weight_codes,
     const device bfloat* weight_scales,
     const device uchar* zero_points,
     const device float* pre_signs,
-    const device float* post_signs OPTIONAL(has_post_signs),
     device char* staged,
     device half* row_scales,
     constant uint& source_row_offset,
@@ -249,9 +355,6 @@ KERNEL(AneStageRows)(
     constant uint& scale_stride,
     constant uint& staged_row_stride,
     constant uint& row_scale_stride,
-    const uint block SPECIALIZE,
-    const uint chunks SPECIALIZE,
-    const bool has_post_signs SPECIALIZE,
     threadgroup float shared[ANE_CHUNK],
     threadgroup float partials[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
@@ -259,13 +362,73 @@ KERNEL(AneStageRows)(
     const uint thread_id THREADS(ANE_THREADS)
 ) {
   const uint source_row = source_row_offset + row;
-  const uint columns = chunks * ANE_CHUNK;
-  const device uchar* row_codes = weight_codes + ulong(source_row) * (columns / 2);
+  const ushort lane = thread_context.simd_lane_id;
+  const ushort simdgroup = thread_context.simdgroup_index;
+  const uint base = thread_id * ANE_VALUES;
+  const uint group = base / 32;
+  const float scale = float(weight_scales[ulong(group) * scale_stride + source_row]);
+  const float zero =
+      float((zero_points[ulong(group) * (scale_stride / 2) + source_row / 2] >> ((source_row & 1) * 4)) & 0xF);
+  const uint2 packed =
+      *reinterpret_cast<const device uint2*>(weight_codes + ulong(source_row) * (ANE_CHUNK / 2) + base / 2);
+
+  float values[ANE_VALUES];
+  const float group_scale = dequantized_h32(values, packed, scale, zero, lane);
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; index += 4) {
+    const float4 signs = *reinterpret_cast<const device float4*>(pre_signs + base + index) * group_scale;
+    values[index] *= signs.x;
+    values[index + 1] *= signs.y;
+    values[index + 2] *= signs.z;
+    values[index + 3] *= signs.w;
+  }
+  // Unnormalized, and left in the hadamard_across_simdgroups_columns layout.
+  block_hadamard_columns(values, lane, simdgroup, shared, thread_id);
+
+  const float normalization = rsqrt(float(ANE_CHUNK));
+  const float row_peak = max(threadgroup_peak(values_peak(values), partials, thread_context) * normalization, 1e-20f);
+  store_codes_columns(
+      staged + ulong(row) * staged_row_stride,
+      values,
+      127.0f * normalization / row_peak,
+      lane,
+      simdgroup
+  );
+  if (thread_id == 0) {
+    row_scales[ulong(row) * row_scale_stride] = half(row_peak / 127.0f * 128.0f);
+  }
+}
+
+// Down projection: a `chunks` * 4096-column row (chunks <= 3, held in registers), block 512, with post
+// signs. The +-1 sign vectors are bit masks: the float signs of a 12288-column row (96 KB with both)
+// did not stay cache resident and dominated the kernel.
+KERNEL(AneStageDownRows)(
+    const device uchar* weight_codes,
+    const device bfloat* weight_scales,
+    const device uchar* zero_points,
+    const device ushort* pre_sign_bits,
+    const device ushort* post_sign_bits,
+    device char* staged,
+    device half* row_scales,
+    constant uint& source_row_offset,
+    constant uint& rows,
+    constant uint& scale_stride,
+    constant uint& staged_row_stride,
+    constant uint& row_scale_stride,
+    const uint chunks SPECIALIZE,
+    threadgroup float partials[METAL_SIMD_SIZE],
+    const ThreadContext thread_context,
+    const uint row GROUPS(rows),
+    const uint thread_id THREADS(ANE_THREADS)
+) {
+  const uint source_row = source_row_offset + row;
+  const device uchar* row_codes = weight_codes + ulong(source_row) * (chunks * ANE_CHUNK / 2);
   const ushort lane = thread_context.simd_lane_id;
   const uint zero_shift = (source_row & 1) * 4;
 
   float values[3][ANE_VALUES];
   float peak = 0.0f;
+  METAL_PRAGMA_UNROLL
   for (uint chunk = 0; chunk < chunks; ++chunk) {
     const uint base = chunk * ANE_CHUNK + thread_id * ANE_VALUES;
     const uint group = base / 32;
@@ -273,32 +436,30 @@ KERNEL(AneStageRows)(
     const float zero = float((zero_points[ulong(group) * (scale_stride / 2) + source_row / 2] >> zero_shift) & 0xF);
     const uint2 packed = *reinterpret_cast<const device uint2*>(row_codes + base / 2);
     thread float* chunk_values = values[chunk];
+    const float group_scale = dequantized_h32(chunk_values, packed, scale, zero, lane);
+    const uint pre_bits = pre_sign_bits[base / ANE_VALUES];
     METAL_PRAGMA_UNROLL
     for (ushort index = 0; index < ANE_VALUES; ++index) {
-      const uint word = index < 8 ? packed.x : packed.y;
-      const uint code = (word >> ((index % 8) * 4)) & 0xF;
-      chunk_values[index] = scale * (float(code) - zero);
+      chunk_values[index] = flip_sign(chunk_values[index], pre_bits, index) * group_scale;
     }
-    block_hadamard(chunk_values, 32, lane, shared, thread_id);
+    hadamard_in_thread(chunk_values);
+    hadamard_across_lanes(chunk_values, lane, ANE_DOWN_BLOCK / ANE_VALUES);
+    const uint post_bits = post_sign_bits[base / ANE_VALUES];
     METAL_PRAGMA_UNROLL
     for (ushort index = 0; index < ANE_VALUES; ++index) {
-      chunk_values[index] *= pre_signs[base + index];
-    }
-    block_hadamard(chunk_values, block, lane, shared, thread_id);
-    if (has_post_signs) {
-      METAL_PRAGMA_UNROLL
-      for (ushort index = 0; index < ANE_VALUES; ++index) {
-        chunk_values[index] *= post_signs[base + index];
-      }
+      chunk_values[index] = flip_sign(chunk_values[index], post_bits, index);
     }
     peak = max(peak, values_peak(chunk_values));
   }
-  peak = max(threadgroup_peak(peak, partials, thread_context), 1e-20f);
+  const float normalization = rsqrt(float(ANE_DOWN_BLOCK));
+  const float row_peak = max(threadgroup_peak(peak, partials, thread_context) * normalization, 1e-20f);
+  const float inverse = 127.0f * normalization / row_peak;
   device char* destination = staged + ulong(row) * staged_row_stride;
+  METAL_PRAGMA_UNROLL
   for (uint chunk = 0; chunk < chunks; ++chunk) {
-    store_codes(destination + chunk * ANE_CHUNK + thread_id * ANE_VALUES, values[chunk], 127.0f / peak);
+    store_codes(destination + chunk * ANE_CHUNK + thread_id * ANE_VALUES, values[chunk], inverse);
   }
   if (thread_id == 0) {
-    row_scales[ulong(row) * row_scale_stride] = half(peak / 127.0f * 128.0f);
+    row_scales[ulong(row) * row_scale_stride] = half(row_peak / 127.0f * 128.0f);
   }
 }

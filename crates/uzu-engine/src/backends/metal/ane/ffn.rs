@@ -1,7 +1,7 @@
 //! The Neural Engine FFN executor: one W8A8 program shared by every dense MLP of a shape.
 //!
 //! Per MLP call (prefill batches only) the GPU
-//! 1. stages the layer's W4 weights into int8 rows the ANE reads (`AneStageRows`), folding the
+//! 1. stages the layer's W4 weights into int8 rows the ANE reads (`AneStageUpRows`, `AneStageDownRows`), folding the
 //!    projections' input rotations and the ANE-side rotations into the rows,
 //! 2. packs the activations: `a = H_hidden(D_a * x)`, int8 per token, channel-major (`AnePack`,
 //!    `AneTransposeCodes`),
@@ -37,7 +37,10 @@ use crate::{
             command_buffer::{Handoffs, MetalCommandBufferEncoding},
             context::{MetalContext, MetalLane},
             error::MetalError,
-            kernel::{AnePackMetalKernel, AneStageRowsMetalKernel, AneTransposeCodesMetalKernel, AneUnpackMetalKernel},
+            kernel::{
+                AnePackMetalKernel, AneStageDownRowsMetalKernel, AneStageUpRowsMetalKernel,
+                AneTransposeCodesMetalKernel, AneUnpackMetalKernel,
+            },
         },
     },
     encodable_block::{linear::LinearWeights, mlp::DenseMlpWeights, weight_matrix::WeightMatrix},
@@ -142,6 +145,19 @@ fn upload(
     Ok(buffer.handoff())
 }
 
+/// Uploads a +-1 sign vector as a bit mask (bit `i % 16` of u16 `i / 16` set where `signs[i]` is negative),
+/// the form `AneStageDownRows` reads: 32x less cache traffic per staged row than the float signs.
+fn upload_sign_bits(
+    context: &MetalContext,
+    signs: &[f32],
+) -> Result<GpuBuffer, MetalError> {
+    let mut buffer = context.create_buffer_cpu_gpu(size_of_val(signs) / 32 * 2)?;
+    for (word, group) in buffer.as_slice_mut::<u16>().iter_mut().zip(signs.chunks(16)) {
+        *word = group.iter().enumerate().fold(0u16, |bits, (index, sign)| bits | (u16::from(*sign < 0.0) << index));
+    }
+    Ok(buffer.handoff())
+}
+
 /// Whether a projection is mirai W4 (asymmetric, group 32) in the plain row-major layout this
 /// executor stages from, with input and output RHT signs and no biases.
 fn stageable(weights: &LinearWeights<'_, Metal>) -> bool {
@@ -207,8 +223,8 @@ struct Kernels {
     pack: AnePackMetalKernel,
     transpose: AneTransposeCodesMetalKernel,
     unpack: AneUnpackMetalKernel,
-    stage_up: AneStageRowsMetalKernel,
-    stage_down: AneStageRowsMetalKernel,
+    stage_up: AneStageUpRowsMetalKernel,
+    stage_down: AneStageDownRowsMetalKernel,
 }
 
 /// What one lane (see [`MetalLane`]) of the pipelined prefill needs to run its chunk's MLPs: chunks
@@ -335,9 +351,8 @@ impl AneFfn {
             pack: AnePackMetalKernel::new(context).map_err(kernel_error)?,
             transpose: AneTransposeCodesMetalKernel::new(context).map_err(kernel_error)?,
             unpack: AneUnpackMetalKernel::new(context).map_err(kernel_error)?,
-            stage_up: AneStageRowsMetalKernel::new(context, hidden, hidden / CHUNK, false).map_err(kernel_error)?,
-            stage_down: AneStageRowsMetalKernel::new(context, INTERMEDIATE_ROTATION_BLOCK, intermediate / CHUNK, true)
-                .map_err(kernel_error)?,
+            stage_up: AneStageUpRowsMetalKernel::new(context).map_err(kernel_error)?,
+            stage_down: AneStageDownRowsMetalKernel::new(context, intermediate / CHUNK).map_err(kernel_error)?,
         };
         let pack_signs = random_signs(hidden as usize, 1);
 
@@ -350,7 +365,7 @@ impl AneFfn {
             kernels,
             pack_signs_buffer: upload(context, &pack_signs).map_err(kernel_error)?,
             pack_signs,
-            intermediate_signs_buffer: upload(context, &intermediate_signs).map_err(kernel_error)?,
+            intermediate_signs_buffer: upload_sign_bits(context, &intermediate_signs).map_err(kernel_error)?,
             up_output_signs,
             healthy: AtomicBool::new(true),
             fault: Fault::from_env(),
@@ -381,7 +396,7 @@ impl AneFfn {
         Ok(Some(AneLayer {
             index: context.next_ane_layer_index(),
             up_pre_signs: upload(context, &up_pre_signs)?,
-            down_pre_signs: upload(context, &down_input_signs)?,
+            down_pre_signs: upload_sign_bits(context, &down_input_signs)?,
             down_output_signs: upload(context, &read_signs(weights.down.output_rht_signs.unwrap()))?,
         }))
     }
@@ -449,7 +464,6 @@ impl AneFfn {
                 up.scales().unwrap(),
                 up.zero_points().unwrap(),
                 &layer.up_pre_signs,
-                None::<&GpuBuffer>,
                 staged.buffer_mut(),
                 scales.buffer_mut(),
                 row_offset,
@@ -466,7 +480,7 @@ impl AneFfn {
             down.scales().unwrap(),
             down.zero_points().unwrap(),
             &layer.down_pre_signs,
-            Some(&self.intermediate_signs_buffer),
+            &self.intermediate_signs_buffer,
             wd.buffer_mut(),
             sd.buffer_mut(),
             0,
