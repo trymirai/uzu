@@ -19,8 +19,6 @@ export type ChatContentBlock = { type: "identity"; value: string } | { type: "re
 
 export type ChatContentBlockType = "Identity" | "ReasoningEffort" | "ConversationStartDate" | "KnowledgeCutoff" | "BuiltinTools" | "Tools" | "Text" | "Image" | "Video" | "Audio" | "File" | "Reasoning" | "ToolCall" | "ToolCallCandidate" | "ToolCallResult" | "Translation" | "Custom";
 
-export type ChatReplyEnergy = { type: "total"; total: number } | { type: "components"; cpu: number; gpu: number; ane: number; dram: number };
-
 export type ChatReplyFinishReason = "Stop" | "Length" | "Cancelled" | "ContextLimitReached" | "ToolCalls" | "Rejected";
 
 export type ChatReplyJoulesPerToken = { type: "total"; total: number } | { type: "components"; cpu: number; gpu: number; ane: number; dram: number };
@@ -58,6 +56,8 @@ export type ModelSource = { type: "mirai"; toolchain_version: string; repository
 export type ModelSpecialization = { type: "chat" } | { type: "classification" } | { type: "decision" } | { type: "text_to_speech" } | { type: "translation" } | { type: "speculation" };
 
 export type ReasoningEffort = "Disabled" | "Default" | "Low" | "Medium" | "High" | "XHigh";
+
+export type ReplyEnergy = { type: "total"; total: number } | { type: "components"; cpu: number; gpu: number; ane: number; dram: number };
 
 export type SamplingMethod = { Greedy: {} } | { Stochastic: { temperature: number | undefined; top_k: number | undefined; top_p: number | undefined; min_p: number | undefined; repetition_penalty: number | undefined; suffix_repetition_length: number | undefined } };
 
@@ -217,12 +217,12 @@ export class ChatReplyStats {
     duration: number;
     get generate_tokens_per_second(): number | undefined;
     set generate_tokens_per_second(value: number | null | undefined);
-    get input_energy(): ChatReplyEnergy | undefined;
-    set input_energy(value: ChatReplyEnergy | null | undefined);
+    get input_energy(): ReplyEnergy | undefined;
+    set input_energy(value: ReplyEnergy | null | undefined);
     get memory_used_bytes(): bigint | undefined;
     set memory_used_bytes(value: bigint | null | undefined);
-    get output_energy(): ChatReplyEnergy | undefined;
-    set output_energy(value: ChatReplyEnergy | null | undefined);
+    get output_energy(): ReplyEnergy | undefined;
+    set output_energy(value: ReplyEnergy | null | undefined);
     get prefill_tokens_per_second(): number | undefined;
     set prefill_tokens_per_second(value: number | null | undefined);
     get speculator_stats(): ChatReplySpeculatorStats | undefined;
@@ -343,6 +343,9 @@ export class DecisionStats {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
+    get energy(): ReplyEnergy | undefined;
+    set energy(value: ReplyEnergy | null | undefined);
+    prefill_duration: number;
     tokens_count: bigint;
     total_duration: number;
 }
@@ -898,6 +901,8 @@ export interface InitOutput {
     readonly __wbg_get_decisionoutput_results: (a: number) => [number, number];
     readonly __wbg_get_decisionresult_answer: (a: number) => any;
     readonly __wbg_get_decisionresult_stats: (a: number) => number;
+    readonly __wbg_get_decisionstats_energy: (a: number) => any;
+    readonly __wbg_get_decisionstats_prefill_duration: (a: number) => number;
     readonly __wbg_get_decisionstats_tokens_count: (a: number) => bigint;
     readonly __wbg_get_decisionstats_total_duration: (a: number) => number;
     readonly __wbg_get_device_cpu_name: (a: number) => [number, number];
@@ -1077,6 +1082,8 @@ export interface InitOutput {
     readonly __wbg_set_decisionoutput_results: (a: number, b: number, c: number) => void;
     readonly __wbg_set_decisionresult_answer: (a: number, b: any) => void;
     readonly __wbg_set_decisionresult_stats: (a: number, b: number) => void;
+    readonly __wbg_set_decisionstats_energy: (a: number, b: number) => void;
+    readonly __wbg_set_decisionstats_prefill_duration: (a: number, b: number) => void;
     readonly __wbg_set_decisionstats_tokens_count: (a: number, b: bigint) => void;
     readonly __wbg_set_decisionstats_total_duration: (a: number, b: number) => void;
     readonly __wbg_set_device_cpu_name: (a: number, b: number, c: number) => void;
@@ -1339,7 +1346,7 @@ export interface InitOutput {
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___js_sys_50975383be31856c___Function_fn_wasm_bindgen_6c51f868a643a6ac___JsValue_____wasm_bindgen_6c51f868a643a6ac___sys__Undefined___js_sys_50975383be31856c___Function_fn_wasm_bindgen_6c51f868a643a6ac___JsValue_____wasm_bindgen_6c51f868a643a6ac___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue__core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__476: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__480: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue__wasm_bindgen_6c51f868a643a6ac___JsValue__true_: (a: number, b: number, c: any) => any;
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue______true_: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke_______true_: (a: number, b: number) => void;
