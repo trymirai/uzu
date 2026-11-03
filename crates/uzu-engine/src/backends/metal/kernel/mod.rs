@@ -34,3 +34,7 @@ impl Kernels for MetalKernels {
     type MatmulKernel = matmul::MatmulMetalKernel;
     type RadixTopKSmall = radix_top_k_small::MetalRadixTopKSmall;
 }
+
+#[cfg(test)]
+#[path = "../../../../unit/backends/metal/kernel/ane_ffn_test.rs"]
+mod ane_ffn_test;

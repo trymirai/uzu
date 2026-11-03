@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub mod dense;
+pub mod external;
 pub mod sparse;
 
 pub(super) trait MetalBufferExt: GpuBuffer<Backend = Metal> {
@@ -25,6 +26,8 @@ pub(super) trait MetalBufferExt: GpuBuffer<Backend = Metal> {
             let (page, offset) = buffer.page().downcast();
             (page, offset + buffer.range().start)
         } else if let Some(buffer) = downcast_ref::<<Metal as Backend>::SparseBuffer>(self) {
+            (buffer.mtl_buffer(), 0)
+        } else if let Some(buffer) = downcast_ref::<external::MetalExternalBuffer>(self) {
             (buffer.mtl_buffer(), 0)
         } else {
             unreachable!()
