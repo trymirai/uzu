@@ -26,6 +26,11 @@ metal = [
     "dep:blake3",
     "dep:xxhash-rust",
     "dep:metal",
+    "dep:objc2-foundation",
+    "dep:objc2-core-foundation",
+    "dep:objc2-io-surface",
+    "dep:block2",
+    "dep:libc",
 ]
 
 webgpu = [
@@ -89,7 +94,12 @@ parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
-objc2 = { workspace = true, optional = true }
+objc2 = { workspace = true, optional = true, features = ["exception"] }
+objc2-foundation = { workspace = true, optional = true }
+objc2-core-foundation = { workspace = true, optional = true }
+objc2-io-surface = { workspace = true, optional = true }
+block2 = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 metal = { workspace = true, optional = true }
