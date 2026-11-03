@@ -136,11 +136,13 @@ fn embedding_prefix_preserves_full_lookup() {
             assert_eq_float(&read(&full_lookup), &read(&draft_lookup), 0.0, "full lookup through prefix");
             let full = read(&full);
             let expected: Vec<_> =
-                full.chunks_exact(VOCAB_SIZE as usize).flat_map(|row| row[..3].iter().copied()).collect();
+                full.as_chunks::<{ VOCAB_SIZE as usize }>().0.iter().flat_map(|row| row[..3].iter().copied()).collect();
             assert_eq_float(&expected, &read(&prefix), 0.001, "prefix readout");
             let full_ref = &full;
             let expected: Vec<_> = gather_ids
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .enumerate()
                 .flat_map(|(row, ids)| ids.iter().map(move |id| full_ref[row * VOCAB_SIZE as usize + *id as usize]))
                 .collect();
@@ -251,7 +253,9 @@ fn embedding_prefix_quantized_input_rht_readout() {
             let full = read(&full);
             assert!(full.iter().any(|value| value.abs() > 0.001), "quantized readout is empty");
             let expected: Vec<_> = full
-                .chunks_exact(VOCAB as usize)
+                .as_chunks::<{ VOCAB as usize }>()
+                .0
+                .iter()
                 .flat_map(|row| row[..prefix_width as usize].iter().copied())
                 .collect();
             assert_eq_float(
