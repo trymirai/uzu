@@ -232,6 +232,14 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             let split_logits_row = model.decoder.prefill_cache_skips_trailing_layers();
             let hidden_feature_layer_indices =
                 model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+            // Chunk c's layer-L mixer needs only chunk c-1's layer-L mixer (flat prefill accepts
+            // nothing), so a backend may overlap a chunk's mixers with the previous chunk's MLPs.
+            // Ring caches, speculators and the suffix-repetition ring add chunk-tail dependencies.
+            let pipelined = number_of_batches > 1
+                && model.speculator.is_none()
+                && options.sampling_method.suffix_repetition_length().is_none()
+                && model.decoder.supports_layerwise_prefill_pipelining();
+            let mut first_chunk = true;
 
             for (input_chunk, sample_last) in input
                 .chunks(max_batch_size)
@@ -241,6 +249,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 })
                 .flatten()
             {
+                if pipelined && !first_chunk {
+                    command_buffer.begin_independent_chunk().map_err(LanguageModelStreamError::Backend)?;
+                }
+                first_chunk = false;
+
                 let input_trie = TrieNode::flat(model_state.tokens.len(), input_chunk, &model_state.prng);
                 let input_flat_trie = input_trie.linearize();
 

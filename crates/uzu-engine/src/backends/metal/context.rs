@@ -3,14 +3,14 @@ use std::{
     path::Path,
     sync::{
         Arc, OnceLock, Weak,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use metal::{
     MTL4CommandAllocator, MTL4CommandQueue, MTL4CommandQueueDescriptor, MTLCaptureTarget, MTLComputePipelineState,
     MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEvent, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -42,6 +42,9 @@ use crate::{
 pub(super) struct SparseState {
     pub did_ops: bool,
     pub event_value: u64,
+    /// Per lane, the last `event_value` its queue waited for: every queue that uses sparse
+    /// buffers must itself wait for the mappings, ordering through another queue is not enough.
+    pub synced: [u64; 2],
 }
 
 pub struct MetalContext {
@@ -63,8 +66,47 @@ pub struct MetalContext {
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     pub(super) blit_copy: [OnceLock<BlitCopyMetalKernel>; 3],
     pub(super) blit_fill: [OnceLock<BlitFillMetalKernel>; 2],
+    lanes: [OnceLock<Arc<MetalLane>>; 2],
     ane: Mutex<AneState>,
     weak_self: Weak<MetalContext>,
+}
+
+/// A command queue with its own timeline. Prefill chunks alternate between two lanes so one chunk's
+/// GPU work can overlap the other's Neural Engine work; each lane is ordered by itself, and lanes
+/// are ordered against each other through their events.
+pub struct MetalLane {
+    pub queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    /// Shared with the ANE, which waits for its `ready` values and signals its `done` values.
+    pub event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
+    /// Orders other lanes' GPU work after this lane's. Metal does not reliably order GPU work
+    /// across queues through a shared event (the waiting queue can run ahead), a plain event does.
+    pub order: Retained<ProtocolObject<dyn MTLEvent>>,
+    /// Reaches an ANE round trip's `done` value once the ANE has finished it. The ANE signals
+    /// `event` itself, but a queue other than the first does not reliably wait for that signal
+    /// (its next command buffer runs before the ANE is done), so the completion of the request
+    /// is relayed to this plain event through `relay_queue` and the queue waits for this one.
+    pub done: Retained<ProtocolObject<dyn MTLEvent>>,
+    relay_queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    next_value: AtomicU64,
+}
+
+impl MetalLane {
+    /// Marks an ANE round trip as finished for the lane's queue (see [`Self::done`]).
+    pub fn relay_done(
+        &self,
+        value: u64,
+    ) {
+        self.relay_queue.signal_event_value(&self.done, value);
+    }
+
+    /// Reserves `count` consecutive values of the lane's events, returning the first. Values are
+    /// handed out in the order they are encoded, so they increase along the lane's queue.
+    pub fn reserve_values(
+        &self,
+        count: u64,
+    ) -> u64 {
+        self.next_value.fetch_add(count, Ordering::AcqRel) + 1
+    }
 }
 
 /// The Neural Engine executors of this device, built on demand per MLP shape.
@@ -72,6 +114,11 @@ pub struct MetalContext {
 struct AneState {
     disabled: bool,
     ffns: Vec<Arc<AneFfn>>,
+    /// Layers wrapped so far; an `AneMlp`'s index orders its layer across pipelined prefill chunks.
+    wrapped_layers: usize,
+    /// Set once a dense MLP stays on the GPU: it does not order its layer across chunks, so
+    /// chunks cannot be pipelined.
+    has_unordered_mlps: bool,
 }
 
 impl MetalContext {
@@ -101,6 +148,61 @@ impl MetalContext {
                 None
             },
         }
+    }
+
+    /// The lane with this index (0 is the main queue), created on first use.
+    pub fn lane(
+        &self,
+        index: usize,
+    ) -> Result<Arc<MetalLane>, MetalError> {
+        if let Some(lane) = self.lanes[index].get() {
+            return Ok(lane.clone());
+        }
+        let queue = if index == 0 {
+            self.command_queue.clone()
+        } else {
+            let queue_descriptor = MTL4CommandQueueDescriptor::new();
+            queue_descriptor.set_label(Some(&format!("compute queue {index}")));
+            let queue = self
+                .device
+                .new_mtl4_command_queue_with_descriptor(&queue_descriptor)
+                .map_err(|_| MetalError::CannotCreateCommandQueue)?;
+            queue.add_residency_set(&self.residency_set.lock());
+            queue
+        };
+        let event = self.device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
+        let order = self.device.new_event().ok_or(MetalError::CannotCreateEvent)?;
+        let done = self.device.new_event().ok_or(MetalError::CannotCreateEvent)?;
+        let relay_queue = self
+            .device
+            .new_mtl4_command_queue_with_descriptor(&MTL4CommandQueueDescriptor::new())
+            .map_err(|_| MetalError::CannotCreateCommandQueue)?;
+        let lane = Arc::new(MetalLane {
+            queue,
+            event,
+            order,
+            done,
+            relay_queue,
+            next_value: AtomicU64::new(0),
+        });
+        Ok(self.lanes[index].get_or_init(|| lane).clone())
+    }
+
+    /// Whether prefill chunks may be pipelined across lanes: a healthy ANE executor orders every
+    /// MLP layer, so a chunk's layer-L GPU work waits only for the previous chunk's layer L.
+    pub fn ane_pipelining_available(&self) -> bool {
+        if std::env::var("UZU_ANE_PIPELINE").is_ok_and(|v| v == "0") {
+            return false;
+        }
+        let ane = self.ane.lock();
+        !ane.disabled && !ane.has_unordered_mlps && ane.ffns.iter().any(|ffn| ffn.is_healthy())
+    }
+
+    /// The index of the next ANE-run layer, in wrapping (model layer) order.
+    pub fn next_ane_layer_index(&self) -> usize {
+        let mut ane = self.ane.lock();
+        ane.wrapped_layers += 1;
+        ane.wrapped_layers - 1
     }
 
     fn library(
@@ -194,13 +296,14 @@ impl Context for MetalContext {
         let sparse_state = SparseState {
             did_ops: false,
             event_value: 0,
+            synced: [0; 2],
         };
 
         let block_allocator = BlockAllocator::new(16 * 1024);
 
         let heaps = MetalHeaps::new(device.clone(), peak_memory_usage.clone(), MTLSparsePageSize::KB256, 256);
 
-        Ok(Arc::new_cyclic(|weak_self: &Weak<Self>| Self {
+        let context = Arc::new_cyclic(|weak_self: &Weak<Self>| Self {
             device,
             gpu_core_count,
             apple_gpu_family,
@@ -219,12 +322,14 @@ impl Context for MetalContext {
             pipeline_cache: Mutex::new(HashMap::new()),
             blit_copy: std::array::from_fn(|_| OnceLock::new()),
             blit_fill: std::array::from_fn(|_| OnceLock::new()),
+            lanes: std::array::from_fn(|_| OnceLock::new()),
             ane: Mutex::new(AneState {
                 disabled: std::env::var("UZU_ANE").is_ok_and(|value| value == "0"),
-                ffns: Vec::new(),
+                ..Default::default()
             }),
             weak_self: weak_self.clone(),
-        }))
+        });
+        Ok(context)
     }
 
     fn device_name(&self) -> Option<&str> {
@@ -299,6 +404,12 @@ impl Context for MetalContext {
         mlp: DenseMlp<Metal>,
         config: &DenseMLPConfig,
     ) -> Box<dyn Mlp<Metal>> {
-        AneMlp::wrap(self, mlp, config)
+        match AneMlp::wrap(self, mlp, config) {
+            Ok(ane_mlp) => Box::new(ane_mlp),
+            Err(dense) => {
+                self.ane.lock().has_unordered_mlps = true;
+                Box::new(dense)
+            },
+        }
     }
 }

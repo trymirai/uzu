@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    mem,
     ops::{Deref, DerefMut},
     range::Range,
     sync::Arc,
@@ -24,7 +26,7 @@ use crate::backends::{
     metal::{
         Metal,
         buffer::MetalBufferExt,
-        context::MetalContext,
+        context::{MetalContext, MetalLane},
         error::MetalError,
         kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
         timestamp_recorder::MetalTimestampRecorder,
@@ -60,9 +62,34 @@ pub struct MetalCommandBufferEncoding {
     timestamps: Option<MetalTimestampRecorder>,
     debug_groups: Vec<String>,
     handoffs: Option<Arc<Handoffs>>,
+    /// The queue (of lane `lane`) the current segment is committed to.
+    queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    lane: usize,
+    /// Both lanes, once [`Self::begin_independent_chunk`] switched lanes.
+    lanes: Option<[Arc<MetalLane>; 2]>,
+    /// The scratch pool of the lane not in use; scratch reuse is only ordered within one queue.
+    other_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
+    /// Events the queue waits for before the next commit.
+    pending_waits: Vec<EventWait>,
+    /// Layers' progress of the chunk being encoded (see [`Self::record_layer_ready`]).
+    layer_ready: HashMap<usize, u64>,
+    /// The chunk before the one being encoded, which runs on the other lane.
+    previous_chunk: Option<PreviousChunk>,
 }
 
 unsafe impl Send for MetalCommandBufferEncoding {}
+
+type EventWait = (Retained<ProtocolObject<dyn MTLEvent>>, u64);
+
+/// What a chunk's layers wait for in the chunk before it.
+struct PreviousChunk {
+    /// The previous chunk's lane's order event.
+    order: Retained<ProtocolObject<dyn MTLEvent>>,
+    /// Reached once everything the chunk encoded has completed.
+    tail: u64,
+    /// Per layer, the value reached once the chunk's work up to the layer's MLP input has completed.
+    layer_ready: HashMap<usize, u64>,
+}
 
 /// State shared by the command buffers an encoding was cut into by [`MetalCommandBufferEncoding::handoff`].
 #[derive(Default)]
@@ -105,10 +132,17 @@ impl MetalCommandBufferEncoding {
             writes: RangeSet::new(),
             constant_allocator: Some(constant_allocator),
             allocation_pool,
-            context,
             timestamps: None,
             debug_groups: Vec::new(),
             handoffs: None,
+            queue: context.command_queue.clone(),
+            lane: 0,
+            lanes: None,
+            other_pool: None,
+            pending_waits: Vec::new(),
+            layer_ready: HashMap::new(),
+            previous_chunk: None,
+            context,
         })
     }
 
@@ -124,13 +158,75 @@ impl MetalCommandBufferEncoding {
         signal: Option<u64>,
         wait: Option<u64>,
     ) -> Result<(), MetalError> {
+        self.commit_segment();
+
+        let event: &ProtocolObject<dyn MTLEvent> = ProtocolObject::from_ref(event);
+        if let Some(signal) = signal {
+            self.queue.signal_event_value(event, signal);
+        }
+        if let Some(wait) = wait {
+            self.queue.wait_for_event_value(event, wait);
+        }
+
+        self.begin_segment()
+    }
+
+    /// [`Self::handoff`] for an ANE round trip on `lane` (the encoding's current lane): the ANE
+    /// waits for `lane.event` to reach `ready`, and the queue then waits for `lane.done` to reach
+    /// `done` (the ANE executor relays the request's completion to it). `lane.order` also reaches
+    /// `ready`, as soon as the work so far completes, for the next chunk's GPU work to order against.
+    pub fn handoff_to_ane(
+        &mut self,
+        lane: &MetalLane,
+        ready: u64,
+        done: u64,
+    ) -> Result<(), MetalError> {
+        self.handoff(&lane.event, Some(ready), None)?;
+        self.queue.signal_event_value(&lane.order, ready);
+        self.queue.wait_for_event_value(&lane.done, done);
+        Ok(())
+    }
+
+    /// The lane (command queue) the encoding is currently on: 0 until a chunk was pipelined.
+    pub fn lane(&self) -> usize {
+        self.lane
+    }
+
+    /// Holds the segment being encoded back until the previous chunk has passed `layer`'s MLP
+    /// input (or has completed, if it never recorded the layer). A chunk's layer-L mixer reads
+    /// and updates state the previous chunk's layer-L mixer wrote.
+    pub fn order_after_previous_chunk(
+        &mut self,
+        layer: usize,
+    ) {
+        if let Some(previous) = &self.previous_chunk {
+            let value = previous.layer_ready.get(&layer).copied().unwrap_or(previous.tail);
+            self.pending_waits.push((previous.order.clone(), value));
+        }
+    }
+
+    /// Records that this chunk's work up to `layer`'s MLP input completes when the current
+    /// lane's event reaches `value`, for the next chunk to order against.
+    pub fn record_layer_ready(
+        &mut self,
+        layer: usize,
+        value: u64,
+    ) {
+        self.layer_ready.insert(layer, value);
+    }
+
+    /// Ends the current segment: queue waits requested so far, then the commit.
+    fn commit_segment(&mut self) {
         let handoffs = self.handoffs.get_or_insert_with(Arc::default).clone();
 
         for _ in &self.debug_groups {
             self.compute_encoder.pop_debug_group();
         }
         self.finish_command_buffer();
-        sync_sparse_queue(&self.context);
+        sync_sparse_queue(&self.context, &self.queue, self.lane);
+        for (event, value) in self.pending_waits.drain(..) {
+            self.queue.wait_for_event_value(&event, value);
+        }
 
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
@@ -145,16 +241,11 @@ impl MetalCommandBufferEncoding {
         };
         let options = MTL4CommitOptions::new();
         options.add_feedback_handler(&MTL4CommitFeedbackHandler::new(feedback_handler));
-        self.context.command_queue.commit_with_options(&[&self.command_buffer], &options);
+        self.queue.commit_with_options(&[&self.command_buffer], &options);
+    }
 
-        let event: &ProtocolObject<dyn MTLEvent> = ProtocolObject::from_ref(event);
-        if let Some(signal) = signal {
-            self.context.command_queue.signal_event_value(event, signal);
-        }
-        if let Some(wait) = wait {
-            self.context.command_queue.wait_for_event_value(event, wait);
-        }
-
+    /// Starts a fresh command buffer on the current queue (debug groups carry over).
+    fn begin_segment(&mut self) -> Result<(), MetalError> {
         self.command_allocator = new_command_allocator(&self.context)?;
         self.command_buffer =
             self.context.device.new_mtl4_command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
@@ -232,14 +323,23 @@ fn begin_compute_encoder(
     compute_encoder
 }
 
-fn sync_sparse_queue(context: &MetalContext) {
+/// Makes `queue` (of lane `lane`) wait for the sparse mappings made since it last did.
+fn sync_sparse_queue(
+    context: &MetalContext,
+    queue: &ProtocolObject<dyn MTL4CommandQueue>,
+    lane: usize,
+) {
     let mut sparse_state_locked = context.sparse_state.lock();
     if sparse_state_locked.did_ops {
         sparse_state_locked.did_ops = false;
         sparse_state_locked.event_value += 1;
         let value = sparse_state_locked.event_value;
         context.sparse_queue.signal_event_value(&context.sparse_event, value);
-        context.command_queue.wait_for_event_value(&context.sparse_event, value);
+    }
+    let value = sparse_state_locked.event_value;
+    if sparse_state_locked.synced[lane] < value {
+        sparse_state_locked.synced[lane] = value;
+        queue.wait_for_event_value(&context.sparse_event, value);
     }
 }
 
@@ -327,6 +427,34 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         ProtocolObject::<dyn MTL4CommandEncoder>::insert_debug_signpost(self.compute_encoder.as_ref(), name);
     }
 
+    /// Moves encoding to the other lane: the chunk encoded so far keeps running on its lane while
+    /// the next one starts on the other. Only the ANE MLP executors enforce the per-layer ordering
+    /// that makes this safe, so without one the encoding stays on a single lane.
+    fn begin_independent_chunk(&mut self) -> Result<(), MetalError> {
+        if !self.context.ane_pipelining_available() {
+            return Ok(());
+        }
+        let lanes = [self.context.lane(0)?, self.context.lane(1)?];
+        let current = lanes[self.lane].clone();
+        let next = lanes[1 - self.lane].clone();
+        self.lanes.get_or_insert(lanes);
+
+        self.commit_segment();
+        let tail = current.reserve_values(1);
+        self.queue.signal_event_value(&current.order, tail);
+        self.previous_chunk = Some(PreviousChunk {
+            order: current.order.clone(),
+            tail,
+            layer_ready: mem::take(&mut self.layer_ready),
+        });
+
+        self.lane = 1 - self.lane;
+        self.queue = next.queue.clone();
+        let next_pool = self.other_pool.take().unwrap_or_else(|| self.context.create_allocation_pool());
+        self.other_pool = Some(mem::replace(&mut self.allocation_pool, next_pool));
+        self.begin_segment()
+    }
+
     fn with_timestamps(mut self) -> Self {
         self.timestamps = Some(MetalTimestampRecorder::default());
         self
@@ -336,14 +464,32 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
 
+        // Completing the final command buffer must imply that every lane completed (scratch pools
+        // and constants are released then), so it waits for the other lane's last chunk.
+        let mut waits = mem::take(&mut self.pending_waits);
+        if let Some(previous) = &self.previous_chunk {
+            waits.push((previous.order.clone(), previous.tail));
+        }
+        // Later encodings go to the main queue; hold it back until this one has finished.
+        let main_queue_release = if self.lane != 0 {
+            self.lanes.as_ref().map(|lanes| lanes[self.lane].clone())
+        } else {
+            None
+        };
+
         MetalCommandBufferExecutable {
             command_allocator: self.command_allocator.clone(),
             command_buffer: self.command_buffer.clone(),
             constant_allocator,
             allocation_pool: self.allocation_pool.clone(),
+            other_pool: self.other_pool.take(),
             context: self.context.clone(),
             timestamps: self.timestamps.take(),
             handoffs: self.handoffs.take(),
+            queue: self.queue.clone(),
+            lane: self.lane,
+            waits,
+            main_queue_release,
         }
     }
 }
@@ -388,16 +534,24 @@ pub struct MetalCommandBufferExecutable {
     command_buffer: Retained<ProtocolObject<dyn MTL4CommandBuffer>>,
     constant_allocator: BumpAllocator<<Metal as Backend>::GlobalGpuBuffer>,
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
+    other_pool: Option<Arc<<Metal as Backend>::AllocationPool>>,
     context: Arc<MetalContext>,
     timestamps: Option<MetalTimestampRecorder>,
     handoffs: Option<Arc<Handoffs>>,
+    queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    lane: usize,
+    waits: Vec<EventWait>,
+    main_queue_release: Option<Arc<MetalLane>>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
     type CommandBuffer = MetalCommandBuffer;
 
     fn submit(self) -> MetalCommandBufferPending {
-        sync_sparse_queue(&self.context);
+        sync_sparse_queue(&self.context, &self.queue, self.lane);
+        for (event, value) in &self.waits {
+            self.queue.wait_for_event_value(event, *value);
+        }
 
         let (sender, receiver) = mpsc::unbounded();
 
@@ -408,6 +562,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
 
         let constant_allocator = self.constant_allocator;
         let allocation_pool = self.allocation_pool.clone();
+        let other_pool = self.other_pool.clone();
         let handoffs = self.handoffs;
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
             let mut error = feedback.error().map(|error| error.to_string());
@@ -428,12 +583,17 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             };
             let _ = sender.unbounded_send(message);
             context_clone.command_allocator_cache.lock().push(command_allocator.clone());
-            let _keep_alive = (&command_buffer, &constant_allocator, &allocation_pool);
+            let _keep_alive = (&command_buffer, &constant_allocator, &allocation_pool, &other_pool);
         };
 
         let options = MTL4CommitOptions::new();
         options.add_feedback_handler(&MTL4CommitFeedbackHandler::new(feedback_handler));
-        self.context.command_queue.commit_with_options(&[&self.command_buffer], &options);
+        self.queue.commit_with_options(&[&self.command_buffer], &options);
+        if let Some(lane) = &self.main_queue_release {
+            let value = lane.reserve_values(1);
+            self.queue.signal_event_value(&lane.order, value);
+            self.context.command_queue.wait_for_event_value(&lane.order, value);
+        }
 
         MetalCommandBufferPending {
             receiver,

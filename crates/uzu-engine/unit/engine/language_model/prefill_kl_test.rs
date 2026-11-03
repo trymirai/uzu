@@ -18,7 +18,7 @@ use crate::{
         },
         metal::Metal,
     },
-    encodable_block::batch_topology::BatchTopology,
+    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
     engine::{Engine, language_model::LanguageModel},
     trie::TrieNode,
 };
@@ -83,13 +83,16 @@ fn prompts(
         "src/backends/metal/kernel/ane/ane_ffn.metal",
     ]
     .iter()
-    .map(|path| {
+    .filter_map(|path| {
         let text = std::fs::read_to_string(root.join(path)).unwrap();
         let mut ids: Vec<u64> =
             model.tokenizer().encode(text.as_str(), true).unwrap().get_ids().iter().map(|id| u64::from(*id)).collect();
-        assert!(ids.len() >= tokens, "{path} has only {} tokens", ids.len());
+        if ids.len() < tokens {
+            println!("skipping {path}: {} tokens, need {tokens}", ids.len());
+            return None;
+        }
         ids.truncate(tokens);
-        (path.to_string(), ids)
+        Some((path.to_string(), ids))
     })
     .collect()
 }
@@ -135,5 +138,157 @@ fn prefill_kl() {
         kl_sum / positions as f64,
         worst,
         100.0 * agree as f64 / positions as f64
+    );
+}
+
+/// Logits of the last prefill chunk's positions, `[chunk tokens][vocab]`, from a prefill encoded
+/// the way the stream does it: one command buffer, `chunk` tokens per decoder pass, the chunks
+/// pipelined across lanes when the model allows it.
+fn chunked_prompt_logits(
+    model: &LanguageModel<Metal>,
+    tokens: &[u64],
+    chunk: usize,
+) -> Vec<Vec<f32>> {
+    let mut state = model.create_empty_state(Some(tokens.len() as u32 + 64), 0).unwrap();
+    let chunk_count = tokens.len().div_ceil(chunk);
+    state.transformer_state.prepare(((chunk_count - 1) * chunk) as u32, chunk.min(tokens.len()) as u32).unwrap();
+    let context = model.engine.context.clone();
+    let mut command_buffer = context.create_command_buffer(Some("chunked prompt logits"), None).unwrap();
+    let pipelined = chunk_count > 1 && model.decoder.supports_layerwise_prefill_pipelining();
+
+    let mut token_ids = Vec::new();
+    let mut last = None;
+    for (index, ids) in tokens.chunks(chunk).enumerate() {
+        if pipelined && index > 0 {
+            command_buffer.begin_independent_chunk().unwrap();
+        }
+        token_ids.push(
+            command_buffer
+                .allocate_constant_from_slice(&ids.iter().map(|token| *token as u32).collect::<Box<[u32]>>())
+                .unwrap(),
+        );
+        let trie = TrieNode::flat(index * chunk, ids, &state.prng);
+        let nodes = trie.linearize().token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
+        let batch = BatchTopology::new(&nodes, true);
+        let is_last = index == chunk_count - 1;
+        let output = model
+            .decoder
+            .encode(
+                token_ids.last().unwrap(),
+                &batch,
+                is_last.then(|| (0..ids.len() as u32).into()),
+                None,
+                &mut state.transformer_state,
+                &mut command_buffer,
+            )
+            .unwrap();
+        state
+            .transformer_state
+            .encode_accept(&(0..ids.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
+            .unwrap();
+        if is_last {
+            last = Some((output.logits.unwrap(), ids.len()));
+        }
+    }
+    let (logits, rows) = last.unwrap();
+    let mut copy = context.create_buffer_cpu_gpu(logits.size()).unwrap().handoff();
+    command_buffer.encode_copy(&logits, &mut copy);
+    drop((logits, token_ids));
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+
+    let vocab = model.vocab_size;
+    let values: Vec<f32> = if copy.size() == rows * vocab * 4 {
+        copy.as_slice::<f32>().to_vec()
+    } else {
+        assert_eq!(copy.size(), rows * vocab * 2, "unexpected logits size");
+        copy.as_slice::<bf16>().iter().map(|value| value.to_f32()).collect()
+    };
+    values.chunks(vocab).map(|row| row.to_vec()).collect()
+}
+
+/// Greedy continuation through the stream, i.e. the real prefill driver.
+fn greedy_tokens(
+    model: &LanguageModel<Metal>,
+    tokens: &[u64],
+    count: usize,
+) -> Vec<u64> {
+    let mut state = model.create_empty_state(Some((tokens.len() + count + 64) as u32), 0).unwrap();
+    let mut options = model.default_stream_options();
+    options.sampling_method = SamplingMethod::Greedy;
+    let mut stream = model.stream(tokens, &mut state, options).unwrap();
+    let mut output = Vec::new();
+    while output.len() < count {
+        if let Some(token) = block_on(stream.generate()).unwrap() {
+            output.push(token);
+        } else {
+            break;
+        }
+    }
+    block_on(stream.close()).unwrap();
+    output
+}
+
+fn kl_divergence(
+    reference: &[f32],
+    candidate: &[f32],
+) -> f64 {
+    let (log_p, log_q) = (log_softmax(reference), log_softmax(candidate));
+    log_p.iter().zip(&log_q).map(|(lp, lq)| lp.exp() * (lp - lq)).sum()
+}
+
+// Ignored: needs UZU_PREFILL_MODEL; loads the model twice.
+//
+// A multi-chunk prefill (default 3 chunks of 1024), where the ANE engine pipelines the chunks across
+// two command queues: KL of the last chunk's logits against the GPU-only engine, and agreement of
+// the greedy continuation produced through the stream.
+#[uzu_test]
+#[ignore]
+fn prefill_kl_pipelined() {
+    let model_path = PathBuf::from(std::env::var("UZU_PREFILL_MODEL").expect("set UZU_PREFILL_MODEL"));
+    let tokens: usize = std::env::var("UZU_KL_TOKENS").map_or(3072, |value| value.parse().unwrap());
+    let continuation: usize = 16;
+    const CHUNK: usize = 1024;
+    // SAFETY: test-only; the variable is read when a Metal context is created.
+    unsafe { std::env::set_var("UZU_ANE", "0") };
+    let gpu_engine = block_on(Engine::<Metal>::new()).unwrap();
+    let gpu = block_on(gpu_engine.load_language_model(&model_path)).unwrap();
+    unsafe { std::env::remove_var("UZU_ANE") };
+    let ane_engine = block_on(Engine::<Metal>::new()).unwrap();
+    let ane = block_on(ane_engine.load_language_model(&model_path)).unwrap();
+    assert!(ane.decoder.supports_layerwise_prefill_pipelining(), "the model must allow pipelining");
+
+    let (mut kl_sum, mut positions, mut agree, mut worst) = (0.0f64, 0usize, 0usize, 0.0f64);
+    let (mut final_agree, mut prompts_run, mut tokens_agree, mut tokens_total) = (0usize, 0usize, 0usize, 0usize);
+    for (name, ids) in prompts(&gpu, tokens) {
+        let reference = chunked_prompt_logits(&gpu, &ids, CHUNK);
+        let candidate = chunked_prompt_logits(&ane, &ids, CHUNK);
+        let mut prompt_kl = 0.0;
+        for (p, q) in reference.iter().zip(&candidate) {
+            let kl = kl_divergence(p, q);
+            prompt_kl += kl;
+            worst = worst.max(kl);
+            agree += usize::from(argmax(p) == argmax(q));
+        }
+        let (last_reference, last_candidate) = (reference.last().unwrap(), candidate.last().unwrap());
+        final_agree += usize::from(argmax(last_reference) == argmax(last_candidate));
+
+        let reference_tokens = greedy_tokens(&gpu, &ids, continuation);
+        let candidate_tokens = greedy_tokens(&ane, &ids, continuation);
+        let matching = reference_tokens.iter().zip(&candidate_tokens).filter(|(a, b)| a == b).count();
+        println!(
+            "{name}: last-chunk mean KL {:.2e}, final-position KL {:.2e}, greedy continuation {matching}/{continuation} equal",
+            prompt_kl / reference.len() as f64,
+            kl_divergence(last_reference, last_candidate),
+        );
+        kl_sum += prompt_kl;
+        positions += reference.len();
+        prompts_run += 1;
+        tokens_agree += matching;
+        tokens_total += continuation;
+    }
+    println!(
+        "OVERALL ({tokens} tokens, {CHUNK}-token chunks): last-chunk mean KL {:.2e}, max KL {worst:.2e}, top-1 agreement {:.2}% ({positions} positions), final-position top-1 {final_agree}/{prompts_run}, greedy continuation {tokens_agree}/{tokens_total}",
+        kl_sum / positions as f64,
+        100.0 * agree as f64 / positions as f64,
     );
 }

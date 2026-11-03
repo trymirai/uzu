@@ -7,7 +7,10 @@ use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::TensorAddScaleKernel,
     },
-    config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
+    config::{
+        rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig, transformer::TransformerConfig,
+        transformer_layer::TransformerLayerConfig,
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -104,6 +107,25 @@ pub struct Transformer<B: Backend> {
     output_norm: Normalization<B>,
     model_dim: u32,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
+    supports_layerwise_prefill_pipelining: bool,
+}
+
+/// Whether a layer's work for a prefill chunk depends on the previous chunk only through that
+/// layer's own mixer state (an append-only KV cache or in-place DeltaNet state). Sliding-window
+/// attention (ring caches), convolutions (chunk-tail state) and KV sharing (cross-layer reads)
+/// also depend on other layers' or the previous chunk's later work.
+fn layer_pipelines_prefill(layer_config: &TransformerLayerConfig) -> bool {
+    let mixer_pipelines = match &layer_config.mixer_config {
+        AnyTokenMixerConfig::DeltaNetConfig(_) => true,
+        AnyTokenMixerConfig::AttentionConfig(attention) => {
+            attention.sliding_window_size.is_none() && !attention.is_kv_sharing
+        },
+        AnyTokenMixerConfig::ShortConvConfig(_) => false,
+    };
+    mixer_pipelines
+        && layer_config.kv_source_layer_index.is_none()
+        && layer_config.mixer_conv_config.is_none()
+        && layer_config.mlp_conv_config.is_none()
 }
 
 impl<B: Backend> Transformer<B> {
@@ -166,6 +188,7 @@ impl<B: Backend> Transformer<B> {
             output_norm,
             model_dim: transformer_config.model_dim,
             residual_add,
+            supports_layerwise_prefill_pipelining: transformer_config.layer_configs.iter().all(layer_pipelines_prefill),
         })
     }
 
@@ -213,6 +236,12 @@ impl<B: Backend> Transformer<B> {
 
     pub fn prefill_cache_skips_trailing_layers(&self) -> bool {
         self.prefill_cache_layer_count() < self.layers.len()
+    }
+
+    /// Whether prefill chunk `c` may run layer `L` as soon as chunk `c - 1` has finished layer `L`,
+    /// without waiting for chunk `c - 1`'s later layers.
+    pub fn supports_layerwise_prefill_pipelining(&self) -> bool {
+        self.supports_layerwise_prefill_pipelining
     }
 
     pub fn create_empty_state(

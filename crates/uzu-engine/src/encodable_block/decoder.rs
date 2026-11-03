@@ -136,6 +136,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.prefill_cache_skips_trailing_layers()
     }
 
+    pub fn supports_layerwise_prefill_pipelining(&self) -> bool {
+        self.transformer.supports_layerwise_prefill_pipelining()
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<u32>,

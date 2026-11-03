@@ -24,35 +24,35 @@ pub struct AneMlp {
 }
 
 impl AneMlp {
-    /// Wraps `dense` if the ANE can run it; otherwise returns it as is.
+    /// Wraps `dense` if the ANE can run it; otherwise gives it back.
     pub fn wrap(
         context: &MetalContext,
         dense: DenseMlp<Metal>,
         config: &DenseMLPConfig,
-    ) -> Box<dyn Mlp<Metal>> {
+    ) -> Result<Self, DenseMlp<Metal>> {
         let plain_silu = config.activation.act_type() == ActivationType::SILU
             && config.activation.custom_alpha().is_none()
             && config.gate_clipping == ClippingBounds::default()
             && config.up_clipping == ClippingBounds::default();
         if !plain_silu {
-            return Box::new(dense);
+            return Err(dense);
         }
         let Some(weights) = dense.weights() else {
-            return Box::new(dense);
+            return Err(dense);
         };
         let Some(ffn) = context.ane_ffn(&weights) else {
-            return Box::new(dense);
+            return Err(dense);
         };
         let layer = match ffn.layer(context, &weights) {
             Ok(Some(layer)) => layer,
-            Ok(None) => return Box::new(dense),
+            Ok(None) => return Err(dense),
             Err(error) => {
                 eprintln!("uzu: ANE layer setup failed, MLP stays on the GPU: {error}");
-                return Box::new(dense);
+                return Err(dense);
             },
         };
         drop(weights);
-        Box::new(Self {
+        Ok(Self {
             dense,
             ffn,
             layer,
@@ -68,6 +68,8 @@ impl Mlp<Metal> for AneMlp {
         command_buffer: &mut <<Metal as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MlpEncodeError<Metal>> {
         if !self.ffn.accepts(batch_dim) {
+            // Still part of the pipelined prefill: keep this layer after the previous chunk's.
+            self.layer.order(command_buffer);
             return self.dense.encode(input, batch_dim, command_buffer);
         }
         let weights = self.dense.weights().expect("weights were exposed when the MLP was wrapped");

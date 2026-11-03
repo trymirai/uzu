@@ -84,6 +84,15 @@ pub trait CommandBufferEncoding: Send {
         name: &str,
     );
 
+    /// Marks the start of work that depends on earlier work in this encoding only through
+    /// per-layer state ordering that the backend's MLP executors enforce; a backend may run it
+    /// concurrently with earlier work. Default: no-op.
+    fn begin_independent_chunk(
+        &mut self
+    ) -> Result<(), <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error> {
+        Ok(())
+    }
+
     fn with_timestamps(self) -> Self;
 
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
