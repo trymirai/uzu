@@ -173,8 +173,7 @@ fn ane_transpose_codes_to_channel_major_surface() {
     }
 }
 
-#[uzu_test]
-fn ane_unpack_scales_rotates_and_transposes() {
+fn check_unpack(scale_row: bool) {
     let context = create_context::<Metal>();
     let mut rng = StdRng::seed_from_u64(3);
     let (hidden, tokens, row_stride) = (512usize, 45usize, 64usize);
@@ -186,7 +185,7 @@ fn ane_unpack_scales_rotates_and_transposes() {
     let token_buffer = upload(&context, &token_scales);
     let sign_buffer = upload(&context, &sign);
     let mut output = zeros(&context, hidden * tokens * 2);
-    let kernel = AneUnpackMetalKernel::new(&context).unwrap();
+    let kernel = AneUnpackMetalKernel::new(&context, scale_row).unwrap();
     run(&context, |encoding| {
         kernel.encode(
             &surface_buffer,
@@ -201,7 +200,12 @@ fn ane_unpack_scales_rotates_and_transposes() {
     });
     let actual = read::<bf16>(&output);
     for token in 0..tokens {
-        let scale = surface[hidden * row_stride + token].to_f64() * token_scales[token].to_f64();
+        let row_scale = if scale_row {
+            surface[hidden * row_stride + token].to_f64()
+        } else {
+            1.0
+        };
+        let scale = row_scale * token_scales[token].to_f64();
         let mut values: Vec<f64> =
             (0..hidden).map(|channel| surface[channel * row_stride + token].to_f64() * scale).collect();
         hadamard(&mut values, 32);
@@ -210,10 +214,20 @@ fn ane_unpack_scales_rotates_and_transposes() {
             let got = actual[token * hidden + channel].to_f64();
             assert!(
                 (got - expected).abs() <= 1e-2 * expected.abs() + 1e-3,
-                "unpack[{token},{channel}] {got} vs {expected}"
+                "unpack[{token},{channel}] (scale row {scale_row}) {got} vs {expected}"
             );
         }
     }
+}
+
+#[uzu_test]
+fn ane_unpack_scales_rotates_and_transposes() {
+    check_unpack(true);
+}
+
+#[uzu_test]
+fn ane_unpack_without_scale_row_scales_rotates_and_transposes() {
+    check_unpack(false);
 }
 
 struct W4 {

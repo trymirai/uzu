@@ -8,8 +8,10 @@
 //! - [`AneSurface`]: an IOSurface in the ANE's channel-major layout, aliased by a Metal buffer.
 //! - [`AneProgram`]: a compiled, loaded multi-function program; synchronous evaluation or
 //!   asynchronous evaluation ordered by a Metal shared event.
-//! - [`mil`]: the W8A8 FFN program text and its constant blob.
-//! - [`fake`]: the CPU reference of the FFN program, the test oracle.
+//! - [`mil`]: the W8A8 FFN and linear program texts and the FFN's constant blob.
+//! - [`fake`]: the CPU reference of the programs, the test oracle.
+//! - [`ffn`], [`linear`]: the executors of dense MLPs and of single linear layers (the DeltaNet and
+//!   attention projections); [`shared`] holds what they have in common.
 //!
 //! Portions are adapted from Splash (<https://github.com/incoai/splash>, commit 031a25a),
 //! Apache License 2.0: `runtime/ane/Program.mm` (client calls, IOSurface layout, constant blob)
@@ -17,11 +19,13 @@
 
 pub mod fake;
 pub mod ffn;
+pub mod linear;
 pub mod mil;
 pub mod mlp;
 mod objc;
 mod program;
 mod runtime;
+pub mod shared;
 mod surface;
 
 pub use program::{AneBinding, AneProcedure, AneProgram};

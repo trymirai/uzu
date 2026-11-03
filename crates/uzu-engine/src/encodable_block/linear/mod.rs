@@ -73,6 +73,15 @@ pub struct LinearWeights<'a, B: Backend> {
     pub output_rht_signs: Option<&'a B::GlobalGpuBuffer>,
 }
 
+/// What a linear layer is for, so a backend can choose where to run it (see `Context::wrap_linear`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinearRole {
+    DeltaNetInput,
+    DeltaNetOutput,
+    AttentionInput,
+    AttentionOutput,
+}
+
 pub type LinearInput<B> = MatmulA<<B as Backend>::ScratchBuffer>;
 
 pub struct Gather<T: BufferRef> {

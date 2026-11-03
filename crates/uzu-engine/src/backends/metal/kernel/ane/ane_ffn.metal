@@ -275,9 +275,10 @@ KERNEL(AneTransposeCodes)(
   }
 }
 
-// ANE output [hidden + 1, row_stride] fp16 (last row: per-token intermediate scale) -> token-major bf16
-// [tokens, hidden]: y = signs * H32(y_ane * intermediate_scale * token_scale), the down projection's
-// output rotation applied per 32-channel block.
+// ANE output [hidden (+ 1), row_stride] fp16 -> token-major bf16 [tokens, hidden]:
+// y = signs * H32(y_ane * intermediate_scale * token_scale), the projection's output rotation applied
+// per 32-channel block. With `scale_row` the output carries a per-token intermediate scale in its last
+// row (the FFN's down projection); without it (a single linear layer) that factor is 1.
 KERNEL(AneUnpack)(
     const device half* surface,
     const device half* token_scales,
@@ -286,6 +287,7 @@ KERNEL(AneUnpack)(
     constant uint& hidden,
     constant uint& tokens,
     constant uint& row_stride,
+    const bool scale_row SPECIALIZE,
     threadgroup float tile[ANE_TILE * (ANE_TILE + 1)],
     const ThreadContext thread_context,
     const uint channel_tile GROUPS(hidden / 32),
@@ -312,7 +314,10 @@ KERNEL(AneUnpack)(
     if (global_token >= tokens) {
       break;
     }
-    const float scale = float(surface[ulong(hidden) * row_stride + global_token]) * float(token_scales[global_token]);
+    float scale = float(token_scales[global_token]);
+    if (scale_row) {
+      scale *= float(surface[ulong(hidden) * row_stride + global_token]);
+    }
     const float value = simdgroup_hadamard_transform(lane, tile[lane * (ANE_TILE + 1) + token] * scale) * sign;
     output[ulong(global_token) * hidden + channel_base + lane] = bfloat(value);
   }

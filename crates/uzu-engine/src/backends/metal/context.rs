@@ -24,7 +24,13 @@ use crate::{
         },
         metal::{
             Metal,
-            ane::{ffn::AneFfn, mlp::AneMlp},
+            ane::{
+                AneError,
+                ffn::AneFfn,
+                linear::{AneLinear, AneLinearProgram, AneLinears, runs_on_ane, supported_output},
+                mlp::AneMlp,
+                shared::AneHealth,
+            },
             buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
             capture::MetalCaptureSpan,
             command_buffer::MetalCommandBufferEncoding,
@@ -36,7 +42,10 @@ use crate::{
         },
     },
     config::mlp::dense_mlp::DenseMLPConfig,
-    encodable_block::mlp::{DenseMlp, DenseMlpWeights, Mlp},
+    encodable_block::{
+        linear::{Linear, LinearRole, LinearWeights},
+        mlp::{DenseMlp, DenseMlpWeights, Mlp},
+    },
 };
 
 pub(super) struct SparseState {
@@ -109,12 +118,18 @@ impl MetalLane {
     }
 }
 
-/// The Neural Engine executors of this device, built on demand per MLP shape.
+/// The Neural Engine executors of this device, built on demand per MLP shape and linear output width.
 #[derive(Default)]
 struct AneState {
     disabled: bool,
+    /// Shared by every executor: the first failed request retires them all.
+    health: Arc<AneHealth>,
     ffns: Vec<Arc<AneFfn>>,
-    /// Layers wrapped so far; an `AneMlp`'s index orders its layer across pipelined prefill chunks.
+    /// What every linear program shares, created with the first one.
+    linears: Option<Arc<AneLinears>>,
+    linear_programs: Vec<Arc<AneLinearProgram>>,
+    /// ANE call sites wrapped so far (MLPs and linears); a call site's index orders its segment
+    /// across pipelined prefill chunks.
     wrapped_layers: usize,
     /// Set once a dense MLP stays on the GPU: it does not order its layer across chunks, so
     /// chunks cannot be pipelined.
@@ -135,7 +150,7 @@ impl MetalContext {
         if let Some(ffn) = ane.ffns.iter().find(|ffn| ffn.matches(weights)) {
             return Some(ffn.clone());
         }
-        match AneFfn::new(self, weights) {
+        match AneFfn::new(self, ane.health.clone(), weights) {
             Ok(Some(ffn)) => {
                 let ffn = Arc::new(ffn);
                 ane.ffns.push(ffn.clone());
@@ -148,6 +163,48 @@ impl MetalContext {
                 None
             },
         }
+    }
+
+    /// The ANE program for linear layers shaped like `weights` (built on first use), unless the
+    /// ANE is disabled (`UZU_ANE=0`), unavailable, or cannot run them.
+    pub fn ane_linear(
+        &self,
+        weights: &LinearWeights<'_, Metal>,
+    ) -> Option<Arc<AneLinearProgram>> {
+        let output = supported_output(weights)?;
+        let mut ane = self.ane.lock();
+        if ane.disabled {
+            return None;
+        }
+        if let Some(program) = ane.linear_programs.iter().find(|program| program.output() == output) {
+            return Some(program.clone());
+        }
+        match self.build_linear_program(&mut ane, output) {
+            Ok(program) => {
+                ane.linear_programs.push(program.clone());
+                Some(program)
+            },
+            Err(error) => {
+                eprintln!("uzu: the Neural Engine is unavailable, linears run on the GPU: {error}");
+                ane.disabled = true;
+                None
+            },
+        }
+    }
+
+    fn build_linear_program(
+        &self,
+        ane: &mut AneState,
+        output: u32,
+    ) -> Result<Arc<AneLinearProgram>, AneError> {
+        let shared = if let Some(shared) = &ane.linears {
+            shared.clone()
+        } else {
+            let shared = Arc::new(AneLinears::new(self, ane.health.clone())?);
+            ane.linears = Some(shared.clone());
+            shared
+        };
+        Ok(Arc::new(AneLinearProgram::new(shared, output)?))
     }
 
     /// The lane with this index (0 is the main queue), created on first use.
@@ -195,7 +252,7 @@ impl MetalContext {
             return false;
         }
         let ane = self.ane.lock();
-        !ane.disabled && !ane.has_unordered_mlps && ane.ffns.iter().any(|ffn| ffn.is_healthy())
+        !ane.disabled && !ane.has_unordered_mlps && !ane.ffns.is_empty() && ane.health.is_healthy()
     }
 
     /// The index of the next ANE-run layer, in wrapping (model layer) order.
@@ -410,6 +467,20 @@ impl Context for MetalContext {
                 self.ane.lock().has_unordered_mlps = true;
                 Box::new(dense)
             },
+        }
+    }
+
+    fn wrap_linear(
+        &self,
+        linear: Box<dyn Linear<Metal>>,
+        role: LinearRole,
+    ) -> Box<dyn Linear<Metal>> {
+        if !runs_on_ane(role) {
+            return linear;
+        }
+        match AneLinear::wrap(self, linear, role) {
+            Ok(ane_linear) => Box::new(ane_linear),
+            Err(linear) => linear,
         }
     }
 

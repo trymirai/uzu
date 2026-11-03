@@ -5,7 +5,10 @@ use bytemuck::AnyBitPattern;
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, DeviceCapabilities},
     config::mlp::dense_mlp::DenseMLPConfig,
-    encodable_block::mlp::{DenseMlp, Mlp},
+    encodable_block::{
+        linear::{Linear, LinearRole},
+        mlp::{DenseMlp, Mlp},
+    },
 };
 
 pub trait Context: Sized + Send + Sync {
@@ -60,6 +63,16 @@ pub trait Context: Sized + Send + Sync {
         _config: &DenseMLPConfig,
     ) -> Box<dyn Mlp<Self::Backend>> {
         Box::new(mlp)
+    }
+
+    /// Lets the backend run a mixer's projection on other hardware (e.g. the Neural Engine); by
+    /// default it runs as built.
+    fn wrap_linear(
+        &self,
+        linear: Box<dyn Linear<Self::Backend>>,
+        _role: LinearRole,
+    ) -> Box<dyn Linear<Self::Backend>> {
+        linear
     }
 
     /// Whether the backend overlaps consecutive prefill chunks (`begin_independent_chunk`), so

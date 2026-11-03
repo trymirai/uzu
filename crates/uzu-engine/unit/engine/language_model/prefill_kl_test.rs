@@ -97,6 +97,55 @@ fn prompts(
     .collect()
 }
 
+// Ignored: needs UZU_PREFILL_MODEL.
+//
+// Relative RMS of each ANE-run linear layer (DeltaNet in/out, attention in/out) against the GPU
+// linear on the same real activations: the ANE and the GPU path run on each projection's input,
+// and the GPU output continues through the model, so errors do not accumulate across layers.
+#[uzu_test]
+#[ignore]
+fn ane_linear_numerics() {
+    use std::collections::BTreeMap;
+
+    use crate::{backends::metal::ane::linear::comparison, encodable_block::linear::LinearRole};
+
+    let model_path = PathBuf::from(std::env::var("UZU_PREFILL_MODEL").expect("set UZU_PREFILL_MODEL"));
+    let tokens: usize = std::env::var("UZU_KL_TOKENS").map_or(1024, |value| value.parse().unwrap());
+    let engine = block_on(Engine::<Metal>::new()).unwrap();
+    let model = block_on(engine.load_language_model(&model_path)).unwrap();
+    comparison::enable(1);
+
+    for (name, ids) in prompts(&model, tokens) {
+        comparison::RECORDS.lock().clear();
+        prompt_logits(&model, &ids);
+        let records = std::mem::take(&mut *comparison::RECORDS.lock());
+        let mut per_role: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+        for record in &records {
+            let ane = record.ane.as_slice::<bf16>();
+            let gpu = record.gpu.as_slice::<bf16>();
+            let (mut error, mut energy) = (0.0f64, 0.0f64);
+            for (a, g) in ane.iter().zip(gpu) {
+                let (a, g) = (f64::from(a.to_f32()), f64::from(g.to_f32()));
+                error += (a - g).powi(2);
+                energy += g * g;
+            }
+            let role = match record.role {
+                LinearRole::DeltaNetInput => "deltanet in ",
+                LinearRole::DeltaNetOutput => "deltanet out",
+                LinearRole::AttentionInput => "attention in ",
+                LinearRole::AttentionOutput => "attention out",
+            };
+            per_role.entry(format!("{role} (N={})", record.output)).or_default().push((error / energy).sqrt());
+        }
+        println!("{name}:");
+        for (role, values) in per_role {
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let worst = values.iter().copied().fold(0.0, f64::max);
+            println!("  {role}: rel RMS mean {mean:.4}, max {worst:.4} over {} layers", values.len());
+        }
+    }
+}
+
 // Ignored: needs UZU_PREFILL_MODEL; loads the model twice.
 #[uzu_test]
 #[ignore]

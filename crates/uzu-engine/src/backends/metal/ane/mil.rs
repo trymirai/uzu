@@ -513,3 +513,171 @@ pub fn ffn_program(shape: &FfnShape) -> (String, Vec<u8>) {
     text += "}\n";
     (text, constants.blob)
 }
+
+/// A single W8A8 matmul `y = s * (W x)` (`W`: int8 `[output, input]` with one scale per row, `x`:
+/// int8 per token), the program of one linear layer shape. Like the FFN program it holds a function
+/// per row count (`lin{rows}`). The weight, scale and output surfaces have `max_output` rows, and a
+/// function of fewer `output` rows reads and writes their leading rows, so one set of surfaces
+/// serves every shape up to `max_output`.
+///
+/// Inputs `x` (int8 `[input, max_rows]`), `w` (int8 `[max_output, input]`), `s` (fp16 `[max_output,
+/// 1]`, the row scales ×128); output `y` (fp16 `[max_output, max_rows]`). The token scales (the
+/// FFN's `tx`) are not read: the real output is `y[c][t] * tx[t]`, which the GPU unpack applies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinearShape {
+    pub input: u32,
+    pub output: u32,
+    pub max_output: u32,
+    /// Width of each matmul's reduction segment.
+    pub segment: u32,
+    /// The row counts a function is compiled for, ascending.
+    pub rows: Vec<u32>,
+    pub max_rows: u32,
+    /// The element type of the activations `x` and of the weights `w`: int8 (dequantized by 1/128)
+    /// or fp16 (read as they are).
+    pub activations: AneElement,
+    pub weights: AneElement,
+}
+
+impl LinearShape {
+    pub fn function_name(rows: u32) -> String {
+        format!("lin{rows}")
+    }
+
+    /// The smallest function row count holding `tokens`.
+    pub fn rows_for(
+        &self,
+        tokens: u32,
+    ) -> Option<u32> {
+        self.rows.iter().copied().find(|rows| *rows >= tokens)
+    }
+
+    pub fn segments(&self) -> u32 {
+        self.input / self.segment
+    }
+
+    /// The program's inputs, in parameter order.
+    pub fn inputs(&self) -> Vec<FfnSurfaceSpec> {
+        vec![
+            FfnSurfaceSpec::new("x".to_string(), self.input, self.max_rows, self.activations, true),
+            FfnSurfaceSpec::new("w".to_string(), self.max_output, self.input, self.weights, false),
+            FfnSurfaceSpec::new("s".to_string(), self.max_output, 1, AneElement::Float16, false),
+        ]
+    }
+
+    /// The surface of the token scales `tx` (fp16 `[1, max_rows]`, ×128) the GPU pack writes.
+    pub fn token_scales(&self) -> FfnSurfaceSpec {
+        FfnSurfaceSpec::new("tx".to_string(), 1, self.max_rows, AneElement::Float16, true)
+    }
+
+    pub fn output_spec(&self) -> FfnSurfaceSpec {
+        FfnSurfaceSpec::new("y".to_string(), self.max_output, self.max_rows, AneElement::Float16, true)
+    }
+
+    fn validate(&self) {
+        assert!(self.segment > 0 && self.input.is_multiple_of(self.segment), "input must be whole segments");
+        assert!(self.output > 0 && self.output <= self.max_output, "output exceeds max_output");
+        assert!(!self.rows.is_empty() && self.rows.is_sorted(), "rows must be ascending");
+        assert!(self.rows.iter().all(|rows| *rows <= self.max_rows), "rows exceed max_rows");
+    }
+
+    fn function(
+        &self,
+        rows: u32,
+    ) -> String {
+        let (input, output, segment) = (self.input, self.output, self.segment);
+        let unit = fp16_literal(1.0 / INT8_UNIT);
+        let mut body = String::new();
+        let mut line = |text: String| {
+            let _ = writeln!(body, "        {text};");
+        };
+
+        let mut parameters = Vec::new();
+        for spec in self.inputs() {
+            let width = if spec.token_major {
+                rows
+            } else {
+                spec.width
+            };
+            parameters.push(format!(
+                "{} {}",
+                mil_buffer_type(spec.element, spec.rows, width, spec.row_stride_elements()),
+                spec.name
+            ));
+            line(format!(
+                "{} {}_t = tensor_buffer_to_tensor<ios17>(input = {})",
+                tensor(spec.element.mil_type(), spec.rows.into(), width.into()),
+                spec.name,
+                spec.name
+            ));
+        }
+        let activations = if self.activations == AneElement::Int8 {
+            line(format!(
+                "{} x_d = dequantize(input = x_t, scale = {unit})",
+                tensor("fp16", input.into(), rows.into())
+            ));
+            "x_d"
+        } else {
+            "x_t"
+        };
+
+        for k in 0..self.segments() {
+            let begin = k * segment;
+            line(format!(
+                "{} x{k}_d = slice_by_size(x = {activations}, begin = tensor<int32, [4]>([0, 0, {begin}, 0]), size = tensor<int32, [4]>({}))",
+                tensor("fp16", segment.into(), rows.into()),
+                dims(segment.into(), rows.into())
+            ));
+            let weights_name = if self.weights == AneElement::Int8 {
+                format!("w{k}_s")
+            } else {
+                format!("w{k}_d")
+            };
+            line(format!(
+                "{} {weights_name} = slice_by_size(x = w_t, begin = tensor<int32, [4]>([0, 0, 0, {begin}]), size = tensor<int32, [4]>({}))",
+                tensor(self.weights.mil_type(), output.into(), segment.into()),
+                dims(output.into(), segment.into())
+            ));
+            if self.weights == AneElement::Int8 {
+                line(format!(
+                    "{} w{k}_d = dequantize(input = w{k}_s, scale = {unit})",
+                    tensor("fp16", output.into(), segment.into())
+                ));
+            }
+            line(format!(
+                "{} m{k} = matmul(transpose_x = bool(false), transpose_y = bool(false), x = w{k}_d, y = x{k}_d)",
+                tensor("fp16", output.into(), rows.into())
+            ));
+        }
+        let mut total = "m0".to_string();
+        for k in 1..self.segments() {
+            line(format!("{} m_sum{k} = add(x = {total}, y = m{k})", tensor("fp16", output.into(), rows.into())));
+            total = format!("m_sum{k}");
+        }
+        line(format!(
+            "{} s_n = slice_by_size(x = s_t, begin = tensor<int32, [4]>([0, 0, 0, 0]), size = tensor<int32, [4]>({}))",
+            tensor("fp16", output.into(), 1),
+            dims(output.into(), 1)
+        ));
+        line(format!("{} ys = mul(x = {total}, y = s_n)", tensor("fp16", output.into(), rows.into())));
+        let spec = self.output_spec();
+        let stride = spec.row_stride_elements();
+        line(format!(
+            "{} y = tensor_to_tensor_buffer<ios17>(input = ys, interleave_factors = tensor<uint8, [4]>([1, 1, 1, 1]), strides = tensor<int64, [4]>({}))",
+            mil_buffer_type(spec.element, output, rows, stride),
+            mil_strides(output, stride)
+        ));
+        format!("    func {}<ios18>({}) {{\n{body}    }} -> (y);\n", Self::function_name(rows), parameters.join(", "))
+    }
+}
+
+/// The MIL text of a linear program; it has no constants, so its `weights.bin` is empty.
+pub fn linear_program(shape: &LinearShape) -> (String, Vec<u8>) {
+    shape.validate();
+    let mut text = String::from("program(1.3)\n{\n");
+    for rows in &shape.rows {
+        text += &shape.function(*rows);
+    }
+    text += "}\n";
+    (text, constant_blob(&[]).blob)
+}

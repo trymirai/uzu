@@ -5,7 +5,7 @@ use half::f16;
 
 use super::{
     AneSurface,
-    mil::{FfnShape, INT8_PEAK, INT8_UNIT, INTERMEDIATE_FLOOR},
+    mil::{FfnShape, INT8_PEAK, INT8_UNIT, INTERMEDIATE_FLOOR, LinearShape},
 };
 
 /// A `[channels, tokens]` row-major f32 matrix.
@@ -73,13 +73,14 @@ fn read_tokens(
     matrix
 }
 
-/// `scales[c] * sum_k weights[c][k] / 128 * values[k][t]` over the given weight segments.
+/// `scales[c] * sum_k weights[c][k] / 128 * values[k][t]` over the given weight segments, for the
+/// leading `channels` rows of the weights.
 fn project(
     segments: &[&AneSurface],
     scales: &AneSurface,
     values: &Matrix,
+    channels: usize,
 ) -> Matrix {
-    let channels = segments[0].rows() as usize;
     let tokens = values.tokens;
     let mut result = Matrix::zeros(channels, tokens);
     let mut weights = Vec::new();
@@ -162,8 +163,10 @@ pub fn run_ffn_reference(
             (0..count).map(|k| surface(inputs, &format!("{prefix}{k}"))).collect()
         }
     };
-    let mut gate = project(&segments("wg", shape.input_segments()), surface(inputs, "sg"), &x);
-    let mut value = project(&segments("wu", shape.input_segments()), surface(inputs, "su"), &x);
+    let mut gate =
+        project(&segments("wg", shape.input_segments()), surface(inputs, "sg"), &x, shape.intermediate as usize);
+    let mut value =
+        project(&segments("wu", shape.input_segments()), surface(inputs, "su"), &x, shape.intermediate as usize);
     if shape.up_rotation_block > 0 {
         gate = block_rotation(&gate, &shape.gate_rotation, shape.up_rotation_block as usize);
         value = block_rotation(&value, &shape.value_rotation, shape.up_rotation_block as usize);
@@ -192,7 +195,8 @@ pub fn run_ffn_reference(
         }
         intermediate_scales[token] = floor * (INT8_UNIT / INT8_PEAK) as f32;
     }
-    let down = project(&segments("wd", shape.down_segments()), surface(inputs, "sd"), &quantized);
+    let down =
+        project(&segments("wd", shape.down_segments()), surface(inputs, "sd"), &quantized, shape.hidden as usize);
 
     let stride = output.row_stride_elements();
     let values = output.as_f16_mut();
@@ -203,5 +207,25 @@ pub fn run_ffn_reference(
     }
     for token in 0..tokens {
         values[shape.hidden as usize * stride + token] = f16::from_f32(intermediate_scales[token]);
+    }
+}
+
+/// Runs function `lin{rows}` of the linear program on the CPU: reads the inputs (by name) and
+/// writes the leading `output` rows and `rows` columns of `output_surface`.
+pub fn run_linear_reference(
+    shape: &LinearShape,
+    rows: u32,
+    inputs: &[(&str, &AneSurface)],
+    output_surface: &mut AneSurface,
+) {
+    let tokens = rows as usize;
+    let x = read_tokens(surface(inputs, "x"), tokens);
+    let result = project(&[surface(inputs, "w")], surface(inputs, "s"), &x, shape.output as usize);
+    let stride = output_surface.row_stride_elements();
+    let values = output_surface.as_f16_mut();
+    for channel in 0..shape.output as usize {
+        for token in 0..tokens {
+            values[channel * stride + token] = f16::from_f32(result.row(channel)[token]);
+        }
     }
 }

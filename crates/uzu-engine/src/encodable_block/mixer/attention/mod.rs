@@ -3,14 +3,14 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareInt8Kernel, AttentionPrepareKernel},
     },
     config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError, LinearEncodeError},
+        linear::{Linear, LinearBlockError, LinearEncodeError, LinearRole},
         mixer::{
             Mixer, MixerEncodeError, MixerState,
             attention::{
@@ -118,6 +118,7 @@ impl<B: Backend> Attention<B> {
             context,
         )
         .await?;
+        let projection = context.wrap_linear(projection, LinearRole::AttentionInput);
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
@@ -197,6 +198,7 @@ impl<B: Backend> Attention<B> {
             context,
         )
         .await?;
+        let out_projection = context.wrap_linear(out_projection, LinearRole::AttentionOutput);
 
         Ok((
             Self {

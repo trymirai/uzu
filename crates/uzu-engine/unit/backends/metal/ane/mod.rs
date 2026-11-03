@@ -15,8 +15,8 @@ use crate::{
         Metal,
         ane::{
             AneElement, AneProgram, AneRuntime, AneSurface,
-            fake::run_ffn_reference,
-            mil::{FfnShape, INT8_UNIT, ffn_program},
+            fake::{run_ffn_reference, run_linear_reference},
+            mil::{FfnShape, INT8_UNIT, LinearShape, ffn_program, linear_program},
         },
         context::MetalContext,
     },
@@ -379,6 +379,110 @@ fn ane_ffn_single_surfaces_match_reference() {
     );
 }
 
+/// Programs of two output widths over one set of surfaces sized for the wider: each reads and writes
+/// only its leading rows.
+#[uzu_test]
+fn ane_linear_matches_reference() {
+    let Some(runtime) = runtime() else {
+        return;
+    };
+    let context = create_context::<Metal>();
+    let mut rng = Rng(0x7f4a_7c15_9e37_79b9);
+    let (input, max_output, max_rows) = (512u32, 192u32, 256u32);
+    let widths = [96u32, 192];
+    let shape_of = |output: u32| LinearShape {
+        input,
+        output,
+        max_output,
+        segment: 256,
+        rows: vec![128, 256],
+        max_rows,
+        activations: AneElement::Int8,
+        weights: AneElement::Int8,
+    };
+
+    let template = shape_of(widths[0]);
+    let mut inputs: Vec<(String, AneSurface)> = template
+        .inputs()
+        .into_iter()
+        .map(|spec| (spec.name.clone(), AneSurface::new(&context, spec.rows, spec.width, spec.element).unwrap()))
+        .collect();
+    let spec = template.output_spec();
+    let mut output = AneSurface::new(&context, spec.rows, spec.width, spec.element).unwrap();
+    let mut reference = AneSurface::new(&context, spec.rows, spec.width, spec.element).unwrap();
+
+    let mut codes = vec![0i8; (max_output * input) as usize];
+    let scales = quantize_rows(max_output, input, 1.0 / (input as f32).sqrt(), &mut rng, |row, column, code| {
+        codes[(row * input + column) as usize] = code;
+    });
+    let mut activations = vec![0i8; (max_rows * input) as usize];
+    quantize_rows(max_rows, input, 1.0, &mut rng, |token, channel, code| {
+        activations[(token * input + channel) as usize] = code;
+    });
+    for (name, surface) in inputs.iter_mut() {
+        let stride = surface.row_stride_elements();
+        match name.as_str() {
+            "w" => {
+                let values = surface.as_i8_mut();
+                for row in 0..max_output {
+                    for column in 0..input {
+                        values[row as usize * stride + column as usize] = codes[(row * input + column) as usize];
+                    }
+                }
+            },
+            "s" => {
+                let values = surface.as_f16_mut();
+                for (row, scale) in scales.iter().enumerate() {
+                    values[row * stride] = f16::from_f32(scale * INT8_UNIT as f32);
+                }
+            },
+            _ => {
+                let values = surface.as_i8_mut();
+                for channel in 0..input {
+                    for token in 0..max_rows {
+                        values[channel as usize * stride + token as usize] =
+                            activations[(token * input + channel) as usize];
+                    }
+                }
+            },
+        }
+    }
+    let named: Vec<(&str, &AneSurface)> = inputs.iter().map(|(name, surface)| (name.as_str(), surface)).collect();
+
+    for width in widths {
+        let shape = shape_of(width);
+        let (mil, weights) = linear_program(&shape);
+        let program = AneProgram::new(runtime.clone(), &mil, &weights).unwrap();
+        for rows in shape.rows.clone() {
+            let procedure = program.procedure(&LinearShape::function_name(rows)).unwrap();
+            poison(&mut output);
+            let binding = program.bind(procedure, &named, &output).unwrap();
+            program.evaluate(&binding).unwrap();
+            run_linear_reference(&shape, rows, &named, &mut reference);
+
+            let read = |surface: &AneSurface| -> Vec<f32> {
+                (0..width)
+                    .flat_map(|channel| (0..rows).map(move |token| (channel, token)))
+                    .map(|(channel, token)| surface.get(channel, token))
+                    .collect()
+            };
+            let (rms, nonfinite) = relative_rms(&read(&output), &read(&reference));
+            println!("lin{rows} (output {width}): rel RMS {rms:.5}, non-finite {nonfinite}");
+            assert_eq!(nonfinite, 0);
+            assert!(rms <= 0.015, "ANE vs reference rel RMS {rms}");
+
+            // The function writes only its leading `output` rows and `rows` columns.
+            for row in 0..max_output {
+                for column in 0..max_rows {
+                    if row >= width || column >= rows {
+                        assert!(output.get(row, column).is_nan(), "lin{rows} (output {width}) wrote ({row}, {column})");
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[uzu_test]
 fn ane_ffn_enqueue_waits_for_and_signals_shared_event() {
     let Some(runtime) = runtime() else {
@@ -492,6 +596,84 @@ fn ane_ffn_perf_9b_shape() {
             let operations = 2.0 * 3.0 * f64::from(shape.hidden) * f64::from(shape.intermediate) * f64::from(rows);
             println!(
                 "  ffn{rows}: median {:.2} ms (min {:.2}), {:.1} TOPS",
+                times[times.len() / 2],
+                times[0],
+                operations / (times[times.len() / 2] * 1e-3) / 1e12
+            );
+        }
+    }
+}
+
+// Ignored: compiles 9B-shaped linear programs (a minute on first run); manual perf harness.
+//
+// Time of one 4096 -> 12352 linear call with int8 or fp16 activations and weights.
+#[uzu_test]
+#[ignore]
+fn ane_linear_perf_9b_shape() {
+    let Some(runtime) = runtime() else {
+        return;
+    };
+    let context = create_context::<Metal>();
+    let precisions = [
+        (AneElement::Int8, AneElement::Int8),
+        (AneElement::Float16, AneElement::Int8),
+        (AneElement::Float16, AneElement::Float16),
+    ];
+    for (activations, weights) in precisions {
+        let shape = LinearShape {
+            input: 4096,
+            output: 12352,
+            max_output: 12352,
+            segment: 2048,
+            rows: vec![256, 512, 768, 1024],
+            max_rows: 1024,
+            activations,
+            weights,
+        };
+        let (mil, blob) = linear_program(&shape);
+        let started = Instant::now();
+        let program = AneProgram::new(runtime.clone(), &mil, &blob).unwrap();
+        println!("activations {activations:?}, weights {weights:?}: build {:.2}s", started.elapsed().as_secs_f64());
+        let mut rng = Rng(0x1234_5678_9abc_def1);
+        let mut inputs: Vec<(String, AneSurface)> = shape
+            .inputs()
+            .into_iter()
+            .map(|spec| (spec.name.clone(), AneSurface::new(&context, spec.rows, spec.width, spec.element).unwrap()))
+            .collect();
+        for (_, surface) in inputs.iter_mut() {
+            match surface.element() {
+                AneElement::Int8 => {
+                    for value in surface.as_i8_mut() {
+                        *value = (rng.normal() * 30.0) as i8;
+                    }
+                },
+                AneElement::Float16 => {
+                    for value in surface.as_f16_mut() {
+                        *value = f16::from_f32(rng.normal() * 0.1);
+                    }
+                },
+            }
+        }
+        let output_spec = shape.output_spec();
+        let output = AneSurface::new(&context, output_spec.rows, output_spec.width, output_spec.element).unwrap();
+        let named: Vec<(&str, &AneSurface)> = inputs.iter().map(|(name, surface)| (name.as_str(), surface)).collect();
+        for rows in shape.rows.clone() {
+            let procedure = program.procedure(&LinearShape::function_name(rows)).unwrap();
+            let binding = program.bind(procedure, &named, &output).unwrap();
+            for _ in 0..3 {
+                program.evaluate(&binding).unwrap();
+            }
+            let mut times: Vec<f64> = (0..15)
+                .map(|_| {
+                    let started = Instant::now();
+                    program.evaluate(&binding).unwrap();
+                    started.elapsed().as_secs_f64() * 1e3
+                })
+                .collect();
+            times.sort_by(f64::total_cmp);
+            let operations = 2.0 * f64::from(shape.input) * f64::from(shape.output) * f64::from(rows);
+            println!(
+                "  lin{rows}: median {:.2} ms (min {:.2}), {:.1} TOPS",
                 times[times.len() / 2],
                 times[0],
                 operations / (times[times.len() / 2] * 1e-3) / 1e12

@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearRole},
         mixer::{
             Mixer, MixerEncodeError, MixerState,
             attention::rope::PrecalculatedRoPE,
@@ -209,6 +209,7 @@ impl<B: Backend> DeltaNet<B> {
                 context,
             )
             .await?;
+        let in_projection = context.wrap_linear(in_projection, LinearRole::DeltaNetInput);
 
         let conv_config = &config.conv_config;
         let conv_tree = parameter_tree.subtree("conv");
@@ -308,6 +309,7 @@ impl<B: Backend> DeltaNet<B> {
             context,
         )
         .await?;
+        let out_projection = context.wrap_linear(out_projection, LinearRole::DeltaNetOutput);
 
         Ok((
             Self {
