@@ -171,3 +171,7 @@ impl<B: Backend> LanguageModel<B> {
         &self.tokenizer
     }
 }
+
+#[cfg(all(test, backend = "metal"))]
+#[path = "../../../unit/engine/language_model/prefill_breakdown_test.rs"]
+mod prefill_breakdown_test;
