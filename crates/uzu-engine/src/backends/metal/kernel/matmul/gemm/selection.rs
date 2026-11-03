@@ -188,8 +188,6 @@ impl GemmProblem {
     }
 
     fn split_k_output_supported(&self) -> bool {
-        use crate::backends::common::gpu_types::gemm::GemmDTransform;
-
         let mut output_transform = self.shape.d_transform;
         if self.shape.is_quant()
             && output_transform.contains(GemmDTransform::RHT)
@@ -202,7 +200,7 @@ impl GemmProblem {
     }
 }
 
-pub(super) fn select_trellis_plan(
+fn select_trellis_plan(
     m: u32,
     n: u32,
     k: u32,
@@ -265,7 +263,7 @@ fn select_tiling(
 ) -> GemmTiling {
     match engine {
         GemmEngine::Simdgroup if shape.is_quant() => policy::simdgroup_quant_tile(shape.m),
-        GemmEngine::Simdgroup => policy::SIMDGROUP_FP_TILE,
+        GemmEngine::Simdgroup => GemmTiling::Tile64x32x32_Simdgroups2x2,
         GemmEngine::Mxu if shape.a_is_quantized() => match policy::mxu_int8_gemm_tile(shape.m, shape.n) {
             tiling
                 if tiling.simdgroups_k() > 1

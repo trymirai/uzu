@@ -42,7 +42,7 @@ pub fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
 }
 
 impl MatmulMetalKernel {
-    pub fn prefer_gemm_over_gemv(
+    fn prefer_gemm_over_gemv(
         shape: MatmulShape,
         plan: GemmPlan,
         weights_data_type: DataType,

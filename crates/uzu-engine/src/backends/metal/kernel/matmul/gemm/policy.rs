@@ -6,7 +6,6 @@
 
 use crate::backends::metal::gpu_types::gemm::GemmTiling;
 
-pub(super) const SIMDGROUP_FP_TILE: GemmTiling = GemmTiling::Tile64x32x32_Simdgroups2x2;
 const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
 
 const MXU_SKINNY_M_MAX: u32 = 16;
