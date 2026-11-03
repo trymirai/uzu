@@ -9,6 +9,7 @@ use std::sync::{
 
 use half::f16;
 use metal::{MTLSharedEventExt, MTLSharedEventListener, MTLSharedEventNotificationBlock};
+use objc2::rc::Retained;
 
 use crate::{
     backends::{
@@ -19,7 +20,10 @@ use crate::{
         },
         metal::{
             Metal,
-            ane::{AneBinding, AneElement, AneError, AneProgram, AneSurface},
+            ane::{
+                AneBinding, AneElement, AneError, AneProgram, AneSurface,
+                trace::{self, Mark},
+            },
             command_buffer::{Handoffs, MetalCommandBufferEncoding},
             context::{MetalContext, MetalLane},
             error::MetalError,
@@ -83,6 +87,8 @@ pub struct AneHealth {
     healthy: AtomicBool,
     fault: Option<Fault>,
     requests: AtomicUsize,
+    /// Listens for the ANE's `done` signals when tracing (`UZU_ANE_TRACE`).
+    trace_listener: Option<Retained<MTLSharedEventListener>>,
 }
 
 impl Default for AneHealth {
@@ -91,6 +97,7 @@ impl Default for AneHealth {
             healthy: AtomicBool::new(true),
             fault: Fault::from_env(),
             requests: AtomicUsize::new(0),
+            trace_listener: trace::enabled().then(MTLSharedEventListener::new),
         }
     }
 }
@@ -352,6 +359,7 @@ pub fn submit<E: AneExecutor>(
     command_buffer.order_after_previous_chunk(order);
     command_buffer.record_layer_ready(order, ready);
     let failures = command_buffer.failure_sink();
+    trace::begin(lane, command_buffer.chunk(), order, rows, ready);
     enqueue_when_ready(executor, lane, rows, &timeline, ready, done, failures);
     command_buffer.handoff_to_ane(&timeline, ready, done)
 }
@@ -370,9 +378,28 @@ fn enqueue_when_ready<E: AneExecutor>(
     let target = executor.clone();
     let block_timeline = timeline.clone();
     let block = MTLSharedEventNotificationBlock::new(move |_event, _value| {
+        trace::mark(lane, ready, Mark::Notified);
         enqueue(&target, lane, rows, &block_timeline, ready, done, &failures);
     });
     timeline.event.notify_listener_at_value(executor.listener(lane), ready, &block);
+    if let Some(listener) = &executor.health().trace_listener {
+        let block = MTLSharedEventNotificationBlock::new(move |_event, _value| {
+            trace::mark(lane, ready, Mark::Signalled);
+        });
+        timeline.event.notify_listener_at_value(listener, done, &block);
+    }
+}
+
+/// Tells the lane's queue the request that became ready at `ready` is done.
+fn relay_done(
+    timeline: &MetalLane,
+    lane: usize,
+    ready: u64,
+    done: u64,
+) {
+    trace::mark(lane, ready, Mark::RelayStarted);
+    timeline.relay_done(done);
+    trace::mark(lane, ready, Mark::RelayReturned);
 }
 
 fn enqueue<E: AneExecutor>(
@@ -389,7 +416,7 @@ fn enqueue<E: AneExecutor>(
         // Retired while this call was already encoded: its result is lost either way, so do not
         // keep sending work to a failing ANE. The GPU waits for `done` and must not hang.
         failures.fail(FAILED);
-        timeline.relay_done(done);
+        relay_done(timeline, lane, ready, done);
         return;
     }
     let fault = health.begin_request();
@@ -397,23 +424,26 @@ fn enqueue<E: AneExecutor>(
     let completion_timeline = timeline.clone();
     let completion_failures = failures.clone();
     let completion = Box::new(move |success: bool| {
+        trace::mark(lane, ready, Mark::Completed);
         if !success || fault == Some(FaultKind::Completion) {
             // The result is garbage: the engine retires and the prefill fails.
             completion_executor.health().retire();
             completion_failures.fail(FAILED);
         }
         // On failure too: the GPU waits for `done` and must not hang.
-        completion_timeline.relay_done(done);
+        relay_done(&completion_timeline, lane, ready, done);
     });
+    trace::mark(lane, ready, Mark::EnqueueStarted);
     let enqueued = if fault == Some(FaultKind::Enqueue) {
         Err(AneError::Unavailable("injected enqueue fault".to_string()))
     } else {
         executor.program().enqueue(executor.binding(lane, rows), &timeline.event, ready, done, completion)
     };
+    trace::mark(lane, ready, Mark::EnqueueReturned);
     if let Err(error) = enqueued {
         health.retire();
         failures.fail(FAILED);
-        timeline.relay_done(done);
+        relay_done(timeline, lane, ready, done);
         eprintln!("uzu: ANE enqueue failed, everything runs on the GPU from now on: {error}");
     }
 }

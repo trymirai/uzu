@@ -3,8 +3,11 @@ use std::{
     mem,
     ops::{Deref, DerefMut},
     range::Range,
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use futures::channel::mpsc;
@@ -25,6 +28,7 @@ use crate::backends::{
     },
     metal::{
         Metal,
+        ane::trace,
         buffer::MetalBufferExt,
         context::{MetalContext, MetalLane},
         error::MetalError,
@@ -32,6 +36,9 @@ use crate::backends::{
         timestamp_recorder::MetalTimestampRecorder,
     },
 };
+
+/// Distinguishes the encodings of a process in timestamp span names and traces.
+static NEXT_ENCODING_ID: AtomicUsize = AtomicUsize::new(0);
 
 pub struct MetalCommandBuffer;
 
@@ -65,6 +72,14 @@ pub struct MetalCommandBufferEncoding {
     /// The queue (of lane `lane`) the current segment is committed to.
     queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     lane: usize,
+    /// Number of [`CommandBufferEncoding::begin_independent_chunk`] calls so far: the index of the
+    /// chunk being encoded.
+    chunk: usize,
+    /// See [`NEXT_ENCODING_ID`].
+    encoding_id: usize,
+    /// Command buffers committed so far, and what the next one ends with (for `UZU_ANE_TRACE`).
+    segments: usize,
+    segment_end: trace::SegmentEnd,
     /// Both lanes, once [`Self::begin_independent_chunk`] switched lanes.
     lanes: Option<[Arc<MetalLane>; 2]>,
     /// The scratch pool of the lane not in use; scratch reuse is only ordered within one queue.
@@ -78,6 +93,34 @@ pub struct MetalCommandBufferEncoding {
 }
 
 unsafe impl Send for MetalCommandBufferEncoding {}
+
+/// The identity of a command buffer in the trace; the GPU times come with its completion.
+#[derive(Clone, Copy)]
+struct SegmentTraceTemplate {
+    encoding: usize,
+    lane: usize,
+    chunk: usize,
+    index: usize,
+    end: trace::SegmentEnd,
+}
+
+impl SegmentTraceTemplate {
+    fn record(
+        self,
+        feedback: &ProtocolObject<dyn MTL4CommitFeedback>,
+    ) {
+        trace::segment(trace::SegmentTrace {
+            encoding: self.encoding,
+            lane: self.lane,
+            chunk: self.chunk,
+            index: self.index,
+            end: self.end,
+            handled: Instant::now(),
+            gpu_start: feedback.gpu_start_time(),
+            gpu_end: feedback.gpu_end_time(),
+        });
+    }
+}
 
 type EventWait = (Retained<ProtocolObject<dyn MTLEvent>>, u64);
 
@@ -148,6 +191,10 @@ impl MetalCommandBufferEncoding {
             handoffs: None,
             queue: context.command_queue.clone(),
             lane: 0,
+            chunk: 0,
+            encoding_id: NEXT_ENCODING_ID.fetch_add(1, Ordering::Relaxed),
+            segments: 0,
+            segment_end: trace::SegmentEnd::ChunkSwitch,
             lanes: None,
             other_pool: None,
             pending_waits: Vec::new(),
@@ -192,6 +239,7 @@ impl MetalCommandBufferEncoding {
         ready: u64,
         done: u64,
     ) -> Result<(), MetalError> {
+        self.segment_end = trace::SegmentEnd::Handoff(ready);
         self.handoff(&lane.event, Some(ready), None)?;
         self.queue.signal_event_value(&lane.order, ready);
         self.queue.wait_for_event_value(&lane.done, done);
@@ -207,6 +255,22 @@ impl MetalCommandBufferEncoding {
     /// The lane (command queue) the encoding is currently on: 0 until a chunk was pipelined.
     pub fn lane(&self) -> usize {
         self.lane
+    }
+
+    /// The index of the chunk being encoded (0 until a chunk was begun).
+    pub fn chunk(&self) -> usize {
+        self.chunk
+    }
+
+    /// Names the timestamp spans of the chunk being encoded after its encoding, lane and index
+    /// (only when tracing, `UZU_ANE_TRACE`: span names are otherwise just the debug group path).
+    fn label_timestamps(&mut self) {
+        if !trace::enabled() {
+            return;
+        }
+        if let Some(timestamps) = &mut self.timestamps {
+            timestamps.set_prefix(format!("enc {}/lane {}/chunk {}/", self.encoding_id, self.lane, self.chunk));
+        }
     }
 
     /// Holds the segment being encoded back until the previous chunk has passed `layer`'s MLP
@@ -248,7 +312,11 @@ impl MetalCommandBufferEncoding {
         let command_allocator = self.command_allocator.clone();
         let command_buffer = self.command_buffer.clone();
         let context = self.context.clone();
+        let segment_trace = self.segment_trace();
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
+            if let Some(segment_trace) = segment_trace {
+                segment_trace.record(feedback);
+            }
             if let Some(error) = feedback.error() {
                 handoffs.error.lock().get_or_insert(error.to_string());
             }
@@ -259,6 +327,29 @@ impl MetalCommandBufferEncoding {
         let options = MTL4CommitOptions::new();
         options.add_feedback_handler(&MTL4CommitFeedbackHandler::new(feedback_handler));
         self.queue.commit_with_options(&[&self.command_buffer], &options);
+    }
+
+    /// What to record about the command buffer being committed, when tracing (`UZU_ANE_TRACE`).
+    fn segment_trace(&mut self) -> Option<SegmentTraceTemplate> {
+        if !trace::enabled() {
+            return None;
+        }
+        let template = SegmentTraceTemplate {
+            encoding: self.encoding_id,
+            lane: self.lane,
+            chunk: self.chunk,
+            index: self.segments,
+            end: self.segment_end,
+        };
+        self.segments += 1;
+        self.segment_end = trace::SegmentEnd::ChunkSwitch;
+        Some(template)
+    }
+
+    /// [`Self::segment_trace`] for the encoding's last command buffer.
+    fn segment_trace_final(&mut self) -> Option<SegmentTraceTemplate> {
+        self.segment_end = trace::SegmentEnd::Final;
+        self.segment_trace()
     }
 
     /// Starts a fresh command buffer on the current queue (debug groups carry over).
@@ -449,6 +540,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     /// that makes this safe, so without one the encoding stays on a single lane.
     fn begin_independent_chunk(&mut self) -> Result<(), MetalError> {
         if !self.context.ane_pipelining_available() {
+            self.chunk += 1;
+            self.label_timestamps();
             return Ok(());
         }
         let lanes = [self.context.lane(0)?, self.context.lane(1)?];
@@ -456,6 +549,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         let next = lanes[1 - self.lane].clone();
         self.lanes.get_or_insert(lanes);
 
+        self.segment_end = trace::SegmentEnd::ChunkSwitch;
         self.commit_segment();
         let tail = current.reserve_values(1);
         self.queue.signal_event_value(&current.order, tail);
@@ -466,6 +560,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         });
 
         self.lane = 1 - self.lane;
+        self.chunk += 1;
+        self.label_timestamps();
         self.queue = next.queue.clone();
         let next_pool = self.other_pool.take().unwrap_or_else(|| self.context.create_allocation_pool());
         self.other_pool = Some(mem::replace(&mut self.allocation_pool, next_pool));
@@ -474,6 +570,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn with_timestamps(mut self) -> Self {
         self.timestamps = Some(MetalTimestampRecorder::default());
+        self.label_timestamps();
         self
     }
 
@@ -507,6 +604,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
             lane: self.lane,
             waits,
             main_queue_release,
+            segment_trace: self.segment_trace_final(),
         }
     }
 }
@@ -559,6 +657,7 @@ pub struct MetalCommandBufferExecutable {
     lane: usize,
     waits: Vec<EventWait>,
     main_queue_release: Option<Arc<MetalLane>>,
+    segment_trace: Option<SegmentTraceTemplate>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
@@ -581,7 +680,11 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let allocation_pool = self.allocation_pool.clone();
         let other_pool = self.other_pool.clone();
         let handoffs = self.handoffs;
+        let segment_trace = self.segment_trace;
         let feedback_handler = move |feedback: &ProtocolObject<dyn MTL4CommitFeedback>| {
+            if let Some(segment_trace) = segment_trace {
+                segment_trace.record(feedback);
+            }
             let mut error = feedback.error().map(|error| error.to_string());
             let mut gpu_start_time = feedback.gpu_start_time();
             if let Some(handoffs) = &handoffs {
@@ -596,7 +699,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
                 timestamps
                     .as_ref()
                     .map_or_else(|| Ok(Box::default()), |timestamps| timestamps.resolve(&context_clone.device))
-                    .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - gpu_start_time), spans))
+                    .map(|spans| (Duration::from_secs_f64((feedback.gpu_end_time() - gpu_start_time).max(0.0)), spans))
             };
             let _ = sender.unbounded_send(message);
             context_clone.command_allocator_cache.lock().push(command_allocator.clone());

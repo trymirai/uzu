@@ -7,16 +7,27 @@
 //! Reports wall-clock prefill tok/s (without timestamps) and a GPU-time breakdown per
 //! module class (with timestamps), aggregated over layers.
 
-use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, time::Instant};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::mpsc::channel,
+    time::{Duration, Instant},
+};
 
 use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::{common::TimestampSpan, metal::Metal},
+    backends::{
+        common::TimestampSpan,
+        metal::{Metal, ane::trace},
+    },
     encodable_block::sampling::SamplingMethod,
     engine::{Engine, language_model::LanguageModel},
 };
+
+#[path = "prefill_timeline.rs"]
+mod timeline;
 
 const RUNS: usize = 3;
 
@@ -216,4 +227,61 @@ fn decode_throughput() {
         "decode after {prompt_length}-token prompt (UZU_ANE={}): best of {RUNS} = {best:.2} tok/s",
         std::env::var("UZU_ANE").unwrap_or_default()
     );
+}
+
+// Ignored: needs UZU_PREFILL_MODEL and UZU_ANE_TRACE=1; manual perf harness.
+//
+// Timeline profiler of pipelined ANE prefill (see prefill_timeline.rs for what is reported). Run it
+// holding /tmp/uzu-bench.lock:
+//   UZU_ANE_TRACE=1 UZU_PREFILL_MODEL=~/models/Qwen3.5-9B-M [UZU_TIMELINE_LENGTHS=2048,4096] \
+//     cargo test --release -p uzu-engine --lib prefill_timeline -- --ignored --nocapture
+//
+// Writes /tmp/uzu_prefill_timeline_{tokens}.json (open in https://ui.perfetto.dev or chrome://tracing:
+// one process per GPU lane, one for the ANE, one for the CPU notify/relay) and
+// /tmp/uzu_prefill_timeline_{tokens}_kernels.json (per-kernel timestamps of an instrumented run).
+#[uzu_test]
+#[ignore]
+fn prefill_timeline() {
+    assert!(trace::enabled(), "set UZU_ANE_TRACE=1");
+    let model_path = PathBuf::from(std::env::var("UZU_PREFILL_MODEL").expect("set UZU_PREFILL_MODEL"));
+    let lengths: Vec<usize> = std::env::var("UZU_TIMELINE_LENGTHS")
+        .unwrap_or_else(|_| "2048,4096".to_string())
+        .split(',')
+        .map(|length| length.trim().parse().unwrap())
+        .collect();
+
+    let engine = block_on(Engine::<Metal>::new()).unwrap();
+    let model = block_on(engine.load_language_model(&model_path)).unwrap();
+
+    prefill(&model, &prompt(lengths[0]), false);
+    for length in lengths {
+        let tokens = prompt(length);
+        println!("prefill {length} tokens");
+
+        // The run as it is (no kernel timestamps); the fastest of RUNS is analysed.
+        let mut best: Option<(f64, Vec<trace::AneRequestTrace>, Vec<trace::SegmentTrace>)> = None;
+        for _ in 0..RUNS {
+            trace::drain();
+            trace::drain_segments();
+            let (wall, _) = prefill(&model, &tokens, false);
+            // Completion handlers of the last command buffers may still be running.
+            std::thread::sleep(Duration::from_millis(300));
+            let (requests, segments) = (trace::drain(), trace::drain_segments());
+            if best.as_ref().is_none_or(|(best_wall, ..)| wall < *best_wall) {
+                best = Some((wall, requests, segments));
+            }
+        }
+        let (wall, requests, segments) = best.unwrap();
+        println!("  best of {RUNS}, timestamps off: wall {:.1} ms -> {:.0} tok/s", wall * 1e3, length as f64 / wall);
+        timeline::analyze_trace(length, wall, &segments, &requests);
+
+        // Per-kernel timestamps (instrumenting changes the run: used for the kernel class mix).
+        trace::drain();
+        trace::drain_segments();
+        let (timed_wall, spans) = prefill(&model, &tokens, true);
+        std::thread::sleep(Duration::from_millis(300));
+        trace::drain();
+        trace::drain_segments();
+        timeline::analyze_kernels(length, timed_wall, wall, &spans);
+    }
 }

@@ -27,6 +27,7 @@ mod program;
 mod runtime;
 pub mod shared;
 mod surface;
+pub mod trace;
 
 pub use program::{AneBinding, AneProcedure, AneProgram};
 pub use runtime::AneRuntime;

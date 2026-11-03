@@ -17,6 +17,8 @@ const COUNTER_HEAP_CAPACITY: usize = 4096;
 
 #[derive(Default)]
 pub struct MetalTimestampRecorder {
+    /// Prepended to the name of every top-level span (e.g. `enc 0/lane 1/chunk 3/`).
+    prefix: String,
     spans: Vec<(String, Range<usize>)>,
     open_spans: Vec<usize>,
     slot_count: usize,
@@ -24,6 +26,13 @@ pub struct MetalTimestampRecorder {
 }
 
 impl MetalTimestampRecorder {
+    pub fn set_prefix(
+        &mut self,
+        prefix: String,
+    ) {
+        self.prefix = prefix;
+    }
+
     pub fn start(
         &mut self,
         label: &str,
@@ -32,7 +41,7 @@ impl MetalTimestampRecorder {
     ) {
         let name = match self.open_spans.last() {
             Some(&parent) => format!("{}/{label}", self.spans[parent].0),
-            None => label.to_owned(),
+            None => format!("{}{label}", self.prefix),
         };
         let slot = self.write(device, encoder);
         self.open_spans.push(self.spans.len());
