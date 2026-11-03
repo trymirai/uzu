@@ -1,0 +1,11 @@
+--- a/std/Io/Threaded.zig
++++ b/std/Io/Threaded.zig
+@@ -354,7 +354,7 @@
+             }
+         }
+     },
+-    .wasi, .ios, .tvos, .visionos, .watchos => struct {
++    .wasi, .tvos, .watchos => struct {
+         fn deinit(this: @This()) void {
+             _ = this;
+         }

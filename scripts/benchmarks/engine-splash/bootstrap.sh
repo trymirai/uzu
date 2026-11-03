@@ -16,6 +16,13 @@ if [[ ! -e "$SOURCE_DIR" ]]; then
     git clone --depth 1 --branch "$VERSION" https://github.com/incoai/splash.git "$SOURCE_DIR" >&2
 fi
 
+for patch in "$PROJECT_DIR"/patches/*.patch; do
+    if ! git -C "$SOURCE_DIR" apply --reverse --check "$patch" 2>/dev/null; then
+        git -C "$SOURCE_DIR" apply --check "$patch"
+        git -C "$SOURCE_DIR" apply "$patch"
+    fi
+done
+
 make -C "$SOURCE_DIR" --no-print-directory \
     "BUILD_ID_PYTHON=$PYTHON_EXECUTABLE" platform-check >&2
 make -C "$SOURCE_DIR" --no-print-directory -j "$PARALLEL_JOBS" \

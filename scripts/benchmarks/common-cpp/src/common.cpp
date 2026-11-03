@@ -68,6 +68,7 @@ void run_loop(
     std::FILE* output
 ) {
     std::string line;
+    std::cin.clear();
     while (std::getline(std::cin, line)) {
         if (line.find_first_not_of(" \t\r\n\v\f") == std::string::npos) {
             continue;
