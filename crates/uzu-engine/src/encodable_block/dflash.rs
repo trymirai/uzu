@@ -51,6 +51,7 @@ pub struct DFlash<B: Backend> {
     max_context_length: u32,
     block_size: u32,
     mask_token_id: u32,
+    vocab_size: u32,
     target_feature_input_dim: u32,
     data_type: DataType,
 }
@@ -178,6 +179,7 @@ impl<B: Backend> DFlash<B> {
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
             mask_token_id,
+            vocab_size: config.vocab_size,
             target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
             data_type,
         })
@@ -349,7 +351,7 @@ impl<B: Backend> DFlash<B> {
         let logits = target_embedding.encode_readout(
             &lookahead_hidden,
             batch_size - 1,
-            target_embedding.vocab_size(),
+            self.vocab_size,
             None::<&B::ScratchBuffer>,
             false,
             command_buffer,

@@ -3,10 +3,8 @@ use uzu_engine_macros::uzu_config;
 use crate::config::{decoder::DecoderConfig, model::generation::GenerationConfig};
 
 #[uzu_config]
-#[derive(Default)]
 #[serde(rename_all = "snake_case")]
 pub enum VocabularyOrder {
-    #[default]
     Original,
     Frequency,
 }
@@ -15,6 +13,5 @@ pub enum VocabularyOrder {
 pub struct LanguageModelConfig {
     pub decoder_config: DecoderConfig,
     pub generation_config: GenerationConfig,
-    #[serde(default)]
     pub vocabulary_order: VocabularyOrder,
 }

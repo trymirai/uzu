@@ -68,8 +68,6 @@ async fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    /// Loads a linear over any parsed spec — full precision, MLX or Int. Hybrid
-    /// compositions live in the wrappers, not here.
     pub async fn load(
         input_dim: u32,
         output_dim: u32,
@@ -130,7 +128,7 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(self.prepared_activation_format)
     }
 
-    pub(super) fn encode_readout(
+    pub(super) fn encode_with_a(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,
@@ -186,7 +184,7 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
-    pub(super) fn select_readout_activation_format(
+    pub(super) fn select_activation_format_for_output(
         &self,
         batch_dim: u32,
         output_dim: u32,
@@ -222,7 +220,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        self.encode_readout(input.as_ref(), batch_dim, self.output_dim, None::<&B::ScratchBuffer>, command_buffer)
+        self.encode_with_a(input.as_ref(), batch_dim, self.output_dim, None::<&B::ScratchBuffer>, command_buffer)
     }
 
     fn select_activation_format(
@@ -230,6 +228,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        self.select_readout_activation_format(batch_dim, self.output_dim, context)
+        self.select_activation_format_for_output(batch_dim, self.output_dim, context)
     }
 }

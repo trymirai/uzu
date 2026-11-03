@@ -139,6 +139,7 @@ pub struct Weaver<B: Backend> {
     target_model_dim: u32,
     max_depth: u32,
     candidate_pool_size: u32,
+    vocab_size: u32,
 }
 
 struct PrefixUnrotation<B: Backend> {
@@ -351,6 +352,7 @@ impl<B: Backend> Weaver<B> {
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
             candidate_pool_size: config.candidate_pool_size,
+            vocab_size,
         })
     }
 
@@ -597,7 +599,7 @@ impl<B: Backend> Weaver<B> {
             u32::from(batch_start_slot == 0),
             self.candidate_pool_size,
             shape.expand_width,
-            target_embedding.lookup_vocab_size(),
+            target_embedding.vocab_size(),
             frontier_capacity,
             tree_slot_count,
             if fuse_next {
@@ -653,7 +655,7 @@ impl<B: Backend> Weaver<B> {
 
             // Rank the draft logits: the top `candidate_pool_size` tokens per
             // lookahead row form the candidate pool node expansions draw from.
-            let vocab_size = target_embedding.vocab_size();
+            let vocab_size = self.vocab_size;
             assert!(
                 logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DATA_TYPE),
                 "draft logits do not cover the lookahead rows"

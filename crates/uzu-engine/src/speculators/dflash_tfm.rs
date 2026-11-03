@@ -20,7 +20,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
-        embedding::{Embedding, EmbeddingError},
+        embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
         weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
@@ -57,10 +57,8 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     DFlash(#[from] DFlashNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
-    #[error("Embedding error: {0}")]
-    Embedding(#[from] EmbeddingError<B>),
-    #[error("mask token {0} is outside the target vocabulary")]
-    InvalidMaskToken(u64),
+    #[error("invalid speculator configuration: {0}")]
+    InvalidConfiguration(String),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -95,13 +93,12 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
-    embedding: Embedding<B>,
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub async fn new(
         model_path: &Path,
-        target_embedding: &Embedding<B>,
+        target_vocab_size: u32,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
         let mut shapes: HashMap<String, DFlashTfmTreeShape> =
@@ -119,9 +116,17 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
-        let embedding = target_embedding.prefix(config.draft_config.vocab_size)?;
-        if config.draft_config.mask_token_id >= u64::from(embedding.lookup_vocab_size()) {
-            return Err(DFlashSpeculatorLoadError::InvalidMaskToken(config.draft_config.mask_token_id));
+        let draft_vocab_size = config.draft_config.vocab_size;
+        if draft_vocab_size == 0 || draft_vocab_size > target_vocab_size {
+            return Err(DFlashSpeculatorLoadError::InvalidConfiguration(format!(
+                "draft vocabulary {draft_vocab_size} is outside 1..={target_vocab_size}"
+            )));
+        }
+        if config.draft_config.mask_token_id >= u64::from(target_vocab_size) {
+            return Err(DFlashSpeculatorLoadError::InvalidConfiguration(format!(
+                "mask token {} is outside the target vocabulary of {target_vocab_size}",
+                config.draft_config.mask_token_id
+            )));
         }
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
@@ -138,7 +143,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weaver = if let Some(weaver_config) = &config.weaver_config {
             Some(
                 Weaver::new(
-                    embedding.vocab_size(),
+                    draft_vocab_size,
                     weaver_config,
                     target_embedding.readout_input_hadamard_factors(),
                     &speculator_tree.subtree("weaver"),
@@ -152,7 +157,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.assert_all_tensors_read()?;
 
-        let sampling = Sampling::new(embedding.vocab_size(), data_type);
+        let sampling = Sampling::new(draft_vocab_size, data_type);
 
         Ok(Some(Self {
             context,
@@ -161,7 +166,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             sampling,
             config,
             shape,
-            embedding,
         }))
     }
 
@@ -218,6 +222,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         state: &mut DFlashState<B>,
         target_output_norm: impl BufferRef<Backend = B>,
         target_output_token: u32,
+        target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
         sampling_method: &SamplingMethod,
         grammar: Option<&mut Grammar>,
@@ -226,7 +231,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         command_buffer_name: Option<&str>,
         timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
-        let target_embedding = &self.embedding;
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
         let block_size = self.dflash.block_size();

@@ -84,15 +84,15 @@ impl<B: Backend> UntiedReadout<B> {
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::full_precision(input);
-            return self.linear.encode_readout(a, batch_dim, output_dim, gather_indices, command_buffer);
+            return self.linear.encode_with_a(a, batch_dim, output_dim, gather_indices, command_buffer);
         };
 
         let format = if gather_indices.is_some() {
             ActivationFormat::Bf16
         } else {
-            self.linear.select_readout_activation_format(batch_dim, output_dim, command_buffer.context())
+            self.linear.select_activation_format_for_output(batch_dim, output_dim, command_buffer.context())
         };
         let input = input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
-        self.linear.encode_readout(input.as_ref(), batch_dim, output_dim, gather_indices, command_buffer)
+        self.linear.encode_with_a(input.as_ref(), batch_dim, output_dim, gather_indices, command_buffer)
     }
 }
