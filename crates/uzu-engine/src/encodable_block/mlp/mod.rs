@@ -1,17 +1,15 @@
 mod dense;
 mod gate_act_mul;
 
+pub use dense::{DenseMlp, DenseMlpWeights};
 use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, CommandBuffer, Context},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
-    encodable_block::{
-        linear::LinearEncodeError,
-        mlp::dense::{DenseMlp, DenseMlpNewError},
-    },
+    encodable_block::{linear::LinearEncodeError, mlp::dense::DenseMlpNewError},
     safetensors::ParameterTree,
 };
 
@@ -55,7 +53,7 @@ impl<B: Backend> dyn Mlp<B> {
                     DenseMlp::new(model_dimension, hidden_dimension, data_type, config, parameter_tree, context)
                         .await?;
 
-                Ok((Box::new(dense), up_input_hadamard_factors))
+                Ok((context.wrap_mlp(dense, config), up_input_hadamard_factors))
             },
             AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockNewError::UnsupportedMixtureOfExperts),
         }

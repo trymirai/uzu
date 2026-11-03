@@ -16,7 +16,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::{Gather, Linear, LinearEncodeError, LinearInput},
+        linear::{Gather, Linear, LinearEncodeError, LinearInput, LinearWeights},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -222,5 +222,14 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             self.prepared_activation_format,
             context,
         )
+    }
+
+    fn weights(&self) -> Option<LinearWeights<'_, B>> {
+        Some(LinearWeights {
+            matrix: &self.matrix,
+            has_biases: self.biases.is_some(),
+            input_rht_signs: None,
+            output_rht_signs: self.output_hadamard_factors.as_ref(),
+        })
     }
 }

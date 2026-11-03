@@ -175,3 +175,7 @@ impl<B: Backend> LanguageModel<B> {
 #[cfg(all(test, backend = "metal"))]
 #[path = "../../../unit/engine/language_model/prefill_breakdown_test.rs"]
 mod prefill_breakdown_test;
+
+#[cfg(all(test, backend = "metal"))]
+#[path = "../../../unit/engine/language_model/prefill_kl_test.rs"]
+mod prefill_kl_test;

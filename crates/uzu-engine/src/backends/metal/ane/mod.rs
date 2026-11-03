@@ -16,7 +16,9 @@
 //! and `runtime/ops/AneFfn.cpp` (the W8A8 FFN MIL program). Not affiliated with Splash.
 
 pub mod fake;
+pub mod ffn;
 pub mod mil;
+pub mod mlp;
 mod objc;
 mod program;
 mod runtime;

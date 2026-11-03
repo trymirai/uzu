@@ -8,7 +8,7 @@ use crate::{
     config::mlp::dense_mlp::DenseMLPConfig,
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearWeights},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     safetensors::ParameterTree,
@@ -76,6 +76,27 @@ impl<B: Backend> DenseMlp<B> {
             },
             up_input_hadamard_factors,
         ))
+    }
+}
+
+/// Read-only view of a dense MLP's projections, with every RHT sign each projection's input and
+/// output carries (including the down projection's input signs, which the gate block applies).
+pub struct DenseMlpWeights<'a, B: Backend> {
+    pub up: LinearWeights<'a, B>,
+    pub down: LinearWeights<'a, B>,
+}
+
+impl<B: Backend> DenseMlp<B> {
+    pub fn weights(&self) -> Option<DenseMlpWeights<'_, B>> {
+        let up = self.up.weights()?;
+        let mut down = self.down.weights()?;
+        if down.input_rht_signs.is_none() {
+            down.input_rht_signs = self.gate.input_rht_signs();
+        }
+        Some(DenseMlpWeights {
+            up,
+            down,
+        })
     }
 }
 

@@ -2,7 +2,11 @@ use std::{path::Path, sync::Arc};
 
 use bytemuck::AnyBitPattern;
 
-use crate::backends::common::{Backend, BufferRef, CommandBuffer, DeviceCapabilities};
+use crate::{
+    backends::common::{Backend, BufferRef, CommandBuffer, DeviceCapabilities},
+    config::mlp::dense_mlp::DenseMLPConfig,
+    encodable_block::mlp::{DenseMlp, Mlp},
+};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -47,4 +51,14 @@ pub trait Context: Sized + Send + Sync {
     ) -> Result<<Self::Backend as Backend>::CaptureSpan, <Self::Backend as Backend>::Error>;
 
     fn device_capabilities(&self) -> DeviceCapabilities;
+
+    /// Lets the backend run a dense MLP on other hardware (e.g. the Neural Engine); by default it
+    /// runs as built.
+    fn wrap_mlp(
+        &self,
+        mlp: DenseMlp<Self::Backend>,
+        _config: &DenseMLPConfig,
+    ) -> Box<dyn Mlp<Self::Backend>> {
+        Box::new(mlp)
+    }
 }

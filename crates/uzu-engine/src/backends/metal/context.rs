@@ -15,23 +15,28 @@ use metal::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
 
-use crate::backends::{
-    common::{
-        Backend, BufferRef, Context, CpuBuffer, DeviceCapabilities,
-        allocator::{block::BlockAllocator, pool::PoolAllocator},
-        capture_matcher::CAPTURE_MATCHER,
+use crate::{
+    backends::{
+        common::{
+            Backend, BufferRef, Context, CpuBuffer, DeviceCapabilities,
+            allocator::{block::BlockAllocator, pool::PoolAllocator},
+            capture_matcher::CAPTURE_MATCHER,
+        },
+        metal::{
+            Metal,
+            ane::{ffn::AneFfn, mlp::AneMlp},
+            buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
+            capture::MetalCaptureSpan,
+            command_buffer::MetalCommandBufferEncoding,
+            decompression,
+            error::MetalError,
+            heaps::MetalHeaps,
+            kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
+            metal_extensions::{DeviceExt, LibraryPipelineExtensions},
+        },
     },
-    metal::{
-        Metal,
-        buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
-        capture::MetalCaptureSpan,
-        command_buffer::MetalCommandBufferEncoding,
-        decompression,
-        error::MetalError,
-        heaps::MetalHeaps,
-        kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
-        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
-    },
+    config::mlp::dense_mlp::DenseMLPConfig,
+    encodable_block::mlp::{DenseMlp, DenseMlpWeights, Mlp},
 };
 
 pub(super) struct SparseState {
@@ -58,10 +63,46 @@ pub struct MetalContext {
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     pub(super) blit_copy: [OnceLock<BlitCopyMetalKernel>; 3],
     pub(super) blit_fill: [OnceLock<BlitFillMetalKernel>; 2],
+    ane: Mutex<AneState>,
     weak_self: Weak<MetalContext>,
 }
 
+/// The Neural Engine executors of this device, built on demand per MLP shape.
+#[derive(Default)]
+struct AneState {
+    disabled: bool,
+    ffns: Vec<Arc<AneFfn>>,
+}
+
 impl MetalContext {
+    /// The ANE executor for MLPs shaped like `weights` (built on first use), unless the ANE is
+    /// disabled (`UZU_ANE=0`), unavailable, or cannot run them.
+    pub fn ane_ffn(
+        &self,
+        weights: &DenseMlpWeights<'_, Metal>,
+    ) -> Option<Arc<AneFfn>> {
+        let mut ane = self.ane.lock();
+        if ane.disabled {
+            return None;
+        }
+        if let Some(ffn) = ane.ffns.iter().find(|ffn| ffn.matches(weights)) {
+            return Some(ffn.clone());
+        }
+        match AneFfn::new(self, weights) {
+            Ok(Some(ffn)) => {
+                let ffn = Arc::new(ffn);
+                ane.ffns.push(ffn.clone());
+                Some(ffn)
+            },
+            Ok(None) => None,
+            Err(error) => {
+                eprintln!("uzu: the Neural Engine is unavailable, MLPs run on the GPU: {error}");
+                ane.disabled = true;
+                None
+            },
+        }
+    }
+
     fn library(
         &self,
         data: &'static [u8],
@@ -178,6 +219,10 @@ impl Context for MetalContext {
             pipeline_cache: Mutex::new(HashMap::new()),
             blit_copy: std::array::from_fn(|_| OnceLock::new()),
             blit_fill: std::array::from_fn(|_| OnceLock::new()),
+            ane: Mutex::new(AneState {
+                disabled: std::env::var("UZU_ANE").is_ok_and(|value| value == "0"),
+                ffns: Vec::new(),
+            }),
             weak_self: weak_self.clone(),
         }))
     }
@@ -247,5 +292,13 @@ impl Context for MetalContext {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }
         capabilities
+    }
+
+    fn wrap_mlp(
+        &self,
+        mlp: DenseMlp<Metal>,
+        config: &DenseMLPConfig,
+    ) -> Box<dyn Mlp<Metal>> {
+        AneMlp::wrap(self, mlp, config)
     }
 }

@@ -21,6 +21,7 @@ use crate::{
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
+    encodable_block::weight_matrix::WeightMatrix,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
 
@@ -56,6 +57,20 @@ pub trait Linear<B: Backend>: Send + Sync {
     ) -> ActivationFormat {
         ActivationFormat::Bf16
     }
+
+    /// The stored weights, for executors that run this layer elsewhere; `None` if not exposed.
+    fn weights(&self) -> Option<LinearWeights<'_, B>> {
+        None
+    }
+}
+
+/// Read-only view of a linear layer's stored weights and incoherence (RHT) signs.
+pub struct LinearWeights<'a, B: Backend> {
+    pub matrix: &'a WeightMatrix<B>,
+    pub has_biases: bool,
+    /// Input RHT signs this layer applies itself; `None` if it applies none or a preceding block does.
+    pub input_rht_signs: Option<&'a B::GlobalGpuBuffer>,
+    pub output_rht_signs: Option<&'a B::GlobalGpuBuffer>,
 }
 
 pub type LinearInput<B> = MatmulA<<B as Backend>::ScratchBuffer>;

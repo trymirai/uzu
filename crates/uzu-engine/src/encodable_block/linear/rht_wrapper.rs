@@ -14,7 +14,7 @@ use crate::{
     data_type::DataType,
     encodable_block::linear::{
         Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
-        input_rht::InputRht,
+        LinearWeights, input_rht::InputRht,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -206,5 +206,11 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         )?;
 
         Ok(output)
+    }
+
+    fn weights(&self) -> Option<LinearWeights<'_, B>> {
+        let mut weights = self.inner_linear.weights()?;
+        weights.input_rht_signs = Some(self.input_rht.rht_signs());
+        Some(weights)
     }
 }

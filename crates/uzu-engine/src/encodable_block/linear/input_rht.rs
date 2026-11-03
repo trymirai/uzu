@@ -115,6 +115,10 @@ impl<B: Backend> InputRht<B> {
         Ok(MatmulA::full_precision(input))
     }
 
+    pub fn rht_signs(&self) -> &B::GlobalGpuBuffer {
+        &self.rht_signs
+    }
+
     fn input_dim(&self) -> u32 {
         (self.rht_signs.size() / size_of::<i32>()) as u32
     }
