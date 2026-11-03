@@ -29,29 +29,28 @@ impl AneMlp {
         context: &MetalContext,
         dense: DenseMlp<Metal>,
         config: &DenseMLPConfig,
-    ) -> Result<Self, DenseMlp<Metal>> {
+    ) -> Result<Self, Box<DenseMlp<Metal>>> {
         let plain_silu = config.activation.act_type() == ActivationType::SILU
             && config.activation.custom_alpha().is_none()
             && config.gate_clipping == ClippingBounds::default()
             && config.up_clipping == ClippingBounds::default();
         if !plain_silu {
-            return Err(dense);
+            return Err(Box::new(dense));
         }
         let Some(weights) = dense.weights() else {
-            return Err(dense);
+            return Err(Box::new(dense));
         };
         let Some(ffn) = context.ane_ffn(&weights) else {
-            return Err(dense);
+            return Err(Box::new(dense));
         };
         let layer = match ffn.layer(context, &weights) {
             Ok(Some(layer)) => layer,
-            Ok(None) => return Err(dense),
+            Ok(None) => return Err(Box::new(dense)),
             Err(error) => {
                 eprintln!("uzu: ANE layer setup failed, MLP stays on the GPU: {error}");
-                return Err(dense);
+                return Err(Box::new(dense));
             },
         };
-        drop(weights);
         Ok(Self {
             dense,
             ffn,

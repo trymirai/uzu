@@ -27,6 +27,8 @@ pub enum Mark {
     RelayReturned,
 }
 
+// Only the timeline harness (tests) reads the recorded fields.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct AneRequestTrace {
     pub lane: usize,
@@ -74,6 +76,8 @@ pub enum SegmentEnd {
 }
 
 /// One command buffer of an encoding, with the GPU times its completion feedback reports.
+// Only the timeline harness (tests) reads the recorded fields.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct SegmentTrace {
     pub encoding: usize,
@@ -143,6 +147,7 @@ pub fn mark(
 }
 
 /// Takes the requests traced so far, in encoding order.
+#[cfg(test)]
 pub fn drain() -> Vec<AneRequestTrace> {
     std::mem::take(&mut *REQUESTS.lock())
 }
@@ -153,6 +158,7 @@ pub fn segment(segment: SegmentTrace) {
 }
 
 /// Takes the command buffers traced so far.
+#[cfg(test)]
 pub fn drain_segments() -> Vec<SegmentTrace> {
     std::mem::take(&mut *SEGMENTS.lock())
 }

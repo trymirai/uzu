@@ -374,6 +374,8 @@ pub struct AneLinear {
     inner: Box<dyn Linear<Metal>>,
     program: Arc<AneLinearProgram>,
     layer: AneLinearLayer,
+    /// Recorded by the test-only ANE/GPU comparison.
+    #[cfg(test)]
     role: LinearRole,
 }
 
@@ -397,17 +399,13 @@ impl AneLinear {
                 return Err(inner);
             },
         };
-        drop(weights);
         Ok(Self {
             inner,
             program,
             layer,
+            #[cfg(test)]
             role,
         })
-    }
-
-    pub fn role(&self) -> LinearRole {
-        self.role
     }
 }
 
@@ -466,9 +464,7 @@ pub mod comparison {
     };
 
     pub struct Comparison {
-        pub index: usize,
         pub role: LinearRole,
-        pub tokens: u32,
         pub output: u32,
         pub ane: <Metal as Backend>::GlobalBufferCpuGpu,
         pub gpu: <Metal as Backend>::GlobalBufferCpuGpu,
@@ -527,9 +523,7 @@ impl AneLinear {
             command_buffer.encode_copy(&ane, &mut ane_copy);
             command_buffer.encode_copy(&gpu, &mut gpu_copy);
             comparison::RECORDS.lock().push(comparison::Comparison {
-                index: self.layer.index,
                 role: self.role,
-                tokens: batch_dim,
                 output: self.program.output(),
                 ane: ane_copy,
                 gpu: gpu_copy,

@@ -17,6 +17,7 @@
 //! Apache License 2.0: `runtime/ane/Program.mm` (client calls, IOSurface layout, constant blob)
 //! and `runtime/ops/AneFfn.cpp` (the W8A8 FFN MIL program). Not affiliated with Splash.
 
+#[cfg(test)]
 pub mod fake;
 pub mod ffn;
 pub mod linear;
@@ -29,7 +30,7 @@ pub mod shared;
 mod surface;
 pub mod trace;
 
-pub use program::{AneBinding, AneProcedure, AneProgram};
+pub use program::{AneBinding, AneProgram};
 pub use runtime::AneRuntime;
 pub use surface::{AneElement, AneSurface};
 use thiserror::Error;

@@ -5,8 +5,11 @@
 
 use std::{ffi::c_void, ptr::NonNull};
 
+#[cfg(test)]
 use half::f16;
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
+#[cfg(test)]
+use metal::MTLBuffer;
+use metal::{MTLDeviceExt, MTLResourceOptions};
 use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString};
 use objc2_io_surface::{
     IOSurfaceRef, kIOSurfaceAllocSize, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfaceHeight,
@@ -14,10 +17,9 @@ use objc2_io_surface::{
 };
 
 use super::AneError;
-use crate::backends::{
-    common::Buffer,
-    metal::{buffer::external::MetalExternalBuffer, context::MetalContext},
-};
+#[cfg(test)]
+use crate::backends::common::Buffer;
+use crate::backends::metal::{buffer::external::MetalExternalBuffer, context::MetalContext};
 
 const ROW_ALIGNMENT: usize = 64;
 const ALLOCATION_ALIGNMENT: usize = 16 * 1024;
@@ -56,7 +58,9 @@ pub struct AneSurface {
     // Declared before the surface: the alias is released before the memory it aliases.
     buffer: MetalExternalBuffer,
     surface: CFRetained<IOSurfaceRef>,
+    #[cfg(test)]
     rows: u32,
+    #[cfg(test)]
     width: u32,
     element: AneElement,
     row_stride_bytes: usize,
@@ -150,7 +154,9 @@ impl AneSurface {
         Ok(Self {
             buffer: MetalExternalBuffer::new(context, alias),
             surface,
+            #[cfg(test)]
             rows,
+            #[cfg(test)]
             width,
             element,
             row_stride_bytes,
@@ -171,14 +177,6 @@ impl AneSurface {
         &mut self.buffer
     }
 
-    pub fn rows(&self) -> u32 {
-        self.rows
-    }
-
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
     pub fn element(&self) -> AneElement {
         self.element
     }
@@ -190,19 +188,21 @@ impl AneSurface {
     pub fn row_stride_elements(&self) -> usize {
         self.row_stride_bytes / self.element.bytes()
     }
+}
+
+/// Host access to a surface's elements, for the CPU reference and the tests.
+#[cfg(test)]
+impl AneSurface {
+    pub fn rows(&self) -> u32 {
+        self.rows
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
     pub fn size(&self) -> usize {
         self.buffer.size()
-    }
-
-    /// The MIL type of a function parameter reading the leading `width` elements of the leading
-    /// `rows` rows.
-    pub fn mil_buffer_type(
-        &self,
-        rows: u32,
-        width: u32,
-    ) -> String {
-        mil_buffer_type(self.element, rows, width, self.row_stride_elements())
     }
 
     fn bytes_mut(&mut self) -> &mut [u8] {

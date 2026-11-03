@@ -470,7 +470,7 @@ impl Context for MetalContext {
             Ok(ane_mlp) => Box::new(ane_mlp),
             Err(dense) => {
                 self.ane.lock().has_unordered_mlps = true;
-                Box::new(dense)
+                dense
             },
         }
     }

@@ -316,11 +316,9 @@ fn check_against_reference(
     let (mil, weights) = ffn_program(&shape);
     let program = AneProgram::new(runtime, &mil, &weights).unwrap();
     println!(
-        "procedures: {:?}; compile {:.2}s (cached {}), load {:.2}s",
+        "procedures: {:?}; cached {}",
         program.procedures().iter().map(|procedure| procedure.function.as_str()).collect::<Vec<_>>(),
-        program.compile_seconds(),
-        program.was_cached(),
-        program.load_seconds()
+        program.was_cached()
     );
 
     let mut surfaces = create_surfaces(&context, &shape);
@@ -573,11 +571,9 @@ fn ane_ffn_perf_9b_shape() {
         let started = Instant::now();
         let program = AneProgram::new(runtime.clone(), &mil, &weights).unwrap();
         println!(
-            "9B program {layout:?}: build {:.2}s (compile {:.2}s, cached {}, load {:.2}s)",
+            "9B program {layout:?}: build {:.2}s (cached {})",
             started.elapsed().as_secs_f64(),
-            program.compile_seconds(),
-            program.was_cached(),
-            program.load_seconds()
+            program.was_cached()
         );
         let mut surfaces = create_surfaces(&context, &shape);
         fill(&mut surfaces, &shape, &mut rng);

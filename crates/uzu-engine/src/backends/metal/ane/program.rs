@@ -5,7 +5,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
 };
 
 use block2::RcBlock;
@@ -42,8 +41,6 @@ pub struct AneProgram {
     model: Retained<AnyObject>,
     procedures: Vec<AneProcedure>,
     was_cached: bool,
-    compile_seconds: f64,
-    load_seconds: f64,
 }
 
 // SAFETY: the `_ANEModel` is only messaged through the framework's thread-safe client.
@@ -140,20 +137,13 @@ impl AneProgram {
             model,
             procedures: Vec::new(),
             was_cached: false,
-            compile_seconds: 0.0,
-            load_seconds: 0.0,
         };
 
-        let started = Instant::now();
         program.was_cached = program.compiled()?;
         if !program.was_cached {
             program.compile()?;
         }
-        program.compile_seconds = started.elapsed().as_secs_f64();
-
-        let started = Instant::now();
         program.load(program.was_cached)?;
-        program.load_seconds = started.elapsed().as_secs_f64();
 
         program.procedures = program.describe()?;
         Ok(program)
@@ -263,6 +253,7 @@ impl AneProgram {
         })
     }
 
+    #[cfg(test)]
     pub fn procedures(&self) -> &[AneProcedure] {
         &self.procedures
     }
@@ -275,16 +266,9 @@ impl AneProgram {
     }
 
     /// Whether the service already held a compilation of this program's source.
+    #[cfg(test)]
     pub fn was_cached(&self) -> bool {
         self.was_cached
-    }
-
-    pub fn compile_seconds(&self) -> f64 {
-        self.compile_seconds
-    }
-
-    pub fn load_seconds(&self) -> f64 {
-        self.load_seconds
     }
 
     /// Binds a procedure's inputs, by name, and its output to surfaces.
@@ -361,6 +345,7 @@ impl AneProgram {
     }
 
     /// Evaluates a binding synchronously.
+    #[cfg(test)]
     pub fn evaluate(
         &self,
         binding: &AneBinding,
