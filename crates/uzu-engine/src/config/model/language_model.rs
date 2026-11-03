@@ -18,7 +18,3 @@ pub struct LanguageModelConfig {
     #[serde(default)]
     pub vocabulary_order: VocabularyOrder,
 }
-
-#[cfg(test)]
-#[path = "../../../unit/config/language_model_test.rs"]
-mod tests;

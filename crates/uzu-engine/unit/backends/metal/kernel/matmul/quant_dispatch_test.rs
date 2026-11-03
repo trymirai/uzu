@@ -20,8 +20,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput,
-                    MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel, MatmulShape, QuantParams,
+                    QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
                 },
             },
         },
@@ -660,14 +660,13 @@ fn gemv_mxu_tiled_prefix_preserves_output_bounds() {
         for width in [16, 19, 33, 2049] {
             let sentinel = bf16::from_f32(-123.0);
             let output_len = (m * width) as usize;
-            let mut output = create_buffer_with_data::<Metal, bf16>(&context, &vec![sentinel; output_len + 32]);
+            buffers.y = create_buffer_with_data::<Metal, bf16>(&context, &vec![sentinel; output_len + 32]);
             let mut commands = context.create_command_buffer(None, None).unwrap();
             let mut args = quant_arguments(&mut buffers, &input);
             args.n = width;
-            args.output = MatmulOutput::new(&mut output, MatmulDOps::none());
             matmul.encode(args, &mut commands).unwrap();
             block_on(commands.end_encoding().submit().wait_until_completed()).unwrap();
-            let actual = buffer_to_vec::<Metal, bf16>(&context, &output);
+            let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
             let expected: Vec<_> = expected_full
                 .chunks_exact(input.n as usize)
                 .flat_map(|row| row[..width as usize].iter().copied())
