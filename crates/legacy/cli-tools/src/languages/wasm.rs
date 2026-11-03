@@ -71,4 +71,20 @@ impl LanguageBackend for WasmLanguageBackend {
         }
         Ok(())
     }
+
+    fn example_target(
+        &self,
+        name: &str,
+        _configuration: Configuration,
+        _target: LanguageBackendTarget,
+    ) -> Result<()> {
+        let paths = Paths::new()?;
+        let bindings_path = paths.bindings_for_language_path(self.language());
+        let name = self.language().convert_file_name(name);
+        let file_path = paths.wasm_examples_path().join(format!("{name}.{}", self.language().file_extension()));
+        if !file_path.exists() {
+            return Err(anyhow!("Example not found: {}", file_path.display()));
+        }
+        Command::pnpm_examples(&name).with_current_path(&bindings_path).run()
+    }
 }

@@ -157,10 +157,11 @@ async fn main() -> Result<()> {
         }) => {
             let configuration = Configuration::Release;
             let backend = language_backend(language, config.clone())?;
+            let targets = backend.default_targets();
             if backend.expects_prebuild_for_run() {
-                backend.build(configuration, vec![host_target.clone()])?;
+                backend.build(configuration, targets.clone())?;
             }
-            backend.example(&name, configuration, host_target.clone())?
+            backend.example(&name, configuration, targets)?
         },
         Some(Commands::Sync {
             check,

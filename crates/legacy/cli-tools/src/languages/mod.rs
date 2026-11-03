@@ -106,9 +106,9 @@ pub trait LanguageBackend {
         &self,
         name: &str,
         configuration: Configuration,
-        target: String,
+        targets: Vec<String>,
     ) -> Result<()> {
-        let targets = self.resolve_targets("example".to_string(), configuration, vec![target])?;
+        let targets = self.resolve_targets("example".to_string(), configuration, targets)?;
         if targets.len() != 1 {
             return Err(anyhow!("Expected 1 target for example, got {}", targets.len()));
         }

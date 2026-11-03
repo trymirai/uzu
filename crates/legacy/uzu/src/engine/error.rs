@@ -21,7 +21,6 @@ pub enum EngineError {
     #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     ClassificationSession(#[from] nagare::classification::ClassificationSessionError),
-    #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
     DecisionSession(#[from] nagare::decision::DecisionSessionError),
     #[cfg(not(target_family = "wasm"))]

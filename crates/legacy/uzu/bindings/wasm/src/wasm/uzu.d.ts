@@ -37,6 +37,8 @@ export type DecisionAnswer = { type: "choice"; index: number; key: string; proba
 
 export type DecisionQuestion = { type: "choice"; instructions: string | undefined; options: DecisionOption[] } | { type: "score"; instructions: string | undefined; levels: string[] } | { type: "yes_no"; instructions: string | undefined; no_description: string | undefined; yes_description: string | undefined };
 
+export type DecisionSessionState = "Idle" | "Deciding";
+
 export type DownloadManagerType = "universal";
 
 export type DownloadPhase = { NotDownloaded: {} } | { Downloading: {} } | { Paused: {} } | { Downloaded: {} } | { Locked: { manager_id: string } } | { Error: { message: string } } | { Initializing: {} };
@@ -55,7 +57,7 @@ export type ModelSource = { type: "mirai"; toolchain_version: string; repository
 
 export type ModelSpecialization = { type: "chat" } | { type: "classification" } | { type: "decision" } | { type: "text_to_speech" } | { type: "translation" } | { type: "speculation" };
 
-export type ReasoningEffort = "Disabled" | "Default" | "Low" | "Medium" | "High" | "XHigh";
+export type ReasoningEffort = "disabled" | "default" | "low" | "medium" | "high" | "xhigh";
 
 export type ReplyEnergy = { type: "total"; total: number } | { type: "components"; cpu: number; gpu: number; ane: number; dram: number };
 
@@ -339,6 +341,14 @@ export class DecisionResult {
     stats: DecisionStats;
 }
 
+export class DecisionSession {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    decide(input: DecisionInput): Promise<DecisionOutput>;
+    readonly state: Promise<DecisionSessionState>;
+}
+
 export class DecisionStats {
     private constructor();
     free(): void;
@@ -410,6 +420,7 @@ export class Engine {
     chatWithInstance(instance: ChatInstance): Promise<ChatSession>;
     chat(model: Model, config: ChatConfig): Promise<ChatSession>;
     static create(config: EngineConfig): Promise<Engine>;
+    decision(model: Model): Promise<DecisionSession>;
     downloadState(model: Model): Promise<DownloadState | undefined>;
     download(model: Model): Promise<DownloaderStream>;
     downloader(model: Model): Downloader;
@@ -832,6 +843,7 @@ export interface InitOutput {
     readonly __wbg_decisionoption_free: (a: number, b: number) => void;
     readonly __wbg_decisionoutput_free: (a: number, b: number) => void;
     readonly __wbg_decisionresult_free: (a: number, b: number) => void;
+    readonly __wbg_decisionsession_free: (a: number, b: number) => void;
     readonly __wbg_decisionstats_free: (a: number, b: number) => void;
     readonly __wbg_device_free: (a: number, b: number) => void;
     readonly __wbg_downloader_free: (a: number, b: number) => void;
@@ -1244,6 +1256,8 @@ export interface InitOutput {
     readonly chatsessionstream_next: (a: number) => any;
     readonly classificationmessage_assistant: (a: number, b: number) => number;
     readonly classificationmessage_user: (a: number, b: number) => number;
+    readonly decisionsession_decide: (a: number, b: number) => any;
+    readonly decisionsession_state: (a: number) => any;
     readonly device_create: () => [number, number, number];
     readonly downloader_delete: (a: number) => any;
     readonly downloader_pause: (a: number) => any;
@@ -1261,6 +1275,7 @@ export interface InitOutput {
     readonly engine_chatModelInfo: (a: number, b: number) => any;
     readonly engine_chatWithInstance: (a: number, b: number) => any;
     readonly engine_create: (a: number) => any;
+    readonly engine_decision: (a: number, b: number) => any;
     readonly engine_download: (a: number, b: number) => any;
     readonly engine_downloadState: (a: number, b: number) => any;
     readonly engine_downloadStates: (a: number) => any;
@@ -1346,7 +1361,7 @@ export interface InitOutput {
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___js_sys_50975383be31856c___Function_fn_wasm_bindgen_6c51f868a643a6ac___JsValue_____wasm_bindgen_6c51f868a643a6ac___sys__Undefined___js_sys_50975383be31856c___Function_fn_wasm_bindgen_6c51f868a643a6ac___JsValue_____wasm_bindgen_6c51f868a643a6ac___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue__core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__480: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__483: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue__wasm_bindgen_6c51f868a643a6ac___JsValue__true_: (a: number, b: number, c: any) => any;
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue______true_: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke_______true_: (a: number, b: number) => void;

@@ -1,11 +1,14 @@
 {
-    "include": ["src"],
+    "include": ["src", "examples"],
     "exclude": [],
     "compilerOptions": {
         "target": "es2020",
         "lib": ["es2020", "DOM"],
         "module": "esnext",
         "moduleResolution": "bundler",
+        "paths": {
+            "@trymirai/uzu-wasm": ["./src/index.ts"]
+        },
         "noEmit": true,
         "forceConsistentCasingInFileNames": true,
         "strict": true,

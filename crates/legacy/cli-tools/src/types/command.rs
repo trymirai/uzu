@@ -361,6 +361,10 @@ impl Command {
         Self::pnpm_run("tsn").with_argument(&path.to_string_lossy())
     }
 
+    pub fn pnpm_examples(name: &str) -> Self {
+        Self::pnpm_run("examples").with_argument("--open").with_argument(&format!("/?example={name}"))
+    }
+
     pub fn napi_build(
         manifest_path: PathBuf,
         target: String,

@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "bindings-wasm", serde(rename_all = "lowercase"))]
 pub enum ReasoningEffort {
     Disabled,
     Default,
