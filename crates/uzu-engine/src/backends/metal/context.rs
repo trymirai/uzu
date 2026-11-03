@@ -25,9 +25,9 @@ use crate::{
         metal::{
             Metal,
             ane::{
-                AneError,
+                AneElement, AneError,
                 ffn::AneFfn,
-                linear::{AneLinear, AneLinearProgram, AneLinears, runs_on_ane, supported_output},
+                linear::{AneLinear, AneLinearProgram, AneLinears, runs_on_ane, supported_output, weights_element},
                 mlp::AneMlp,
                 shared::AneHealth,
             },
@@ -170,16 +170,20 @@ impl MetalContext {
     pub fn ane_linear(
         &self,
         weights: &LinearWeights<'_, Metal>,
+        role: LinearRole,
     ) -> Option<Arc<AneLinearProgram>> {
         let output = supported_output(weights)?;
+        let element = weights_element(role);
         let mut ane = self.ane.lock();
         if ane.disabled {
             return None;
         }
-        if let Some(program) = ane.linear_programs.iter().find(|program| program.output() == output) {
+        if let Some(program) =
+            ane.linear_programs.iter().find(|program| program.output() == output && program.weights() == element)
+        {
             return Some(program.clone());
         }
-        match self.build_linear_program(&mut ane, output) {
+        match self.build_linear_program(&mut ane, output, element) {
             Ok(program) => {
                 ane.linear_programs.push(program.clone());
                 Some(program)
@@ -196,6 +200,7 @@ impl MetalContext {
         &self,
         ane: &mut AneState,
         output: u32,
+        element: AneElement,
     ) -> Result<Arc<AneLinearProgram>, AneError> {
         let shared = if let Some(shared) = &ane.linears {
             shared.clone()
@@ -204,7 +209,7 @@ impl MetalContext {
             ane.linears = Some(shared.clone());
             shared
         };
-        Ok(Arc::new(AneLinearProgram::new(shared, output)?))
+        Ok(Arc::new(AneLinearProgram::new(self, shared, output, element)?))
     }
 
     /// The lane with this index (0 is the main queue), created on first use.

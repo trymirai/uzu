@@ -25,8 +25,8 @@ use crate::{
                 AneBinding, AneElement, AneError, AneProgram, AneRuntime, AneSurface,
                 mil::{FfnSurfaceSpec, LinearShape, linear_program},
                 shared::{
-                    AneExecutor, AneHealth, AneKernels, CHUNK, GpuBuffer, MIN_TOKENS, ROWS, SEGMENT, random_signs,
-                    read_signs, stageable, submit, upload,
+                    AneExecutor, AneHealth, AneKernels, CHUNK, GpuBuffer, MIN_TOKENS, ROWS, SEGMENT, WEIGHT_CLIP,
+                    random_signs, read_signs, stageable, submit, upload, weight_clip,
                 },
             },
             command_buffer::MetalCommandBufferEncoding,
@@ -39,12 +39,21 @@ use crate::{
 
 /// Rows of the weight, scale and output surfaces, the widest linear layer one lane can run.
 pub const MAX_OUTPUT: u32 = 16384;
+/// Whether the weights of the roles `UZU_ANE_FP16_WEIGHTS` does not name are fp16.
+const FP16_WEIGHTS_DEFAULT: bool = false;
 /// The output rotation is applied per 32-channel block.
 const OUTPUT_BLOCK: u32 = 32;
 
 struct Surfaces {
     x: AneSurface,
     tx: AneSurface,
+    w: AneSurface,
+    s: AneSurface,
+    y: AneSurface,
+}
+
+/// The weight, scale and output surfaces of a program that does not use the shared ones.
+struct Operands {
     w: AneSurface,
     s: AneSurface,
     y: AneSurface,
@@ -61,16 +70,26 @@ pub struct AneLinears {
     health: Arc<AneHealth>,
 }
 
-fn template_shape(output: u32) -> LinearShape {
+/// The shape of the program of `output`-wide layers whose weights are `weights`. Int8 weights use
+/// the surfaces every program shares (sized for the widest layer); fp16 weights are twice as big and
+/// only some layers use them, so such a program has surfaces of its own, `output` rows tall.
+fn template_shape(
+    output: u32,
+    weights: AneElement,
+) -> LinearShape {
     LinearShape {
         input: CHUNK,
         output,
-        max_output: MAX_OUTPUT,
+        max_output: if weights == AneElement::Int8 {
+            MAX_OUTPUT
+        } else {
+            output
+        },
         segment: SEGMENT,
         rows: ROWS.to_vec(),
         max_rows: *ROWS.last().unwrap(),
         activations: activations(),
-        weights: AneElement::Int8,
+        weights,
     }
 }
 
@@ -89,7 +108,7 @@ impl AneLinears {
         context: &MetalContext,
         health: Arc<AneHealth>,
     ) -> Result<Self, AneError> {
-        let shape = template_shape(OUTPUT_BLOCK);
+        let shape = template_shape(OUTPUT_BLOCK, AneElement::Int8);
         let surface = |spec: FfnSurfaceSpec| AneSurface::new(context, spec.rows, spec.width, spec.element);
         let lane_surfaces = || -> Result<Mutex<Surfaces>, AneError> {
             let [x, w, s]: [_; 3] = shape.inputs().try_into().expect("linear programs take three inputs");
@@ -105,7 +124,12 @@ impl AneLinears {
         let pack_signs = random_signs(CHUNK as usize, 1);
         Ok(Self {
             surfaces: [lane_surfaces()?, lane_surfaces()?],
-            kernels: AneKernels::new(context, false, activations())?,
+            kernels: AneKernels::new(
+                context,
+                false,
+                activations(),
+                weight_clip(&["UZU_ANE_WEIGHT_CLIP"], WEIGHT_CLIP),
+            )?,
             pack_signs_buffer: upload(context, &pack_signs).map_err(kernel_error)?,
             pack_signs,
             health,
@@ -119,6 +143,8 @@ pub struct AneLinearProgram {
     program: AneProgram,
     bindings: [Vec<(u32, AneBinding)>; 2],
     listeners: [Retained<MTLSharedEventListener>; 2],
+    /// Per lane, the surfaces of a program with fp16 weights (see [`template_shape`]).
+    own: Option<[Mutex<Operands>; 2]>,
     shared: Arc<AneLinears>,
 }
 
@@ -151,16 +177,33 @@ impl AneExecutor for AneLinearProgram {
 /// `deltanet`, `attention`, or single roles `deltanet_in`, `deltanet_out`, `attention_in`,
 /// `attention_out`; `none` for no linears; default all), to compare configurations.
 pub fn runs_on_ane(role: LinearRole) -> bool {
-    let Ok(selection) = std::env::var("UZU_ANE_LINEARS") else {
-        return true;
-    };
+    selected("UZU_ANE_LINEARS", role).unwrap_or(true)
+}
+
+/// The element type of the weights of the ANE program of `role`. `UZU_ANE_FP16_WEIGHTS` picks the
+/// roles whose weights are fp16 (same syntax as `UZU_ANE_LINEARS`): more accurate, slower on the ANE.
+pub fn weights_element(role: LinearRole) -> AneElement {
+    if selected("UZU_ANE_FP16_WEIGHTS", role).unwrap_or(FP16_WEIGHTS_DEFAULT) {
+        AneElement::Float16
+    } else {
+        AneElement::Int8
+    }
+}
+
+/// Whether `role` is in the comma separated list in the environment variable `variable`, or `None`
+/// if it is not set.
+fn selected(
+    variable: &str,
+    role: LinearRole,
+) -> Option<bool> {
+    let selection = std::env::var(variable).ok()?;
     let (group, name) = match role {
         LinearRole::DeltaNetInput => ("deltanet", "deltanet_in"),
         LinearRole::DeltaNetOutput => ("deltanet", "deltanet_out"),
         LinearRole::AttentionInput => ("attention", "attention_in"),
         LinearRole::AttentionOutput => ("attention", "attention_out"),
     };
-    selection.split(',').any(|item| item == group || item == name || item == "all")
+    Some(selection.split(',').any(|item| item == group || item == name || item == "all"))
 }
 
 /// The output width of a layer these programs can run, or `None` if they cannot (other format,
@@ -181,24 +224,46 @@ pub fn supported_output(weights: &LinearWeights<'_, Metal>) -> Option<u32> {
 impl AneLinearProgram {
     /// Builds the program of `output`-wide layers (compiling it the first time per Mac).
     pub fn new(
+        context: &MetalContext,
         shared: Arc<AneLinears>,
         output: u32,
+        weights: AneElement,
     ) -> Result<Self, AneError> {
-        let shape = template_shape(output);
+        let shape = template_shape(output, weights);
         let runtime = AneRuntime::new()?;
         let (mil, blob) = linear_program(&shape);
         let program = AneProgram::new(runtime, &mil, &blob)?;
 
+        let own = if weights == AneElement::Int8 {
+            None
+        } else {
+            let surface = |spec: FfnSurfaceSpec| AneSurface::new(context, spec.rows, spec.width, spec.element);
+            let operands = || -> Result<Mutex<Operands>, AneError> {
+                let [_, w, s]: [_; 3] = shape.inputs().try_into().expect("linear programs take three inputs");
+                Ok(Mutex::new(Operands {
+                    w: surface(w)?,
+                    s: surface(s)?,
+                    y: surface(shape.output_spec())?,
+                }))
+            };
+            Some([operands()?, operands()?])
+        };
         let bind = |lane: usize| -> Result<Vec<(u32, AneBinding)>, AneError> {
             let surfaces = shared.surfaces[lane].lock();
-            let inputs = [("x", &surfaces.x), ("w", &surfaces.w), ("s", &surfaces.s)];
+            let own = own.as_ref().map(|own| own[lane].lock());
+            let (w, s, y) = if let Some(own) = &own {
+                (&own.w, &own.s, &own.y)
+            } else {
+                (&surfaces.w, &surfaces.s, &surfaces.y)
+            };
+            let inputs = [("x", &surfaces.x), ("w", w), ("s", s)];
             shape
                 .rows
                 .iter()
                 .map(|rows| {
                     let name = LinearShape::function_name(*rows);
                     let procedure = program.procedure(&name).ok_or(AneError::UnknownProcedure(name))?;
-                    Ok((*rows, program.bind(procedure, &inputs, &surfaces.y)?))
+                    Ok((*rows, program.bind(procedure, &inputs, y)?))
                 })
                 .collect()
         };
@@ -208,12 +273,18 @@ impl AneLinearProgram {
             program,
             bindings,
             listeners: [MTLSharedEventListener::new(), MTLSharedEventListener::new()],
+            own,
             shared,
         })
     }
 
     pub fn output(&self) -> u32 {
         self.shape.output
+    }
+
+    /// The element type of the weights the program reads.
+    pub fn weights(&self) -> AneElement {
+        self.shape.weights
     }
 
     /// The per-layer constants for a layer these programs can run, `supported_output` wide.
@@ -256,7 +327,9 @@ impl AneLinearProgram {
         let command_buffer = &mut *command_buffer.debug_group("linear (ane)");
         let rows = self.shape.rows_for(tokens).expect("batch accepted by the ANE executor");
         let kernels = &self.shared.kernels;
-        let mut surfaces = self.shared.surfaces[command_buffer.lane()].lock();
+        let lane = command_buffer.lane();
+        let mut surfaces = self.shared.surfaces[lane].lock();
+        let mut own = self.own.as_ref().map(|own| own[lane].lock());
         let Surfaces {
             x,
             tx,
@@ -264,6 +337,16 @@ impl AneLinearProgram {
             s,
             y,
         } = &mut *surfaces;
+        let (w, s, y) = if let Some(own) = own.as_deref_mut() {
+            let Operands {
+                w,
+                s,
+                y,
+            } = own;
+            (w, s, y)
+        } else {
+            (w, s, y)
+        };
 
         kernels.stage_rows(weights.matrix, &layer.pre_signs, w, s, 0, self.shape.output, command_buffer);
         kernels.pack(input, &self.shared.pack_signs_buffer, tokens, x, tx, command_buffer)?;
@@ -302,7 +385,7 @@ impl AneLinear {
         let Some(weights) = inner.weights() else {
             return Err(inner);
         };
-        let Some(program) = context.ane_linear(&weights) else {
+        let Some(program) = context.ane_linear(&weights, role) else {
             return Err(inner);
         };
         let layer = match program.layer(context, &weights) {

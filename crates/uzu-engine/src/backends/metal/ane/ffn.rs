@@ -29,8 +29,9 @@ use crate::{
                 AneBinding, AneElement, AneError, AneProgram, AneRuntime, AneSurface,
                 mil::FfnShape,
                 shared::{
-                    AneExecutor, AneHealth, AneKernels, CHUNK, GpuBuffer, MIN_TOKENS, ROWS, SEGMENT, random_signs,
-                    read_signs, scale_stride, signed_hadamard_blocks, stageable, submit, upload, upload_sign_bits,
+                    AneExecutor, AneHealth, AneKernels, CHUNK, GpuBuffer, MIN_TOKENS, ROWS, SEGMENT, WEIGHT_CLIP,
+                    random_signs, read_signs, scale_stride, signed_hadamard_blocks, stageable, submit, upload,
+                    upload_sign_bits, weight_clip,
                 },
             },
             command_buffer::MetalCommandBufferEncoding,
@@ -234,7 +235,12 @@ impl AneFfn {
         let program = AneProgram::new(runtime, &mil, &blob)?;
 
         let lanes = [LaneResources::new(context, &shape, &program)?, LaneResources::new(context, &shape, &program)?];
-        let kernels = AneKernels::new(context, true, shape.inputs()[0].element)?;
+        let kernels = AneKernels::new(
+            context,
+            true,
+            shape.inputs()[0].element,
+            weight_clip(&["UZU_ANE_FFN_WEIGHT_CLIP", "UZU_ANE_WEIGHT_CLIP"], WEIGHT_CLIP),
+        )?;
 
         let kernel_error = |error: MetalError| AneError::Unavailable(error.to_string());
         let pack_signs = random_signs(hidden as usize, 1);
@@ -348,6 +354,7 @@ impl AneFfn {
             scale_stride(down),
             wd_row_stride,
             sd_stride,
+            self.kernels.weight_clip,
             command_buffer,
         );
 

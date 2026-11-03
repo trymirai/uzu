@@ -166,6 +166,27 @@ static float threadgroup_peak(float value, threadgroup float* partials, const th
   return threadgroup_cooperative_reduce<SimdReduceMax<float>, ANE_THREADS>(value, partials, thread_context);
 }
 
+static float threadgroup_sum(float value, threadgroup float* partials, const thread ThreadContext& thread_context) {
+  return threadgroup_cooperative_reduce<SimdReduceSum<float>, ANE_THREADS>(value, partials, thread_context);
+}
+
+static float values_sum_squares(const thread float* values) {
+  float sum = 0.0f;
+  METAL_PRAGMA_UNROLL
+  for (ushort index = 0; index < ANE_VALUES; ++index) {
+    sum = fma(values[index], values[index], sum);
+  }
+  return sum;
+}
+
+// The int8 range of a staged row covers its peak, or with `clip_sigmas` > 0 at most that many standard
+// deviations of the row (`sum_squares` over `count` values; codes beyond clamp to +-127). Rotated rows are
+// close to Gaussian, whose peak is already near the minimum-error clip, so this does not reduce the error
+// (see the measurements in the commit that added it); it is kept as an experiment switch.
+static float clipped_bound(float peak, float sum_squares, float count, float clip_sigmas) {
+  return min(peak, clip_sigmas * sqrt(sum_squares / count));
+}
+
 static float values_peak(const thread float* values) {
   float peak = 0.0f;
   METAL_PRAGMA_UNROLL
@@ -178,14 +199,17 @@ static float values_peak(const thread float* values) {
 // round-to-nearest-even int8 codes by adding 1.5 * 2^23: the sum's low byte is the code in two's complement.
 #define ANE_ROUNDING_MAGIC 12582912.0f
 
+// Codes are clamped to +-127 (symmetric, as the ANE programs expect).
 static void store_codes(device char* destination, const thread float* values, float inverse) {
   METAL_PRAGMA_UNROLL
   for (ushort index = 0; index < ANE_VALUES; index += 4) {
-    const uint4 bits = as_type<uint4>(
+    const uint4 bits = as_type<uint4>(clamp(
         fma(float4(values[index], values[index + 1], values[index + 2], values[index + 3]),
             float4(inverse),
-            float4(ANE_ROUNDING_MAGIC))
-    );
+            float4(ANE_ROUNDING_MAGIC)),
+        float4(ANE_ROUNDING_MAGIC - 127.0f),
+        float4(ANE_ROUNDING_MAGIC + 127.0f)
+    ));
     uint packed = bits.w << 24;
     packed = insert_bits(packed, bits.z, 16, 8);
     packed = insert_bits(packed, bits.y, 8, 8);
@@ -203,11 +227,30 @@ static void store_codes_columns(
 ) {
   METAL_PRAGMA_UNROLL
   for (ushort group = 0; group < 8; ++group) {
-    const uint2 bits = as_type<uint2>(
-        fma(float2(values[2 * group], values[2 * group + 1]), float2(inverse), float2(ANE_ROUNDING_MAGIC))
-    );
+    const uint2 bits = as_type<uint2>(clamp(
+        fma(float2(values[2 * group], values[2 * group + 1]), float2(inverse), float2(ANE_ROUNDING_MAGIC)),
+        float2(ANE_ROUNDING_MAGIC - 127.0f),
+        float2(ANE_ROUNDING_MAGIC + 127.0f)
+    ));
     *reinterpret_cast<device ushort*>(destination + group * 512 + lane * ANE_VALUES + simdgroup * 2) =
         ushort(insert_bits(bits.x, bits.y, 8, 8));
+  }
+}
+
+// The fp16 values of the program's dequantized codes, without the rounding: value / bound * 127 / 128
+// (`inverse` is 127 / bound), in the hadamard_across_simdgroups_columns layout.
+static void store_values_columns(
+    device char* destination,
+    const thread float* values,
+    float inverse,
+    ushort lane,
+    ushort simdgroup
+) {
+  METAL_PRAGMA_UNROLL
+  for (ushort group = 0; group < 8; ++group) {
+    const float scale = inverse * (1.0f / 128.0f);
+    *reinterpret_cast<device half2*>(destination + 2 * (group * 512 + lane * ANE_VALUES + simdgroup * 2)) =
+        half2(values[2 * group] * scale, values[2 * group + 1] * scale);
   }
 }
 
@@ -365,7 +408,8 @@ static float dequantized_h32(thread float* values, uint2 packed, float scale, fl
 // [groups, scale_stride/2] low nibble = even row), then
 //   r' = post_signs * H_block(pre_signs * H32(r))
 // and quantize to int8 with one scale per row (written x128 into a [rows, 1] fp16 surface). The
-// second transform's normalization is folded into the quantization (peak and inverse scale).
+// second transform's normalization is folded into the quantization (peak and inverse scale). With
+// `half_values` (up projection only) the staged row holds the unrounded fp16 values instead of the codes.
 
 // Up projection: a 4096-column row, block 4096, no post signs. Float pre signs (their 16 KB per row
 // stay cache resident, and the float multiply is what keeps this kernel ALU-light).
@@ -381,8 +425,11 @@ KERNEL(AneStageUpRows)(
     constant uint& scale_stride,
     constant uint& staged_row_stride,
     constant uint& row_scale_stride,
+    constant float& clip_sigmas,
+    const bool half_values SPECIALIZE,
     threadgroup float shared[ANE_CHUNK],
     threadgroup float partials[METAL_SIMD_SIZE],
+    threadgroup float sum_partials[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint row GROUPS(rows),
     const uint thread_id THREADS(ANE_THREADS)
@@ -412,14 +459,30 @@ KERNEL(AneStageUpRows)(
   block_hadamard_columns(values, lane, simdgroup, shared, thread_id);
 
   const float normalization = rsqrt(float(ANE_CHUNK));
-  const float row_peak = max(threadgroup_peak(values_peak(values), partials, thread_context) * normalization, 1e-20f);
-  store_codes_columns(
-      staged + ulong(row) * staged_row_stride,
-      values,
-      127.0f * normalization / row_peak,
-      lane,
-      simdgroup
-  );
+  float bound = threadgroup_peak(values_peak(values), partials, thread_context) * normalization;
+  if (clip_sigmas > 0.0f) {
+    const float sum_squares =
+        threadgroup_sum(values_sum_squares(values), sum_partials, thread_context) * (normalization * normalization);
+    bound = clipped_bound(bound, sum_squares, float(ANE_CHUNK), clip_sigmas);
+  }
+  const float row_peak = max(bound, 1e-20f);
+  if (half_values) {
+    store_values_columns(
+        staged + ulong(row) * staged_row_stride,
+        values,
+        127.0f * normalization / row_peak,
+        lane,
+        simdgroup
+    );
+  } else {
+    store_codes_columns(
+        staged + ulong(row) * staged_row_stride,
+        values,
+        127.0f * normalization / row_peak,
+        lane,
+        simdgroup
+    );
+  }
   if (thread_id == 0) {
     row_scales[ulong(row) * row_scale_stride] = half(row_peak / 127.0f * 128.0f);
   }
@@ -441,8 +504,10 @@ KERNEL(AneStageDownRows)(
     constant uint& scale_stride,
     constant uint& staged_row_stride,
     constant uint& row_scale_stride,
+    constant float& clip_sigmas,
     const uint chunks SPECIALIZE,
     threadgroup float partials[METAL_SIMD_SIZE],
+    threadgroup float sum_partials[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint row GROUPS(rows),
     const uint thread_id THREADS(ANE_THREADS)
@@ -454,6 +519,7 @@ KERNEL(AneStageDownRows)(
 
   float values[3][ANE_VALUES];
   float peak = 0.0f;
+  float sum_squares = 0.0f;
   METAL_PRAGMA_UNROLL
   for (uint chunk = 0; chunk < chunks; ++chunk) {
     const uint base = chunk * ANE_CHUNK + thread_id * ANE_VALUES;
@@ -476,9 +542,18 @@ KERNEL(AneStageDownRows)(
       chunk_values[index] = flip_sign(chunk_values[index], post_bits, index);
     }
     peak = max(peak, values_peak(chunk_values));
+    if (clip_sigmas > 0.0f) {
+      sum_squares += values_sum_squares(chunk_values);
+    }
   }
   const float normalization = rsqrt(float(ANE_DOWN_BLOCK));
-  const float row_peak = max(threadgroup_peak(peak, partials, thread_context) * normalization, 1e-20f);
+  float bound = threadgroup_peak(peak, partials, thread_context) * normalization;
+  if (clip_sigmas > 0.0f) {
+    const float total_squares =
+        threadgroup_sum(sum_squares, sum_partials, thread_context) * (normalization * normalization);
+    bound = clipped_bound(bound, total_squares, float(chunks * ANE_CHUNK), clip_sigmas);
+  }
+  const float row_peak = max(bound, 1e-20f);
   const float inverse = 127.0f * normalization / row_peak;
   device char* destination = staged + ulong(row) * staged_row_stride;
   METAL_PRAGMA_UNROLL

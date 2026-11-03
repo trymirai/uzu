@@ -99,10 +99,20 @@ fn signs(
         .collect()
 }
 
-fn quantize_row(values: &[f64]) -> (Vec<i8>, f64) {
-    let peak = values.iter().fold(0.0f64, |peak, value| peak.max(value.abs())).max(1e-20);
-    let codes = values.iter().map(|value| (value * 127.0 / peak).round().clamp(-127.0, 127.0) as i8).collect();
-    (codes, peak / 127.0)
+/// The staging kernels' rule: the int8 range covers the row's peak, or with `clip_sigmas` > 0 at most
+/// that many standard deviations (codes beyond clamp to +-127).
+fn quantize_row(
+    values: &[f64],
+    clip_sigmas: f64,
+) -> (Vec<i8>, f64) {
+    let mut bound = values.iter().fold(0.0f64, |peak, value| peak.max(value.abs()));
+    if clip_sigmas > 0.0 {
+        let deviation = (values.iter().map(|value| value * value).sum::<f64>() / values.len() as f64).sqrt();
+        bound = bound.min(clip_sigmas * deviation);
+    }
+    let bound = bound.max(1e-20);
+    let codes = values.iter().map(|value| (value * 127.0 / bound).round().clamp(-127.0, 127.0) as i8).collect();
+    (codes, bound / 127.0)
 }
 
 fn assert_codes_close(
@@ -153,7 +163,7 @@ fn check_pack(half_values: bool) {
         let mut values: Vec<f64> =
             (0..hidden).map(|index| input[token * hidden + index].to_f32() as f64 * sign[index] as f64).collect();
         hadamard(&mut values, hidden);
-        let (expected, scale) = quantize_row(&values);
+        let (expected, scale) = quantize_row(&values, 0.0);
         if half_values {
             // fp16 values a / peak * 127 / 128: the codes before rounding, over 128.
             let actual = &read::<f16>(&codes)[token * hidden..(token + 1) * hidden];
@@ -331,6 +341,8 @@ fn check_stage_rows(
     columns: usize,
     block: usize,
     with_post_signs: bool,
+    clip_sigmas: f32,
+    half_values: bool,
 ) {
     let context = create_context::<Metal>();
     let mut rng = StdRng::seed_from_u64(columns as u64 + block as u64);
@@ -338,12 +350,22 @@ fn check_stage_rows(
     let weights = random_w4(&mut rng, total_rows, columns);
     let pre = signs(&mut rng, columns);
     let post = signs(&mut rng, columns);
-    let staged_row_stride = columns;
+    let staged_row_stride = columns
+        * if half_values {
+            2
+        } else {
+            1
+        };
     let row_scale_stride = 32usize; // fp16 [rows, 1] surface: 64-byte rows
     let codes_buffer = upload(&context, &weights.codes);
     let scales_buffer = upload(&context, &weights.scales);
     let zero_buffer = upload(&context, &weights.zero_points);
-    let mut staged = zeros(&context, rows * staged_row_stride);
+    let element_bytes = if half_values {
+        2
+    } else {
+        1
+    };
+    let mut staged = zeros(&context, rows * staged_row_stride * element_bytes);
     let mut row_scales = zeros(&context, rows * row_scale_stride * 2);
     if with_post_signs {
         let kernel = AneStageDownRowsMetalKernel::new(&context, (columns / 4096) as u32).unwrap();
@@ -362,11 +384,12 @@ fn check_stage_rows(
                 weights.scale_stride as u32,
                 staged_row_stride as u32,
                 row_scale_stride as u32,
+                clip_sigmas,
                 encoding,
             )
         });
     } else {
-        let kernel = AneStageUpRowsMetalKernel::new(&context).unwrap();
+        let kernel = AneStageUpRowsMetalKernel::new(&context, half_values).unwrap();
         let pre_buffer = upload(&context, &pre);
         run(&context, |encoding| {
             kernel.encode(
@@ -381,6 +404,7 @@ fn check_stage_rows(
                 weights.scale_stride as u32,
                 staged_row_stride as u32,
                 row_scale_stride as u32,
+                clip_sigmas,
                 encoding,
             )
         });
@@ -393,9 +417,19 @@ fn check_stage_rows(
         if with_post_signs {
             values.iter_mut().zip(&post).for_each(|(value, sign)| *value *= *sign as f64);
         }
-        let (expected, scale) = quantize_row(&values);
-        let actual = &read::<i8>(&staged)[row * staged_row_stride..row * staged_row_stride + columns];
-        assert_codes_close(actual, &expected, "stage");
+        let (expected, scale) = quantize_row(&values, clip_sigmas as f64);
+        if half_values {
+            let actual = &read::<f16>(&staged)[row * columns..(row + 1) * columns];
+            let worst = actual
+                .iter()
+                .zip(&values)
+                .map(|(actual, value)| (actual.to_f64() * 128.0 - value / scale).abs())
+                .fold(0.0, f64::max);
+            assert!(worst < 0.05, "fp16 staged value differs by {worst} codes");
+        } else {
+            let actual = &read::<i8>(&staged)[row * staged_row_stride..row * staged_row_stride + columns];
+            assert_codes_close(actual, &expected, "stage");
+        }
         let actual_scale = read::<f16>(&row_scales)[row * row_scale_stride].to_f64() / 128.0;
         assert!((actual_scale - scale).abs() <= scale * 1e-3, "row scale {actual_scale} vs {scale}");
     }
@@ -403,12 +437,27 @@ fn check_stage_rows(
 
 #[uzu_test]
 fn ane_stage_rows_up_projection_layout() {
-    check_stage_rows(4096, 4096, false);
+    check_stage_rows(4096, 4096, false, 0.0, false);
+}
+
+#[uzu_test]
+fn ane_stage_rows_up_projection_half_values() {
+    check_stage_rows(4096, 4096, false, 0.0, true);
+}
+
+#[uzu_test]
+fn ane_stage_rows_up_projection_clipped() {
+    check_stage_rows(4096, 4096, false, 3.5, false);
 }
 
 #[uzu_test]
 fn ane_stage_rows_down_projection_layout() {
-    check_stage_rows(12288, 512, true);
+    check_stage_rows(12288, 512, true, 0.0, false);
+}
+
+#[uzu_test]
+fn ane_stage_rows_down_projection_clipped() {
+    check_stage_rows(12288, 512, true, 3.5, false);
 }
 
 /// Stages the 9B layer's up (2 x 12288 rows x 4096 columns, block 4096) and down (4096 rows x 12288
@@ -439,7 +488,8 @@ fn ane_stage_rows_perf() {
     let mut su = zeros(&context, intermediate * 64);
     let mut sg = zeros(&context, intermediate * 64);
     let mut sd = zeros(&context, hidden * 64);
-    let stage_up = AneStageUpRowsMetalKernel::new(&context).unwrap();
+    let clip_sigmas: f32 = std::env::var("UZU_ANE_WEIGHT_CLIP").map_or(0.0, |value| value.parse().unwrap());
+    let stage_up = AneStageUpRowsMetalKernel::new(&context, false).unwrap();
     let stage_down = AneStageDownRowsMetalKernel::new(&context, 3).unwrap();
     let up_bytes = up.codes.len() + up.scales.len() * 2 + up.zero_points.len() + 2 * intermediate * up_columns;
     let down_bytes = down.codes.len() + down.scales.len() * 2 + down.zero_points.len() + hidden * down_columns;
@@ -464,6 +514,7 @@ fn ane_stage_rows_perf() {
                     up.scale_stride as u32,
                     up_columns as u32,
                     32,
+                    clip_sigmas,
                     &mut encoding,
                 );
             }
@@ -483,6 +534,7 @@ fn ane_stage_rows_perf() {
                 down.scale_stride as u32,
                 down_columns as u32,
                 32,
+                clip_sigmas,
                 &mut encoding,
             );
         }

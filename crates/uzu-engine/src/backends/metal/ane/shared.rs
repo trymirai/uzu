@@ -46,6 +46,8 @@ pub const MIN_TOKENS: u32 = 128;
 pub const ROWS: [u32; 4] = [256, 512, 768, 1024];
 /// Width of each matmul's reduction segment in the programs.
 pub const SEGMENT: u32 = 2048;
+/// Standard deviations of a staged weight row the int8 range covers by default (`0`: its peak).
+pub const WEIGHT_CLIP: f32 = 0.0;
 const SIGN_SEED: u64 = 0x5eed_a11e_2026_1103;
 
 /// The error a prefill fails with when an ANE request of it failed: its output would be wrong.
@@ -215,6 +217,26 @@ pub fn scale_stride(matrix: &WeightMatrix<Metal>) -> u32 {
     quantized.params.scale_shape()[1]
 }
 
+/// How the staging kernels spread a row's int8 range: over the row's peak (`0`), or over that many
+/// standard deviations of the row, clipping what is beyond. The weights are clipped at the first of
+/// the environment variables `names` that is set (`peak` or a number of standard deviations),
+/// else at `default` standard deviations.
+pub fn weight_clip(
+    names: &[&str],
+    default: f32,
+) -> f32 {
+    for name in names {
+        if let Ok(value) = std::env::var(name) {
+            return if value == "peak" {
+                0.0
+            } else {
+                value.parse().unwrap_or_else(|_| panic!("{name} is `peak` or a number, got `{value}`"))
+            };
+        }
+    }
+    default
+}
+
 /// The GPU kernels around an ANE program: activation packing, row staging and output unpacking.
 pub struct AneKernels {
     activations: AneElement,
@@ -222,16 +244,21 @@ pub struct AneKernels {
     transpose: AneTransposeCodesMetalKernel,
     unpack: AneUnpackMetalKernel,
     stage_up: AneStageUpRowsMetalKernel,
+    /// Stages fp16 weights instead of int8 codes.
+    stage_up_half: AneStageUpRowsMetalKernel,
+    /// See [`weight_clip`].
+    pub weight_clip: f32,
 }
 
 impl AneKernels {
     /// `scale_row`: whether the program's output carries a per-token scale in the row after its
     /// channels (the FFN's intermediate scale), which unpacking applies. `activations`: the element
-    /// type of the program's input `x`.
+    /// type of the program's input `x`. `weight_clip`: see [`weight_clip`].
     pub fn new(
         context: &MetalContext,
         scale_row: bool,
         activations: AneElement,
+        weight_clip: f32,
     ) -> Result<Self, AneError> {
         let half_values = activations == AneElement::Float16;
         let kernel_error = |error: MetalError| AneError::Unavailable(error.to_string());
@@ -240,7 +267,9 @@ impl AneKernels {
             transpose: AneTransposeCodesMetalKernel::new(context, half_values).map_err(kernel_error)?,
             activations,
             unpack: AneUnpackMetalKernel::new(context, scale_row).map_err(kernel_error)?,
-            stage_up: AneStageUpRowsMetalKernel::new(context).map_err(kernel_error)?,
+            stage_up: AneStageUpRowsMetalKernel::new(context, false).map_err(kernel_error)?,
+            stage_up_half: AneStageUpRowsMetalKernel::new(context, true).map_err(kernel_error)?,
+            weight_clip,
         })
     }
 
@@ -263,7 +292,8 @@ impl AneKernels {
     }
 
     /// Stages `rows` rows of a W4 projection, from `row_offset`, into the int8 weight rows `staged`
-    /// and their scales `scales` (see `AneStageUpRows`): row `r' = H4096(pre_signs * H32(r))`.
+    /// and their scales `scales` (see `AneStageUpRows`): row `r' = H4096(pre_signs * H32(r))`. The
+    /// rows are fp16 values instead of int8 codes if `staged` is an fp16 surface.
     pub fn stage_rows(
         &self,
         matrix: &WeightMatrix<Metal>,
@@ -276,7 +306,12 @@ impl AneKernels {
     ) {
         let staged_row_stride = staged.row_stride_bytes() as u32;
         let row_scale_stride = scales.row_stride_elements() as u32;
-        self.stage_up.encode(
+        let kernel = if staged.element() == AneElement::Float16 {
+            &self.stage_up_half
+        } else {
+            &self.stage_up
+        };
+        kernel.encode(
             matrix.values(),
             matrix.scales().unwrap(),
             matrix.zero_points().unwrap(),
@@ -288,6 +323,7 @@ impl AneKernels {
             scale_stride(matrix),
             staged_row_stride,
             row_scale_stride,
+            self.weight_clip,
             command_buffer,
         );
     }
