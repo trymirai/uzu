@@ -23,6 +23,7 @@ mod objc;
 mod program;
 mod runtime;
 mod surface;
+pub mod trace;
 
 pub use program::{AneBinding, AneProcedure, AneProgram};
 pub use runtime::AneRuntime;
