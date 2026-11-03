@@ -2,7 +2,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
-        common::{Backend, Context, SparseBuffer},
+        common::{Context, SparseBuffer},
         metal::{Metal, error::MetalError},
     },
     tests::helpers::create_context,
