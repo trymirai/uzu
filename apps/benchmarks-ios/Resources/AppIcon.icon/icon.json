@@ -1,0 +1,107 @@
+{
+  "fill": {
+    "solid": "srgb:0.94902,0.94510,0.92941,1.00000"
+  },
+  "fill-specializations": [
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.03922,0.03922,0.03922,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:1.00000,0.36863,0.00000,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "Accent.svg",
+          "name": "Accent"
+        },
+        {
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.94902,0.94510,0.92941,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:0.94902,0.94510,0.92941,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "Stems.svg",
+          "name": "Stems"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.94902,0.94510,0.92941,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "srgb:0.94902,0.94510,0.92941,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "image-name": "Ticks.svg",
+          "name": "Ticks"
+        },
+        {
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.16863,0.16863,0.16078,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "image-name": "Lines.svg",
+          "name": "Lines"
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

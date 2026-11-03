@@ -1,5 +1,25 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
+SRCS = [
+    "bench.hpp",
+    "common.cpp",
+    "common.hpp",
+    "engine.cpp",
+    "engine.hpp",
+    "main.cpp",
+]
+
+DEPS = [
+    ":memory_counters",
+    "//ml_drift/samples/llm:llm_config",
+    "//ml_drift/samples/llm:llm_runner_interface",
+    "//ml_drift/samples/llm:llm_runner_metal_lib",
+    "@com_google_absl//absl/flags:flag",
+    "@com_google_absl//absl/flags:parse",
+    "@com_google_absl//absl/status",
+    "@glaze",
+]
+
 cc_library(
     name = "memory_counters",
     srcs = ["memory_counters.c"],
@@ -8,22 +28,14 @@ cc_library(
 
 cc_binary(
     name = "engine-mldrift",
-    srcs = [
-        "bench.hpp",
-        "common.cpp",
-        "common.hpp",
-        "engine.cpp",
-        "engine.hpp",
-        "main.cpp",
-    ],
-    deps = [
-        ":memory_counters",
-        "//ml_drift/samples/llm:llm_config",
-        "//ml_drift/samples/llm:llm_runner_interface",
-        "//ml_drift/samples/llm:llm_runner_metal_lib",
-        "@com_google_absl//absl/flags:flag",
-        "@com_google_absl//absl/flags:parse",
-        "@com_google_absl//absl/status",
-        "@glaze",
-    ],
+    srcs = SRCS,
+    deps = DEPS,
+)
+
+cc_binary(
+    name = "BenchmarksMldrift",
+    srcs = SRCS,
+    linkopts = ["-Wl,-exported_symbol,_benchmarks_mldrift_main"],
+    linkshared = True,
+    deps = DEPS,
 )
