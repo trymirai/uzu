@@ -20,8 +20,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel, MatmulShape, QuantParams,
-                    QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput,
+                    MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
                 },
             },
         },
@@ -641,6 +641,44 @@ fn a8w_mxu_output_bias_parity_bf16(
         0.08,
         0.8,
     );
+}
+
+#[uzu_test]
+fn gemv_mxu_tiled_prefix_preserves_output_bounds() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let mut matmul = MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
+    for m in [1, 4] {
+        let input = QuantInput::<bf16>::new(m, 2048, 2080, 64, 8, QuantizationMethod::ScaleSymmetric, 0)
+            .with_group_output()
+            .with_signed_weight_codes();
+        let expected_full = run_quant_cpu(&input);
+        let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        tile_weights(&matmul, &mut buffers, &input, &context);
+        for width in [16, 19, 33, 2049] {
+            let sentinel = bf16::from_f32(-123.0);
+            let output_len = (m * width) as usize;
+            let mut output = create_buffer_with_data::<Metal, bf16>(&context, &vec![sentinel; output_len + 32]);
+            let mut commands = context.create_command_buffer(None, None).unwrap();
+            let mut args = quant_arguments(&mut buffers, &input);
+            args.n = width;
+            args.output = MatmulOutput::new(&mut output, MatmulDOps::none());
+            matmul.encode(args, &mut commands).unwrap();
+            block_on(commands.end_encoding().submit().wait_until_completed()).unwrap();
+            let actual = buffer_to_vec::<Metal, bf16>(&context, &output);
+            let expected: Vec<_> = expected_full
+                .chunks_exact(input.n as usize)
+                .flat_map(|row| row[..width as usize].iter().copied())
+                .collect();
+            assert_parity(&format!("tiled prefix m={m} n={width}"), &expected, &actual[..output_len], 0.05, 0.5);
+            assert!(
+                actual[output_len..].iter().all(|value| *value == sentinel),
+                "prefix wrote past output m={m} n={width}"
+            );
+        }
+    }
 }
 
 #[rstest]
