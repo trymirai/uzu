@@ -34,6 +34,7 @@ struct MxuMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
+  using RightStageType = RightElementType;
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
