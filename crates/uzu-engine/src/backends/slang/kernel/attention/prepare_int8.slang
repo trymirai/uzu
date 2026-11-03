@@ -4,7 +4,7 @@ import definitions;
 [[Variants("ElementT", "BFloat16")]]
 [[Variants("RopeT", "float")]]
 [[Variants("HEAD_DIM", "128, 256")]]
-[[Public]] [[Kernel]] func AttentionPrepareInt8<ElementT, RopeT, let HEAD_DIM: uint>(
+[[Public]] [[Kernel]] func AttentionPrepareInt8<ElementT, RopeT, let HEAD_DIM: uint32_t>(
   StructuredBuffer<ElementT> qkvg,
   [[Optional("!quantize_queries")]] RWStructuredBuffer<ElementT> queries,
   [[Optional("quantize_queries")]] RWStructuredBuffer<int8_t> q_codes,
@@ -15,19 +15,19 @@ import definitions;
   [[Optional("append_kv")]] RWStructuredBuffer<ElementT> v_scales,
   [[Optional("has_rope")]] StructuredBuffer<RopeT> cosines,
   [[Optional("has_rope")]] StructuredBuffer<RopeT> sines,
-  uint num_q_heads,
-  [[Optional("has_rope")]] uint rope_dim,
-  uint kv_token_offset,
-  uint input_row_stride,
-  uint suffix_length,
-  uint query_rows,
+  uint32_t num_q_heads,
+  [[Optional("has_rope")]] uint32_t rope_dim,
+  uint32_t kv_token_offset,
+  uint32_t input_row_stride,
+  uint32_t suffix_length,
+  uint32_t query_rows,
   [[Specialize]] bool has_rope,
   [[Specialize]] bool quantize_queries,
-  [[Specialize]] uint num_kv_heads,
+  [[Specialize]] uint32_t num_kv_heads,
   [[Specialize]] bool append_kv,
-  [[Groups("suffix_length")]] uint token_idx,
-  [[Groups("num_q_heads + num_kv_heads * 2")]] uint head_idx,
-  [[Threads("32")]] uint lane,
+  [[Groups("suffix_length")]] uint32_t token_idx,
+  [[Groups("num_q_heads + num_kv_heads * 2")]] uint32_t head_idx,
+  [[Threads("32")]] uint32_t lane,
 ) {
   // TODO
 }

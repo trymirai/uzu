@@ -5,14 +5,14 @@ import definitions;
 [[Public]] [[Kernel]] func RepetitionPenalty<T>(
   StructuredBuffer<T> original_logits,
   RWStructuredBuffer<T> logits_copy,
-  StructuredBuffer<uint> context_ring,
-  StructuredBuffer<uint> token_ids,
+  StructuredBuffer<uint32_t> context_ring,
+  StructuredBuffer<uint32_t> token_ids,
   float repetition_penalty,
-  uint suffix_repetition_length,
-  uint vocab_size,
-  uint sampling_start,
-  uint sampling_length,
-  [[Axis("sampling_length * suffix_repetition_length", "256")]] uint position,
+  uint32_t suffix_repetition_length,
+  uint32_t vocab_size,
+  uint32_t sampling_start,
+  uint32_t sampling_length,
+  [[Axis("sampling_length * suffix_repetition_length", "256")]] uint32_t position,
 ) {
   // TODO
 }

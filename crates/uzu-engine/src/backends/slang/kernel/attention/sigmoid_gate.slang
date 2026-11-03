@@ -5,11 +5,11 @@ import definitions;
 [[Public]] [[Kernel]] func SigmoidGate<T>(
   StructuredBuffer<T> gate,
   RWStructuredBuffer<T> output,
-  uint gate_dim,
-  uint batch_dim,
-  uint gate_row_stride,
-  [[Axis("gate_dim", "256")]] uint gate_idx,
-  [[Axis("batch_dim", "1")]] uint batch_idx,
+  uint32_t gate_dim,
+  uint32_t batch_dim,
+  uint32_t gate_row_stride,
+  [[Axis("gate_dim", "256")]] uint32_t gate_idx,
+  [[Axis("batch_dim", "1")]] uint32_t batch_idx,
 ) {
   // TODO
 }

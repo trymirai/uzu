@@ -7,16 +7,16 @@ import definitions;
   StructuredBuffer<float> conv_weight,
   [[Optional("has_bias")]] StructuredBuffer<float> bias,
   StructuredBuffer<float> base_state,
-  StructuredBuffer<int> parents,
+  StructuredBuffer<int32_t> parents,
   RWStructuredBuffer<T> out_proj,
   RWStructuredBuffer<float> suffix_state,
-  uint suffix_len,
-  [[Specialize]] uint kernel_size,
-  uint total_proj_dim,
-  uint conv_dim,
+  uint32_t suffix_len,
+  [[Specialize]] uint32_t kernel_size,
+  uint32_t total_proj_dim,
+  uint32_t conv_dim,
   [[Specialize]] bool has_bias,
-  [[Axis("suffix_len", "1")]] uint node_idx,
-  [[Axis("total_proj_dim", "256")]] uint channel_idx,
+  [[Axis("suffix_len", "1")]] uint32_t node_idx,
+  [[Axis("total_proj_dim", "256")]] uint32_t channel_idx,
 ) {
   // TODO
 }

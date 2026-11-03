@@ -23,6 +23,8 @@ function PerfStat({ value, label }: { value: string; label: string }) {
 }
 
 export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropdownProps) {
+  const tokensPerForwardPass = perf?.tokensPerForwardPass;
+  const hasSpeculation = typeof tokensPerForwardPass === "number" && Number.isFinite(tokensPerForwardPass);
   return (
     <Popover className="w-fit">
       <PopoverButton
@@ -46,9 +48,12 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
           className="[--anchor-gap:8px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
         >
           <div className="p-[10px]">
-            <div className="grid grid-cols-3 gap-3 text-center">
+            <div className={`grid ${hasSpeculation ? "grid-cols-4" : "grid-cols-3"} gap-3 text-center`}>
               <PerfStat value={formatSeconds(perf?.ttftSec)} label="Time to first token" />
               <PerfStat value={formatTps(perf?.tps)} label="Tokens per second" />
+              {hasSpeculation && (
+                <PerfStat value={`${tokensPerForwardPass.toFixed(2)} tok/pass`} label="Acceptance rate" />
+              )}
               <PerfStat value={formatSeconds(perf?.totalSec)} label="Total time" />
             </div>
           </div>

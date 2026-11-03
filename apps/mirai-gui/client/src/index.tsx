@@ -17,11 +17,6 @@ RuntimeLoader.setWasmUrl(riveWasmUrl);
 const appState = useAppStore.getState();
 document.documentElement.classList.toggle("dark", appState.isDarkMode);
 
-const getInitialPath = (): string => {
-  if (!appState.skipWelcome) return "/welcome";
-  return platformInfo.isTauri ? "/local-models" : "/chats";
-};
-
 if (platformInfo.isTauri) {
   initPlatform(new TauriPlatformClient());
 } else {
@@ -30,6 +25,6 @@ if (platformInfo.isTauri) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={createAppRouter(getInitialPath())} />
+    <RouterProvider router={createAppRouter()} />
   </React.StrictMode>,
 );

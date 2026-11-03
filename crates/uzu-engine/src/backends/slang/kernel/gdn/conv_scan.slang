@@ -3,19 +3,19 @@ import definitions;
 
 [[Variants("T", "float, BFloat16")]]
 [[Variants("KERNEL_SIZE", "4")]]
-[[Public]] [[Kernel]] func DeltaNetConvScan<T, let KERNEL_SIZE: uint>(
+[[Public]] [[Kernel]] func DeltaNetConvScan<T, let KERNEL_SIZE: uint32_t>(
   StructuredBuffer<float> packed,
   StructuredBuffer<float> conv_weight,
   [[Optional("has_bias")]] StructuredBuffer<float> bias,
   RWStructuredBuffer<T> in_proj,
   RWStructuredBuffer<float> state_out,
-  uint suffix_len,
-  uint tile_tokens,
-  uint conv_dim,
-  uint out_stride,
+  uint32_t suffix_len,
+  uint32_t tile_tokens,
+  uint32_t conv_dim,
+  uint32_t out_stride,
   [[Specialize]] bool has_bias,
-  [[Axis("conv_dim / 8", "32")]] uint channel_group,
-  [[Axis("suffix_len.div_ceil(tile_tokens)", "4")]] uint tile_idx,
+  [[Axis("conv_dim / 8", "32")]] uint32_t channel_group,
+  [[Axis("suffix_len.div_ceil(tile_tokens)", "4")]] uint32_t tile_idx,
 ) {
   // TODO
 }

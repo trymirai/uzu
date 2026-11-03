@@ -6,27 +6,27 @@ import generated.quantization_method;
 
 [[Variants("T", "float, BFloat16")]]
 [[Public]] [[Kernel]] func InputEmbeddingLookup<T>(
-  StructuredBuffer<uint> token_ids,
+  StructuredBuffer<uint32_t> token_ids,
   StructuredBuffer<uint8_t> values,
   [[Optional("table_kind != EmbeddingTableKind::Dense")]] StructuredBuffer<T> scales,
   [[Optional("table_kind == EmbeddingTableKind::Quantized && quantization_method == QuantizationMethod::ScaleZeroPoint")]] StructuredBuffer<uint8_t> zero_points,
   [[Optional("table_kind == EmbeddingTableKind::Quantized && quantization_method == QuantizationMethod::ScaleBias")]] StructuredBuffer<T> biases,
-  [[Optional("use_hadamard")]] StructuredBuffer<int> hadamard_factors,
+  [[Optional("use_hadamard")]] StructuredBuffer<int32_t> hadamard_factors,
   [[Optional("table_kind == EmbeddingTableKind::D4S4")]] StructuredBuffer<uint8_t> ladder_indices,
   [[Optional("table_kind == EmbeddingTableKind::D4S4")]] StructuredBuffer<half> ladder,
   [[Optional("table_kind == EmbeddingTableKind::D4S4")]] StructuredBuffer<vector<int8_t, 4>> codebook,
   RWStructuredBuffer<T> output,
-  uint batch_size,
-  uint vocab_size,
-  uint model_dim,
+  uint32_t batch_size,
+  uint32_t vocab_size,
+  uint32_t model_dim,
   float input_scale,
   [[Specialize]] EmbeddingTableKind table_kind,
-  [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] uint group_size,
+  [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] uint32_t group_size,
   [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] QuantizationMode quantization_mode,
   [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] QuantizationMethod quantization_method,
   [[Specialize]] bool use_hadamard,
-  [[Axis("model_dim", "256")]] uint dim_idx,
-  [[Axis("batch_size", "1")]] uint batch_idx,
+  [[Axis("model_dim", "256")]] uint32_t dim_idx,
+  [[Axis("batch_size", "1")]] uint32_t batch_idx,
 ) {
   // TODO
 }

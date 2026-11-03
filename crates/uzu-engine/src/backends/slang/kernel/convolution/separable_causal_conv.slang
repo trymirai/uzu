@@ -8,14 +8,14 @@ import definitions;
   StructuredBuffer<T> weights,
   [[Optional("has_bias")]] StructuredBuffer<T> bias,
   RWStructuredBuffer<T> output,
-  uint sequence_length,
-  uint coefficient_row_stride,
-  [[Specialize]] uint model_dim,
-  [[Specialize]] uint kernel_size,
-  [[Specialize]] uint group_size,
+  uint32_t sequence_length,
+  uint32_t coefficient_row_stride,
+  [[Specialize]] uint32_t model_dim,
+  [[Specialize]] uint32_t kernel_size,
+  [[Specialize]] uint32_t group_size,
   [[Specialize]] bool has_bias,
-  [[Axis("sequence_length", "1")]] uint token,
-  [[Axis("model_dim.div_ceil(4)", "128")]] uint channel_block_index,
+  [[Axis("sequence_length", "1")]] uint32_t token,
+  [[Axis("model_dim.div_ceil(4)", "128")]] uint32_t channel_block_index,
 ) {
   // TODO
 }

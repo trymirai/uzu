@@ -11,9 +11,9 @@ import definitions;
   [[Optional("has_biases")]] StructuredBuffer<AffineT> biases,
   RWStructuredBuffer<OutputT> output,
   [[Optional("copy_to_shortcut")]] RWStructuredBuffer<InputT> shortcut,
-  [[Optional("use_hadamard")]] StructuredBuffer<int> hadamard_factors,
-  uint batch_size,
-  uint element_count,
+  [[Optional("use_hadamard")]] StructuredBuffer<int32_t> hadamard_factors,
+  uint32_t batch_size,
+  uint32_t element_count,
   float epsilon,
   float scale_offset,
   float post_layer_scalar,
@@ -28,8 +28,8 @@ import definitions;
   [[Specialize]] bool has_biases,
   [[Specialize]] bool has_scales,
   ThreadContext thread_context,
-  [[Groups("batch_size")]] uint batch_idx,
-  [[Threads("1024")]] uint thread_in_row,
+  [[Groups("batch_size")]] uint32_t batch_idx,
+  [[Threads("1024")]] uint32_t thread_in_row,
 ) {
   // TODO
 }

@@ -1,3 +1,4 @@
+mod decision;
 mod model;
 mod runner;
 mod stat;
@@ -7,7 +8,7 @@ use comfy_table::{CellAlignment, ContentArrangement, Table, presets::UTF8_FULL};
 use indicatif::ProgressBar;
 use tokio::fs;
 
-use crate::bench::{model::BenchTask, runner::BenchRunner, stat::calculate_metric};
+use crate::bench::{decision::DecisionBenchTask, model::BenchTask, runner::BenchRunner, stat::calculate_metric};
 
 pub async fn run_bench(
     model_path: String,
@@ -16,8 +17,16 @@ pub async fn run_bench(
 ) -> Result<()> {
     let task_content =
         fs::read_to_string(&task_path).await.with_context(|| format!("Failed to read task file: {task_path}"))?;
-    let task: BenchTask =
+    let task_value: serde_json::Value =
         serde_json::from_str(&task_content).with_context(|| format!("Failed to parse task file: {task_path}"))?;
+    if task_value.get("questions").is_some() {
+        let task: DecisionBenchTask = serde_json::from_value(task_value)
+            .with_context(|| format!("Failed to parse decision task file: {task_path}"))?;
+        return decision::run(task, model_path, output_path).await;
+    }
+
+    let task: BenchTask =
+        serde_json::from_value(task_value).with_context(|| format!("Failed to parse task file: {task_path}"))?;
     println!("Model: {}", task.repo_id);
 
     let progress_bar = ProgressBar::new(task.number_of_runs);

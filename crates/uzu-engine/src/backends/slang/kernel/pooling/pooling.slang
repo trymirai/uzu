@@ -5,11 +5,11 @@ import definitions;
 [[Public]] [[Kernel]] func PoolingMean<T>(
   StructuredBuffer<T> input,
   RWStructuredBuffer<T> output,
-  uint seq_len,
-  uint hidden_dim,
-  uint batch_size,
-  [[Axis("hidden_dim", "16")]] uint dim_idx,
-  [[Axis("batch_size", "16")]] uint batch_idx,
+  uint32_t seq_len,
+  uint32_t hidden_dim,
+  uint32_t batch_size,
+  [[Axis("hidden_dim", "16")]] uint32_t dim_idx,
+  [[Axis("batch_size", "16")]] uint32_t batch_idx,
 ) {
   // TODO
 }

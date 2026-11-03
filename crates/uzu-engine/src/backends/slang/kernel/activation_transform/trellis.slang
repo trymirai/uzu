@@ -8,10 +8,10 @@ import definitions;
   RWStructuredBuffer<int8_t> activations,
   RWStructuredBuffer<vector<float, 4>> column_group_sums,
   RWStructuredBuffer<float> scales,
-  uint batch,
-  [[Specialize]] uint dimension,
-  [[Groups("batch")]] uint token,
-  [[Threads("512")]] uint thread_index,
+  uint32_t batch,
+  [[Specialize]] uint32_t dimension,
+  [[Groups("batch")]] uint32_t token,
+  [[Threads("512")]] uint32_t thread_index,
   ThreadContext thread_context,
 ) {
   // TODO
