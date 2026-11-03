@@ -8,7 +8,7 @@ use crate::{
     config::mlp::dense_mlp::DenseMLPConfig,
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearInput, LinearInputPreparation},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     safetensors::ParameterTree,
@@ -52,16 +52,15 @@ impl<B: Backend> DenseMlp<B> {
         Ok((mlp, up_input_hadamard_factors))
     }
 
-    /// Like `new`, but the up projection rotates its own input, so the caller passes the input unrotated.
-    pub async fn new_self_contained(
+    pub async fn new_for_fused_input(
         model_dimension: u32,
         hidden_dimension: u32,
         data_type: DataType,
         config: &DenseMLPConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<Self, DenseMlpNewError<B>> {
-        let up = <dyn Linear<B>>::new(
+    ) -> Result<(Self, Option<LinearInputPreparation<B>>), DenseMlpNewError<B>> {
+        let (up, up_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
             model_dimension,
             2 * hidden_dimension,
             data_type,
@@ -70,43 +69,30 @@ impl<B: Backend> DenseMlp<B> {
             context,
         )
         .await?;
-        Self::with_up(up, model_dimension, hidden_dimension, data_type, config, parameter_tree, context).await
+        let mlp =
+            Self::with_up(up, model_dimension, hidden_dimension, data_type, config, parameter_tree, context).await?;
+
+        Ok((mlp, up_input_preparation))
     }
 
-    pub fn select_up_activation_format(
+    pub fn encode_input(
+        &self,
+        input: LinearInput<B>,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
+
+        let fused_up = self.up.encode_input(input, batch_dim, command_buffer)?;
+        self.encode_gate_and_down(&fused_up, batch_dim, command_buffer)
+    }
+
+    pub fn select_activation_format(
         &self,
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
         self.up.select_activation_format(batch_dim, context)
-    }
-
-    /// Like `Mlp::encode`, but leaves `input` as it was. A rotating up projection allows this only at batches where it
-    /// quantizes its activations (see `Linear::encode_ref`).
-    pub fn encode_ref(
-        &self,
-        input: &B::ScratchBuffer,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
-
-        let fused_up = self.up.encode_ref(input, batch_dim, command_buffer)?;
-        self.encode_gate_and_down(&fused_up, batch_dim, command_buffer)
-    }
-
-    /// Encodes a bf16 input the caller already rotated with the up projection's input signs, at batches where
-    /// `select_up_activation_format` is Bf16.
-    pub fn encode_prerotated_bf16(
-        &self,
-        rotated_input: &B::ScratchBuffer,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
-
-        let fused_up = self.up.encode_prerotated_bf16(rotated_input, batch_dim, command_buffer)?;
-        self.encode_gate_and_down(&fused_up, batch_dim, command_buffer)
     }
 
     /// Loads the gated activation and the down projection around an up projection the caller loaded.
@@ -172,9 +158,6 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
-
-        let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
-        self.encode_gate_and_down(&fused_up, batch_dim, command_buffer)
+        self.encode_input(LinearInput::<B>::full_precision(input), batch_dim, command_buffer)
     }
 }

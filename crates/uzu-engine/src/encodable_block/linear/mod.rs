@@ -6,6 +6,7 @@ mod matmul;
 mod rht_wrapper;
 mod untied_readout;
 
+pub(crate) use input_rht::InputRht;
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 pub use untied_readout::UntiedReadout;
@@ -40,27 +41,6 @@ pub trait Linear<B: Backend>: Send + Sync {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         self.encode_input(MatmulA::full_precision(input), batch_dim, command_buffer)
-    }
-
-    /// Like `encode`, but leaves `input` as it was. An RHT linear rotates bf16 inputs in place, so it reads a borrowed
-    /// input only at batches where it quantizes its activations.
-    fn encode_ref(
-        &self,
-        input: &B::ScratchBuffer,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
-
-    /// Encodes a bf16 input the caller already rotated with this linear's input signs; a linear without an input
-    /// rotation reads it as it is. Only for batches where `select_activation_format` is Bf16: weights laid out for
-    /// quantized activations take no bf16 input at the batches that quantize.
-    fn encode_prerotated_bf16(
-        &self,
-        rotated_input: &B::ScratchBuffer,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        self.encode_ref(rotated_input, batch_dim, command_buffer)
     }
 
     fn encode_input(

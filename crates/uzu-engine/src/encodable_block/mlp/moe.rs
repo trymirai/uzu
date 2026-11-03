@@ -27,13 +27,13 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearBlockError, LinearInputPreparation, LinearMatmul},
+        linear::{Gather, InputRht, LinearBlockError, LinearInput, LinearInputPreparation, LinearMatmul},
         mlp::{
             Mlp, MlpEncodeError,
             dense::{DenseMlp, DenseMlpNewError},
             gate_act_mul::MlpGateActMulEncodable,
         },
-        weight_matrix::{ParsedWeightSpec, QuantizationInfo, WeightMatrixError, parse_spec},
+        weight_matrix::{ParsedWeightSpec, WeightMatrixError, parse_spec},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -101,89 +101,22 @@ fn check_config<B: Backend>(
     Err(MoeMlpNewError::UnsupportedConfiguration(problem))
 }
 
-/// Splits the spec of quantized MoE weights into their quantization spec and format: they must be rotated as `mode`
-/// says in blocks of HADAMARD_TRANSFORM_BLOCK_SIZE and stored output_input in groups of MOE_GEMV_GROUP_SIZE, as 4-bit
-/// codes with zero points or 8-bit symmetric codes.
-fn check_quantized_spec<B: Backend>(
+fn parse_quantized_spec<B: Backend>(
     weights_name: &str,
     spec: AnyWeightMatrixSpec,
     mode: IncoherenceProcessingMode,
-) -> Result<(AnyWeightMatrixSpec, QuantizationInfo), MoeMlpNewError<B>> {
-    let quantization_spec = match spec {
+) -> Result<AnyWeightMatrixSpec, MoeMlpNewError<B>> {
+    match spec {
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
             incoherence_processing_mode,
             ..
-        }) if incoherence_processing_mode == mode => *quantization_spec,
-        spec => {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "{weights_name} must rotate {mode:?} in blocks of {HADAMARD_TRANSFORM_BLOCK_SIZE}, got {spec:?}"
-            )));
-        },
-    };
-    let ParsedWeightSpec {
-        layout,
-        quantization,
-    } = parse_spec::<B>(&quantization_spec)?;
-    let Some(quantization) = quantization
-        .filter(|quantization| layout == Layout::OutputInput && quantization.group_size == MOE_GEMV_GROUP_SIZE)
-    else {
-        return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-            "{weights_name} must be quantized output_input in groups of {MOE_GEMV_GROUP_SIZE}, got {quantization_spec:?}"
-        )));
-    };
-    match (quantization.mode, quantization.method) {
-        (QuantizationMode::U4, QuantizationMethod::ScaleZeroPoint)
-        | (QuantizationMode::U8, QuantizationMethod::ScaleSymmetric) => Ok((quantization_spec, quantization)),
-        (mode, method) => Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-            "{weights_name} must be 4-bit with zero points or 8-bit symmetric, got {mode} {method}"
+        }) if incoherence_processing_mode == mode => Ok(*quantization_spec),
+        spec => Err(MoeMlpNewError::UnsupportedConfiguration(format!(
+            "{weights_name} must rotate {mode:?} in blocks of {HADAMARD_TRANSFORM_BLOCK_SIZE}, got {spec:?}"
         ))),
     }
-}
-
-/// How a routed projection's experts are stored, as the MoE GEMV reads them.
-struct RoutedFormat {
-    quantization: QuantizationInfo,
-    bits: u32,
-    b_expert_stride_bytes: u32,
-}
-
-/// Checks that routed experts stored with `spec` fit the MoE GEMV, which has no bounds checks: whole input blocks and
-/// output tiles, and expert planes offset with 32-bit products. `num_experts` is at least 1, as check_config ensures.
-fn check_routed_projection<B: Backend>(
-    spec: AnyWeightMatrixSpec,
-    num_experts: u32,
-    input_dim: u32,
-    output_dim: u32,
-) -> Result<RoutedFormat, MoeMlpNewError<B>> {
-    let (_, quantization) = check_quantized_spec("routed experts", spec, IncoherenceProcessingMode::InputOutput)?;
-    let bits = DataType::from(quantization.mode).size_in_bits() as u32;
-    let input_block = if quantization.mode == QuantizationMode::U4 {
-        MOE_GEMV_W4_INPUT_BLOCK
-    } else {
-        MOE_GEMV_W8_INPUT_BLOCK
-    };
-    if !input_dim.is_multiple_of(input_block) || !output_dim.is_multiple_of(MOE_GEMV_OUTPUT_ROW_TILE) {
-        return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-            "{bits}-bit routed experts need input_dim ({input_dim}) a multiple of {input_block} and output_dim ({output_dim}) a multiple of {MOE_GEMV_OUTPUT_ROW_TILE}"
-        )));
-    }
-    // The GEMV offsets an expert's weights, scales, zero points and output signs by 32-bit products of its id, at
-    // most num_experts - 1, and the weight plane is the largest of them.
-    let Some(b_expert_stride_bytes) = output_dim
-        .checked_mul(input_dim / quantization.mode.packing_divisor())
-        .filter(|plane_bytes| (num_experts - 1).checked_mul(*plane_bytes).is_some())
-    else {
-        return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-            "{num_experts} expert planes of {output_dim} x {input_dim} {bits}-bit weights exceed 32-bit offsets"
-        )));
-    };
-    Ok(RoutedFormat {
-        quantization,
-        bits,
-        b_expert_stride_bytes,
-    })
 }
 
 /// Whether every expert's row of `signs` equals the first expert's.
@@ -271,7 +204,7 @@ async fn load_shared_gate<B: Backend>(
     context: &B::Context,
 ) -> Result<LinearMatmul<B>, MoeMlpNewError<B>> {
     let weights_tree = tree.subtree("weights");
-    let (quantization_spec, _) = check_quantized_spec(
+    let quantization_spec = parse_quantized_spec(
         "the shared expert gate",
         weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?,
         IncoherenceProcessingMode::Input,
@@ -324,11 +257,47 @@ impl<B: Backend> RoutedProjection<B> {
         context: &B::Context,
     ) -> Result<(Self, Box<[i32]>), MoeMlpNewError<B>> {
         let weights_tree = tree.subtree("weights");
-        let RoutedFormat {
+        let spec = weights_tree.metadata("spec")?;
+        let quantization_spec = parse_quantized_spec("routed experts", spec, IncoherenceProcessingMode::InputOutput)?;
+        let ParsedWeightSpec {
+            layout,
             quantization,
-            bits,
-            b_expert_stride_bytes,
-        } = check_routed_projection(weights_tree.metadata("spec")?, num_experts, input_dim, output_dim)?;
+        } = parse_spec::<B>(&quantization_spec)?;
+        let Some(quantization) = quantization
+            .filter(|quantization| layout == Layout::OutputInput && quantization.group_size == MOE_GEMV_GROUP_SIZE)
+        else {
+            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
+                "routed experts must be quantized output_input in groups of {MOE_GEMV_GROUP_SIZE}, got {quantization_spec:?}"
+            )));
+        };
+        match (quantization.mode, quantization.method) {
+            (QuantizationMode::U4, QuantizationMethod::ScaleZeroPoint)
+            | (QuantizationMode::U8, QuantizationMethod::ScaleSymmetric) => {},
+            (mode, method) => {
+                return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
+                    "routed experts must be 4-bit with zero points or 8-bit symmetric, got {mode} {method}"
+                )));
+            },
+        }
+        let bits = DataType::from(quantization.mode).size_in_bits() as u32;
+        let input_block = if quantization.mode == QuantizationMode::U4 {
+            MOE_GEMV_W4_INPUT_BLOCK
+        } else {
+            MOE_GEMV_W8_INPUT_BLOCK
+        };
+        if !input_dim.is_multiple_of(input_block) || !output_dim.is_multiple_of(MOE_GEMV_OUTPUT_ROW_TILE) {
+            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
+                "{bits}-bit routed experts need input_dim ({input_dim}) a multiple of {input_block} and output_dim ({output_dim}) a multiple of {MOE_GEMV_OUTPUT_ROW_TILE}"
+            )));
+        }
+        let Some(b_expert_stride_bytes) = output_dim
+            .checked_mul(input_dim / quantization.mode.packing_divisor())
+            .filter(|plane_bytes| (num_experts - 1).checked_mul(*plane_bytes).is_some())
+        else {
+            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
+                "{num_experts} expert planes of {output_dim} x {input_dim} {bits}-bit weights exceed 32-bit offsets"
+            )));
+        };
 
         let input_signs =
             weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[num_experts, input_dim]).await?;
@@ -430,6 +399,7 @@ pub struct MoeMlp<B: Backend> {
     routed_activation: MlpGateActMulEncodable<B>,
     routed_down: RoutedProjection<B>,
     shared_expert: DenseMlp<B>,
+    shared_input_rht: Option<InputRht<B>>,
     shared_gate: LinearMatmul<B>,
     combine: <B::Kernels as Kernels>::MoeCombineKernel,
     model_dimension: u32,
@@ -493,9 +463,9 @@ impl<B: Backend> MoeMlp<B> {
         )
         .map_err(MoeMlpNewError::Backend)?;
 
-        let shared_tree = parameter_tree.subtree("shared_experts").unit_mixture();
+        let shared_tree = parameter_tree.subtree("shared_experts");
         check_reads_routed_rotation(&shared_tree.subtree("up_projection"), &input_signs, "shared expert").await?;
-        let shared_expert = DenseMlp::new_self_contained(
+        let (shared_expert, shared_preparation) = DenseMlp::new_for_fused_input(
             model_dimension,
             hidden_dimension,
             data_type,
@@ -504,6 +474,10 @@ impl<B: Backend> MoeMlp<B> {
             context,
         )
         .await?;
+        let shared_input_rht = shared_preparation
+            .map(|preparation| InputRht::new(data_type, preparation, false, context))
+            .transpose()
+            .map_err(MoeMlpNewError::Backend)?;
         let shared_gate =
             load_shared_gate(model_dimension, data_type, &input_signs, &parameter_tree.subtree("gate"), context)
                 .await?;
@@ -521,6 +495,7 @@ impl<B: Backend> MoeMlp<B> {
             routed_activation,
             routed_down,
             shared_expert,
+            shared_input_rht,
             shared_gate,
             combine,
             model_dimension,
@@ -542,7 +517,12 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         let top_k = self.num_active_routed_experts;
         let num_routes = batch_dim * top_k;
 
-        let router_logits = self.router.encode_ref(&input, batch_dim, command_buffer)?;
+        let router_logits = self.router.encode_with_a(
+            MatmulA::full_precision(&input),
+            batch_dim,
+            None::<Gather<&B::ScratchBuffer>>,
+            command_buffer,
+        )?;
         let mut expert_ids = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, top_k], DataType::U32)
             .map_err(MlpEncodeError::Backend)?;
@@ -559,18 +539,23 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             command_buffer,
         );
 
-        // A shared expert that quantizes its activations rotates them while quantizing, so it reads the input before
-        // the rotation below.
-        let quantized_shared_output =
-            if self.shared_expert.select_up_activation_format(batch_dim, command_buffer.context())
-                != ActivationFormat::Bf16
-            {
-                Some(self.shared_expert.encode_ref(&input, batch_dim, command_buffer)?)
-            } else {
-                None
-            };
+        let quantized_shared_input = match &self.shared_input_rht {
+            Some(input_rht) => {
+                let format = self.shared_expert.select_activation_format(batch_dim, command_buffer.context());
+                if format != ActivationFormat::Bf16 {
+                    Some(
+                        input_rht
+                            .prepare(&input, batch_dim, format, command_buffer)
+                            .map_err(MlpEncodeError::Backend)?,
+                    )
+                } else {
+                    None
+                }
+            },
+            None => None,
+        };
 
-        // One rotation serves the routed experts, the bf16 shared expert and the gate.
+        // One rotation serves the routed experts, the shared expert, and the gate.
         self.input_rotation.encode_fp_in_place(
             &mut input,
             &self.input_signs,
@@ -599,11 +584,17 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             .encode(&down_input, &expert_ids, num_routes, top_k, command_buffer)
             .map_err(MlpEncodeError::Backend)?;
 
-        let shared_output = match quantized_shared_output {
-            Some(shared_output) => shared_output,
-            None => self.shared_expert.encode_prerotated_bf16(&input, batch_dim, command_buffer)?,
+        let shared_gate = self.shared_gate.encode_with_a(
+            MatmulA::full_precision(&input),
+            batch_dim,
+            None::<Gather<&B::ScratchBuffer>>,
+            command_buffer,
+        )?;
+        let shared_input = match quantized_shared_input {
+            Some(shared_input) => shared_input,
+            None => LinearInput::<B>::full_precision(input),
         };
-        let shared_gate = self.shared_gate.encode_ref(&input, batch_dim, command_buffer)?;
+        let shared_output = self.shared_expert.encode_input(shared_input, batch_dim, command_buffer)?;
 
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)

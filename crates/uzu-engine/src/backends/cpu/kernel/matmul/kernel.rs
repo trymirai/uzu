@@ -14,7 +14,7 @@ use crate::{
             command_buffer::CpuCommandBufferEncoding,
             context::CpuContext,
             kernel::{
-                dequant::{dequantize_weight, read_packed_code, read_zero_point},
+                dequant::{dequantize_weight, dequantize_weight_with_bias, read_zero_point},
                 matmul::{
                     MatmulCpuError,
                     reference::{WeightData, load, store},
@@ -239,17 +239,15 @@ impl MatmulKernel for MatmulCpuKernel {
                                         read_zero_point(zp.as_ptr(), zero_point_index, *bits)
                                     });
                                     if let Some(b) = biases {
-                                        let mut code = read_packed_code(
+                                        let bias_term = load(b.as_ptr(), weights_data_type, metadata_index);
+                                        dequantize_weight_with_bias(
                                             weights.as_ptr() as *const u32,
                                             weight_linear_index,
                                             *bits,
-                                        );
-                                        if *signed_codes {
-                                            code ^= 1u8 << (bits - 1);
-                                        }
-                                        let quantized_value = f32::from(code);
-                                        let bias_term = load(b.as_ptr(), weights_data_type, metadata_index);
-                                        scale * quantized_value + bias_term
+                                            *signed_codes,
+                                            scale,
+                                            bias_term,
+                                        )
                                     } else {
                                         dequantize_weight(
                                             weights.as_ptr() as *const u32,
