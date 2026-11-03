@@ -15,7 +15,7 @@ pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     batch_size: u32,
     logit_stride: u32,
 ) {
-    // The Metal kernel holds up to 256 experts, 8 in each of its 32 lanes.
+    // The Metal kernel holds up to 256 experts, one in each thread of its 8 SIMD groups.
     assert!(num_experts <= 256);
     assert!(top_k > 0 && top_k <= MAX_TOP_K && top_k <= num_experts);
     let num_experts_usize = num_experts as usize;

@@ -96,26 +96,30 @@ fn moe_router_top_k_nan_safety() {
 
 #[uzu_test]
 fn moe_router_top_k_jax_ties() {
-    // As in jax.lax.top_k: a tie for the 8th pick goes to the lower index, and +0.0 ranks above -0.0.
-    let top_seven = [200u32, 150, 100, 90, 60, 50, 40];
-    for (logit_7, logit_230, eighth) in [(1.0f32, 1.0f32, 7u32), (-0.0, 0.0, 230)] {
+    // As in jax.lax.top_k: a tie for the 8th pick goes to the lower index, and +0.0 ranks above -0.0. In the Metal
+    // kernel expert 20 shares expert 7's SIMD group and expert 230 does not, so both merge levels see each tie, and
+    // expert 255 sits in the last lane of the last SIMD group.
+    let top_seven = [255u32, 200, 150, 100, 90, 60, 40];
+    for (tied_expert, logit_7, tied_logit, eighth) in
+        [(230u32, 1.0f32, 1.0f32, 7u32), (230, -0.0, 0.0, 230), (20, 1.0, 1.0, 7), (20, -0.0, 0.0, 20)]
+    {
         let mut logits = vec![-1.0f32; NUM_EXPERTS as usize];
         for (rank, &expert) in top_seven.iter().enumerate() {
             logits[expert as usize] = 10.0 - rank as f32;
         }
         logits[7] = logit_7;
-        logits[230] = logit_230;
+        logits[tied_expert as usize] = tied_logit;
         let expected_ids: Vec<u32> = top_seven.into_iter().chain([eighth]).collect();
         assert_eq!(
             run_router_top_k::<Cpu>(&logits, 1).0,
             expected_ids,
-            "CPU picks with {logit_7} and {logit_230} tied"
+            "CPU picks with experts 7 and {tied_expert} tied at {logit_7} and {tied_logit}"
         );
         for_each_non_cpu_backend!(|B| {
             assert_eq!(
                 run_router_top_k::<B>(&logits, 1).0,
                 expected_ids,
-                "Backend picks with {logit_7} and {logit_230} tied"
+                "Backend picks with experts 7 and {tied_expert} tied at {logit_7} and {tied_logit}"
             );
         });
     }
