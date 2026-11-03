@@ -62,7 +62,7 @@
                             "name": [
                                 {
                                     "type": "regex_find_all",
-                                    "pattern": "<function=(\\w+)>"
+                                    "pattern": "<function=([\\w-]+)>"
                                 },
                                 {
                                     "type": "first"
