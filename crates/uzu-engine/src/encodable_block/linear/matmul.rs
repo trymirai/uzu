@@ -184,22 +184,6 @@ impl<B: Backend> LinearMatmul<B> {
         }
     }
 
-    pub(super) fn select_activation_format_for_output(
-        &self,
-        batch_dim: u32,
-        output_dim: u32,
-        context: &B::Context,
-    ) -> ActivationFormat {
-        let mut shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
-        shape.n = output_dim;
-        self.kernel.lock().select_activation_format(
-            &shape,
-            self.matmul_b().weights_layout(),
-            self.prepared_activation_format,
-            context,
-        )
-    }
-
     fn matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
         self.matrix.matmul_b()
     }
@@ -226,8 +210,16 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
     fn select_activation_format(
         &self,
         batch_dim: u32,
+        output_dim: Option<u32>,
         context: &B::Context,
     ) -> ActivationFormat {
-        self.select_activation_format_for_output(batch_dim, self.output_dim, context)
+        let mut shape = self.matmul_shape(batch_dim, ActivationFormat::Bf16);
+        shape.n = output_dim.unwrap_or(self.output_dim);
+        self.kernel.lock().select_activation_format(
+            &shape,
+            self.matmul_b().weights_layout(),
+            self.prepared_activation_format,
+            context,
+        )
     }
 }

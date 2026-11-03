@@ -52,6 +52,7 @@ pub trait Linear<B: Backend>: Send + Sync {
     fn select_activation_format(
         &self,
         _batch_dim: u32,
+        _output_dim: Option<u32>,
         _context: &B::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16

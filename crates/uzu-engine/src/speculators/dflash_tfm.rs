@@ -57,8 +57,6 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     DFlash(#[from] DFlashNewError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverNewError<B>),
-    #[error("invalid speculator configuration: {0}")]
-    InvalidConfiguration(String),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -98,7 +96,7 @@ pub struct DFlashTfmSpeculator<B: Backend> {
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub async fn new(
         model_path: &Path,
-        target_vocab_size: u32,
+        target_embedding: &Embedding<B>,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
         let mut shapes: HashMap<String, DFlashTfmTreeShape> =
@@ -117,17 +115,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
         let draft_vocab_size = config.draft_config.vocab_size;
-        if draft_vocab_size == 0 || draft_vocab_size > target_vocab_size {
-            return Err(DFlashSpeculatorLoadError::InvalidConfiguration(format!(
-                "draft vocabulary {draft_vocab_size} is outside 1..={target_vocab_size}"
-            )));
-        }
-        if config.draft_config.mask_token_id >= u64::from(target_vocab_size) {
-            return Err(DFlashSpeculatorLoadError::InvalidConfiguration(format!(
-                "mask token {} is outside the target vocabulary of {target_vocab_size}",
-                config.draft_config.mask_token_id
-            )));
-        }
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
         let speculator_tree = weight_loader.tree().subtree("speculator");

@@ -10,7 +10,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
     },
     safetensors::ParameterTree,
 };
@@ -90,7 +90,7 @@ impl<B: Backend> UntiedReadout<B> {
         let format = if gather_indices.is_some() {
             ActivationFormat::Bf16
         } else {
-            self.linear.select_activation_format_for_output(batch_dim, output_dim, command_buffer.context())
+            self.linear.select_activation_format(batch_dim, Some(output_dim), command_buffer.context())
         };
         let input = input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
         self.linear.encode_with_a(input.as_ref(), batch_dim, output_dim, gather_indices, command_buffer)

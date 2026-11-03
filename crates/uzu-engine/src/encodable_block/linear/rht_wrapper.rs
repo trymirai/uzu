@@ -228,7 +228,7 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         };
         let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
 
-        let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
+        let format = self.inner_linear.select_activation_format(batch_dim, None, command_buffer.context());
         let input = self
             .input_rht
             .prepare_in_place(input, batch_dim, format, command_buffer)
