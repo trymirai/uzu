@@ -19,7 +19,8 @@ template <
     short DESTINATION_LEADING_DIMENSION,
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
-    short BITS>
+    short BITS,
+    typename StageT = T>
 struct QuantizedBlockLoaderScaleBias {
   static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
@@ -33,6 +34,10 @@ struct QuantizedBlockLoaderScaleBias {
                                          : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
   UZU_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
   UZU_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
+  static_assert(
+      DESTINATION_LEADING_DIMENSION % 2 == 0 && (READS_PER_THREAD * PACK_FACTOR) % 2 == 0,
+      "paired stores need 4-byte alignment"
+  );
 
   const int src_leading_dim;
   const int tile_stride;
@@ -43,7 +48,7 @@ struct QuantizedBlockLoaderScaleBias {
   const short tile_row_index;
   const short tile_col_index;
 
-  threadgroup T* dst;
+  threadgroup StageT* dst;
   const device uint8_t* src;
   const device T* scales;
   const device T* biases;
@@ -65,7 +70,8 @@ struct QuantizedBlockLoaderScaleBias {
         group_step_counter(0), group_stride(params_group_stride_), thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
-        dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * PACK_FACTOR),
+        dst(reinterpret_cast<threadgroup StageT*>(dst_) + tile_row_index * DESTINATION_LEADING_DIMENSION +
+            tile_col_index * PACK_FACTOR),
         src(src_ + tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR + tile_col_index * BYTES_PER_PACK),
         scales(scales_ + tile_row_index * params_output_stride_),
         biases(biases_ + tile_row_index * params_output_stride_), signed_codes(signed_codes_) {}
@@ -77,11 +83,7 @@ struct QuantizedBlockLoaderScaleBias {
       }
     }
 
-    T scale = *scales;
-    T bias = *biases;
-    for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
-    }
+    dequantize<StageT, READS_PER_THREAD * PACK_FACTOR, BITS>(src, float(*scales), float(*biases), dst, signed_codes);
   }
 
   void load_safe(short2 src_tile_dim) const {
@@ -93,28 +95,34 @@ struct QuantizedBlockLoaderScaleBias {
 
     if (tile_row_index >= src_tile_dim.y) {
       for (int i = 0; i < READS_PER_THREAD * PACK_FACTOR; i++) {
-        dst[i] = T(0);
+        dst[i] = StageT(0);
       }
       return;
     }
 
     const int valid_cols = src_tile_dim.x;
     const int valid_packs = (valid_cols + PACK_FACTOR - 1) / PACK_FACTOR;
-    T scale = *scales;
-    T bias = *biases;
+    const float scale = float(*scales);
+    const float bias = float(*biases);
     for (int i = 0; i < READS_PER_THREAD; i++) {
       const int pack_index = tile_col_index + i;
       if (pack_index < valid_packs) {
-        dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
+        dequantize<StageT, PACK_FACTOR, BITS>(
+            src + i * BYTES_PER_PACK,
+            scale,
+            bias,
+            dst + i * PACK_FACTOR,
+            signed_codes
+        );
         if (pack_index == valid_packs - 1) {
           const int remaining = valid_cols - pack_index * PACK_FACTOR;
           for (int lane = remaining; lane < PACK_FACTOR; ++lane) {
-            dst[i * PACK_FACTOR + lane] = T(0);
+            dst[i * PACK_FACTOR + lane] = StageT(0);
           }
         }
       } else {
         for (int lane = 0; lane < PACK_FACTOR; ++lane) {
-          dst[i * PACK_FACTOR + lane] = T(0);
+          dst[i * PACK_FACTOR + lane] = StageT(0);
         }
       }
     }

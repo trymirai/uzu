@@ -34,6 +34,9 @@ struct SimdgroupMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
+  // Quantized weights are dequantized in f32 and staged as half, the fast pre-M5 MMA operand.
+  using RightStageType = conditional_t<Right::QUANTIZED, half, RightElementType>;
+  static_assert(sizeof(RightStageType) == sizeof(RightElementType), "staging memory is sized for the weight type");
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   static_assert(!Left::QUANTIZED, "simdgroup MMA stages full-precision left operands only");
@@ -65,7 +68,7 @@ struct SimdgroupMmaCore {
       THREADGROUP_THREADS>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       LeftElementType,
-      RightElementType,
+      RightStageType,
       OutputElementType,
       THREADGROUP_BLOCK_M,
       THREADGROUP_BLOCK_N,
@@ -82,7 +85,7 @@ struct SimdgroupMmaCore {
   template <uint GEMM_ALIGNMENT_RAW, typename BLoader>
   static METAL_FUNC void k_loop(
       threadgroup LeftElementType* a_shared,
-      threadgroup RightElementType* b_shared,
+      threadgroup RightStageType* b_shared,
       const int aligned_k_iterations,
       thread ALoader& loader_a,
       thread BLoader& loader_b,
@@ -244,7 +247,7 @@ struct SimdgroupMmaCore {
         constexpr uint gemm_alignment = gemm_alignment_mask.value;
         k_loop<gemm_alignment>(
             a_shared,
-            b_shared,
+            reinterpret_cast<threadgroup RightStageType*>(b_shared),
             params->aligned_inner_iterations,
             loader_a,
             loader_b,
