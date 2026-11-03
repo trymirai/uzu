@@ -1,5 +1,7 @@
 //! The Neural Engine executor of single linear layers (the DeltaNet and attention projections):
-//! one W8A8 matmul program per output width, over surfaces shared by every shape.
+//! one matmul program per output width and weight type (fp16 activations, fp16 weights by default:
+//! int8 weights, one scale per row, add 0.8-1.1% relative error per projection, which the model's
+//! logits do not tolerate on top of the int8 MLPs; `UZU_ANE_FP16_WEIGHTS`).
 //!
 //! A call is the FFN's up projection alone: the GPU stages the layer's W4 weights into int8 rows
 //! `r' = H_in(D_a D_in H32(r))` (`AneStageUpRows`), packs the activations `a = H_in(D_a x)` (`AnePack`),
@@ -39,24 +41,39 @@ use crate::{
 
 /// Rows of the weight, scale and output surfaces, the widest linear layer one lane can run.
 pub const MAX_OUTPUT: u32 = 16384;
-/// Whether the weights of the roles `UZU_ANE_FP16_WEIGHTS` does not name are fp16.
-const FP16_WEIGHTS_DEFAULT: bool = false;
+/// Whether the weights of the roles `UZU_ANE_FP16_WEIGHTS` does not name are fp16 (all roles by
+/// default: with int8 weights the mean KL of the prefill logits against the GPU is 1.3e-3 instead of 9.8e-4).
+const FP16_WEIGHTS_DEFAULT: bool = true;
 /// The output rotation is applied per 32-channel block.
 const OUTPUT_BLOCK: u32 = 32;
 
-struct Surfaces {
-    x: AneSurface,
-    tx: AneSurface,
+/// The weight, scale and output surfaces of programs.
+struct Operands {
     w: AneSurface,
     s: AneSurface,
     y: AneSurface,
 }
 
-/// The weight, scale and output surfaces of a program that does not use the shared ones.
-struct Operands {
-    w: AneSurface,
-    s: AneSurface,
-    y: AneSurface,
+impl Operands {
+    fn new(
+        context: &MetalContext,
+        shape: &LinearShape,
+    ) -> Result<Self, AneError> {
+        let surface = |spec: FfnSurfaceSpec| AneSurface::new(context, spec.rows, spec.width, spec.element);
+        let [_, w, s]: [_; 3] = shape.inputs().try_into().expect("linear programs take three inputs");
+        Ok(Self {
+            w: surface(w)?,
+            s: surface(s)?,
+            y: surface(shape.output_spec())?,
+        })
+    }
+}
+
+struct Surfaces {
+    x: AneSurface,
+    tx: AneSurface,
+    /// What the programs with int8 weights share, created with the first of them.
+    int8: Option<Operands>,
 }
 
 /// What every linear program shares: per lane (see `MetalLane`) one set of surfaces sized for the
@@ -111,13 +128,11 @@ impl AneLinears {
         let shape = template_shape(OUTPUT_BLOCK, AneElement::Int8);
         let surface = |spec: FfnSurfaceSpec| AneSurface::new(context, spec.rows, spec.width, spec.element);
         let lane_surfaces = || -> Result<Mutex<Surfaces>, AneError> {
-            let [x, w, s]: [_; 3] = shape.inputs().try_into().expect("linear programs take three inputs");
+            let [x, _, _]: [_; 3] = shape.inputs().try_into().expect("linear programs take three inputs");
             Ok(Mutex::new(Surfaces {
                 x: surface(x)?,
                 tx: surface(shape.token_scales())?,
-                w: surface(w)?,
-                s: surface(s)?,
-                y: surface(shape.output_spec())?,
+                int8: None,
             }))
         };
         let kernel_error = |error: MetalError| AneError::Unavailable(error.to_string());
@@ -237,25 +252,19 @@ impl AneLinearProgram {
         let own = if weights == AneElement::Int8 {
             None
         } else {
-            let surface = |spec: FfnSurfaceSpec| AneSurface::new(context, spec.rows, spec.width, spec.element);
-            let operands = || -> Result<Mutex<Operands>, AneError> {
-                let [_, w, s]: [_; 3] = shape.inputs().try_into().expect("linear programs take three inputs");
-                Ok(Mutex::new(Operands {
-                    w: surface(w)?,
-                    s: surface(s)?,
-                    y: surface(shape.output_spec())?,
-                }))
-            };
-            Some([operands()?, operands()?])
+            Some([Mutex::new(Operands::new(context, &shape)?), Mutex::new(Operands::new(context, &shape)?)])
         };
         let bind = |lane: usize| -> Result<Vec<(u32, AneBinding)>, AneError> {
-            let surfaces = shared.surfaces[lane].lock();
+            let mut surfaces = shared.surfaces[lane].lock();
             let own = own.as_ref().map(|own| own[lane].lock());
-            let (w, s, y) = if let Some(own) = &own {
-                (&own.w, &own.s, &own.y)
-            } else {
-                (&surfaces.w, &surfaces.s, &surfaces.y)
-            };
+            if own.is_none() && surfaces.int8.is_none() {
+                surfaces.int8 = Some(Operands::new(context, &shape)?);
+            }
+            let Operands {
+                w,
+                s,
+                y,
+            } = own.as_deref().or(surfaces.int8.as_ref()).expect("operands exist");
             let inputs = [("x", &surfaces.x), ("w", w), ("s", s)];
             shape
                 .rows
@@ -333,20 +342,13 @@ impl AneLinearProgram {
         let Surfaces {
             x,
             tx,
+            int8,
+        } = &mut *surfaces;
+        let Operands {
             w,
             s,
             y,
-        } = &mut *surfaces;
-        let (w, s, y) = if let Some(own) = own.as_deref_mut() {
-            let Operands {
-                w,
-                s,
-                y,
-            } = own;
-            (w, s, y)
-        } else {
-            (w, s, y)
-        };
+        } = own.as_deref_mut().or(int8.as_mut()).expect("operands exist");
 
         kernels.stage_rows(weights.matrix, &layer.pre_signs, w, s, 0, self.shape.output, command_buffer);
         kernels.pack(input, &self.shared.pack_signs_buffer, tokens, x, tx, command_buffer)?;
