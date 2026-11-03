@@ -77,7 +77,11 @@ pub async fn run_server(
             .manage(state)
             .mount("/", routes![handle_system_one, handle_decisions, handle_models])
             .mount("/v1", routes![handle_system_one, handle_decisions, handle_models]);
-        let details = "📝 Endpoints:\n   POST /v1/systemone        (or /v1/decisions, /systemone, /decisions)\n";
+        let details = concat!(
+            "📝 Endpoints:\n",
+            "   POST /v1/systemone        (or /v1/decisions, /systemone, /decisions)\n",
+            "        Docs: https://github.com/trymirai/uzu#decision-models\n",
+        );
         (rocket, "System One server", details.to_string())
     } else {
         let thinking_support = ThinkingSupport::for_model(&resolved);
