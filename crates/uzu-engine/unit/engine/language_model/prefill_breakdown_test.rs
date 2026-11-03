@@ -172,3 +172,48 @@ fn prefill_coherence() {
         println!("--- prompt ({} chars) ---\n{continuation:?}", text.len());
     }
 }
+
+// Ignored: needs UZU_PREFILL_MODEL; manual perf harness.
+//
+// Decode tok/s (greedy, after a prompt of UZU_DECODE_PROMPT tokens, default 2048): decode batches are
+// one token, so they never run on the ANE; run it with and without `UZU_ANE=0` to compare.
+#[uzu_test]
+#[ignore]
+fn decode_throughput() {
+    let model_path = PathBuf::from(std::env::var("UZU_PREFILL_MODEL").expect("set UZU_PREFILL_MODEL"));
+    let prompt_length: usize = std::env::var("UZU_DECODE_PROMPT").map_or(2048, |value| value.parse().unwrap());
+    let count = 128;
+    let engine = block_on(Engine::<Metal>::new()).unwrap();
+    let model = block_on(engine.load_language_model(&model_path)).unwrap();
+    let tokens = prompt(prompt_length);
+
+    let mut best = 0.0f64;
+    for run in 0..RUNS + 1 {
+        let mut state = model.create_empty_state(Some((prompt_length + count + 64) as u32), 0).unwrap();
+        let mut options = model.default_stream_options();
+        options.sampling_method = SamplingMethod::Greedy;
+        let mut stream = model.stream(&tokens, &mut state, options).unwrap();
+        // The first token comes with the prefill; time the rest.
+        block_on(stream.generate()).unwrap().unwrap();
+        let started = Instant::now();
+        let mut produced = 0;
+        while produced < count - 1 {
+            if block_on(stream.generate()).unwrap().is_none() {
+                break;
+            }
+            produced += 1;
+        }
+        let rate = produced as f64 / started.elapsed().as_secs_f64();
+        block_on(stream.close()).unwrap();
+        drop(stream);
+        // The first run warms up pipelines.
+        if run > 0 {
+            println!("  run {run}: {produced} tokens, {rate:.2} tok/s");
+            best = best.max(rate);
+        }
+    }
+    println!(
+        "decode after {prompt_length}-token prompt (UZU_ANE={}): best of {RUNS} = {best:.2} tok/s",
+        std::env::var("UZU_ANE").unwrap_or_default()
+    );
+}

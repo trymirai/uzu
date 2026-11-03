@@ -149,6 +149,15 @@ fn chunked_prompt_logits(
     tokens: &[u64],
     chunk: usize,
 ) -> Vec<Vec<f32>> {
+    try_chunked_prompt_logits(model, tokens, chunk).unwrap()
+}
+
+/// [`chunked_prompt_logits`] that reports a failed execution instead of panicking.
+fn try_chunked_prompt_logits(
+    model: &LanguageModel<Metal>,
+    tokens: &[u64],
+    chunk: usize,
+) -> Result<Vec<Vec<f32>>, String> {
     let mut state = model.create_empty_state(Some(tokens.len() as u32 + 64), 0).unwrap();
     let chunk_count = tokens.len().div_ceil(chunk);
     state.transformer_state.prepare(((chunk_count - 1) * chunk) as u32, chunk.min(tokens.len()) as u32).unwrap();
@@ -194,7 +203,7 @@ fn chunked_prompt_logits(
     let mut copy = context.create_buffer_cpu_gpu(logits.size()).unwrap().handoff();
     command_buffer.encode_copy(&logits, &mut copy);
     drop((logits, token_ids));
-    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).map_err(|error| error.to_string())?;
 
     let vocab = model.vocab_size;
     let values: Vec<f32> = if copy.size() == rows * vocab * 4 {
@@ -203,7 +212,7 @@ fn chunked_prompt_logits(
         assert_eq!(copy.size(), rows * vocab * 2, "unexpected logits size");
         copy.as_slice::<bf16>().iter().map(|value| value.to_f32()).collect()
     };
-    values.chunks(vocab).map(|row| row.to_vec()).collect()
+    Ok(values.chunks(vocab).map(|row| row.to_vec()).collect())
 }
 
 /// Greedy continuation through the stream, i.e. the real prefill driver.
@@ -291,4 +300,123 @@ fn prefill_kl_pipelined() {
         kl_sum / positions as f64,
         100.0 * agree as f64 / positions as f64,
     );
+}
+/// [`greedy_tokens`] that reports errors instead of panicking.
+fn try_greedy_tokens(
+    model: &LanguageModel<Metal>,
+    tokens: &[u64],
+    count: usize,
+) -> Result<Vec<u64>, String> {
+    let mut state = model.create_empty_state(Some((tokens.len() + count + 64) as u32), 0).unwrap();
+    let mut options = model.default_stream_options();
+    options.sampling_method = SamplingMethod::Greedy;
+    let mut stream = model.stream(tokens, &mut state, options).map_err(|error| format!("{error:?}"))?;
+    let mut output = Vec::new();
+    while output.len() < count {
+        match block_on(stream.generate()).map_err(|error| format!("{error:?}"))? {
+            Some(token) => output.push(token),
+            None => break,
+        }
+    }
+    let _ = block_on(stream.close());
+    Ok(output)
+}
+
+/// Runs `work`, failing the process (a stuck GPU queue cannot be unwound) if it takes over 3 minutes.
+fn within_deadline<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        scope.spawn(move || {
+            let _ = sender.send(work());
+        });
+        receiver.recv_timeout(std::time::Duration::from_secs(180)).unwrap_or_else(|_| {
+            println!("HANG: no result within 180 s");
+            std::process::exit(2);
+        })
+    })
+}
+
+// Ignored: needs UZU_PREFILL_MODEL; loads the model repeatedly.
+//
+// Failure injection (`UZU_ANE_FAULT=enqueue:K` / `completion:K`, see `AneFfn`) for a single-chunk
+// (1024 tokens) and a pipelined (3072 tokens) prefill, driven both through the decoder directly and
+// through the stream. Per case: no hang, the failed prefill reports an error (not silently wrong
+// logits), the ANE retired, and the next prefill on the same engine matches the GPU-only engine.
+#[uzu_test]
+#[ignore]
+fn prefill_fault() {
+    let model_path = PathBuf::from(std::env::var("UZU_PREFILL_MODEL").expect("set UZU_PREFILL_MODEL"));
+    let continuation = 16;
+    // SAFETY: test-only; the variables are read when a Metal context / the ANE executor is created.
+    unsafe { std::env::set_var("UZU_ANE", "0") };
+    let gpu_engine = block_on(Engine::<Metal>::new()).unwrap();
+    let gpu = block_on(gpu_engine.load_language_model(&model_path)).unwrap();
+    unsafe { std::env::remove_var("UZU_ANE") };
+
+    let kinds = std::env::var("UZU_FAULT_KINDS").unwrap_or_else(|_| "enqueue,completion".to_string());
+    let lengths: Vec<usize> = std::env::var("UZU_FAULT_LENGTHS")
+        .unwrap_or_else(|_| "1024,3072".to_string())
+        .split(',')
+        .map(|length| length.parse().unwrap())
+        .collect();
+    let (_, ids) = prompts(&gpu, 3072).into_iter().next().expect("a prompt with 3072 tokens");
+    for kind in kinds.split(',') {
+        for length in &lengths {
+            let ids = &ids[..*length];
+            // 32 MLPs per chunk: fail in the middle of the first (single) or second (pipelined) chunk.
+            let at = if *length > 1024 {
+                32 + 10
+            } else {
+                10
+            };
+            let reference = chunked_prompt_logits(&gpu, ids, 1024);
+            let reference_tokens = greedy_tokens(&gpu, ids, continuation);
+            let mean_kl = |candidate: &[Vec<f32>]| {
+                reference.iter().zip(candidate).map(|(p, q)| kl_divergence(p, q)).sum::<f64>() / reference.len() as f64
+            };
+            let equal = |tokens: &Result<Vec<u64>, String>| match tokens {
+                Ok(tokens) => {
+                    let matching = tokens.iter().zip(&reference_tokens).filter(|(a, b)| a == b).count();
+                    format!("{matching}/{continuation} equal")
+                },
+                Err(error) => format!("error ({error})"),
+            };
+            let load = || {
+                unsafe { std::env::set_var("UZU_ANE_FAULT", format!("{kind}:{at}")) };
+                let engine = block_on(Engine::<Metal>::new()).unwrap();
+                let model = block_on(engine.load_language_model(&model_path)).unwrap();
+                unsafe { std::env::remove_var("UZU_ANE_FAULT") };
+                (engine, model)
+            };
+
+            // Through the decoder: the fault fires in the first prefill.
+            let (engine, model) = load();
+            let failed = within_deadline(|| try_chunked_prompt_logits(&model, ids, 1024));
+            let retired = !engine.context.ane_pipelining_available();
+            let after = within_deadline(|| try_chunked_prompt_logits(&model, ids, 1024));
+            println!(
+                "{kind}:{at} {length} tokens, decoder: failed prefill {}, ANE retired {retired}, next prefill {}",
+                failed.map_or_else(
+                    |error| format!("error ({error})"),
+                    |logits| format!("OK, KL {:.2e}", mean_kl(&logits))
+                ),
+                after.map_or_else(
+                    |error| format!("error ({error})"),
+                    |logits| format!("OK, KL {:.2e}", mean_kl(&logits))
+                ),
+            );
+            drop((model, engine));
+
+            // Through the stream.
+            let (engine, model) = load();
+            let first = within_deadline(|| try_greedy_tokens(&model, ids, continuation));
+            let retired = !engine.context.ane_pipelining_available();
+            let second = within_deadline(|| try_greedy_tokens(&model, ids, continuation));
+            println!(
+                "{kind}:{at} {length} tokens, stream: first request {}, ANE retired {retired}, second request {}",
+                equal(&first),
+                equal(&second)
+            );
+        }
+    }
 }

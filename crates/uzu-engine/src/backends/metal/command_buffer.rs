@@ -93,9 +93,20 @@ struct PreviousChunk {
 
 /// State shared by the command buffers an encoding was cut into by [`MetalCommandBufferEncoding::handoff`].
 #[derive(Default)]
-struct Handoffs {
+pub struct Handoffs {
     first_gpu_start: Mutex<Option<f64>>,
     error: Mutex<Option<String>>,
+}
+
+impl Handoffs {
+    /// Fails the execution of the encoding: awaiting it returns this error. Must be called before
+    /// the handed-off work is reported done to the queue, so the final command buffer sees it.
+    pub fn fail(
+        &self,
+        message: &str,
+    ) {
+        self.error.lock().get_or_insert_with(|| message.to_string());
+    }
 }
 
 impl MetalCommandBufferEncoding {
@@ -185,6 +196,12 @@ impl MetalCommandBufferEncoding {
         self.queue.signal_event_value(&lane.order, ready);
         self.queue.wait_for_event_value(&lane.done, done);
         Ok(())
+    }
+
+    /// Where work handed off to another engine reports its failure: a failure recorded here makes
+    /// awaiting the encoding fail, instead of the encoding completing with a silently wrong result.
+    pub fn failure_sink(&mut self) -> Arc<Handoffs> {
+        self.handoffs.get_or_insert_with(Arc::default).clone()
     }
 
     /// The lane (command queue) the encoding is currently on: 0 until a chunk was pipelined.

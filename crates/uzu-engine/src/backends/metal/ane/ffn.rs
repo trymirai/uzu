@@ -16,7 +16,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use half::f16;
@@ -34,7 +34,7 @@ use crate::{
         metal::{
             Metal,
             ane::{AneBinding, AneElement, AneError, AneProgram, AneRuntime, AneSurface, mil::FfnShape},
-            command_buffer::MetalCommandBufferEncoding,
+            command_buffer::{Handoffs, MetalCommandBufferEncoding},
             context::{MetalContext, MetalLane},
             error::MetalError,
             kernel::{AnePackMetalKernel, AneStageRowsMetalKernel, AneTransposeCodesMetalKernel, AneUnpackMetalKernel},
@@ -53,6 +53,39 @@ const CHUNK: u32 = 4096;
 const INTERMEDIATE_ROTATION_BLOCK: u32 = 512;
 const UP_ROTATION_BLOCK: u32 = 32;
 const SIGN_SEED: u64 = 0x5eed_a11e_2026_1103;
+
+/// The error a prefill fails with when an ANE request of it failed: its output would be wrong.
+/// The executor has retired by then, so running the prefill again keeps every MLP on the GPU.
+const FAILED: &str = "ANE request failed during prefill (the Neural Engine is retired; retry runs on the GPU)";
+
+/// Test-only failure injection, `UZU_ANE_FAULT=enqueue:K` or `completion:K` (K counts from 1): the
+/// K-th ANE request of the executor fails to enqueue, or enqueues and reports failure.
+#[derive(Clone, Copy, PartialEq)]
+enum FaultKind {
+    Enqueue,
+    Completion,
+}
+
+struct Fault {
+    kind: FaultKind,
+    at: usize,
+}
+
+impl Fault {
+    fn from_env() -> Option<Self> {
+        let value = std::env::var("UZU_ANE_FAULT").ok()?;
+        let (kind, at) = value.split_once(':')?;
+        let kind = match kind {
+            "enqueue" => FaultKind::Enqueue,
+            "completion" => FaultKind::Completion,
+            _ => return None,
+        };
+        Some(Self {
+            kind,
+            at: at.parse().ok()?,
+        })
+    }
+}
 
 /// Deterministic ±1 signs.
 fn random_signs(
@@ -254,6 +287,8 @@ pub struct AneFfn {
     intermediate_signs_buffer: GpuBuffer,
     up_output_signs: Vec<f32>,
     healthy: AtomicBool,
+    fault: Option<Fault>,
+    requests: AtomicUsize,
 }
 
 impl AneFfn {
@@ -318,6 +353,8 @@ impl AneFfn {
             intermediate_signs_buffer: upload(context, &intermediate_signs).map_err(kernel_error)?,
             up_output_signs,
             healthy: AtomicBool::new(true),
+            fault: Fault::from_env(),
+            requests: AtomicUsize::new(0),
         }))
     }
 
@@ -461,7 +498,8 @@ impl AneFfn {
         let done = ready + 1;
         command_buffer.order_after_previous_chunk(layer.index);
         command_buffer.record_layer_ready(layer.index, ready);
-        self.enqueue_when_ready(lane, rows, &timeline, ready, done);
+        let failures = command_buffer.failure_sink();
+        self.enqueue_when_ready(lane, rows, &timeline, ready, done, failures);
         command_buffer.handoff_to_ane(&timeline, ready, done)?;
 
         let mut output = command_buffer.allocate_scratch((tokens * hidden * 2) as usize)?;
@@ -487,11 +525,12 @@ impl AneFfn {
         timeline: &Arc<MetalLane>,
         ready: u64,
         done: u64,
+        failures: Arc<Handoffs>,
     ) {
         let ffn = self.clone();
         let block_timeline = timeline.clone();
         let block = MTLSharedEventNotificationBlock::new(move |_event, _value| {
-            ffn.enqueue(lane, rows, &block_timeline, ready, done);
+            ffn.enqueue(lane, rows, &block_timeline, ready, done, &failures);
         });
         timeline.event.notify_listener_at_value(&self.lanes[lane].listener, ready, &block);
     }
@@ -503,20 +542,38 @@ impl AneFfn {
         timeline: &Arc<MetalLane>,
         ready: u64,
         done: u64,
+        failures: &Arc<Handoffs>,
     ) {
+        if !self.is_healthy() {
+            // Retired while this MLP was already encoded: its result is lost either way, so do not
+            // keep sending work to a failing ANE. The GPU waits for `done` and must not hang.
+            failures.fail(FAILED);
+            timeline.relay_done(done);
+            return;
+        }
         let binding = &self.lanes[lane].bindings.iter().find(|(function_rows, _)| *function_rows == rows).unwrap().1;
+        let request = self.requests.fetch_add(1, Ordering::AcqRel) + 1;
+        let fault = self.fault.as_ref().filter(|fault| fault.at == request).map(|fault| fault.kind);
         let ffn = self.clone();
         let completion_timeline = timeline.clone();
+        let completion_failures = failures.clone();
         let completion = Box::new(move |success: bool| {
-            if !success {
-                // The result is garbage; the executor retires.
+            if !success || fault == Some(FaultKind::Completion) {
+                // The result is garbage: the executor retires and the prefill fails.
                 ffn.retire();
+                completion_failures.fail(FAILED);
             }
             // On failure too: the GPU waits for `done` and must not hang.
             completion_timeline.relay_done(done);
         });
-        if let Err(error) = self.program.enqueue(binding, &timeline.event, ready, done, completion) {
+        let enqueued = if fault == Some(FaultKind::Enqueue) {
+            Err(AneError::Unavailable("injected enqueue fault".to_string()))
+        } else {
+            self.program.enqueue(binding, &timeline.event, ready, done, completion)
+        };
+        if let Err(error) = enqueued {
             self.retire();
+            failures.fail(FAILED);
             timeline.relay_done(done);
             eprintln!("uzu: ANE enqueue failed, MLPs run on the GPU from now on: {error}");
         }
