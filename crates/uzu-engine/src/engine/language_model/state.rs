@@ -20,6 +20,10 @@ impl<B: Backend> LanguageModelState<B> {
     pub fn tokens(&self) -> &[u64] {
         &self.tokens
     }
+
+    pub fn max_context_length(&self) -> Option<u32> {
+        self.max_context_length
+    }
 }
 
 #[derive(Debug, Error)]
@@ -38,6 +42,12 @@ impl<B: Backend> LanguageModel<B> {
         let last_output_token = None;
 
         let prng = PRng::new(sampling_seed);
+
+        let max_context_length = match (max_context_length, self.max_context_length()) {
+            (Some(max_context_length), Some(model_max)) => Some(max_context_length.min(model_max)),
+            (Some(max_context_length), None) => Some(max_context_length),
+            (None, _) => self.recommended_context_length(),
+        };
 
         let transformer_state = self
             .decoder

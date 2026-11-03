@@ -73,6 +73,13 @@ impl SparseBuffer for MetalSparseBuffer {
         &mut self,
         until: usize,
     ) -> Result<(), MetalError> {
+        if until > self.capacity {
+            return Err(MetalError::CapacityExceeded {
+                requested: until,
+                capacity: self.capacity,
+            });
+        }
+
         if until <= self.length {
             return Ok(());
         }
@@ -139,3 +146,7 @@ impl Drop for MetalSparseBuffer {
         residency_set_locked.commit();
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../unit/backends/metal/sparse_buffer_test.rs"]
+mod test;

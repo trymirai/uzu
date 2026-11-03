@@ -14,6 +14,11 @@ pub enum MetalError {
     CannotCreateCommandQueue,
     #[error("Cannot create event")]
     CannotCreateEvent,
+    #[error("Sparse buffer capacity exceeded: requested {requested} bytes, capacity {capacity} bytes")]
+    CapacityExceeded {
+        requested: usize,
+        capacity: usize,
+    },
     #[error("Cannot create buffer")]
     CannotCreateBuffer,
     #[error("Cannot create heap")]
