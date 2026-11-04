@@ -46,6 +46,7 @@ struct TrellisEpilogue {
 struct TrellisWeightLoader {
   trellis::GemmTrellisFormat format;
   const device uint8_t* codes;
+  uint row_byte;
   uint row_columns;
   uint column;
   uint row;
@@ -63,7 +64,8 @@ struct TrellisWeightLoader {
     if (row >= block_n) {
       return;
     }
-    const uint4 weights = live ? trellis::decode_biased_weight_quad(format, codes, 0, column, row_columns) : uint4(0u);
+    const uint4 weights =
+        live ? trellis::decode_biased_weight_quad(format, codes, row_byte, column, row_columns) : uint4(0u);
     METAL_PRAGMA_UNROLL
     for (ushort index = 0; index < 4; ++index) {
       *reinterpret_cast<threadgroup half4*>(destination + 4 * index) = half4(as_type<uchar4>(weights[index]));
@@ -142,6 +144,27 @@ KERNEL(GemmTrellis)(
   const uint code_row_bytes = trellis::row_bytes(trellis_format, params->K);
   const short2 position = Ops::get_position(thread_context.simd_lane_id);
 
+  const bool write_split_k_partials = params->aligned_inner_iterations * trellis::K_STEP < params->K;
+  const size_t partial_sum_offset = size_t(group_z) * params->M * params->N;
+  const TrellisEpilogue epilogue{
+      scale_and_offsets,
+      column_group_sums,
+      activation_scales,
+      row_scales,
+      output,
+      params->leading_dimension_d
+  };
+  const auto store = [&](const uint token, const uint row, const int value) {
+    if (token < params->M && row < params->N) {
+      if (write_split_k_partials) {
+        device int* partial_sums = reinterpret_cast<device int*>(output) + partial_sum_offset;
+        partial_sums[size_t(token) * params->N + row] = value;
+      } else {
+        epilogue.store(value, token, row);
+      }
+    }
+  };
+
   Products products;
   products.clear();
   if constexpr (USE_MXU) {
@@ -193,6 +216,10 @@ KERNEL(GemmTrellis)(
         }
       }
     });
+    products.map_coords(thread_context.simd_lane_id, [&](short token_offset, short row_offset, int value) {
+      store(token_base + token_offset, row_base + row_offset, value);
+      return value;
+    });
   } else {
     using LeftOperand = operands::LeftOperandFor<GemmAPrologueKind::FullPrecision, half, ushort(0), false>;
     using RightOperand = operands::RightOperandFor<GemmBPrologueKind::FullPrecision, ushort(0), ushort(0), half>;
@@ -235,7 +262,8 @@ KERNEL(GemmTrellis)(
     const uint b_window = thread_index % B_WINDOWS * trellis::LANE_COLUMNS;
     TrellisWeightLoader b_loader{
         trellis_format,
-        codes + size_t(block_col + b_row) * code_row_bytes,
+        codes,
+        (block_col + b_row) * code_row_bytes,
         params->K,
         k_offset + b_window,
         b_row,
@@ -259,39 +287,21 @@ KERNEL(GemmTrellis)(
             tile_block_cols,
             leftover_block_depth
         );
-        slab.c_fragment.zip_for_each_coord(
-            thread_context.simd_lane_id,
-            [&](short, short, thread float& sum, thread int& exact) { exact += int(sum); },
-            slab.c_fragment,
-            products
-        );
+        ushort index = 0;
+        slab.for_each_output([&](ushort, ushort, ushort, thread float& sum) {
+          products.elements()[index++] += int(sum);
+        });
       }
     });
+    ushort index = 0;
+    slab.for_each_output([&](ushort token_offset, ushort row_offset, ushort lane_column, thread float&) {
+      store(
+          block_row + slab.simdgroup_row_offset + token_offset,
+          block_col + slab.simdgroup_col_offset + row_offset + lane_column,
+          products.elements()[index++]
+      );
+    });
   }
-
-  const bool write_split_k_partials = params->aligned_inner_iterations * trellis::K_STEP < params->K;
-  const size_t partial_sum_offset = size_t(group_z) * params->M * params->N;
-  const TrellisEpilogue epilogue{
-      scale_and_offsets,
-      column_group_sums,
-      activation_scales,
-      row_scales,
-      output,
-      params->leading_dimension_d
-  };
-  products.map_coords(thread_context.simd_lane_id, [&](short token_offset, short row_offset, int value) {
-    if (token_offset < token_end && row_offset < row_end) {
-      const uint token = token_base + uint(token_offset);
-      const uint row = row_base + uint(row_offset);
-      if (write_split_k_partials) {
-        device int* partial_sums = reinterpret_cast<device int*>(output) + partial_sum_offset;
-        partial_sums[size_t(token) * params->N + row] = value;
-      } else {
-        epilogue.store(value, token, row);
-      }
-    }
-    return value;
-  });
 }
 
 KERNEL(GemmTrellisReduce)(

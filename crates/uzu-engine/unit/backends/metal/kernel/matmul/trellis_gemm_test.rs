@@ -244,13 +244,14 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
         run_projection(&context, format, dimensions, None);
     }
     // The forced plans' K are whole 64-column blocks.
-    if whole_blocks(64) && context.supports_mxu {
-        run_projection(&context, format, (129, 132, 1024), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
-        run_projection(&context, format, (129, 132, 64), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
-        run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile32x64x256_Simdgroups2x2, 1)));
-        run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
-        run_projection(&context, format, (7, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
-    } else if whole_blocks(64) {
+    if whole_blocks(64) {
+        if context.supports_mxu {
+            run_projection(&context, format, (129, 132, 1024), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
+            run_projection(&context, format, (129, 132, 64), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
+            run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile32x64x256_Simdgroups2x2, 1)));
+            run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
+            run_projection(&context, format, (7, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
+        }
         run_projection(&context, format, (7, 68, 6144), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 4)));
         run_projection(&context, format, (33, 68, 6144), Some((GemmTiling::Tile32x32x32_Simdgroups2x2, 4)));
         run_projection(&context, format, (65, 68, 6144), Some((GemmTiling::Tile64x64x32_Simdgroups2x2, 4)));
