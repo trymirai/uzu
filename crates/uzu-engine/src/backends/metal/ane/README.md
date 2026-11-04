@@ -13,14 +13,15 @@ and `runtime/ops/AneFfn.cpp`. Not affiliated with Splash.
 
 Qwen3.5-9B-M (W4 asym g32, RHT), base M4, prefill tok/s:
 
-| prompt | GPU only (`UZU_ANE=0`) | all linears on the ANE, fp16 linear weights |
-|-------:|-----------------------:|--------------------------------------------:|
-| 1k     | 225                    | 628                                         |
-| 2k     | 224                    | 742                                         |
-| 4k     | 222                    | 731                                         |
+| prompt | GPU only (`UZU_ANE=0`) | all linears on the ANE, int8 weights (default) | fp16 linear weights (`UZU_ANE_FP16_WEIGHTS=all`) |
+|-------:|-----------------------:|-----------------------------------------------:|-------------------------------------------------:|
+| 1k     | 225                    | 703                                            | 628                                              |
+| 2k     | 224                    | 827                                            | 742                                              |
+| 4k     | 222                    | 806                                            | 731                                              |
 
-Mean KL of the prompt logits against GPU-only: 9.78e-4 single chunk, 7.12e-4 pipelined
-(`prefill_kl`, `prefill_kl_pipelined`). Decode throughput is unchanged (`decode_throughput`).
+Mean KL of the prompt logits against GPU-only (`prefill_kl`, single chunk): 1.31e-3 with int8
+weights (the default, matching the A8W8/A8W4 precision of the M5 GPU path), 9.78e-4 with fp16 linear
+weights (7.12e-4 pipelined). Decode throughput is unchanged (`decode_throughput`).
 
 ## Architecture
 
@@ -136,7 +137,7 @@ All defaulted, so other backends and models are unaffected (verified against the
 | `UZU_ANE=0` | disable the ANE entirely (GPU-only; also the baseline for KL tests) |
 | `UZU_ANE_PIPELINE=0` | keep ANE offload but no cross-lane chunk pipelining (fixed 1024 chunks) |
 | `UZU_ANE_LINEARS` | linear roles on the ANE: comma list of `deltanet`, `attention`, `deltanet_in`, `deltanet_out`, `attention_in`, `attention_out`, `all`; `none` for none; default all |
-| `UZU_ANE_FP16_WEIGHTS` | roles with fp16 weights (same syntax); unset = all roles fp16; roles not named use int8 weights |
+| `UZU_ANE_FP16_WEIGHTS` | roles with fp16 weights (same syntax); unset = none (int8 weights for every role); roles not named use int8 weights |
 | `UZU_ANE_ACTIVATIONS=int8` | int8 activations for the linear programs (default fp16) |
 | `UZU_ANE_FFN_PRECISION` | `int8` (default), `fp16_in`, `fp16_mid`, `fp16`: unrounded FFN input and/or intermediate |
 | `UZU_ANE_WEIGHT_CLIP` | `peak` (default) or a number of std-devs the staged int8 rows cover (experiment; did not help) |

@@ -41,9 +41,9 @@ use crate::{
 
 /// Rows of the weight, scale and output surfaces, the widest linear layer one lane can run.
 pub const MAX_OUTPUT: u32 = 16384;
-/// Whether the weights of the roles `UZU_ANE_FP16_WEIGHTS` does not name are fp16 (all roles by
-/// default: with int8 weights the mean KL of the prefill logits against the GPU is 1.3e-3 instead of 9.8e-4).
-const FP16_WEIGHTS_DEFAULT: bool = true;
+/// Whether the weights of the roles `UZU_ANE_FP16_WEIGHTS` does not name are fp16 (no role by
+/// default: int8 weights, mean KL of the prefill logits against the GPU 1.3e-3; all-fp16 gives 9.8e-4).
+const FP16_WEIGHTS_DEFAULT: bool = false;
 /// The output rotation is applied per 32-channel block.
 const OUTPUT_BLOCK: u32 = 32;
 
