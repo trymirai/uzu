@@ -46,7 +46,8 @@ static METAL_FUNC auto make_staged_loader(
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
         RightOperand::BITS,
-        typename Core::RightStageType>;
+        typename Core::RightStageType,
+        typename Core::RightComputeType>;
     return Loader(
         values,
         scales,
@@ -69,7 +70,8 @@ static METAL_FUNC auto make_staged_loader(
         RightOperand::GROUP_SIZE,
         RightOperand::BITS,
         false,
-        typename Core::RightStageType>;
+        typename Core::RightStageType,
+        typename Core::RightComputeType>;
     return Loader(
         values,
         scales,
@@ -99,7 +101,8 @@ static METAL_FUNC auto make_staged_loader(
         RightOperand::GROUP_SIZE,
         RightOperand::BITS,
         true,
-        typename Core::RightStageType>;
+        typename Core::RightStageType,
+        typename Core::RightComputeType>;
     return Loader(
         values,
         scales,

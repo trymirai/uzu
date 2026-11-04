@@ -20,8 +20,9 @@ template <
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
     short BITS,
-    bool SCALE_SYMMETRIC = false,
-    typename StageT = T>
+    bool SCALE_SYMMETRIC,
+    typename StageT,
+    typename ComputeT>
 struct QuantizedBlockLoaderScaleZeroPoint {
   static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
@@ -138,7 +139,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     float scale;
     float bias;
     current_scale_bias(scale, bias);
-    dequantize<StageT, READS_PER_THREAD * PACK_FACTOR, BITS>(src, scale, bias, dst, signed_codes);
+    dequantize<StageT, ComputeT, READS_PER_THREAD * PACK_FACTOR, BITS>(src, scale, bias, dst, signed_codes);
   }
 
   void load_safe(short2 src_tile_dim) const {
@@ -163,7 +164,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     for (int i = 0; i < READS_PER_THREAD; i++) {
       const int pack_index = tile_col_index + i;
       if (pack_index < valid_packs) {
-        dequantize<StageT, PACK_FACTOR, BITS>(
+        dequantize<StageT, ComputeT, PACK_FACTOR, BITS>(
             src + i * BYTES_PER_PACK,
             scale,
             bias,
