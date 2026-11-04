@@ -1,6 +1,7 @@
 mod napi;
 mod pyo3;
 mod rust;
+mod typescript;
 mod uniffi;
 mod wasm;
 

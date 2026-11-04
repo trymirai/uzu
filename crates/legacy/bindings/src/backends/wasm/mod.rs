@@ -18,7 +18,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::{
-    backends::Backend,
+    backends::{Backend, typescript::typescript_type},
     contexts::{
         AliasContext, ClassContext, EnumerationContext, EnumerationShape, ErrorContext, ImplementationContext,
         MethodMetadata, StructureContext,
@@ -77,7 +77,7 @@ impl Backend for Wasm {
 
     fn alias_companions(context: &AliasContext) -> TokenStream {
         let name = context.item.ident.to_string();
-        let declaration = format!("export type {name} = {};", typescript::typescript_type(&context.item.ty, &name));
+        let declaration = format!("export type {name} = {};", typescript_type(&context.item.ty, &name));
         typescript::custom_section(&name, &typescript::cfg_attributes(&context.item.attrs), &declaration)
     }
 

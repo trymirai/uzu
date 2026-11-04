@@ -3,54 +3,12 @@ use heck::ToShoutySnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use crate::backends::typescript::{option_inner, optional_class_field_type, typescript_type};
+
 /// The JavaScript name of a field, parameter, or method, converted exactly as napi-derive does
 /// (same `convert_case` version), so that e.g. `crc32c` becomes `crc32C` in both packages.
 pub fn js_name(rust_name: &str) -> String {
     rust_name.trim_start_matches("r#").trim_start_matches('_').to_case(Case::Camel)
-}
-
-/// The TypeScript type napi declares for a Rust type. `Option` maps to `T | null`, as for return
-/// values; fields and parameters handle a top-level `Option` themselves.
-pub fn typescript_type(
-    ty: &syn::Type,
-    self_name: &str,
-) -> String {
-    match ty {
-        syn::Type::Reference(reference) => typescript_type(&reference.elem, self_name),
-        syn::Type::Paren(paren) => typescript_type(&paren.elem, self_name),
-        syn::Type::Group(group) => typescript_type(&group.elem, self_name),
-        syn::Type::Tuple(tuple) if tuple.elems.is_empty() => "void".to_string(),
-        syn::Type::Slice(slice) => format!("Array<{}>", typescript_type(&slice.elem, self_name)),
-        syn::Type::Path(path) => path_type(path, self_name),
-        _ => "any".to_string(),
-    }
-}
-
-fn path_type(
-    path: &syn::TypePath,
-    self_name: &str,
-) -> String {
-    let Some(segment) = path.path.segments.last() else {
-        return "any".to_string();
-    };
-    let arguments = generic_arguments(segment);
-    let argument = |index: usize| {
-        arguments.get(index).map_or_else(|| "any".to_string(), |argument| typescript_type(argument, self_name))
-    };
-    match segment.ident.to_string().as_str() {
-        "bool" => "boolean".to_string(),
-        "u8" | "u16" | "u32" | "u64" | "usize" | "i8" | "i16" | "i32" | "i64" | "isize" | "f32" | "f64" => {
-            "number".to_string()
-        },
-        "String" | "str" | "char" => "string".to_string(),
-        "Option" => format!("{} | null", argument(0)),
-        "Vec" | "VecDeque" => format!("Array<{}>", argument(0)),
-        "HashMap" | "BTreeMap" | "IndexMap" => format!("Record<{}, {}>", argument(0), argument(1)),
-        "Box" | "Arc" | "Rc" | "Result" => argument(0),
-        "JsValue" => "any".to_string(),
-        "Self" => self_name.to_string(),
-        name => name.to_string(),
-    }
 }
 
 /// A member of an object type literal or interface, e.g. `name?: string`.
@@ -64,44 +22,15 @@ pub fn object_member(
     }
 }
 
-fn generic_arguments(segment: &syn::PathSegment) -> Vec<&syn::Type> {
-    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return Vec::new();
-    };
-    arguments
-        .args
-        .iter()
-        .filter_map(|argument| match argument {
-            syn::GenericArgument::Type(ty) => Some(ty),
-            _ => None,
-        })
-        .collect()
-}
-
-fn wrapped_inner<'ty>(
-    ty: &'ty syn::Type,
-    wrapper: &str,
-) -> Option<&'ty syn::Type> {
-    let syn::Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != wrapper {
-        return None;
+/// A field of a class, e.g. `name?: string | null`, see `optional_class_field_type`.
+pub fn class_member(
+    name: &str,
+    ty: &syn::Type,
+) -> String {
+    match option_inner(ty) {
+        Some(inner) => format!("{name}?: {}", optional_class_field_type(inner, "")),
+        None => object_member(name, ty),
     }
-    generic_arguments(segment).into_iter().next()
-}
-
-pub fn option_inner(ty: &syn::Type) -> Option<&syn::Type> {
-    wrapped_inner(ty, "Option")
-}
-
-pub fn result_inner(ty: &syn::Type) -> Option<&syn::Type> {
-    wrapped_inner(ty, "Result")
-}
-
-pub fn is_unit(ty: &syn::Type) -> bool {
-    matches!(ty, syn::Type::Tuple(tuple) if tuple.elems.is_empty())
 }
 
 /// The `#[cfg(...)]` attributes of an item, to repeat on the code generated for it.

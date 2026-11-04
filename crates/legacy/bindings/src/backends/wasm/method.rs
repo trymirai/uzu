@@ -1,10 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::typescript::{
-    cfg_attributes, custom_section, doc_attributes, is_unit, js_name, option_inner, result_inner, typescript_type,
-};
+use super::typescript::{cfg_attributes, custom_section, doc_attributes, js_name};
 use crate::{
+    backends::typescript::{is_unit, option_inner, result_inner, typescript_type},
     contexts::{ImplementationContext, MethodMetadata},
     types::MethodFlavor,
 };

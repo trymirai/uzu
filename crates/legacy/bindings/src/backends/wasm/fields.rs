@@ -2,7 +2,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::ext::IdentExt;
 
-use super::typescript::{cfg_attributes, custom_section, js_name, object_member, option_inner, typescript_type};
+use super::typescript::{cfg_attributes, class_member, custom_section, js_name, object_member};
+use crate::backends::typescript::{option_inner, typescript_type};
 
 pub struct Field<'item> {
     pub ident: &'item syn::Ident,
@@ -168,14 +169,15 @@ pub fn object_members(fields: &[Field]) -> Vec<String> {
     fields.iter().map(|field| object_member(&field.js_name, field.ty)).collect()
 }
 
-/// Declares the fields of a class as napi does (`name?: T` for an `Option`), in an interface that
-/// merges with the class wasm-bindgen declares.
+/// Declares the fields of a class as napi does (`name?: T | null` for an `Option`), in an interface
+/// that merges with the class wasm-bindgen declares.
 pub fn field_declarations(
     class_name: &str,
     cfgs: &[&syn::Attribute],
     fields: &[Field],
 ) -> TokenStream {
-    let members: String = object_members(fields).iter().map(|member| format!("  {member};\n")).collect();
+    let members: String =
+        fields.iter().map(|field| format!("  {};\n", class_member(&field.js_name, field.ty))).collect();
     let declaration = format!("export interface {class_name} {{\n{members}}}");
     custom_section(&format!("{class_name}Fields"), cfgs, &declaration)
 }
