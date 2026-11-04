@@ -15,10 +15,3 @@ def add_options(parser: pytest.Parser) -> None:
 
 class TestMLXServe(EngineTests):
     engine_name = "mlxserve"
-
-    @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        args = ["./engine-mlxserve/run.sh", "--model", config.getoption("mlxserve_model")]
-        if draft := config.getoption("mlxserve_draft_model"):
-            args.extend(["--draft-model", draft])
-        return args

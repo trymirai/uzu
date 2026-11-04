@@ -4,7 +4,7 @@ let buildPythonPackages = TargetScript.pre(
     script: """
         env -i HOME="$HOME" ${DEVELOPER_DIR:+DEVELOPER_DIR="$DEVELOPER_DIR"} \\
             PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \\
-            "$PROJECT_DIR/bootstrap.sh"
+            "$PROJECT_DIR/build.sh"
         """,
     name: "Build Python Packages",
     basedOnDependencyAnalysis: false
@@ -72,10 +72,7 @@ let project = Project(
                     "$(PROJECT_DIR)/deps/Python.xcframework/ios-arm64", "$(PROJECT_DIR)/deps",
                 ]),
                 "OTHER_LDFLAGS": .array(
-                    [
-                        "Python", "BenchmarksUzu", "BenchmarksLlamacpp", "BenchmarksMldrift",
-                        "BenchmarksMlxserve",
-                    ]
+                    ["Python", "BenchmarksUzu", "BenchmarksLlamacpp", "BenchmarksMlxserve"]
                     .flatMap { ["-framework", $0] }
                 ),
                 "SUPPORTED_PLATFORMS": "iphoneos",

@@ -16,7 +16,4 @@ def add_options(parser: pytest.Parser) -> None:
 
 class TestSplash(EngineTests):
     engine_name = "splash"
-
-    @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "--project", "engine-splash", "bench-splash", "--model", config.getoption("splash_model")]
+    specdec = True

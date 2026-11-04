@@ -1473,14 +1473,6 @@ On Linux and Windows, Vulkan needs:
 
 On Linux, `nix develop` provides everything but the GPU driver.
 
-## Benchmarks
-
-To run benchmarks, pass a downloaded model path, a benchmark task file, and an output path:
-
-```bash
-cargo run --release -p cli -- bench {MODEL_PATH} {TASK_PATH} {OUTPUT_PATH}
-```
-
 ## Server
 
 You can also run `uzu` as an OpenAI-compatible HTTP server:

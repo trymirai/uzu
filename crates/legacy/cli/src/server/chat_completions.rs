@@ -232,7 +232,7 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     }
 }
 
-pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
+fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
     merge_adjacent_system_messages(messages.iter().map(to_chat_message))
 }
 
