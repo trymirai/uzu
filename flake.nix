@@ -8,12 +8,30 @@
     };
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+    };
   };
   outputs = {
     nixpkgs,
     rust-overlay,
     crane,
     flake-utils,
+    pyproject-nix,
+    uv2nix,
+    pyproject-build-systems,
     ...
   }:
     flake-utils.lib.eachSystem ["aarch64-darwin" "aarch64-linux" "x86_64-linux"] (
@@ -40,7 +58,13 @@
         rustupShim = import ./scripts/rustup-shim.nix pkgs;
         rustShimNixCC = rustupShim (rustToolchainsNixCC // {default = "nightly";});
         rustShimHostCC = rustupShim ((pkgs.lib.mapAttrs (_: withoutNixCC) rustToolchainsNixCC) // {default = "nightly";});
-        craneLibNixCC = (crane.mkLib pkgs).overrideToolchain rustToolchainNixCC;
+        craneLibNixCC = ((crane.mkLib pkgs).overrideToolchain rustToolchainNixCC).overrideScope (
+          _: prev:
+            pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+              # WORKAROUND: Short store names keep large Cargo closures below macOS's sandbox profile limit.
+              downloadCargoPackage = args: (prev.downloadCargoPackage args).overrideAttrs {name = "crate";};
+            }
+        );
 
         metal-toolchain = import ./scripts/metal-toolchain.nix pkgs {
           build = "27A266a";
@@ -140,14 +164,14 @@
         hostToolchainDevshellPackages = commonDevshellPackages ++ benchmarkDevshellPackages ++ [rustShimHostCC];
         nixToolchainDevshellPackages = commonDevshellPackages ++ benchmarkDevshellPackages ++ [rustShimNixCC];
 
-        mirai = craneLibNixCC.buildPackage {
-          pname = "mirai";
+        mirai-cli = craneLibNixCC.buildPackage {
+          pname = "mirai-cli";
           src = ./.;
 
           cargoExtraArgs = "-p cli";
           installPhaseCommand = ''
             mkdir -p $out/bin
-            install -Dm755 target/release/cli $out/bin/mirai
+            install -Dm755 target/release/cli $out/bin/mirai-cli
           '';
 
           buildInputs = nixToolchainBuildInputs;
@@ -155,13 +179,19 @@
 
           doCheck = false;
         };
+        benchmarks = import ./scripts/benchmarks {
+          inherit pkgs metal-toolchain mirai-cli pyproject-nix uv2nix pyproject-build-systems;
+          craneLib = craneLibNixCC;
+        };
       in {
         formatter = pkgs.alejandra;
 
-        packages = {
-          inherit mirai;
-          default = mirai;
-        };
+        packages =
+          {
+            inherit mirai-cli;
+            default = mirai-cli;
+          }
+          // benchmarks;
 
         devShells = {
           default = pkgs.mkShell ({

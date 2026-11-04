@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -77,15 +78,18 @@ class MagnitudeServerEngine(ServerEngine):
 
     def create_process(self) -> subprocess.Popen:
         model = resolve_model(self.model)
-        subprocess.run(
-            ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
-            check=True,
-            stdin=subprocess.DEVNULL,
-            stdout=sys.stderr,
-        )
+        binary = os.environ.get("BENCHMARK_MAGNITUDE_BINARY")
+        if binary is None:
+            subprocess.run(
+                ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+            )
+            binary = str(self.PROJECT_DIR / "target/release/magnitude-engine")
         return subprocess.Popen(
             [
-                str(self.PROJECT_DIR / "target/release/magnitude-engine"),
+                binary,
                 "--model",
                 str(model),
                 "--no-projector",

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.31)
-include(FetchContent)
+include(../common-cpp/dependencies.cmake)
 
 # project setup
 project(engine-llamacpp LANGUAGES C CXX)
@@ -8,7 +8,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # llama.cpp
-set(LLAMA_VERSION v0.8.0)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build common utilities")
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Build upstream tests")
@@ -16,21 +15,10 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "Build upstream examples")
 set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "Build upstream tools")
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "Build upstream server")
 set(LLAMA_BUILD_APP OFF CACHE BOOL "Build upstream application")
-FetchContent_Declare(
-    llama_cpp
-    GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG ${LLAMA_VERSION}
-)
-FetchContent_MakeAvailable(llama_cpp)
+benchmark_dependency(llama_cpp)
 
 # CLI11
-FetchContent_Declare(
-    cli11
-    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-    GIT_TAG v2.7.2
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(cli11)
+benchmark_dependency(cli11)
 
 # common sources
 add_subdirectory(../common-cpp common-cpp)

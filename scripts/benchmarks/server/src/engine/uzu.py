@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -33,14 +34,11 @@ class UzuServerEngine(ServerEngine):
         self._log_thread: Thread | None = None
 
     def create_process(self) -> subprocess.Popen:
+        binary = os.environ.get("BENCHMARK_UZU_BINARY")
+        command = [binary] if binary else ["cargo", "run", "--release", "-p", "cli", "--"]
         process = subprocess.Popen(
-            [
-                "cargo",
-                "run",
-                "--release",
-                "-p",
-                "cli",
-                "--",
+            command
+            + [
                 "server",
                 "--no-prefix-cache",
                 "--host",
@@ -50,7 +48,7 @@ class UzuServerEngine(ServerEngine):
                 "--model",
                 self.model,
             ],
-            cwd=UzuServerEngine.REPO_ROOT,
+            cwd=None if binary else UzuServerEngine.REPO_ROOT,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             text=True,
