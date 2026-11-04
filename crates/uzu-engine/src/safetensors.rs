@@ -124,7 +124,6 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
     }
 }
 
-#[derive(Clone)]
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
     prefix: String,

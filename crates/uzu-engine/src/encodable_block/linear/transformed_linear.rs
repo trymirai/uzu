@@ -87,7 +87,7 @@ impl<B: Backend> TransformedLinear<B> {
         output_data_type: DataType,
         has_biases: bool,
         spec: AnyWeightMatrixSpec,
-        weights_tree: &ParameterTree<'_, B>,
+        weights_tree: ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformedLinearError<B>> {
         if has_biases {
@@ -99,7 +99,7 @@ impl<B: Backend> TransformedLinear<B> {
             input_data_type,
             output_data_type,
         };
-        let parts = row_stack_parts(spec, output_dimension, weights_tree.clone())?;
+        let parts = row_stack_parts(spec, output_dimension, weights_tree)?;
         let mut groups = Vec::with_capacity(parts.len());
         for (rows, spec, tree) in parts {
             let AnyWeightMatrixSpec::HybridSpec(hybrid) = spec else {
