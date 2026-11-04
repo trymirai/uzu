@@ -1,7 +1,7 @@
 import { IconButton } from "./icon-button";
 import { useToast } from "./toast/use-toast";
 import { Transition } from "@headlessui/react";
-import { Check, Copy } from "lucide-react";
+import { IconCheckmark1Small, IconSquareBehindSquare1 } from "@central-icons-react/round-outlined-radius-3-stroke-2";
 import { Fragment, useState } from "react";
 import { twMerge } from "tailwind-merge";
 
@@ -13,7 +13,7 @@ type CopyButtonProps = {
 const COPIED_FEEDBACK_MS = 1000;
 
 const BUTTON_CLASSES =
-  "relative min-w-8 min-h-8 flex items-center justify-center p-[6px] rounded-[5px] text-label-muted hover:bg-card-hover hover:text-label-title active:scale-100";
+  "relative size-8 flex items-center justify-center p-0 rounded-lg text-label-muted transition-[background-color,color,scale] duration-150 ease-out hover:bg-black/[0.06] hover:text-label-title dark:hover:bg-white/[0.08] active:scale-[0.96]";
 
 export function CopyButton({ onCopy, className }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
@@ -41,7 +41,7 @@ export function CopyButton({ onCopy, className }: CopyButtonProps) {
         leaveFrom="opacity-100"
         leaveTo="opacity-0"
       >
-        <Copy className="w-[14px] h-[14px] absolute" />
+        <IconSquareBehindSquare1 size={16} aria-hidden className="absolute" />
       </Transition>
       <Transition
         as={Fragment}
@@ -53,7 +53,7 @@ export function CopyButton({ onCopy, className }: CopyButtonProps) {
         leaveFrom="opacity-100"
         leaveTo="opacity-0"
       >
-        <Check className="w-[14px] h-[14px] absolute" />
+        <IconCheckmark1Small size={16} aria-hidden className="absolute text-success-strong" />
       </Transition>
     </IconButton>
   );

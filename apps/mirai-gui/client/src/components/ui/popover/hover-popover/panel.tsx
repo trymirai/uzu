@@ -33,8 +33,8 @@ type HoverPopoverPanelProps = {
   restoreFocusRef?: RefObject<HTMLElement | null>;
 };
 
-const ENTER = "transition-[opacity,transform] duration-[120ms] ease-spring";
-const LEAVE = "transition-[opacity,transform] duration-[80ms] ease-spring";
+const ENTER = "transition-[opacity,transform] duration-200 ease-spring motion-reduce:transition-none";
+const LEAVE = "transition-[opacity,transform] duration-[140ms] ease-spring motion-reduce:transition-none";
 
 export function HoverPopoverPanel({
   floatingStyle,
@@ -74,11 +74,11 @@ export function HoverPopoverPanel({
         <TransitionChild
           as="div"
           enter={ENTER}
-          enterFrom="opacity-0 scale-90"
+          enterFrom="opacity-0 scale-95"
           enterTo="opacity-100 scale-100"
           leave={LEAVE}
           leaveFrom="opacity-100 scale-100"
-          leaveTo="opacity-0 scale-90"
+          leaveTo="opacity-0 scale-95"
           className={getOriginClassName(side, align)}
         >
           <PopoverSurface open side={side} align={align} animated={false}>
@@ -89,7 +89,7 @@ export function HoverPopoverPanel({
                 role="menuitem"
                 disabled={!open || item.disabled === true}
                 className={twMerge(
-                  "flex items-center gap-2 w-full px-2.5 py-2 rounded-md bg-transparent border-none outline-hidden text-left hover:bg-surface-tertiary focus:bg-surface-tertiary",
+                  "flex min-h-8 items-center gap-2.5 w-full px-2 py-1.5 rounded-lg bg-transparent border-none outline-hidden text-left transition-colors duration-100 ease-out hover:bg-surface-tertiary focus:bg-surface-tertiary",
                   item.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                   item.danger ? "text-red-500" : "text-text-primary",
                 )}

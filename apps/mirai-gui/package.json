@@ -53,6 +53,7 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
+    "@central-icons-react/round-outlined-radius-3-stroke-2": "^1.2.23",
     "@floating-ui/react-dom": "^2.1.9",
     "@headlessui/react": "^2.2.10",
     "@rive-app/canvas": "^2.44.0",

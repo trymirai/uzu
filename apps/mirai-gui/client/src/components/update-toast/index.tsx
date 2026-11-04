@@ -1,7 +1,12 @@
 import React from "react";
 import { twMerge } from "tailwind-merge";
+import { IconArrowDownCircle, IconCrossSmall } from "@central-icons-react/round-outlined-radius-3-stroke-2";
 import { Button } from "@/components/ui/button";
-import { X } from "lucide-react";
+import {
+  SURFACE_BUTTON_SMALL_CLASSNAME,
+  SURFACE_CLOSE_CLASSNAME,
+  SURFACE_SOFT_BUTTON_CLASSNAME,
+} from "@/components/ui/modal/constants";
 
 export type UpdateToastProps = {
   version: string;
@@ -9,35 +14,65 @@ export type UpdateToastProps = {
   onLater: () => void;
   errorMessage?: string;
   onClose?: () => void;
+  visible?: boolean;
 };
 
-export const UpdateToast: React.FC<UpdateToastProps> = ({ version, onApplyNow, onLater, errorMessage, onClose }) => {
+/**
+ * The update notice in the corner: the same lifted surface and motion as the other toasts, with the
+ * two choices as pills under the text.
+ */
+export const UpdateToast: React.FC<UpdateToastProps> = ({
+  version,
+  onApplyNow,
+  onLater,
+  errorMessage,
+  onClose,
+  visible = true,
+}) => {
   return (
     <div
+      role="status"
       className={twMerge(
-        "w-[560px] max-w-[90vw] bg-bg-modal border border-button-border rounded-xl p-4 shadow-lg",
-        "flex flex-col gap-3",
+        "pointer-events-auto flex w-[360px] max-w-[calc(100vw-2rem)] gap-3 rounded-[12px] bg-surface-popover p-4 pr-3 shadow-popover",
+        visible ? "animate-uzu-toast-in" : "animate-uzu-toast-out",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col">
-          <div className="text-label-title font-semibold">Update {version} is ready</div>
-          <div className="text-label-muted text-sm mt-1">Restart to apply the update.</div>
-          {errorMessage ? <div className="text-sm mt-2 text-error">{errorMessage}</div> : null}
+      <IconArrowDownCircle size={18} aria-hidden className="mt-px shrink-0 text-text-secondary" />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="text-[14px] font-[500] leading-[1.35] text-text-primary tabular-nums">
+          Update {version} is ready
+        </p>
+        <p className="mt-0.5 text-[13px] font-[400] leading-[1.45] text-text-secondary text-pretty">
+          Restart to finish installing it.
+        </p>
+        {errorMessage ? (
+          <p className="mt-1.5 text-[13px] font-[400] leading-[1.45] text-danger text-pretty">{errorMessage}</p>
+        ) : null}
+
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" kind="primary" onClick={onApplyNow} className={SURFACE_BUTTON_SMALL_CLASSNAME}>
+            Restart now
+          </Button>
+          <Button
+            size="sm"
+            kind="secondary"
+            onClick={onLater}
+            className={twMerge(SURFACE_BUTTON_SMALL_CLASSNAME, SURFACE_SOFT_BUTTON_CLASSNAME)}
+          >
+            Later
+          </Button>
         </div>
-        <button onClick={onClose} className="text-label-muted hover:text-label-title p-1 rounded" aria-label="Close">
-          <X size={18} />
-        </button>
       </div>
 
-      <div className="flex items-center gap-2 mt-1">
-        <Button size="sm" kind="primary" onClick={onApplyNow}>
-          Restart now
-        </Button>
-        <Button size="sm" kind="secondary" onClick={onLater}>
-          Later
-        </Button>
-      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Dismiss"
+        className={twMerge(SURFACE_CLOSE_CLASSNAME, "-mt-1 size-6")}
+      >
+        <IconCrossSmall size={16} aria-hidden />
+      </button>
     </div>
   );
 };

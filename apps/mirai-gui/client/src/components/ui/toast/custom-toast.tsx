@@ -1,10 +1,14 @@
-import { Info, TriangleAlert, X } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  IconCircleCheck,
+  IconCircleInfo,
+  IconCrossSmall,
+  IconExclamationCircle,
+  IconExclamationTriangle,
+} from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import type { ComponentType, ReactNode } from "react";
 import type { Toast } from "react-hot-toast";
 import toast from "react-hot-toast";
 import { twMerge } from "tailwind-merge";
-import { IconButton } from "../icon-button";
-import { IconCheckCircleFilled } from "../../icons/check-circle-filled-icon";
 import type { ToastType } from "./types";
 
 export type CustomToastProps = {
@@ -14,32 +18,30 @@ export type CustomToastProps = {
   onClick?: () => void;
 };
 
-type ToastIconConfig = {
-  Icon: (props: { className?: string; size?: number }) => ReactNode;
-  className: string;
+const TOAST_ICON_BY_TYPE: Record<
+  ToastType,
+  { Icon: ComponentType<{ size?: number; className?: string }>; tone: string }
+> = {
+  success: { Icon: IconCircleCheck, tone: "text-success" },
+  info: { Icon: IconCircleInfo, tone: "text-text-muted" },
+  warning: { Icon: IconExclamationTriangle, tone: "text-amber-500" },
+  error: { Icon: IconExclamationCircle, tone: "text-danger" },
 };
 
-const TOAST_ICON_BY_TYPE: Record<ToastType, ToastIconConfig> = {
-  success: { Icon: IconCheckCircleFilled, className: "text-success" },
-  info: { Icon: Info, className: "text-blue-500" },
-  warning: { Icon: TriangleAlert, className: "text-yellow-500" },
-  error: { Icon: TriangleAlert, className: "text-error" },
-};
-
-function ToastIcon({ type }: { type: ToastType }) {
-  const { Icon, className } = TOAST_ICON_BY_TYPE[type];
-  return <Icon className={className} size={20} />;
-}
-
+/**
+ * A note in the corner: the same floating surface as menus, one small coloured icon for the kind of
+ * message, and the text. It comes into focus from just above and leaves a little faster than it came.
+ */
 export function CustomToast({ t, message, type, onClick }: CustomToastProps) {
   const isClickable = onClick !== undefined;
+  const { Icon, tone } = TOAST_ICON_BY_TYPE[type];
 
   return (
     <div
       className={twMerge(
-        "flex items-center justify-between rounded-lg border border-gray-500 bg-surface-elevated py-2 pl-3 pr-2 shadow-custom transition-opacity",
-        t.visible ? "opacity-100" : "opacity-0",
-        isClickable && "cursor-pointer hover:bg-surface-tertiary",
+        "pointer-events-auto flex min-h-10 max-w-[380px] items-center gap-2.5 rounded-[4px] bg-surface-popover py-1.5 pl-3 pr-1.5 shadow-popover",
+        t.visible ? "animate-uzu-toast-in" : "animate-uzu-toast-out",
+        isClickable && "cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-tertiary",
       )}
       onClick={isClickable ? onClick : undefined}
       onKeyDown={
@@ -53,22 +55,24 @@ export function CustomToast({ t, message, type, onClick }: CustomToastProps) {
             }
           : undefined
       }
-      role={isClickable ? "button" : undefined}
+      role={isClickable ? "button" : "status"}
       tabIndex={isClickable ? 0 : undefined}
     >
-      <div className="flex min-w-0 items-center">
-        <ToastIcon type={type} />
-        <span className="ml-2 mr-5 min-w-0 truncate text-sm font-medium text-text-primary">{message}</span>
-      </div>
-      <IconButton
+      <Icon size={16} className={twMerge("shrink-0", tone)} aria-hidden />
+      <span className="min-w-0 flex-1 text-[13px] font-[450] leading-[1.35] text-text-primary text-pretty">
+        {message}
+      </span>
+      <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           toast.dismiss(t.id);
         }}
-        className="text-text-muted hover:text-text-primary"
-        icon={<X size={20} />}
-        aria-label="Dismiss toast"
-      />
+        aria-label="Dismiss"
+        className="relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-surface-tertiary hover:text-text-primary focus-visible:shadow-focus before:absolute before:-inset-2"
+      >
+        <IconCrossSmall size={16} aria-hidden />
+      </button>
     </div>
   );
 }

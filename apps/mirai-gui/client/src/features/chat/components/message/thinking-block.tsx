@@ -1,11 +1,17 @@
 import { Transition } from "@headlessui/react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState, type UIEvent } from "react";
 import { twMerge } from "tailwind-merge";
-import { ThinkingBubbleIcon } from "@/components/icons/thinking-bubble";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { MarkdownRenderer } from "./markdown-renderer";
 
-type Props = { text: string; reasoningInProgress: boolean; isThinking?: boolean };
+type Props = {
+  text: string;
+  reasoningInProgress: boolean;
+  isThinking?: boolean;
+  /** Tool calls made within this run of thinking; named in the summary once it is done. */
+  toolCalls?: number;
+};
 
 const FADE_RAMP_PX = 32;
 const MAX_FADE_HEIGHT_PX = 42;
@@ -15,8 +21,21 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   text,
   reasoningInProgress,
   isThinking = reasoningInProgress,
+  toolCalls = 0,
 }: Props) {
   const [isReasoningVisible, setIsReasoningVisible] = useState(false);
+  // How long it thought, measured while you watched; reopened chats just say it thought.
+  const [seconds, setSeconds] = useState<number | null>(null);
+  const thinkingSinceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isThinking) {
+      thinkingSinceRef.current ??= performance.now();
+      return;
+    }
+    if (thinkingSinceRef.current === null) return;
+    setSeconds(Math.max(1, Math.round((performance.now() - thinkingSinceRef.current) / 1000)));
+    thinkingSinceRef.current = null;
+  }, [isThinking]);
   const wasReasoningInProgressRef = useRef(false);
   const userToggledRef = useRef(false);
 
@@ -93,33 +112,40 @@ export const ThinkingBlock = memo(function ThinkingBlock({
         userToggledRef.current = true;
         setIsReasoningVisible((v) => !v);
       }}
-      className={twMerge(
-        "group mb-1 px-3 pt-2 border border-cell-border w-full rounded-[8px] transition-colors duration-150",
-        "hover:[background-color:rgba(0,0,0,0.01)] dark:hover:[background-color:rgba(255,255,255,0.01)]",
-      )}
+      // A line of text, not a box: the cat beside the answer already shows that it is thinking.
+      className="group mb-1 block w-full text-left [--fade:var(--color-background)] outline-hidden data-[focus]:shadow-focus rounded-md"
     >
-      <div className="flex pb-2 items-center justify-between p-0 group hover:bg-transparent text-label-title">
-        <span className="flex items-center gap-2">
-          <ThinkingBubbleIcon className="w-[14px] h-[14px]" />
-
-          <span className="text-[13px] font-[400] leading-[130%]">{isThinking ? "Thinking..." : "Thinking"}</span>
-        </span>
-        <ChevronDownIcon
+      <span className="flex h-7 items-center gap-1 text-[15px] font-[400] leading-[1.3] text-label-muted transition-colors duration-150 ease-out group-hover:text-label-title">
+        {isThinking ? (
+          <TextShimmer duration={1.6} className="[--base-color:var(--color-label-muted)]">
+            Thinking…
+          </TextShimmer>
+        ) : (
+          <span key="done" className="animate-uzu-swap tabular-nums">
+            {seconds !== null ? `Thought for ${seconds} s` : "Thought"}
+            {toolCalls > 0 ? ` · ${toolCalls} ${toolCalls === 1 ? "tool call" : "tool calls"}` : ""}
+          </span>
+        )}
+        <ChevronRightIcon
+          aria-hidden
           className={twMerge(
-            "w-[12px] h-[12px] text-label-muted transition-transform transition-colors duration-150",
-            isReasoningVisible && "rotate-180",
+            "size-3.5 shrink-0 transition-transform duration-250 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+            isReasoningVisible && "rotate-90",
           )}
         />
-      </div>
+      </span>
+      {/* Opens on the same curve as the chevron, the text fading in as the height grows. It stays
+          mounted while closed, so opening never has to render the whole reasoning in its first
+          frame, which is what made it stutter. */}
       <Transition
         show={isReasoningVisible}
-        appear
-        enter="transition-[grid-template-rows] duration-200 ease-in-out motion-reduce:transition-none"
-        enterFrom="grid-rows-[0fr]"
-        enterTo="grid-rows-[1fr]"
-        leave="transition-[grid-template-rows] duration-200 ease-in-out motion-reduce:transition-none"
-        leaveFrom="grid-rows-[1fr]"
-        leaveTo="grid-rows-[0fr]"
+        unmount={false}
+        enter="transition-[grid-template-rows,opacity] duration-250 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
+        enterFrom="grid-rows-[0fr] opacity-0"
+        enterTo="grid-rows-[1fr] opacity-100"
+        leave="transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
+        leaveFrom="grid-rows-[1fr] opacity-100"
+        leaveTo="grid-rows-[0fr] opacity-0"
       >
         <div className="grid">
           <div className="min-h-0 min-w-0 overflow-clip">
@@ -127,12 +153,12 @@ export const ThinkingBlock = memo(function ThinkingBlock({
               <div
                 ref={setReasoningScrollElement}
                 onScroll={onReasoningScroll}
-                className="pb-2 text-left max-h-[180px] overflow-y-auto overscroll-y-auto thin-scrollbar"
+                className="pb-2 pt-0.5 text-left max-h-[180px] overflow-y-auto overscroll-y-auto thin-scrollbar"
               >
                 <MarkdownRenderer
                   content={text || ""}
                   useOneFontSize={true}
-                  className="text-[12px] leading-[150%] font-mono text-label-muted [&_p]:mb-1 [&_p]:mt-1"
+                  className="text-[15px] leading-[1.6] text-label-muted [&_p]:mb-2 [&_p]:mt-0"
                 />
               </div>
               <div
@@ -142,7 +168,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
                   height: Math.min(MAX_FADE_HEIGHT_PX * fades.top, fades.viewportHeight / 2),
                   opacity: (2 / 3) * fades.top,
                 }}
-                className="pointer-events-none absolute top-0 inset-x-0 z-10 [background:linear-gradient(180deg,#FFFFFF_0%,rgba(255,255,255,0)_100%)] dark:[background:linear-gradient(180deg,#0A0A0A_0%,rgba(10,10,10,0)_100%)]"
+                className="pointer-events-none absolute top-0 inset-x-0 z-10 bg-linear-to-b from-(--fade) to-transparent"
               />
               <div
                 data-reasoning-fade="bottom"
@@ -151,7 +177,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
                   height: Math.min(END_FADE_HEIGHT_PX + END_FADE_HEIGHT_PX * fades.bottom, fades.viewportHeight / 2),
                   opacity: (1 + fades.bottom) / 3,
                 }}
-                className="pointer-events-none absolute bottom-0 inset-x-0 z-10 [background:linear-gradient(180deg,rgba(255,255,255,0)_0%,#FFFFFF_100%)] dark:[background:linear-gradient(180deg,rgba(10,10,10,0)_0%,#0A0A0A_100%)]"
+                className="pointer-events-none absolute bottom-0 inset-x-0 z-10 bg-linear-to-b from-transparent to-(--fade)"
               />
             </div>
           </div>

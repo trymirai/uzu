@@ -5,6 +5,9 @@ import { persist } from "zustand/middleware";
 
 export type ChatWidth = 800 | 1000 | 1200;
 export const DEFAULT_CHAT_WIDTH: ChatWidth = 1000;
+/** The column each width setting draws. Settings keep their stored values; the reading column is
+ *  held near a comfortable measure (~75 characters at 15px for Medium). */
+export const CHAT_COLUMN_PX: Record<ChatWidth, number> = { 800: 640, 1000: 720, 1200: 880 };
 
 export type ThemeMode = "system" | "light" | "dark";
 

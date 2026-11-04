@@ -6,7 +6,6 @@ type ChatMessageListProps = {
   isLoadingStream: boolean;
   isTitleGeneratingForChat: boolean;
   isModelLoading: boolean;
-  hasResidentModel: boolean;
   scrollTargetId: string | null;
   onScrolled: () => void;
   loadingMessageId: string | null;
@@ -14,6 +13,8 @@ type ChatMessageListProps = {
   onMessageModelSelect: (messageId: string, modelId: string, modelName: string) => void;
   onEditMessage: (messageId: string, text: string, onSaved: () => void) => Promise<void>;
   canEditMessages: boolean;
+  draft: string;
+  missingModelAt: number;
 };
 
 export const ChatMessageList = ({
@@ -22,7 +23,6 @@ export const ChatMessageList = ({
   isLoadingStream,
   isTitleGeneratingForChat,
   isModelLoading,
-  hasResidentModel,
   scrollTargetId,
   onScrolled,
   loadingMessageId,
@@ -30,6 +30,8 @@ export const ChatMessageList = ({
   onMessageModelSelect,
   onEditMessage,
   canEditMessages,
+  draft,
+  missingModelAt,
 }: ChatMessageListProps) => (
   <MessageList
     isNew={isNewChat}
@@ -43,6 +45,7 @@ export const ChatMessageList = ({
     loadingMessageId={loadingMessageId}
     canceledMessageId={canceledMessageId}
     isModelLoading={isModelLoading}
-    hasResidentModel={hasResidentModel}
+    draft={draft}
+    missingModelAt={missingModelAt}
   />
 );

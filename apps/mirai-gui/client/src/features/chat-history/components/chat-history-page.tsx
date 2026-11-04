@@ -6,14 +6,17 @@ import { ChatRenameModal } from "./chat-rename-modal";
 import GlobalInstructions from "./global-instructions";
 import { GroupButton } from "@/components/ui/group-button";
 import { useNavigate } from "@tanstack/react-router";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
+import { v4 as uuidv4 } from "uuid";
+import { UzuCat } from "@/components/uzu-cat";
+import { PageScroller, PageTitleBar } from "@/components/page-title-bar";
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchInput } from "@/components/ui/search-input";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatStore } from "@/stores/use-chat-store";
-import { useAppStore } from "@/stores/use-app-store";
+import { CHAT_COLUMN_PX, useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 
 export function ChatHistoryPage() {
@@ -24,6 +27,7 @@ export function ChatHistoryPage() {
   const savedChats = useChatStore((s) => s.savedChats);
   const loadSavedChats = useChatStore((s) => s.loadSavedChats);
   const deleteChat = useChatStore((s) => s.deleteChat);
+  const createNewChat = useChatStore((s) => s.createNewChat);
   const instructions = useGlobalInstructionsStore((s) => s.instructions);
   const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
   const saveInstructions = useGlobalInstructionsStore((s) => s.saveInstructions);
@@ -67,6 +71,12 @@ export function ChatHistoryPage() {
         });
   };
 
+  const startNewChat = () => {
+    const chatId = uuidv4();
+    createNewChat(chatId);
+    navigate({ to: "/chat/$chatId", params: { chatId }, search: { isNew: true } });
+  };
+
   const confirmBulkDelete = async () => {
     setIsDeleting(true);
     try {
@@ -91,101 +101,106 @@ export function ChatHistoryPage() {
   const labelText = isAllSelected ? "All selected" : selectedCount === 0 ? "Select all" : `${selectedCount} selected`;
 
   return (
-    <div className="flex h-full min-h-0 flex-col" style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}>
-      <div className="shrink-0 z-10">
-        <div className="w-full bg-bg-modal">
-          <div className="pt-7 pb-7 flex flex-col justify-center px-5 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto gap-6 lg:gap-0">
-            <h1 className="leading-[130%] text-xl font-medium text-label-title text-center lg:text-left">
-              Chat history
-            </h1>
-          </div>
+    <div
+      className="flex h-full min-h-0 flex-col"
+      style={{ "--chat-width": `${CHAT_COLUMN_PX[chatWidth]}px` } as CSSProperties}
+    >
+      <PageScroller
+        className="bg-background"
+        header={
+          <PageTitleBar className="justify-between">
+            <h1 className="text-[20px] font-[600] leading-[1.2] tracking-[-0.01em] text-label-title">Chat history</h1>
+            {/* Search and selection only once there is something to search or select. */}
+            {savedChats.length > 0 ? (
+              <div className="flex items-center gap-2">
+                <SearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Search"
+                  className="w-full max-w-[210px] lg:min-w-[240px] lg:max-w-[240px]"
+                />
+                {isSelectionMode ? (
+                  <GroupButton>
+                    <GroupButton.Segment ariaLabel="Select all" onClick={() => toggleSelectAll()} className="gap-2">
+                      <Checkbox
+                        checked={isAllSelected}
+                        onChange={() => {}}
+                        size="sm"
+                        disabled
+                        className="pointer-events-none opacity-100"
+                      />
+                      <span className={showActive ? "text-[12px] text-label-title" : "text-[12px] text-label-muted"}>
+                        {labelText}
+                      </span>
+                    </GroupButton.Segment>
 
-          <div className="px-5 pt-4 pb-7 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
-            <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
-          </div>
-          <div className="h-[1px] bg-cell-border" />
-        </div>
+                    {!isAllSelected && singleSelectedChat && (
+                      <GroupButton.Segment
+                        leftDivider
+                        ariaLabel="Rename"
+                        onClick={() => setIsRenameOpen(true)}
+                        className={showActive ? "text-label-title" : "text-label-muted"}
+                      >
+                        <RenameIcon className="w-4 h-4" />
+                      </GroupButton.Segment>
+                    )}
 
-        <div className="w-full bg-background">
-          <div className="px-5 pt-5 pb-2.5 flex items-center justify-between w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
-            <h2 className="text-sm font-[350] text-label-title">Your chats</h2>
-            <div className="flex items-center gap-2">
-              <SearchInput
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Search"
-                className="w-full max-w-[210px] lg:min-w-[240px] lg:max-w-[240px]"
-              />
-              {isSelectionMode ? (
-                <GroupButton>
-                  <GroupButton.Segment ariaLabel="Select all" onClick={() => toggleSelectAll()} className="gap-2">
-                    <Checkbox
-                      checked={isAllSelected}
-                      onChange={() => {}}
-                      size="sm"
-                      disabled
-                      className="pointer-events-none opacity-100"
-                    />
-                    <span className={showActive ? "text-[12px] text-label-title" : "text-[12px] text-label-muted"}>
-                      {labelText}
-                    </span>
-                  </GroupButton.Segment>
-
-                  {!isAllSelected && singleSelectedChat && (
                     <GroupButton.Segment
                       leftDivider
-                      ariaLabel="Rename"
-                      onClick={() => setIsRenameOpen(true)}
+                      ariaLabel="Delete"
+                      onClick={() => setIsConfirmOpen(true)}
+                      disabled={selectedIds.length === 0}
                       className={showActive ? "text-label-title" : "text-label-muted"}
                     >
-                      <RenameIcon className="w-4 h-4" />
+                      <TrashIcon className="w-4 h-4" />
                     </GroupButton.Segment>
-                  )}
 
-                  <GroupButton.Segment
-                    leftDivider
-                    ariaLabel="Delete"
-                    onClick={() => setIsConfirmOpen(true)}
-                    disabled={selectedIds.length === 0}
-                    className={showActive ? "text-label-title" : "text-label-muted"}
+                    <GroupButton.Segment
+                      leftDivider
+                      ariaLabel="Exit selection"
+                      onClick={exitSelectionMode}
+                      className={showActive ? "text-label-title" : "text-label-muted"}
+                    >
+                      <X className="w-4 h-4" />
+                    </GroupButton.Segment>
+                  </GroupButton>
+                ) : (
+                  <Button
+                    kind="secondary"
+                    size="sm"
+                    className="h-8 px-3.5 rounded-full bg-surface-tertiary shadow-none text-[13px] font-[450] text-label-muted hover:bg-control-surface-hover hover:text-label-title"
+                    onClick={() => setIsSelectionMode(true)}
                   >
-                    <TrashIcon className="w-4 h-4" />
-                  </GroupButton.Segment>
-
-                  <GroupButton.Segment
-                    leftDivider
-                    ariaLabel="Exit selection"
-                    onClick={exitSelectionMode}
-                    className={showActive ? "text-label-title" : "text-label-muted"}
-                  >
-                    <X className="w-4 h-4" />
-                  </GroupButton.Segment>
-                </GroupButton>
-              ) : (
-                <Button
-                  kind="secondary"
-                  size="sm"
-                  className="text-label-muted h-8 px-3 rounded-[8px] text-sm leading-[150%]"
-                  onClick={() => setIsSelectionMode(true)}
-                >
-                  Select
-                </Button>
-              )}
+                    Select
+                  </Button>
+                )}
+              </div>
+            ) : null}
+          </PageTitleBar>
+        }
+      >
+        <div className="px-5 overflow-visible w-full min-h-full flex flex-col max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
+          {filteredChats.length === 0 && !searchQuery ? (
+            <div className="flex flex-1 flex-col items-center justify-center pb-16 text-center animate-uzu-in">
+              <div className="mb-1">
+                <UzuCat state="resting" size={112} className="text-text-primary" label="uzu, asleep" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <p className="text-[15px] font-[500] text-label-title">No chats yet</p>
+                <p className="text-[13px] text-label-muted">Conversations stay on this device</p>
+              </div>
+              {/* As far below the words as the cat sits above them. */}
+              <Button kind="primary" size="sm" icon={<Plus size={16} />} onClick={startNewChat} className="mt-7">
+                New chat
+              </Button>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 min-h-0 w-full overflow-y-auto overscroll-y-contain thin-scrollbar bg-background">
-        <div className="px-5 overflow-visible w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
-          {filteredChats.length === 0 ? (
+          ) : filteredChats.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-label-muted">
-                {searchQuery ? "No chats found matching your search." : "No chats yet. Start a new conversation!"}
-              </p>
+              <p className="text-label-muted">No chats found matching your search.</p>
             </div>
           ) : (
-            <div className="space-y-3 pb-6 w-full">
+            <div className="mt-4 mb-10 w-full flex flex-col gap-2 animate-uzu-in">
+              {/* The list comes in once as a whole, like the settings page, not card by card. */}
               {filteredChats.map((chat) => (
                 <div key={chat.id} className="relative">
                   <ChatCard
@@ -202,6 +217,18 @@ export function ChatHistoryPage() {
               ))}
             </div>
           )}
+        </div>
+      </PageScroller>
+
+      {/* Instructions for every chat sit where the composer sits in a chat: what you tell the model. */}
+      <div className="relative shrink-0">
+        {/* Chats scroll down behind the card through the same fade as under the title bar. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-0 right-3 -top-10 h-10 bg-linear-to-t from-background from-15% to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_top,black_35%,transparent)]"
+        />
+        <div className="px-5 pt-2 pb-5 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
+          <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
         </div>
       </div>
 

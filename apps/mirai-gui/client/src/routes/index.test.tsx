@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useModelsStore } from "@/stores/use-models-store";
 import type { EngineModel } from "@/types/model-manager";
 import { modelDownloadPhases } from "@/types/model-manager";
+import { markWelcomeSeen } from "@/features/welcome/welcome-seen";
 import { Route } from "./index";
 
 const getModels = vi.hoisted(() => vi.fn());
@@ -29,8 +30,19 @@ const destination = () => JSON.parse(screen.getByTestId("destination").textConte
 beforeEach(() => {
   vi.clearAllMocks();
   useModelsStore.setState(defaults, true);
+  // These are returning users; the welcome is covered on its own below.
+  markWelcomeSeen();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+
+it("opens the welcome first on a new install", () => {
+  localStorage.clear();
+  render(<HomePage />);
+  expect(destination()).toEqual({ to: "/welcome", replace: true });
+});
 
 it("waits for discovery and opens a new chat when a shared-cache download is found", async () => {
   render(<HomePage />);

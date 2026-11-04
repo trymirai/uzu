@@ -26,6 +26,8 @@ type ChatComposerProps = {
   onRemoveFile: (fileId: string) => void;
   onOpenModelParams: () => void;
   modelParamsModified: boolean;
+  /** Called when a message can't go out because no model is chosen. */
+  onMissingModel?: () => void;
 };
 
 const ATTACH_ACCEPT = SUPPORTED_FILE_TYPES.text.join(",");
@@ -49,6 +51,7 @@ export const ChatComposer = ({
   onRemoveFile,
   onOpenModelParams,
   modelParamsModified,
+  onMissingModel,
 }: ChatComposerProps) => {
   const toast = useToast();
 
@@ -103,7 +106,8 @@ export const ChatComposer = ({
           if (files.length > 0) toast.error("Add a message to send attachments");
           return;
         }
-        toast.error(blockedMessage || "Sending is blocked right now");
+        if (!selectedModelId || autoSelectSuppressed) onMissingModel?.();
+        toast.warning(blockedMessage || "Sending is blocked right now");
       }}
       streaming={isStreaming}
       onStop={onStopResponse}

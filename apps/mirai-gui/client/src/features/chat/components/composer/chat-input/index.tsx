@@ -50,7 +50,7 @@ export function ChatInput({
   }, []);
 
   return (
-    <div className="rounded-xl bg-surface-elevated shadow-md p-4 w-full">
+    <div className="rounded-[20px] bg-surface-elevated shadow-md px-4 pt-4 pb-3 w-full transition-shadow duration-150 ease-out focus-within:shadow-lg dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)] dark:focus-within:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.18)]">
       <input
         ref={fileInputRef}
         type="file"
@@ -75,6 +75,7 @@ export function ChatInput({
 
       <TextArea
         ref={controller.textareaRef}
+        data-composer-input
         value={value}
         onChange={onChange}
         onKeyDown={controller.handleKeyDown}
@@ -106,7 +107,7 @@ export function ChatInput({
                 onClick={onModelSettingsClick}
                 disabled={settingsDisabled}
                 aria-label="Model settings"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-control-fill text-text-secondary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 <Settings size={16} />
               </Button>

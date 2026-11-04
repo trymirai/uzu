@@ -41,7 +41,10 @@ export function formatParamRange(min?: number, max?: number): string | undefined
 
 export function formatQuantization(model: { quantization?: string | null; quantizationBits?: number }): string {
   if (!model.quantization) return "Unquantized";
-  const method = model.quantization.toUpperCase();
+  // Mirai's own quantizations read as "Mirai M" / "Mirai L", like the model menus; others keep
+  // their upper-case method name.
+  const mirai = /^mirai-(\w+)$/i.exec(model.quantization);
+  const method = mirai?.[1] ? `Mirai ${mirai[1].toUpperCase()}` : model.quantization.toUpperCase();
   return typeof model.quantizationBits === "number" ? `${method} · ${model.quantizationBits}-bit` : method;
 }
 
@@ -127,21 +130,22 @@ export function buildFamiliesView(params: {
     return filtered.sort((a, b) => a.familyName.localeCompare(b.familyName));
   }
 
-  // Families with a downloaded model first, by most recent install; then the rest
-  // by family ordering (Llama-3 above Llama-2, Qwen3 above Qwen-2, etc).
-  const active: FamilyEntry[] = [];
-  const others: FamilyEntry[] = [];
-  for (const entry of filtered) {
-    if (entry.lastActiveAt > 0) {
-      active.push(entry);
-    } else {
-      others.push(entry);
-    }
-  }
-  active.sort((a, b) => b.lastActiveAt - a.lastActiveAt || a.familyName.localeCompare(b.familyName));
+  // A fixed order: Qwen first, then LFM, then Glimmer, then anything else. Within one line, the
+  // newest version first (Qwen3.8 above Qwen3.6 above Qwen3.5), whether or not it is downloaded.
   const compareModels = createNewestTextModelComparator();
-  others.sort((a, b) => compareModels(a.representative, b.representative));
-  return [...active, ...others];
+  return filtered.sort(
+    (a, b) =>
+      familyRank(a.familyName) - familyRank(b.familyName) ||
+      b.familyName.localeCompare(a.familyName, undefined, { numeric: true }) ||
+      compareModels(a.representative, b.representative),
+  );
+}
+
+const FAMILY_ORDER = [/^qwen/i, /^lfm/i, /glimmer/i];
+
+function familyRank(familyName: string): number {
+  const rank = FAMILY_ORDER.findIndex((pattern) => pattern.test(familyName));
+  return rank === -1 ? FAMILY_ORDER.length : rank;
 }
 
 export type FamilyDetailView = {

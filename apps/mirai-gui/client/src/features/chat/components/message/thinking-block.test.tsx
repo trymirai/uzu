@@ -53,9 +53,10 @@ const settleScrolling = () =>
 const measure = (element: HTMLDivElement, height: number, contentHeight: number) => {
   const geometry = { height, contentHeight, top: 0 };
   Object.defineProperties(element, {
-    clientHeight: { get: () => geometry.height },
-    scrollHeight: { get: () => geometry.contentHeight },
+    clientHeight: { configurable: true, get: () => geometry.height },
+    scrollHeight: { configurable: true, get: () => geometry.contentHeight },
     scrollTop: {
+      configurable: true,
       get: () => geometry.top,
       set: (value: number) => {
         geometry.top = Math.max(0, Math.min(value, geometry.contentHeight - geometry.height));
@@ -144,8 +145,9 @@ it("recalculates fades after a completed block is reopened", async () => {
   const { view, scroll, fade } = await renderBlock();
   scroll(0);
   view.rerender(<ThinkingBlock text="Reasoning" reasoningInProgress={false} />);
-  await waitFor(() => expect(view.container.querySelector(".overflow-y-auto")).toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: "Thinking" }));
+  // Closed reasoning stays mounted, hidden, so reopening doesn't have to render it again.
+  await waitFor(() => expect(view.container.querySelector(".overflow-y-auto")?.closest("[hidden]")).not.toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: /^Thought/ }));
   const scroller = view.container.querySelector<HTMLDivElement>(".overflow-y-auto")!;
   measure(scroller, 100, 240);
   resize(scroller);

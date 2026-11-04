@@ -1,92 +1,61 @@
-import { ChevronLeft, MonitorSmartphone } from "lucide-react";
-import { PageHeader } from "@/components/page-header";
+import { ChevronLeft } from "lucide-react";
+import { PageTitleBar } from "@/components/page-title-bar";
 import type { FamilyEntry } from "../../lib/view";
 import { IconAction } from "@/components/ui/icon-action";
-import { SearchInput } from "@/components/ui/search-input";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
-
-const TEXT_14 = "text-[14px] font-[450] leading-[1.5]";
-const TEXT_14_STYLE = { fontVariationSettings: "'opsz' 20" } as const;
+import { FamilyBadge } from "../family-card";
+import { formatParamRange } from "../../lib/view";
 
 type LocalModelsHeaderProps = {
   selectedFamily?: FamilyEntry;
   isMobile: boolean;
-  searchQuery: string;
-  modelsSearch: string;
-  onSearchQueryChange: (value: string) => void;
-  onModelsSearchChange: (value: string) => void;
   onBack: () => void;
+  /** Slides the title in with the page when moving between the families and a family. */
+  animationClassName?: string;
 };
 
-export function LocalModelsHeader({
-  selectedFamily,
-  isMobile,
-  searchQuery,
-  modelsSearch,
-  onSearchQueryChange,
-  onModelsSearchChange,
-  onBack,
-}: LocalModelsHeaderProps) {
-  const search = selectedFamily
-    ? { value: modelsSearch, onChange: onModelsSearchChange, placeholder: "Search models" }
-    : { value: searchQuery, onChange: onSearchQueryChange, placeholder: "Search families" };
-
+/** The page title, set like the chats page: in the column, at the top. A family adds a way back. */
+export function LocalModelsHeader({ selectedFamily, isMobile, onBack, animationClassName }: LocalModelsHeaderProps) {
+  const range = selectedFamily
+    ? formatParamRange(selectedFamily.paramRange?.min, selectedFamily.paramRange?.max)
+    : undefined;
   return (
-    <>
-      <PageHeader
-        title={
-          <div data-tauri-drag-region="deep" className="flex h-[52px] shrink-0 items-center gap-2 px-4 min-w-0">
-            {selectedFamily ? (
-              <>
-                <Tooltip content="Back to families" side="bottom">
-                  <span className="shrink-0">
-                    <IconAction label="Back to families" icon={<ChevronLeft size={16} />} onClick={onBack} />
-                  </span>
-                </Tooltip>
-                <ModelVendorIcon vendor={selectedFamily.vendor} size={16} className="h-4 w-4" />
-                <span className={`${TEXT_14} text-text-primary truncate`} style={TEXT_14_STYLE}>
-                  {selectedFamily.familyName}
-                </span>
-                {!isMobile && (
-                  <span className={`${TEXT_14} text-text-muted truncate`} style={TEXT_14_STYLE}>
-                    from {selectedFamily.vendor}
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                <MonitorSmartphone size={16} className="text-text-primary shrink-0" />
-                <span className={`${TEXT_14} text-text-primary truncate`} style={TEXT_14_STYLE}>
-                  Choose a model to chat
-                </span>
-              </>
-            )}
-            <div className="flex-1" />
-            {!isMobile && (
-              <SearchInput
-                value={search.value}
-                onChange={search.onChange}
-                placeholder={search.placeholder}
-                className="w-[260px] shrink-0"
-              />
-            )}
-          </div>
-        }
-      />
-      {isMobile && (
-        <div
-          className="flex shrink-0 items-center gap-2 px-4 py-2"
-          style={{ borderTop: "0.5px solid var(--color-border-default)" }}
-        >
-          <SearchInput
-            value={search.value}
-            onChange={search.onChange}
-            placeholder={search.placeholder}
-            className="min-w-0 flex-1"
-          />
-        </div>
-      )}
-    </>
+    <PageTitleBar>
+      <div
+        key={selectedFamily?.familyIdentifier ?? "families"}
+        className={`flex min-w-0 flex-1 items-center gap-2 ${animationClassName ?? ""}`}
+      >
+        {selectedFamily ? (
+          <>
+            <Tooltip content="Back to local models" side="bottom">
+              <span className="shrink-0 -ml-1.5">
+                <IconAction label="Back to local models" icon={<ChevronLeft size={18} />} onClick={onBack} />
+              </span>
+            </Tooltip>
+            <ModelVendorIcon vendor={selectedFamily.vendor} size={20} className="size-5" />
+            <h1 className="text-[20px] font-[600] leading-[1.2] tracking-[-0.01em] text-label-title truncate">
+              {selectedFamily.familyName}
+            </h1>
+            {/* Who made it and what's inside, as the same pills the family list uses. */}
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {[
+                { label: selectedFamily.vendor },
+                ...(isMobile
+                  ? []
+                  : [
+                      { label: `${selectedFamily.totalCount} ${selectedFamily.totalCount === 1 ? "model" : "models"}` },
+                      ...(range ? [{ label: range }] : []),
+                    ]),
+              ].map((badge) => (
+                <FamilyBadge key={badge.label} badge={badge} />
+              ))}
+            </div>
+          </>
+        ) : (
+          <h1 className="text-[20px] font-[600] leading-[1.2] tracking-[-0.01em] text-label-title">Local models</h1>
+        )}
+      </div>
+    </PageTitleBar>
   );
 }

@@ -6,6 +6,7 @@ import { SelectionItem } from "@/components/ui/select/selection-item";
 import { SelectionPanel } from "@/components/ui/select/selection-panel";
 import { SelectionSection } from "@/components/ui/select/selection-section";
 import { Text } from "@/components/ui/typography";
+import { ModelName } from "@/components/model-name";
 import type { ChatInputModel, ChatInputMoreModelsLink } from "./types";
 
 export type ModelPickerProps = {
@@ -67,10 +68,11 @@ export function ModelPicker({
       {({ close }) => (
         <div className="relative">
           <MenuButton
+            data-model-picker
             as="button"
             type="button"
             disabled={disabled}
-            className="group/model flex items-center gap-2 h-7 px-2 max-w-full rounded-md bg-surface-tertiary hover:bg-control-surface-hover data-[headlessui-state~=open]:bg-control-surface-active data-[focus]:bg-control-surface-hover cursor-pointer border-none outline-hidden data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
+            className="group/model flex items-center gap-2 h-7 px-2.5 max-w-full rounded-full bg-control-fill hover:bg-control-fill-hover data-[headlessui-state~=open]:bg-control-fill-hover data-[focus]:bg-control-fill-hover cursor-pointer border-none outline-hidden data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
           >
             {activeModel && (
               <span className="shrink-0 flex items-center justify-center w-3.5 h-3.5 [&>svg]:w-3.5 [&>svg]:h-3.5">
@@ -81,36 +83,36 @@ export function ModelPicker({
               as="span"
               color="muted"
               opticalSize={14}
-              className={`min-w-0 truncate ${TEXT_13_CLASSNAME} group-hover/model:text-text-primary group-data-[focus]/model:text-text-primary group-data-[headlessui-state~=open]/model:text-text-primary`}
+              className={`min-w-0 truncate ${TEXT_13_CLASSNAME} text-text-secondary group-hover/model:text-text-primary group-data-[focus]/model:text-text-primary group-data-[headlessui-state~=open]/model:text-text-primary`}
             >
-              {activeModel ? activeModel.name : "Select model"}
+              {activeModel ? <ModelName name={activeModel.name} /> : "Select model"}
             </Text>
             <ChevronDown
               size={16}
-              className="shrink-0 text-text-muted group-hover/model:text-text-primary group-data-[focus]/model:text-text-primary group-data-[headlessui-state~=open]/model:text-text-primary"
+              className="shrink-0 text-text-secondary group-hover/model:text-text-primary group-data-[focus]/model:text-text-primary group-data-[headlessui-state~=open]/model:text-text-primary"
             />
           </MenuButton>
 
           <Transition
             as={Fragment}
-            enter="transition-[opacity,scale] duration-[120ms] ease-spring"
-            enterFrom="opacity-0 scale-90"
+            enter="transition-[opacity,scale] duration-200 ease-spring motion-reduce:transition-none"
+            enterFrom="opacity-0 scale-95"
             enterTo="opacity-100 scale-100"
-            leave="transition-[opacity,scale] duration-[80ms] ease-spring"
+            leave="transition-[opacity,scale] duration-[140ms] ease-spring motion-reduce:transition-none"
             leaveFrom="opacity-100 scale-100"
-            leaveTo="opacity-0 scale-90"
+            leaveTo="opacity-0 scale-95"
           >
             <div
               className={
                 menuPlacement === "up"
-                  ? "absolute right-0 bottom-full pb-1 z-50 origin-bottom-right"
-                  : "absolute right-0 top-full pt-1 z-50 origin-top-right"
+                  ? "absolute right-0 bottom-full pb-2 z-50 origin-bottom-right"
+                  : "absolute right-0 top-full pt-2 z-50 origin-top-right"
               }
             >
               <MenuItems className="outline-hidden">
-                <SelectionPanel className="pt-1.5 min-w-[240px]">
-                  {/* Reserve the scrollbar width before WebKit measures the popup. */}
-                  <SelectionSection className="max-h-[280px] overflow-y-scroll overscroll-y-contain thin-scrollbar">
+                <SelectionPanel className="py-1 min-w-[240px]">
+                  {/* No reserved scrollbar gutter: it made the right inset wider than the left. */}
+                  <SelectionSection className="max-h-[280px] overflow-y-auto overscroll-y-contain scrollbar-hide">
                     {models?.map((model) => (
                       <MenuItem key={model.id}>
                         {({ focus }) => (
@@ -129,9 +131,9 @@ export function ModelPicker({
                               as="span"
                               color="primary"
                               opticalSize={14}
-                              className={`whitespace-nowrap ${TEXT_13_CLASSNAME}`}
+                              className={`min-w-0 flex-1 ${TEXT_13_CLASSNAME}`}
                             >
-                              {model.name}
+                              <ModelName name={model.name} />
                             </Text>
                           </SelectionRow>
                         )}
@@ -140,7 +142,7 @@ export function ModelPicker({
                   </SelectionSection>
 
                   {moreModelsLink && (
-                    <SelectionSection divided className="py-1.5">
+                    <SelectionSection divided>
                       <MenuItem>
                         {({ focus }) => (
                           <SelectionItem
@@ -154,7 +156,7 @@ export function ModelPicker({
                             className="flex items-center w-full bg-transparent text-text-primary"
                           >
                             <Text as="span" color="primary" opticalSize={14} className={TEXT_13_CLASSNAME}>
-                              Download more models
+                              Download models
                             </Text>
                           </SelectionItem>
                         )}

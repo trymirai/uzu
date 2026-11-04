@@ -25,7 +25,7 @@ export function FileChip({ file, onRemove }: FileChipProps) {
 
   return (
     <div
-      className="relative group flex items-center gap-2 rounded-md bg-surface-tertiary px-2 py-2 min-w-[80px]"
+      className="relative group flex items-center gap-2 rounded-md bg-control-fill px-2 py-2 min-w-[80px]"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >

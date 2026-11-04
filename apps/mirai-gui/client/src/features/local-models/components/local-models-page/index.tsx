@@ -13,7 +13,10 @@ import { Modal } from "@/components/ui/modal";
 import { Text } from "@/components/ui/typography";
 import { TooltipProvider } from "@/components/ui/tooltip/provider";
 import { RefreshCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CHAT_COLUMN_PX, useAppStore } from "@/stores/use-app-store";
+import { LocalModelsHero } from "./local-models-hero";
+import { PageScroller } from "@/components/page-title-bar";
 import { v4 as uuidv4 } from "uuid";
 import { buildFamiliesView, formatParamRange, type FamilyEntry } from "../../lib/view";
 import { FamilyDetailPage } from "../family-detail-page";
@@ -26,18 +29,24 @@ const TEXT_14_STYLE = { fontVariationSettings: "'opsz' 20" } as const;
 export function LocalModelsPage() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  const chatWidth = useAppStore((s) => s.chatWidth);
   const createNewChat = useChatStore((s) => s.createNewChat);
   const { handleDownload, handlePause, handleResume, handleCancel } = useDownloadManager();
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [modelsSearch, setModelsSearch] = useState("");
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Which way the last move went, so the new level slides in from that side. Null on first load:
+  // the page just appears.
+  const [direction, setDirection] = useState<"forward" | "back" | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const selectFamily = useCallback((id: string | null) => {
+    setDirection(id ? "forward" : "back");
     setSelectedFamilyId(id);
-    setModelsSearch("");
+    scrollRef.current?.scrollTo({ top: 0 });
   }, []);
+  const levelAnimation =
+    direction === "forward" ? "animate-uzu-forward" : direction === "back" ? "animate-uzu-back" : undefined;
 
   const models = useModelsStore((s) => s.models);
   const loadingModels = useModelsStore((s) => s.loading);
@@ -74,11 +83,9 @@ export function LocalModelsPage() {
     [getSize, newestTextModelComparator],
   );
 
-  const searchLower = searchQuery.trim().toLowerCase();
-
   const families: FamilyEntry[] = useMemo(
-    () => buildFamiliesView({ models, modelPhasesById, installedAtById, searchLower }),
-    [models, modelPhasesById, installedAtById, searchLower],
+    () => buildFamiliesView({ models, modelPhasesById, installedAtById, searchLower: "" }),
+    [models, modelPhasesById, installedAtById],
   );
 
   const selectedFamily = useMemo(
@@ -122,24 +129,64 @@ export function LocalModelsPage() {
     );
   }
 
+  const familyList = (
+    <div className="flex flex-col gap-2">
+      {families.map((family) => {
+        const sizeRange = formatParamRange(family.paramRange?.min, family.paramRange?.max);
+        const badges: FamilyCardBadge[] = [
+          ...(family.installedCount > 0
+            ? [
+                {
+                  label: `${family.installedCount} downloaded`,
+                  tone: "success" as const,
+                },
+              ]
+            : []),
+          {
+            label: `${family.totalCount} ${family.totalCount === 1 ? "model" : "models"}`,
+          },
+          ...(sizeRange ? [{ label: sizeRange }] : []),
+        ];
+        return (
+          <FamilyCard
+            key={family.familyIdentifier}
+            compact={isMobile}
+            vendorIcon={<ModelVendorIcon vendor={family.vendor} size={16} className="h-4 w-4" />}
+            familyName={family.familyName}
+            vendorName={family.vendor}
+            badges={badges}
+            onClick={() => selectFamily(family.familyIdentifier)}
+          />
+        );
+      })}
+    </div>
+  );
+
   return (
     <TooltipProvider>
-      <div className="flex h-full min-h-0 flex-col bg-background">
-        <div className="w-full flex h-full min-h-0 overflow-clip bg-surface-elevated">
+      <div
+        className="flex h-full min-h-0 flex-col bg-background"
+        style={{ "--chat-width": `${CHAT_COLUMN_PX[chatWidth]}px` } as CSSProperties}
+      >
+        <div className="w-full flex h-full min-h-0 overflow-clip">
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-            <LocalModelsHeader
-              selectedFamily={selectedFamily}
-              isMobile={isMobile}
-              searchQuery={searchQuery}
-              modelsSearch={modelsSearch}
-              onSearchQueryChange={setSearchQuery}
-              onModelsSearchChange={setModelsSearch}
-              onBack={() => selectFamily(null)}
-            />
-            <div style={{ borderBottom: "0.5px solid var(--color-border-default)" }}></div>
-
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-hide">
-              <div className="px-4 py-4">
+            <PageScroller
+              scrollRef={scrollRef}
+              className="scrollbar-hide"
+              header={
+                <LocalModelsHeader
+                  selectedFamily={selectedFamily}
+                  isMobile={isMobile}
+                  onBack={() => selectFamily(null)}
+                  animationClassName={levelAnimation}
+                />
+              }
+            >
+              <div
+                key={selectedFamilyId ?? "families"}
+                className={`px-5 pt-4 pb-8 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto ${levelAnimation ?? ""}`}
+              >
+                {!selectedFamily && models.length > 0 ? <LocalModelsHero /> : null}
                 {(modelsError || incompleteCatalog) && (
                   <div className="my-4">
                     <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20">
@@ -180,7 +227,7 @@ export function LocalModelsPage() {
                 ) : selectedFamily ? (
                   <FamilyDetailPage
                     family={selectedFamily}
-                    searchQuery={modelsSearch}
+                    searchQuery=""
                     sortModels={sortModels}
                     onDownload={handleDownload}
                     onPause={handlePause}
@@ -191,44 +238,13 @@ export function LocalModelsPage() {
                   />
                 ) : families.length === 0 ? (
                   <div className="flex min-h-[200px] items-center justify-center">
-                    <span className="text-[13px] text-text-muted">
-                      {searchQuery ? `No families matching "${searchQuery}"` : "No model families"}
-                    </span>
+                    <span className="text-[13px] text-text-muted">No model families</span>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
-                    {families.map((family) => {
-                      const sizeRange = formatParamRange(family.paramRange?.min, family.paramRange?.max);
-                      const badges: FamilyCardBadge[] = [
-                        ...(family.installedCount > 0
-                          ? [
-                              {
-                                label: `${family.installedCount} downloaded ${family.installedCount === 1 ? "model" : "models"}`,
-                                tone: "success" as const,
-                              },
-                            ]
-                          : []),
-                        {
-                          label: `${family.totalCount} ${family.totalCount === 1 ? "model" : "models"}`,
-                        },
-                        ...(sizeRange ? [{ label: sizeRange }] : []),
-                      ];
-                      return (
-                        <FamilyCard
-                          key={family.familyIdentifier}
-                          compact={isMobile}
-                          vendorIcon={<ModelVendorIcon vendor={family.vendor} size={16} className="h-4 w-4" />}
-                          familyName={family.familyName}
-                          vendorName={family.vendor}
-                          badges={badges}
-                          onClick={() => selectFamily(family.familyIdentifier)}
-                        />
-                      );
-                    })}
-                  </div>
+                  familyList
                 )}
               </div>
-            </div>
+            </PageScroller>
           </div>
         </div>
         <Modal

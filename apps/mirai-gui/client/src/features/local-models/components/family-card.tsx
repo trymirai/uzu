@@ -20,32 +20,27 @@ export type FamilyCardProps = {
   compact?: boolean;
 };
 
+// Raised off the card like the row buttons, so the badges read on the soft fill.
+const RAISED =
+  "bg-surface-popover shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_2px_rgb(0_0_0/0.06)] dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)]";
+
+// Every badge is the same raised pill; success only adds a green dot and lifts the text a step.
 const TONE_CLASSES: Record<FamilyCardBadgeTone, { border: string; text: string }> = {
-  neutral: {
-    border: "border-border-outlined",
-    text: "text-text-muted",
-  },
-  success: {
-    border: "border-success-border",
-    text: "text-success",
-  },
+  neutral: { border: RAISED, text: "text-text-muted" },
+  success: { border: twMerge(RAISED, "gap-1.5 pl-2"), text: "text-text-secondary" },
 };
 
-function Chip({ badge }: { badge: FamilyCardBadge }) {
+export function FamilyBadge({ badge }: { badge: FamilyCardBadge }) {
   const { label, tone = "neutral" } = badge;
   const tones = TONE_CLASSES[tone];
 
   return (
-    <div
-      className={twMerge(
-        "flex items-center justify-center h-7 px-2 py-0.5 rounded border-[0.5px] bg-transparent cursor-default",
-        tones.border,
-      )}
-    >
+    <div className={twMerge("flex items-center justify-center h-6 px-2.5 rounded-full cursor-default", tones.border)}>
+      {tone === "success" && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success-strong" />}
       <Text
         as="span"
         opticalSize={14}
-        className={twMerge("text-[13px] font-[450] leading-[1.3] whitespace-nowrap", tones.text)}
+        className={twMerge("text-[12px] font-[450] leading-[1.3] whitespace-nowrap tabular-nums", tones.text)}
       >
         {label}
       </Text>
@@ -70,7 +65,7 @@ export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick
     </div>
   );
 
-  const chips = badges?.map((badge, idx) => <Chip key={idx} badge={badge} />);
+  const chips = badges?.map((badge, idx) => <FamilyBadge key={idx} badge={badge} />);
 
   const chevron = <ChevronRight size={14} className="text-text-muted shrink-0" />;
 
@@ -80,7 +75,7 @@ export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick
         type="button"
         onClick={onClick}
         aria-label={fallbackAria}
-        className="w-full flex flex-col items-stretch gap-3 px-4 py-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden data-[focus]:shadow-focus hover:bg-surface-tertiary text-left"
+        className="w-full flex flex-col items-stretch gap-3 px-4 py-3 rounded-xl bg-surface-soft transition-colors duration-150 ease-out cursor-pointer outline-hidden data-[focus]:shadow-focus hover:bg-surface-tertiary text-left"
       >
         <div className="flex items-center gap-3 min-w-0">
           {heading}
@@ -96,7 +91,7 @@ export function FamilyCard({ vendorIcon, familyName, vendorName, badges, onClick
       type="button"
       onClick={onClick}
       aria-label={fallbackAria}
-      className="w-full flex items-center justify-between gap-4 h-12 pl-4 pr-3 rounded-lg border-[0.5px] border-border-default bg-surface-elevated transition-colors duration-150 cursor-pointer outline-hidden data-[focus]:shadow-focus hover:bg-surface-tertiary"
+      className="w-full flex items-center justify-between gap-4 h-14 pl-4 pr-3 rounded-xl bg-surface-soft transition-colors duration-150 ease-out cursor-pointer outline-hidden data-[focus]:shadow-focus hover:bg-surface-tertiary"
     >
       {heading}
       <div className="flex items-center gap-1.5 shrink-0">

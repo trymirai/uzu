@@ -24,7 +24,7 @@ export function IconAction({ label, icon, onClick, className }: IconActionProps)
       onClick={handleClick}
       className={
         className ??
-        "size-7 rounded-md bg-transparent text-text-muted hover:bg-border-default hover:text-text-primary active:bg-border-default"
+        "size-7 rounded-full bg-transparent text-text-muted hover:bg-border-default hover:text-text-primary active:bg-border-default"
       }
     />
   );

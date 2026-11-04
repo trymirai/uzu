@@ -1,8 +1,9 @@
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from "@headlessui/react";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { Check, ChevronRight, RefreshCw } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import React from "react";
 import { twMerge } from "tailwind-merge";
+import { ModelName } from "@/components/model-name";
 import { useModelsStore } from "@/stores/use-models-store";
 import { modelDownloadPhases } from "@/types/model-manager";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
@@ -39,63 +40,61 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
         <div>
           <ListboxButton
             aria-label="Regenerate with model"
-            title="Regenerate with model"
-            className="flex size-8 items-center justify-center rounded-md text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden data-[focus]:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex size-8 items-center justify-center rounded-lg text-label-muted transition-[background-color,color,scale] duration-150 ease-out enabled:hover:bg-black/[0.06] enabled:hover:text-label-title dark:enabled:hover:bg-white/[0.08] enabled:active:scale-[0.96] focus:outline-hidden data-[focus]:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <RefreshCw className="size-4" aria-hidden="true" />
           </ListboxButton>
 
           <Transition
-            enter="transition duration-100 ease-out"
-            enterFrom="transform scale-95 opacity-0"
-            enterTo="transform scale-100 opacity-100"
-            leave="transition duration-75 ease-out"
-            leaveFrom="transform scale-100 opacity-100"
-            leaveTo="transform scale-95 opacity-0"
+            enter="transition-[opacity,scale] duration-200 ease-spring motion-reduce:transition-none"
+            enterFrom="scale-95 opacity-0"
+            enterTo="scale-100 opacity-100"
+            leave="transition-[opacity,scale] duration-[140ms] ease-spring motion-reduce:transition-none"
+            leaveFrom="scale-100 opacity-100"
+            leaveTo="scale-95 opacity-0"
           >
             <ListboxOptions
               anchor="bottom start"
-              className="overscroll-y-contain thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
+              className="min-w-[240px] origin-top-left overscroll-y-contain thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] rounded-xl bg-surface-popover shadow-popover p-1 z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
             >
-              <div className="p-[6px] flex flex-col gap-2">
+              <div className="flex flex-col gap-px">
                 {loadingModels ? (
-                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted">Loading models...</div>
+                  <div className="flex min-h-8 items-center px-2 text-[13px] text-label-muted">Loading models…</div>
                 ) : installedModelsList.length > 0 ? (
-                  installedModelsList.map((model) => {
-                    const isSelected = model.repoId === selectedModel;
-                    return (
-                      <ListboxOption
-                        key={model.repoId}
-                        value={model.repoId}
+                  installedModelsList.map((model) => (
+                    <ListboxOption
+                      key={model.repoId}
+                      value={model.repoId}
+                      className="group flex min-h-8 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors duration-100 ease-out data-[focus]:bg-surface-tertiary focus:outline-hidden"
+                    >
+                      <ModelVendorIcon vendor={model.vendor} />
+                      <ModelName
+                        name={model.name}
+                        className="flex-1 text-[13px] font-[450] leading-[1.3] text-label-title"
+                      />
+                      <Check
+                        aria-hidden
                         className={twMerge(
-                          "w-full flex items-center gap-2 px-[14px] py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-bg-hover focus:outline-hidden focus:ring-0",
-                          isSelected ? "bg-bg-sub" : "",
+                          "size-4 shrink-0 text-label-title",
+                          model.repoId === selectedModel ? "opacity-100" : "opacity-0",
                         )}
-                      >
-                        <ModelVendorIcon vendor={model.vendor} />
-                        <span className="text-sm leading-[130%] text-label-title flex items-center gap-2">
-                          {model.name}
-                        </span>
-                        <span className="text-label-muted text-[10px]">Local</span>
-                      </ListboxOption>
-                    );
-                  })
+                      />
+                    </ListboxOption>
+                  ))
                 ) : (
-                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted">No models available</div>
+                  <div className="flex min-h-8 items-center px-2 text-[13px] text-label-muted">No models available</div>
                 )}
               </div>
 
-              <div className="h-[1px] bg-cell-border" />
+              <div className="mx-2 my-1 h-px bg-border-default" />
 
-              <div className="p-[10px]">
-                <button
-                  onClick={handleMoreModelsClick}
-                  className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover transition-colors text-label-title focus:outline-hidden focus:ring-0"
-                >
-                  <span className="text-sm text-label-title">More models</span>
-                  <ChevronRight className="h-4 w-4 text-label-muted" />
-                </button>
-              </div>
+              <button
+                onClick={handleMoreModelsClick}
+                className="flex min-h-8 w-full items-center justify-between gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors duration-100 ease-out hover:bg-surface-tertiary focus-visible:bg-surface-tertiary focus:outline-hidden"
+              >
+                <span className="text-[13px] font-[450] leading-[1.3] text-label-title">More models</span>
+                <ChevronRight className="size-4 text-label-muted" aria-hidden />
+              </button>
             </ListboxOptions>
           </Transition>
         </div>

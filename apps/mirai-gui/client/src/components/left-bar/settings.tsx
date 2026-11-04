@@ -1,10 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { Settings as SettingsIcon } from "lucide-react";
+import { IconSettingsGear2 } from "@central-icons-react/round-outlined-radius-3-stroke-2";
 
 function Settings() {
   return (
     <div>
-      <div className="border-t border-cell-border mb-2" />
       <Link
         to="/settings"
         search={{ tab: "general" }}
@@ -13,10 +12,10 @@ function Settings() {
       >
         {({ isActive }) => (
           <div
-            className={`flex items-center gap-2 px-2 py-[6px] w-full rounded-md transition-colors duration-150 ${isActive ? "bg-sidebar-chat-selected" : "hover:bg-sidebar-chat-hover"}`}
+            className={`flex h-9 items-center gap-2.5 px-2.5 w-full rounded-[10px] transition-colors duration-150 ease-out ${isActive ? "bg-sidebar-chat-selected" : "hover:bg-sidebar-chat-hover"}`}
           >
-            <SettingsIcon aria-hidden="true" className="size-5 shrink-0 text-label-muted" />
-            <span className="text-[13px] font-[350] leading-[150%] text-label-title">Settings</span>
+            <IconSettingsGear2 aria-hidden size={20} className="shrink-0 text-label-title" />
+            <span className="text-[14px] font-[450] leading-[1.3] text-label-title">Settings</span>
           </div>
         )}
       </Link>

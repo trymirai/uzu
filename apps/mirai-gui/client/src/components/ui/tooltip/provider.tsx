@@ -1,14 +1,23 @@
 import { flip, offset, shift, useFloating } from "@floating-ui/react-dom";
 import type { ReferenceType } from "@floating-ui/react-dom";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { TooltipContext } from "./context";
 import type { TooltipContextValue, TooltipPayload, TooltipProviderProps } from "./types";
 import { autoUpdateWithDetach } from "./utils";
 import { TooltipBubble } from "./bubble";
 
+// The first tooltip waits so it doesn't flash on a passing cursor; once one has been shown, its
+// neighbours open at once and without an entrance, until the pointer has been away a moment.
+const OPEN_DELAY_MS = 400;
+const WARM_FOR_MS = 300;
+
 export function TooltipProvider({ children }: TooltipProviderProps) {
   const [activeTooltip, setActiveTooltip] = useState<TooltipPayload | null>(null);
+  const [instant, setInstant] = useState(false);
   const tooltipId = useId();
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmUntilRef = useRef(0);
+  const visibleRef = useRef(false);
 
   const whileElementsMounted = useCallback(
     (reference: ReferenceType, floating: HTMLElement, update: () => void) =>
@@ -29,12 +38,32 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
     refs.setReference(activeTooltip?.reference ?? null);
   }, [activeTooltip, refs]);
 
+  useEffect(() => {
+    visibleRef.current = activeTooltip !== null;
+  }, [activeTooltip]);
+  useEffect(() => () => clearTimeout(openTimerRef.current ?? undefined), []);
+
   const show = useCallback((payload: TooltipPayload) => {
-    setActiveTooltip(payload);
+    clearTimeout(openTimerRef.current ?? undefined);
+    const warm = visibleRef.current || performance.now() < warmUntilRef.current;
+    if (warm) {
+      setInstant(true);
+      setActiveTooltip(payload);
+      return;
+    }
+    openTimerRef.current = setTimeout(() => {
+      setInstant(false);
+      setActiveTooltip(payload);
+    }, OPEN_DELAY_MS);
   }, []);
 
   const hide = useCallback((id: string) => {
-    setActiveTooltip((current) => (current?.id === id ? null : current));
+    clearTimeout(openTimerRef.current ?? undefined);
+    setActiveTooltip((current) => {
+      if (current?.id !== id) return current;
+      warmUntilRef.current = performance.now() + WARM_FOR_MS;
+      return null;
+    });
   }, []);
 
   const contextValue = useMemo<TooltipContextValue>(
@@ -52,6 +81,9 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
       {children}
       {activeTooltip && (
         <TooltipBubble
+          key={activeTooltip.id}
+          side={activeTooltip.side}
+          instant={instant}
           tooltipId={tooltipId}
           content={activeTooltip.content}
           floatingStyles={floatingStyles}

@@ -1,7 +1,6 @@
 import { Textarea as HeadlessTextarea } from "@headlessui/react";
 import { Plus } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { CardContainer } from "@/components/ui/card-container";
 import { useToast } from "@/components/ui/toast/use-toast";
 
 type GlobalInstructionsProps = {
@@ -104,45 +103,46 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
   );
 
   return (
-    <div>
-      <CardContainer>
-        <button
-          className="w-full group flex items-center gap-3 p-3 text-left lg:justify-between"
-          onClick={handleToggleExpand}
-        >
-          <div className="flex items-center gap-3 flex-1 min-w-0 lg:flex-initial">
-            <Plus
-              className={`w-5 h-5 shrink-0 text-label-muted transition-transform duration-200 ${isExpanded ? "rotate-45" : ""}`}
-            />
-            <div className="flex-1 min-w-0 lg:flex-initial">
-              <h3 className="text-sm font-[350] leading-[150%] text-label-title">Add instructions to all chats</h3>
-              <span className="block text-[13px] font-[350] leading-[130%] text-label-muted lg:hidden">
-                Tailor the way the model responds
-              </span>
-            </div>
-          </div>
-
-          <span className="hidden lg:block text-[13px] font-[350] leading-[130%] text-label-muted text-right">
-            Tailor the way the model responds
-          </span>
-        </button>
-      </CardContainer>
-
-      <CardContainer
-        className={`overflow-clip transition-all duration-300 ease-in-out ${isExpanded ? "max-h-96 opacity-100 mt-3" : "max-h-0 opacity-0"}`}
+    <div className="rounded-xl bg-surface-elevated shadow-md dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)]">
+      <button
+        type="button"
+        aria-expanded={isExpanded}
+        className="group flex min-h-12 w-full items-center gap-3 rounded-xl pl-3 pr-4 py-2.5 text-left outline-hidden focus-visible:shadow-focus"
+        onClick={handleToggleExpand}
       >
-        <div className="p-3">
-          <HeadlessTextarea
-            ref={textareaRef}
-            value={localInstructions}
-            onChange={handleChange}
-            onBlur={flushSave}
-            placeholder="Add instructions to all chats"
-            className="w-full p-1 bg-bg-modal rounded-md text-sm leading-[150%] text-label-title placeholder:text-label-muted focus:outline-hidden focus:border-primary resize-none overscroll-y-auto thin-scrollbar"
-            rows={7}
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-tertiary text-label-muted transition-colors duration-150 ease-out group-hover:bg-control-surface-hover group-hover:text-label-title">
+          <Plus
+            aria-hidden
+            className={`size-4 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${isExpanded ? "rotate-45" : ""}`}
           />
+        </span>
+        <span className="flex-1 min-w-0 text-[14px] font-[450] leading-[1.3] text-label-title">
+          Add instructions to all chats
+        </span>
+        <span className="hidden sm:block text-[13px] leading-[1.3] text-label-muted">
+          Tailor the way the model responds
+        </span>
+      </button>
+
+      {/* Opens in place: the card grows from its own row instead of a second box appearing. */}
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
+      >
+        <div className="min-h-0 overflow-clip">
+          <div className="px-4 pb-4">
+            <HeadlessTextarea
+              ref={textareaRef}
+              value={localInstructions}
+              onChange={handleChange}
+              onBlur={flushSave}
+              placeholder="Add instructions to all chats"
+              tabIndex={isExpanded ? 0 : -1}
+              className="w-full rounded-xl bg-surface-soft px-3 py-2.5 text-[14px] leading-[1.5] text-label-title placeholder:text-label-muted focus:outline-hidden resize-none overscroll-y-auto thin-scrollbar"
+              rows={6}
+            />
+          </div>
         </div>
-      </CardContainer>
+      </div>
     </div>
   );
 };
