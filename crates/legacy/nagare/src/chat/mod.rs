@@ -775,7 +775,7 @@ fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
         let intervals = u64::from(tokens - 1);
         Some((token_intervals + intervals, duration + intervals as f64 / generate_rate))
     })?;
-    (token_intervals > 0 && duration > 0.0).then(|| token_intervals as f64 / duration)
+    (token_intervals > 0 && duration > 0.0).then_some(token_intervals as f64 / duration)
 }
 
 fn aggregate_prefill_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
@@ -794,7 +794,7 @@ fn aggregate_prefill_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
         }
         Some((tokens + u64::from(input_tokens), duration + f64::from(input_tokens) / prefill_rate))
     })?;
-    (tokens > 0 && duration > 0.0).then(|| tokens as f64 / duration)
+    (tokens > 0 && duration > 0.0).then_some(tokens as f64 / duration)
 }
 
 fn sum_optional_u32(

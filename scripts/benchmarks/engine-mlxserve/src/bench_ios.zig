@@ -3,6 +3,7 @@ const bench_main = @import("bench_main.zig");
 pub const mlx = bench_main.mlx;
 pub const log = bench_main.log;
 pub const io_util = bench_main.io_util;
+pub const env = bench_main.env;
 
 export fn benchmarks_mlxserve_main(argc: c_int, argv: [*][*:0]u8) c_int {
     var count: usize = 0;

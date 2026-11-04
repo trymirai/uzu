@@ -113,7 +113,7 @@ impl BenchRunner {
                 aggregate_energy(input_energy.iter().chain(output_energy.iter())).map(|energy| energy.total());
             let tokens_count = tokens_count_input + tokens_count_output;
             let joules_per_token =
-                total_joules.and_then(|joules| (tokens_count > 0).then(|| joules / tokens_count as f64));
+                total_joules.and_then(|joules| (tokens_count > 0).then_some(joules / tokens_count as f64));
 
             let result = BenchResult {
                 task: self.task.clone(),

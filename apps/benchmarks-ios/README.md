@@ -15,7 +15,7 @@ Engines, the same as in `scripts/benchmarks`, each started through its command-l
 On the Mac:
 
 - Xcode 27 or newer, signed in with an account of the Mirai team and selected for the command line: `sudo xcode-select -s /Applications/Xcode.app`. Then its Metal Toolchain component: `xcodebuild -downloadComponent MetalToolchain`.
-- [Tuist](https://tuist.dev), [uv](https://docs.astral.sh/uv/), CMake, bazelisk and the Hugging Face CLI: `brew install tuist uv cmake bazelisk hf`.
+- [Tuist](https://tuist.dev), [uv](https://docs.astral.sh/uv/), CMake, bazelisk and the Hugging Face CLI: `brew install tuist uv cmake bazelisk hf`. Also install Zig 0.17, pkg-config and libwebp for mlx-serve.
 - rustup from [rustup.rs](https://rustup.rs), in its default `~/.cargo`; the build finds tools only in `~/.cargo/bin`, `~/.local/bin` and `/opt/homebrew/bin`. Python packages with Rust code build with the stable toolchain: `rustup toolchain install stable && rustup target add aarch64-apple-ios --toolchain stable`.
 
 On the iPhone or iPad:

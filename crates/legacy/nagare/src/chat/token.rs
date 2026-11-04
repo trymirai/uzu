@@ -484,7 +484,7 @@ impl StreamingState<'_> {
             self.time_first_token.map(|time_first_token| time_first_token.duration_since(self.time_prefill_start));
         let prefill_tps = ttft_duration.and_then(|duration| {
             (self.total_tokens_input > 0 && !duration.is_zero())
-                .then(|| self.total_tokens_input as f64 / duration.as_secs_f64())
+                .then_some(self.total_tokens_input as f64 / duration.as_secs_f64())
         });
 
         let generate_duration = if let (Some(start), Some(finish)) = (self.time_first_token, self.time_last_token) {
@@ -529,7 +529,7 @@ impl StreamingState<'_> {
 
 fn speculator_stats(metrics: &TokenStreamMetrics) -> Option<ChatReplySpeculatorStats> {
     let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
-    (num_forward_passes > 0 && metrics.num_tokens_proposed > num_forward_passes).then(|| ChatReplySpeculatorStats {
+    (num_forward_passes > 0 && metrics.num_tokens_proposed > num_forward_passes).then_some(ChatReplySpeculatorStats {
         tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / num_forward_passes as f64,
         num_decode_forward_passes: num_forward_passes as u32,
     })

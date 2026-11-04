@@ -68,7 +68,7 @@ class SplashEngine(InferenceEngine):
     def __init__(self, model: str | Path):
         sys.path.insert(0, str(SPLASH_DIR.parent))
         sys.path.insert(0, str(SPLASH_DIR))
-        from splash.install import models, paths
+        from splash.install import assembly, models, paths
 
         self._processes = models.processes
         self._processes.run([str(paths.BINARY), "device-check"], check=True)
@@ -92,13 +92,16 @@ class SplashEngine(InferenceEngine):
         self.runtime = None
         self.backend = None
         root = get_model_path(model)
+        family = assembly.family(root)
+        if family is None:
+            raise ValueError(f"Splash cannot determine the prepared model's family: {root}")
         self.tokenizer = AutoTokenizer.from_pretrained(
             root / "tokenizer",
             local_files_only=True,
             trust_remote_code=False,
             fix_mistral_regex=True,
         )
-        validate_tokenizer(self.tokenizer)
+        validate_tokenizer(self.tokenizer, family.chat_format)
         chat_templates = ChatTemplates(self.tokenizer)
         self._command = [str(paths.BINARY), "serve-native", str(root), "auto", "auto"]
         try:
@@ -127,8 +130,9 @@ class SplashEngine(InferenceEngine):
                 ready.max_context_tokens,
                 1800.0,
                 ready.max_concurrent_requests,
-                constraint_factory=ConstraintFactory(self.tokenizer),
+                constraint_factory=ConstraintFactory(self.tokenizer, family.chat_format),
                 chat_templates=chat_templates,
+                chat_format=family.chat_format,
                 thinking_codec=ThinkingCodec(),
                 vision=ready.vision,
             )
@@ -170,7 +174,7 @@ class SplashEngine(InferenceEngine):
             raise ValueError("num_runs must be 1 or greater")
 
         if request.speculative_depth not in (None, 7):
-            raise ValueError("Splash 1.1.0 uses a fixed speculative_depth of 7; it cannot disable or resize drafting")
+            raise ValueError("Splash uses a fixed speculative_depth of 7; it cannot disable or resize drafting")
 
         if request.max_tokens is not None and request.max_tokens < 0:
             raise ValueError("max_tokens must be 0 or greater")

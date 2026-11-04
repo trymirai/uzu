@@ -149,3 +149,31 @@ def test_splash_uses_latest_version() -> None:
     current = version[1]
     latest = latest_github_tag("incoai/splash")
     assert current == latest, f"engine-splash/bootstrap.sh: VERSION is {current}, latest release is {latest}"
+
+
+@pytest.mark.parametrize(
+    "engine,repository,prefix",
+    [("magnitude", "magnitudedev/magnitude", "@magnitudedev/cli@"), ("tensorfold", "ashhart/TensorFold", "")],
+)
+def test_server_engine_uses_latest_version(engine: str, repository: str, prefix: str) -> None:
+    source = (ROOT / "server/engine" / engine / "bootstrap.sh").read_text()
+    version = re.search(r'^VERSION="([^"]+)"$', source, re.MULTILINE)
+    assert version, f"{engine}/bootstrap.sh: missing VERSION"
+    latest = latest_github_tag(repository)
+    assert prefix + version[1] == latest, f"{engine}: VERSION is {version[1]}, latest release is {latest}"
+    revision = re.search(r'^REVISION="([0-9a-f]{40})"$', source, re.MULTILINE)
+    if revision:
+        commit = fetch_json(f"https://api.github.com/repos/{repository}/commits/{latest}")["sha"]
+        assert revision[1] == commit, f"{engine}: REVISION does not match {latest}"
+
+
+@pytest.mark.parametrize(
+    "path,repository",
+    [("common-cpp/CMakeLists.txt", "stephenberry/glaze"), ("engine-llamacpp/CMakeLists.txt", "CLIUtils/CLI11")],
+)
+def test_cpp_dependency_uses_latest_version(path: str, repository: str) -> None:
+    source = (ROOT / path).read_text()
+    version = re.search(rf"GIT_REPOSITORY https://github.com/{re.escape(repository)}\.git\s+GIT_TAG (\S+)", source)
+    assert version, f"{path}: missing {repository} pin"
+    latest = latest_github_tag(repository)
+    assert version[1] == latest, f"{path}: {repository} is {version[1]}, latest release is {latest}"
