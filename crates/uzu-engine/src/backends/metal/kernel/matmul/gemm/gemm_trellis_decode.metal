@@ -9,7 +9,7 @@ using namespace uzu::gemm;
 #define ROWS_PER_SIMDGROUP 4
 
 UZU_CONST uint ROWS_PER_THREADGROUP = ROWS_PER_SIMDGROUP * SIMDGROUPS;
-UZU_CONST uint MAX_BATCH = 8;
+UZU_CONST uint MAX_BATCH = TRELLIS_DECODE_MAX_BATCH;
 
 // Pre-M5 batch 1..8. Lane partials are exact integers in float, so the cross-lane sum is an int simd_sum.
 KERNEL(GemmTrellisDecode)(

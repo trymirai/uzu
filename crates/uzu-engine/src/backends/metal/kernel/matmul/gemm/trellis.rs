@@ -9,7 +9,7 @@ use crate::backends::{
         Metal,
         command_buffer::MetalCommandBufferEncoding,
         gpu_types::{
-            gemm::{GemmAlignment, GemmTiling},
+            gemm::{GemmAlignment, GemmTiling, TRELLIS_DECODE_MAX_BATCH},
             matmul::GemmParams,
         },
         kernel::{
@@ -81,7 +81,10 @@ impl TrellisGemm {
             return Err(unsupported());
         }
 
-        if plan.engine == GemmEngine::Simdgroup && (1..=SIMDGROUPS).contains(&m) && k <= DECODE_MAX_EXACT_K {
+        if plan.engine == GemmEngine::Simdgroup
+            && (1..=TRELLIS_DECODE_MAX_BATCH).contains(&m)
+            && k <= DECODE_MAX_EXACT_K
+        {
             let kernel = match self.decode_kernels.entry((m, format)) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => entry.insert(GemmTrellisDecodeMetalKernel::new(

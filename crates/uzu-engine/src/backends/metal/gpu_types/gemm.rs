@@ -38,6 +38,7 @@ pub enum GemmTiling {
 }
 
 pub const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
+pub const TRELLIS_DECODE_MAX_BATCH: u32 = 8;
 
 impl GemmTiling {
     pub const fn is_packed_w4(self) -> bool {
