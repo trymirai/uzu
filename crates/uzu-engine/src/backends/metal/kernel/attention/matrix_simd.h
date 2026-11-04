@@ -8,9 +8,10 @@
 
 using namespace uzu::matmul;
 
-template <uint HEAD_DIM, uint BK, bool IS_VALUE, uint NUM_SIMDGROUPS, typename Code>
+template <uint HEAD_DIM, uint BK, bool IS_VALUE, uint NUM_SIMDGROUPS, typename Code, typename ScaleType>
 METAL_FUNC void stage_int8_tile(
     const device Code* codes,
+    const device ScaleType* scales,
     threadgroup half* tile,
     uzu::kv_layout::KVShape shape,
     uint key_base,
@@ -24,12 +25,15 @@ METAL_FUNC void stage_int8_tile(
   for (uint vector = thread_index; vector < VECTORS; vector += NUM_SIMDGROUPS * METAL_SIMD_SIZE) {
     const uint row = vector / (HEAD_DIM / 16);
     const uint channel = vector % (HEAD_DIM / 16) * 16;
-    uint4 words = key_base + row < key_length ? rows[vector] : uint4(0);
+    const bool valid = key_base + row < key_length;
+    uint4 words = valid ? rows[vector] : uint4(0);
     if constexpr (IS_VALUE)
       words ^= uint4(0x80808080u);
+    // K/V/Q are staged as half after scaling (values stay far below 65504).
+    const float scale = valid ? float(scales[shape.scale_index(key_base + row, kv_head)]) : 0.0f;
     METAL_PRAGMA_UNROLL
     for (ushort chunk = 0; chunk < 4; ++chunk) {
-      const half4 values = key_base + row < key_length ? half4(as_type<char4>(words[chunk])) : half4(0);
+      const half4 values = half4(float4(as_type<char4>(words[chunk])) * scale);
       *reinterpret_cast<threadgroup half4*>(tile + row * ROW_STRIDE + channel + chunk * 4) = values;
     }
   }
@@ -101,7 +105,10 @@ METAL_FUNC void attention_matrix_simd(
     queries[depth].clear();
     queries[depth].map_coords(lane, [&](short row, short col, half) {
       const uint q = min(row_base + uint(row), grouped_rows - 1u);
-      return half(query_codes[(query_group + q) * HEAD_DIM + channel_base + depth * Ops::FRAGMENT_COLS + col]);
+      return half(
+          float(query_codes[(query_group + q) * HEAD_DIM + channel_base + depth * Ops::FRAGMENT_COLS + col]) *
+          query_scale
+      );
     });
   }
 
@@ -135,6 +142,7 @@ METAL_FUNC void attention_matrix_simd(
     const uint key_base = block * BK;
     stage_int8_tile<HEAD_DIM, BK, false, NUM_SIMDGROUPS>(
         key_codes,
+        key_scales,
         kv_tile,
         shape,
         key_base,
@@ -163,6 +171,7 @@ METAL_FUNC void attention_matrix_simd(
     }
     stage_int8_tile<HEAD_DIM, BK, true, NUM_SIMDGROUPS>(
         value_codes,
+        value_scales,
         kv_tile,
         shape,
         key_base,
@@ -170,11 +179,7 @@ METAL_FUNC void attention_matrix_simd(
         kv_head_index,
         simdgroup * METAL_SIMD_SIZE + lane
     );
-    if (!is_kv_cache_ring && !is_sliding_window && key_base + BK <= params.q_off) {
-      scores.map_coords(lane, [&](short, short col, float score) {
-        return score * query_scale * float(key_scales[shape.scale_index(key_base + uint(col), kv_head_index)]);
-      });
-    } else {
+    if (is_kv_cache_ring || is_sliding_window || key_base + BK > params.q_off) {
       scores.map_coords(lane, [&](short, short col, float score) {
         const uint key = key_base + uint(col);
         bool visible = key < params.k_len;
@@ -201,7 +206,7 @@ METAL_FUNC void attention_matrix_simd(
             );
           }
         }
-        return visible ? score * query_scale * float(key_scales[shape.scale_index(key, kv_head_index)]) : -INFINITY;
+        return visible ? score : -INFINITY;
       });
     }
     float block_max;
@@ -215,10 +220,6 @@ METAL_FUNC void attention_matrix_simd(
     running_max = next_max;
     output.map([&](float value) { return value * rescale; });
 
-    scores.map_coords(lane, [&](short, short col, float probability) {
-      const uint key = key_base + uint(col);
-      return key < params.k_len ? probability * float(value_scales[shape.scale_index(key, kv_head_index)]) : 0.0f;
-    });
     METAL_PRAGMA_UNROLL
     for (ushort key_fragment = 0; key_fragment < KEY_FRAGMENTS; ++key_fragment) {
       METAL_PRAGMA_UNROLL

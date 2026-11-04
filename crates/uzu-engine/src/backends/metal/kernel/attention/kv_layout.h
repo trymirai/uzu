@@ -22,14 +22,13 @@ struct KVShape {
   }
 
   // Scales: [key block][head][key in block].
-  METAL_FUNC size_t scale_index(const uint key, const uint kv_head) const {
-    return (size_t(key / kv_layout::TILE_KEYS) * num_kv_heads + kv_head) * kv_layout::TILE_KEYS +
-           key % kv_layout::TILE_KEYS;
+  METAL_FUNC uint scale_index(const uint key, const uint kv_head) const {
+    return (key / kv_layout::TILE_KEYS * num_kv_heads + kv_head) * kv_layout::TILE_KEYS + key % kv_layout::TILE_KEYS;
   }
 
   METAL_FUNC size_t k_code_index(const uint key, const uint kv_head, const uint channel) const {
     if (layout == KVLayout::RowMajor)
-      return scale_index(key, kv_head) * head_dim + channel;
+      return size_t(scale_index(key, kv_head)) * head_dim + channel;
     // K: [block][head][fragment][lane][LANE_BYTES].
     const uint row = key % kv_layout::TILE_KEYS;
     const uint lane = mma_lane(row % kv_layout::GROUP_ROWS, channel % kv_layout::TILE_DIMS / kv_layout::LANE_COLS);
