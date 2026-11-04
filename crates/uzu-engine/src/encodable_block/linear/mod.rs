@@ -147,7 +147,7 @@ impl<B: Backend> dyn Linear<B> {
                     output_data_type,
                     has_biases,
                     spec,
-                    &weights_tree,
+                    weights_tree,
                     context,
                 )
                 .await?,
