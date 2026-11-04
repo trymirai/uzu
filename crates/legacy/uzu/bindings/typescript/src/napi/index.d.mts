@@ -42,7 +42,7 @@ export declare class DownloadState {
   get name(): string
 }
 
-export declare const enum DownloadManagerType {
+export declare enum DownloadManagerType {
   Native = 'Native',
   Universal = 'Universal'
 }
@@ -160,7 +160,7 @@ export type ChatSessionError =
   | { type: 'NoResponse' }
   | { type: 'ToolTurnLimitExceeded'; limit: number }
 
-export declare const enum ChatSessionState {
+export declare enum ChatSessionState {
   Idle = 'Idle',
   Generation = 'Generation',
   ToolCalling = 'ToolCalling',
@@ -176,7 +176,7 @@ export type ClassificationSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare const enum ClassificationSessionState {
+export declare enum ClassificationSessionState {
   Idle = 'Idle',
   Classifying = 'Classifying'
 }
@@ -190,7 +190,7 @@ export type DecisionSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare const enum DecisionSessionState {
+export declare enum DecisionSessionState {
   Idle = 'Idle',
   Deciding = 'Deciding'
 }
@@ -201,7 +201,7 @@ export type TextToSpeechSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare const enum TextToSpeechSessionState {
+export declare enum TextToSpeechSessionState {
   Idle = 'Idle',
   Synthesizing = 'Synthesizing'
 }
@@ -878,7 +878,7 @@ export declare class Value {
 export type ChatContentBlock =
   ChatContentBlockIdentity | ChatContentBlockReasoningEffort | ChatContentBlockConversationStartDate | ChatContentBlockKnowledgeCutoff | ChatContentBlockBuiltinTools | ChatContentBlockTools | ChatContentBlockText | ChatContentBlockImage | ChatContentBlockVideo | ChatContentBlockAudio | ChatContentBlockFile | ChatContentBlockReasoning | ChatContentBlockToolCall | ChatContentBlockToolCallCandidate | ChatContentBlockToolCallResult | ChatContentBlockTranslation | ChatContentBlockCustom
 
-export declare const enum ChatContentBlockType {
+export declare enum ChatContentBlockType {
   Identity = 'Identity',
   ReasoningEffort = 'ReasoningEffort',
   ConversationStartDate = 'ConversationStartDate',
@@ -902,7 +902,7 @@ export interface ChatMessageMetadata {
   values: Record<string, Value>
 }
 
-export declare const enum ChatReplyFinishReason {
+export declare enum ChatReplyFinishReason {
   Stop = 'Stop',
   Length = 'Length',
   Cancelled = 'Cancelled',
@@ -921,7 +921,7 @@ export interface ClassificationOutputProbabilities {
   values: Record<string, number>
 }
 
-export declare const enum ClassificationRole {
+export declare enum ClassificationRole {
   User = 'User',
   Assistant = 'Assistant'
 }
@@ -938,19 +938,19 @@ export type DecisionQuestion =
 export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
 
-export declare const enum HashMethod {
+export declare enum HashMethod {
   CRC32C = 'CRC32C',
   Sha256 = 'Sha256',
   GitBlobSha1 = 'GitBlobSha1'
 }
 
-export declare const enum ImageFormat {
+export declare enum ImageFormat {
   Png = 'Png',
   Webp = 'Webp',
   Svg = 'Svg'
 }
 
-export declare const enum ImageTheme {
+export declare enum ImageTheme {
   Light = 'Light',
   Dark = 'Dark'
 }
@@ -970,7 +970,7 @@ export type ModelSpecialization =
 export type PcmBatchError =
   | { type: 'UnableToSaveAsWav'; message: string }
 
-export declare const enum ReasoningEffort {
+export declare enum ReasoningEffort {
   Disabled = 'Disabled',
   Default = 'Default',
   Low = 'Low',

@@ -19,7 +19,11 @@
     "scripts": {
         "build": "./scripts/build",
         "lint": "./scripts/lint",
+        "check-api": "./scripts/check-api",
         "examples": "vite"
+    },
+    "dependencies": {
+        "zod": "^4.2.1"
     },
     "devDependencies": {
         "publint": "^0.2.12",

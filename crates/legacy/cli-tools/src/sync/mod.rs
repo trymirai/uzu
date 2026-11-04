@@ -11,6 +11,7 @@ mod pyproject;
 mod readme;
 mod swift_package;
 mod toolchains;
+mod wasm_tool;
 
 use anyhow::{Ok, Result, anyhow};
 pub use jsr::JsrSyncTask;
@@ -22,6 +23,7 @@ pub use pyproject::PyprojectSyncTask;
 pub use readme::ReadmeSyncTask;
 pub use swift_package::SwiftPackageSyncTask;
 pub use toolchains::ToolchainsSyncTask;
+pub use wasm_tool::WasmToolSyncTask;
 
 use crate::configs::{Paths, PlatformsConfig, WorkspaceManifest};
 
@@ -114,6 +116,12 @@ pub fn run_sync(check: bool) -> Result<()> {
         check,
     )?;
     LicenseSyncTask.run(&platforms, &workspace, &wasm_bindings_path.join("LICENSE"), check)?;
+    WasmToolSyncTask::new(typescript_bindings_path.join("src/tool.ts")).run(
+        &platforms,
+        &workspace,
+        &wasm_bindings_path.join("src/tool.ts"),
+        check,
+    )?;
 
     PlaygroundSyncTask.run(&platforms, &workspace, &root_path.join("apps/playground/Project.swift"), check)?;
 

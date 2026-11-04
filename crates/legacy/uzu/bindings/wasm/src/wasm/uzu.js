@@ -17,22 +17,31 @@ export class CancelToken {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_canceltoken_free(ptr, 0);
     }
+    /**
+     * @returns {boolean}
+     */
+    get isCancelled() {
+        const ret = wasm.canceltoken___wasm_is_cancelled(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
     cancel() {
-        wasm.canceltoken_cancel(this.__wbg_ptr);
+        const ret = wasm.canceltoken_cancel(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * @returns {CancelToken}
      */
     static create() {
         const ret = wasm.canceltoken_create();
-        return CancelToken.__wrap(ret);
-    }
-    /**
-     * @returns {boolean}
-     */
-    get isCancelled() {
-        const ret = wasm.canceltoken_isCancelled(this.__wbg_ptr);
-        return ret !== 0;
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) CancelToken.prototype[Symbol.dispose] = CancelToken.prototype.free;
@@ -55,56 +64,1308 @@ export class ChatConfig {
         wasm.__wbg_chatconfig_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneChatConfig() {
+        const ret = wasm.chatconfig___uzuCloneChatConfig(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get contextLength() {
+        const ret = wasm.chatconfig___wasm_get_context_length(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get samplingSeed() {
+        const ret = wasm.chatconfig___wasm_get_sampling_seed(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ContextLength} contextLength
+     * @param {SamplingSeed} samplingSeed
+     */
+    constructor(contextLength, samplingSeed) {
+        const ret = wasm.chatconfig___wasm_new(contextLength, samplingSeed);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatConfigFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set contextLength(value) {
+        wasm.chatconfig___wasm_set_context_length(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set samplingSeed(value) {
+        wasm.chatconfig___wasm_set_sampling_seed(this.__wbg_ptr, value);
+    }
+    /**
      * @returns {ChatConfig}
      */
     static create() {
         const ret = wasm.chatconfig_create();
-        return ChatConfig.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {ContextLength} context_length
+     * @param {ContextLength} contextLength
      * @returns {ChatConfig}
      */
-    withContextLength(context_length) {
-        const ret = wasm.chatconfig_withContextLength(this.__wbg_ptr, context_length);
-        return ChatConfig.__wrap(ret);
+    withContextLength(contextLength) {
+        const ret = wasm.chatconfig_withContextLength(this.__wbg_ptr, contextLength);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {SamplingSeed} sampling_seed
+     * @param {SamplingSeed} samplingSeed
      * @returns {ChatConfig}
      */
-    withSamplingSeed(sampling_seed) {
-        const ret = wasm.chatconfig_withSamplingSeed(this.__wbg_ptr, sampling_seed);
-        return ChatConfig.__wrap(ret);
-    }
-    /**
-     * @returns {ContextLength}
-     */
-    get context_length() {
-        const ret = wasm.__wbg_get_chatconfig_context_length(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {SamplingSeed}
-     */
-    get sampling_seed() {
-        const ret = wasm.__wbg_get_chatconfig_sampling_seed(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @param {ContextLength} arg0
-     */
-    set context_length(arg0) {
-        wasm.__wbg_set_chatconfig_context_length(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {SamplingSeed} arg0
-     */
-    set sampling_seed(arg0) {
-        wasm.__wbg_set_chatconfig_sampling_seed(this.__wbg_ptr, arg0);
+    withSamplingSeed(samplingSeed) {
+        const ret = wasm.chatconfig_withSamplingSeed(this.__wbg_ptr, samplingSeed);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) ChatConfig.prototype[Symbol.dispose] = ChatConfig.prototype.free;
+
+export class ChatContentBlockAudio {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockAudio.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockAudioFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockAudioFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockaudio_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockaudio___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get url() {
+        const ret = wasm.chatcontentblockaudio___wasm_get_url(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} url
+     */
+    constructor(url) {
+        const ret = wasm.chatcontentblockaudio___wasm_new(url);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockAudioFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set url(value) {
+        wasm.chatcontentblockaudio___wasm_set_url(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockAudio.prototype[Symbol.dispose] = ChatContentBlockAudio.prototype.free;
+
+export class ChatContentBlockBuiltinTools {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockBuiltinTools.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockBuiltinToolsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockBuiltinToolsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockbuiltintools_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockbuiltintools___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get names() {
+        const ret = wasm.chatcontentblockbuiltintools___wasm_get_names(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<string>} names
+     */
+    constructor(names) {
+        const ret = wasm.chatcontentblockbuiltintools___wasm_new(names);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockBuiltinToolsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set names(value) {
+        wasm.chatcontentblockbuiltintools___wasm_set_names(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockBuiltinTools.prototype[Symbol.dispose] = ChatContentBlockBuiltinTools.prototype.free;
+
+export class ChatContentBlockConversationStartDate {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockConversationStartDate.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockConversationStartDateFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockConversationStartDateFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockconversationstartdate_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockconversationstartdate___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblockconversationstartdate___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblockconversationstartdate___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockConversationStartDateFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblockconversationstartdate___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockConversationStartDate.prototype[Symbol.dispose] = ChatContentBlockConversationStartDate.prototype.free;
+
+export class ChatContentBlockCustom {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockCustom.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockCustomFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockCustomFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockcustom_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockcustom___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblockcustom___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Value} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblockcustom___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockCustomFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblockcustom___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockCustom.prototype[Symbol.dispose] = ChatContentBlockCustom.prototype.free;
+
+export class ChatContentBlockFile {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockFile.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockFileFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockFileFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockfile_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockfile___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get url() {
+        const ret = wasm.chatcontentblockfile___wasm_get_url(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} url
+     */
+    constructor(url) {
+        const ret = wasm.chatcontentblockfile___wasm_new(url);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockFileFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set url(value) {
+        wasm.chatcontentblockfile___wasm_set_url(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockFile.prototype[Symbol.dispose] = ChatContentBlockFile.prototype.free;
+
+export class ChatContentBlockIdentity {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockIdentity.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockIdentityFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockIdentityFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockidentity_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockidentity___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblockidentity___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblockidentity___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockIdentityFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblockidentity___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockIdentity.prototype[Symbol.dispose] = ChatContentBlockIdentity.prototype.free;
+
+export class ChatContentBlockImage {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockImage.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockImageFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockImageFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockimage_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockimage___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get url() {
+        const ret = wasm.chatcontentblockimage___wasm_get_url(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} url
+     */
+    constructor(url) {
+        const ret = wasm.chatcontentblockimage___wasm_new(url);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockImageFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set url(value) {
+        wasm.chatcontentblockimage___wasm_set_url(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockImage.prototype[Symbol.dispose] = ChatContentBlockImage.prototype.free;
+
+export class ChatContentBlockKnowledgeCutoff {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockKnowledgeCutoff.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockKnowledgeCutoffFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockKnowledgeCutoffFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockknowledgecutoff_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockknowledgecutoff___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblockknowledgecutoff___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblockknowledgecutoff___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockKnowledgeCutoffFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblockknowledgecutoff___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockKnowledgeCutoff.prototype[Symbol.dispose] = ChatContentBlockKnowledgeCutoff.prototype.free;
+
+export class ChatContentBlockReasoning {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockReasoning.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockReasoningFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockReasoningFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockreasoning_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockreasoning___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblockreasoning___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblockreasoning___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockReasoningFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblockreasoning___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockReasoning.prototype[Symbol.dispose] = ChatContentBlockReasoning.prototype.free;
+
+export class ChatContentBlockReasoningEffort {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockReasoningEffort.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockReasoningEffortFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockReasoningEffortFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockreasoningeffort_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockreasoningeffort___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblockreasoningeffort___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ReasoningEffort} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblockreasoningeffort___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockReasoningEffortFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblockreasoningeffort___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockReasoningEffort.prototype[Symbol.dispose] = ChatContentBlockReasoningEffort.prototype.free;
+
+export class ChatContentBlockText {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockText.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockTextFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockTextFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktext_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblocktext___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblocktext___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblocktext___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockTextFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblocktext___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockText.prototype[Symbol.dispose] = ChatContentBlockText.prototype.free;
+
+export class ChatContentBlockToolCall {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockToolCall.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockToolCallFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockToolCallFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktoolcall_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblocktoolcall___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblocktoolcall___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ToolCall} value
+     */
+    constructor(value) {
+        const ret = wasm.chatcontentblocktoolcall___wasm_new(value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockToolCallFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblocktoolcall___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockToolCall.prototype[Symbol.dispose] = ChatContentBlockToolCall.prototype.free;
+
+export class ChatContentBlockToolCallCandidate {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockToolCallCandidate.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockToolCallCandidateFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockToolCallCandidateFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktoolcallcandidate_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblocktoolcallcandidate___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get identifier() {
+        const ret = wasm.chatcontentblocktoolcallcandidate___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblocktoolcallcandidate___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Value} value
+     * @param {string | null} [identifier]
+     */
+    constructor(value, identifier) {
+        const ret = wasm.chatcontentblocktoolcallcandidate___wasm_new(value, identifier);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockToolCallCandidateFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set identifier(value) {
+        wasm.chatcontentblocktoolcallcandidate___wasm_set_identifier(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblocktoolcallcandidate___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockToolCallCandidate.prototype[Symbol.dispose] = ChatContentBlockToolCallCandidate.prototype.free;
+
+export class ChatContentBlockToolCallResult {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockToolCallResult.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockToolCallResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockToolCallResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktoolcallresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblocktoolcallresult___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get identifier() {
+        const ret = wasm.chatcontentblocktoolcallresult___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get name() {
+        const ret = wasm.chatcontentblocktoolcallresult___wasm_get_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.chatcontentblocktoolcallresult___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | undefined | null} identifier
+     * @param {string | undefined | null} name
+     * @param {Value} value
+     */
+    constructor(identifier, name, value) {
+        const ret = wasm.chatcontentblocktoolcallresult___wasm_new(identifier, name, value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockToolCallResultFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set identifier(value) {
+        wasm.chatcontentblocktoolcallresult___wasm_set_identifier(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set name(value) {
+        wasm.chatcontentblocktoolcallresult___wasm_set_name(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.chatcontentblocktoolcallresult___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockToolCallResult.prototype[Symbol.dispose] = ChatContentBlockToolCallResult.prototype.free;
+
+export class ChatContentBlockTools {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockTools.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockToolsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockToolsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktools_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblocktools___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get namespaces() {
+        const ret = wasm.chatcontentblocktools___wasm_get_namespaces(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<ToolNamespace>} namespaces
+     */
+    constructor(namespaces) {
+        const ret = wasm.chatcontentblocktools___wasm_new(namespaces);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockToolsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set namespaces(value) {
+        wasm.chatcontentblocktools___wasm_set_namespaces(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockTools.prototype[Symbol.dispose] = ChatContentBlockTools.prototype.free;
+
+export class ChatContentBlockTranslation {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockTranslation.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockTranslationFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockTranslationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktranslation_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblocktranslation___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get payload() {
+        const ret = wasm.chatcontentblocktranslation___wasm_get_payload(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get sourceLanguageCode() {
+        const ret = wasm.chatcontentblocktranslation___wasm_get_source_language_code(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get targetLanguageCode() {
+        const ret = wasm.chatcontentblocktranslation___wasm_get_target_language_code(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {TranslationPayload} payload
+     * @param {string} sourceLanguageCode
+     * @param {string} targetLanguageCode
+     */
+    constructor(payload, sourceLanguageCode, targetLanguageCode) {
+        const ret = wasm.chatcontentblocktranslation___wasm_new(payload, sourceLanguageCode, targetLanguageCode);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockTranslationFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set payload(value) {
+        wasm.chatcontentblocktranslation___wasm_set_payload(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set sourceLanguageCode(value) {
+        wasm.chatcontentblocktranslation___wasm_set_source_language_code(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set targetLanguageCode(value) {
+        wasm.chatcontentblocktranslation___wasm_set_target_language_code(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockTranslation.prototype[Symbol.dispose] = ChatContentBlockTranslation.prototype.free;
+
+export class ChatContentBlockType {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockTypeFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblocktype_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Audio() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Audio();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get BuiltinTools() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_BuiltinTools();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ConversationStartDate() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_ConversationStartDate();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Custom() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Custom();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get File() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_File();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Identity() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Identity();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Image() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Image();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get KnowledgeCutoff() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_KnowledgeCutoff();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ReasoningEffort() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_ReasoningEffort();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Reasoning() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Reasoning();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Text() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Text();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ToolCallCandidate() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_ToolCallCandidate();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ToolCallResult() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_ToolCallResult();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ToolCall() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_ToolCall();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Tools() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Tools();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Translation() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Translation();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Video() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatcontentblocktype___wasm_variant_Video();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ChatContentBlockType.prototype[Symbol.dispose] = ChatContentBlockType.prototype.free;
+
+export class ChatContentBlockVideo {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatContentBlockVideo.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatContentBlockVideoFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatContentBlockVideoFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatcontentblockvideo_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatContentBlock() {
+        const ret = wasm.chatcontentblockvideo___uzuCloneChatContentBlock(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get url() {
+        const ret = wasm.chatcontentblockvideo___wasm_get_url(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} url
+     */
+    constructor(url) {
+        const ret = wasm.chatcontentblockvideo___wasm_new(url);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatContentBlockVideoFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set url(value) {
+        wasm.chatcontentblockvideo___wasm_set_url(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatContentBlockVideo.prototype[Symbol.dispose] = ChatContentBlockVideo.prototype.free;
 
 /**
  * A loaded chat backend instance (model weights, tokenizer, configuration).
@@ -132,8 +1393,11 @@ export class ChatInstance {
      * @returns {Model}
      */
     get model() {
-        const ret = wasm.chatinstance_model(this.__wbg_ptr);
-        return Model.__wrap(ret);
+        const ret = wasm.chatinstance___wasm_model(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) ChatInstance.prototype[Symbol.dispose] = ChatInstance.prototype.free;
@@ -144,12 +1408,6 @@ export class ChatMessage {
         obj.__wbg_ptr = ptr;
         ChatMessageFinalization.register(obj, obj.__wbg_ptr, obj);
         return obj;
-    }
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof ChatMessage)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
     }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -162,96 +1420,175 @@ export class ChatMessage {
         wasm.__wbg_chatmessage_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneChatMessage() {
+        const ret = wasm.chatmessage___uzuCloneChatMessage(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get content() {
+        const ret = wasm.chatmessage___wasm_get_content(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get metadata() {
+        const ret = wasm.chatmessage___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get role() {
+        const ret = wasm.chatmessage___wasm_get_role(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ChatRole} role
+     * @param {Array<ChatContentBlock>} content
+     * @param {ChatMessageMetadata} metadata
+     */
+    constructor(role, content, metadata) {
+        const ret = wasm.chatmessage___wasm_new(role, content, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatMessageFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {string | null}
+     */
+    get reasoning() {
+        const ret = wasm.chatmessage___wasm_reasoning(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {ReasoningEffort | null}
+     */
+    get reasoningEffort() {
+        const ret = wasm.chatmessage___wasm_reasoning_effort(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {any} value
+     */
+    set content(value) {
+        wasm.chatmessage___wasm_set_content(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set metadata(value) {
+        wasm.chatmessage___wasm_set_metadata(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set role(value) {
+        wasm.chatmessage___wasm_set_role(this.__wbg_ptr, value);
+    }
+    /**
+     * @returns {string | null}
+     */
+    get text() {
+        const ret = wasm.chatmessage___wasm_text(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {Array<ToolCall>}
+     */
+    get toolCalls() {
+        const ret = wasm.chatmessage___wasm_tool_calls(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {Array<ToolNamespace>}
+     */
+    get toolNamespaces() {
+        const ret = wasm.chatmessage___wasm_tool_namespaces(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * @returns {ChatMessage}
      */
     static assistant() {
         const ret = wasm.chatmessage_assistant();
-        return ChatMessage.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {ChatMessage}
      */
     static developer() {
         const ret = wasm.chatmessage_developer();
-        return ChatMessage.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {ChatRole} role
      * @returns {ChatMessage}
      */
-    static forRole(role) {
-        const ret = wasm.chatmessage_forRole(role);
-        return ChatMessage.__wrap(ret);
-    }
-    /**
-     * @returns {ReasoningEffort | undefined}
-     */
-    get reasoningEffort() {
-        const ret = wasm.chatmessage_reasoningEffort(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {string | undefined}
-     */
-    get reasoning() {
-        const ret = wasm.chatmessage_reasoning(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    static for_role(role) {
+        const ret = wasm.chatmessage_for_role(role);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {ChatMessage}
      */
     static system() {
         const ret = wasm.chatmessage_system();
-        return ChatMessage.__wrap(ret);
-    }
-    /**
-     * @returns {string | undefined}
-     */
-    get text() {
-        const ret = wasm.chatmessage_text(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
-    }
-    /**
-     * @returns {ToolCall[]}
-     */
-    get toolCalls() {
-        const ret = wasm.chatmessage_toolCalls(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @returns {ToolNamespace[]}
-     */
-    get toolNamespaces() {
-        const ret = wasm.chatmessage_toolNamespaces(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {ChatMessage}
      */
     static tool() {
         const ret = wasm.chatmessage_tool();
-        return ChatMessage.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {ChatMessage}
      */
     static user() {
         const ret = wasm.chatmessage_user();
-        return ChatMessage.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {ChatContentBlock} block
@@ -259,108 +1596,76 @@ export class ChatMessage {
      */
     withBlock(block) {
         const ret = wasm.chatmessage_withBlock(this.__wbg_ptr, block);
-        return ChatMessage.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {ReasoningEffort} reasoning_effort
+     * @param {ReasoningEffort} reasoningEffort
      * @returns {ChatMessage}
      */
-    withReasoningEffort(reasoning_effort) {
-        const ret = wasm.chatmessage_withReasoningEffort(this.__wbg_ptr, reasoning_effort);
-        return ChatMessage.__wrap(ret);
+    withReasoningEffort(reasoningEffort) {
+        const ret = wasm.chatmessage_withReasoningEffort(this.__wbg_ptr, reasoningEffort);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {string} reasoning
      * @returns {ChatMessage}
      */
     withReasoning(reasoning) {
-        const ptr0 = passStringToWasm0(reasoning, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.chatmessage_withReasoning(this.__wbg_ptr, ptr0, len0);
-        return ChatMessage.__wrap(ret);
+        const ret = wasm.chatmessage_withReasoning(this.__wbg_ptr, reasoning);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {string} text
      * @returns {ChatMessage}
      */
     withText(text) {
-        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.chatmessage_withText(this.__wbg_ptr, ptr0, len0);
-        return ChatMessage.__wrap(ret);
+        const ret = wasm.chatmessage_withText(this.__wbg_ptr, text);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {Value} value
      * @returns {ChatMessage}
      */
     withToolCallCandidate(value) {
-        _assertClass(value, Value);
-        var ptr0 = value.__destroy_into_raw();
-        const ret = wasm.chatmessage_withToolCallCandidate(this.__wbg_ptr, ptr0);
-        return ChatMessage.__wrap(ret);
+        const ret = wasm.chatmessage_withToolCallCandidate(this.__wbg_ptr, value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {ToolCall} tool_call
+     * @param {ToolCall} toolCall
      * @returns {ChatMessage}
      */
-    withToolCall(tool_call) {
-        _assertClass(tool_call, ToolCall);
-        var ptr0 = tool_call.__destroy_into_raw();
-        const ret = wasm.chatmessage_withToolCall(this.__wbg_ptr, ptr0);
-        return ChatMessage.__wrap(ret);
+    withToolCall(toolCall) {
+        const ret = wasm.chatmessage_withToolCall(this.__wbg_ptr, toolCall);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {ToolNamespace[]} tool_namespaces
+     * @param {Array<ToolNamespace>} toolNamespaces
      * @returns {ChatMessage}
      */
-    withToolNamespaces(tool_namespaces) {
-        const ptr0 = passArrayJsValueToWasm0(tool_namespaces, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.chatmessage_withToolNamespaces(this.__wbg_ptr, ptr0, len0);
-        return ChatMessage.__wrap(ret);
-    }
-    /**
-     * @returns {ChatContentBlock[]}
-     */
-    get content() {
-        const ret = wasm.__wbg_get_chatmessage_content(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @returns {ChatMessageMetadata}
-     */
-    get metadata() {
-        const ret = wasm.__wbg_get_chatmessage_metadata(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {ChatRole}
-     */
-    get role() {
-        const ret = wasm.__wbg_get_chatmessage_role(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @param {ChatContentBlock[]} arg0
-     */
-    set content(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_chatmessage_content(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {ChatMessageMetadata} arg0
-     */
-    set metadata(arg0) {
-        wasm.__wbg_set_chatmessage_metadata(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {ChatRole} arg0
-     */
-    set role(arg0) {
-        wasm.__wbg_set_chatmessage_role(this.__wbg_ptr, arg0);
+    withToolNamespaces(toolNamespaces) {
+        const ret = wasm.chatmessage_withToolNamespaces(this.__wbg_ptr, toolNamespaces);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) ChatMessage.prototype[Symbol.dispose] = ChatMessage.prototype.free;
@@ -383,86 +1688,106 @@ export class ChatModelCapabilities {
         wasm.__wbg_chatmodelcapabilities_free(ptr, 0);
     }
     /**
-     * @returns {ReasoningEffort[]}
+     * @returns {number}
      */
-    get reasoning_efforts() {
-        const ret = wasm.__wbg_get_chatmodelcapabilities_reasoning_efforts(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+    __uzuCloneChatModelCapabilities() {
+        const ret = wasm.chatmodelcapabilities___uzuCloneChatModelCapabilities(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {boolean}
+     * @returns {any}
      */
-    get requires_tools() {
-        const ret = wasm.__wbg_get_chatmodelcapabilities_requires_tools(this.__wbg_ptr);
-        return ret !== 0;
+    get reasoningEfforts() {
+        const ret = wasm.chatmodelcapabilities___wasm_get_reasoning_efforts(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {boolean}
+     * @returns {any}
      */
-    get supports_disable_reasoning() {
-        const ret = wasm.__wbg_get_chatmodelcapabilities_supports_disable_reasoning(this.__wbg_ptr);
-        return ret !== 0;
+    get requiresTools() {
+        const ret = wasm.chatmodelcapabilities___wasm_get_requires_tools(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {boolean}
+     * @returns {any}
      */
-    get supports_multiple_tool_calls() {
-        const ret = wasm.__wbg_get_chatmodelcapabilities_supports_multiple_tool_calls(this.__wbg_ptr);
-        return ret !== 0;
+    get supportsDisableReasoning() {
+        const ret = wasm.chatmodelcapabilities___wasm_get_supports_disable_reasoning(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {boolean}
+     * @returns {any}
      */
-    get supports_reasoning() {
-        const ret = wasm.__wbg_get_chatmodelcapabilities_supports_reasoning(this.__wbg_ptr);
-        return ret !== 0;
+    get supportsMultipleToolCalls() {
+        const ret = wasm.chatmodelcapabilities___wasm_get_supports_multiple_tool_calls(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {boolean}
+     * @returns {any}
      */
-    get supports_tools() {
-        const ret = wasm.__wbg_get_chatmodelcapabilities_supports_tools(this.__wbg_ptr);
-        return ret !== 0;
+    get supportsReasoning() {
+        const ret = wasm.chatmodelcapabilities___wasm_get_supports_reasoning(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {ReasoningEffort[]} arg0
+     * @returns {any}
      */
-    set reasoning_efforts(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_chatmodelcapabilities_reasoning_efforts(this.__wbg_ptr, ptr0, len0);
+    get supportsTools() {
+        const ret = wasm.chatmodelcapabilities___wasm_get_supports_tools(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {boolean} arg0
+     * @param {boolean} supportsReasoning
+     * @param {boolean} supportsDisableReasoning
+     * @param {Array<ReasoningEffort>} reasoningEfforts
+     * @param {boolean} supportsTools
+     * @param {boolean} supportsMultipleToolCalls
+     * @param {boolean} requiresTools
      */
-    set requires_tools(arg0) {
-        wasm.__wbg_set_chatmodelcapabilities_requires_tools(this.__wbg_ptr, arg0);
+    constructor(supportsReasoning, supportsDisableReasoning, reasoningEfforts, supportsTools, supportsMultipleToolCalls, requiresTools) {
+        const ret = wasm.chatmodelcapabilities___wasm_new(supportsReasoning, supportsDisableReasoning, reasoningEfforts, supportsTools, supportsMultipleToolCalls, requiresTools);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatModelCapabilitiesFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {boolean} arg0
+     * @param {any} value
      */
-    set supports_disable_reasoning(arg0) {
-        wasm.__wbg_set_chatmodelcapabilities_supports_disable_reasoning(this.__wbg_ptr, arg0);
+    set reasoningEfforts(value) {
+        wasm.chatmodelcapabilities___wasm_set_reasoning_efforts(this.__wbg_ptr, value);
     }
     /**
-     * @param {boolean} arg0
+     * @param {any} value
      */
-    set supports_multiple_tool_calls(arg0) {
-        wasm.__wbg_set_chatmodelcapabilities_supports_multiple_tool_calls(this.__wbg_ptr, arg0);
+    set requiresTools(value) {
+        wasm.chatmodelcapabilities___wasm_set_requires_tools(this.__wbg_ptr, value);
     }
     /**
-     * @param {boolean} arg0
+     * @param {any} value
      */
-    set supports_reasoning(arg0) {
-        wasm.__wbg_set_chatmodelcapabilities_supports_reasoning(this.__wbg_ptr, arg0);
+    set supportsDisableReasoning(value) {
+        wasm.chatmodelcapabilities___wasm_set_supports_disable_reasoning(this.__wbg_ptr, value);
     }
     /**
-     * @param {boolean} arg0
+     * @param {any} value
      */
-    set supports_tools(arg0) {
-        wasm.__wbg_set_chatmodelcapabilities_supports_tools(this.__wbg_ptr, arg0);
+    set supportsMultipleToolCalls(value) {
+        wasm.chatmodelcapabilities___wasm_set_supports_multiple_tool_calls(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set supportsReasoning(value) {
+        wasm.chatmodelcapabilities___wasm_set_supports_reasoning(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set supportsTools(value) {
+        wasm.chatmodelcapabilities___wasm_set_supports_tools(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ChatModelCapabilities.prototype[Symbol.dispose] = ChatModelCapabilities.prototype.free;
@@ -488,47 +1813,64 @@ export class ChatModelInfo {
         wasm.__wbg_chatmodelinfo_free(ptr, 0);
     }
     /**
-     * @returns {ChatModelCapabilities}
+     * @returns {number}
+     */
+    __uzuCloneChatModelInfo() {
+        const ret = wasm.chatmodelinfo___uzuCloneChatModelInfo(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get capabilities() {
-        const ret = wasm.__wbg_get_chatmodelinfo_capabilities(this.__wbg_ptr);
-        return ChatModelCapabilities.__wrap(ret);
-    }
-    /**
-     * Architectural limit; absent before download or for models without a finite limit.
-     * @returns {number | undefined}
-     */
-    get context_length() {
-        const ret = wasm.__wbg_get_chatmodelinfo_context_length(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * @returns {ReasoningEffort | undefined}
-     */
-    get default_reasoning_effort() {
-        const ret = wasm.__wbg_get_chatmodelinfo_default_reasoning_effort(this.__wbg_ptr);
+        const ret = wasm.chatmodelinfo___wasm_get_capabilities(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @param {ChatModelCapabilities} arg0
+     * @returns {any}
      */
-    set capabilities(arg0) {
-        _assertClass(arg0, ChatModelCapabilities);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_chatmodelinfo_capabilities(this.__wbg_ptr, ptr0);
+    get contextLength() {
+        const ret = wasm.chatmodelinfo___wasm_get_context_length(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * Architectural limit; absent before download or for models without a finite limit.
-     * @param {number | null} [arg0]
+     * @returns {any}
      */
-    set context_length(arg0) {
-        wasm.__wbg_set_chatmodelinfo_context_length(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
+    get defaultReasoningEffort() {
+        const ret = wasm.chatmodelinfo___wasm_get_default_reasoning_effort(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {ReasoningEffort | null} [arg0]
+     * @param {number | undefined | null} contextLength
+     * @param {ChatModelCapabilities} capabilities
+     * @param {ReasoningEffort | null} [defaultReasoningEffort]
      */
-    set default_reasoning_effort(arg0) {
-        wasm.__wbg_set_chatmodelinfo_default_reasoning_effort(this.__wbg_ptr, isLikeNone(arg0) ? 0 : addToExternrefTable0(arg0));
+    constructor(contextLength, capabilities, defaultReasoningEffort) {
+        const ret = wasm.chatmodelinfo___wasm_new(contextLength, capabilities, defaultReasoningEffort);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatModelInfoFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set capabilities(value) {
+        wasm.chatmodelinfo___wasm_set_capabilities(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set contextLength(value) {
+        wasm.chatmodelinfo___wasm_set_context_length(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set defaultReasoningEffort(value) {
+        wasm.chatmodelinfo___wasm_set_default_reasoning_effort(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ChatModelInfo.prototype[Symbol.dispose] = ChatModelInfo.prototype.free;
@@ -551,47 +1893,64 @@ export class ChatReply {
         wasm.__wbg_chatreply_free(ptr, 0);
     }
     /**
-     * @returns {ChatReplyFinishReason | undefined}
+     * @returns {number}
      */
-    get finish_reason() {
-        const ret = wasm.__wbg_get_chatreply_finish_reason(this.__wbg_ptr);
+    __uzuCloneChatReply() {
+        const ret = wasm.chatreply___uzuCloneChatReply(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get finishReason() {
+        const ret = wasm.chatreply___wasm_get_finish_reason(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {ChatMessage}
+     * @returns {any}
      */
     get message() {
-        const ret = wasm.__wbg_get_chatreply_message(this.__wbg_ptr);
-        return ChatMessage.__wrap(ret);
+        const ret = wasm.chatreply___wasm_get_message(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {ChatReplyStats}
+     * @returns {any}
      */
     get stats() {
-        const ret = wasm.__wbg_get_chatreply_stats(this.__wbg_ptr);
-        return ChatReplyStats.__wrap(ret);
+        const ret = wasm.chatreply___wasm_get_stats(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {ChatReplyFinishReason | null} [arg0]
+     * @param {ChatMessage} message
+     * @param {ChatReplyStats} stats
+     * @param {ChatReplyFinishReason | null} [finishReason]
      */
-    set finish_reason(arg0) {
-        wasm.__wbg_set_chatreply_finish_reason(this.__wbg_ptr, isLikeNone(arg0) ? 0 : addToExternrefTable0(arg0));
+    constructor(message, stats, finishReason) {
+        const ret = wasm.chatreply___wasm_new(message, stats, finishReason);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatReplyFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {ChatMessage} arg0
+     * @param {any} value
      */
-    set message(arg0) {
-        _assertClass(arg0, ChatMessage);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_chatreply_message(this.__wbg_ptr, ptr0);
+    set finishReason(value) {
+        wasm.chatreply___wasm_set_finish_reason(this.__wbg_ptr, value);
     }
     /**
-     * @param {ChatReplyStats} arg0
+     * @param {any} value
      */
-    set stats(arg0) {
-        _assertClass(arg0, ChatReplyStats);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_chatreply_stats(this.__wbg_ptr, ptr0);
+    set message(value) {
+        wasm.chatreply___wasm_set_message(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set stats(value) {
+        wasm.chatreply___wasm_set_stats(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ChatReply.prototype[Symbol.dispose] = ChatReply.prototype.free;
@@ -614,110 +1973,396 @@ export class ChatReplyConfig {
         wasm.__wbg_chatreplyconfig_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneChatReplyConfig() {
+        const ret = wasm.chatreplyconfig___uzuCloneChatReplyConfig(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get grammar() {
+        const ret = wasm.chatreplyconfig___wasm_get_grammar(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get samplingPolicy() {
+        const ret = wasm.chatreplyconfig___wasm_get_sampling_policy(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get tokenLimit() {
+        const ret = wasm.chatreplyconfig___wasm_get_token_limit(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get toolTurnLimit() {
+        const ret = wasm.chatreplyconfig___wasm_get_tool_turn_limit(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number | undefined | null} tokenLimit
+     * @param {SamplingPolicy} samplingPolicy
+     * @param {Grammar | null} [grammar]
+     * @param {number | null} [toolTurnLimit]
+     */
+    constructor(tokenLimit, samplingPolicy, grammar, toolTurnLimit) {
+        const ret = wasm.chatreplyconfig___wasm_new(tokenLimit, samplingPolicy, grammar, toolTurnLimit);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatReplyConfigFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set grammar(value) {
+        wasm.chatreplyconfig___wasm_set_grammar(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set samplingPolicy(value) {
+        wasm.chatreplyconfig___wasm_set_sampling_policy(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set tokenLimit(value) {
+        wasm.chatreplyconfig___wasm_set_token_limit(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set toolTurnLimit(value) {
+        wasm.chatreplyconfig___wasm_set_tool_turn_limit(this.__wbg_ptr, value);
+    }
+    /**
      * @returns {ChatReplyConfig}
      */
     static create() {
         const ret = wasm.chatreplyconfig_create();
-        return ChatReplyConfig.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {Grammar | null} [grammar]
      * @returns {ChatReplyConfig}
      */
     withGrammar(grammar) {
-        const ret = wasm.chatreplyconfig_withGrammar(this.__wbg_ptr, isLikeNone(grammar) ? 0 : addToExternrefTable0(grammar));
-        return ChatReplyConfig.__wrap(ret);
+        const ret = wasm.chatreplyconfig_withGrammar(this.__wbg_ptr, grammar);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {SamplingMethod} sampling_method
+     * @param {SamplingMethod} samplingMethod
      * @returns {ChatReplyConfig}
      */
-    withSamplingMethod(sampling_method) {
-        const ret = wasm.chatreplyconfig_withSamplingMethod(this.__wbg_ptr, sampling_method);
-        return ChatReplyConfig.__wrap(ret);
+    withSamplingMethod(samplingMethod) {
+        const ret = wasm.chatreplyconfig_withSamplingMethod(this.__wbg_ptr, samplingMethod);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {SamplingPolicy} sampling_policy
+     * @param {SamplingPolicy} samplingPolicy
      * @returns {ChatReplyConfig}
      */
-    withSamplingPolicy(sampling_policy) {
-        const ret = wasm.chatreplyconfig_withSamplingPolicy(this.__wbg_ptr, sampling_policy);
-        return ChatReplyConfig.__wrap(ret);
+    withSamplingPolicy(samplingPolicy) {
+        const ret = wasm.chatreplyconfig_withSamplingPolicy(this.__wbg_ptr, samplingPolicy);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {number | null} [token_limit]
+     * @param {number | null} [tokenLimit]
      * @returns {ChatReplyConfig}
      */
-    withTokenLimit(token_limit) {
-        const ret = wasm.chatreplyconfig_withTokenLimit(this.__wbg_ptr, isLikeNone(token_limit) ? Number.MAX_SAFE_INTEGER : (token_limit) >>> 0);
-        return ChatReplyConfig.__wrap(ret);
+    withTokenLimit(tokenLimit) {
+        const ret = wasm.chatreplyconfig_withTokenLimit(this.__wbg_ptr, tokenLimit);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {number | null} [tool_turn_limit]
+     * @param {number | null} [toolTurnLimit]
      * @returns {ChatReplyConfig}
      */
-    withToolTurnLimit(tool_turn_limit) {
-        const ret = wasm.chatreplyconfig_withToolTurnLimit(this.__wbg_ptr, isLikeNone(tool_turn_limit) ? Number.MAX_SAFE_INTEGER : (tool_turn_limit) >>> 0);
-        return ChatReplyConfig.__wrap(ret);
-    }
-    /**
-     * @returns {Grammar | undefined}
-     */
-    get grammar() {
-        const ret = wasm.__wbg_get_chatreplyconfig_grammar(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {SamplingPolicy}
-     */
-    get sampling_policy() {
-        const ret = wasm.__wbg_get_chatreplyconfig_sampling_policy(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {number | undefined}
-     */
-    get token_limit() {
-        const ret = wasm.__wbg_get_chatreplyconfig_token_limit(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * Maximum number of automatic tool-call turns per reply.
-     * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
-     * @returns {number | undefined}
-     */
-    get tool_turn_limit() {
-        const ret = wasm.__wbg_get_chatreplyconfig_tool_turn_limit(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * @param {Grammar | null} [arg0]
-     */
-    set grammar(arg0) {
-        wasm.__wbg_set_chatreplyconfig_grammar(this.__wbg_ptr, isLikeNone(arg0) ? 0 : addToExternrefTable0(arg0));
-    }
-    /**
-     * @param {SamplingPolicy} arg0
-     */
-    set sampling_policy(arg0) {
-        wasm.__wbg_set_chatreplyconfig_sampling_policy(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set token_limit(arg0) {
-        wasm.__wbg_set_chatreplyconfig_token_limit(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
-    }
-    /**
-     * Maximum number of automatic tool-call turns per reply.
-     * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
-     * @param {number | null} [arg0]
-     */
-    set tool_turn_limit(arg0) {
-        wasm.__wbg_set_chatreplyconfig_tool_turn_limit(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
+    withToolTurnLimit(toolTurnLimit) {
+        const ret = wasm.chatreplyconfig_withToolTurnLimit(this.__wbg_ptr, toolTurnLimit);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) ChatReplyConfig.prototype[Symbol.dispose] = ChatReplyConfig.prototype.free;
+
+export class ChatReplyFinishReason {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatReplyFinishReasonFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatreplyfinishreason_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Cancelled() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatreplyfinishreason___wasm_variant_Cancelled();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ContextLimitReached() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatreplyfinishreason___wasm_variant_ContextLimitReached();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Length() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatreplyfinishreason___wasm_variant_Length();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Rejected() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatreplyfinishreason___wasm_variant_Rejected();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Stop() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatreplyfinishreason___wasm_variant_Stop();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ToolCalls() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatreplyfinishreason___wasm_variant_ToolCalls();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ChatReplyFinishReason.prototype[Symbol.dispose] = ChatReplyFinishReason.prototype.free;
+
+export class ChatReplyJoulesPerTokenComponents {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatReplyJoulesPerTokenComponents.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatReplyJoulesPerTokenComponentsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatReplyJoulesPerTokenComponentsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatreplyjoulespertokencomponents_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatReplyJoulesPerToken() {
+        const ret = wasm.chatreplyjoulespertokencomponents___uzuCloneChatReplyJoulesPerToken(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get ane() {
+        const ret = wasm.chatreplyjoulespertokencomponents___wasm_get_ane(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get cpu() {
+        const ret = wasm.chatreplyjoulespertokencomponents___wasm_get_cpu(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get dram() {
+        const ret = wasm.chatreplyjoulespertokencomponents___wasm_get_dram(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get gpu() {
+        const ret = wasm.chatreplyjoulespertokencomponents___wasm_get_gpu(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} cpu
+     * @param {number} gpu
+     * @param {number} ane
+     * @param {number} dram
+     */
+    constructor(cpu, gpu, ane, dram) {
+        const ret = wasm.chatreplyjoulespertokencomponents___wasm_new(cpu, gpu, ane, dram);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatReplyJoulesPerTokenComponentsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set ane(value) {
+        wasm.chatreplyjoulespertokencomponents___wasm_set_ane(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set cpu(value) {
+        wasm.chatreplyjoulespertokencomponents___wasm_set_cpu(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set dram(value) {
+        wasm.chatreplyjoulespertokencomponents___wasm_set_dram(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set gpu(value) {
+        wasm.chatreplyjoulespertokencomponents___wasm_set_gpu(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatReplyJoulesPerTokenComponents.prototype[Symbol.dispose] = ChatReplyJoulesPerTokenComponents.prototype.free;
+
+export class ChatReplyJoulesPerTokenTotal {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatReplyJoulesPerTokenTotal.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatReplyJoulesPerTokenTotalFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatReplyJoulesPerTokenTotalFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatreplyjoulespertokentotal_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatReplyJoulesPerToken() {
+        const ret = wasm.chatreplyjoulespertokentotal___uzuCloneChatReplyJoulesPerToken(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get total() {
+        const ret = wasm.chatreplyjoulespertokentotal___wasm_get_total(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} total
+     */
+    constructor(total) {
+        const ret = wasm.chatreplyjoulespertokentotal___wasm_new(total);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatReplyJoulesPerTokenTotalFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set total(value) {
+        wasm.chatreplyjoulespertokentotal___wasm_set_total(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatReplyJoulesPerTokenTotal.prototype[Symbol.dispose] = ChatReplyJoulesPerTokenTotal.prototype.free;
 
 export class ChatReplySpeculatorStats {
     static __wrap(ptr) {
@@ -739,28 +2384,48 @@ export class ChatReplySpeculatorStats {
     /**
      * @returns {number}
      */
-    get num_decode_forward_passes() {
-        const ret = wasm.__wbg_get_chatreplyspeculatorstats_num_decode_forward_passes(this.__wbg_ptr);
+    __uzuCloneChatReplySpeculatorStats() {
+        const ret = wasm.chatreplyspeculatorstats___uzuCloneChatReplySpeculatorStats(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
-     * @returns {number}
+     * @returns {any}
      */
-    get tokens_per_forward_pass() {
-        const ret = wasm.__wbg_get_chatreplyspeculatorstats_tokens_per_forward_pass(this.__wbg_ptr);
+    get numDecodeForwardPasses() {
+        const ret = wasm.chatreplyspeculatorstats___wasm_get_num_decode_forward_passes(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @param {number} arg0
+     * @returns {any}
      */
-    set num_decode_forward_passes(arg0) {
-        wasm.__wbg_set_chatreplyspeculatorstats_num_decode_forward_passes(this.__wbg_ptr, arg0);
+    get tokensPerForwardPass() {
+        const ret = wasm.chatreplyspeculatorstats___wasm_get_tokens_per_forward_pass(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {number} arg0
+     * @param {number} tokensPerForwardPass
+     * @param {number} numDecodeForwardPasses
      */
-    set tokens_per_forward_pass(arg0) {
-        wasm.__wbg_set_chatreplyspeculatorstats_tokens_per_forward_pass(this.__wbg_ptr, arg0);
+    constructor(tokensPerForwardPass, numDecodeForwardPasses) {
+        const ret = wasm.chatreplyspeculatorstats___wasm_new(tokensPerForwardPass, numDecodeForwardPasses);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatReplySpeculatorStatsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set numDecodeForwardPasses(value) {
+        wasm.chatreplyspeculatorstats___wasm_set_num_decode_forward_passes(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set tokensPerForwardPass(value) {
+        wasm.chatreplyspeculatorstats___wasm_set_tokens_per_forward_pass(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ChatReplySpeculatorStats.prototype[Symbol.dispose] = ChatReplySpeculatorStats.prototype.free;
@@ -783,183 +2448,451 @@ export class ChatReplyStats {
         wasm.__wbg_chatreplystats_free(ptr, 0);
     }
     /**
-     * @returns {ChatReplyJoulesPerToken | undefined}
+     * @returns {number}
+     */
+    __uzuCloneChatReplyStats() {
+        const ret = wasm.chatreplystats___uzuCloneChatReplyStats(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get duration() {
+        const ret = wasm.chatreplystats___wasm_get_duration(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get generateTokensPerSecond() {
+        const ret = wasm.chatreplystats___wasm_get_generate_tokens_per_second(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get inputEnergy() {
+        const ret = wasm.chatreplystats___wasm_get_input_energy(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get memoryUsedBytes() {
+        const ret = wasm.chatreplystats___wasm_get_memory_used_bytes(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get outputEnergy() {
+        const ret = wasm.chatreplystats___wasm_get_output_energy(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get prefillTokensPerSecond() {
+        const ret = wasm.chatreplystats___wasm_get_prefill_tokens_per_second(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get speculatorStats() {
+        const ret = wasm.chatreplystats___wasm_get_speculator_stats(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get timeToFirstToken() {
+        const ret = wasm.chatreplystats___wasm_get_time_to_first_token(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get tokensCountInput() {
+        const ret = wasm.chatreplystats___wasm_get_tokens_count_input(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get tokensCountInputCached() {
+        const ret = wasm.chatreplystats___wasm_get_tokens_count_input_cached(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get tokensCountOutput() {
+        const ret = wasm.chatreplystats___wasm_get_tokens_count_output(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {ChatReplyJoulesPerToken | null}
      */
     get inputJoulesPerToken() {
-        const ret = wasm.chatreplystats_inputJoulesPerToken(this.__wbg_ptr);
-        return ret;
+        const ret = wasm.chatreplystats___wasm_input_joules_per_token(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {ChatReplyJoulesPerToken | undefined}
+     * @param {number} duration
+     * @param {number | null} [timeToFirstToken]
+     * @param {number | null} [prefillTokensPerSecond]
+     * @param {number | null} [generateTokensPerSecond]
+     * @param {number | null} [tokensCountInput]
+     * @param {number | null} [tokensCountInputCached]
+     * @param {number | null} [tokensCountOutput]
+     * @param {number | null} [memoryUsedBytes]
+     * @param {ChatReplySpeculatorStats | null} [speculatorStats]
+     * @param {ReplyEnergy | null} [inputEnergy]
+     * @param {ReplyEnergy | null} [outputEnergy]
+     */
+    constructor(duration, timeToFirstToken, prefillTokensPerSecond, generateTokensPerSecond, tokensCountInput, tokensCountInputCached, tokensCountOutput, memoryUsedBytes, speculatorStats, inputEnergy, outputEnergy) {
+        const ret = wasm.chatreplystats___wasm_new(duration, timeToFirstToken, prefillTokensPerSecond, generateTokensPerSecond, tokensCountInput, tokensCountInputCached, tokensCountOutput, memoryUsedBytes, speculatorStats, inputEnergy, outputEnergy);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatReplyStatsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {ChatReplyJoulesPerToken | null}
      */
     get outputJoulesPerToken() {
-        const ret = wasm.chatreplystats_outputJoulesPerToken(this.__wbg_ptr);
-        return ret;
+        const ret = wasm.chatreplystats___wasm_output_joules_per_token(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {number | undefined}
+     * @param {any} value
+     */
+    set duration(value) {
+        wasm.chatreplystats___wasm_set_duration(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set generateTokensPerSecond(value) {
+        wasm.chatreplystats___wasm_set_generate_tokens_per_second(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set inputEnergy(value) {
+        wasm.chatreplystats___wasm_set_input_energy(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set memoryUsedBytes(value) {
+        wasm.chatreplystats___wasm_set_memory_used_bytes(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set outputEnergy(value) {
+        wasm.chatreplystats___wasm_set_output_energy(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set prefillTokensPerSecond(value) {
+        wasm.chatreplystats___wasm_set_prefill_tokens_per_second(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set speculatorStats(value) {
+        wasm.chatreplystats___wasm_set_speculator_stats(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set timeToFirstToken(value) {
+        wasm.chatreplystats___wasm_set_time_to_first_token(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set tokensCountInput(value) {
+        wasm.chatreplystats___wasm_set_tokens_count_input(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set tokensCountInputCached(value) {
+        wasm.chatreplystats___wasm_set_tokens_count_input_cached(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set tokensCountOutput(value) {
+        wasm.chatreplystats___wasm_set_tokens_count_output(this.__wbg_ptr, value);
+    }
+    /**
+     * @returns {number | null}
      */
     get tokensCount() {
-        const ret = wasm.chatreplystats_tokensCount(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+        const ret = wasm.chatreplystats___wasm_tokens_count(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {number | undefined}
+     * @returns {number | null}
      */
     get totalJoules() {
-        const ret = wasm.chatreplystats_totalJoules(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+        const ret = wasm.chatreplystats___wasm_total_joules(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+}
+if (Symbol.dispose) ChatReplyStats.prototype[Symbol.dispose] = ChatReplyStats.prototype.free;
+
+export class ChatRoleAssistant {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatRoleAssistant.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatRoleAssistantFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatRoleAssistantFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatroleassistant_free(ptr, 0);
     }
     /**
      * @returns {number}
      */
-    get duration() {
-        const ret = wasm.__wbg_get_chatreplystats_duration(this.__wbg_ptr);
-        return ret;
+    __uzuCloneChatRole() {
+        const ret = wasm.chatroleassistant___uzuCloneChatRole(this.__wbg_ptr);
+        return ret >>> 0;
     }
-    /**
-     * @returns {number | undefined}
-     */
-    get generate_tokens_per_second() {
-        const ret = wasm.__wbg_get_chatreplystats_generate_tokens_per_second(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
-    }
-    /**
-     * @returns {ReplyEnergy | undefined}
-     */
-    get input_energy() {
-        const ret = wasm.__wbg_get_chatreplystats_input_energy(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {bigint | undefined}
-     */
-    get memory_used_bytes() {
-        const ret = wasm.__wbg_get_chatreplystats_memory_used_bytes(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
-    }
-    /**
-     * @returns {ReplyEnergy | undefined}
-     */
-    get output_energy() {
-        const ret = wasm.__wbg_get_chatreplystats_output_energy(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {number | undefined}
-     */
-    get prefill_tokens_per_second() {
-        const ret = wasm.__wbg_get_chatreplystats_prefill_tokens_per_second(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
-    }
-    /**
-     * @returns {ChatReplySpeculatorStats | undefined}
-     */
-    get speculator_stats() {
-        const ret = wasm.__wbg_get_chatreplystats_speculator_stats(this.__wbg_ptr);
-        return ret === 0 ? undefined : ChatReplySpeculatorStats.__wrap(ret);
-    }
-    /**
-     * @returns {number | undefined}
-     */
-    get time_to_first_token() {
-        const ret = wasm.__wbg_get_chatreplystats_time_to_first_token(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
-    }
-    /**
-     * @returns {number | undefined}
-     */
-    get tokens_count_input_cached() {
-        const ret = wasm.__wbg_get_chatreplystats_tokens_count_input_cached(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * @returns {number | undefined}
-     */
-    get tokens_count_input() {
-        const ret = wasm.__wbg_get_chatreplystats_tokens_count_input(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * @returns {number | undefined}
-     */
-    get tokens_count_output() {
-        const ret = wasm.__wbg_get_chatreplystats_tokens_count_output(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * @param {number} arg0
-     */
-    set duration(arg0) {
-        wasm.__wbg_set_chatreplystats_duration(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set generate_tokens_per_second(arg0) {
-        wasm.__wbg_set_chatreplystats_generate_tokens_per_second(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
-    }
-    /**
-     * @param {ReplyEnergy | null} [arg0]
-     */
-    set input_energy(arg0) {
-        wasm.__wbg_set_chatreplystats_input_energy(this.__wbg_ptr, isLikeNone(arg0) ? 0 : addToExternrefTable0(arg0));
-    }
-    /**
-     * @param {bigint | null} [arg0]
-     */
-    set memory_used_bytes(arg0) {
-        wasm.__wbg_set_chatreplystats_memory_used_bytes(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
-    }
-    /**
-     * @param {ReplyEnergy | null} [arg0]
-     */
-    set output_energy(arg0) {
-        wasm.__wbg_set_chatreplystats_output_energy(this.__wbg_ptr, isLikeNone(arg0) ? 0 : addToExternrefTable0(arg0));
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set prefill_tokens_per_second(arg0) {
-        wasm.__wbg_set_chatreplystats_prefill_tokens_per_second(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
-    }
-    /**
-     * @param {ChatReplySpeculatorStats | null} [arg0]
-     */
-    set speculator_stats(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, ChatReplySpeculatorStats);
-            ptr0 = arg0.__destroy_into_raw();
+    constructor() {
+        const ret = wasm.chatroleassistant___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        wasm.__wbg_set_chatreplystats_speculator_stats(this.__wbg_ptr, ptr0);
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set time_to_first_token(arg0) {
-        wasm.__wbg_set_chatreplystats_time_to_first_token(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set tokens_count_input_cached(arg0) {
-        wasm.__wbg_set_chatreplystats_tokens_count_input_cached(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set tokens_count_input(arg0) {
-        wasm.__wbg_set_chatreplystats_tokens_count_input(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
-    }
-    /**
-     * @param {number | null} [arg0]
-     */
-    set tokens_count_output(arg0) {
-        wasm.__wbg_set_chatreplystats_tokens_count_output(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
+        this.__wbg_ptr = ret[0];
+        ChatRoleAssistantFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
 }
-if (Symbol.dispose) ChatReplyStats.prototype[Symbol.dispose] = ChatReplyStats.prototype.free;
+if (Symbol.dispose) ChatRoleAssistant.prototype[Symbol.dispose] = ChatRoleAssistant.prototype.free;
+
+export class ChatRoleCustom {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatRoleCustom.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatRoleCustomFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatRoleCustomFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatrolecustom_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatRole() {
+        const ret = wasm.chatrolecustom___uzuCloneChatRole(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get name() {
+        const ret = wasm.chatrolecustom___wasm_get_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} name
+     */
+    constructor(name) {
+        const ret = wasm.chatrolecustom___wasm_new(name);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatRoleCustomFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set name(value) {
+        wasm.chatrolecustom___wasm_set_name(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatRoleCustom.prototype[Symbol.dispose] = ChatRoleCustom.prototype.free;
+
+export class ChatRoleDeveloper {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatRoleDeveloper.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatRoleDeveloperFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatRoleDeveloperFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatroledeveloper_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatRole() {
+        const ret = wasm.chatroledeveloper___uzuCloneChatRole(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.chatroledeveloper___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatRoleDeveloperFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ChatRoleDeveloper.prototype[Symbol.dispose] = ChatRoleDeveloper.prototype.free;
+
+export class ChatRoleSystem {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatRoleSystem.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatRoleSystemFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatRoleSystemFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatrolesystem_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatRole() {
+        const ret = wasm.chatrolesystem___uzuCloneChatRole(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.chatrolesystem___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatRoleSystemFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ChatRoleSystem.prototype[Symbol.dispose] = ChatRoleSystem.prototype.free;
+
+export class ChatRoleTool {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatRoleTool.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatRoleToolFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatRoleToolFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatroletool_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatRole() {
+        const ret = wasm.chatroletool___uzuCloneChatRole(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.chatroletool___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatRoleToolFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ChatRoleTool.prototype[Symbol.dispose] = ChatRoleTool.prototype.free;
+
+export class ChatRoleUser {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatRoleUser.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatRoleUserFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatRoleUserFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatroleuser_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatRole() {
+        const ret = wasm.chatroleuser___uzuCloneChatRole(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.chatroleuser___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatRoleUserFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ChatRoleUser.prototype[Symbol.dispose] = ChatRoleUser.prototype.free;
 
 export class ChatSession {
     static __wrap(ptr) {
@@ -979,6 +2912,34 @@ export class ChatSession {
         wasm.__wbg_chatsession_free(ptr, 0);
     }
     /**
+     * @returns {Array<ChatMessage>}
+     */
+    get messages() {
+        const ret = wasm.chatsession___wasm_messages(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {SamplingParameters | null}
+     */
+    get samplingDefaults() {
+        const ret = wasm.chatsession___wasm_sampling_defaults(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {ChatSessionState}
+     */
+    get state() {
+        const ret = wasm.chatsession___wasm_state(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get supportsToolCalls() {
+        const ret = wasm.chatsession___wasm_supports_tool_calls(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * @param {NativeTool} tool
      * @returns {Promise<void>}
      */
@@ -988,47 +2949,29 @@ export class ChatSession {
         return ret;
     }
     /**
-     * Consumes the tool handles; the session retains their callbacks.
-     * @param {NativeTool[]} tools
+     * @param {Array<NativeTool>} tools
      * @returns {Promise<void>}
      */
     addTools(tools) {
-        const ptr0 = passArrayJsValueToWasm0(tools, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.chatsession_addTools(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.chatsession_addTools(this.__wbg_ptr, tools);
         return ret;
     }
     /**
-     * @returns {Promise<ChatMessage[]>}
-     */
-    get messages() {
-        const ret = wasm.chatsession_messages(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @param {ChatMessage[]} input
+     * @param {Array<ChatMessage>} input
      * @param {ChatReplyConfig} config
-     * @returns {Promise<ChatSessionStream>}
+     * @returns {ChatSessionStream}
      */
     replyWithStream(input, config) {
-        const ptr0 = passArrayJsValueToWasm0(input, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        _assertClass(config, ChatReplyConfig);
-        var ptr1 = config.__destroy_into_raw();
-        const ret = wasm.chatsession_replyWithStream(this.__wbg_ptr, ptr0, len0, ptr1);
+        const ret = wasm.chatsession_replyWithStream(this.__wbg_ptr, input, config);
         return ret;
     }
     /**
-     * @param {ChatMessage[]} input
+     * @param {Array<ChatMessage>} input
      * @param {ChatReplyConfig} config
-     * @returns {Promise<ChatReply[]>}
+     * @returns {Array<ChatReply>}
      */
     reply(input, config) {
-        const ptr0 = passArrayJsValueToWasm0(input, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        _assertClass(config, ChatReplyConfig);
-        var ptr1 = config.__destroy_into_raw();
-        const ret = wasm.chatsession_reply(this.__wbg_ptr, ptr0, len0, ptr1);
+        const ret = wasm.chatsession_reply(this.__wbg_ptr, input, config);
         return ret;
     }
     /**
@@ -1038,29 +2981,82 @@ export class ChatSession {
         const ret = wasm.chatsession_reset(this.__wbg_ptr);
         return ret;
     }
-    /**
-     * @returns {Promise<SamplingParameters | undefined>}
-     */
-    get samplingDefaults() {
-        const ret = wasm.chatsession_samplingDefaults(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<ChatSessionState>}
-     */
-    get state() {
-        const ret = wasm.chatsession_state(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<boolean>}
-     */
-    get supportsToolCalls() {
-        const ret = wasm.chatsession_supportsToolCalls(this.__wbg_ptr);
-        return ret;
-    }
 }
 if (Symbol.dispose) ChatSession.prototype[Symbol.dispose] = ChatSession.prototype.free;
+
+export class ChatSessionState {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatSessionStateFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatsessionstate_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Generation() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatsessionstate___wasm_variant_Generation();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Idle() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatsessionstate___wasm_variant_Idle();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Resetting() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatsessionstate___wasm_variant_Resetting();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get ToolCalling() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.chatsessionstate___wasm_variant_ToolCalling();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ChatSessionState.prototype[Symbol.dispose] = ChatSessionState.prototype.free;
 
 export class ChatSessionStream {
     static __wrap(ptr) {
@@ -1083,11 +3079,21 @@ export class ChatSessionStream {
      * @returns {CancelToken}
      */
     get cancelToken() {
-        const ret = wasm.chatsessionstream_cancelToken(this.__wbg_ptr);
-        return CancelToken.__wrap(ret);
+        const ret = wasm.chatsessionstream___wasm_cancel_token(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {Promise<ChatSessionStreamChunk | undefined>}
+     * @returns {boolean}
+     */
+    static get __uzuStream() {
+        const ret = wasm.chatsessionstream___wasm_stream_marker();
+        return ret !== 0;
+    }
+    /**
+     * @returns {ChatSessionStreamChunk | null}
      */
     next() {
         const ret = wasm.chatsessionstream_next(this.__wbg_ptr);
@@ -1095,6 +3101,162 @@ export class ChatSessionStream {
     }
 }
 if (Symbol.dispose) ChatSessionStream.prototype[Symbol.dispose] = ChatSessionStream.prototype.free;
+
+export class ChatSessionStreamChunkError {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatSessionStreamChunkError.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatSessionStreamChunkErrorFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatSessionStreamChunkErrorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatsessionstreamchunkerror_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatSessionStreamChunk() {
+        const ret = wasm.chatsessionstreamchunkerror___uzuCloneChatSessionStreamChunk(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get error() {
+        const ret = wasm.chatsessionstreamchunkerror___wasm_get_error(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ChatSessionError} error
+     */
+    constructor(error) {
+        const ret = wasm.chatsessionstreamchunkerror___wasm_new(error);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatSessionStreamChunkErrorFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set error(value) {
+        wasm.chatsessionstreamchunkerror___wasm_set_error(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatSessionStreamChunkError.prototype[Symbol.dispose] = ChatSessionStreamChunkError.prototype.free;
+
+export class ChatSessionStreamChunkReplies {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatSessionStreamChunkReplies.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatSessionStreamChunkRepliesFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatSessionStreamChunkRepliesFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatsessionstreamchunkreplies_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatSessionStreamChunk() {
+        const ret = wasm.chatsessionstreamchunkreplies___uzuCloneChatSessionStreamChunk(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get replies() {
+        const ret = wasm.chatsessionstreamchunkreplies___wasm_get_replies(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<ChatReply>} replies
+     */
+    constructor(replies) {
+        const ret = wasm.chatsessionstreamchunkreplies___wasm_new(replies);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatSessionStreamChunkRepliesFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set replies(value) {
+        wasm.chatsessionstreamchunkreplies___wasm_set_replies(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatSessionStreamChunkReplies.prototype[Symbol.dispose] = ChatSessionStreamChunkReplies.prototype.free;
+
+export class ChatSessionStreamChunkToolResults {
+    static __wrap(ptr) {
+        const obj = Object.create(ChatSessionStreamChunkToolResults.prototype);
+        obj.__wbg_ptr = ptr;
+        ChatSessionStreamChunkToolResultsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ChatSessionStreamChunkToolResultsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_chatsessionstreamchunktoolresults_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneChatSessionStreamChunk() {
+        const ret = wasm.chatsessionstreamchunktoolresults___uzuCloneChatSessionStreamChunk(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get messages() {
+        const ret = wasm.chatsessionstreamchunktoolresults___wasm_get_messages(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<ChatMessage>} messages
+     */
+    constructor(messages) {
+        const ret = wasm.chatsessionstreamchunktoolresults___wasm_new(messages);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ChatSessionStreamChunkToolResultsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set messages(value) {
+        wasm.chatsessionstreamchunktoolresults___wasm_set_messages(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ChatSessionStreamChunkToolResults.prototype[Symbol.dispose] = ChatSessionStreamChunkToolResults.prototype.free;
 
 export class ClassificationLabel {
     __destroy_into_raw() {
@@ -1108,99 +3270,92 @@ export class ClassificationLabel {
         wasm.__wbg_classificationlabel_free(ptr, 0);
     }
     /**
-     * @returns {string}
-     */
-    get description() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_classificationlabel_description(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {bigint}
-     */
-    get index() {
-        const ret = wasm.__wbg_get_classificationlabel_index(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {string}
-     */
-    get label() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_classificationlabel_label(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
      * @returns {number}
      */
-    get recommended_threshold() {
-        const ret = wasm.__wbg_get_classificationlabel_recommended_threshold(this.__wbg_ptr);
+    __uzuCloneClassificationLabel() {
+        const ret = wasm.classificationlabel___uzuCloneClassificationLabel(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get description() {
+        const ret = wasm.classificationlabel___wasm_get_description(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
+     */
+    get index() {
+        const ret = wasm.classificationlabel___wasm_get_index(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get label() {
+        const ret = wasm.classificationlabel___wasm_get_label(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get recommendedThreshold() {
+        const ret = wasm.classificationlabel___wasm_get_recommended_threshold(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get title() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_classificationlabel_title(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.classificationlabel___wasm_get_title(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} index
+     * @param {string} label
+     * @param {string} title
+     * @param {string} description
+     * @param {number} recommendedThreshold
+     */
+    constructor(index, label, title, description, recommendedThreshold) {
+        const ret = wasm.classificationlabel___wasm_new(index, label, title, description, recommendedThreshold);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        ClassificationLabelFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set description(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_classificationlabel_description(this.__wbg_ptr, ptr0, len0);
+    set description(value) {
+        wasm.classificationlabel___wasm_set_description(this.__wbg_ptr, value);
     }
     /**
-     * @param {bigint} arg0
+     * @param {any} value
      */
-    set index(arg0) {
-        wasm.__wbg_set_classificationlabel_index(this.__wbg_ptr, arg0);
+    set index(value) {
+        wasm.classificationlabel___wasm_set_index(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set label(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_classificationlabel_label(this.__wbg_ptr, ptr0, len0);
+    set label(value) {
+        wasm.classificationlabel___wasm_set_label(this.__wbg_ptr, value);
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set recommended_threshold(arg0) {
-        wasm.__wbg_set_classificationlabel_recommended_threshold(this.__wbg_ptr, arg0);
+    set recommendedThreshold(value) {
+        wasm.classificationlabel___wasm_set_recommended_threshold(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set title(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_classificationlabel_title(this.__wbg_ptr, ptr0, len0);
+    set title(value) {
+        wasm.classificationlabel___wasm_set_title(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ClassificationLabel.prototype[Symbol.dispose] = ClassificationLabel.prototype.free;
@@ -1223,60 +3378,72 @@ export class ClassificationMessage {
         wasm.__wbg_classificationmessage_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneClassificationMessage() {
+        const ret = wasm.classificationmessage___uzuCloneClassificationMessage(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get content() {
+        const ret = wasm.classificationmessage___wasm_get_content(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get role() {
+        const ret = wasm.classificationmessage___wasm_get_role(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ClassificationRole} role
+     * @param {string} content
+     */
+    constructor(role, content) {
+        const ret = wasm.classificationmessage___wasm_new(role, content);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ClassificationMessageFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set content(value) {
+        wasm.classificationmessage___wasm_set_content(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set role(value) {
+        wasm.classificationmessage___wasm_set_role(this.__wbg_ptr, value);
+    }
+    /**
      * @param {string} content
      * @returns {ClassificationMessage}
      */
     static assistant(content) {
-        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.classificationmessage_assistant(ptr0, len0);
-        return ClassificationMessage.__wrap(ret);
+        const ret = wasm.classificationmessage_assistant(content);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {string} content
      * @returns {ClassificationMessage}
      */
     static user(content) {
-        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.classificationmessage_user(ptr0, len0);
-        return ClassificationMessage.__wrap(ret);
-    }
-    /**
-     * @returns {string}
-     */
-    get content() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_classificationmessage_content(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.classificationmessage_user(content);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-    }
-    /**
-     * @returns {ClassificationRole}
-     */
-    get role() {
-        const ret = wasm.__wbg_get_classificationmessage_role(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @param {string} arg0
-     */
-    set content(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_classificationmessage_content(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {ClassificationRole} arg0
-     */
-    set role(arg0) {
-        wasm.__wbg_set_classificationmessage_role(this.__wbg_ptr, arg0);
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) ClassificationMessage.prototype[Symbol.dispose] = ClassificationMessage.prototype.free;
@@ -1293,52 +3460,111 @@ export class ClassificationOutput {
         wasm.__wbg_classificationoutput_free(ptr, 0);
     }
     /**
-     * @returns {Float64Array}
+     * @returns {number}
      */
-    get logits() {
-        const ret = wasm.__wbg_get_classificationoutput_logits(this.__wbg_ptr);
-        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-        return v1;
+    __uzuCloneClassificationOutput() {
+        const ret = wasm.classificationoutput___uzuCloneClassificationOutput(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {ClassificationOutputProbabilities}
+     * @returns {any}
      */
-    get probabilities() {
-        const ret = wasm.__wbg_get_classificationoutput_probabilities(this.__wbg_ptr);
+    get logits() {
+        const ret = wasm.classificationoutput___wasm_get_logits(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {ClassificationStats}
+     * @returns {any}
+     */
+    get probabilities() {
+        const ret = wasm.classificationoutput___wasm_get_probabilities(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get stats() {
-        const ret = wasm.__wbg_get_classificationoutput_stats(this.__wbg_ptr);
-        return ClassificationStats.__wrap(ret);
+        const ret = wasm.classificationoutput___wasm_get_stats(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {Float64Array} arg0
+     * @param {Array<number>} logits
+     * @param {ClassificationOutputProbabilities} probabilities
+     * @param {ClassificationStats} stats
      */
-    set logits(arg0) {
-        const ptr0 = passArrayF64ToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_classificationoutput_logits(this.__wbg_ptr, ptr0, len0);
+    constructor(logits, probabilities, stats) {
+        const ret = wasm.classificationoutput___wasm_new(logits, probabilities, stats);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ClassificationOutputFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {ClassificationOutputProbabilities} arg0
+     * @param {any} value
      */
-    set probabilities(arg0) {
-        wasm.__wbg_set_classificationoutput_probabilities(this.__wbg_ptr, arg0);
+    set logits(value) {
+        wasm.classificationoutput___wasm_set_logits(this.__wbg_ptr, value);
     }
     /**
-     * @param {ClassificationStats} arg0
+     * @param {any} value
      */
-    set stats(arg0) {
-        _assertClass(arg0, ClassificationStats);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_classificationoutput_stats(this.__wbg_ptr, ptr0);
+    set probabilities(value) {
+        wasm.classificationoutput___wasm_set_probabilities(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set stats(value) {
+        wasm.classificationoutput___wasm_set_stats(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ClassificationOutput.prototype[Symbol.dispose] = ClassificationOutput.prototype.free;
+
+export class ClassificationRole {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ClassificationRoleFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_classificationrole_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Assistant() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.classificationrole___wasm_variant_Assistant();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get User() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.classificationrole___wasm_variant_User();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ClassificationRole.prototype[Symbol.dispose] = ClassificationRole.prototype.free;
 
 export class ClassificationStats {
     static __wrap(ptr) {
@@ -1360,119 +3586,457 @@ export class ClassificationStats {
     /**
      * @returns {number}
      */
+    __uzuCloneClassificationStats() {
+        const ret = wasm.classificationstats___uzuCloneClassificationStats(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
     get confidence() {
-        const ret = wasm.__wbg_get_classificationstats_confidence(this.__wbg_ptr);
+        const ret = wasm.classificationstats___wasm_get_confidence(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {number}
+     * @returns {any}
      */
-    get forward_pass_duration() {
-        const ret = wasm.__wbg_get_classificationstats_forward_pass_duration(this.__wbg_ptr);
+    get forwardPassDuration() {
+        const ret = wasm.classificationstats___wasm_get_forward_pass_duration(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {number}
+     * @returns {any}
      */
-    get postprocessing_duration() {
-        const ret = wasm.__wbg_get_classificationstats_postprocessing_duration(this.__wbg_ptr);
+    get postprocessingDuration() {
+        const ret = wasm.classificationstats___wasm_get_postprocessing_duration(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
-    get predicted_label() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_classificationstats_predicted_label(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    get predictedLabel() {
+        const ret = wasm.classificationstats___wasm_get_predicted_label(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get preprocessingDuration() {
+        const ret = wasm.classificationstats___wasm_get_preprocessing_duration(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get tokensCount() {
+        const ret = wasm.classificationstats___wasm_get_tokens_count(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get tokensPerSecond() {
+        const ret = wasm.classificationstats___wasm_get_tokens_per_second(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get totalDuration() {
+        const ret = wasm.classificationstats___wasm_get_total_duration(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} preprocessingDuration
+     * @param {number} forwardPassDuration
+     * @param {number} postprocessingDuration
+     * @param {number} totalDuration
+     * @param {number} tokensCount
+     * @param {number} tokensPerSecond
+     * @param {string} predictedLabel
+     * @param {number} confidence
+     */
+    constructor(preprocessingDuration, forwardPassDuration, postprocessingDuration, totalDuration, tokensCount, tokensPerSecond, predictedLabel, confidence) {
+        const ret = wasm.classificationstats___wasm_new(preprocessingDuration, forwardPassDuration, postprocessingDuration, totalDuration, tokensCount, tokensPerSecond, predictedLabel, confidence);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        ClassificationStatsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @returns {number}
+     * @param {any} value
      */
-    get preprocessing_duration() {
-        const ret = wasm.__wbg_get_classificationstats_preprocessing_duration(this.__wbg_ptr);
-        return ret;
+    set confidence(value) {
+        wasm.classificationstats___wasm_set_confidence(this.__wbg_ptr, value);
     }
     /**
-     * @returns {bigint}
+     * @param {any} value
      */
-    get tokens_count() {
-        const ret = wasm.__wbg_get_classificationstats_tokens_count(this.__wbg_ptr);
-        return ret;
+    set forwardPassDuration(value) {
+        wasm.classificationstats___wasm_set_forward_pass_duration(this.__wbg_ptr, value);
     }
     /**
-     * @returns {number}
+     * @param {any} value
      */
-    get tokens_per_second() {
-        const ret = wasm.__wbg_get_classificationstats_tokens_per_second(this.__wbg_ptr);
-        return ret;
+    set postprocessingDuration(value) {
+        wasm.classificationstats___wasm_set_postprocessing_duration(this.__wbg_ptr, value);
     }
     /**
-     * @returns {number}
+     * @param {any} value
      */
-    get total_duration() {
-        const ret = wasm.__wbg_get_classificationstats_total_duration(this.__wbg_ptr);
-        return ret;
+    set predictedLabel(value) {
+        wasm.classificationstats___wasm_set_predicted_label(this.__wbg_ptr, value);
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set confidence(arg0) {
-        wasm.__wbg_set_classificationstats_confidence(this.__wbg_ptr, arg0);
+    set preprocessingDuration(value) {
+        wasm.classificationstats___wasm_set_preprocessing_duration(this.__wbg_ptr, value);
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set forward_pass_duration(arg0) {
-        wasm.__wbg_set_classificationstats_forward_pass_duration(this.__wbg_ptr, arg0);
+    set tokensCount(value) {
+        wasm.classificationstats___wasm_set_tokens_count(this.__wbg_ptr, value);
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set postprocessing_duration(arg0) {
-        wasm.__wbg_set_classificationstats_postprocessing_duration(this.__wbg_ptr, arg0);
+    set tokensPerSecond(value) {
+        wasm.classificationstats___wasm_set_tokens_per_second(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set predicted_label(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_classificationstats_predicted_label(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {number} arg0
-     */
-    set preprocessing_duration(arg0) {
-        wasm.__wbg_set_classificationstats_preprocessing_duration(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {bigint} arg0
-     */
-    set tokens_count(arg0) {
-        wasm.__wbg_set_classificationstats_tokens_count(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {number} arg0
-     */
-    set tokens_per_second(arg0) {
-        wasm.__wbg_set_classificationstats_tokens_per_second(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {number} arg0
-     */
-    set total_duration(arg0) {
-        wasm.__wbg_set_classificationstats_total_duration(this.__wbg_ptr, arg0);
+    set totalDuration(value) {
+        wasm.classificationstats___wasm_set_total_duration(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ClassificationStats.prototype[Symbol.dispose] = ClassificationStats.prototype.free;
+
+export class ContextLengthCustom {
+    static __wrap(ptr) {
+        const obj = Object.create(ContextLengthCustom.prototype);
+        obj.__wbg_ptr = ptr;
+        ContextLengthCustomFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ContextLengthCustomFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_contextlengthcustom_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneContextLength() {
+        const ret = wasm.contextlengthcustom___uzuCloneContextLength(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get length() {
+        const ret = wasm.contextlengthcustom___wasm_get_length(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} length
+     */
+    constructor(length) {
+        const ret = wasm.contextlengthcustom___wasm_new(length);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ContextLengthCustomFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set length(value) {
+        wasm.contextlengthcustom___wasm_set_length(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ContextLengthCustom.prototype[Symbol.dispose] = ContextLengthCustom.prototype.free;
+
+export class ContextLengthDefault {
+    static __wrap(ptr) {
+        const obj = Object.create(ContextLengthDefault.prototype);
+        obj.__wbg_ptr = ptr;
+        ContextLengthDefaultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ContextLengthDefaultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_contextlengthdefault_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneContextLength() {
+        const ret = wasm.contextlengthdefault___uzuCloneContextLength(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.contextlengthdefault___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ContextLengthDefaultFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ContextLengthDefault.prototype[Symbol.dispose] = ContextLengthDefault.prototype.free;
+
+export class ContextLengthMaximal {
+    static __wrap(ptr) {
+        const obj = Object.create(ContextLengthMaximal.prototype);
+        obj.__wbg_ptr = ptr;
+        ContextLengthMaximalFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ContextLengthMaximalFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_contextlengthmaximal_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneContextLength() {
+        const ret = wasm.contextlengthmaximal___uzuCloneContextLength(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.contextlengthmaximal___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ContextLengthMaximalFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ContextLengthMaximal.prototype[Symbol.dispose] = ContextLengthMaximal.prototype.free;
+
+export class DecisionAnswerChoice {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionAnswerChoice.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionAnswerChoiceFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionAnswerChoiceFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionanswerchoice_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDecisionAnswer() {
+        const ret = wasm.decisionanswerchoice___uzuCloneDecisionAnswer(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get index() {
+        const ret = wasm.decisionanswerchoice___wasm_get_index(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get key() {
+        const ret = wasm.decisionanswerchoice___wasm_get_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get probabilities() {
+        const ret = wasm.decisionanswerchoice___wasm_get_probabilities(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} index
+     * @param {string} key
+     * @param {Array<number>} probabilities
+     */
+    constructor(index, key, probabilities) {
+        const ret = wasm.decisionanswerchoice___wasm_new(index, key, probabilities);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionAnswerChoiceFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set index(value) {
+        wasm.decisionanswerchoice___wasm_set_index(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set key(value) {
+        wasm.decisionanswerchoice___wasm_set_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set probabilities(value) {
+        wasm.decisionanswerchoice___wasm_set_probabilities(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DecisionAnswerChoice.prototype[Symbol.dispose] = DecisionAnswerChoice.prototype.free;
+
+export class DecisionAnswerScore {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionAnswerScore.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionAnswerScoreFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionAnswerScoreFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionanswerscore_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDecisionAnswer() {
+        const ret = wasm.decisionanswerscore___uzuCloneDecisionAnswer(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get probabilities() {
+        const ret = wasm.decisionanswerscore___wasm_get_probabilities(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get score() {
+        const ret = wasm.decisionanswerscore___wasm_get_score(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<number>} probabilities
+     * @param {number} score
+     */
+    constructor(probabilities, score) {
+        const ret = wasm.decisionanswerscore___wasm_new(probabilities, score);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionAnswerScoreFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set probabilities(value) {
+        wasm.decisionanswerscore___wasm_set_probabilities(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set score(value) {
+        wasm.decisionanswerscore___wasm_set_score(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DecisionAnswerScore.prototype[Symbol.dispose] = DecisionAnswerScore.prototype.free;
+
+export class DecisionAnswerYesNo {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionAnswerYesNo.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionAnswerYesNoFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionAnswerYesNoFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionansweryesno_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDecisionAnswer() {
+        const ret = wasm.decisionansweryesno___uzuCloneDecisionAnswer(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get yesProbability() {
+        const ret = wasm.decisionansweryesno___wasm_get_yes_probability(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} yesProbability
+     */
+    constructor(yesProbability) {
+        const ret = wasm.decisionansweryesno___wasm_new(yesProbability);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionAnswerYesNoFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set yesProbability(value) {
+        wasm.decisionansweryesno___wasm_set_yes_probability(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DecisionAnswerYesNo.prototype[Symbol.dispose] = DecisionAnswerYesNo.prototype.free;
 
 export class DecisionInput {
     __destroy_into_raw() {
@@ -1486,49 +4050,61 @@ export class DecisionInput {
         wasm.__wbg_decisioninput_free(ptr, 0);
     }
     /**
-     * @returns {DecisionQuestion[]}
+     * @returns {number}
+     */
+    __uzuCloneDecisionInput() {
+        const ret = wasm.decisioninput___uzuCloneDecisionInput(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get questions() {
-        const ret = wasm.__wbg_get_decisioninput_questions(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+        const ret = wasm.decisioninput___wasm_get_questions(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get state() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_decisioninput_state(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.decisioninput___wasm_get_state(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} state
+     * @param {Array<DecisionQuestion>} questions
+     */
+    constructor(state, questions) {
+        const ret = wasm.decisioninput___wasm_new(state, questions);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        DecisionInputFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {DecisionQuestion[]} arg0
+     * @param {any} value
      */
-    set questions(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_decisioninput_questions(this.__wbg_ptr, ptr0, len0);
+    set questions(value) {
+        wasm.decisioninput___wasm_set_questions(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set state(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_decisioninput_state(this.__wbg_ptr, ptr0, len0);
+    set state(value) {
+        wasm.decisioninput___wasm_set_state(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) DecisionInput.prototype[Symbol.dispose] = DecisionInput.prototype.free;
 
 export class DecisionOption {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionOption.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionOptionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -1540,47 +4116,50 @@ export class DecisionOption {
         wasm.__wbg_decisionoption_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
+     */
+    __uzuCloneDecisionOption() {
+        const ret = wasm.decisionoption___uzuCloneDecisionOption(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get description() {
-        const ret = wasm.__wbg_get_decisionoption_description(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+        const ret = wasm.decisionoption___wasm_get_description(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get key() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_decisionoption_key(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.decisionoption___wasm_get_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} key
+     * @param {string | null} [description]
+     */
+    constructor(key, description) {
+        const ret = wasm.decisionoption___wasm_new(key, description);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        DecisionOptionFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {any} value
      */
-    set description(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_decisionoption_description(this.__wbg_ptr, ptr0, len0);
+    set description(value) {
+        wasm.decisionoption___wasm_set_description(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set key(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_decisionoption_key(this.__wbg_ptr, ptr0, len0);
+    set key(value) {
+        wasm.decisionoption___wasm_set_key(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) DecisionOption.prototype[Symbol.dispose] = DecisionOption.prototype.free;
@@ -1603,24 +4182,251 @@ export class DecisionOutput {
         wasm.__wbg_decisionoutput_free(ptr, 0);
     }
     /**
-     * @returns {DecisionResult[]}
+     * @returns {number}
      */
-    get results() {
-        const ret = wasm.__wbg_get_decisionoutput_results(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+    __uzuCloneDecisionOutput() {
+        const ret = wasm.decisionoutput___uzuCloneDecisionOutput(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @param {DecisionResult[]} arg0
+     * @returns {any}
      */
-    set results(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_decisionoutput_results(this.__wbg_ptr, ptr0, len0);
+    get results() {
+        const ret = wasm.decisionoutput___wasm_get_results(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<DecisionResult>} results
+     */
+    constructor(results) {
+        const ret = wasm.decisionoutput___wasm_new(results);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionOutputFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set results(value) {
+        wasm.decisionoutput___wasm_set_results(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) DecisionOutput.prototype[Symbol.dispose] = DecisionOutput.prototype.free;
+
+export class DecisionQuestionChoice {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionQuestionChoice.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionQuestionChoiceFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionQuestionChoiceFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionquestionchoice_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDecisionQuestion() {
+        const ret = wasm.decisionquestionchoice___uzuCloneDecisionQuestion(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get instructions() {
+        const ret = wasm.decisionquestionchoice___wasm_get_instructions(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get options() {
+        const ret = wasm.decisionquestionchoice___wasm_get_options(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | undefined | null} instructions
+     * @param {Array<DecisionOption>} options
+     */
+    constructor(instructions, options) {
+        const ret = wasm.decisionquestionchoice___wasm_new(instructions, options);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionQuestionChoiceFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set instructions(value) {
+        wasm.decisionquestionchoice___wasm_set_instructions(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set options(value) {
+        wasm.decisionquestionchoice___wasm_set_options(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DecisionQuestionChoice.prototype[Symbol.dispose] = DecisionQuestionChoice.prototype.free;
+
+export class DecisionQuestionScore {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionQuestionScore.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionQuestionScoreFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionQuestionScoreFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionquestionscore_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDecisionQuestion() {
+        const ret = wasm.decisionquestionscore___uzuCloneDecisionQuestion(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get instructions() {
+        const ret = wasm.decisionquestionscore___wasm_get_instructions(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get levels() {
+        const ret = wasm.decisionquestionscore___wasm_get_levels(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | undefined | null} instructions
+     * @param {Array<string>} levels
+     */
+    constructor(instructions, levels) {
+        const ret = wasm.decisionquestionscore___wasm_new(instructions, levels);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionQuestionScoreFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set instructions(value) {
+        wasm.decisionquestionscore___wasm_set_instructions(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set levels(value) {
+        wasm.decisionquestionscore___wasm_set_levels(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DecisionQuestionScore.prototype[Symbol.dispose] = DecisionQuestionScore.prototype.free;
+
+export class DecisionQuestionYesNo {
+    static __wrap(ptr) {
+        const obj = Object.create(DecisionQuestionYesNo.prototype);
+        obj.__wbg_ptr = ptr;
+        DecisionQuestionYesNoFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionQuestionYesNoFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionquestionyesno_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDecisionQuestion() {
+        const ret = wasm.decisionquestionyesno___uzuCloneDecisionQuestion(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get instructions() {
+        const ret = wasm.decisionquestionyesno___wasm_get_instructions(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get noDescription() {
+        const ret = wasm.decisionquestionyesno___wasm_get_no_description(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get yesDescription() {
+        const ret = wasm.decisionquestionyesno___wasm_get_yes_description(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | null} [instructions]
+     * @param {string | null} [noDescription]
+     * @param {string | null} [yesDescription]
+     */
+    constructor(instructions, noDescription, yesDescription) {
+        const ret = wasm.decisionquestionyesno___wasm_new(instructions, noDescription, yesDescription);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionQuestionYesNoFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set instructions(value) {
+        wasm.decisionquestionyesno___wasm_set_instructions(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set noDescription(value) {
+        wasm.decisionquestionyesno___wasm_set_no_description(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set yesDescription(value) {
+        wasm.decisionquestionyesno___wasm_set_yes_description(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DecisionQuestionYesNo.prototype[Symbol.dispose] = DecisionQuestionYesNo.prototype.free;
 
 export class DecisionResult {
     static __wrap(ptr) {
@@ -1628,12 +4434,6 @@ export class DecisionResult {
         obj.__wbg_ptr = ptr;
         DecisionResultFinalization.register(obj, obj.__wbg_ptr, obj);
         return obj;
-    }
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof DecisionResult)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
     }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -1646,32 +4446,50 @@ export class DecisionResult {
         wasm.__wbg_decisionresult_free(ptr, 0);
     }
     /**
-     * @returns {DecisionAnswer}
+     * @returns {number}
+     */
+    __uzuCloneDecisionResult() {
+        const ret = wasm.decisionresult___uzuCloneDecisionResult(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get answer() {
-        const ret = wasm.__wbg_get_decisionresult_answer(this.__wbg_ptr);
+        const ret = wasm.decisionresult___wasm_get_answer(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {DecisionStats}
+     * @returns {any}
      */
     get stats() {
-        const ret = wasm.__wbg_get_decisionresult_stats(this.__wbg_ptr);
-        return DecisionStats.__wrap(ret);
+        const ret = wasm.decisionresult___wasm_get_stats(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {DecisionAnswer} arg0
+     * @param {DecisionAnswer} answer
+     * @param {DecisionStats} stats
      */
-    set answer(arg0) {
-        wasm.__wbg_set_decisionresult_answer(this.__wbg_ptr, arg0);
+    constructor(answer, stats) {
+        const ret = wasm.decisionresult___wasm_new(answer, stats);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionResultFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {DecisionStats} arg0
+     * @param {any} value
      */
-    set stats(arg0) {
-        _assertClass(arg0, DecisionStats);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_decisionresult_stats(this.__wbg_ptr, ptr0);
+    set answer(value) {
+        wasm.decisionresult___wasm_set_answer(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set stats(value) {
+        wasm.decisionresult___wasm_set_stats(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) DecisionResult.prototype[Symbol.dispose] = DecisionResult.prototype.free;
@@ -1694,24 +4512,66 @@ export class DecisionSession {
         wasm.__wbg_decisionsession_free(ptr, 0);
     }
     /**
-     * @param {DecisionInput} input
-     * @returns {Promise<DecisionOutput>}
+     * @returns {DecisionSessionState}
      */
-    decide(input) {
-        _assertClass(input, DecisionInput);
-        var ptr0 = input.__destroy_into_raw();
-        const ret = wasm.decisionsession_decide(this.__wbg_ptr, ptr0);
+    get state() {
+        const ret = wasm.decisionsession___wasm_state(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {Promise<DecisionSessionState>}
+     * @param {DecisionInput} input
+     * @returns {DecisionOutput}
      */
-    get state() {
-        const ret = wasm.decisionsession_state(this.__wbg_ptr);
+    decide(input) {
+        const ret = wasm.decisionsession_decide(this.__wbg_ptr, input);
         return ret;
     }
 }
 if (Symbol.dispose) DecisionSession.prototype[Symbol.dispose] = DecisionSession.prototype.free;
+
+export class DecisionSessionState {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecisionSessionStateFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decisionsessionstate_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Deciding() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.decisionsessionstate___wasm_variant_Deciding();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Idle() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.decisionsessionstate___wasm_variant_Idle();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) DecisionSessionState.prototype[Symbol.dispose] = DecisionSessionState.prototype.free;
 
 export class DecisionStats {
     static __wrap(ptr) {
@@ -1731,56 +4591,78 @@ export class DecisionStats {
         wasm.__wbg_decisionstats_free(ptr, 0);
     }
     /**
-     * @returns {ReplyEnergy | undefined}
+     * @returns {number}
+     */
+    __uzuCloneDecisionStats() {
+        const ret = wasm.decisionstats___uzuCloneDecisionStats(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get energy() {
-        const ret = wasm.__wbg_get_decisionstats_energy(this.__wbg_ptr);
+        const ret = wasm.decisionstats___wasm_get_energy(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {number}
+     * @returns {any}
      */
-    get prefill_duration() {
-        const ret = wasm.__wbg_get_decisionstats_prefill_duration(this.__wbg_ptr);
+    get prefillDuration() {
+        const ret = wasm.decisionstats___wasm_get_prefill_duration(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {bigint}
+     * @returns {any}
      */
-    get tokens_count() {
-        const ret = wasm.__wbg_get_decisionstats_tokens_count(this.__wbg_ptr);
+    get tokensCount() {
+        const ret = wasm.decisionstats___wasm_get_tokens_count(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {number}
+     * @returns {any}
      */
-    get total_duration() {
-        const ret = wasm.__wbg_get_decisionstats_total_duration(this.__wbg_ptr);
+    get totalDuration() {
+        const ret = wasm.decisionstats___wasm_get_total_duration(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @param {ReplyEnergy | null} [arg0]
+     * @param {number} tokensCount
+     * @param {number} prefillDuration
+     * @param {number} totalDuration
+     * @param {ReplyEnergy | null} [energy]
      */
-    set energy(arg0) {
-        wasm.__wbg_set_decisionstats_energy(this.__wbg_ptr, isLikeNone(arg0) ? 0 : addToExternrefTable0(arg0));
+    constructor(tokensCount, prefillDuration, totalDuration, energy) {
+        const ret = wasm.decisionstats___wasm_new(tokensCount, prefillDuration, totalDuration, energy);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DecisionStatsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set prefill_duration(arg0) {
-        wasm.__wbg_set_decisionstats_prefill_duration(this.__wbg_ptr, arg0);
+    set energy(value) {
+        wasm.decisionstats___wasm_set_energy(this.__wbg_ptr, value);
     }
     /**
-     * @param {bigint} arg0
+     * @param {any} value
      */
-    set tokens_count(arg0) {
-        wasm.__wbg_set_decisionstats_tokens_count(this.__wbg_ptr, arg0);
+    set prefillDuration(value) {
+        wasm.decisionstats___wasm_set_prefill_duration(this.__wbg_ptr, value);
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set total_duration(arg0) {
-        wasm.__wbg_set_decisionstats_total_duration(this.__wbg_ptr, arg0);
+    set tokensCount(value) {
+        wasm.decisionstats___wasm_set_tokens_count(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set totalDuration(value) {
+        wasm.decisionstats___wasm_set_total_duration(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) DecisionStats.prototype[Symbol.dispose] = DecisionStats.prototype.free;
@@ -1803,6 +4685,80 @@ export class Device {
         wasm.__wbg_device_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneDevice() {
+        const ret = wasm.device___uzuCloneDevice(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get cpuName() {
+        const ret = wasm.device___wasm_get_cpu_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get homePath() {
+        const ret = wasm.device___wasm_get_home_path(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get memoryTotal() {
+        const ret = wasm.device___wasm_get_memory_total(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get osName() {
+        const ret = wasm.device___wasm_get_os_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | undefined | null} osName
+     * @param {string | undefined | null} cpuName
+     * @param {number | undefined | null} memoryTotal
+     * @param {string} homePath
+     */
+    constructor(osName, cpuName, memoryTotal, homePath) {
+        const ret = wasm.device___wasm_new(osName, cpuName, memoryTotal, homePath);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DeviceFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set cpuName(value) {
+        wasm.device___wasm_set_cpu_name(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set homePath(value) {
+        wasm.device___wasm_set_home_path(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set memoryTotal(value) {
+        wasm.device___wasm_set_memory_total(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set osName(value) {
+        wasm.device___wasm_set_os_name(this.__wbg_ptr, value);
+    }
+    /**
      * @returns {Device}
      */
     static create() {
@@ -1810,28 +4766,30 @@ export class Device {
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
-        return Device.__wrap(ret[0]);
+        return takeFromExternrefTable0(ret[0]);
     }
-    /**
-     * @returns {string | undefined}
-     */
-    get cpu_name() {
-        const ret = wasm.__wbg_get_device_cpu_name(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+}
+if (Symbol.dispose) Device.prototype[Symbol.dispose] = Device.prototype.free;
+
+export class DownloadManagerType {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadManagerTypeFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadmanagertype_free(ptr, 0);
     }
     /**
      * @returns {string}
      */
-    get home_path() {
+    static get Universal() {
         let deferred1_0;
         let deferred1_1;
         try {
-            const ret = wasm.__wbg_get_device_home_path(this.__wbg_ptr);
+            const ret = wasm.downloadmanagertype___wasm_variant_Universal();
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);
@@ -1839,57 +4797,292 @@ export class Device {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
-    /**
-     * @returns {bigint | undefined}
-     */
-    get memory_total() {
-        const ret = wasm.__wbg_get_device_memory_total(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+}
+if (Symbol.dispose) DownloadManagerType.prototype[Symbol.dispose] = DownloadManagerType.prototype.free;
+
+export class DownloadPhaseDownloaded {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhaseDownloaded.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhaseDownloadedFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhaseDownloadedFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphasedownloaded_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
      */
-    get os_name() {
-        const ret = wasm.__wbg_get_device_os_name(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphasedownloaded___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.downloadphasedownloaded___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set cpu_name(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_device_cpu_name(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string} arg0
-     */
-    set home_path(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_device_home_path(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {bigint | null} [arg0]
-     */
-    set memory_total(arg0) {
-        wasm.__wbg_set_device_memory_total(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set os_name(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_device_os_name(this.__wbg_ptr, ptr0, len0);
+        this.__wbg_ptr = ret[0];
+        DownloadPhaseDownloadedFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
 }
-if (Symbol.dispose) Device.prototype[Symbol.dispose] = Device.prototype.free;
+if (Symbol.dispose) DownloadPhaseDownloaded.prototype[Symbol.dispose] = DownloadPhaseDownloaded.prototype.free;
+
+export class DownloadPhaseDownloading {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhaseDownloading.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhaseDownloadingFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhaseDownloadingFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphasedownloading_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphasedownloading___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.downloadphasedownloading___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadPhaseDownloadingFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) DownloadPhaseDownloading.prototype[Symbol.dispose] = DownloadPhaseDownloading.prototype.free;
+
+export class DownloadPhaseError {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhaseError.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhaseErrorFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhaseErrorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphaseerror_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphaseerror___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get message() {
+        const ret = wasm.downloadphaseerror___wasm_get_message(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} message
+     */
+    constructor(message) {
+        const ret = wasm.downloadphaseerror___wasm_new(message);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadPhaseErrorFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set message(value) {
+        wasm.downloadphaseerror___wasm_set_message(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DownloadPhaseError.prototype[Symbol.dispose] = DownloadPhaseError.prototype.free;
+
+export class DownloadPhaseInitializing {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhaseInitializing.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhaseInitializingFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhaseInitializingFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphaseinitializing_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphaseinitializing___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.downloadphaseinitializing___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadPhaseInitializingFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) DownloadPhaseInitializing.prototype[Symbol.dispose] = DownloadPhaseInitializing.prototype.free;
+
+export class DownloadPhaseLocked {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhaseLocked.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhaseLockedFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhaseLockedFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphaselocked_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphaselocked___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get managerId() {
+        const ret = wasm.downloadphaselocked___wasm_get_manager_id(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} managerId
+     */
+    constructor(managerId) {
+        const ret = wasm.downloadphaselocked___wasm_new(managerId);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadPhaseLockedFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set managerId(value) {
+        wasm.downloadphaselocked___wasm_set_manager_id(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) DownloadPhaseLocked.prototype[Symbol.dispose] = DownloadPhaseLocked.prototype.free;
+
+export class DownloadPhaseNotDownloaded {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhaseNotDownloaded.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhaseNotDownloadedFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhaseNotDownloadedFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphasenotdownloaded_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphasenotdownloaded___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.downloadphasenotdownloaded___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadPhaseNotDownloadedFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) DownloadPhaseNotDownloaded.prototype[Symbol.dispose] = DownloadPhaseNotDownloaded.prototype.free;
+
+export class DownloadPhasePaused {
+    static __wrap(ptr) {
+        const obj = Object.create(DownloadPhasePaused.prototype);
+        obj.__wbg_ptr = ptr;
+        DownloadPhasePausedFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DownloadPhasePausedFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_downloadphasepaused_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadPhase() {
+        const ret = wasm.downloadphasepaused___uzuCloneDownloadPhase(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.downloadphasepaused___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadPhasePausedFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) DownloadPhasePaused.prototype[Symbol.dispose] = DownloadPhasePaused.prototype.free;
 
 export class DownloadState {
     static __wrap(ptr) {
@@ -1909,86 +5102,114 @@ export class DownloadState {
         wasm.__wbg_downloadstate_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneDownloadState() {
+        const ret = wasm.downloadstate___uzuCloneDownloadState(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * @returns {boolean}
      */
     get canDelete() {
-        const ret = wasm.downloadstate_canDelete(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.downloadstate___wasm_can_delete(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get canPause() {
-        const ret = wasm.downloadstate_canPause(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.downloadstate___wasm_can_pause(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {any}
+     */
+    get downloadedBytes() {
+        const ret = wasm.downloadstate___wasm_get_downloaded_bytes(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get phase() {
+        const ret = wasm.downloadstate___wasm_get_phase(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get totalBytes() {
+        const ret = wasm.downloadstate___wasm_get_total_bytes(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {boolean}
      */
     get isInProgress() {
-        const ret = wasm.downloadstate_isInProgress(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.downloadstate___wasm_is_in_progress(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.downloadstate_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.downloadstate___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {number} totalBytes
+     * @param {number} downloadedBytes
+     * @param {DownloadPhase} phase
+     */
+    constructor(totalBytes, downloadedBytes, phase) {
+        const ret = wasm.downloadstate___wasm_new(totalBytes, downloadedBytes, phase);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        DownloadStateFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
      * @returns {number}
      */
     get progress() {
-        const ret = wasm.downloadstate_progress(this.__wbg_ptr);
-        return ret;
+        const ret = wasm.downloadstate___wasm_progress(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {bigint}
+     * @param {any} value
      */
-    get downloaded_bytes() {
-        const ret = wasm.__wbg_get_downloadstate_downloaded_bytes(this.__wbg_ptr);
-        return ret;
+    set downloadedBytes(value) {
+        wasm.downloadstate___wasm_set_downloaded_bytes(this.__wbg_ptr, value);
     }
     /**
-     * @returns {DownloadPhase}
+     * @param {any} value
      */
-    get phase() {
-        const ret = wasm.__wbg_get_downloadstate_phase(this.__wbg_ptr);
-        return ret;
+    set phase(value) {
+        wasm.downloadstate___wasm_set_phase(this.__wbg_ptr, value);
     }
     /**
-     * @returns {bigint}
+     * @param {any} value
      */
-    get total_bytes() {
-        const ret = wasm.__wbg_get_downloadstate_total_bytes(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @param {bigint} arg0
-     */
-    set downloaded_bytes(arg0) {
-        wasm.__wbg_set_downloadstate_downloaded_bytes(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {DownloadPhase} arg0
-     */
-    set phase(arg0) {
-        wasm.__wbg_set_downloadstate_phase(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {bigint} arg0
-     */
-    set total_bytes(arg0) {
-        wasm.__wbg_set_downloadstate_total_bytes(this.__wbg_ptr, arg0);
+    set totalBytes(value) {
+        wasm.downloadstate___wasm_set_total_bytes(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) DownloadState.prototype[Symbol.dispose] = DownloadState.prototype.free;
@@ -2011,6 +5232,13 @@ export class Downloader {
         wasm.__wbg_downloader_free(ptr, 0);
     }
     /**
+     * @returns {DownloadState | null}
+     */
+    get state() {
+        const ret = wasm.downloader___wasm_state(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * @returns {Promise<void>}
      */
     delete() {
@@ -2025,7 +5253,7 @@ export class Downloader {
         return ret;
     }
     /**
-     * @returns {Promise<DownloaderStream>}
+     * @returns {DownloaderStream}
      */
     progress() {
         const ret = wasm.downloader_progress(this.__wbg_ptr);
@@ -2036,13 +5264,6 @@ export class Downloader {
      */
     resume() {
         const ret = wasm.downloader_resume(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<DownloadState | undefined>}
-     */
-    get state() {
-        const ret = wasm.downloader_state(this.__wbg_ptr);
         return ret;
     }
 }
@@ -2066,7 +5287,14 @@ export class DownloaderStream {
         wasm.__wbg_downloaderstream_free(ptr, 0);
     }
     /**
-     * @returns {Promise<DownloadState | undefined>}
+     * @returns {boolean}
+     */
+    static get __uzuStream() {
+        const ret = wasm.downloaderstream___wasm_stream_marker();
+        return ret !== 0;
+    }
+    /**
+     * @returns {DownloadState | null}
      */
     next() {
         const ret = wasm.downloaderstream_next(this.__wbg_ptr);
@@ -2093,16 +5321,103 @@ export class Engine {
         wasm.__wbg_engine_free(ptr, 0);
     }
     /**
+     * @returns {Record<ModelIdentifier, DownloadState>}
+     */
+    get downloadStates() {
+        const ret = wasm.engine___wasm_download_states(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<ModelFamily>}
+     */
+    get modelFamilies() {
+        const ret = wasm.engine___wasm_model_families(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<ModelRegistry>}
+     */
+    get modelRegistries() {
+        const ret = wasm.engine___wasm_model_registries(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<ModelVendor>}
+     */
+    get modelVendors() {
+        const ret = wasm.engine___wasm_model_vendors(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get models() {
+        const ret = wasm.engine___wasm_models(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsDownloadable() {
+        const ret = wasm.engine___wasm_models_downloadable(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsForChat() {
+        const ret = wasm.engine___wasm_models_for_chat(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsForClassification() {
+        const ret = wasm.engine___wasm_models_for_classification(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsForSpeculation() {
+        const ret = wasm.engine___wasm_models_for_speculation(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsForTextToSpeech() {
+        const ret = wasm.engine___wasm_models_for_text_to_speech(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsForTranslation() {
+        const ret = wasm.engine___wasm_models_for_translation(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsOnDevice() {
+        const ret = wasm.engine___wasm_models_on_device(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Array<Model>}
+     */
+    get modelsRemote() {
+        const ret = wasm.engine___wasm_models_remote(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * @param {Model} model
      * @param {ChatConfig} config
-     * @returns {Promise<ChatInstance>}
+     * @returns {ChatInstance}
      */
     chatInstance(model, config) {
-        _assertClass(model, Model);
-        var ptr0 = model.__destroy_into_raw();
-        _assertClass(config, ChatConfig);
-        var ptr1 = config.__destroy_into_raw();
-        const ret = wasm.engine_chatInstance(this.__wbg_ptr, ptr0, ptr1);
+        const ret = wasm.engine_chatInstance(this.__wbg_ptr, model, config);
         return ret;
     }
     /**
@@ -2110,7 +5425,7 @@ export class Engine {
      * Encoding capabilities come from the catalog; the context limit needs local configuration.
      * Remote and non-chat models return `None`.
      * @param {Model} model
-     * @returns {Promise<ChatModelInfo | undefined>}
+     * @returns {ChatModelInfo | null}
      */
     chatModelInfo(model) {
         _assertClass(model, Model);
@@ -2119,7 +5434,7 @@ export class Engine {
     }
     /**
      * @param {ChatInstance} instance
-     * @returns {Promise<ChatSession>}
+     * @returns {ChatSession}
      */
     chatWithInstance(instance) {
         _assertClass(instance, ChatInstance);
@@ -2129,39 +5444,31 @@ export class Engine {
     /**
      * @param {Model} model
      * @param {ChatConfig} config
-     * @returns {Promise<ChatSession>}
+     * @returns {ChatSession}
      */
     chat(model, config) {
-        _assertClass(model, Model);
-        var ptr0 = model.__destroy_into_raw();
-        _assertClass(config, ChatConfig);
-        var ptr1 = config.__destroy_into_raw();
-        const ret = wasm.engine_chat(this.__wbg_ptr, ptr0, ptr1);
+        const ret = wasm.engine_chat(this.__wbg_ptr, model, config);
         return ret;
     }
     /**
      * @param {EngineConfig} config
-     * @returns {Promise<Engine>}
+     * @returns {Engine}
      */
     static create(config) {
-        _assertClass(config, EngineConfig);
-        var ptr0 = config.__destroy_into_raw();
-        const ret = wasm.engine_create(ptr0);
+        const ret = wasm.engine_create(config);
         return ret;
     }
     /**
      * @param {Model} model
-     * @returns {Promise<DecisionSession>}
+     * @returns {DecisionSession}
      */
     decision(model) {
-        _assertClass(model, Model);
-        var ptr0 = model.__destroy_into_raw();
-        const ret = wasm.engine_decision(this.__wbg_ptr, ptr0);
+        const ret = wasm.engine_decision(this.__wbg_ptr, model);
         return ret;
     }
     /**
      * @param {Model} model
-     * @returns {Promise<DownloadState | undefined>}
+     * @returns {DownloadState | null}
      */
     downloadState(model) {
         _assertClass(model, Model);
@@ -2169,15 +5476,8 @@ export class Engine {
         return ret;
     }
     /**
-     * @returns {Promise<Map<any, any>>}
-     */
-    get downloadStates() {
-        const ret = wasm.engine_downloadStates(this.__wbg_ptr);
-        return ret;
-    }
-    /**
      * @param {Model} model
-     * @returns {Promise<DownloaderStream>}
+     * @returns {DownloaderStream}
      */
     download(model) {
         _assertClass(model, Model);
@@ -2191,48 +5491,38 @@ export class Engine {
     downloader(model) {
         _assertClass(model, Model);
         const ret = wasm.engine_downloader(this.__wbg_ptr, model.__wbg_ptr);
-        return Downloader.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} identifier
-     * @returns {Promise<Model | undefined>}
+     * @param {ModelIdentifier} identifier
+     * @returns {Model | null}
      */
     modelByIdentifier(identifier) {
-        const ptr0 = passStringToWasm0(identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_modelByIdentifier(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.engine_modelByIdentifier(this.__wbg_ptr, identifier);
         return ret;
     }
     /**
      * @param {string} path
-     * @returns {Promise<Model | undefined>}
+     * @returns {Model | null}
      */
     modelByPath(path) {
-        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_modelByPath(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.engine_modelByPath(this.__wbg_ptr, path);
         return ret;
     }
     /**
-     * @param {string} repo_id
-     * @returns {Promise<Model | undefined>}
+     * @param {string} repoId
+     * @returns {Model | null}
      */
-    modelByRepoId(repo_id) {
-        const ptr0 = passStringToWasm0(repo_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_modelByRepoId(this.__wbg_ptr, ptr0, len0);
-        return ret;
-    }
-    /**
-     * @returns {Promise<ModelFamily[]>}
-     */
-    get modelFamilies() {
-        const ret = wasm.engine_modelFamilies(this.__wbg_ptr);
+    modelByRepoId(repoId) {
+        const ret = wasm.engine_modelByRepoId(this.__wbg_ptr, repoId);
         return ret;
     }
     /**
      * @param {Model} model
-     * @returns {Promise<string | undefined>}
+     * @returns {string | null}
      */
     modelPath(model) {
         _assertClass(model, Model);
@@ -2240,116 +5530,33 @@ export class Engine {
         return ret;
     }
     /**
-     * @returns {Promise<ModelRegistry[]>}
-     */
-    get modelRegistries() {
-        const ret = wasm.engine_modelRegistries(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<ModelVendor[]>}
-     */
-    get modelVendors() {
-        const ret = wasm.engine_modelVendors(this.__wbg_ptr);
-        return ret;
-    }
-    /**
      * @param {string} identifier
-     * @returns {Promise<Model | undefined>}
+     * @returns {Model | null}
      */
     model(identifier) {
-        const ptr0 = passStringToWasm0(identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_model(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.engine_model(this.__wbg_ptr, identifier);
         return ret;
     }
     /**
-     * @param {string} family_identifier
-     * @returns {Promise<Model[]>}
+     * @param {string} familyIdentifier
+     * @returns {Array<Model>}
      */
-    modelsByFamily(family_identifier) {
-        const ptr0 = passStringToWasm0(family_identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_modelsByFamily(this.__wbg_ptr, ptr0, len0);
+    modelsByFamily(familyIdentifier) {
+        const ret = wasm.engine_modelsByFamily(this.__wbg_ptr, familyIdentifier);
         return ret;
     }
     /**
-     * @param {string} vendor_identifier
-     * @returns {Promise<Model[]>}
+     * @param {string} vendorIdentifier
+     * @returns {Array<Model>}
      */
-    modelsByVendor(vendor_identifier) {
-        const ptr0 = passStringToWasm0(vendor_identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_modelsByVendor(this.__wbg_ptr, ptr0, len0);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsDownloadable() {
-        const ret = wasm.engine_modelsDownloadable(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsForChat() {
-        const ret = wasm.engine_modelsForChat(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsForClassification() {
-        const ret = wasm.engine_modelsForClassification(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsForSpeculation() {
-        const ret = wasm.engine_modelsForSpeculation(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsForTextToSpeech() {
-        const ret = wasm.engine_modelsForTextToSpeech(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsForTranslation() {
-        const ret = wasm.engine_modelsForTranslation(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsOnDevice() {
-        const ret = wasm.engine_modelsOnDevice(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get modelsRemote() {
-        const ret = wasm.engine_modelsRemote(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {Promise<Model[]>}
-     */
-    get models() {
-        const ret = wasm.engine_models(this.__wbg_ptr);
+    modelsByVendor(vendorIdentifier) {
+        const ret = wasm.engine_modelsByVendor(this.__wbg_ptr, vendorIdentifier);
         return ret;
     }
     /**
      * Refresh registries and wait until the catalog has been published to storage.
      * Registries that fail to refresh retain their last known entries.
-     * @returns {Promise<Model[]>}
+     * @returns {Array<Model>}
      */
     refreshModels() {
         const ret = wasm.engine_refreshModels(this.__wbg_ptr);
@@ -2369,19 +5576,15 @@ export class Engine {
      * @returns {Promise<void>}
      */
     removeBackend(identifier) {
-        const ptr0 = passStringToWasm0(identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_removeBackend(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.engine_removeBackend(this.__wbg_ptr, identifier);
         return ret;
     }
     /**
-     * @param {string} registry_identifier
+     * @param {string} registryIdentifier
      * @returns {Promise<void>}
      */
-    removeRegistry(registry_identifier) {
-        const ptr0 = passStringToWasm0(registry_identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engine_removeRegistry(this.__wbg_ptr, ptr0, len0);
+    removeRegistry(registryIdentifier) {
+        const ret = wasm.engine_removeRegistry(this.__wbg_ptr, registryIdentifier);
         return ret;
     }
 }
@@ -2405,7 +5608,7 @@ export class EngineCallback {
         wasm.__wbg_enginecallback_free(ptr, 0);
     }
     /**
-     * @param {Function} callback
+     * @param {() => void} callback
      * @returns {EngineCallback}
      */
     static create(callback) {
@@ -2433,344 +5636,332 @@ export class EngineConfig {
         wasm.__wbg_engineconfig_free(ptr, 0);
     }
     /**
+     * @returns {number}
+     */
+    __uzuCloneEngineConfig() {
+        const ret = wasm.engineconfig___uzuCloneEngineConfig(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get allowLmstudioUsage() {
+        const ret = wasm.engineconfig___wasm_get_allow_lmstudio_usage(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get allowOllamaUsage() {
+        const ret = wasm.engineconfig___wasm_get_allow_ollama_usage(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get anthropicApiKey() {
+        const ret = wasm.engineconfig___wasm_get_anthropic_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get basetenApiKey() {
+        const ret = wasm.engineconfig___wasm_get_baseten_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get downloadManagerType() {
+        const ret = wasm.engineconfig___wasm_get_download_manager_type(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get geminiApiKey() {
+        const ret = wasm.engineconfig___wasm_get_gemini_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get huggingfaceApiKey() {
+        const ret = wasm.engineconfig___wasm_get_huggingface_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get localPath() {
+        const ret = wasm.engineconfig___wasm_get_local_path(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get miraiApiKey() {
+        const ret = wasm.engineconfig___wasm_get_mirai_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get openaiApiKey() {
+        const ret = wasm.engineconfig___wasm_get_openai_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get openrouterApiKey() {
+        const ret = wasm.engineconfig___wasm_get_openrouter_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get xaiApiKey() {
+        const ret = wasm.engineconfig___wasm_get_xai_api_key(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | undefined | null} miraiApiKey
+     * @param {string | undefined | null} localPath
+     * @param {string | undefined | null} huggingfaceApiKey
+     * @param {string | undefined | null} openaiApiKey
+     * @param {string | undefined | null} anthropicApiKey
+     * @param {string | undefined | null} geminiApiKey
+     * @param {string | undefined | null} xaiApiKey
+     * @param {string | undefined | null} basetenApiKey
+     * @param {string | undefined | null} openrouterApiKey
+     * @param {boolean} allowOllamaUsage
+     * @param {boolean} allowLmstudioUsage
+     * @param {DownloadManagerType} downloadManagerType
+     */
+    constructor(miraiApiKey, localPath, huggingfaceApiKey, openaiApiKey, anthropicApiKey, geminiApiKey, xaiApiKey, basetenApiKey, openrouterApiKey, allowOllamaUsage, allowLmstudioUsage, downloadManagerType) {
+        const ret = wasm.engineconfig___wasm_new(miraiApiKey, localPath, huggingfaceApiKey, openaiApiKey, anthropicApiKey, geminiApiKey, xaiApiKey, basetenApiKey, openrouterApiKey, allowOllamaUsage, allowLmstudioUsage, downloadManagerType);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        EngineConfigFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set allowLmstudioUsage(value) {
+        wasm.engineconfig___wasm_set_allow_lmstudio_usage(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set allowOllamaUsage(value) {
+        wasm.engineconfig___wasm_set_allow_ollama_usage(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set anthropicApiKey(value) {
+        wasm.engineconfig___wasm_set_anthropic_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set basetenApiKey(value) {
+        wasm.engineconfig___wasm_set_baseten_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set downloadManagerType(value) {
+        wasm.engineconfig___wasm_set_download_manager_type(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set geminiApiKey(value) {
+        wasm.engineconfig___wasm_set_gemini_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set huggingfaceApiKey(value) {
+        wasm.engineconfig___wasm_set_huggingface_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set localPath(value) {
+        wasm.engineconfig___wasm_set_local_path(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set miraiApiKey(value) {
+        wasm.engineconfig___wasm_set_mirai_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set openaiApiKey(value) {
+        wasm.engineconfig___wasm_set_openai_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set openrouterApiKey(value) {
+        wasm.engineconfig___wasm_set_openrouter_api_key(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set xaiApiKey(value) {
+        wasm.engineconfig___wasm_set_xai_api_key(this.__wbg_ptr, value);
+    }
+    /**
      * @returns {EngineConfig}
      */
     static create() {
         const ret = wasm.engineconfig_create();
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {boolean} allow_lmstudio_usage
-     * @returns {EngineConfig}
-     */
-    withAllowLmstudioUsage(allow_lmstudio_usage) {
-        const ret = wasm.engineconfig_withAllowLmstudioUsage(this.__wbg_ptr, allow_lmstudio_usage);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {boolean} allow_ollama_usage
-     * @returns {EngineConfig}
-     */
-    withAllowOllamaUsage(allow_ollama_usage) {
-        const ret = wasm.engineconfig_withAllowOllamaUsage(this.__wbg_ptr, allow_ollama_usage);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} anthropic_api_key
-     * @returns {EngineConfig}
-     */
-    withAnthropicApiKey(anthropic_api_key) {
-        const ptr0 = passStringToWasm0(anthropic_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withAnthropicApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} baseten_api_key
-     * @returns {EngineConfig}
-     */
-    withBasetenApiKey(baseten_api_key) {
-        const ptr0 = passStringToWasm0(baseten_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withBasetenApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {DownloadManagerType} download_manager_type
-     * @returns {EngineConfig}
-     */
-    withDownloadManagerType(download_manager_type) {
-        const ret = wasm.engineconfig_withDownloadManagerType(this.__wbg_ptr, download_manager_type);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} gemini_api_key
-     * @returns {EngineConfig}
-     */
-    withGeminiApiKey(gemini_api_key) {
-        const ptr0 = passStringToWasm0(gemini_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withGeminiApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} huggingface_api_key
-     * @returns {EngineConfig}
-     */
-    withHuggingfaceApiKey(huggingface_api_key) {
-        const ptr0 = passStringToWasm0(huggingface_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withHuggingfaceApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} local_path
-     * @returns {EngineConfig}
-     */
-    withLocalPath(local_path) {
-        const ptr0 = passStringToWasm0(local_path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withLocalPath(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} mirai_api_key
-     * @returns {EngineConfig}
-     */
-    withMiraiApiKey(mirai_api_key) {
-        const ptr0 = passStringToWasm0(mirai_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withMiraiApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} openai_api_key
-     * @returns {EngineConfig}
-     */
-    withOpenaiApiKey(openai_api_key) {
-        const ptr0 = passStringToWasm0(openai_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withOpenaiApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} openrouter_api_key
-     * @returns {EngineConfig}
-     */
-    withOpenrouterApiKey(openrouter_api_key) {
-        const ptr0 = passStringToWasm0(openrouter_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withOpenrouterApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @param {string} xai_api_key
-     * @returns {EngineConfig}
-     */
-    withXaiApiKey(xai_api_key) {
-        const ptr0 = passStringToWasm0(xai_api_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.engineconfig_withXaiApiKey(this.__wbg_ptr, ptr0, len0);
-        return EngineConfig.__wrap(ret);
-    }
-    /**
-     * @returns {boolean}
-     */
-    get allow_lmstudio_usage() {
-        const ret = wasm.__wbg_get_engineconfig_allow_lmstudio_usage(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * @returns {boolean}
-     */
-    get allow_ollama_usage() {
-        const ret = wasm.__wbg_get_engineconfig_allow_ollama_usage(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * @returns {string | undefined}
-     */
-    get anthropic_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_anthropic_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {boolean} allowLmstudioUsage
+     * @returns {EngineConfig}
      */
-    get baseten_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_baseten_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withAllowLmstudioUsage(allowLmstudioUsage) {
+        const ret = wasm.engineconfig_withAllowLmstudioUsage(this.__wbg_ptr, allowLmstudioUsage);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {DownloadManagerType}
+     * @param {boolean} allowOllamaUsage
+     * @returns {EngineConfig}
      */
-    get download_manager_type() {
-        const ret = wasm.__wbg_get_engineconfig_download_manager_type(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {string | undefined}
-     */
-    get gemini_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_gemini_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withAllowOllamaUsage(allowOllamaUsage) {
+        const ret = wasm.engineconfig_withAllowOllamaUsage(this.__wbg_ptr, allowOllamaUsage);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {string} anthropicApiKey
+     * @returns {EngineConfig}
      */
-    get huggingface_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_huggingface_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withAnthropicApiKey(anthropicApiKey) {
+        const ret = wasm.engineconfig_withAnthropicApiKey(this.__wbg_ptr, anthropicApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {string} basetenApiKey
+     * @returns {EngineConfig}
      */
-    get local_path() {
-        const ret = wasm.__wbg_get_engineconfig_local_path(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withBasetenApiKey(basetenApiKey) {
+        const ret = wasm.engineconfig_withBasetenApiKey(this.__wbg_ptr, basetenApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {DownloadManagerType} downloadManagerType
+     * @returns {EngineConfig}
      */
-    get mirai_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_mirai_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withDownloadManagerType(downloadManagerType) {
+        const ret = wasm.engineconfig_withDownloadManagerType(this.__wbg_ptr, downloadManagerType);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {string} geminiApiKey
+     * @returns {EngineConfig}
      */
-    get openai_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_openai_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withGeminiApiKey(geminiApiKey) {
+        const ret = wasm.engineconfig_withGeminiApiKey(this.__wbg_ptr, geminiApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {string} huggingfaceApiKey
+     * @returns {EngineConfig}
      */
-    get openrouter_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_openrouter_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withHuggingfaceApiKey(huggingfaceApiKey) {
+        const ret = wasm.engineconfig_withHuggingfaceApiKey(this.__wbg_ptr, huggingfaceApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @param {string} localPath
+     * @returns {EngineConfig}
      */
-    get xai_api_key() {
-        const ret = wasm.__wbg_get_engineconfig_xai_api_key(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    withLocalPath(localPath) {
+        const ret = wasm.engineconfig_withLocalPath(this.__wbg_ptr, localPath);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {boolean} arg0
+     * @param {string} miraiApiKey
+     * @returns {EngineConfig}
      */
-    set allow_lmstudio_usage(arg0) {
-        wasm.__wbg_set_engineconfig_allow_lmstudio_usage(this.__wbg_ptr, arg0);
+    withMiraiApiKey(miraiApiKey) {
+        const ret = wasm.engineconfig_withMiraiApiKey(this.__wbg_ptr, miraiApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {boolean} arg0
+     * @param {string} openaiApiKey
+     * @returns {EngineConfig}
      */
-    set allow_ollama_usage(arg0) {
-        wasm.__wbg_set_engineconfig_allow_ollama_usage(this.__wbg_ptr, arg0);
+    withOpenaiApiKey(openaiApiKey) {
+        const ret = wasm.engineconfig_withOpenaiApiKey(this.__wbg_ptr, openaiApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {string} openrouterApiKey
+     * @returns {EngineConfig}
      */
-    set anthropic_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_anthropic_api_key(this.__wbg_ptr, ptr0, len0);
+    withOpenrouterApiKey(openrouterApiKey) {
+        const ret = wasm.engineconfig_withOpenrouterApiKey(this.__wbg_ptr, openrouterApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {string} xaiApiKey
+     * @returns {EngineConfig}
      */
-    set baseten_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_baseten_api_key(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {DownloadManagerType} arg0
-     */
-    set download_manager_type(arg0) {
-        wasm.__wbg_set_engineconfig_download_manager_type(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set gemini_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_gemini_api_key(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set huggingface_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_huggingface_api_key(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set local_path(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_local_path(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set mirai_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_mirai_api_key(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set openai_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_openai_api_key(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set openrouter_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_openrouter_api_key(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set xai_api_key(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_engineconfig_xai_api_key(this.__wbg_ptr, ptr0, len0);
+    withXaiApiKey(xaiApiKey) {
+        const ret = wasm.engineconfig_withXaiApiKey(this.__wbg_ptr, xaiApiKey);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) EngineConfig.prototype[Symbol.dispose] = EngineConfig.prototype.free;
@@ -2787,49 +5978,61 @@ export class Feature {
         wasm.__wbg_feature_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
+     */
+    __uzuCloneFeature() {
+        const ret = wasm.feature___uzuCloneFeature(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_feature_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.feature___wasm_get_name(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string[]}
+     * @returns {any}
      */
     get values() {
-        const ret = wasm.__wbg_get_feature_values(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+        const ret = wasm.feature___wasm_get_values(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {string} arg0
+     * @param {string} name
+     * @param {Array<string>} values
      */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_feature_name(this.__wbg_ptr, ptr0, len0);
+    constructor(name, values) {
+        const ret = wasm.feature___wasm_new(name, values);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        FeatureFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string[]} arg0
+     * @param {any} value
      */
-    set values(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_feature_values(this.__wbg_ptr, ptr0, len0);
+    set name(value) {
+        wasm.feature___wasm_set_name(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set values(value) {
+        wasm.feature___wasm_set_values(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) Feature.prototype[Symbol.dispose] = Feature.prototype.free;
 
 export class File {
+    static __wrap(ptr) {
+        const obj = Object.create(File.prototype);
+        obj.__wbg_ptr = ptr;
+        FileFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -2841,95 +6044,231 @@ export class File {
         wasm.__wbg_file_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
      */
-    get crc32c() {
-        const ret = wasm.file_crc32c(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+    __uzuCloneFile() {
+        const ret = wasm.file___uzuCloneFile(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {Hash[]}
+     * @returns {string | null}
+     */
+    get crc32C() {
+        const ret = wasm.file___wasm_crc32c(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {any}
      */
     get hashes() {
-        const ret = wasm.__wbg_get_file_hashes(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @returns {string}
-     */
-    get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_file_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {bigint}
-     */
-    get size() {
-        const ret = wasm.__wbg_get_file_size(this.__wbg_ptr);
+        const ret = wasm.file___wasm_get_hashes(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
+     */
+    get name() {
+        const ret = wasm.file___wasm_get_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get size() {
+        const ret = wasm.file___wasm_get_size(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get url() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_file_url(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.file___wasm_get_url(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} url
+     * @param {string} name
+     * @param {number} size
+     * @param {Array<Hash>} hashes
+     */
+    constructor(url, name, size, hashes) {
+        const ret = wasm.file___wasm_new(url, name, size, hashes);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        FileFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Hash[]} arg0
+     * @param {any} value
      */
-    set hashes(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_file_hashes(this.__wbg_ptr, ptr0, len0);
+    set hashes(value) {
+        wasm.file___wasm_set_hashes(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_file_name(this.__wbg_ptr, ptr0, len0);
+    set name(value) {
+        wasm.file___wasm_set_name(this.__wbg_ptr, value);
     }
     /**
-     * @param {bigint} arg0
+     * @param {any} value
      */
-    set size(arg0) {
-        wasm.__wbg_set_file_size(this.__wbg_ptr, arg0);
+    set size(value) {
+        wasm.file___wasm_set_size(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set url(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_file_url(this.__wbg_ptr, ptr0, len0);
+    set url(value) {
+        wasm.file___wasm_set_url(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) File.prototype[Symbol.dispose] = File.prototype.free;
+
+export class GrammarJsonAny {
+    static __wrap(ptr) {
+        const obj = Object.create(GrammarJsonAny.prototype);
+        obj.__wbg_ptr = ptr;
+        GrammarJsonAnyFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        GrammarJsonAnyFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_grammarjsonany_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneGrammar() {
+        const ret = wasm.grammarjsonany___uzuCloneGrammar(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.grammarjsonany___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        GrammarJsonAnyFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) GrammarJsonAny.prototype[Symbol.dispose] = GrammarJsonAny.prototype.free;
+
+export class GrammarJsonSchema {
+    static __wrap(ptr) {
+        const obj = Object.create(GrammarJsonSchema.prototype);
+        obj.__wbg_ptr = ptr;
+        GrammarJsonSchemaFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        GrammarJsonSchemaFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_grammarjsonschema_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneGrammar() {
+        const ret = wasm.grammarjsonschema___uzuCloneGrammar(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get schema() {
+        const ret = wasm.grammarjsonschema___wasm_get_schema(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} schema
+     */
+    constructor(schema) {
+        const ret = wasm.grammarjsonschema___wasm_new(schema);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        GrammarJsonSchemaFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set schema(value) {
+        wasm.grammarjsonschema___wasm_set_schema(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) GrammarJsonSchema.prototype[Symbol.dispose] = GrammarJsonSchema.prototype.free;
+
+export class GrammarRegex {
+    static __wrap(ptr) {
+        const obj = Object.create(GrammarRegex.prototype);
+        obj.__wbg_ptr = ptr;
+        GrammarRegexFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        GrammarRegexFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_grammarregex_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneGrammar() {
+        const ret = wasm.grammarregex___uzuCloneGrammar(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get pattern() {
+        const ret = wasm.grammarregex___wasm_get_pattern(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} pattern
+     */
+    constructor(pattern) {
+        const ret = wasm.grammarregex___wasm_new(pattern);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        GrammarRegexFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set pattern(value) {
+        wasm.grammarregex___wasm_set_pattern(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) GrammarRegex.prototype[Symbol.dispose] = GrammarRegex.prototype.free;
 
 export class Hash {
     static __wrap(ptr) {
@@ -2937,12 +6276,6 @@ export class Hash {
         obj.__wbg_ptr = ptr;
         HashFinalization.register(obj, obj.__wbg_ptr, obj);
         return obj;
-    }
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof Hash)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
     }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -2955,20 +6288,73 @@ export class Hash {
         wasm.__wbg_hash_free(ptr, 0);
     }
     /**
-     * @returns {HashMethod}
+     * @returns {number}
+     */
+    __uzuCloneHash() {
+        const ret = wasm.hash___uzuCloneHash(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get method() {
-        const ret = wasm.__wbg_get_hash_method(this.__wbg_ptr);
+        const ret = wasm.hash___wasm_get_method(this.__wbg_ptr);
         return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get value() {
+        const ret = wasm.hash___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {HashMethod} method
+     * @param {string} value
+     */
+    constructor(method, value) {
+        const ret = wasm.hash___wasm_new(method, value);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        HashFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set method(value) {
+        wasm.hash___wasm_set_method(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set value(value) {
+        wasm.hash___wasm_set_value(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) Hash.prototype[Symbol.dispose] = Hash.prototype.free;
+
+export class HashMethod {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        HashMethodFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_hashmethod_free(ptr, 0);
     }
     /**
      * @returns {string}
      */
-    get value() {
+    static get CRC32C() {
         let deferred1_0;
         let deferred1_1;
         try {
-            const ret = wasm.__wbg_get_hash_value(this.__wbg_ptr);
+            const ret = wasm.hashmethod___wasm_variant_CRC32C();
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);
@@ -2977,21 +6363,37 @@ export class Hash {
         }
     }
     /**
-     * @param {HashMethod} arg0
+     * @returns {string}
      */
-    set method(arg0) {
-        wasm.__wbg_set_hash_method(this.__wbg_ptr, arg0);
+    static get GitBlobSha1() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.hashmethod___wasm_variant_GitBlobSha1();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
-     * @param {string} arg0
+     * @returns {string}
      */
-    set value(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_hash_value(this.__wbg_ptr, ptr0, len0);
+    static get Sha256() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.hashmethod___wasm_variant_Sha256();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
 }
-if (Symbol.dispose) Hash.prototype[Symbol.dispose] = Hash.prototype.free;
+if (Symbol.dispose) HashMethod.prototype[Symbol.dispose] = HashMethod.prototype.free;
 
 export class Image {
     static __wrap(ptr) {
@@ -2999,12 +6401,6 @@ export class Image {
         obj.__wbg_ptr = ptr;
         ImageFinalization.register(obj, obj.__wbg_ptr, obj);
         return obj;
-    }
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof Image)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
     }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -3017,125 +6413,226 @@ export class Image {
         wasm.__wbg_image_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
+     */
+    __uzuCloneImage() {
+        const ret = wasm.image___uzuCloneImage(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get description() {
-        const ret = wasm.__wbg_get_image_description(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+        const ret = wasm.image___wasm_get_description(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {ImageFormat}
+     * @returns {any}
      */
     get format() {
-        const ret = wasm.__wbg_get_image_format(this.__wbg_ptr);
+        const ret = wasm.image___wasm_get_format(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {number | undefined}
+     * @returns {any}
      */
     get height() {
-        const ret = wasm.__wbg_get_image_height(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
-    }
-    /**
-     * @returns {string}
-     */
-    get id() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_image_id(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {ImageTheme}
-     */
-    get theme() {
-        const ret = wasm.__wbg_get_image_theme(this.__wbg_ptr);
+        const ret = wasm.image___wasm_get_height(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
+     */
+    get id() {
+        const ret = wasm.image___wasm_get_id(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get theme() {
+        const ret = wasm.image___wasm_get_theme(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get url() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_image_url(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.image___wasm_get_url(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {number | undefined}
+     * @returns {any}
      */
     get width() {
-        const ret = wasm.__wbg_get_image_width(this.__wbg_ptr);
-        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+        const ret = wasm.image___wasm_get_width(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {string} id
+     * @param {string} url
+     * @param {ImageTheme} theme
+     * @param {ImageFormat} format
+     * @param {string | null} [description]
+     * @param {number | null} [width]
+     * @param {number | null} [height]
      */
-    set description(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_image_description(this.__wbg_ptr, ptr0, len0);
+    constructor(id, url, theme, format, description, width, height) {
+        const ret = wasm.image___wasm_new(id, url, theme, format, description, width, height);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ImageFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {ImageFormat} arg0
+     * @param {any} value
      */
-    set format(arg0) {
-        wasm.__wbg_set_image_format(this.__wbg_ptr, arg0);
+    set description(value) {
+        wasm.image___wasm_set_description(this.__wbg_ptr, value);
     }
     /**
-     * @param {number | null} [arg0]
+     * @param {any} value
      */
-    set height(arg0) {
-        wasm.__wbg_set_image_height(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
+    set format(value) {
+        wasm.image___wasm_set_format(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set id(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_image_id(this.__wbg_ptr, ptr0, len0);
+    set height(value) {
+        wasm.image___wasm_set_height(this.__wbg_ptr, value);
     }
     /**
-     * @param {ImageTheme} arg0
+     * @param {any} value
      */
-    set theme(arg0) {
-        wasm.__wbg_set_image_theme(this.__wbg_ptr, arg0);
+    set id(value) {
+        wasm.image___wasm_set_id(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set url(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_image_url(this.__wbg_ptr, ptr0, len0);
+    set theme(value) {
+        wasm.image___wasm_set_theme(this.__wbg_ptr, value);
     }
     /**
-     * @param {number | null} [arg0]
+     * @param {any} value
      */
-    set width(arg0) {
-        wasm.__wbg_set_image_width(this.__wbg_ptr, isLikeNone(arg0) ? Number.MAX_SAFE_INTEGER : (arg0) >>> 0);
+    set url(value) {
+        wasm.image___wasm_set_url(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set width(value) {
+        wasm.image___wasm_set_width(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) Image.prototype[Symbol.dispose] = Image.prototype.free;
+
+export class ImageFormat {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ImageFormatFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_imageformat_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Png() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.imageformat___wasm_variant_Png();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Svg() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.imageformat___wasm_variant_Svg();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Webp() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.imageformat___wasm_variant_Webp();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ImageFormat.prototype[Symbol.dispose] = ImageFormat.prototype.free;
+
+export class ImageTheme {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ImageThemeFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_imagetheme_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Dark() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.imagetheme___wasm_variant_Dark();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Light() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.imagetheme___wasm_variant_Light();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ImageTheme.prototype[Symbol.dispose] = ImageTheme.prototype.free;
 
 export class IntoUnderlyingByteSource {
     __destroy_into_raw() {
@@ -3266,97 +6763,89 @@ export class Metadata {
         wasm.__wbg_metadata_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
+     */
+    __uzuCloneMetadata() {
+        const ret = wasm.metadata___uzuCloneMetadata(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get description() {
-        const ret = wasm.__wbg_get_metadata_description(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+        const ret = wasm.metadata___wasm_get_description(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {Image[]}
+     * @returns {any}
      */
     get icons() {
-        const ret = wasm.__wbg_get_metadata_icons(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+        const ret = wasm.metadata___wasm_get_icons(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_metadata_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.metadata___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_metadata_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.metadata___wasm_get_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} identifier
+     * @param {string} name
+     * @param {string | undefined | null} description
+     * @param {Array<Image>} icons
+     */
+    constructor(identifier, name, description, icons) {
+        const ret = wasm.metadata___wasm_new(identifier, name, description, icons);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        MetadataFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set description(value) {
+        wasm.metadata___wasm_set_description(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set icons(value) {
+        wasm.metadata___wasm_set_icons(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set identifier(value) {
+        wasm.metadata___wasm_set_identifier(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set name(value) {
+        wasm.metadata___wasm_set_name(this.__wbg_ptr, value);
     }
     /**
      * @param {string} name
      * @returns {Metadata}
      */
     static external(name) {
-        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.metadata_external(ptr0, len0);
-        return Metadata.__wrap(ret);
-    }
-    /**
-     * @param {string | null} [arg0]
-     */
-    set description(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_metadata_description(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {Image[]} arg0
-     */
-    set icons(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_metadata_icons(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string} arg0
-     */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_metadata_identifier(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string} arg0
-     */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_metadata_name(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.metadata_external(name);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) Metadata.prototype[Symbol.dispose] = Metadata.prototype.free;
@@ -3379,325 +6868,414 @@ export class Model {
         wasm.__wbg_model_free(ptr, 0);
     }
     /**
-     * @returns {ModelAccessibility}
+     * @returns {number}
      */
-    get accessibility() {
-        const ret = wasm.__wbg_get_model_accessibility(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {ModelBackend[]}
-     */
-    get backends() {
-        const ret = wasm.__wbg_get_model_backends(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @returns {Value | undefined}
-     */
-    get encoding() {
-        const ret = wasm.__wbg_get_model_encoding(this.__wbg_ptr);
-        return ret === 0 ? undefined : Value.__wrap(ret);
-    }
-    /**
-     * @returns {ModelFamily | undefined}
-     */
-    get family() {
-        const ret = wasm.__wbg_get_model_family(this.__wbg_ptr);
-        return ret === 0 ? undefined : ModelFamily.__wrap(ret);
-    }
-    /**
-     * @returns {string}
-     */
-    get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_model_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {ModelProperties | undefined}
-     */
-    get properties() {
-        const ret = wasm.__wbg_get_model_properties(this.__wbg_ptr);
-        return ret === 0 ? undefined : ModelProperties.__wrap(ret);
-    }
-    /**
-     * @returns {ModelQuantization | undefined}
-     */
-    get quantization() {
-        const ret = wasm.__wbg_get_model_quantization(this.__wbg_ptr);
-        return ret === 0 ? undefined : ModelQuantization.__wrap(ret);
-    }
-    /**
-     * @returns {ModelRegistry}
-     */
-    get registry() {
-        const ret = wasm.__wbg_get_model_registry(this.__wbg_ptr);
-        return ModelRegistry.__wrap(ret);
-    }
-    /**
-     * @returns {ModelSpecialization[]}
-     */
-    get specializations() {
-        const ret = wasm.__wbg_get_model_specializations(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+    __uzuCloneModel() {
+        const ret = wasm.model___uzuCloneModel(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * @returns {string}
      */
     get cacheIdentifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.model_cacheIdentifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.model___wasm_cache_identifier(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {string | null}
      */
     get checkpointVersion() {
-        const ret = wasm.model_checkpointVersion(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        const ret = wasm.model___wasm_checkpoint_version(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} identifier
-     * @param {string} registry_identifier
-     * @param {string} registry_name
-     * @param {string} backend_identifier
-     * @param {string} backend_name
-     * @param {string} backend_version
-     * @param {ModelSpecialization[]} specializations
-     * @param {ModelAccessibility} accessibility
-     * @param {Value | null} [encoding]
-     * @returns {Model}
-     */
-    static external(identifier, registry_identifier, registry_name, backend_identifier, backend_name, backend_version, specializations, accessibility, encoding) {
-        const ptr0 = passStringToWasm0(identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(registry_identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(registry_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ptr3 = passStringToWasm0(backend_identifier, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len3 = WASM_VECTOR_LEN;
-        const ptr4 = passStringToWasm0(backend_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len4 = WASM_VECTOR_LEN;
-        const ptr5 = passStringToWasm0(backend_version, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len5 = WASM_VECTOR_LEN;
-        const ptr6 = passArrayJsValueToWasm0(specializations, wasm.__wbindgen_malloc);
-        const len6 = WASM_VECTOR_LEN;
-        let ptr7 = 0;
-        if (!isLikeNone(encoding)) {
-            _assertClass(encoding, Value);
-            ptr7 = encoding.__destroy_into_raw();
-        }
-        const ret = wasm.model_external(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, accessibility, ptr7);
-        return Model.__wrap(ret);
-    }
-    /**
-     * @returns {string | undefined}
+     * @returns {string | null}
      */
     get filesystemPath() {
-        const ret = wasm.model_filesystemPath(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        const ret = wasm.model___wasm_filesystem_path(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {any}
+     */
+    get accessibility() {
+        const ret = wasm.model___wasm_get_accessibility(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get backends() {
+        const ret = wasm.model___wasm_get_backends(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get encoding() {
+        const ret = wasm.model___wasm_get_encoding(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get family() {
+        const ret = wasm.model___wasm_get_family(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get identifier() {
+        const ret = wasm.model___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get properties() {
+        const ret = wasm.model___wasm_get_properties(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get quantization() {
+        const ret = wasm.model___wasm_get_quantization(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get registry() {
+        const ret = wasm.model___wasm_get_registry(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get specializations() {
+        const ret = wasm.model___wasm_get_specializations(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {boolean}
      */
     get isChatCapable() {
-        const ret = wasm.model_isChatCapable(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_chat_capable(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isClassificationCapable() {
-        const ret = wasm.model_isClassificationCapable(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_classification_capable(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isDownloadable() {
-        const ret = wasm.model_isDownloadable(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_downloadable(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isOnDevice() {
-        const ret = wasm.model_isOnDevice(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_on_device(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isQuantized() {
-        const ret = wasm.model_isQuantized(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_quantized(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isRemote() {
-        const ret = wasm.model_isRemote(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_remote(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isSpeculationCapable() {
-        const ret = wasm.model_isSpeculationCapable(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_speculation_capable(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isTextToSpeechCapable() {
-        const ret = wasm.model_isTextToSpeechCapable(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_text_to_speech_capable(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {boolean}
      */
     get isTranslationCapable() {
-        const ret = wasm.model_isTranslationCapable(this.__wbg_ptr);
-        return ret !== 0;
+        const ret = wasm.model___wasm_is_translation_capable(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.model_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.model___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @returns {string[]}
+     * @param {ModelIdentifier} identifier
+     * @param {ModelRegistry} registry
+     * @param {Array<ModelBackend>} backends
+     * @param {ModelFamily | undefined | null} family
+     * @param {ModelProperties | undefined | null} properties
+     * @param {ModelQuantization | undefined | null} quantization
+     * @param {Array<ModelSpecialization>} specializations
+     * @param {ModelAccessibility} accessibility
+     * @param {Value | null} [encoding]
+     */
+    constructor(identifier, registry, backends, family, properties, quantization, specializations, accessibility, encoding) {
+        const ret = wasm.model___wasm_new(identifier, registry, backends, family, properties, quantization, specializations, accessibility, encoding);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {Array<string>}
      */
     get repoIds() {
-        const ret = wasm.model_repoIds(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @param {ModelAccessibility} arg0
-     */
-    set accessibility(arg0) {
-        wasm.__wbg_set_model_accessibility(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {ModelBackend[]} arg0
-     */
-    set backends(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_model_backends(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {Value | null} [arg0]
-     */
-    set encoding(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, Value);
-            ptr0 = arg0.__destroy_into_raw();
+        const ret = wasm.model___wasm_repo_ids(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        wasm.__wbg_set_model_encoding(this.__wbg_ptr, ptr0);
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {ModelFamily | null} [arg0]
+     * @param {any} value
      */
-    set family(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, ModelFamily);
-            ptr0 = arg0.__destroy_into_raw();
+    set accessibility(value) {
+        wasm.model___wasm_set_accessibility(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set backends(value) {
+        wasm.model___wasm_set_backends(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set encoding(value) {
+        wasm.model___wasm_set_encoding(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set family(value) {
+        wasm.model___wasm_set_family(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set identifier(value) {
+        wasm.model___wasm_set_identifier(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set properties(value) {
+        wasm.model___wasm_set_properties(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set quantization(value) {
+        wasm.model___wasm_set_quantization(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set registry(value) {
+        wasm.model___wasm_set_registry(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set specializations(value) {
+        wasm.model___wasm_set_specializations(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {ModelIdentifier} identifier
+     * @param {string} registryIdentifier
+     * @param {string} registryName
+     * @param {string} backendIdentifier
+     * @param {string} backendName
+     * @param {string} backendVersion
+     * @param {Array<ModelSpecialization>} specializations
+     * @param {ModelAccessibility} accessibility
+     * @param {Value | null} [encoding]
+     * @returns {Model}
+     */
+    static external(identifier, registryIdentifier, registryName, backendIdentifier, backendName, backendVersion, specializations, accessibility, encoding) {
+        const ret = wasm.model_external(identifier, registryIdentifier, registryName, backendIdentifier, backendName, backendVersion, specializations, accessibility, encoding);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        wasm.__wbg_set_model_family(this.__wbg_ptr, ptr0);
-    }
-    /**
-     * @param {string} arg0
-     */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_model_identifier(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {ModelProperties | null} [arg0]
-     */
-    set properties(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, ModelProperties);
-            ptr0 = arg0.__destroy_into_raw();
-        }
-        wasm.__wbg_set_model_properties(this.__wbg_ptr, ptr0);
-    }
-    /**
-     * @param {ModelQuantization | null} [arg0]
-     */
-    set quantization(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, ModelQuantization);
-            ptr0 = arg0.__destroy_into_raw();
-        }
-        wasm.__wbg_set_model_quantization(this.__wbg_ptr, ptr0);
-    }
-    /**
-     * @param {ModelRegistry} arg0
-     */
-    set registry(arg0) {
-        _assertClass(arg0, ModelRegistry);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_model_registry(this.__wbg_ptr, ptr0);
-    }
-    /**
-     * @param {ModelSpecialization[]} arg0
-     */
-    set specializations(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_model_specializations(this.__wbg_ptr, ptr0, len0);
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) Model.prototype[Symbol.dispose] = Model.prototype.free;
+
+export class ModelAccessibilityOnDevice {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelAccessibilityOnDevice.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelAccessibilityOnDeviceFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelAccessibilityOnDeviceFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelaccessibilityondevice_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelAccessibility() {
+        const ret = wasm.modelaccessibilityondevice___uzuCloneModelAccessibility(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get source() {
+        const ret = wasm.modelaccessibilityondevice___wasm_get_source(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ModelSource} source
+     */
+    constructor(source) {
+        const ret = wasm.modelaccessibilityondevice___wasm_new(source);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelAccessibilityOnDeviceFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set source(value) {
+        wasm.modelaccessibilityondevice___wasm_set_source(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ModelAccessibilityOnDevice.prototype[Symbol.dispose] = ModelAccessibilityOnDevice.prototype.free;
+
+export class ModelAccessibilityRemote {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelAccessibilityRemote.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelAccessibilityRemoteFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelAccessibilityRemoteFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelaccessibilityremote_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelAccessibility() {
+        const ret = wasm.modelaccessibilityremote___uzuCloneModelAccessibility(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get repository() {
+        const ret = wasm.modelaccessibilityremote___wasm_get_repository(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Repository | null} [repository]
+     */
+    constructor(repository) {
+        const ret = wasm.modelaccessibilityremote___wasm_new(repository);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelAccessibilityRemoteFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set repository(value) {
+        wasm.modelaccessibilityremote___wasm_set_repository(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ModelAccessibilityRemote.prototype[Symbol.dispose] = ModelAccessibilityRemote.prototype.free;
 
 export class ModelBackend {
     static __wrap(ptr) {
@@ -3705,12 +7283,6 @@ export class ModelBackend {
         obj.__wbg_ptr = ptr;
         ModelBackendFinalization.register(obj, obj.__wbg_ptr, obj);
         return obj;
-    }
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof ModelBackend)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
     }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -3723,80 +7295,74 @@ export class ModelBackend {
         wasm.__wbg_modelbackend_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
+     */
+    __uzuCloneModelBackend() {
+        const ret = wasm.modelbackend___uzuCloneModelBackend(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelbackend_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.modelbackend___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {Metadata}
+     * @returns {any}
      */
     get metadata() {
-        const ret = wasm.__wbg_get_modelbackend_metadata(this.__wbg_ptr);
-        return Metadata.__wrap(ret);
+        const ret = wasm.modelbackend___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get version() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelbackend_version(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.modelbackend___wasm_get_version(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.modelbackend_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.modelbackend___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} arg0
+     * @param {string} identifier
+     * @param {string} version
+     * @param {Metadata} metadata
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelbackend_identifier(this.__wbg_ptr, ptr0, len0);
+    constructor(identifier, version, metadata) {
+        const ret = wasm.modelbackend___wasm_new(identifier, version, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelBackendFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Metadata} arg0
+     * @param {any} value
      */
-    set metadata(arg0) {
-        _assertClass(arg0, Metadata);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelbackend_metadata(this.__wbg_ptr, ptr0);
+    set identifier(value) {
+        wasm.modelbackend___wasm_set_identifier(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set version(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelbackend_version(this.__wbg_ptr, ptr0, len0);
+    set metadata(value) {
+        wasm.modelbackend___wasm_set_metadata(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set version(value) {
+        wasm.modelbackend___wasm_set_version(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ModelBackend.prototype[Symbol.dispose] = ModelBackend.prototype.free;
@@ -3819,72 +7385,74 @@ export class ModelFamily {
         wasm.__wbg_modelfamily_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
+     */
+    __uzuCloneModelFamily() {
+        const ret = wasm.modelfamily___uzuCloneModelFamily(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelfamily_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.modelfamily___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {Metadata}
+     * @returns {any}
      */
     get metadata() {
-        const ret = wasm.__wbg_get_modelfamily_metadata(this.__wbg_ptr);
-        return Metadata.__wrap(ret);
+        const ret = wasm.modelfamily___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {ModelVendor}
+     * @returns {any}
      */
     get vendor() {
-        const ret = wasm.__wbg_get_modelfamily_vendor(this.__wbg_ptr);
-        return ModelVendor.__wrap(ret);
+        const ret = wasm.modelfamily___wasm_get_vendor(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.modelfamily_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.modelfamily___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} arg0
+     * @param {string} identifier
+     * @param {ModelVendor} vendor
+     * @param {Metadata} metadata
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelfamily_identifier(this.__wbg_ptr, ptr0, len0);
+    constructor(identifier, vendor, metadata) {
+        const ret = wasm.modelfamily___wasm_new(identifier, vendor, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelFamilyFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Metadata} arg0
+     * @param {any} value
      */
-    set metadata(arg0) {
-        _assertClass(arg0, Metadata);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelfamily_metadata(this.__wbg_ptr, ptr0);
+    set identifier(value) {
+        wasm.modelfamily___wasm_set_identifier(this.__wbg_ptr, value);
     }
     /**
-     * @param {ModelVendor} arg0
+     * @param {any} value
      */
-    set vendor(arg0) {
-        _assertClass(arg0, ModelVendor);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelfamily_vendor(this.__wbg_ptr, ptr0);
+    set metadata(value) {
+        wasm.modelfamily___wasm_set_metadata(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set vendor(value) {
+        wasm.modelfamily___wasm_set_vendor(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ModelFamily.prototype[Symbol.dispose] = ModelFamily.prototype.free;
@@ -3907,90 +7475,88 @@ export class ModelProperties {
         wasm.__wbg_modelproperties_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
+     */
+    __uzuCloneModelProperties() {
+        const ret = wasm.modelproperties___uzuCloneModelProperties(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelproperties_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {Metadata}
-     */
-    get metadata() {
-        const ret = wasm.__wbg_get_modelproperties_metadata(this.__wbg_ptr);
-        return Metadata.__wrap(ret);
-    }
-    /**
-     * @returns {bigint}
-     */
-    get size() {
-        const ret = wasm.__wbg_get_modelproperties_size(this.__wbg_ptr);
+        const ret = wasm.modelproperties___wasm_get_identifier(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @returns {string | undefined}
+     * @returns {any}
+     */
+    get metadata() {
+        const ret = wasm.modelproperties___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get size() {
+        const ret = wasm.modelproperties___wasm_get_size(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get version() {
-        const ret = wasm.__wbg_get_modelproperties_version(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+        const ret = wasm.modelproperties___wasm_get_version(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.modelproperties_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.modelproperties___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} arg0
+     * @param {string} identifier
+     * @param {number} size
+     * @param {string | undefined | null} version
+     * @param {Metadata} metadata
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelproperties_identifier(this.__wbg_ptr, ptr0, len0);
+    constructor(identifier, size, version, metadata) {
+        const ret = wasm.modelproperties___wasm_new(identifier, size, version, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelPropertiesFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Metadata} arg0
+     * @param {any} value
      */
-    set metadata(arg0) {
-        _assertClass(arg0, Metadata);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelproperties_metadata(this.__wbg_ptr, ptr0);
+    set identifier(value) {
+        wasm.modelproperties___wasm_set_identifier(this.__wbg_ptr, value);
     }
     /**
-     * @param {bigint} arg0
+     * @param {any} value
      */
-    set size(arg0) {
-        wasm.__wbg_set_modelproperties_size(this.__wbg_ptr, arg0);
+    set metadata(value) {
+        wasm.modelproperties___wasm_set_metadata(this.__wbg_ptr, value);
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {any} value
      */
-    set version(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelproperties_version(this.__wbg_ptr, ptr0, len0);
+    set size(value) {
+        wasm.modelproperties___wasm_set_size(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set version(value) {
+        wasm.modelproperties___wasm_set_version(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ModelProperties.prototype[Symbol.dispose] = ModelProperties.prototype.free;
@@ -4015,106 +7581,100 @@ export class ModelQuantization {
     /**
      * @returns {number}
      */
-    get bits_per_weight() {
-        const ret = wasm.__wbg_get_modelquantization_bits_per_weight(this.__wbg_ptr);
+    __uzuCloneModelQuantization() {
+        const ret = wasm.modelquantization___uzuCloneModelQuantization(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
-     * @returns {string}
+     * @returns {any}
+     */
+    get bitsPerWeight() {
+        const ret = wasm.modelquantization___wasm_get_bits_per_weight(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelquantization_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.modelquantization___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {Metadata}
+     * @returns {any}
      */
     get metadata() {
-        const ret = wasm.__wbg_get_modelquantization_metadata(this.__wbg_ptr);
-        return Metadata.__wrap(ret);
+        const ret = wasm.modelquantization___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get method() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelquantization_method(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.modelquantization___wasm_get_method(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {ModelVendor}
+     * @returns {any}
      */
     get vendor() {
-        const ret = wasm.__wbg_get_modelquantization_vendor(this.__wbg_ptr);
-        return ModelVendor.__wrap(ret);
+        const ret = wasm.modelquantization___wasm_get_vendor(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.modelquantization_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.modelquantization___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {number} arg0
+     * @param {string} identifier
+     * @param {string} method
+     * @param {number} bitsPerWeight
+     * @param {ModelVendor} vendor
+     * @param {Metadata} metadata
      */
-    set bits_per_weight(arg0) {
-        wasm.__wbg_set_modelquantization_bits_per_weight(this.__wbg_ptr, arg0);
+    constructor(identifier, method, bitsPerWeight, vendor, metadata) {
+        const ret = wasm.modelquantization___wasm_new(identifier, method, bitsPerWeight, vendor, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelQuantizationFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelquantization_identifier(this.__wbg_ptr, ptr0, len0);
+    set bitsPerWeight(value) {
+        wasm.modelquantization___wasm_set_bits_per_weight(this.__wbg_ptr, value);
     }
     /**
-     * @param {Metadata} arg0
+     * @param {any} value
      */
-    set metadata(arg0) {
-        _assertClass(arg0, Metadata);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelquantization_metadata(this.__wbg_ptr, ptr0);
+    set identifier(value) {
+        wasm.modelquantization___wasm_set_identifier(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set method(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelquantization_method(this.__wbg_ptr, ptr0, len0);
+    set metadata(value) {
+        wasm.modelquantization___wasm_set_metadata(this.__wbg_ptr, value);
     }
     /**
-     * @param {ModelVendor} arg0
+     * @param {any} value
      */
-    set vendor(arg0) {
-        _assertClass(arg0, ModelVendor);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelquantization_vendor(this.__wbg_ptr, ptr0);
+    set method(value) {
+        wasm.modelquantization___wasm_set_method(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set vendor(value) {
+        wasm.modelquantization___wasm_set_vendor(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ModelQuantization.prototype[Symbol.dispose] = ModelQuantization.prototype.free;
@@ -4137,60 +7697,425 @@ export class ModelRegistry {
         wasm.__wbg_modelregistry_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
      */
-    get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelregistry_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+    __uzuCloneModelRegistry() {
+        const ret = wasm.modelregistry___uzuCloneModelRegistry(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {Metadata}
+     * @returns {any}
+     */
+    get identifier() {
+        const ret = wasm.modelregistry___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get metadata() {
-        const ret = wasm.__wbg_get_modelregistry_metadata(this.__wbg_ptr);
-        return Metadata.__wrap(ret);
+        const ret = wasm.modelregistry___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.modelregistry_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.modelregistry___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} arg0
+     * @param {string} identifier
+     * @param {Metadata} metadata
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelregistry_identifier(this.__wbg_ptr, ptr0, len0);
+    constructor(identifier, metadata) {
+        const ret = wasm.modelregistry___wasm_new(identifier, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelRegistryFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Metadata} arg0
+     * @param {any} value
      */
-    set metadata(arg0) {
-        _assertClass(arg0, Metadata);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelregistry_metadata(this.__wbg_ptr, ptr0);
+    set identifier(value) {
+        wasm.modelregistry___wasm_set_identifier(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set metadata(value) {
+        wasm.modelregistry___wasm_set_metadata(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ModelRegistry.prototype[Symbol.dispose] = ModelRegistry.prototype.free;
+
+export class ModelSourceFilesystem {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSourceFilesystem.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSourceFilesystemFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSourceFilesystemFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelsourcefilesystem_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSource() {
+        const ret = wasm.modelsourcefilesystem___uzuCloneModelSource(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get path() {
+        const ret = wasm.modelsourcefilesystem___wasm_get_path(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} path
+     */
+    constructor(path) {
+        const ret = wasm.modelsourcefilesystem___wasm_new(path);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSourceFilesystemFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set path(value) {
+        wasm.modelsourcefilesystem___wasm_set_path(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ModelSourceFilesystem.prototype[Symbol.dispose] = ModelSourceFilesystem.prototype.free;
+
+export class ModelSourceRegistry {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSourceRegistry.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSourceRegistryFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSourceRegistryFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelsourceregistry_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSource() {
+        const ret = wasm.modelsourceregistry___uzuCloneModelSource(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get files() {
+        const ret = wasm.modelsourceregistry___wasm_get_files(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get repository() {
+        const ret = wasm.modelsourceregistry___wasm_get_repository(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get sourceRepository() {
+        const ret = wasm.modelsourceregistry___wasm_get_source_repository(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get toolchainVersion() {
+        const ret = wasm.modelsourceregistry___wasm_get_toolchain_version(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} toolchainVersion
+     * @param {Repository | undefined | null} repository
+     * @param {Repository | undefined | null} sourceRepository
+     * @param {Array<File>} files
+     */
+    constructor(toolchainVersion, repository, sourceRepository, files) {
+        const ret = wasm.modelsourceregistry___wasm_new(toolchainVersion, repository, sourceRepository, files);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSourceRegistryFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set files(value) {
+        wasm.modelsourceregistry___wasm_set_files(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set repository(value) {
+        wasm.modelsourceregistry___wasm_set_repository(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set sourceRepository(value) {
+        wasm.modelsourceregistry___wasm_set_source_repository(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set toolchainVersion(value) {
+        wasm.modelsourceregistry___wasm_set_toolchain_version(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ModelSourceRegistry.prototype[Symbol.dispose] = ModelSourceRegistry.prototype.free;
+
+export class ModelSpecializationChat {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSpecializationChat.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSpecializationChatFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSpecializationChatFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelspecializationchat_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSpecialization() {
+        const ret = wasm.modelspecializationchat___uzuCloneModelSpecialization(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.modelspecializationchat___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSpecializationChatFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ModelSpecializationChat.prototype[Symbol.dispose] = ModelSpecializationChat.prototype.free;
+
+export class ModelSpecializationClassification {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSpecializationClassification.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSpecializationClassificationFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSpecializationClassificationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelspecializationclassification_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSpecialization() {
+        const ret = wasm.modelspecializationclassification___uzuCloneModelSpecialization(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.modelspecializationclassification___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSpecializationClassificationFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ModelSpecializationClassification.prototype[Symbol.dispose] = ModelSpecializationClassification.prototype.free;
+
+export class ModelSpecializationDecision {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSpecializationDecision.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSpecializationDecisionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSpecializationDecisionFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelspecializationdecision_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSpecialization() {
+        const ret = wasm.modelspecializationdecision___uzuCloneModelSpecialization(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.modelspecializationdecision___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSpecializationDecisionFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ModelSpecializationDecision.prototype[Symbol.dispose] = ModelSpecializationDecision.prototype.free;
+
+export class ModelSpecializationSpeculation {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSpecializationSpeculation.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSpecializationSpeculationFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSpecializationSpeculationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelspecializationspeculation_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSpecialization() {
+        const ret = wasm.modelspecializationspeculation___uzuCloneModelSpecialization(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.modelspecializationspeculation___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSpecializationSpeculationFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ModelSpecializationSpeculation.prototype[Symbol.dispose] = ModelSpecializationSpeculation.prototype.free;
+
+export class ModelSpecializationTextToSpeech {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSpecializationTextToSpeech.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSpecializationTextToSpeechFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSpecializationTextToSpeechFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelspecializationtexttospeech_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSpecialization() {
+        const ret = wasm.modelspecializationtexttospeech___uzuCloneModelSpecialization(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.modelspecializationtexttospeech___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSpecializationTextToSpeechFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ModelSpecializationTextToSpeech.prototype[Symbol.dispose] = ModelSpecializationTextToSpeech.prototype.free;
+
+export class ModelSpecializationTranslation {
+    static __wrap(ptr) {
+        const obj = Object.create(ModelSpecializationTranslation.prototype);
+        obj.__wbg_ptr = ptr;
+        ModelSpecializationTranslationFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ModelSpecializationTranslationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_modelspecializationtranslation_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneModelSpecialization() {
+        const ret = wasm.modelspecializationtranslation___uzuCloneModelSpecialization(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.modelspecializationtranslation___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelSpecializationTranslationFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) ModelSpecializationTranslation.prototype[Symbol.dispose] = ModelSpecializationTranslation.prototype.free;
 
 export class ModelVendor {
     static __wrap(ptr) {
@@ -4210,68 +8135,65 @@ export class ModelVendor {
         wasm.__wbg_modelvendor_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
      */
-    get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_modelvendor_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+    __uzuCloneModelVendor() {
+        const ret = wasm.modelvendor___uzuCloneModelVendor(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {Metadata}
+     * @returns {any}
+     */
+    get identifier() {
+        const ret = wasm.modelvendor___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get metadata() {
-        const ret = wasm.__wbg_get_modelvendor_metadata(this.__wbg_ptr);
-        return Metadata.__wrap(ret);
+        const ret = wasm.modelvendor___wasm_get_metadata(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {string}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.modelvendor_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.modelvendor___wasm_name(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {string} arg0
+     * @param {string} identifier
+     * @param {Metadata} metadata
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_modelvendor_identifier(this.__wbg_ptr, ptr0, len0);
+    constructor(identifier, metadata) {
+        const ret = wasm.modelvendor___wasm_new(identifier, metadata);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ModelVendorFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Metadata} arg0
+     * @param {any} value
      */
-    set metadata(arg0) {
-        _assertClass(arg0, Metadata);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_modelvendor_metadata(this.__wbg_ptr, ptr0);
+    set identifier(value) {
+        wasm.modelvendor___wasm_set_identifier(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set metadata(value) {
+        wasm.modelvendor___wasm_set_metadata(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ModelVendor.prototype[Symbol.dispose] = ModelVendor.prototype.free;
 
 export class NativeTool {
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof NativeTool)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
-    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -4283,16 +8205,21 @@ export class NativeTool {
         wasm.__wbg_nativetool_free(ptr, 0);
     }
     /**
-     * The definition uses the serialized ToolFunction shape. The callback receives
-     * JSON arguments and an invocation ID, and returns JSON or a promise of JSON.
-     * @param {string} definition_json
-     * @param {Function} invoke_json
-     * @param {Function} cancel
+     * @returns {number}
      */
-    constructor(definition_json, invoke_json, cancel) {
-        const ptr0 = passStringToWasm0(definition_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.nativetool_new(ptr0, len0, invoke_json, cancel);
+    __uzuCloneNativeTool() {
+        const ret = wasm.nativetool___uzuCloneNativeTool(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * The callback receives the JSON arguments and an invocation ID, and returns JSON or a promise
+     * of JSON. `cancel` receives the invocation ID when the call is cancelled.
+     * @param {ToolFunction} definition
+     * @param {(arg0: string, arg1: string) => Promise<string>} invoke_json
+     * @param {(arg: string) => void} cancel
+     */
+    constructor(definition, invoke_json, cancel) {
+        const ret = wasm.nativetool_new(definition, invoke_json, cancel);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -4323,99 +8250,376 @@ export class PcmBatch {
     /**
      * @returns {number}
      */
-    get channels() {
-        const ret = wasm.__wbg_get_pcmbatch_channels(this.__wbg_ptr);
+    __uzuClonePcmBatch() {
+        const ret = wasm.pcmbatch___uzuClonePcmBatch(this.__wbg_ptr);
         return ret >>> 0;
-    }
-    /**
-     * @returns {Uint32Array}
-     */
-    get lengths() {
-        const ret = wasm.__wbg_get_pcmbatch_lengths(this.__wbg_ptr);
-        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
-    }
-    /**
-     * @returns {number}
-     */
-    get sample_rate() {
-        const ret = wasm.__wbg_get_pcmbatch_sample_rate(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * @returns {Float64Array}
-     */
-    get samples() {
-        const ret = wasm.__wbg_get_pcmbatch_samples(this.__wbg_ptr);
-        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-        return v1;
     }
     /**
      * @returns {number}
      */
     get batchSize() {
-        const ret = wasm.pcmbatch_batchSize(this.__wbg_ptr);
-        return ret >>> 0;
+        const ret = wasm.pcmbatch___wasm_batch_size(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @returns {number}
      */
     get duration() {
-        const ret = wasm.pcmbatch_duration(this.__wbg_ptr);
+        const ret = wasm.pcmbatch___wasm_duration(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {any}
+     */
+    get channels() {
+        const ret = wasm.pcmbatch___wasm_get_channels(this.__wbg_ptr);
         return ret;
     }
     /**
-     * @param {string} path
+     * @returns {any}
      */
-    saveAsWav(path) {
-        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.pcmbatch_saveAsWav(this.__wbg_ptr, ptr0, len0);
-        if (ret[1]) {
-            throw takeFromExternrefTable0(ret[0]);
+    get lengths() {
+        const ret = wasm.pcmbatch___wasm_get_lengths(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get sampleRate() {
+        const ret = wasm.pcmbatch___wasm_get_sample_rate(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get samples() {
+        const ret = wasm.pcmbatch___wasm_get_samples(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {Array<number>} samples
+     * @param {number} sampleRate
+     * @param {number} channels
+     * @param {Array<number>} lengths
+     */
+    constructor(samples, sampleRate, channels, lengths) {
+        const ret = wasm.pcmbatch___wasm_new(samples, sampleRate, channels, lengths);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        PcmBatchFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set channels(value) {
+        wasm.pcmbatch___wasm_set_channels(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set lengths(value) {
+        wasm.pcmbatch___wasm_set_lengths(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set sampleRate(value) {
+        wasm.pcmbatch___wasm_set_sample_rate(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set samples(value) {
+        wasm.pcmbatch___wasm_set_samples(this.__wbg_ptr, value);
     }
     /**
      * @returns {number}
      */
     get totalFrames() {
-        const ret = wasm.pcmbatch_totalFrames(this.__wbg_ptr);
-        return ret >>> 0;
+        const ret = wasm.pcmbatch___wasm_total_frames(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * @param {number} arg0
+     * @param {string} path
      */
-    set channels(arg0) {
-        wasm.__wbg_set_pcmbatch_channels(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {Uint32Array} arg0
-     */
-    set lengths(arg0) {
-        const ptr0 = passArray32ToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_pcmbatch_lengths(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {number} arg0
-     */
-    set sample_rate(arg0) {
-        wasm.__wbg_set_pcmbatch_sample_rate(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {Float64Array} arg0
-     */
-    set samples(arg0) {
-        const ptr0 = passArrayF64ToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_pcmbatch_samples(this.__wbg_ptr, ptr0, len0);
+    saveAsWav(path) {
+        const ret = wasm.pcmbatch_saveAsWav(this.__wbg_ptr, path);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
 }
 if (Symbol.dispose) PcmBatch.prototype[Symbol.dispose] = PcmBatch.prototype.free;
 
+export class ReasoningEffort {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ReasoningEffortFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_reasoningeffort_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    static get Default() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.reasoningeffort___wasm_variant_Default();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Disabled() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.reasoningeffort___wasm_variant_Disabled();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get High() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.reasoningeffort___wasm_variant_High();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Low() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.reasoningeffort___wasm_variant_Low();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get Medium() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.reasoningeffort___wasm_variant_Medium();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    static get XHigh() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.reasoningeffort___wasm_variant_XHigh();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) ReasoningEffort.prototype[Symbol.dispose] = ReasoningEffort.prototype.free;
+
+export class ReplyEnergyComponents {
+    static __wrap(ptr) {
+        const obj = Object.create(ReplyEnergyComponents.prototype);
+        obj.__wbg_ptr = ptr;
+        ReplyEnergyComponentsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ReplyEnergyComponentsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_replyenergycomponents_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneReplyEnergy() {
+        const ret = wasm.replyenergycomponents___uzuCloneReplyEnergy(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get ane() {
+        const ret = wasm.replyenergycomponents___wasm_get_ane(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get cpu() {
+        const ret = wasm.replyenergycomponents___wasm_get_cpu(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get dram() {
+        const ret = wasm.replyenergycomponents___wasm_get_dram(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get gpu() {
+        const ret = wasm.replyenergycomponents___wasm_get_gpu(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} cpu
+     * @param {number} gpu
+     * @param {number} ane
+     * @param {number} dram
+     */
+    constructor(cpu, gpu, ane, dram) {
+        const ret = wasm.replyenergycomponents___wasm_new(cpu, gpu, ane, dram);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ReplyEnergyComponentsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set ane(value) {
+        wasm.replyenergycomponents___wasm_set_ane(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set cpu(value) {
+        wasm.replyenergycomponents___wasm_set_cpu(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set dram(value) {
+        wasm.replyenergycomponents___wasm_set_dram(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set gpu(value) {
+        wasm.replyenergycomponents___wasm_set_gpu(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ReplyEnergyComponents.prototype[Symbol.dispose] = ReplyEnergyComponents.prototype.free;
+
+export class ReplyEnergyTotal {
+    static __wrap(ptr) {
+        const obj = Object.create(ReplyEnergyTotal.prototype);
+        obj.__wbg_ptr = ptr;
+        ReplyEnergyTotalFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ReplyEnergyTotalFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_replyenergytotal_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneReplyEnergy() {
+        const ret = wasm.replyenergytotal___uzuCloneReplyEnergy(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get total() {
+        const ret = wasm.replyenergytotal___wasm_get_total(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} total
+     */
+    constructor(total) {
+        const ret = wasm.replyenergytotal___wasm_new(total);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ReplyEnergyTotalFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set total(value) {
+        wasm.replyenergytotal___wasm_set_total(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ReplyEnergyTotal.prototype[Symbol.dispose] = ReplyEnergyTotal.prototype.free;
+
 export class Repository {
+    static __wrap(ptr) {
+        const obj = Object.create(Repository.prototype);
+        obj.__wbg_ptr = ptr;
+        RepositoryFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -4427,70 +8631,225 @@ export class Repository {
         wasm.__wbg_repository_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
      */
-    get commit_hash() {
-        const ret = wasm.__wbg_get_repository_commit_hash(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+    __uzuCloneRepository() {
+        const ret = wasm.repository___uzuCloneRepository(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {string}
+     * @returns {any}
+     */
+    get commitHash() {
+        const ret = wasm.repository___wasm_get_commit_hash(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get identifier() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_repository_identifier(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.repository___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string[] | undefined}
+     * @returns {any}
      */
     get paths() {
-        const ret = wasm.__wbg_get_repository_paths(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        const ret = wasm.repository___wasm_get_paths(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} identifier
+     * @param {string | null} [commitHash]
+     * @param {Array<string> | null} [paths]
+     */
+    constructor(identifier, commitHash, paths) {
+        const ret = wasm.repository___wasm_new(identifier, commitHash, paths);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        return v1;
+        this.__wbg_ptr = ret[0];
+        RepositoryFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {any} value
      */
-    set commit_hash(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_repository_commit_hash(this.__wbg_ptr, ptr0, len0);
+    set commitHash(value) {
+        wasm.repository___wasm_set_commit_hash(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set identifier(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_repository_identifier(this.__wbg_ptr, ptr0, len0);
+    set identifier(value) {
+        wasm.repository___wasm_set_identifier(this.__wbg_ptr, value);
     }
     /**
-     * @param {string[] | null} [arg0]
+     * @param {any} value
      */
-    set paths(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_repository_paths(this.__wbg_ptr, ptr0, len0);
+    set paths(value) {
+        wasm.repository___wasm_set_paths(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) Repository.prototype[Symbol.dispose] = Repository.prototype.free;
+
+export class SamplingMethodGreedy {
+    static __wrap(ptr) {
+        const obj = Object.create(SamplingMethodGreedy.prototype);
+        obj.__wbg_ptr = ptr;
+        SamplingMethodGreedyFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SamplingMethodGreedyFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_samplingmethodgreedy_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneSamplingMethod() {
+        const ret = wasm.samplingmethodgreedy___uzuCloneSamplingMethod(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.samplingmethodgreedy___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingMethodGreedyFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) SamplingMethodGreedy.prototype[Symbol.dispose] = SamplingMethodGreedy.prototype.free;
+
+export class SamplingMethodStochastic {
+    static __wrap(ptr) {
+        const obj = Object.create(SamplingMethodStochastic.prototype);
+        obj.__wbg_ptr = ptr;
+        SamplingMethodStochasticFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SamplingMethodStochasticFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_samplingmethodstochastic_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneSamplingMethod() {
+        const ret = wasm.samplingmethodstochastic___uzuCloneSamplingMethod(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get minP() {
+        const ret = wasm.samplingmethodstochastic___wasm_get_min_p(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get repetitionPenalty() {
+        const ret = wasm.samplingmethodstochastic___wasm_get_repetition_penalty(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get suffixRepetitionLength() {
+        const ret = wasm.samplingmethodstochastic___wasm_get_suffix_repetition_length(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get temperature() {
+        const ret = wasm.samplingmethodstochastic___wasm_get_temperature(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get topK() {
+        const ret = wasm.samplingmethodstochastic___wasm_get_top_k(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    get topP() {
+        const ret = wasm.samplingmethodstochastic___wasm_get_top_p(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number | null} [temperature]
+     * @param {number | null} [topK]
+     * @param {number | null} [topP]
+     * @param {number | null} [minP]
+     * @param {number | null} [repetitionPenalty]
+     * @param {number | null} [suffixRepetitionLength]
+     */
+    constructor(temperature, topK, topP, minP, repetitionPenalty, suffixRepetitionLength) {
+        const ret = wasm.samplingmethodstochastic___wasm_new(temperature, topK, topP, minP, repetitionPenalty, suffixRepetitionLength);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingMethodStochasticFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set minP(value) {
+        wasm.samplingmethodstochastic___wasm_set_min_p(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set repetitionPenalty(value) {
+        wasm.samplingmethodstochastic___wasm_set_repetition_penalty(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set suffixRepetitionLength(value) {
+        wasm.samplingmethodstochastic___wasm_set_suffix_repetition_length(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set temperature(value) {
+        wasm.samplingmethodstochastic___wasm_set_temperature(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set topK(value) {
+        wasm.samplingmethodstochastic___wasm_set_top_k(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set topP(value) {
+        wasm.samplingmethodstochastic___wasm_set_top_p(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) SamplingMethodStochastic.prototype[Symbol.dispose] = SamplingMethodStochastic.prototype.free;
 
 export class SamplingParameters {
     static __wrap(ptr) {
@@ -4510,85 +8869,285 @@ export class SamplingParameters {
         wasm.__wbg_samplingparameters_free(ptr, 0);
     }
     /**
-     * @returns {number | undefined}
+     * @returns {number}
      */
-    get min_p() {
-        const ret = wasm.__wbg_get_samplingparameters_min_p(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+    __uzuCloneSamplingParameters() {
+        const ret = wasm.samplingparameters___uzuCloneSamplingParameters(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {number | undefined}
+     * @returns {any}
      */
-    get repetition_penalty() {
-        const ret = wasm.__wbg_get_samplingparameters_repetition_penalty(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+    get minP() {
+        const ret = wasm.samplingparameters___wasm_get_min_p(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {bigint | undefined}
+     * @returns {any}
      */
-    get suffix_repetition_length() {
-        const ret = wasm.__wbg_get_samplingparameters_suffix_repetition_length(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+    get repetitionPenalty() {
+        const ret = wasm.samplingparameters___wasm_get_repetition_penalty(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {number | undefined}
+     * @returns {any}
+     */
+    get suffixRepetitionLength() {
+        const ret = wasm.samplingparameters___wasm_get_suffix_repetition_length(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get temperature() {
-        const ret = wasm.__wbg_get_samplingparameters_temperature(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+        const ret = wasm.samplingparameters___wasm_get_temperature(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {bigint | undefined}
+     * @returns {any}
      */
-    get top_k() {
-        const ret = wasm.__wbg_get_samplingparameters_top_k(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+    get topK() {
+        const ret = wasm.samplingparameters___wasm_get_top_k(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {number | undefined}
+     * @returns {any}
      */
-    get top_p() {
-        const ret = wasm.__wbg_get_samplingparameters_top_p(this.__wbg_ptr);
-        return ret[0] === 0 ? undefined : ret[1];
+    get topP() {
+        const ret = wasm.samplingparameters___wasm_get_top_p(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {number | null} [arg0]
+     * @param {number | null} [temperature]
+     * @param {number | null} [topK]
+     * @param {number | null} [topP]
+     * @param {number | null} [minP]
+     * @param {number | null} [repetitionPenalty]
+     * @param {number | null} [suffixRepetitionLength]
      */
-    set min_p(arg0) {
-        wasm.__wbg_set_samplingparameters_min_p(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
+    constructor(temperature, topK, topP, minP, repetitionPenalty, suffixRepetitionLength) {
+        const ret = wasm.samplingparameters___wasm_new(temperature, topK, topP, minP, repetitionPenalty, suffixRepetitionLength);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingParametersFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {number | null} [arg0]
+     * @param {any} value
      */
-    set repetition_penalty(arg0) {
-        wasm.__wbg_set_samplingparameters_repetition_penalty(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
+    set minP(value) {
+        wasm.samplingparameters___wasm_set_min_p(this.__wbg_ptr, value);
     }
     /**
-     * @param {bigint | null} [arg0]
+     * @param {any} value
      */
-    set suffix_repetition_length(arg0) {
-        wasm.__wbg_set_samplingparameters_suffix_repetition_length(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
+    set repetitionPenalty(value) {
+        wasm.samplingparameters___wasm_set_repetition_penalty(this.__wbg_ptr, value);
     }
     /**
-     * @param {number | null} [arg0]
+     * @param {any} value
      */
-    set temperature(arg0) {
-        wasm.__wbg_set_samplingparameters_temperature(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
+    set suffixRepetitionLength(value) {
+        wasm.samplingparameters___wasm_set_suffix_repetition_length(this.__wbg_ptr, value);
     }
     /**
-     * @param {bigint | null} [arg0]
+     * @param {any} value
      */
-    set top_k(arg0) {
-        wasm.__wbg_set_samplingparameters_top_k(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
+    set temperature(value) {
+        wasm.samplingparameters___wasm_set_temperature(this.__wbg_ptr, value);
     }
     /**
-     * @param {number | null} [arg0]
+     * @param {any} value
      */
-    set top_p(arg0) {
-        wasm.__wbg_set_samplingparameters_top_p(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
+    set topK(value) {
+        wasm.samplingparameters___wasm_set_top_k(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set topP(value) {
+        wasm.samplingparameters___wasm_set_top_p(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) SamplingParameters.prototype[Symbol.dispose] = SamplingParameters.prototype.free;
+
+export class SamplingPolicyCustom {
+    static __wrap(ptr) {
+        const obj = Object.create(SamplingPolicyCustom.prototype);
+        obj.__wbg_ptr = ptr;
+        SamplingPolicyCustomFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SamplingPolicyCustomFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_samplingpolicycustom_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneSamplingPolicy() {
+        const ret = wasm.samplingpolicycustom___uzuCloneSamplingPolicy(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get method() {
+        const ret = wasm.samplingpolicycustom___wasm_get_method(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {SamplingMethod} method
+     */
+    constructor(method) {
+        const ret = wasm.samplingpolicycustom___wasm_new(method);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingPolicyCustomFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set method(value) {
+        wasm.samplingpolicycustom___wasm_set_method(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) SamplingPolicyCustom.prototype[Symbol.dispose] = SamplingPolicyCustom.prototype.free;
+
+export class SamplingPolicyDefault {
+    static __wrap(ptr) {
+        const obj = Object.create(SamplingPolicyDefault.prototype);
+        obj.__wbg_ptr = ptr;
+        SamplingPolicyDefaultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SamplingPolicyDefaultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_samplingpolicydefault_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneSamplingPolicy() {
+        const ret = wasm.samplingpolicydefault___uzuCloneSamplingPolicy(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.samplingpolicydefault___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingPolicyDefaultFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) SamplingPolicyDefault.prototype[Symbol.dispose] = SamplingPolicyDefault.prototype.free;
+
+export class SamplingSeedCustom {
+    static __wrap(ptr) {
+        const obj = Object.create(SamplingSeedCustom.prototype);
+        obj.__wbg_ptr = ptr;
+        SamplingSeedCustomFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SamplingSeedCustomFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_samplingseedcustom_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneSamplingSeed() {
+        const ret = wasm.samplingseedcustom___uzuCloneSamplingSeed(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get seed() {
+        const ret = wasm.samplingseedcustom___wasm_get_seed(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} seed
+     */
+    constructor(seed) {
+        const ret = wasm.samplingseedcustom___wasm_new(seed);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingSeedCustomFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set seed(value) {
+        wasm.samplingseedcustom___wasm_set_seed(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) SamplingSeedCustom.prototype[Symbol.dispose] = SamplingSeedCustom.prototype.free;
+
+export class SamplingSeedDefault {
+    static __wrap(ptr) {
+        const obj = Object.create(SamplingSeedDefault.prototype);
+        obj.__wbg_ptr = ptr;
+        SamplingSeedDefaultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SamplingSeedDefaultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_samplingseeddefault_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneSamplingSeed() {
+        const ret = wasm.samplingseeddefault___uzuCloneSamplingSeed(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    constructor() {
+        const ret = wasm.samplingseeddefault___wasm_new();
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        SamplingSeedDefaultFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) SamplingSeedDefault.prototype[Symbol.dispose] = SamplingSeedDefault.prototype.free;
 
 export class TextToSpeechOutput {
     __destroy_into_raw() {
@@ -4602,34 +9161,50 @@ export class TextToSpeechOutput {
         wasm.__wbg_texttospeechoutput_free(ptr, 0);
     }
     /**
-     * @returns {PcmBatch}
+     * @returns {number}
      */
-    get pcm_batch() {
-        const ret = wasm.__wbg_get_texttospeechoutput_pcm_batch(this.__wbg_ptr);
-        return PcmBatch.__wrap(ret);
+    __uzuCloneTextToSpeechOutput() {
+        const ret = wasm.texttospeechoutput___uzuCloneTextToSpeechOutput(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @returns {TextToSpeechStats}
+     * @returns {any}
+     */
+    get pcmBatch() {
+        const ret = wasm.texttospeechoutput___wasm_get_pcm_batch(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get stats() {
-        const ret = wasm.__wbg_get_texttospeechoutput_stats(this.__wbg_ptr);
-        return TextToSpeechStats.__wrap(ret);
+        const ret = wasm.texttospeechoutput___wasm_get_stats(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {PcmBatch} arg0
+     * @param {PcmBatch} pcmBatch
+     * @param {TextToSpeechStats} stats
      */
-    set pcm_batch(arg0) {
-        _assertClass(arg0, PcmBatch);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_texttospeechoutput_pcm_batch(this.__wbg_ptr, ptr0);
+    constructor(pcmBatch, stats) {
+        const ret = wasm.texttospeechoutput___wasm_new(pcmBatch, stats);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        TextToSpeechOutputFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {TextToSpeechStats} arg0
+     * @param {any} value
      */
-    set stats(arg0) {
-        _assertClass(arg0, TextToSpeechStats);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_texttospeechoutput_stats(this.__wbg_ptr, ptr0);
+    set pcmBatch(value) {
+        wasm.texttospeechoutput___wasm_set_pcm_batch(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set stats(value) {
+        wasm.texttospeechoutput___wasm_set_stats(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) TextToSpeechOutput.prototype[Symbol.dispose] = TextToSpeechOutput.prototype.free;
@@ -4654,54 +9229,76 @@ export class TextToSpeechStats {
     /**
      * @returns {number}
      */
-    get audio_duration() {
-        const ret = wasm.__wbg_get_texttospeechstats_audio_duration(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {number}
-     */
-    get first_chunk_seconds() {
-        const ret = wasm.__wbg_get_texttospeechstats_first_chunk_seconds(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {number}
-     */
-    get generation_duration() {
-        const ret = wasm.__wbg_get_texttospeechstats_generation_duration(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {number}
-     */
-    get text_length() {
-        const ret = wasm.__wbg_get_texttospeechstats_text_length(this.__wbg_ptr);
+    __uzuCloneTextToSpeechStats() {
+        const ret = wasm.texttospeechstats___uzuCloneTextToSpeechStats(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
-     * @param {number} arg0
+     * @returns {any}
      */
-    set audio_duration(arg0) {
-        wasm.__wbg_set_texttospeechstats_audio_duration(this.__wbg_ptr, arg0);
+    get audioDuration() {
+        const ret = wasm.texttospeechstats___wasm_get_audio_duration(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {number} arg0
+     * @returns {any}
      */
-    set first_chunk_seconds(arg0) {
-        wasm.__wbg_set_texttospeechstats_first_chunk_seconds(this.__wbg_ptr, arg0);
+    get firstChunkSeconds() {
+        const ret = wasm.texttospeechstats___wasm_get_first_chunk_seconds(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {number} arg0
+     * @returns {any}
      */
-    set generation_duration(arg0) {
-        wasm.__wbg_set_texttospeechstats_generation_duration(this.__wbg_ptr, arg0);
+    get generationDuration() {
+        const ret = wasm.texttospeechstats___wasm_get_generation_duration(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {number} arg0
+     * @returns {any}
      */
-    set text_length(arg0) {
-        wasm.__wbg_set_texttospeechstats_text_length(this.__wbg_ptr, arg0);
+    get textLength() {
+        const ret = wasm.texttospeechstats___wasm_get_text_length(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} textLength
+     * @param {number} firstChunkSeconds
+     * @param {number} generationDuration
+     * @param {number} audioDuration
+     */
+    constructor(textLength, firstChunkSeconds, generationDuration, audioDuration) {
+        const ret = wasm.texttospeechstats___wasm_new(textLength, firstChunkSeconds, generationDuration, audioDuration);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        TextToSpeechStatsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set audioDuration(value) {
+        wasm.texttospeechstats___wasm_set_audio_duration(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set firstChunkSeconds(value) {
+        wasm.texttospeechstats___wasm_set_first_chunk_seconds(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set generationDuration(value) {
+        wasm.texttospeechstats___wasm_set_generation_duration(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set textLength(value) {
+        wasm.texttospeechstats___wasm_set_text_length(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) TextToSpeechStats.prototype[Symbol.dispose] = TextToSpeechStats.prototype.free;
@@ -4720,51 +9317,62 @@ export class Token {
     /**
      * @returns {number}
      */
-    get id() {
-        const ret = wasm.__wbg_get_token_id(this.__wbg_ptr);
+    __uzuCloneToken() {
+        const ret = wasm.token___uzuCloneToken(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
-     * @returns {boolean}
+     * @returns {any}
      */
-    get is_special() {
-        const ret = wasm.__wbg_get_token_is_special(this.__wbg_ptr);
-        return ret !== 0;
+    get id() {
+        const ret = wasm.token___wasm_get_id(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
+     */
+    get isSpecial() {
+        const ret = wasm.token___wasm_get_is_special(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
      */
     get value() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_token_value(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.token___wasm_get_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {TokenId} id
+     * @param {TokenValue} value
+     * @param {boolean} isSpecial
+     */
+    constructor(id, value, isSpecial) {
+        const ret = wasm.token___wasm_new(id, value, isSpecial);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        TokenFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {number} arg0
+     * @param {any} value
      */
-    set id(arg0) {
-        wasm.__wbg_set_token_id(this.__wbg_ptr, arg0);
+    set id(value) {
+        wasm.token___wasm_set_id(this.__wbg_ptr, value);
     }
     /**
-     * @param {boolean} arg0
+     * @param {any} value
      */
-    set is_special(arg0) {
-        wasm.__wbg_set_token_is_special(this.__wbg_ptr, arg0);
+    set isSpecial(value) {
+        wasm.token___wasm_set_is_special(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set value(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_token_value(this.__wbg_ptr, ptr0, len0);
+    set value(value) {
+        wasm.token___wasm_set_value(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) Token.prototype[Symbol.dispose] = Token.prototype.free;
@@ -4787,62 +9395,64 @@ export class ToolCall {
         wasm.__wbg_toolcall_free(ptr, 0);
     }
     /**
-     * @returns {Value}
+     * @returns {number}
+     */
+    __uzuCloneToolCall() {
+        const ret = wasm.toolcall___uzuCloneToolCall(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get arguments() {
-        const ret = wasm.__wbg_get_toolcall_arguments(this.__wbg_ptr);
-        return Value.__wrap(ret);
+        const ret = wasm.toolcall___wasm_get_arguments(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string | undefined}
+     * @returns {any}
      */
     get identifier() {
-        const ret = wasm.__wbg_get_toolcall_identifier(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+        const ret = wasm.toolcall___wasm_get_identifier(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_toolcall_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.toolcall___wasm_get_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string | undefined | null} identifier
+     * @param {string} name
+     * @param {Value} _arguments
+     */
+    constructor(identifier, name, _arguments) {
+        const ret = wasm.toolcall___wasm_new(identifier, name, _arguments);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        ToolCallFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Value} arg0
+     * @param {any} value
      */
-    set arguments(arg0) {
-        _assertClass(arg0, Value);
-        var ptr0 = arg0.__destroy_into_raw();
-        wasm.__wbg_set_toolcall_arguments(this.__wbg_ptr, ptr0);
+    set arguments(value) {
+        wasm.toolcall___wasm_set_arguments(this.__wbg_ptr, value);
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {any} value
      */
-    set identifier(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolcall_identifier(this.__wbg_ptr, ptr0, len0);
+    set identifier(value) {
+        wasm.toolcall___wasm_set_identifier(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolcall_name(this.__wbg_ptr, ptr0, len0);
+    set name(value) {
+        wasm.toolcall___wasm_set_name(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ToolCall.prototype[Symbol.dispose] = ToolCall.prototype.free;
@@ -4865,50 +9475,50 @@ export class ToolCallArgumentDelta {
         wasm.__wbg_toolcallargumentdelta_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
+     */
+    __uzuCloneToolCallArgumentDelta() {
+        const ret = wasm.toolcallargumentdelta___uzuCloneToolCallArgumentDelta(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get arguments() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_toolcallargumentdelta_arguments(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.toolcallargumentdelta___wasm_get_arguments(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_toolcallargumentdelta_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        const ret = wasm.toolcallargumentdelta___wasm_get_name(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} name
+     * @param {string} _arguments
+     */
+    constructor(name, _arguments) {
+        const ret = wasm.toolcallargumentdelta___wasm_new(name, _arguments);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
+        this.__wbg_ptr = ret[0];
+        ToolCallArgumentDeltaFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set arguments(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolcallargumentdelta_arguments(this.__wbg_ptr, ptr0, len0);
+    set arguments(value) {
+        wasm.toolcallargumentdelta___wasm_set_arguments(this.__wbg_ptr, value);
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolcallargumentdelta_name(this.__wbg_ptr, ptr0, len0);
+    set name(value) {
+        wasm.toolcallargumentdelta___wasm_set_name(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ToolCallArgumentDelta.prototype[Symbol.dispose] = ToolCallArgumentDelta.prototype.free;
@@ -4934,45 +9544,100 @@ export class ToolCallArgumentStream {
         wasm.__wbg_toolcallargumentstream_free(ptr, 0);
     }
     /**
-     * @param {ToolNamespace[]} tools
+     * @param {Array<ToolNamespace>} tools
      * @returns {ToolCallArgumentStream}
      */
     static create(tools) {
-        const ptr0 = passArrayJsValueToWasm0(tools, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.toolcallargumentstream_create(ptr0, len0);
-        return ToolCallArgumentStream.__wrap(ret);
+        const ret = wasm.toolcallargumentstream_create(tools);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {ToolCall} call
      * @returns {ToolCallArgumentDelta}
      */
     finish(call) {
-        _assertClass(call, ToolCall);
-        var ptr0 = call.__destroy_into_raw();
-        const ret = wasm.toolcallargumentstream_finish(this.__wbg_ptr, ptr0);
+        const ret = wasm.toolcallargumentstream_finish(this.__wbg_ptr, call);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
-        return ToolCallArgumentDelta.__wrap(ret[0]);
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {string} raw
      * @returns {ToolCallArgumentDelta}
      */
     update(raw) {
-        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.toolcallargumentstream_update(this.__wbg_ptr, ptr0, len0);
+        const ret = wasm.toolcallargumentstream_update(this.__wbg_ptr, raw);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
-        return ToolCallArgumentDelta.__wrap(ret[0]);
+        return takeFromExternrefTable0(ret[0]);
     }
 }
 if (Symbol.dispose) ToolCallArgumentStream.prototype[Symbol.dispose] = ToolCallArgumentStream.prototype.free;
 
+export class ToolDescriptionFunction {
+    static __wrap(ptr) {
+        const obj = Object.create(ToolDescriptionFunction.prototype);
+        obj.__wbg_ptr = ptr;
+        ToolDescriptionFunctionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ToolDescriptionFunctionFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_tooldescriptionfunction_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneToolDescription() {
+        const ret = wasm.tooldescriptionfunction___uzuCloneToolDescription(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get toolFunction() {
+        const ret = wasm.tooldescriptionfunction___wasm_get_tool_function(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {ToolFunction} toolFunction
+     */
+    constructor(toolFunction) {
+        const ret = wasm.tooldescriptionfunction___wasm_new(toolFunction);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ToolDescriptionFunctionFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set toolFunction(value) {
+        wasm.tooldescriptionfunction___wasm_set_tool_function(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) ToolDescriptionFunction.prototype[Symbol.dispose] = ToolDescriptionFunction.prototype.free;
+
 export class ToolFunction {
+    static __wrap(ptr) {
+        const obj = Object.create(ToolFunction.prototype);
+        obj.__wbg_ptr = ptr;
+        ToolFunctionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -4984,86 +9649,78 @@ export class ToolFunction {
         wasm.__wbg_toolfunction_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
+     */
+    __uzuCloneToolFunction() {
+        const ret = wasm.toolfunction___uzuCloneToolFunction(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get description() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_toolfunction_description(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.toolfunction___wasm_get_description(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_toolfunction_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.toolfunction___wasm_get_name(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {Value | undefined}
+     * @returns {any}
      */
     get parameters() {
-        const ret = wasm.__wbg_get_toolfunction_parameters(this.__wbg_ptr);
-        return ret === 0 ? undefined : Value.__wrap(ret);
+        const ret = wasm.toolfunction___wasm_get_parameters(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {Value | undefined}
+     * @returns {any}
      */
-    get return_definition() {
-        const ret = wasm.__wbg_get_toolfunction_return_definition(this.__wbg_ptr);
-        return ret === 0 ? undefined : Value.__wrap(ret);
+    get returnDefinition() {
+        const ret = wasm.toolfunction___wasm_get_return_definition(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {string} arg0
+     * @param {string} name
+     * @param {string} description
+     * @param {Value | null} [parameters]
+     * @param {Value | null} [returnDefinition]
      */
-    set description(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolfunction_description(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {string} arg0
-     */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolfunction_name(this.__wbg_ptr, ptr0, len0);
-    }
-    /**
-     * @param {Value | null} [arg0]
-     */
-    set parameters(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, Value);
-            ptr0 = arg0.__destroy_into_raw();
+    constructor(name, description, parameters, returnDefinition) {
+        const ret = wasm.toolfunction___wasm_new(name, description, parameters, returnDefinition);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
         }
-        wasm.__wbg_set_toolfunction_parameters(this.__wbg_ptr, ptr0);
+        this.__wbg_ptr = ret[0];
+        ToolFunctionFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {Value | null} [arg0]
+     * @param {any} value
      */
-    set return_definition(arg0) {
-        let ptr0 = 0;
-        if (!isLikeNone(arg0)) {
-            _assertClass(arg0, Value);
-            ptr0 = arg0.__destroy_into_raw();
-        }
-        wasm.__wbg_set_toolfunction_return_definition(this.__wbg_ptr, ptr0);
+    set description(value) {
+        wasm.toolfunction___wasm_set_description(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set name(value) {
+        wasm.toolfunction___wasm_set_name(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set parameters(value) {
+        wasm.toolfunction___wasm_set_parameters(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set returnDefinition(value) {
+        wasm.toolfunction___wasm_set_return_definition(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ToolFunction.prototype[Symbol.dispose] = ToolFunction.prototype.free;
@@ -5074,12 +9731,6 @@ export class ToolNamespace {
         obj.__wbg_ptr = ptr;
         ToolNamespaceFinalization.register(obj, obj.__wbg_ptr, obj);
         return obj;
-    }
-    static __unwrap(jsValue) {
-        if (!(jsValue instanceof ToolNamespace)) {
-            return 0;
-        }
-        return jsValue.__destroy_into_raw();
     }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -5092,67 +9743,171 @@ export class ToolNamespace {
         wasm.__wbg_toolnamespace_free(ptr, 0);
     }
     /**
-     * @returns {string | undefined}
+     * @returns {number}
+     */
+    __uzuCloneToolNamespace() {
+        const ret = wasm.toolnamespace___uzuCloneToolNamespace(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
      */
     get description() {
-        const ret = wasm.__wbg_get_toolnamespace_description(this.__wbg_ptr);
-        let v1;
-        if (ret[0] !== 0) {
-            v1 = getStringFromWasm0(ret[0], ret[1]);
-            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        }
-        return v1;
+        const ret = wasm.toolnamespace___wasm_get_description(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {string}
+     * @returns {any}
      */
     get name() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_toolnamespace_name(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+        const ret = wasm.toolnamespace___wasm_get_name(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @returns {ToolDescription[]}
+     * @returns {any}
      */
     get tools() {
-        const ret = wasm.__wbg_get_toolnamespace_tools(this.__wbg_ptr);
-        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]);
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+        const ret = wasm.toolnamespace___wasm_get_tools(this.__wbg_ptr);
+        return ret;
     }
     /**
-     * @param {string | null} [arg0]
+     * @param {string} name
+     * @param {string | undefined | null} description
+     * @param {Array<ToolDescription>} tools
      */
-    set description(arg0) {
-        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolnamespace_description(this.__wbg_ptr, ptr0, len0);
+    constructor(name, description, tools) {
+        const ret = wasm.toolnamespace___wasm_new(name, description, tools);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ToolNamespaceFinalization.register(this, this.__wbg_ptr, this);
+        return this;
     }
     /**
-     * @param {string} arg0
+     * @param {any} value
      */
-    set name(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolnamespace_name(this.__wbg_ptr, ptr0, len0);
+    set description(value) {
+        wasm.toolnamespace___wasm_set_description(this.__wbg_ptr, value);
     }
     /**
-     * @param {ToolDescription[]} arg0
+     * @param {any} value
      */
-    set tools(arg0) {
-        const ptr0 = passArrayJsValueToWasm0(arg0, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_toolnamespace_tools(this.__wbg_ptr, ptr0, len0);
+    set name(value) {
+        wasm.toolnamespace___wasm_set_name(this.__wbg_ptr, value);
+    }
+    /**
+     * @param {any} value
+     */
+    set tools(value) {
+        wasm.toolnamespace___wasm_set_tools(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) ToolNamespace.prototype[Symbol.dispose] = ToolNamespace.prototype.free;
+
+export class TranslationPayloadImage {
+    static __wrap(ptr) {
+        const obj = Object.create(TranslationPayloadImage.prototype);
+        obj.__wbg_ptr = ptr;
+        TranslationPayloadImageFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        TranslationPayloadImageFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_translationpayloadimage_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneTranslationPayload() {
+        const ret = wasm.translationpayloadimage___uzuCloneTranslationPayload(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get url() {
+        const ret = wasm.translationpayloadimage___wasm_get_url(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} url
+     */
+    constructor(url) {
+        const ret = wasm.translationpayloadimage___wasm_new(url);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        TranslationPayloadImageFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set url(value) {
+        wasm.translationpayloadimage___wasm_set_url(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) TranslationPayloadImage.prototype[Symbol.dispose] = TranslationPayloadImage.prototype.free;
+
+export class TranslationPayloadText {
+    static __wrap(ptr) {
+        const obj = Object.create(TranslationPayloadText.prototype);
+        obj.__wbg_ptr = ptr;
+        TranslationPayloadTextFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        TranslationPayloadTextFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_translationpayloadtext_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    __uzuCloneTranslationPayload() {
+        const ret = wasm.translationpayloadtext___uzuCloneTranslationPayload(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {any}
+     */
+    get text() {
+        const ret = wasm.translationpayloadtext___wasm_get_text(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} text
+     */
+    constructor(text) {
+        const ret = wasm.translationpayloadtext___wasm_new(text);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        TranslationPayloadTextFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set text(value) {
+        wasm.translationpayloadtext___wasm_set_text(this.__wbg_ptr, value);
+    }
+}
+if (Symbol.dispose) TranslationPayloadText.prototype[Symbol.dispose] = TranslationPayloadText.prototype.free;
 
 export class Value {
     static __wrap(ptr) {
@@ -5172,48 +9927,42 @@ export class Value {
         wasm.__wbg_value_free(ptr, 0);
     }
     /**
-     * @returns {string}
+     * @returns {number}
      */
-    get json() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.__wbg_get_value_json(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
+    __uzuCloneValue() {
+        const ret = wasm.value___uzuCloneValue(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
-     * @param {string} arg0
+     * @returns {any}
      */
-    set json(arg0) {
-        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.__wbg_set_value_json(this.__wbg_ptr, ptr0, len0);
+    get json() {
+        const ret = wasm.value___wasm_get_json(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} json
+     */
+    constructor(json) {
+        const ret = wasm.value___wasm_new(json);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        ValueFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} value
+     */
+    set json(value) {
+        wasm.value___wasm_set_json(this.__wbg_ptr, value);
     }
 }
 if (Symbol.dispose) Value.prototype[Symbol.dispose] = Value.prototype.free;
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg_Error_30c8987f7c2ed4e2: function(arg0, arg1) {
-            const ret = Error(getStringFromWasm0(arg0, arg1));
-            return ret;
-        },
-        __wbg_Number_14af1003b8dd5ead: function(arg0) {
-            const ret = Number(arg0);
-            return ret;
-        },
-        __wbg_String_8564e559799eccda: function(arg0, arg1) {
-            const ret = String(arg1);
-            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-            const len1 = WASM_VECTOR_LEN;
-            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
-        },
         __wbg_Window_a2a6c4d665047b14: function(arg0) {
             const ret = arg0.Window;
             return ret;
@@ -5221,12 +9970,6 @@ function __wbg_get_imports() {
         __wbg_WorkerGlobalScope_2664448a7c667d67: function(arg0) {
             const ret = arg0.WorkerGlobalScope;
             return ret;
-        },
-        __wbg___wbindgen_bigint_get_as_i64_a2383202b9353e4c: function(arg0, arg1) {
-            const v = arg1;
-            const ret = typeof(v) === 'bigint' ? v : undefined;
-            getDataViewMemory0().setBigInt64(arg0 + 8 * 1, isLikeNone(ret) ? BigInt(0) : ret, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
         },
         __wbg___wbindgen_boolean_get_5b446f51afd21013: function(arg0) {
             const v = arg0;
@@ -5239,14 +9982,6 @@ function __wbg_get_imports() {
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
-        },
-        __wbg___wbindgen_in_92f62ee1427d9e49: function(arg0, arg1) {
-            const ret = arg0 in arg1;
-            return ret;
-        },
-        __wbg___wbindgen_is_bigint_b123553bed3bb382: function(arg0) {
-            const ret = typeof(arg0) === 'bigint';
-            return ret;
         },
         __wbg___wbindgen_is_function_1f9d30630b8b1d3d: function(arg0) {
             const ret = typeof(arg0) === 'function';
@@ -5269,19 +10004,14 @@ function __wbg_get_imports() {
             const ret = arg0 === undefined;
             return ret;
         },
-        __wbg___wbindgen_jsval_eq_02babf21faa37971: function(arg0, arg1) {
-            const ret = arg0 === arg1;
-            return ret;
-        },
-        __wbg___wbindgen_jsval_loose_eq_677f21e468d6b461: function(arg0, arg1) {
-            const ret = arg0 == arg1;
-            return ret;
-        },
         __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'number' ? obj : undefined;
             getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+        },
+        __wbg___wbindgen_rethrow_cb2e88c6b2a16733: function(arg0) {
+            throw arg0;
         },
         __wbg___wbindgen_string_get_0380ccaa2f57f0d9: function(arg0, arg1) {
             const obj = arg1;
@@ -5366,8 +10096,84 @@ function __wbg_get_imports() {
             const ret = arg0.cancel();
             return ret;
         },
+        __wbg_canceltoken_new: function(arg0) {
+            const ret = CancelToken.__wrap(arg0);
+            return ret;
+        },
         __wbg_catch_92594c2d17f55f12: function(arg0, arg1) {
             const ret = arg0.catch(arg1);
+            return ret;
+        },
+        __wbg_chatconfig_new: function(arg0) {
+            const ret = ChatConfig.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockaudio_new: function(arg0) {
+            const ret = ChatContentBlockAudio.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockbuiltintools_new: function(arg0) {
+            const ret = ChatContentBlockBuiltinTools.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockconversationstartdate_new: function(arg0) {
+            const ret = ChatContentBlockConversationStartDate.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockcustom_new: function(arg0) {
+            const ret = ChatContentBlockCustom.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockfile_new: function(arg0) {
+            const ret = ChatContentBlockFile.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockidentity_new: function(arg0) {
+            const ret = ChatContentBlockIdentity.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockimage_new: function(arg0) {
+            const ret = ChatContentBlockImage.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockknowledgecutoff_new: function(arg0) {
+            const ret = ChatContentBlockKnowledgeCutoff.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockreasoning_new: function(arg0) {
+            const ret = ChatContentBlockReasoning.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockreasoningeffort_new: function(arg0) {
+            const ret = ChatContentBlockReasoningEffort.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblocktext_new: function(arg0) {
+            const ret = ChatContentBlockText.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblocktoolcall_new: function(arg0) {
+            const ret = ChatContentBlockToolCall.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblocktoolcallcandidate_new: function(arg0) {
+            const ret = ChatContentBlockToolCallCandidate.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblocktoolcallresult_new: function(arg0) {
+            const ret = ChatContentBlockToolCallResult.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblocktools_new: function(arg0) {
+            const ret = ChatContentBlockTools.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblocktranslation_new: function(arg0) {
+            const ret = ChatContentBlockTranslation.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatcontentblockvideo_new: function(arg0) {
+            const ret = ChatContentBlockVideo.__wrap(arg0);
             return ret;
         },
         __wbg_chatinstance_new: function(arg0) {
@@ -5378,8 +10184,8 @@ function __wbg_get_imports() {
             const ret = ChatMessage.__wrap(arg0);
             return ret;
         },
-        __wbg_chatmessage_unwrap: function(arg0) {
-            const ret = ChatMessage.__unwrap(arg0);
+        __wbg_chatmodelcapabilities_new: function(arg0) {
+            const ret = ChatModelCapabilities.__wrap(arg0);
             return ret;
         },
         __wbg_chatmodelinfo_new: function(arg0) {
@@ -5390,12 +10196,76 @@ function __wbg_get_imports() {
             const ret = ChatReply.__wrap(arg0);
             return ret;
         },
+        __wbg_chatreplyconfig_new: function(arg0) {
+            const ret = ChatReplyConfig.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatreplyjoulespertokencomponents_new: function(arg0) {
+            const ret = ChatReplyJoulesPerTokenComponents.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatreplyjoulespertokentotal_new: function(arg0) {
+            const ret = ChatReplyJoulesPerTokenTotal.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatreplyspeculatorstats_new: function(arg0) {
+            const ret = ChatReplySpeculatorStats.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatreplystats_new: function(arg0) {
+            const ret = ChatReplyStats.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatroleassistant_new: function(arg0) {
+            const ret = ChatRoleAssistant.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatrolecustom_new: function(arg0) {
+            const ret = ChatRoleCustom.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatroledeveloper_new: function(arg0) {
+            const ret = ChatRoleDeveloper.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatrolesystem_new: function(arg0) {
+            const ret = ChatRoleSystem.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatroletool_new: function(arg0) {
+            const ret = ChatRoleTool.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatroleuser_new: function(arg0) {
+            const ret = ChatRoleUser.__wrap(arg0);
+            return ret;
+        },
         __wbg_chatsession_new: function(arg0) {
             const ret = ChatSession.__wrap(arg0);
             return ret;
         },
         __wbg_chatsessionstream_new: function(arg0) {
             const ret = ChatSessionStream.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatsessionstreamchunkerror_new: function(arg0) {
+            const ret = ChatSessionStreamChunkError.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatsessionstreamchunkreplies_new: function(arg0) {
+            const ret = ChatSessionStreamChunkReplies.__wrap(arg0);
+            return ret;
+        },
+        __wbg_chatsessionstreamchunktoolresults_new: function(arg0) {
+            const ret = ChatSessionStreamChunkToolResults.__wrap(arg0);
+            return ret;
+        },
+        __wbg_classificationmessage_new: function(arg0) {
+            const ret = ClassificationMessage.__wrap(arg0);
+            return ret;
+        },
+        __wbg_classificationstats_new: function(arg0) {
+            const ret = ClassificationStats.__wrap(arg0);
             return ret;
         },
         __wbg_clearBuffer_3d5a3057c3c8a9bf: function(arg0, arg1, arg2, arg3) {
@@ -5424,6 +10294,18 @@ function __wbg_get_imports() {
         __wbg_configure_1e2c1c9edad07d26: function() { return handleError(function (arg0, arg1) {
             arg0.configure(arg1);
         }, arguments); },
+        __wbg_contextlengthcustom_new: function(arg0) {
+            const ret = ContextLengthCustom.__wrap(arg0);
+            return ret;
+        },
+        __wbg_contextlengthdefault_new: function(arg0) {
+            const ret = ContextLengthDefault.__wrap(arg0);
+            return ret;
+        },
+        __wbg_contextlengthmaximal_new: function(arg0) {
+            const ret = ContextLengthMaximal.__wrap(arg0);
+            return ret;
+        },
         __wbg_copyBufferToBuffer_01766818654a9868: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
             arg0.copyBufferToBuffer(arg1, arg2, arg3, arg4);
         }, arguments); },
@@ -5458,20 +10340,48 @@ function __wbg_get_imports() {
             const ret = arg0.createWritable(arg1);
             return ret;
         },
+        __wbg_decisionanswerchoice_new: function(arg0) {
+            const ret = DecisionAnswerChoice.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionanswerscore_new: function(arg0) {
+            const ret = DecisionAnswerScore.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionansweryesno_new: function(arg0) {
+            const ret = DecisionAnswerYesNo.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionoption_new: function(arg0) {
+            const ret = DecisionOption.__wrap(arg0);
+            return ret;
+        },
         __wbg_decisionoutput_new: function(arg0) {
             const ret = DecisionOutput.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionquestionchoice_new: function(arg0) {
+            const ret = DecisionQuestionChoice.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionquestionscore_new: function(arg0) {
+            const ret = DecisionQuestionScore.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionquestionyesno_new: function(arg0) {
+            const ret = DecisionQuestionYesNo.__wrap(arg0);
             return ret;
         },
         __wbg_decisionresult_new: function(arg0) {
             const ret = DecisionResult.__wrap(arg0);
             return ret;
         },
-        __wbg_decisionresult_unwrap: function(arg0) {
-            const ret = DecisionResult.__unwrap(arg0);
-            return ret;
-        },
         __wbg_decisionsession_new: function(arg0) {
             const ret = DecisionSession.__wrap(arg0);
+            return ret;
+        },
+        __wbg_decisionstats_new: function(arg0) {
+            const ret = DecisionStats.__wrap(arg0);
             return ret;
         },
         __wbg_description_83b8a393160021b9: function(arg0, arg1) {
@@ -5481,6 +10391,10 @@ function __wbg_get_imports() {
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
+        __wbg_device_new: function(arg0) {
+            const ret = Device.__wrap(arg0);
+            return ret;
+        },
         __wbg_dispatchWorkgroups_56b943172790add0: function(arg0, arg1, arg2, arg3) {
             arg0.dispatchWorkgroups(arg1 >>> 0, arg2 >>> 0, arg3 >>> 0);
         },
@@ -5488,8 +10402,40 @@ function __wbg_get_imports() {
             const ret = arg0.done;
             return ret;
         },
+        __wbg_downloader_new: function(arg0) {
+            const ret = Downloader.__wrap(arg0);
+            return ret;
+        },
         __wbg_downloaderstream_new: function(arg0) {
             const ret = DownloaderStream.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphasedownloaded_new: function(arg0) {
+            const ret = DownloadPhaseDownloaded.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphasedownloading_new: function(arg0) {
+            const ret = DownloadPhaseDownloading.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphaseerror_new: function(arg0) {
+            const ret = DownloadPhaseError.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphaseinitializing_new: function(arg0) {
+            const ret = DownloadPhaseInitializing.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphaselocked_new: function(arg0) {
+            const ret = DownloadPhaseLocked.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphasenotdownloaded_new: function(arg0) {
+            const ret = DownloadPhaseNotDownloaded.__wrap(arg0);
+            return ret;
+        },
+        __wbg_downloadphasepaused_new: function(arg0) {
+            const ret = DownloadPhasePaused.__wrap(arg0);
             return ret;
         },
         __wbg_downloadstate_new: function(arg0) {
@@ -5501,6 +10447,10 @@ function __wbg_get_imports() {
         },
         __wbg_engine_new: function(arg0) {
             const ret = Engine.__wrap(arg0);
+            return ret;
+        },
+        __wbg_engineconfig_new: function(arg0) {
+            const ret = EngineConfig.__wrap(arg0);
             return ret;
         },
         __wbg_enqueue_4a01c128f9a0de16: function() { return handleError(function (arg0, arg1) {
@@ -5524,6 +10474,10 @@ function __wbg_get_imports() {
         },
         __wbg_fetch_efc64baf325b084d: function(arg0, arg1) {
             const ret = arg0.fetch(arg1);
+            return ret;
+        },
+        __wbg_file_new: function(arg0) {
+            const ret = File.__wrap(arg0);
             return ret;
         },
         __wbg_from_296ca31f8d0f1c52: function(arg0) {
@@ -5584,10 +10538,6 @@ function __wbg_get_imports() {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
-        __wbg_get_658f6698067d9515: function() { return handleError(function (arg0, arg1) {
-            const ret = Reflect.get(arg0, arg1);
-            return ret;
-        }, arguments); },
         __wbg_get_6c896e0571ddae51: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
@@ -5604,12 +10554,20 @@ function __wbg_get_imports() {
             const ret = arg0.value;
             return ret;
         },
-        __wbg_get_with_ref_key_6412cf3094599694: function(arg0, arg1) {
-            const ret = arg0[arg1];
-            return ret;
-        },
         __wbg_gpu_afdd4387c7afe5f9: function(arg0) {
             const ret = arg0.gpu;
+            return ret;
+        },
+        __wbg_grammarjsonany_new: function(arg0) {
+            const ret = GrammarJsonAny.__wrap(arg0);
+            return ret;
+        },
+        __wbg_grammarjsonschema_new: function(arg0) {
+            const ret = GrammarJsonSchema.__wrap(arg0);
+            return ret;
+        },
+        __wbg_grammarregex_new: function(arg0) {
+            const ret = GrammarRegex.__wrap(arg0);
             return ret;
         },
         __wbg_has_5d6706e5209576c1: function() { return handleError(function (arg0, arg1) {
@@ -5620,10 +10578,6 @@ function __wbg_get_imports() {
             const ret = Hash.__wrap(arg0);
             return ret;
         },
-        __wbg_hash_unwrap: function(arg0) {
-            const ret = Hash.__unwrap(arg0);
-            return ret;
-        },
         __wbg_headers_eba93595f8944c2f: function(arg0) {
             const ret = arg0.headers;
             return ret;
@@ -5632,22 +10586,8 @@ function __wbg_get_imports() {
             const ret = Image.__wrap(arg0);
             return ret;
         },
-        __wbg_image_unwrap: function(arg0) {
-            const ret = Image.__unwrap(arg0);
-            return ret;
-        },
         __wbg_info_971d8b9db3dae69f: function(arg0) {
             const ret = arg0.info;
-            return ret;
-        },
-        __wbg_instanceof_ArrayBuffer_a99f175873e5d9b8: function(arg0) {
-            let result;
-            try {
-                result = arg0 instanceof ArrayBuffer;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
             return ret;
         },
         __wbg_instanceof_DomException_550db3f9465a933f: function(arg0) {
@@ -5690,30 +10630,10 @@ function __wbg_get_imports() {
             const ret = result;
             return ret;
         },
-        __wbg_instanceof_Map_b2611749102d7ba3: function(arg0) {
-            let result;
-            try {
-                result = arg0 instanceof Map;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
-            return ret;
-        },
         __wbg_instanceof_Response_b8758567269c30b2: function(arg0) {
             let result;
             try {
                 result = arg0 instanceof Response;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
-            return ret;
-        },
-        __wbg_instanceof_Uint8Array_828cef2aaacafc31: function(arg0) {
-            let result;
-            try {
-                result = arg0 instanceof Uint8Array;
             } catch (_) {
                 result = false;
             }
@@ -5736,14 +10656,6 @@ function __wbg_get_imports() {
         },
         __wbg_isFallbackAdapter_4c8cc3b18677460a: function(arg0) {
             const ret = arg0.isFallbackAdapter;
-            return ret;
-        },
-        __wbg_isSafeInteger_717808ad6a54bd9e: function(arg0) {
-            const ret = Number.isSafeInteger(arg0);
-            return ret;
-        },
-        __wbg_iterator_e3c31c892080e444: function() {
-            const ret = Symbol.iterator;
             return ret;
         },
         __wbg_length_7f3c00c40364105e: function(arg0) {
@@ -5889,6 +10801,10 @@ function __wbg_get_imports() {
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
+        __wbg_metadata_new: function(arg0) {
+            const ret = Metadata.__wrap(arg0);
+            return ret;
+        },
         __wbg_minStorageBufferOffsetAlignment_5ba9b77792bdadb3: function(arg0) {
             const ret = arg0.minStorageBufferOffsetAlignment;
             return ret;
@@ -5901,20 +10817,64 @@ function __wbg_get_imports() {
             const ret = Model.__wrap(arg0);
             return ret;
         },
-        __wbg_modelbackend_new: function(arg0) {
-            const ret = ModelBackend.__wrap(arg0);
+        __wbg_modelaccessibilityondevice_new: function(arg0) {
+            const ret = ModelAccessibilityOnDevice.__wrap(arg0);
             return ret;
         },
-        __wbg_modelbackend_unwrap: function(arg0) {
-            const ret = ModelBackend.__unwrap(arg0);
+        __wbg_modelaccessibilityremote_new: function(arg0) {
+            const ret = ModelAccessibilityRemote.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelbackend_new: function(arg0) {
+            const ret = ModelBackend.__wrap(arg0);
             return ret;
         },
         __wbg_modelfamily_new: function(arg0) {
             const ret = ModelFamily.__wrap(arg0);
             return ret;
         },
+        __wbg_modelproperties_new: function(arg0) {
+            const ret = ModelProperties.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelquantization_new: function(arg0) {
+            const ret = ModelQuantization.__wrap(arg0);
+            return ret;
+        },
         __wbg_modelregistry_new: function(arg0) {
             const ret = ModelRegistry.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelsourcefilesystem_new: function(arg0) {
+            const ret = ModelSourceFilesystem.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelsourceregistry_new: function(arg0) {
+            const ret = ModelSourceRegistry.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelspecializationchat_new: function(arg0) {
+            const ret = ModelSpecializationChat.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelspecializationclassification_new: function(arg0) {
+            const ret = ModelSpecializationClassification.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelspecializationdecision_new: function(arg0) {
+            const ret = ModelSpecializationDecision.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelspecializationspeculation_new: function(arg0) {
+            const ret = ModelSpecializationSpeculation.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelspecializationtexttospeech_new: function(arg0) {
+            const ret = ModelSpecializationTextToSpeech.__wrap(arg0);
+            return ret;
+        },
+        __wbg_modelspecializationtranslation_new: function(arg0) {
+            const ret = ModelSpecializationTranslation.__wrap(arg0);
             return ret;
         },
         __wbg_modelvendor_new: function(arg0) {
@@ -5927,10 +10887,6 @@ function __wbg_get_imports() {
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
-        },
-        __wbg_nativetool_unwrap: function(arg0) {
-            const ret = NativeTool.__unwrap(arg0);
-            return ret;
         },
         __wbg_navigator_2156486643462a87: function(arg0) {
             const ret = arg0.navigator;
@@ -5948,8 +10904,8 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(arg0);
             return ret;
         },
-        __wbg_new_28744009d011f847: function() {
-            const ret = new Map();
+        __wbg_new_2bdcdfcebdfc34d2: function(arg0, arg1) {
+            const ret = new TypeError(getStringFromWasm0(arg0, arg1));
             return ret;
         },
         __wbg_new_2e41357094e99294: function() { return handleError(function () {
@@ -6036,10 +10992,6 @@ function __wbg_get_imports() {
             const ret = new Blob(arg0);
             return ret;
         }, arguments); },
-        __wbg_next_33784799010f1bbe: function(arg0) {
-            const ret = arg0.next;
-            return ret;
-        },
         __wbg_next_762aca09b0915bfc: function() { return handleError(function (arg0) {
             const ret = arg0.next();
             return ret;
@@ -6050,6 +11002,10 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_now_e7c6795a7f81e10f: function(arg0) {
             const ret = arg0.now();
+            return ret;
+        },
+        __wbg_pcmbatch_new: function(arg0) {
+            const ret = PcmBatch.__wrap(arg0);
             return ret;
         },
         __wbg_performance_3fcf6e32a7e1ed0a: function(arg0) {
@@ -6089,6 +11045,18 @@ function __wbg_get_imports() {
             const ret = arg0.removeEntry(getStringFromWasm0(arg1, arg2), arg3);
             return ret;
         },
+        __wbg_replyenergycomponents_new: function(arg0) {
+            const ret = ReplyEnergyComponents.__wrap(arg0);
+            return ret;
+        },
+        __wbg_replyenergytotal_new: function(arg0) {
+            const ret = ReplyEnergyTotal.__wrap(arg0);
+            return ret;
+        },
+        __wbg_repository_new: function(arg0) {
+            const ret = Repository.__wrap(arg0);
+            return ret;
+        },
         __wbg_requestAdapter_a539af006419f2e9: function(arg0, arg1) {
             const ret = arg0.requestAdapter(arg1);
             return ret;
@@ -6104,8 +11072,32 @@ function __wbg_get_imports() {
         __wbg_respond_c102fabcc79e5ef0: function() { return handleError(function (arg0, arg1) {
             arg0.respond(arg1 >>> 0);
         }, arguments); },
+        __wbg_samplingmethodgreedy_new: function(arg0) {
+            const ret = SamplingMethodGreedy.__wrap(arg0);
+            return ret;
+        },
+        __wbg_samplingmethodstochastic_new: function(arg0) {
+            const ret = SamplingMethodStochastic.__wrap(arg0);
+            return ret;
+        },
         __wbg_samplingparameters_new: function(arg0) {
             const ret = SamplingParameters.__wrap(arg0);
+            return ret;
+        },
+        __wbg_samplingpolicycustom_new: function(arg0) {
+            const ret = SamplingPolicyCustom.__wrap(arg0);
+            return ret;
+        },
+        __wbg_samplingpolicydefault_new: function(arg0) {
+            const ret = SamplingPolicyDefault.__wrap(arg0);
+            return ret;
+        },
+        __wbg_samplingseedcustom_new: function(arg0) {
+            const ret = SamplingSeedCustom.__wrap(arg0);
+            return ret;
+        },
+        __wbg_samplingseeddefault_new: function(arg0) {
+            const ret = SamplingSeedDefault.__wrap(arg0);
             return ret;
         },
         __wbg_setBindGroup_0b7c2a055ef1f314: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5, arg6) {
@@ -6135,18 +11127,8 @@ function __wbg_get_imports() {
         __wbg_set_575d3ddb70fe831d: function(arg0, arg1, arg2) {
             arg0.set(getArrayU8FromWasm0(arg1, arg2));
         },
-        __wbg_set_6ae97e73113c4f0b: function(arg0, arg1, arg2) {
-            const ret = arg0.set(arg1, arg2);
-            return ret;
-        },
-        __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
-            arg0[arg1] = arg2;
-        },
         __wbg_set_access_a099cfbbeec9b96f: function(arg0, arg1) {
             arg0.access = __wbindgen_enum_GpuStorageTextureAccess[arg1];
-        },
-        __wbg_set_bea140a88be9b277: function(arg0, arg1, arg2) {
-            arg0[arg1 >>> 0] = arg2;
         },
         __wbg_set_beginning_of_pass_write_index_fa9ae10d5d2804ce: function(arg0, arg1) {
             arg0.beginningOfPassWriteIndex = arg1 >>> 0;
@@ -6406,6 +11388,10 @@ function __wbg_get_imports() {
             const ret = arg0.text();
             return ret;
         }, arguments); },
+        __wbg_texttospeechstats_new: function(arg0) {
+            const ret = TextToSpeechStats.__wrap(arg0);
+            return ret;
+        },
         __wbg_then_c949d5a25a4e78f8: function(arg0, arg1, arg2) {
             const ret = arg0.then(arg1, arg2);
             return ret;
@@ -6418,12 +11404,32 @@ function __wbg_get_imports() {
             const ret = ToolCall.__wrap(arg0);
             return ret;
         },
+        __wbg_toolcallargumentdelta_new: function(arg0) {
+            const ret = ToolCallArgumentDelta.__wrap(arg0);
+            return ret;
+        },
+        __wbg_toolcallargumentstream_new: function(arg0) {
+            const ret = ToolCallArgumentStream.__wrap(arg0);
+            return ret;
+        },
+        __wbg_tooldescriptionfunction_new: function(arg0) {
+            const ret = ToolDescriptionFunction.__wrap(arg0);
+            return ret;
+        },
+        __wbg_toolfunction_new: function(arg0) {
+            const ret = ToolFunction.__wrap(arg0);
+            return ret;
+        },
         __wbg_toolnamespace_new: function(arg0) {
             const ret = ToolNamespace.__wrap(arg0);
             return ret;
         },
-        __wbg_toolnamespace_unwrap: function(arg0) {
-            const ret = ToolNamespace.__unwrap(arg0);
+        __wbg_translationpayloadimage_new: function(arg0) {
+            const ret = TranslationPayloadImage.__wrap(arg0);
+            return ret;
+        },
+        __wbg_translationpayloadtext_new: function(arg0) {
+            const ret = TranslationPayloadText.__wrap(arg0);
             return ret;
         },
         __wbg_unconfigure_835307f58dc68d80: function(arg0) {
@@ -6443,6 +11449,10 @@ function __wbg_get_imports() {
             const ret = arg0.value;
             return ret;
         },
+        __wbg_value_new: function(arg0) {
+            const ret = Value.__wrap(arg0);
+            return ret;
+        },
         __wbg_view_9c570f33e8d6ab96: function(arg0) {
             const ret = arg0.view;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
@@ -6456,37 +11466,37 @@ function __wbg_get_imports() {
             return ret;
         }, arguments); },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1252, ret: Externref, inner_ret: Some(Externref) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1233, ret: Externref, inner_ret: Some(Externref) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue__wasm_bindgen_6c51f868a643a6ac___JsValue__true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1593, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1555, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 3484, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 3313, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___JsValue__core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUDevice")], shim_idx: 3302, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUDevice")], shim_idx: 3251, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_379461efccdc673a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("any")], shim_idx: 3302, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__483);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("any")], shim_idx: 3251, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_379461efccdc673a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__898);
             return ret;
         },
         __wbindgen_generic_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1566, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1528, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke_______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000007: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1700, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1658, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke_______true__1_);
             return ret;
         },
@@ -6495,66 +11505,14 @@ function __wbg_get_imports() {
             const ret = arg0;
             return ret;
         },
-        __wbindgen_generic_0000000000000009: function(arg0) {
-            // Cast intrinsic for `I64 -> Externref`.
-            const ret = arg0;
-            return ret;
-        },
-        __wbindgen_generic_000000000000000a: function(arg0, arg1) {
+        __wbindgen_generic_0000000000000009: function(arg0, arg1) {
             // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
             const ret = getArrayU8FromWasm0(arg0, arg1);
             return ret;
         },
-        __wbindgen_generic_000000000000000b: function(arg0, arg1) {
+        __wbindgen_generic_000000000000000a: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
-            return ret;
-        },
-        __wbindgen_generic_000000000000000c: function(arg0) {
-            // Cast intrinsic for `U64 -> Externref`.
-            const ret = BigInt.asUintN(64, arg0);
-            return ret;
-        },
-        __wbindgen_generic_000000000000000d: function(arg0, arg1) {
-            var v0 = getArrayJsValueFromWasm0(arg0, arg1);
-            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
-            // Cast intrinsic for `Vector(RustStruct { name: "ChatMessage", unique_crate_identifier: "shoji-33ae217e8f89287f" }) -> Externref`.
-            const ret = v0;
-            return ret;
-        },
-        __wbindgen_generic_000000000000000e: function(arg0, arg1) {
-            var v0 = getArrayJsValueFromWasm0(arg0, arg1);
-            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
-            // Cast intrinsic for `Vector(RustStruct { name: "ChatReply", unique_crate_identifier: "shoji-33ae217e8f89287f" }) -> Externref`.
-            const ret = v0;
-            return ret;
-        },
-        __wbindgen_generic_000000000000000f: function(arg0, arg1) {
-            var v0 = getArrayJsValueFromWasm0(arg0, arg1);
-            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
-            // Cast intrinsic for `Vector(RustStruct { name: "Model", unique_crate_identifier: "shoji-33ae217e8f89287f" }) -> Externref`.
-            const ret = v0;
-            return ret;
-        },
-        __wbindgen_generic_0000000000000010: function(arg0, arg1) {
-            var v0 = getArrayJsValueFromWasm0(arg0, arg1);
-            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
-            // Cast intrinsic for `Vector(RustStruct { name: "ModelFamily", unique_crate_identifier: "shoji-33ae217e8f89287f" }) -> Externref`.
-            const ret = v0;
-            return ret;
-        },
-        __wbindgen_generic_0000000000000011: function(arg0, arg1) {
-            var v0 = getArrayJsValueFromWasm0(arg0, arg1);
-            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
-            // Cast intrinsic for `Vector(RustStruct { name: "ModelRegistry", unique_crate_identifier: "shoji-33ae217e8f89287f" }) -> Externref`.
-            const ret = v0;
-            return ret;
-        },
-        __wbindgen_generic_0000000000000012: function(arg0, arg1) {
-            var v0 = getArrayJsValueFromWasm0(arg0, arg1);
-            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
-            // Cast intrinsic for `Vector(RustStruct { name: "ModelVendor", unique_crate_identifier: "shoji-33ae217e8f89287f" }) -> Externref`.
-            const ret = v0;
             return ret;
         },
         __wbindgen_init_externref_table: function() {
@@ -6597,15 +11555,15 @@ function wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bin
     }
 }
 
-function wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_(arg0, arg1, arg2);
+function wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_379461efccdc673a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_379461efccdc673a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true_(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__483(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_5471360f92b7a73a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__483(arg0, arg1, arg2);
+function wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_379461efccdc673a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__898(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen_6c51f868a643a6ac___convert__closures_____invoke___wasm_bindgen_6c51f868a643a6ac___sys__JsNullable_wgpu_379461efccdc673a___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_b4dac1b1fa325dc6___result__Result_____wasm_bindgen_6c51f868a643a6ac___JsError___true__898(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
@@ -6662,6 +11620,60 @@ const CancelTokenFinalization = (typeof FinalizationRegistry === 'undefined')
 const ChatConfigFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatconfig_free(ptr, 1));
+const ChatContentBlockAudioFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockaudio_free(ptr, 1));
+const ChatContentBlockBuiltinToolsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockbuiltintools_free(ptr, 1));
+const ChatContentBlockConversationStartDateFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockconversationstartdate_free(ptr, 1));
+const ChatContentBlockCustomFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockcustom_free(ptr, 1));
+const ChatContentBlockFileFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockfile_free(ptr, 1));
+const ChatContentBlockIdentityFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockidentity_free(ptr, 1));
+const ChatContentBlockImageFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockimage_free(ptr, 1));
+const ChatContentBlockKnowledgeCutoffFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockknowledgecutoff_free(ptr, 1));
+const ChatContentBlockReasoningFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockreasoning_free(ptr, 1));
+const ChatContentBlockReasoningEffortFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockreasoningeffort_free(ptr, 1));
+const ChatContentBlockTextFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktext_free(ptr, 1));
+const ChatContentBlockToolCallFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktoolcall_free(ptr, 1));
+const ChatContentBlockToolCallCandidateFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktoolcallcandidate_free(ptr, 1));
+const ChatContentBlockToolCallResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktoolcallresult_free(ptr, 1));
+const ChatContentBlockToolsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktools_free(ptr, 1));
+const ChatContentBlockTranslationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktranslation_free(ptr, 1));
+const ChatContentBlockTypeFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblocktype_free(ptr, 1));
+const ChatContentBlockVideoFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatcontentblockvideo_free(ptr, 1));
 const ChatInstanceFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatinstance_free(ptr, 1));
@@ -6680,18 +11692,57 @@ const ChatReplyFinalization = (typeof FinalizationRegistry === 'undefined')
 const ChatReplyConfigFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatreplyconfig_free(ptr, 1));
+const ChatReplyFinishReasonFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatreplyfinishreason_free(ptr, 1));
+const ChatReplyJoulesPerTokenComponentsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatreplyjoulespertokencomponents_free(ptr, 1));
+const ChatReplyJoulesPerTokenTotalFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatreplyjoulespertokentotal_free(ptr, 1));
 const ChatReplySpeculatorStatsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatreplyspeculatorstats_free(ptr, 1));
 const ChatReplyStatsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatreplystats_free(ptr, 1));
+const ChatRoleAssistantFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatroleassistant_free(ptr, 1));
+const ChatRoleCustomFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatrolecustom_free(ptr, 1));
+const ChatRoleDeveloperFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatroledeveloper_free(ptr, 1));
+const ChatRoleSystemFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatrolesystem_free(ptr, 1));
+const ChatRoleToolFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatroletool_free(ptr, 1));
+const ChatRoleUserFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatroleuser_free(ptr, 1));
 const ChatSessionFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatsession_free(ptr, 1));
+const ChatSessionStateFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatsessionstate_free(ptr, 1));
 const ChatSessionStreamFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_chatsessionstream_free(ptr, 1));
+const ChatSessionStreamChunkErrorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatsessionstreamchunkerror_free(ptr, 1));
+const ChatSessionStreamChunkRepliesFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatsessionstreamchunkreplies_free(ptr, 1));
+const ChatSessionStreamChunkToolResultsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_chatsessionstreamchunktoolresults_free(ptr, 1));
 const ClassificationLabelFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_classificationlabel_free(ptr, 1));
@@ -6701,9 +11752,30 @@ const ClassificationMessageFinalization = (typeof FinalizationRegistry === 'unde
 const ClassificationOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_classificationoutput_free(ptr, 1));
+const ClassificationRoleFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_classificationrole_free(ptr, 1));
 const ClassificationStatsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_classificationstats_free(ptr, 1));
+const ContextLengthCustomFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_contextlengthcustom_free(ptr, 1));
+const ContextLengthDefaultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_contextlengthdefault_free(ptr, 1));
+const ContextLengthMaximalFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_contextlengthmaximal_free(ptr, 1));
+const DecisionAnswerChoiceFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionanswerchoice_free(ptr, 1));
+const DecisionAnswerScoreFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionanswerscore_free(ptr, 1));
+const DecisionAnswerYesNoFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionansweryesno_free(ptr, 1));
 const DecisionInputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decisioninput_free(ptr, 1));
@@ -6713,18 +11785,54 @@ const DecisionOptionFinalization = (typeof FinalizationRegistry === 'undefined')
 const DecisionOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decisionoutput_free(ptr, 1));
+const DecisionQuestionChoiceFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionquestionchoice_free(ptr, 1));
+const DecisionQuestionScoreFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionquestionscore_free(ptr, 1));
+const DecisionQuestionYesNoFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionquestionyesno_free(ptr, 1));
 const DecisionResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decisionresult_free(ptr, 1));
 const DecisionSessionFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decisionsession_free(ptr, 1));
+const DecisionSessionStateFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decisionsessionstate_free(ptr, 1));
 const DecisionStatsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decisionstats_free(ptr, 1));
 const DeviceFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_device_free(ptr, 1));
+const DownloadManagerTypeFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadmanagertype_free(ptr, 1));
+const DownloadPhaseDownloadedFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphasedownloaded_free(ptr, 1));
+const DownloadPhaseDownloadingFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphasedownloading_free(ptr, 1));
+const DownloadPhaseErrorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphaseerror_free(ptr, 1));
+const DownloadPhaseInitializingFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphaseinitializing_free(ptr, 1));
+const DownloadPhaseLockedFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphaselocked_free(ptr, 1));
+const DownloadPhaseNotDownloadedFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphasenotdownloaded_free(ptr, 1));
+const DownloadPhasePausedFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_downloadphasepaused_free(ptr, 1));
 const DownloadStateFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_downloadstate_free(ptr, 1));
@@ -6749,12 +11857,30 @@ const FeatureFinalization = (typeof FinalizationRegistry === 'undefined')
 const FileFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_file_free(ptr, 1));
+const GrammarJsonAnyFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_grammarjsonany_free(ptr, 1));
+const GrammarJsonSchemaFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_grammarjsonschema_free(ptr, 1));
+const GrammarRegexFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_grammarregex_free(ptr, 1));
 const HashFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_hash_free(ptr, 1));
+const HashMethodFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_hashmethod_free(ptr, 1));
 const ImageFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_image_free(ptr, 1));
+const ImageFormatFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_imageformat_free(ptr, 1));
+const ImageThemeFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_imagetheme_free(ptr, 1));
 const IntoUnderlyingByteSourceFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_intounderlyingbytesource_free(ptr, 1));
@@ -6770,6 +11896,12 @@ const MetadataFinalization = (typeof FinalizationRegistry === 'undefined')
 const ModelFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_model_free(ptr, 1));
+const ModelAccessibilityOnDeviceFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelaccessibilityondevice_free(ptr, 1));
+const ModelAccessibilityRemoteFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelaccessibilityremote_free(ptr, 1));
 const ModelBackendFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_modelbackend_free(ptr, 1));
@@ -6785,6 +11917,30 @@ const ModelQuantizationFinalization = (typeof FinalizationRegistry === 'undefine
 const ModelRegistryFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_modelregistry_free(ptr, 1));
+const ModelSourceFilesystemFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelsourcefilesystem_free(ptr, 1));
+const ModelSourceRegistryFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelsourceregistry_free(ptr, 1));
+const ModelSpecializationChatFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelspecializationchat_free(ptr, 1));
+const ModelSpecializationClassificationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelspecializationclassification_free(ptr, 1));
+const ModelSpecializationDecisionFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelspecializationdecision_free(ptr, 1));
+const ModelSpecializationSpeculationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelspecializationspeculation_free(ptr, 1));
+const ModelSpecializationTextToSpeechFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelspecializationtexttospeech_free(ptr, 1));
+const ModelSpecializationTranslationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_modelspecializationtranslation_free(ptr, 1));
 const ModelVendorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_modelvendor_free(ptr, 1));
@@ -6794,12 +11950,39 @@ const NativeToolFinalization = (typeof FinalizationRegistry === 'undefined')
 const PcmBatchFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_pcmbatch_free(ptr, 1));
+const ReasoningEffortFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_reasoningeffort_free(ptr, 1));
+const ReplyEnergyComponentsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_replyenergycomponents_free(ptr, 1));
+const ReplyEnergyTotalFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_replyenergytotal_free(ptr, 1));
 const RepositoryFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_repository_free(ptr, 1));
+const SamplingMethodGreedyFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_samplingmethodgreedy_free(ptr, 1));
+const SamplingMethodStochasticFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_samplingmethodstochastic_free(ptr, 1));
 const SamplingParametersFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_samplingparameters_free(ptr, 1));
+const SamplingPolicyCustomFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_samplingpolicycustom_free(ptr, 1));
+const SamplingPolicyDefaultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_samplingpolicydefault_free(ptr, 1));
+const SamplingSeedCustomFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_samplingseedcustom_free(ptr, 1));
+const SamplingSeedDefaultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_samplingseeddefault_free(ptr, 1));
 const TextToSpeechOutputFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_texttospeechoutput_free(ptr, 1));
@@ -6818,12 +12001,21 @@ const ToolCallArgumentDeltaFinalization = (typeof FinalizationRegistry === 'unde
 const ToolCallArgumentStreamFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_toolcallargumentstream_free(ptr, 1));
+const ToolDescriptionFunctionFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_tooldescriptionfunction_free(ptr, 1));
 const ToolFunctionFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_toolfunction_free(ptr, 1));
 const ToolNamespaceFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_toolnamespace_free(ptr, 1));
+const TranslationPayloadImageFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_translationpayloadimage_free(ptr, 1));
+const TranslationPayloadTextFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_translationpayloadtext_free(ptr, 1));
 const ValueFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_value_free(ptr, 1));
@@ -6909,22 +12101,6 @@ function debugString(val) {
     return className;
 }
 
-function getArrayF64FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
-}
-
-function getArrayJsValueFromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    const mem = getDataViewMemory0();
-    const result = [];
-    for (let i = ptr; i < ptr + 4 * len; i += 4) {
-        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
-    }
-    wasm.__externref_drop_slice(ptr, len);
-    return result;
-}
-
 function getArrayJsValueViewFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     const mem = getDataViewMemory0();
@@ -6951,14 +12127,6 @@ function getDataViewMemory0() {
         cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
     }
     return cachedDataViewMemory0;
-}
-
-let cachedFloat64ArrayMemory0 = null;
-function getFloat64ArrayMemory0() {
-    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
-        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
-    }
-    return cachedFloat64ArrayMemory0;
 }
 
 function getStringFromWasm0(ptr, len) {
@@ -7020,30 +12188,6 @@ function makeMutClosure(arg0, arg1, f) {
     };
     CLOSURE_DTORS.register(real, state, state);
     return real;
-}
-
-function passArray32ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 4, 4) >>> 0;
-    getUint32ArrayMemory0().set(arg, ptr / 4);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-}
-
-function passArrayF64ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 8, 8) >>> 0;
-    getFloat64ArrayMemory0().set(arg, ptr / 8);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-}
-
-function passArrayJsValueToWasm0(array, malloc) {
-    const ptr = malloc(array.length * 4, 4) >>> 0;
-    for (let i = 0; i < array.length; i++) {
-        const add = addToExternrefTable0(array[i]);
-        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
-    }
-    WASM_VECTOR_LEN = array.length;
-    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -7124,7 +12268,6 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
-    cachedFloat64ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();

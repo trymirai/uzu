@@ -1,4 +1,7 @@
-use bindings_types::js_sys::{Error as JavaScriptError, Function, Promise};
+use bindings_types::{
+    js_sys::{Error as JavaScriptError, Function, Promise},
+    wasm::{FromJs, JsResult, clone_pointer, take_clone},
+};
 use kiban::rt::MakeSendFuture;
 use shoji::types::basic::{ToolFunction, Value};
 use uuid::Uuid;
@@ -21,6 +24,9 @@ impl Drop for JavaScriptInvocation {
     }
 }
 
+const NATIVE_TOOL_CLONE_METHOD: &str = "__uzuCloneNativeTool";
+
+#[derive(Clone)]
 #[wasm_bindgen]
 pub struct NativeTool {
     descriptor: ToolDescriptor,
@@ -28,16 +34,15 @@ pub struct NativeTool {
 
 #[wasm_bindgen]
 impl NativeTool {
-    /// The definition uses the serialized ToolFunction shape. The callback receives
-    /// JSON arguments and an invocation ID, and returns JSON or a promise of JSON.
+    /// The callback receives the JSON arguments and an invocation ID, and returns JSON or a promise
+    /// of JSON. `cancel` receives the invocation ID when the call is cancelled.
     #[wasm_bindgen(constructor)]
     pub fn new(
-        definition_json: &str,
-        invoke_json: Function,
-        cancel: Function,
+        #[wasm_bindgen(unchecked_param_type = "ToolFunction")] definition: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "(arg0: string, arg1: string) => Promise<string>")] invoke_json: Function,
+        #[wasm_bindgen(unchecked_param_type = "(arg: string) => void")] cancel: Function,
     ) -> Result<Self, JsValue> {
-        let definition: ToolFunction =
-            serde_json::from_str(definition_json).map_err(|error| JavaScriptError::new(&error.to_string()))?;
+        let definition = ToolFunction::from_js(definition)?;
         let descriptor = ToolDescriptor::new(
             definition.name,
             definition.description,
@@ -50,6 +55,17 @@ impl NativeTool {
         Ok(Self {
             descriptor,
         })
+    }
+
+    #[wasm_bindgen(js_name = "__uzuCloneNativeTool", skip_typescript)]
+    pub fn clone_pointer_bindings_wasm(&self) -> usize {
+        clone_pointer(self)
+    }
+}
+
+impl FromJs for NativeTool {
+    fn from_js(value: JsValue) -> JsResult<Self> {
+        take_clone(&value, NATIVE_TOOL_CLONE_METHOD, "NativeTool")
     }
 }
 
@@ -64,12 +80,12 @@ impl ChatSession {
         session.add_tool(tool.descriptor.clone()).await.map_err(Into::into)
     }
 
-    /// Consumes the tool handles; the session retains their callbacks.
     #[wasm_bindgen(js_name = addTools)]
     pub async fn add_tools_bindings_wasm(
         &self,
-        tools: Vec<NativeTool>,
+        #[wasm_bindgen(unchecked_param_type = "Array<NativeTool>")] tools: JsValue,
     ) -> Result<(), JsValue> {
+        let tools = Vec::<NativeTool>::from_js(tools)?;
         let mut session = self.clone();
         session.add_tools(tools.into_iter().map(|tool| tool.descriptor).collect()).await.map_err(Into::into)
     }

@@ -165,6 +165,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      zod:
+        specifier: ^4.2.1
+        version: 4.6.7
     devDependencies:
       publint:
         specifier: ^0.2.12
@@ -510,6 +514,9 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
 
   '@oxc-project/types@0.156.0': {}
@@ -732,3 +739,5 @@ snapshots:
       fsevents: 2.3.3
 
   wrappy@1.0.2: {}
+
+  zod@4.6.7: {}

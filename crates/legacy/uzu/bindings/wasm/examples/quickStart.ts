@@ -1,8 +1,6 @@
-import init, { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu-wasm';
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu-wasm';
 
 async function main() {
-    await init();
-
     let output = document.getElementById('output')!;
 
     let engineConfig = EngineConfig.create();
@@ -13,8 +11,7 @@ async function main() {
         throw new Error('Model not found');
     }
 
-    let download = await engine.download(model);
-    for (let update = await download.next(); update; update = await download.next()) {
+    for await (const update of await engine.download(model)) {
         output.textContent = `Download progress: ${(update.progress * 100).toFixed(2)}%`;
     }
 

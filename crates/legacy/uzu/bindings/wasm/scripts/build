@@ -24,5 +24,6 @@ node scripts/utils/make-dist-package-json.cjs > dist/package.json
 mkdir -p dist/wasm
 cp src/wasm/* dist/wasm/
 
-# make sure that nothing crashes when we import the output ESM
-(cd dist && node -e 'import("@trymirai/uzu-wasm")' --input-type=module)
+# make sure that nothing crashes when we import the output ESM, which loads the wasm module
+(cd dist && node --input-type=module -e "$(cat ../scripts/utils/file-fetch.mjs)
+await import('@trymirai/uzu-wasm');")
