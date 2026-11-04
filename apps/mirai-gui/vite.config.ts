@@ -4,9 +4,10 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import { defineConfig } from "vitest/config";
 
-// `--mode web` builds the browser variant; vitest runs with mode "test".
+// `--mode web` builds the browser variant, `--mode demo` the browser variant with a pretend
+// engine (see platform/demo-platform-client.ts); vitest runs with mode "test".
 export default defineConfig(({ mode }) => {
-  const platform = mode === "web" || mode === "test" ? "web" : "tauri";
+  const platform = mode === "web" || mode === "test" ? "web" : mode === "demo" ? "demo" : "tauri";
   return {
     plugins: [
       react(),
@@ -26,7 +27,7 @@ export default defineConfig(({ mode }) => {
       outDir: path.join(__dirname, `client/dist-${platform}`),
       emptyOutDir: true,
     },
-    server: { port: platform === "web" ? 3001 : 3002, strictPort: true },
+    server: { port: { web: 3001, tauri: 3002, demo: 3003 }[platform], strictPort: true },
     resolve: { alias: { "@": path.resolve(__dirname, "client/src") } },
     define: { __PLATFORM__: JSON.stringify(platform) },
     optimizeDeps: { include: ["shiki"] },
