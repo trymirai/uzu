@@ -530,6 +530,28 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         )?;
 
         // sampling
+        let (mut command_buffer, token_ids): (_, &dyn GpuBuffer<Backend = B>) =
+            if needs_last_job_input && self.options.grammar.is_some() {
+                command_buffer.end_encoding().submit();
+                let command_buffer = record(
+                    self.model
+                        .engine
+                        .context
+                        .create_command_buffer(
+                            Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
+                            Some(self.allocation_pool.clone()),
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?,
+                    self.options.timestamps.as_ref(),
+                );
+
+                // NOTE: Not a CPU bubble, forward pass is overlapped.
+                self.resolve(&mut last_job).await?;
+                (command_buffer, last_job.output_tokens_buffer())
+            } else {
+                (command_buffer, token_ids)
+            };
+
         let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
             let mut bitmask = command_buffer
                 .allocate_constant(
@@ -539,13 +561,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let filled = if let Some(flat_trie) = flat_trie.as_ref() {
+            let was_filled = if let Some(flat_trie) = flat_trie.as_ref() {
                 flat_trie.fill_bitmasks(bitmask.as_slice_mut(), self.model.vocab_size, grammar)
             } else {
                 grammar.next_bitmask(bitmask.as_slice_mut())
             };
 
-            filled.then_some(bitmask)
+            was_filled.then_some(bitmask)
         } else {
             None
         };
@@ -761,10 +783,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 self.emitting = Some((resolved, 0))
             }
         } else if let Some((mut queued, emitted_len)) = self.emitting.take() {
-            let accept_pending = self.submitter.encode_accept(&mut queued, emitted_len)?.unwrap();
-            wait(accept_pending, self.submitter.options.timestamps.as_ref())
-                .await
-                .map_err(LanguageModelStreamError::Backend)?;
+            let accept_pending = self.submitter.encode_accept(&mut queued, emitted_len)?;
+            if let Some(pending) = accept_pending {
+                wait(pending, self.submitter.options.timestamps.as_ref())
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+            };
 
             let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
                 self.submitter.model_state.transformer_state.context_length() >= max_context_length
