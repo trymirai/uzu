@@ -47,11 +47,16 @@ struct RightOperand {
   UZU_CONST GemmBPrologueKind SCHEME = PROLOGUE;
   UZU_CONST bool NEEDS_CORRECTION = PROLOGUE == GemmBPrologueKind::ScaleBiasDequant;
 
-  UZU_CONST ushort CODE_ORIGIN = (!QUANTIZED || (BITS_ == 4 && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant))
-                                     ? 0
-                                     : ushort(1u << (BITS - 1));
+  UZU_CONST ushort CODE_ORIGIN =
+      (!QUANTIZED || ((BITS_ == 2 || BITS_ == 4) && PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant))
+          ? 0
+          : ushort(1u << (BITS - 1));
+  UZU_CONST ushort MMA_BLOCK_K = BITS_ == 2 ? 2 * MXU_SIMDGROUP_BLOCK_K : MXU_SIMDGROUP_BLOCK_K;
 
-  static_assert(!QUANTIZED || BITS_ == 4 || BITS_ == 8, "quantized integer weights must use 4 or 8 bits");
+  static_assert(
+      !QUANTIZED || BITS_ == 2 || BITS_ == 4 || BITS_ == 8,
+      "quantized integer weights must use 2, 4 or 8 bits"
+  );
   static_assert(!QUANTIZED || PROLOGUE != GemmBPrologueKind::FullPrecision, "quantized weights need a scheme");
 
   using CodeElement = int8_t;
@@ -61,7 +66,7 @@ struct RightOperand {
   template <ushort BLOCK_K>
   static constexpr ushort outer_block_k() {
     if constexpr (QUANTIZED) {
-      static_assert(GROUP_SIZE_ % MXU_SIMDGROUP_BLOCK_K == 0, "weight groups must contain complete MMA chunks");
+      static_assert(GROUP_SIZE_ % MMA_BLOCK_K == 0, "weight groups must contain complete MMA chunks");
       static_assert(BLOCK_K % GROUP_SIZE_ == 0, "tile block K must contain complete weight groups");
       return GROUP_SIZE_;
     } else {
@@ -92,6 +97,7 @@ struct RightStorage {
   const device typename Right::ScaleElement* biases;
   const device uint8_t* zero_points;
   bool signed_codes;
+  bool hoist_row_metadata;
   GemmBLayout gemm_b_layout;
 
   METAL_FUNC uint sign_mask() const thread {
@@ -170,10 +176,11 @@ METAL_FUNC RightStorage<Right> pack_right(
     const device Element* biases,
     const device uint8_t* zero_points,
     const bool signed_codes,
+    const bool hoist_row_metadata,
     const GemmBLayout gemm_b_layout
 ) {
   if constexpr (!Right::QUANTIZED) {
-    return {dense, nullptr, nullptr, nullptr, nullptr, false, GemmBLayout::RowMajor};
+    return {dense, nullptr, nullptr, nullptr, nullptr, false, false, GemmBLayout::RowMajor};
   } else {
     return {
         nullptr,
@@ -182,6 +189,7 @@ METAL_FUNC RightStorage<Right> pack_right(
         Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant ? biases : nullptr,
         Right::SCHEME == GemmBPrologueKind::ScaleZeroPointDequant ? zero_points : nullptr,
         signed_codes,
+        hoist_row_metadata,
         gemm_b_layout
     };
   }

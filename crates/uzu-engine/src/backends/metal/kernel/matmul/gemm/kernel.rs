@@ -7,7 +7,10 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
+            gpu_types::{
+                gemm::{GemmBPrologueKind, GemmDTransform},
+                matmul::{MXU_TILED_BLOCK_ROWS, MXU_TILED_PREPARE_THREADS, MXU_TILED_W2_BLOCK_ROWS},
+            },
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
                 QuantParamsStrides, QuantizedB,
@@ -95,9 +98,18 @@ impl GemmKernel {
                     specialization.alignment,
                     specialization.signed_codes,
                     specialization.gemm_b_layout,
+                    specialization.hoist_row_metadata,
                 )?;
                 Ok(entry.insert(kernel))
             },
+        }
+    }
+
+    fn mxu_tiled_block_rows(bits: u32) -> u32 {
+        if bits == 2 {
+            MXU_TILED_W2_BLOCK_ROWS
+        } else {
+            MXU_TILED_BLOCK_ROWS
         }
     }
 
@@ -105,7 +117,8 @@ impl GemmKernel {
         k: u32,
         bits: u32,
     ) -> Option<u32> {
-        let words_per_thread = (k * bits / 32).div_ceil(32);
+        let words_per_thread =
+            (Self::mxu_tiled_block_rows(bits) * (k * bits / u32::BITS)).div_ceil(MXU_TILED_PREPARE_THREADS);
         [32, 72, 160].into_iter().find(|&variant| variant >= words_per_thread)
     }
 
@@ -116,13 +129,13 @@ impl GemmKernel {
         bits: u32,
         context: &MetalContext,
     ) -> Result<(), MetalError> {
-        let row_words = k * bits / 32;
+        let row_words = k * bits / u32::BITS;
         let variant = Self::mxu_tiled_words_per_thread(k, bits).expect("int8 eligibility admits only tileable weights");
         let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
         GemmPrepareBLayoutMetalKernel::new(context, bits, variant)?.encode(
             weights,
             row_words,
-            rows / 32,
+            rows / Self::mxu_tiled_block_rows(bits),
             &mut command_buffer,
         );
         block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
@@ -259,6 +272,13 @@ impl GemmKernel {
             });
         }
 
+        if shape.b_bits == Some(2) && shape.a_is_quantized() && gemm_b_layout != GemmBLayout::MxuTiled {
+            return Err(MatmulMetalError::IncompatibleA {
+                path: "Gemm",
+                reason: "2-bit int8 GEMM requires the MxuTiled weight layout",
+            });
+        }
+
         let is_quant = quantized.is_some();
         if !is_quant && !matches!(&a, MatmulA::FullPrecision { .. }) {
             return Err(MatmulMetalError::IncompatibleA {
@@ -266,6 +286,7 @@ impl GemmKernel {
                 reason: "int8 activations require quantized weights",
             });
         }
+        let row_scaled_weights = quantized.as_ref().is_some_and(|quantized| quantized.params.is_per_row());
         let (scales, biases, zero_points, scale_strides, zero_point_strides) = match quantized.as_ref() {
             None => (None, None, None, Default::default(), Default::default()),
             Some(quantized) => (
@@ -336,6 +357,7 @@ impl GemmKernel {
                 ab_scale,
                 scale_strides,
                 zero_point_strides,
+                row_scaled_weights,
                 shape,
                 gemm_b_layout,
                 plan,
@@ -392,6 +414,7 @@ impl GemmKernel {
             alignment,
             a_prologue,
             a_group_size,
+            row_scaled_weights,
         )?;
         let kernel = self.get_or_create(command_buffer.context(), specialization, self.output_data_type)?;
         kernel.encode(
@@ -429,6 +452,7 @@ impl GemmKernel {
         ab_scale: f32,
         scale_strides: QuantParamsStrides,
         zero_point_strides: QuantParamsStrides,
+        row_scaled_weights: bool,
         shape: MatmulShape,
         gemm_b_layout: GemmBLayout,
         plan: GemmPlan,
@@ -487,6 +511,7 @@ impl GemmKernel {
             alignment,
             a_prologue,
             a_group_size,
+            row_scaled_weights,
         )?;
 
         let elem = (m as usize) * (n as usize);

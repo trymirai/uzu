@@ -106,9 +106,11 @@ public:
   ) thread {
     const uint k = position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES;
     const uint offset_bytes = k * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
-    if (params.gemm_b_layout == GemmBLayout::MxuTiled) {
-      load_mxu_tiled_weights(weights_base, weight_row_indices, row_stride, offset_bytes, params.gathered);
-      return;
+    if constexpr (BITS == 4 || BITS == 8) {
+      if (params.gemm_b_layout == GemmBLayout::MxuTiled) {
+        load_mxu_tiled_weights(weights_base, weight_row_indices, row_stride, offset_bytes, params.gathered);
+        return;
+      }
     }
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;

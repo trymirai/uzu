@@ -5,7 +5,10 @@ use crate::{
     backends::common::{
         Backend,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
-        kernel::matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
+        kernel::{
+            activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
+            matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
+        },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
@@ -56,6 +59,7 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
         None => None,
         Some((bits, group_size, method)) => {
             let mode = match bits {
+                2 => QuantizationMode::U2,
                 4 => QuantizationMode::U4,
                 8 => QuantizationMode::U8,
                 _ => {
@@ -114,7 +118,7 @@ impl<B: Backend> WeightMatrix<B> {
         }
         let (rows, columns) = physical_shape(&layout, output_dim, input_dim);
 
-        let Some(info) = quantization_info else {
+        let Some(mut info) = quantization_info else {
             let values = tree.read_buffer("weights", &[rows, columns], data_type).await?;
             return Ok(Self {
                 values,
@@ -136,6 +140,9 @@ impl<B: Backend> WeightMatrix<B> {
             )));
         }
         let groups = columns.div_ceil(group_size);
+        if info.mode == QuantizationMode::U2 {
+            info.group_size = ACTIVATION_SCALE_GROUP_SIZE;
+        }
 
         let values = tree.read_buffer("weights", &[rows, columns / packing_divisor], storage_data_type).await?;
         let params = QuantParams::new(params_layout, rows, groups);

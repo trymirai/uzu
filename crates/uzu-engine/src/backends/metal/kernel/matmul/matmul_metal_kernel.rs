@@ -38,7 +38,7 @@ pub struct MatmulMetalKernel {
 }
 
 pub fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
-    matches!((shape.b_bits, shape.signed_codes), (Some(4), _) | (Some(8), true))
+    matches!((shape.b_bits, shape.signed_codes), (Some(2), false) | (Some(4), _) | (Some(8), true))
 }
 
 impl MatmulMetalKernel {

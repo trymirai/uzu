@@ -18,7 +18,8 @@ using namespace uzu::gemm;
    (OUTPUT_ROW_TILE == 8 / K_SPLIT || OUTPUT_ROW_TILE == 32 / K_SPLIT) && INPUT_ROW_TILE == 1)
 #define GEMV_QUANTIZED_ROW_TILE                                                                                        \
   (K_SPLIT == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE == 1 &&     \
-   ((BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES) || (BITS == 8 && GROUP_SIZE == 8 * GROUP_LANES)))
+   ((BITS == 2 && GROUP_SIZE == 32 * GROUP_LANES) || (BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES) ||                  \
+    (BITS == 8 && GROUP_SIZE == 8 * GROUP_LANES)))
 #define GEMV_BATCHED_FMA_32_TILE                                                                                       \
   (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 4 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE >= 2 &&      \
    INPUT_ROW_TILE <= 4)
@@ -50,8 +51,8 @@ VARIANTS(
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
-VARIANTS(GROUP_SIZE, 0, 32, 64)
-VARIANTS(BITS, 0, 4, 8)
+VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(BITS, 0, 2, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4)
@@ -65,7 +66,9 @@ CONSTRAINT(
     ((B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant ||
       B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) &&
      BITS == 4 && GROUP_SIZE != 0) ||
-    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE != 0))
+    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && GROUP_SIZE != 0) ||
+    (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant && BITS == 2 && GEMV_QUANTIZED_ROW_TILE))
+CONSTRAINT((BITS == 2) == (GROUP_SIZE == 128))
 CONSTRAINT(INPUT_ROW_TILE == 1 || GEMV_BATCHED_INPUT)
 CONSTRAINT(
     GEMV_FULL_PRECISION_TILE ||

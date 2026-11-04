@@ -8,11 +8,7 @@ const fn lane_tile(
     bits: u32,
     group: u32,
 ) -> GemvTile {
-    let pack_factor = match bits {
-        4 => 8,
-        8 => 4,
-        _ => 1,
-    };
+    let pack_factor = 32 / bits;
     GemvTile::quantized(num_simdgroups, results_per_simdgroup, 1, 32, group / (2 * pack_factor))
 }
 
@@ -29,7 +25,7 @@ pub fn gathered_tile(
     m: u32,
     n: u32,
 ) -> Option<GemvTile> {
-    if !matches!(bits, 4 | 8) || !matches!(group, 32 | 64) || !(1..=8).contains(&m) {
+    if !matches!((bits, group), (4 | 8, 32 | 64) | (2, 128)) || !(1..=8).contains(&m) {
         return None;
     }
     let tile = lane_default(bits, group);
@@ -44,7 +40,7 @@ pub fn select(
     bf16_io: bool,
 ) -> Option<GemvTile> {
     // The GEMV pipelines exist for BF16 I/O only. Rows 5..=8 stay on GEMV for tiny N only.
-    if !bf16_io || (m > 4 && n > 64) {
+    if !bf16_io || bits == 2 || (m > 4 && n > 64) {
         return None;
     }
     gathered_tile(bits, group, m, n)

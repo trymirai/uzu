@@ -24,6 +24,7 @@ pub(super) struct GemmSpecialization {
     pub(super) b_group_size: Option<u32>,
     pub(super) signed_codes: bool,
     pub(super) gemm_b_layout: GemmBLayout,
+    pub(super) hoist_row_metadata: bool,
     pub(super) a_group_size: Option<u32>,
 }
 
@@ -37,6 +38,7 @@ impl GemmSpecialization {
         alignment: GemmAlignment,
         a_prologue: GemmAPrologueKind,
         a_group_size: Option<u32>,
+        row_scaled_weights: bool,
     ) -> Result<Self, GemmSpecializationError> {
         let specialization = Self {
             weights_data_type,
@@ -51,6 +53,9 @@ impl GemmSpecialization {
             b_group_size: shape.b_group_size,
             signed_codes: shape.signed_codes,
             gemm_b_layout,
+            hoist_row_metadata: row_scaled_weights
+                && a_prologue == GemmAPrologueKind::Int8Symmetric
+                && shape.b_prologue == GemmBPrologueKind::ScaleBiasDequant,
             a_group_size,
         };
         specialization.validate()?;
