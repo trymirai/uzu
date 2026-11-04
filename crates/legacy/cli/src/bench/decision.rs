@@ -87,7 +87,7 @@ pub async fn run(
         let tokens_count = output.results.iter().map(|result| result.stats.tokens_count as u64).sum::<u64>();
         let prefill_duration = output.results.iter().map(|result| result.stats.prefill_duration).sum::<f64>();
         let total_duration = output.results.iter().map(|result| result.stats.total_duration).sum::<f64>();
-        let prefill_tokens_per_second = (prefill_duration > 0.0).then(|| tokens_count as f64 / prefill_duration);
+        let prefill_tokens_per_second = (prefill_duration > 0.0).then_some(tokens_count as f64 / prefill_duration);
         // A partial sum would understate the run, so energy is reported only when every question has it.
         let energy = output
             .results

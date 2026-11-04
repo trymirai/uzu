@@ -123,7 +123,8 @@ std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) cons
         inputs.use_jinja = true;
         inputs.add_generation_prompt = true;
 
-        const std::string formatted_prompt = common_chat_templates_apply(this->chat_templates.get(), inputs).prompt;
+        const std::string formatted_prompt =
+            common_chat_templates_apply(this->chat_templates.get(), inputs).prompt.str();
         const int32_t prompt_tokens_count =
             -llama_tokenize(this->tokenizer, formatted_prompt.c_str(), formatted_prompt.size(), nullptr, 0, true, true);
         if (prompt_tokens_count <= 0) {

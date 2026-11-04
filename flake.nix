@@ -97,6 +97,17 @@
         hostToolchainNativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config]);
         nixToolchainNativeBuildInputs = hostToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [metal-toolchain]);
 
+        benchmarkDevshellPackages = with pkgs;
+          [bash git curl gnumake ninja huggingface-cli]
+          ++ lib.optionals stdenv.hostPlatform.isDarwin [bazelisk zig_0_17 pkg-config libwebp];
+        benchmarkDevshellEnvironment =
+          {
+            dontAddPythonPath = true;
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+            USE_BAZEL_VERSION = "${pkgs.bazel_8}/bin/bazel-${pkgs.bazel_8.version}-darwin-arm64";
+          };
+
         commonDevshellPackages = with pkgs;
           [
             nil
@@ -126,8 +137,8 @@
               cargo-swift
               tuist
             ]);
-        hostToolchainDevshellPackages = commonDevshellPackages ++ [rustShimHostCC];
-        nixToolchainDevshellPackages = commonDevshellPackages ++ [rustShimNixCC];
+        hostToolchainDevshellPackages = commonDevshellPackages ++ benchmarkDevshellPackages ++ [rustShimHostCC];
+        nixToolchainDevshellPackages = commonDevshellPackages ++ benchmarkDevshellPackages ++ [rustShimNixCC];
 
         mirai = craneLibNixCC.buildPackage {
           pname = "mirai";
@@ -153,21 +164,27 @@
         };
 
         devShells = {
-          default = pkgs.mkShell {
-            buildInputs = nixToolchainBuildInputs;
-            nativeBuildInputs = nixToolchainNativeBuildInputs;
+          default = pkgs.mkShell ({
+              buildInputs = nixToolchainBuildInputs;
+              nativeBuildInputs = nixToolchainNativeBuildInputs;
 
-            packages = nixToolchainDevshellPackages;
-          };
+              packages = nixToolchainDevshellPackages;
+            }
+            // benchmarkDevshellEnvironment);
 
-          host-xcode = pkgs.mkShellNoCC {
-            buildInputs = hostToolchainBuildInputs;
-            nativeBuildInputs = hostToolchainNativeBuildInputs;
+          host-xcode = pkgs.mkShellNoCC ({
+              buildInputs = hostToolchainBuildInputs;
+              nativeBuildInputs = hostToolchainNativeBuildInputs;
 
-            packages = hostToolchainDevshellPackages;
+              packages = hostToolchainDevshellPackages;
 
-            TUIST_GENERATE_OPEN = "false";
-          };
+              shellHook = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                unset NIX_CFLAGS_COMPILE NIX_CFLAGS_LINK NIX_LDFLAGS
+              '';
+
+              TUIST_GENERATE_OPEN = "false";
+            }
+            // benchmarkDevshellEnvironment);
         };
       }
     );

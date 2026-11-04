@@ -1,15 +1,18 @@
 const std = @import("std");
-const generate = @import("generate.zig");
-const mtp = @import("mtp.zig");
-const drafter = @import("drafter.zig");
-const dflash = @import("dflash.zig");
-const transformer = @import("transformer.zig");
-const Transformer = @import("transformer.zig").Transformer;
+const generate = @import("engines/mlx/generate.zig");
+const mtp = @import("sdk/spec/mtp/mtp.zig");
+const plugin_head = @import("engines/mlx/plugin/head.zig");
+const drafter = @import("plugins/gemma4/assistant_drafter.zig");
+const dflash = @import("engines/mlx/spec/dflash/dflash.zig");
+const transformer = @import("engines/mlx/transformer.zig");
+const Transformer = @import("engines/mlx/transformer.zig").Transformer;
 const request_utils = @import("bench_request.zig");
 
 pub const Speculation = struct {
     mode: enum { ar, mtp, drafter, dflash, dspark } = .ar,
     mtp_head: ?mtp.MtpModel = null,
+    plugin_mtp: ?*plugin_head.Head = null,
+    allocator: std.mem.Allocator = undefined,
     assistant: ?drafter.DrafterModel = null,
     block_drafter: ?dflash.DflashModel = null,
     default_depth: u32 = 0,
@@ -24,7 +27,7 @@ pub const Speculation = struct {
         model_path: []const u8,
         draft_path: ?[]const u8,
     ) !void {
-        self.* = .{};
+        self.* = .{ .allocator = a };
         errdefer self.deinit();
 
         if (draft_path) |path| {
@@ -39,7 +42,7 @@ pub const Speculation = struct {
                 // Match upstream's loader: older GPUs use a smaller verify
                 // block; the checkpoint's full width is not the default there.
                 const tree = self.block_drafter.?.selector != null and xfm.specTreeSupported();
-                const cap = dflash.blockCapForMachine(@import("ane.zig").chipBrand(), tree);
+                const cap = dflash.blockCapForMachine(@import("sdk/ane/offload.zig").chipBrand(), tree);
                 const default_block = if (tree and transformer.naxAvailable())
                     dflash.TREE_NAX_BLOCK
                 else
@@ -57,7 +60,10 @@ pub const Speculation = struct {
             return;
         }
 
-        if (mtp.hasMtpHead(io, a, model_path)) {
+        if (xfm.plugin != null) {
+            self.plugin_mtp = plugin_head.load(io, a, xfm, model_path);
+            if (self.plugin_mtp == null and mtp.hasMtpHead(io, a, model_path)) return error.MtpHeadLoadFailed;
+        } else if (mtp.hasMtpHead(io, a, model_path)) {
             self.mtp_head = try mtp.loadMtp(io, a, xfm.s, model_path);
             // A detected but incompatible head is an error, not an AR benchmark.
             try self.mtp_head.?.bind(xfm);
@@ -66,7 +72,7 @@ pub const Speculation = struct {
             self.mode = .mtp;
             self.default_depth = generate.Generator.resolveMtpDepthCapForProfile(xfm.config.mtpDepth(0), h.costProfile(xfm, xfm.cache.config));
             self.max_depth = mtp.MAX_DEPTH;
-        } else if (xfm.dsv4) |m| {
+        } else if (@import("engines/mlx/plugin/intree.zig").dsv4(xfm)) |m| {
             if (m.n_mtp > 0 and m.ds_block > 0) {
                 self.mode = .dspark;
                 self.default_depth = @intCast(m.ds_block);
@@ -79,11 +85,15 @@ pub const Speculation = struct {
         if (self.block_drafter) |*d| d.deinit();
         if (self.assistant) |*d| d.deinit();
         if (self.mtp_head) |*h| h.deinit();
+        if (self.plugin_mtp) |h| plugin_head.destroy(h, self.allocator);
     }
 
     fn head(self: *Speculation, xfm: *Transformer) ?generate.MtpHeadRef {
+        if (self.plugin_mtp) |h| return .{ .plugin = h };
         if (self.mtp_head) |*h| return .{ .qwen = h };
-        if (xfm.qwen4_mtp != null) return .{ .qwen4 = xfm };
+        if (xfm.qwen4Trunk()) |trunk| {
+            if (trunk.qwen4_mtp != null) return .{ .qwen4 = trunk };
+        }
         return null;
     }
 
@@ -119,7 +129,7 @@ pub const Speculation = struct {
                 }
             },
             .dspark => {
-                xfm.dsv4.?.ds_block = depth;
+                @import("engines/mlx/plugin/intree.zig").dsv4(xfm).?.ds_block = depth;
                 // Upstream switches this to its native DSpark path at init.
                 out.mtp_enabled = true;
             },
@@ -129,9 +139,12 @@ pub const Speculation = struct {
 
     pub fn reset(self: *Speculation, xfm: *Transformer) void {
         // Each benchmark run starts without timing/acceptance history from prior runs.
-        xfm.round_cost = .{ .layout = @import("round_cost.zig").layoutFor(&xfm.config) };
+        xfm.round_cost = .{ .layout = @import("engines/mlx/spec/round_cost.zig").layoutFor(&xfm.config) };
         if (self.mtp_head) |*h| h.ev_seed_accept = null;
-        if (xfm.qwen4_mtp) |*h| h.ev_seed_accept = null;
+        if (self.plugin_mtp) |h| h.ev_seed_accept = null;
+        if (xfm.qwen4Trunk()) |trunk| {
+            if (trunk.qwen4_mtp) |*h| h.ev_seed_accept = null;
+        }
     }
 };
 

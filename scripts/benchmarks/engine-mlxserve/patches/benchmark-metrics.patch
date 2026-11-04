@@ -1,29 +1,37 @@
---- a/src/transformer.zig
-+++ b/src/transformer.zig
-@@ -16345,6 +16345,8 @@
+diff --git a/src/engines/mlx/dispatch.zig b/src/engines/mlx/dispatch.zig
+index 8caa18d..2cc951a 100644
+--- a/src/engines/mlx/dispatch.zig
++++ b/src/engines/mlx/dispatch.zig
+@@ -127,6 +127,7 @@ pub fn forward(self: *Transformer, token_ids: mlx.mlx_array) !mlx.mlx_array {
  }
- 
+
+ pub fn forwardWith(self: *Transformer, ctx: *ForwardCtx, token_ids: mlx.mlx_array) !mlx.mlx_array {
++    if (self.benchmark_target_forwards) |count| count.* += 1;
+     if (ctx.batch_slots == null) try self.ssmGroupRelease(ctx);
+     if (self.plugin) |b| return plugin_driver.forward(self, b, ctx, token_ids);
+     if (self.mlx_stream_ext) |m| return forwardMlxStream(self, ctx, token_ids, m);
+diff --git a/src/engines/mlx/generate/init.zig b/src/engines/mlx/generate/init.zig
+index 438d8b9..094b9ce 100644
+--- a/src/engines/mlx/generate/init.zig
++++ b/src/engines/mlx/generate/init.zig
+@@ -544,6 +544,7 @@ pub fn initWithOptions(
+                 }
+                 _ = mlx.mlx_eval(eval_vec);
+             }
++            try @import("../../../bench_memory.zig").sampleActive();
+             _ = mlx.mlx_clear_cache();
+             if (trace_enabled) eval_ns += prefill_sw.read() - eval_start_ns;
+
+diff --git a/src/engines/mlx/transformer.zig b/src/engines/mlx/transformer.zig
+index 5fb3034..ba95991 100644
+--- a/src/engines/mlx/transformer.zig
++++ b/src/engines/mlx/transformer.zig
+@@ -351,6 +351,8 @@ const kda_recurrence = @import("../../sdk/blocks/kda/recurrence.zig");
+ const Weights = model_mod.Weights;
+
  pub const Transformer = struct {
 +    // Benchmark-only logical target-forward counter; no GPU synchronization.
 +    benchmark_target_forwards: ?*usize = null,
      config: ModelConfig,
      cache: KVCache,
      s: mlx.mlx_stream,
-@@ -19807,6 +19809,7 @@
-     }
- 
-     pub fn forwardWith(self: *Transformer, ctx: *ForwardCtx, token_ids: mlx.mlx_array) !mlx.mlx_array {
-+        if (self.benchmark_target_forwards) |count| count.* += 1;
-         if (ctx.batch_slots == null) try self.ssmGroupRelease(ctx);
-         if (self.dsv4) |mdl| return forwardDsv4WithImpl(self, ctx, token_ids, mdl);
-         if (self.bert_layers != null) return self.forwardBertWith(ctx, token_ids);
---- a/src/generate.zig
-+++ b/src/generate.zig
-@@ -2880,6 +2880,7 @@
-                     }
-                     _ = mlx.mlx_eval(eval_vec);
-                 }
-+                try @import("bench_memory.zig").sampleActive();
-                 _ = mlx.mlx_clear_cache();
-                 if (trace_enabled) eval_ns += prefill_sw.read() - eval_start_ns;
- 

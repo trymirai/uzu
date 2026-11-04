@@ -7,7 +7,7 @@ requires-python = ">=3.13.7"
 dependencies = ["benchmarks-common", "server"]
 
 [dependency-groups]
-dev = ["packaging>=26.3", "pytest>=9.0.3", "ruff>=0.16.8", "ty>=0.0.84"]
+dev = ["packaging>=26.3", "pytest>=9.2.0", "ruff>=0.17.3", "ty>=0.0.96"]
 
 [tool.uv.sources]
 benchmarks-common = { path = "common-py", editable = true }

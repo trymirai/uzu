@@ -32,7 +32,7 @@ class TensorFoldServerEngine(ServerEngine):
         # process for memory measurements and process-group cleanup.
         return subprocess.Popen(
             [
-                str(self.PROJECT_DIR / ".venv/bin/tensorfold"),
+                str(self.PROJECT_DIR / "deps/tensorfold/zig-out/native/bin/tensorfold-native"),
                 "serve",
                 model,
                 "--host",
