@@ -81,7 +81,7 @@ impl TrellisGemm {
             return Err(unsupported());
         }
 
-        if plan.engine == GemmEngine::Simdgroup && (1..=8).contains(&m) && k <= DECODE_MAX_EXACT_K {
+        if plan.engine == GemmEngine::Simdgroup && (1..=SIMDGROUPS).contains(&m) && k <= DECODE_MAX_EXACT_K {
             let kernel = match self.decode_kernels.entry((m, format)) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => entry.insert(GemmTrellisDecodeMetalKernel::new(
