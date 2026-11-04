@@ -2,6 +2,7 @@
 compile_error!("uzu tests require cpu backend");
 
 pub mod assert;
+pub(crate) mod attention;
 pub mod cold_pool;
 pub mod harness;
 pub mod helpers;

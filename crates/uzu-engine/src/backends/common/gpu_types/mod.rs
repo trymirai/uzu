@@ -14,6 +14,7 @@ pub mod hadamard_order;
 pub mod kv_cache_update;
 pub mod kv_layout;
 pub mod matmul;
+pub mod qkv_norm;
 pub mod quantization;
 pub mod quantization_method;
 pub mod ring;

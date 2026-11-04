@@ -4,6 +4,7 @@ use crate::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, Kernels,
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, Unsupported,
+                kv_layout::KVLayout,
                 matmul::{MatmulArguments, MatmulKernel},
                 radix_top_k_small::RadixTopKSmall,
             },
@@ -32,6 +33,10 @@ impl Kernels for WebGPUKernels {
 impl AttentionKernel for Unsupported<WebGPU> {
     type Backend = WebGPU;
     type Error = WebGPUError;
+
+    fn kv_layout(&self) -> KVLayout {
+        unreachable!()
+    }
 
     fn new(
         _context: &WebGPUContext,

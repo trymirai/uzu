@@ -1498,6 +1498,83 @@ curl http://127.0.0.1:8000/v1/chat/completions \
     }'
 ```
 
+### Decision models
+
+When `--model` is a decision model, the server serves the [TypeSafe System One API](https://api.typesafe.ai/redoc) instead of chat completions:
+
+```bash
+cargo run --release -p cli -- server --model trymirai/d3-flash-M
+```
+
+It exposes the following endpoints, available both at the root and under `/v1`:
+
+- `POST /v1/systemone` (or `/v1/decisions`) — answers questions about a `state` text in one request.
+- `GET /v1/models` — lists the loaded model.
+
+The request body has a `state` string and a `questions` object that maps your question names to questions. Each question has a `type`, optional `instructions`, and `criteria`:
+
+- `choice` — picks one option. `criteria` maps 1 to 255 option names to their descriptions (or `null`). The answer has the chosen name, a probability for each name, and a confidence.
+- `noul` — yes or no. `criteria` is optional and may describe the answers as `{"false": "...", "true": "..."}`. The answer `noul` is the probability of yes.
+- `score` — rates on a scale. `criteria` lists 2 to 10 distinct levels from lowest to highest. The answer `score` is the expected level index, with a probability for each level index and a `legend` mapping indices to levels.
+
+```bash
+curl http://127.0.0.1:8000/v1/systemone \
+    -H "Content-Type: application/json" \
+    -d '{
+        "state": "The headphones arrived a day early and sound amazing. The battery lasts all week, and I have already recommended them to two friends.",
+        "questions": {
+            "topic": {
+                "type": "choice",
+                "instructions": "What is this message about?",
+                "criteria": {
+                    "praise": "Compliments about a product or service",
+                    "question": "Asks for information or help",
+                    "complaint": "Reports a problem"
+                }
+            },
+            "recommend": {
+                "type": "noul",
+                "instructions": "Would the customer recommend the product?"
+            },
+            "satisfaction": {
+                "type": "score",
+                "instructions": "How satisfied is the customer?",
+                "criteria": ["Unhappy", "Neutral", "Happy", "Delighted"]
+            }
+        }
+    }'
+```
+
+The response answers each question under its name (probabilities rounded here):
+
+```json
+{
+    "model": "vllm-sr:d3-flash:9b:mirai:mirai-m:4",
+    "answers": {
+        "topic": {
+            "type": "choice",
+            "choice": "praise",
+            "probabilities": {"praise": 0.9995, "question": 0.0001, "complaint": 0.0004},
+            "confidence": 0.9957
+        },
+        "recommend": {
+            "type": "noul",
+            "noul": 0.9987
+        },
+        "satisfaction": {
+            "type": "score",
+            "score": 2.8875,
+            "probabilities": {"0": 0.0005, "1": 0.0015, "2": 0.1080, "3": 0.8900},
+            "confidence": 0.7420,
+            "legend": {"0": "Unhappy", "1": "Neutral", "2": "Happy", "3": "Delighted"}
+        }
+    },
+    "usage": {"input_tokens": 374, "output_tokens": 0}
+}
+```
+
+Compared to the TypeSafe API, the server is text only: `state`, `instructions`, and criteria are strings, and there are no `assets` or `box` questions. `model` is optional and ignored, since the loaded model answers. Errors use the same OpenAI-style body as chat completions: an invalid question is rejected with status 400 and names it, for example `"param": "questions.satisfaction"`.
+
 
 
 ## Troubleshooting

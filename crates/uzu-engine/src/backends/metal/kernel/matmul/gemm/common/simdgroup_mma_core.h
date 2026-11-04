@@ -34,8 +34,8 @@ struct SimdgroupMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
-  // Quantized weights are dequantized in f32 and staged as half, the fast pre-M5 MMA operand.
   using RightStageType = conditional_t<Right::QUANTIZED, half, RightElementType>;
+  using RightComputeType = half;
   static_assert(sizeof(RightStageType) == sizeof(RightElementType), "staging memory is sized for the weight type");
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
@@ -52,13 +52,19 @@ struct SimdgroupMmaCore {
   UZU_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
+  UZU_CONST ushort A_READS_PER_THREAD = THREADGROUP_BLOCK_M * THREADGROUP_BLOCK_K / THREADGROUP_THREADS;
+  UZU_CONST ushort A_VECTOR_COPY_ALIGNMENT =
+      !Right::QUANTIZED
+          ? 1
+          : (A_READS_PER_THREAD * sizeof(LeftElementType) < 16 ? A_READS_PER_THREAD : 16 / sizeof(LeftElementType));
   using ALoader = uzu::matmul::ThreadgroupLoader<
       LeftElementType,
       THREADGROUP_BLOCK_M,
       THREADGROUP_BLOCK_K,
       SHARED_STRIDE_A,
       true,
-      THREADGROUP_THREADS>;
+      THREADGROUP_THREADS,
+      A_VECTOR_COPY_ALIGNMENT>;
   using FullPrecisionRightLoader = uzu::matmul::ThreadgroupLoader<
       RightElementType,
       TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
@@ -82,12 +88,12 @@ struct SimdgroupMmaCore {
       float,
       uzu::matmul::TransformNone<OutputElementType, float>>;
 
-  template <uint GEMM_ALIGNMENT_RAW, typename BLoader>
+  template <uint GEMM_ALIGNMENT_RAW, typename ALoaderType, typename BLoader>
   static METAL_FUNC void k_loop(
       threadgroup LeftElementType* a_shared,
       threadgroup RightStageType* b_shared,
       const int aligned_k_iterations,
-      thread ALoader& loader_a,
+      thread ALoaderType& loader_a,
       thread BLoader& loader_b,
       thread TileAccumulator& accumulator,
       thread const ushort& tile_block_rows,

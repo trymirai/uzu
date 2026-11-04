@@ -1,13 +1,12 @@
+use std::any::Any;
+
 use crate::{
     backends::common::{
-        Backend, CommandBuffer,
+        Backend, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, GpuBuffer, Kernels, SparseBuffer,
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
-        kernel::{AttentionKernel, KVFormat},
+        kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{
-        MixerState,
-        attention::{Attention, kv_storage::KVStorage},
-    },
+    encodable_block::mixer::{MixerState, attention::Attention},
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
@@ -159,9 +158,34 @@ impl KVCacheState {
     }
 }
 
+pub struct KVCache<B: Backend> {
+    pub layout: KVLayout,
+    pub k_codes: Box<dyn GpuBuffer<Backend = B>>,
+    pub v_codes: Box<dyn GpuBuffer<Backend = B>>,
+    pub k_scales: Box<dyn GpuBuffer<Backend = B>>,
+    pub v_scales: Box<dyn GpuBuffer<Backend = B>>,
+}
+
+impl<B: Backend> KVCache<B> {
+    pub fn allocate_scratch(
+        layout: KVLayout,
+        max_elements: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, B::Error> {
+        Ok(Self {
+            k_codes: Box::new(command_buffer.allocate_scratch(layout.code_bytes(max_elements))?),
+            v_codes: Box::new(command_buffer.allocate_scratch(layout.code_bytes(max_elements))?),
+            k_scales: Box::new(command_buffer.allocate_scratch(layout.scale_bytes(max_elements))?),
+            v_scales: Box::new(command_buffer.allocate_scratch(layout.scale_bytes(max_elements))?),
+            layout,
+        })
+    }
+}
+
 pub struct AttentionState<B: Backend> {
     cache: KVCacheState,
-    pub kv: KVStorage<B>,
+    pub kv: KVCache<B>,
+    kv_cache_update: <B::Kernels as Kernels>::KVCacheUpdateKernel,
 }
 
 impl<B: Backend> AttentionState<B> {
@@ -189,23 +213,37 @@ impl<B: Backend> AttentionState<B> {
 
         let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
 
-        let format = if attention.kernel.supports_int8() {
-            KVFormat::INT8
-        } else {
-            KVFormat::BF16
+        let num_kv_heads = attention.num_kv_heads.unwrap();
+        let head_dim = attention.head_dim;
+        let layout = attention.kernel.kv_layout();
+        let max_elements = max_prefix_elements + ATTENTION_SUFFIX_CAPACITY;
+        let code_bytes = layout.code_bytes(max_elements);
+        let scale_bytes = layout.scale_bytes(max_elements);
+        let allocate = |bytes| -> Result<Box<dyn GpuBuffer<Backend = B>>, B::Error> {
+            Ok(if context.device_capabilities().contains(DeviceCapabilities::SPARSE_BUFFERS) {
+                Box::new(context.create_sparse_buffer(bytes)?)
+            } else {
+                Box::new(context.create_buffer_gpu(bytes)?)
+            })
         };
-        let kv = KVStorage::create_empty(
-            format,
-            attention.num_kv_heads.unwrap(),
-            attention.head_dim,
-            max_prefix_elements + ATTENTION_SUFFIX_CAPACITY,
-            attention.data_type,
+        let kv = KVCache {
+            k_codes: allocate(code_bytes)?,
+            v_codes: allocate(code_bytes)?,
+            k_scales: allocate(scale_bytes)?,
+            v_scales: allocate(scale_bytes)?,
+            layout,
+        };
+        let kv_cache_update = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(
             context,
+            head_dim,
+            num_kv_heads,
+            layout.backend_opaque_layout,
         )?;
 
         Ok(Self {
             cache,
             kv,
+            kv_cache_update,
         })
     }
 }
@@ -218,7 +256,19 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
     ) -> Result<(), B::Error> {
         assert!(suffix_length <= ATTENTION_SUFFIX_CAPACITY, "suffix exceeds capacity");
 
-        self.kv.prepare(self.cache.required_prefix_len(context_length) + suffix_length)
+        let map = |buffer: &mut dyn GpuBuffer<Backend = B>, bytes: usize| -> Result<(), B::Error> {
+            match (buffer as &mut dyn Any).downcast_mut::<B::SparseBuffer>() {
+                Some(sparse) => sparse.map(bytes),
+                None => Ok(()),
+            }
+        };
+        let elements_required = self.cache.required_prefix_len(context_length) + suffix_length;
+        let code_bytes = self.kv.layout.code_bytes(elements_required);
+        let scale_bytes = self.kv.layout.scale_bytes(elements_required);
+        map(self.kv.k_codes.as_mut(), code_bytes)?;
+        map(self.kv.v_codes.as_mut(), code_bytes)?;
+        map(self.kv.k_scales.as_mut(), scale_bytes)?;
+        map(self.kv.v_scales.as_mut(), scale_bytes)
     }
 
     fn encode_accept(
@@ -229,7 +279,15 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         let copies = self.cache.accept(accepted_indices);
 
         if !copies.is_empty() {
-            self.kv.encode_accept(&copies, command_buffer);
+            self.kv_cache_update.encode(
+                self.kv.k_codes.as_mut(),
+                self.kv.v_codes.as_mut(),
+                self.kv.k_scales.as_mut(),
+                self.kv.v_scales.as_mut(),
+                &copies,
+                copies.len() as u32,
+                command_buffer,
+            );
         }
 
         Ok(())

@@ -23,14 +23,6 @@ pub struct AttnParams {
     /// Absolute offset of the first query token in the full key sequence.
     /// For LLM decode/prefill this is the segment prefix length.
     pub q_off: u32,
-    /// Query tiling: q_len / BQ
-    pub nq_aligned: u32,
-    /// Query tiling: q_len % BQ
-    pub q_rem: u32,
     /// Key tiling: ceil(k_len / BK)
     pub nk: u32,
-    /// Key tiling: k_len / BK
-    pub nk_aligned: u32,
-    /// Key tiling: k_len % BK
-    pub k_rem: u32,
 }

@@ -96,6 +96,7 @@ pub struct DFlashTfmSpeculator<B: Backend> {
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub async fn new(
         model_path: &Path,
+        target_embedding: &Embedding<B>,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
         let mut shapes: HashMap<String, DFlashTfmTreeShape> =
@@ -117,13 +118,20 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
 
-        let dflash =
-            DFlash::new(data_type, &config.draft_config, &speculator_tree.subtree("draft_model"), &*context).await?;
+        let dflash = DFlash::new(
+            data_type,
+            &config.draft_config,
+            target_embedding.readout_input_hadamard_factors(),
+            &speculator_tree.subtree("draft_model"),
+            &*context,
+        )
+        .await?;
         let weaver = if let Some(weaver_config) = &config.weaver_config {
             Some(
                 Weaver::new(
                     config.draft_config.vocab_size,
                     weaver_config,
+                    target_embedding.readout_input_hadamard_factors(),
                     &speculator_tree.subtree("weaver"),
                     &*context,
                 )

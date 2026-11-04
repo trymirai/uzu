@@ -88,14 +88,14 @@ impl GemmProblem {
     }
 
     pub fn select_plan(self) -> GemmPlan {
-        if self.shape.b_is_trellis {
-            return select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
-        }
         let engine = if self.supports_mxu && mxu_is_eligible(self.shape) {
             GemmEngine::Mxu
         } else {
             GemmEngine::Simdgroup
         };
+        if self.shape.b_is_trellis {
+            return select_trellis_plan(self.shape.m, self.shape.n, self.shape.k, engine);
+        }
         self.finish_plan(engine, select_tiling(self.shape, engine))
     }
 
@@ -122,9 +122,7 @@ impl GemmProblem {
         engine: GemmEngine,
     ) -> Result<GemmPlan, GemmPlanError> {
         if self.shape.b_is_trellis {
-            let mut plan = select_trellis_plan(self.shape.m, self.shape.n, self.shape.k);
-            plan.engine = engine;
-            return Ok(plan);
+            return Ok(select_trellis_plan(self.shape.m, self.shape.n, self.shape.k, engine));
         }
         self.validate_engine(engine)?;
         Ok(self.finish_plan(engine, select_tiling(self.shape, engine)))
@@ -204,33 +202,42 @@ fn select_trellis_plan(
     m: u32,
     n: u32,
     k: u32,
+    engine: GemmEngine,
 ) -> GemmPlan {
-    // The M16 wide finalist favored a 32x64 tile and a 256-workgroup target.
-    let (tiling, target_workgroups) =
-        if m == 16 && n >= 4096 && (2048..=5120).contains(&k) && k.is_multiple_of(TRELLIS_K_STEP) {
+    let (tiling, target_workgroups) = match engine {
+        GemmEngine::Simdgroup if m <= 16 => {
+            (GemmTiling::Tile16x32x32_Simdgroups2x1, policy::SPLIT_K_TARGET_TILES_TRELLIS_TILE16)
+        },
+        GemmEngine::Simdgroup => (policy::simdgroup_quant_tile(m), policy::SPLIT_K_TARGET_TILES_TRELLIS_SIMDGROUP),
+        // The M16 wide finalist favored a 32x64 tile and a 256-workgroup target.
+        GemmEngine::Mxu if m == 16 && n >= 4096 && (2048..=5120).contains(&k) && k.is_multiple_of(TRELLIS_K_STEP) => {
             (GemmTiling::Tile32x64x256_Simdgroups2x2, 256)
-        } else {
-            match policy::mxu_mn_tile(true, m, n) {
-                GemmTiling::Tile16x32x256_Simdgroups1x1 => {
-                    (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
-                },
-                GemmTiling::Tile32x64x256_Simdgroups2x2 => {
-                    (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
-                },
-                GemmTiling::Tile128x128x256_Simdgroups4x4 => {
-                    (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
-                },
-                _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
-            }
-        };
+        },
+        GemmEngine::Mxu => match policy::mxu_mn_tile(true, m, n) {
+            GemmTiling::Tile16x32x256_Simdgroups1x1 => {
+                (GemmTiling::Tile16x32x256_Simdgroups1x1, policy::SPLIT_K_TARGET_TILES_A8_TILE16X32)
+            },
+            GemmTiling::Tile32x64x256_Simdgroups2x2 => {
+                (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8_TILE32_W4)
+            },
+            GemmTiling::Tile128x128x256_Simdgroups4x4 => {
+                (GemmTiling::Tile128x128x256_Simdgroups4x4, policy::SPLIT_K_TARGET_TILES_A8)
+            },
+            _ => (GemmTiling::Tile64x64x256_Simdgroups2x2, policy::SPLIT_K_TARGET_TILES_A8),
+        },
+    };
     let output_workgroups = (n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m())).max(1);
     let k_steps = (k / TRELLIS_K_STEP).max(1);
     let mut split_k = (target_workgroups / output_workgroups).clamp(1, k_steps);
+    // The split-K reduce reads four partial sums at a time.
+    if !n.is_multiple_of(4) {
+        split_k = 1;
+    }
     while !k_steps.is_multiple_of(split_k) {
         split_k -= 1;
     }
     GemmPlan {
-        engine: GemmEngine::Mxu,
+        engine,
         tiling,
         split_k,
     }

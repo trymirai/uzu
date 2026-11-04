@@ -30,7 +30,9 @@ fi
 #   - untracked files that are not ignored
 FILES=()
 while IFS= read -r -d '' file; do
-  FILES+=("$file")
+  if [[ -f "$file" ]]; then
+    FILES+=("$file")
+  fi
 done < <(git ls-files -z --cached --others --exclude-standard -- \
   '*.h' '*.hpp' '*.hh' \
   '*.c' '*.cc' '*.cpp' \
