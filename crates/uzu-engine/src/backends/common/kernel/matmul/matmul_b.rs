@@ -14,7 +14,6 @@ pub struct TrellisFormat {
     pub restart_columns: Option<u32>,
 }
 
-/// Readable bytes past the last code row (the GEMM loads whole words).
 pub const TRELLIS_CODES_TAIL_BYTES: usize = 16;
 
 impl TrellisFormat {
