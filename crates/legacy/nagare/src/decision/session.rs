@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../unit/decision/session_test.rs"]
+mod tests;
+
 use std::{sync::Arc, time::Instant};
 
 use hanashi::{DecisionEncoding, DecisionEncodingError};
@@ -33,10 +37,15 @@ struct DecisionInstanceHolder {
     energy_recorder: EnergyRecorder,
 }
 
+enum Executor {
+    D3(DecisionInstanceHolder),
+    Chat(super::chat::ChatExecutor),
+}
+
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct DecisionSession {
-    holder: Arc<Mutex<DecisionInstanceHolder>>,
+    holder: Arc<Mutex<Executor>>,
     state: Arc<Mutex<DecisionSessionState>>,
 }
 
@@ -73,20 +82,31 @@ impl DecisionSession {
         })??;
 
         Ok(Self {
-            holder: Arc::new(Mutex::new(holder)),
+            holder: Arc::new(Mutex::new(Executor::D3(holder))),
+            state: Arc::new(Mutex::new(DecisionSessionState::Idle)),
+        })
+    }
+
+    pub fn from_chat_instance(chat: &crate::chat::ChatInstance) -> Result<Self, DecisionSessionError> {
+        Ok(Self {
+            holder: Arc::new(Mutex::new(Executor::Chat(super::chat::ChatExecutor::new(chat)?))),
             state: Arc::new(Mutex::new(DecisionSessionState::Idle)),
         })
     }
 
     async fn execute(
-        holder: &mut DecisionInstanceHolder,
+        executor: &mut Executor,
         input: &DecisionInput,
+        response: &mpsc::UnboundedSender<Result<DecisionOutput, DecisionSessionError>>,
     ) -> Result<Vec<DecisionResult>, DecisionSessionError> {
         if input.questions.is_empty() {
             return Err(DecisionSessionError::NoQuestions {});
         }
 
-        // Every prompt is built before the first forward pass, so an invalid question fails the call early.
+        let holder = match executor {
+            Executor::D3(holder) => holder,
+            Executor::Chat(chat) => return chat.execute(input, response).await,
+        };
         let prompts = input
             .questions
             .iter()
@@ -142,7 +162,7 @@ impl DecisionSession {
             let energy = None;
 
             results.push(DecisionResult {
-                answer: answer(question, output.probabilities),
+                answer: answer(question, output.probabilities.into_iter().map(f64::from).collect()),
                 stats: DecisionStats {
                     tokens_count: tokens_count as i64,
                     prefill_duration: output.prefill_duration.as_secs_f64(),
@@ -187,7 +207,7 @@ impl DecisionSession {
 
             let result = {
                 let mut holder = holder.lock().await;
-                Self::execute(&mut holder, &input).await
+                Self::execute(&mut holder, &input, &sender).await
             };
             let output = result.map(|results| DecisionOutput {
                 results,
@@ -201,7 +221,7 @@ impl DecisionSession {
     }
 }
 
-fn option_count(question: &DecisionQuestion) -> usize {
+pub(super) fn option_count(question: &DecisionQuestion) -> usize {
     match question {
         DecisionQuestion::Choice {
             options,
@@ -218,11 +238,10 @@ fn option_count(question: &DecisionQuestion) -> usize {
 }
 
 // `probabilities` follow the question's option order: choice options, score levels, or [no, yes].
-fn answer(
+pub(super) fn answer(
     question: &DecisionQuestion,
-    probabilities: Vec<f32>,
+    probabilities: Vec<f64>,
 ) -> DecisionAnswer {
-    let probabilities = probabilities.into_iter().map(f64::from).collect::<Vec<_>>();
     match question {
         DecisionQuestion::Choice {
             options,

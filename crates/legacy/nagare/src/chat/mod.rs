@@ -127,6 +127,7 @@ pub struct ChatSession {
     state: Arc<Mutex<ChatSessionState>>,
     messages: Arc<Mutex<Vec<ChatMessage>>>,
     tool_registry: Option<Arc<Mutex<ToolRegistry>>>,
+    inference_gate: Arc<tokio::sync::Semaphore>,
 }
 
 impl ChatSession {
@@ -142,6 +143,7 @@ impl ChatSession {
 
     pub async fn with_instance(instance: &ChatInstance) -> Result<Self, ChatSessionError> {
         let model = instance.model();
+        let inference_gate = instance.inference_gate.clone();
 
         let instance_future = {
             let instance = instance.clone();
@@ -169,6 +171,7 @@ impl ChatSession {
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
             tool_registry: supports_tool_calls.then(|| Arc::new(Mutex::new(ToolRegistry::new()))),
+            inference_gate,
         })
     }
 
@@ -253,6 +256,11 @@ impl ChatSession {
         cancel_token: CancellationToken,
         completed_stats: &mut Vec<ChatReplyStats>,
     ) -> Option<Vec<ChatReply>> {
+        let _permit = tokio::select! {
+            permit = self.inference_gate.acquire() => match permit { Ok(permit) => permit, Err(_) => return None },
+            _ = cancel_token.cancelled() => return None,
+            _ = sender.closed() => return None,
+        };
         // prepare all messages
         let all_messages = {
             let mut messages_guard = self.messages.lock().await;
@@ -1013,6 +1021,7 @@ mod tests {
         .await
         .unwrap();
         let mut session = ChatSession {
+            inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
             instance: Arc::new(Mutex::new(Instance::Message(instance))),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),

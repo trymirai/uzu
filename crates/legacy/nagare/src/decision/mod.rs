@@ -1,3 +1,4 @@
+mod chat;
 mod error;
 mod session;
 

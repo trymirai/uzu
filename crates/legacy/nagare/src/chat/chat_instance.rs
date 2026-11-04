@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../unit/decision/chat_test.rs"]
+mod decision_tests;
+
 use std::sync::Arc;
 
 use shoji::{
@@ -28,6 +32,7 @@ pub struct ChatInstance {
     kind: ChatInstanceKind,
     model: Model,
     reference: String,
+    pub(crate) inference_gate: Arc<tokio::sync::Semaphore>,
 }
 
 impl ChatInstance {
@@ -67,6 +72,7 @@ impl ChatInstance {
             kind,
             model,
             reference,
+            inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
         })
     }
 

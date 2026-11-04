@@ -218,11 +218,53 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
     }
 
     fn max_context_length(&self) -> Option<usize> {
-        self.max_context_length.map(|max_context_length| max_context_length as usize)
+        match (self.max_context_length, self.model.max_context_length()) {
+            (Some(configured), Some(model)) => Some(configured.min(model) as usize),
+            (configured, model) => configured.or(model).map(|limit| limit as usize),
+        }
     }
 
     fn stop_token_ids(&self) -> Option<Box<[u64]>> {
         Some(self.stop_token_ids.iter().map(|id| *id as u64).collect())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn score_token_ids<'a>(
+        &'a self,
+        prompt: &'a [u64],
+        labels: &'a [u64],
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        shoji::traits::backend::chat_token::TokenScores,
+                        shoji::traits::backend::chat_token::TokenScoreError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            use shoji::traits::backend::chat_token::{TokenScoreError, TokenScores};
+            use uzu_engine::engine::language_model::score::TokenScoreError as CoreError;
+            self.model
+                .score_token_ids(prompt, labels, self.max_context_length)
+                .await
+                .map(|scores| TokenScores {
+                    log_probabilities: scores.log_probabilities,
+                    label_mass: scores.label_mass,
+                    prefill_duration: scores.prefill_duration,
+                })
+                .map_err(|error| match error {
+                    CoreError::ContextOverflow => TokenScoreError::ContextOverflow,
+                    CoreError::EmptyPrompt
+                    | CoreError::EmptyLabels
+                    | CoreError::DuplicateLabel
+                    | CoreError::InvalidToken => TokenScoreError::InvalidInput(error.to_string()),
+                    CoreError::InvalidModelOutput => TokenScoreError::InvalidModelOutput(error.to_string()),
+                    _ => TokenScoreError::Backend(error.to_string()),
+                })
+        })
     }
 
     fn sampling_defaults(&self) -> SamplingParameters {

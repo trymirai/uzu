@@ -1,0 +1,29 @@
+{
+  "repository": "trymirai/LFM2.5-350M-L",
+  "revision": "9825a0acca9efaa1c7e51fe5032a527aedace312",
+  "license": "LFM Open License v1.0",
+  "architecture": {
+    "short_conv_layers": 10,
+    "attention_layers": 6,
+    "kv_shared": false
+  },
+  "files": {
+    "config.json": {
+      "sha256": "e9f941c136b12c2e1b848d8266f1e94c0a547ce61ec130013cdbb18447a375a7"
+    },
+    "tokenizer.json": {
+      "sha256": "df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd"
+    },
+    "model.safetensors": {
+      "sha256": "7368e286e5d7370ae2ce3fdbd1592bc0740c9f318417ce202c0ab3fa8711cfc4"
+    },
+    "encoding.json": {
+      "sha256": "de7f0d7a58715dc73562f8160faef1cfcd969ecd1abaf7b555fd1213d99c049e",
+      "content": "{\n  \"type\": \"hanashi\",\n  \"name\": \"lfm2.5-instruct\"\n}\n"
+    },
+    "LICENSE": {
+      "sha256": "4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c",
+      "url": "https://huggingface.co/LiquidAI/LFM2.5-350M/resolve/9e6c6ccf47cd318696e137d381a7ded8fe4df09f/LICENSE"
+    }
+  }
+}

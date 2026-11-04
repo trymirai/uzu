@@ -85,7 +85,10 @@ pub async fn run_server(
         (rocket, "System One server", details.to_string())
     } else {
         let thinking_support = ThinkingSupport::for_model(&resolved);
-        let session = engine.chat(resolved, ChatConfig::default()).await.context("Failed to create chat session")?;
+        let instance =
+            engine.chat_instance(resolved, ChatConfig::default()).await.context("Failed to load chat instance")?;
+        let decisions = uzu::session::decision::DecisionSession::from_chat_instance(&instance);
+        let session = engine.chat_with_instance(&instance).await.context("Failed to create chat session")?;
         let state = ChatState {
             session: Arc::new(Mutex::new(session)),
             thinking_support,
@@ -95,6 +98,18 @@ pub async fn run_server(
             .manage(state)
             .mount("/", routes![handle_chat_completions, handle_models])
             .mount("/v1", routes![handle_chat_completions, handle_models]);
+        let rocket = match decisions {
+            Ok(session) => rocket
+                .manage(DecisionState {
+                    session: Arc::new(Mutex::new(session)),
+                })
+                .mount("/", routes![handle_system_one])
+                .mount("/v1", routes![handle_system_one]),
+            Err(error) => {
+                tracing::info!("LLM decisions unavailable: {error}");
+                rocket
+            },
+        };
         let prefix_cache_enabled = if prefix_cache {
             "enabled"
         } else {

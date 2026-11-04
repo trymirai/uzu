@@ -157,18 +157,26 @@ async fn session() -> (ChatSession, Arc<FunctionGemma>) {
     );
     let instance = token::Session::with_instance(backend.clone(), String::new(), &model).await.unwrap();
     let mut session = ChatSession {
+        inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
         instance: Arc::new(Mutex::new(Instance::Token(instance))),
         state: Arc::new(Mutex::new(ChatSessionState::Idle)),
         messages: Arc::new(Mutex::new(Vec::new())),
         tool_registry: Some(Arc::new(Mutex::new(ToolRegistry::new()))),
     };
+    let gate = session.inference_gate.clone();
     session
         .add_tool(ToolDescriptor::new(
             "clock".into(),
             "Return the time".into(),
             None,
             None,
-            Box::new(|_| Box::new(async { Ok(serde_json::json!("noon").into()) })),
+            Box::new(move |_| {
+                let gate = gate.clone();
+                Box::new(async move {
+                    let _permit = tokio::time::timeout(Duration::from_secs(2), gate.acquire()).await.unwrap().unwrap();
+                    Ok(serde_json::json!("noon").into())
+                })
+            }),
         ))
         .await
         .unwrap();

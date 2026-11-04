@@ -19,6 +19,8 @@ use crate::{
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod score;
 pub mod state;
 pub mod stream;
 
