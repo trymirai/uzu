@@ -26,10 +26,14 @@ PUBLIC KERNEL(MoeGemv)(
     const device uint8_t* b,
     const device T* scales,
     const device uint8_t* zero_points OPTIONAL(BITS == 4),
+    const device uint8_t* shared_b OPTIONAL(has_shared),
+    const device T* shared_scales OPTIONAL(has_shared),
+    const device uint8_t* shared_zero_points OPTIONAL(has_shared && BITS == 4),
     const device T* a,
     const device uint* expert_ids,
     device T* d,
     const device int32_t* hadamard_factors,
+    const device int32_t* shared_hadamard_factors OPTIONAL(has_shared),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& num_routes,
@@ -42,23 +46,30 @@ PUBLIC KERNEL(MoeGemv)(
     const constant uint& scale_group_stride,
     const constant uint& zero_point_output_stride,
     const constant uint& zero_point_group_stride,
+    const constant uint& num_routed_routes,
     const bool a_per_token SPECIALIZE,
+    const bool has_shared SPECIALIZE,
     threadgroup float shared_results[MOE_GEMV_OUTPUT_ROW_TILE],
     const uint route_idx GROUPS(num_routes),
     const uint output_tile_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(METAL_SIMD_SIZE),
     const uint simd_group THREADS(MOE_GEMV_NUM_SIMDGROUPS)
 ) {
-  const uint expert_id = expert_ids[route_idx];
-  const uint a_row_idx = a_per_token ? (route_idx / active_experts_per_token) : route_idx;
+  const bool is_shared = has_shared && (route_idx >= num_routed_routes);
+  const uint expert_id = is_shared ? 0u : expert_ids[route_idx];
+  const uint a_row_idx =
+      a_per_token ? (is_shared ? (route_idx - num_routed_routes) : (route_idx / active_experts_per_token)) : route_idx;
 
-  const device uint32_t* expert_b = reinterpret_cast<const device uint32_t*>(b + expert_id * b_expert_stride_bytes);
-  const device T* expert_scales = scales + expert_id * scale_expert_stride;
+  const device uint32_t* expert_b =
+      is_shared ? reinterpret_cast<const device uint32_t*>(shared_b)
+                : reinterpret_cast<const device uint32_t*>(b + expert_id * b_expert_stride_bytes);
+  const device T* expert_scales = is_shared ? shared_scales : (scales + expert_id * scale_expert_stride);
   const device uint8_t* expert_zero_points =
-      (BITS == 4) ? (zero_points + expert_id * zero_point_expert_stride) : nullptr;
+      (BITS == 4) ? (is_shared ? shared_zero_points : (zero_points + expert_id * zero_point_expert_stride)) : nullptr;
   const device T* route_a = a + a_row_idx * in_vec_size;
   device T* route_d = d + route_idx * out_vec_size;
-  const device int32_t* expert_hadamard = hadamard_factors + expert_id * out_vec_size;
+  const device int32_t* expert_hadamard =
+      is_shared ? shared_hadamard_factors : (hadamard_factors + expert_id * out_vec_size);
 
   using Ops = GemvOperands<T, T, T>;
   const Ops ops = {

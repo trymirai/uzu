@@ -10,6 +10,7 @@ import definitions;
   uint32_t num_experts,
   uint32_t top_k,
   uint32_t batch_size,
+  uint32_t logit_stride,
   [[Groups("batch_size")]] uint32_t token_idx,
   [[Threads("32")]] uint32_t lane,
 ) {
