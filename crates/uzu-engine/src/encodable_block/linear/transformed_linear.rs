@@ -13,14 +13,16 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
-        input_rht::InputRht,
+        Gather, Linear, LinearEncodeError, LinearInput, LinearMatmul, LinearMatmulError, RHTLinearWrapper,
+        RHTLinearWrapperError, input_rht::InputRht,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum TransformedLinearError<B: Backend> {
+    #[error(transparent)]
+    Hadamard(#[from] RHTLinearWrapperError<B>),
     #[error("Inner linear error: {0}")]
     InnerLinearError(#[from] LinearMatmulError<B>),
     #[error("Parameter loading error: {0}")]
@@ -47,16 +49,7 @@ pub struct TransformedLinear<B: Backend> {
     output_data_type: DataType,
 }
 
-struct Shape {
-    input_dim: u32,
-    weights_data_type: DataType,
-    input_data_type: DataType,
-    output_data_type: DataType,
-}
-
-fn unsupported<B: Backend>(message: String) -> TransformedLinearError<B> {
-    TransformedLinearError::UnsupportedConfiguration(message)
-}
+use TransformedLinearError::UnsupportedConfiguration as Unsupported;
 
 async fn stack_parts<'t, B: Backend>(
     spec: AnyWeightMatrixSpec,
@@ -68,28 +61,28 @@ async fn stack_parts<'t, B: Backend>(
     };
     let part_rows_shape = tree.tensor_shape("part_rows")?;
     let [part_count] = part_rows_shape.as_ref() else {
-        return Err(unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
+        return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
     };
     let part_rows = tree.read_slice::<i32>("part_rows", &part_rows_shape).await?;
     if part_rows.len() != *part_count as usize {
-        return Err(unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
+        return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
     }
     let mut parts = Vec::with_capacity(part_rows.len());
     for (index, part_rows) in part_rows.into_iter().enumerate() {
         let part_rows = u32::try_from(part_rows)
             .ok()
             .filter(|part_rows| *part_rows > 0)
-            .ok_or_else(|| unsupported(format!("invalid output-stack part row count {part_rows}")))?;
+            .ok_or_else(|| Unsupported(format!("invalid output-stack part row count {part_rows}")))?;
         let part_tree = tree.subtree("parts").subtree(&index.to_string());
         let spec = part_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         parts.push((part_rows, spec, part_tree));
     }
     let stacked_rows = parts.iter().try_fold(0u32, |total, (part_rows, _, _)| total.checked_add(*part_rows));
     let Some(stacked_rows) = stacked_rows else {
-        return Err(unsupported("output-stack row count overflow".into()));
+        return Err(Unsupported("output-stack row count overflow".into()));
     };
     if stacked_rows != rows {
-        return Err(unsupported(format!("output-stack parts sum to {stacked_rows} rows, expected {rows}")));
+        return Err(Unsupported(format!("output-stack parts sum to {stacked_rows} rows, expected {rows}")));
     }
     Ok(parts)
 }
@@ -107,21 +100,99 @@ impl<B: Backend> TransformedLinear<B> {
         context: &B::Context,
     ) -> Result<Self, TransformedLinearError<B>> {
         if has_biases {
-            return Err(unsupported("biases on row-stacked or Kronecker linears".into()));
+            return Err(Unsupported("biases on output-stacked or Kronecker linears".into()));
         }
-        let shape = Shape {
-            input_dim: input_dimension,
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-        };
         let parts = stack_parts(spec, output_dimension, weights_tree).await?;
         let mut groups = Vec::with_capacity(parts.len());
         for (rows, spec, tree) in parts {
             let AnyWeightMatrixSpec::HybridSpec(hybrid) = spec else {
-                return Err(unsupported(format!("{spec:?} as a row-stack part")));
+                return Err(Unsupported(format!("{spec:?} as an output-stack part")));
             };
-            groups.push(Self::load_group(&shape, rows, hybrid, &tree, context).await?);
+            let signs_tree = tree.subtree("incoherence_signs");
+            let quantized_tree = tree.subtree("quantized");
+            groups.push(match hybrid {
+                HybridSpec {
+                    quantization_spec,
+                    incoherence_spec: Some(AnyIncoherenceProcessorSpec::KroneckerSpec(KroneckerSpec {
+                        processing_mode: IncoherenceProcessingMode::Input,
+                        ..
+                    })),
+                    ..
+                } => {
+                    let data_types = [weights_data_type, input_data_type, output_data_type];
+                    if data_types != [DataType::BF16; 3] {
+                        return Err(Unsupported(format!("trellis linears are BF16 only, got {data_types:?}")));
+                    }
+                    let mixing_dimension = mixing_dimension(input_dimension);
+                    // TrellisTransform (trellis.metal) handles 512..=4096-point Hadamards and at most 20480 columns.
+                    let hadamard_size = input_dimension / mixing_dimension;
+                    if !(512..=4096).contains(&hadamard_size) || input_dimension > 20480 {
+                        return Err(Unsupported(format!("Kronecker rotation over {} columns", input_dimension)));
+                    }
+                    let kernel = <B::Kernels as Kernels>::TrellisTransformKernel::new(context, input_dimension)
+                        .map_err(TransformedLinearError::BackendError)?;
+                    let signs = signs_tree.read_buffer("signs", &[input_dimension], DataType::F32).await?;
+                    let mixing =
+                        signs_tree.read_buffer("small_q", &[mixing_dimension, mixing_dimension], DataType::F32).await?;
+                    let rotation = Rotation::Kronecker {
+                        kernel,
+                        signs,
+                        mixing,
+                    };
+                    let parts = stack_parts(*quantization_spec, rows, quantized_tree).await?;
+                    let mut blocks = Vec::with_capacity(parts.len());
+                    for (rows, spec, tree) in parts {
+                        if !matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) {
+                            return Err(Unsupported(format!("{spec:?} in a Kronecker linear")));
+                        }
+                        blocks.push(
+                            LinearMatmul::load(
+                                input_dimension,
+                                rows,
+                                weights_data_type,
+                                input_data_type,
+                                output_data_type,
+                                spec,
+                                None,
+                                &tree,
+                                None,
+                                context,
+                            )
+                            .await?,
+                        );
+                    }
+                    (rotation, blocks.into_boxed_slice())
+                },
+                HybridSpec {
+                    quantization_spec,
+                    incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        processing_mode:
+                            mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
+                        ..
+                    })),
+                    ..
+                } => {
+                    let (preparation, linear) = RHTLinearWrapper::load_hadamard(
+                        input_dimension,
+                        rows,
+                        weights_data_type,
+                        input_data_type,
+                        output_data_type,
+                        mode,
+                        true,
+                        *quantization_spec,
+                        &tree,
+                        None,
+                        context,
+                    )
+                    .await?;
+                    let rht = InputRht::new(input_data_type, preparation, false, context)
+                        .map_err(TransformedLinearError::BackendError)?;
+                    (Rotation::Hadamard(rht), Box::new([linear]) as Box<[_]>)
+                },
+                spec => return Err(Unsupported(format!("{spec:?} as an output-stack part"))),
+            });
         }
         Ok(Self {
             groups: groups.into_boxed_slice(),
@@ -129,100 +200,6 @@ impl<B: Backend> TransformedLinear<B> {
             output_dim: output_dimension,
             output_data_type,
         })
-    }
-
-    async fn load_group(
-        shape: &Shape,
-        rows: u32,
-        spec: HybridSpec,
-        tree: &ParameterTree<'_, B>,
-        context: &B::Context,
-    ) -> Result<(Rotation<B>, Box<[LinearMatmul<B>]>), TransformedLinearError<B>> {
-        let signs_tree = tree.subtree("incoherence_signs");
-        let quantized_tree = tree.subtree("quantized");
-        let load = async |rows, spec, tree: &ParameterTree<'_, B>, output_factors| {
-            LinearMatmul::load(
-                shape.input_dim,
-                rows,
-                shape.weights_data_type,
-                shape.input_data_type,
-                shape.output_data_type,
-                spec,
-                output_factors,
-                tree,
-                None,
-                context,
-            )
-            .await
-        };
-        match spec {
-            HybridSpec {
-                quantization_spec,
-                incoherence_spec: Some(AnyIncoherenceProcessorSpec::KroneckerSpec(KroneckerSpec {
-                    processing_mode: IncoherenceProcessingMode::Input,
-                    ..
-                })),
-                ..
-            } => {
-                let data_types = [shape.weights_data_type, shape.input_data_type, shape.output_data_type];
-                if data_types != [DataType::BF16; 3] {
-                    return Err(unsupported(format!("trellis linears are BF16 only, got {data_types:?}")));
-                }
-                let mixing_dimension = mixing_dimension(shape.input_dim);
-                // TrellisTransform (trellis.metal) handles 512..=4096-point Hadamards and at most 20480 columns.
-                let hadamard_size = shape.input_dim / mixing_dimension;
-                if !(512..=4096).contains(&hadamard_size) || shape.input_dim > 20480 {
-                    return Err(unsupported(format!("Kronecker rotation over {} columns", shape.input_dim)));
-                }
-                let kernel = <B::Kernels as Kernels>::TrellisTransformKernel::new(context, shape.input_dim)
-                    .map_err(TransformedLinearError::BackendError)?;
-                let signs = signs_tree.read_buffer("signs", &[shape.input_dim], DataType::F32).await?;
-                let mixing =
-                    signs_tree.read_buffer("small_q", &[mixing_dimension, mixing_dimension], DataType::F32).await?;
-                let rotation = Rotation::Kronecker {
-                    kernel,
-                    signs,
-                    mixing,
-                };
-                let parts = stack_parts(*quantization_spec, rows, quantized_tree).await?;
-                let mut blocks = Vec::with_capacity(parts.len());
-                for (rows, spec, tree) in parts {
-                    if !matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) {
-                        return Err(unsupported(format!("{spec:?} in a Kronecker linear")));
-                    }
-                    blocks.push(load(rows, spec, &tree, None).await?);
-                }
-                Ok((rotation, blocks.into_boxed_slice()))
-            },
-            HybridSpec {
-                quantization_spec,
-                incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                    processing_mode:
-                        mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
-                    ..
-                })),
-                ..
-            } => {
-                let rht_signs = signs_tree.read_buffer("input_signs", &[shape.input_dim], DataType::I32).await?;
-                let output_factors = if mode == IncoherenceProcessingMode::InputOutput {
-                    Some(signs_tree.read_buffer("output_signs", &[rows], DataType::I32).await?)
-                } else {
-                    None
-                };
-                let mut linear = load(rows, *quantization_spec, &quantized_tree, output_factors).await?;
-                let activation_format =
-                    linear.prepare_activation(context).map_err(TransformedLinearError::BackendError)?;
-                let preparation = LinearInputPreparation {
-                    rht_signs,
-                    activation_format,
-                };
-                let rht = InputRht::new(shape.input_data_type, preparation, false, context)
-                    .map_err(TransformedLinearError::BackendError)?;
-                Ok((Rotation::Hadamard(rht), Box::new([linear])))
-            },
-            spec => Err(unsupported(format!("{spec:?} as a row-stack part"))),
-        }
     }
 
     fn prepare(
