@@ -11,10 +11,8 @@ pub enum IncoherenceProcessingMode {
 }
 
 #[uzu_config]
-#[derive(Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IncoherenceKind {
-    #[default]
     Hadamard,
     Kronecker,
 }
@@ -25,6 +23,5 @@ pub struct HybridSpec {
     pub adapter_spec: Option<Unsupported>,
     pub incoherence_block_size: Option<u32>,
     pub incoherence_processing_mode: IncoherenceProcessingMode,
-    #[serde(default)]
     pub incoherence_kind: IncoherenceKind,
 }
