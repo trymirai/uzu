@@ -1,34 +1,8 @@
 use half::bf16;
-use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{backends::common::kernel::kv_layout::Int8KVLayout, data_type::DataTypeRepr};
-
 #[kernel(KVCacheUpdate)]
-#[variants(T, f32, bf16)]
-pub fn kv_cache_update<T: DataTypeRepr + Float>(
-    in_place_keys: *mut T,
-    in_place_values: *mut T,
-    copies: &[crate::backends::common::gpu_types::kv_cache_update::Copy],
-    copy_count: u32,
-    element_dim: u32,
-) {
-    let element_dim = element_dim as usize;
-
-    for element_idx in 0..element_dim {
-        for i in 0..copy_count as usize {
-            let source_idx = (copies[i].source as usize) * element_dim + element_idx;
-            let dest_idx = (copies[i].destination as usize) * element_dim + element_idx;
-            unsafe {
-                *in_place_keys.add(dest_idx) = *in_place_keys.add(source_idx);
-                *in_place_values.add(dest_idx) = *in_place_values.add(source_idx);
-            }
-        }
-    }
-}
-
-#[kernel(KVCacheUpdateInt8)]
-pub fn kv_cache_update_int8(
+pub fn kv_cache_update(
     in_place_k_codes: *mut i8,
     in_place_v_codes: *mut u8,
     in_place_k_scales: *mut bf16,
@@ -37,26 +11,20 @@ pub fn kv_cache_update_int8(
     copy_count: u32,
     #[specialize] head_dim: u32,
     #[specialize] num_kv_heads: u32,
+    #[specialize] backend_opaque_layout: u32,
 ) {
-    let layout = Int8KVLayout::new(head_dim, num_kv_heads);
+    assert_eq!(backend_opaque_layout, 0);
+    let row_width = (num_kv_heads * head_dim) as usize;
     for copy in copies.iter().take(copy_count as usize) {
-        for head in 0..num_kv_heads {
-            for channel in 0..head_dim {
-                let source_k = layout.k_code_index(copy.source, head, channel);
-                let destination_k = layout.k_code_index(copy.destination, head, channel);
-                let source_v = layout.v_code_index(copy.source, head, channel);
-                let destination_v = layout.v_code_index(copy.destination, head, channel);
-                unsafe {
-                    *in_place_k_codes.add(destination_k) = *in_place_k_codes.add(source_k);
-                    *in_place_v_codes.add(destination_v) = *in_place_v_codes.add(source_v);
-                }
-            }
-            let source = layout.scale_index(copy.source, head);
-            let destination = layout.scale_index(copy.destination, head);
-            unsafe {
-                *in_place_k_scales.add(destination) = *in_place_k_scales.add(source);
-                *in_place_v_scales.add(destination) = *in_place_v_scales.add(source);
-            }
+        let source = copy.source as usize * row_width;
+        let destination = copy.destination as usize * row_width;
+        unsafe {
+            std::ptr::copy(in_place_k_codes.add(source), in_place_k_codes.add(destination), row_width);
+            std::ptr::copy(in_place_v_codes.add(source), in_place_v_codes.add(destination), row_width);
+            let source = (copy.source * num_kv_heads) as usize;
+            let destination = (copy.destination * num_kv_heads) as usize;
+            std::ptr::copy(in_place_k_scales.add(source), in_place_k_scales.add(destination), num_kv_heads as usize);
+            std::ptr::copy(in_place_v_scales.add(source), in_place_v_scales.add(destination), num_kv_heads as usize);
         }
     }
 }

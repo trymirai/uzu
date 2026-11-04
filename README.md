@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](crates/legacy/uzu/bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.6.15)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.6.15)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](crates/legacy/uzu/bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.6.15)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.6.15)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](crates/legacy/uzu/bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20Mac%20Catalyst-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](crates/legacy/uzu/bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.6.17)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.6.17)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](crates/legacy/uzu/bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.6.17)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.6.17)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](crates/legacy/uzu/bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20Mac%20Catalyst-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Add the dependency:
 
 ```bash
-uv add uzu==0.6.15
+uv add uzu==0.6.17
 ```
 
 Run the code below:
@@ -137,7 +137,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.6.15")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.6.17")
 ]
 ```
 
@@ -189,7 +189,7 @@ public func runQuickStart() async throws {
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.6.15
+pnpm add @trymirai/uzu@0.6.17
 ```
 
 Run the code below:
@@ -1497,6 +1497,83 @@ curl http://127.0.0.1:8000/v1/chat/completions \
         "stream": true
     }'
 ```
+
+### Decision models
+
+When `--model` is a decision model, the server serves the [TypeSafe System One API](https://api.typesafe.ai/redoc) instead of chat completions:
+
+```bash
+cargo run --release -p cli -- server --model trymirai/d3-flash-M
+```
+
+It exposes the following endpoints, available both at the root and under `/v1`:
+
+- `POST /v1/systemone` (or `/v1/decisions`) — answers questions about a `state` text in one request.
+- `GET /v1/models` — lists the loaded model.
+
+The request body has a `state` string and a `questions` object that maps your question names to questions. Each question has a `type`, optional `instructions`, and `criteria`:
+
+- `choice` — picks one option. `criteria` maps 1 to 255 option names to their descriptions (or `null`). The answer has the chosen name, a probability for each name, and a confidence.
+- `noul` — yes or no. `criteria` is optional and may describe the answers as `{"false": "...", "true": "..."}`. The answer `noul` is the probability of yes.
+- `score` — rates on a scale. `criteria` lists 2 to 10 distinct levels from lowest to highest. The answer `score` is the expected level index, with a probability for each level index and a `legend` mapping indices to levels.
+
+```bash
+curl http://127.0.0.1:8000/v1/systemone \
+    -H "Content-Type: application/json" \
+    -d '{
+        "state": "The headphones arrived a day early and sound amazing. The battery lasts all week, and I have already recommended them to two friends.",
+        "questions": {
+            "topic": {
+                "type": "choice",
+                "instructions": "What is this message about?",
+                "criteria": {
+                    "praise": "Compliments about a product or service",
+                    "question": "Asks for information or help",
+                    "complaint": "Reports a problem"
+                }
+            },
+            "recommend": {
+                "type": "noul",
+                "instructions": "Would the customer recommend the product?"
+            },
+            "satisfaction": {
+                "type": "score",
+                "instructions": "How satisfied is the customer?",
+                "criteria": ["Unhappy", "Neutral", "Happy", "Delighted"]
+            }
+        }
+    }'
+```
+
+The response answers each question under its name (probabilities rounded here):
+
+```json
+{
+    "model": "vllm-sr:d3-flash:9b:mirai:mirai-m:4",
+    "answers": {
+        "topic": {
+            "type": "choice",
+            "choice": "praise",
+            "probabilities": {"praise": 0.9995, "question": 0.0001, "complaint": 0.0004},
+            "confidence": 0.9957
+        },
+        "recommend": {
+            "type": "noul",
+            "noul": 0.9987
+        },
+        "satisfaction": {
+            "type": "score",
+            "score": 2.8875,
+            "probabilities": {"0": 0.0005, "1": 0.0015, "2": 0.1080, "3": 0.8900},
+            "confidence": 0.7420,
+            "legend": {"0": "Unhappy", "1": "Neutral", "2": "Happy", "3": "Delighted"}
+        }
+    },
+    "usage": {"input_tokens": 374, "output_tokens": 0}
+}
+```
+
+Compared to the TypeSafe API, the server is text only: `state`, `instructions`, and criteria are strings, and there are no `assets` or `box` questions. `model` is optional and ignored, since the loaded model answers. Errors use the same OpenAI-style body as chat completions: an invalid question is rejected with status 400 and names it, for example `"param": "questions.satisfaction"`.
 
 
 

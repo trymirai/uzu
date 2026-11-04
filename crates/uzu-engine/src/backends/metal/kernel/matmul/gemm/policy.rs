@@ -4,8 +4,6 @@
 //! features to choices. Eligibility, fallbacks, and legality stay in
 //! `selection.rs`.
 
-use metal::MTLGPUFamily;
-
 use crate::backends::metal::gpu_types::gemm::GemmTiling;
 
 const MXU_DEFAULT_TILE: GemmTiling = GemmTiling::Tile64x64x256_Simdgroups2x2;
@@ -21,16 +19,17 @@ const WIDE_N_MODERATE_K_RATIO: u32 = 6;
 const MXU_M_BUCKET_MAXES: [u32; 4] = [16, 63, 255, 511];
 const MXU_N_BUCKET_MAXES: [u32; 2] = [63, 127];
 
-const SIMDGROUP_QUANT_SMALL_M_MAX: u32 = 32;
-const SIMDGROUP_QUANT_NARROW_BLOCK_M: u32 = 8;
-const SIMDGROUP_QUANT_LARGE_M_MIN: u32 = 64;
-const SIMDGROUP_QUANT_WIDE_N_MIN: u32 = 6144;
+// Two 8-row blocks: past this the 32-row tile has fewer, fuller blocks and wins on every chip.
+const SIMDGROUP_QUANT_NARROW_TILE_M_MAX: u32 = 16;
+const SIMDGROUP_QUANT_WIDE_BLOCK_M: u32 = 64;
 
 const W2_TILE16_MAX_M: u32 = 64;
 
 const SPLIT_K_TARGET_TILES_FP: u32 = 512;
 pub(super) const SPLIT_K_TARGET_TILES_A8: u32 = 256;
 const SPLIT_K_TARGET_TILES_A8_W2: u32 = 128;
+pub(super) const SPLIT_K_TARGET_TILES_TRELLIS_SIMDGROUP: u32 = 384;
+pub(super) const SPLIT_K_TARGET_TILES_TRELLIS_TILE16: u32 = 768;
 pub(super) const SPLIT_K_TARGET_TILES_A8_TILE16X32: u32 = 4 * SPLIT_K_TARGET_TILES_A8;
 const SPLIT_K_TARGET_TILES_A8_TILE16X32_K_SPLIT: u32 = 2 * SPLIT_K_TARGET_TILES_A8;
 pub(super) const SPLIT_K_TARGET_TILES_A8_TILE32_W4: u32 = 512;
@@ -105,42 +104,14 @@ pub(super) fn mxu_fp_tile(
     GemmTiling::Tile32x64x256_Simdgroups2x2
 }
 
-pub(super) fn simdgroup_fp_tile(
-    m: u32,
-    n: u32,
-    k: u32,
-) -> GemmTiling {
-    if 2_u32.saturating_mul(m.max(n)) > k {
-        GemmTiling::Tile64x64x16_Simdgroups2x2
-    } else {
-        GemmTiling::Tile64x32x32_Simdgroups2x2
-    }
-}
-
-/// A partial trailing M block costs a second pass over the weights. Older GPUs are bound by that;
-/// Apple9 and newer would rather keep the narrow tile's parallelism.
-fn prefers_wide_partial_m_tile(apple_gpu_family: MTLGPUFamily) -> bool {
-    apple_gpu_family <= MTLGPUFamily::Apple8
-}
-
-pub(super) fn simdgroup_quant_tile(
-    m: u32,
-    n: u32,
-    apple_gpu_family: MTLGPUFamily,
-) -> GemmTiling {
-    if m < SIMDGROUP_QUANT_SMALL_M_MAX {
-        if !prefers_wide_partial_m_tile(apple_gpu_family)
-            || m <= SIMDGROUP_QUANT_NARROW_BLOCK_M
-            || m.is_multiple_of(SIMDGROUP_QUANT_NARROW_BLOCK_M)
-        {
-            GemmTiling::Tile8x32x32_Simdgroups1x1
-        } else {
-            GemmTiling::Tile32x32x32_Simdgroups2x2
-        }
-    } else if m >= SIMDGROUP_QUANT_LARGE_M_MIN && n >= SIMDGROUP_QUANT_WIDE_N_MIN && n.is_multiple_of(64) {
-        GemmTiling::Tile64x64x32_Simdgroups2x2
-    } else {
+pub(super) fn simdgroup_quant_tile(m: u32) -> GemmTiling {
+    if m <= SIMDGROUP_QUANT_NARROW_TILE_M_MAX {
+        GemmTiling::Tile8x32x32_Simdgroups1x1
+    } else if (1..=SIMDGROUP_QUANT_WIDE_BLOCK_M / 2).contains(&(m % SIMDGROUP_QUANT_WIDE_BLOCK_M)) {
+        // The last wide block would be at most half full: the narrow tile pads fewer rows.
         GemmTiling::Tile32x32x32_Simdgroups2x2
+    } else {
+        GemmTiling::Tile64x64x32_Simdgroups2x2
     }
 }
 

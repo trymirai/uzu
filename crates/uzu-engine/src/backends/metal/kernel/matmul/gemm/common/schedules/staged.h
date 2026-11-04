@@ -45,7 +45,9 @@ static METAL_FUNC auto make_staged_loader(
         Core::SHARED_STRIDE_B,
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
-        RightOperand::BITS>;
+        RightOperand::BITS,
+        typename Core::RightStageType,
+        typename Core::RightComputeType>;
     return Loader(
         values,
         scales,
@@ -67,7 +69,9 @@ static METAL_FUNC auto make_staged_loader(
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
         RightOperand::BITS,
-        false>;
+        false,
+        typename Core::RightStageType,
+        typename Core::RightComputeType>;
     return Loader(
         values,
         scales,
@@ -96,7 +100,9 @@ static METAL_FUNC auto make_staged_loader(
         Core::THREADGROUP_THREADS,
         RightOperand::GROUP_SIZE,
         RightOperand::BITS,
-        true>;
+        true,
+        typename Core::RightStageType,
+        typename Core::RightComputeType>;
     return Loader(
         values,
         scales,

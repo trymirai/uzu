@@ -23,7 +23,6 @@ pub enum GemmBLayout {
 pub enum GemmTiling {
     Tile8x32x32_Simdgroups1x1,
     Tile64x32x32_Simdgroups2x2,
-    Tile64x64x16_Simdgroups2x2,
     Tile64x64x32_Simdgroups2x2,
     Tile32x32x32_Simdgroups2x2,
     Tile16x32x256_Simdgroups1x1,
@@ -35,9 +34,11 @@ pub enum GemmTiling {
     Tile128x128x256_Simdgroups4x4,
     Tile8x32x64_Simdgroups1x2x4,
     Tile8x32x128_Simdgroups1x2x4,
+    Tile16x32x32_Simdgroups2x1,
 }
 
 pub const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
+pub const TRELLIS_DECODE_MAX_BATCH: u32 = 8;
 
 impl GemmTiling {
     pub const fn is_packed_w4(self) -> bool {
@@ -48,7 +49,6 @@ impl GemmTiling {
         match self {
             Self::Tile8x32x32_Simdgroups1x1 => 8,
             Self::Tile64x32x32_Simdgroups2x2 => 64,
-            Self::Tile64x64x16_Simdgroups2x2 => 64,
             Self::Tile64x64x32_Simdgroups2x2 => 64,
             Self::Tile32x32x32_Simdgroups2x2 => 32,
             Self::Tile16x32x256_Simdgroups1x1 => 16,
@@ -59,6 +59,7 @@ impl GemmTiling {
             Self::Tile64x64x256_Simdgroups2x2 => 64,
             Self::Tile128x128x256_Simdgroups4x4 => 128,
             Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 8,
+            Self::Tile16x32x32_Simdgroups2x1 => 16,
         }
     }
 
@@ -66,7 +67,6 @@ impl GemmTiling {
         match self {
             Self::Tile8x32x32_Simdgroups1x1 => 32,
             Self::Tile64x32x32_Simdgroups2x2 => 32,
-            Self::Tile64x64x16_Simdgroups2x2 => 64,
             Self::Tile64x64x32_Simdgroups2x2 => 64,
             Self::Tile32x32x32_Simdgroups2x2 => 32,
             Self::Tile16x32x256_Simdgroups1x1 => 32,
@@ -77,6 +77,7 @@ impl GemmTiling {
             Self::Tile64x64x256_Simdgroups2x2 => 64,
             Self::Tile128x128x256_Simdgroups4x4 => 128,
             Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 32,
+            Self::Tile16x32x32_Simdgroups2x1 => 32,
         }
     }
 
@@ -84,7 +85,6 @@ impl GemmTiling {
         match self {
             Self::Tile8x32x32_Simdgroups1x1 => 32,
             Self::Tile64x32x32_Simdgroups2x2 => 32,
-            Self::Tile64x64x16_Simdgroups2x2 => 16,
             Self::Tile64x64x32_Simdgroups2x2 => 32,
             Self::Tile32x32x32_Simdgroups2x2 => 32,
             Self::Tile16x32x256_Simdgroups1x1 => 256,
@@ -96,6 +96,7 @@ impl GemmTiling {
             Self::Tile128x128x256_Simdgroups4x4 => 256,
             Self::Tile8x32x64_Simdgroups1x2x4 => 64,
             Self::Tile8x32x128_Simdgroups1x2x4 => 128,
+            Self::Tile16x32x32_Simdgroups2x1 => 32,
         }
     }
 
@@ -103,7 +104,6 @@ impl GemmTiling {
         match self {
             Self::Tile8x32x32_Simdgroups1x1 => 1,
             Self::Tile64x32x32_Simdgroups2x2 => 2,
-            Self::Tile64x64x16_Simdgroups2x2 => 2,
             Self::Tile64x64x32_Simdgroups2x2 => 2,
             Self::Tile32x32x32_Simdgroups2x2 => 2,
             Self::Tile16x32x256_Simdgroups1x1 => 1,
@@ -114,6 +114,7 @@ impl GemmTiling {
             Self::Tile64x64x256_Simdgroups2x2 => 2,
             Self::Tile128x128x256_Simdgroups4x4 => 4,
             Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 1,
+            Self::Tile16x32x32_Simdgroups2x1 => 2,
         }
     }
 
@@ -121,7 +122,6 @@ impl GemmTiling {
         match self {
             Self::Tile8x32x32_Simdgroups1x1 => 1,
             Self::Tile64x32x32_Simdgroups2x2 => 2,
-            Self::Tile64x64x16_Simdgroups2x2 => 2,
             Self::Tile64x64x32_Simdgroups2x2 => 2,
             Self::Tile32x32x32_Simdgroups2x2 => 2,
             Self::Tile16x32x256_Simdgroups1x1 => 1,
@@ -132,6 +132,7 @@ impl GemmTiling {
             Self::Tile64x64x256_Simdgroups2x2 => 2,
             Self::Tile128x128x256_Simdgroups4x4 => 4,
             Self::Tile8x32x64_Simdgroups1x2x4 | Self::Tile8x32x128_Simdgroups1x2x4 => 2,
+            Self::Tile16x32x32_Simdgroups2x1 => 1,
         }
     }
 

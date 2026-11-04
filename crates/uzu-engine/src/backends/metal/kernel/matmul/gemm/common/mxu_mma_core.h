@@ -34,6 +34,8 @@ struct MxuMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
+  using RightStageType = RightElementType;
+  using RightComputeType = float;
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
@@ -233,8 +235,10 @@ struct MxuMmaCore {
     }
 
     if (output_transform.contains(GemmDTransform::RHT)) {
-      if constexpr (schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
-                    SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE) {
+      if constexpr (
+          schedules::IntegerSchedule<Left, Right>::CENTER_RIGHT_ZERO_POINTS &&
+          SIMDGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE
+      ) {
         if (alignment.contains(GemmAlignment::M) && alignment.contains(GemmAlignment::N)) {
           if (simdgroup_limit_m <= 0 || simdgroup_limit_n <= 0) {
             return;

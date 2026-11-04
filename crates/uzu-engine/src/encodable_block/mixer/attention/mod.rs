@@ -3,33 +3,24 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
-        kernel::{AttentionKernel, AttentionKernelConfig, AttentionPrepareInt8Kernel, AttentionPrepareKernel},
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        gpu_types::qkv_norm::QKVNormParams,
+        kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
-    config::{rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
+    config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        mixer::{
-            Mixer, MixerEncodeError, MixerState,
-            attention::{
-                mode::LinearProjection,
-                qkv_norm::{QKVNorm, QKVNormError},
-                rope::PrecalculatedRoPE,
-            },
-        },
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
 };
 
-pub mod kv_storage;
-mod mode;
-mod qkv_norm;
 mod state;
 
-pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCacheView};
+pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheView};
 
 pub mod rope;
 
@@ -43,9 +34,10 @@ pub struct Attention<B: Backend> {
     data_type: DataType,
     has_gate: bool,
     projection_dim: u32,
-    projection: LinearProjection<B>,
+    projection: Box<dyn Linear<B>>,
+    qkv_norm_params: QKVNormParams,
+    qkv_norm_scales: [Option<B::GlobalGpuBuffer>; 3],
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    prepare_int8: Option<<B::Kernels as Kernels>::AttentionPrepareInt8Kernel>,
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -61,8 +53,6 @@ pub enum AttentionNewError<B: Backend> {
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
-    #[error("QKVNorm error: {0}")]
-    QKVNorm(#[from] QKVNormError<B>),
 }
 
 #[derive(Debug, Error)]
@@ -123,28 +113,26 @@ impl<B: Backend> Attention<B> {
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
         let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
-        let qkv_norm = QKVNorm::new(
-            num_q_heads,
-            num_kv_heads,
-            projection_dim,
-            head_dim,
-            data_type,
-            query_norm_config,
-            key_norm_config,
-            value_norm_config,
-            parameter_tree,
-            context,
-        )
-        .await?;
+        let mut qkv_norm_params = QKVNormParams::default();
+        let mut qkv_norm_scales = [None, None, None];
+        for (i, (config, name)) in
+            [(query_norm_config, "query_norm"), (key_norm_config, "key_norm"), (value_norm_config, "value_norm")]
+                .into_iter()
+                .enumerate()
+        {
+            let Some(config) = config else {
+                continue;
+            };
+            qkv_norm_params.enabled[i] = 1;
+            qkv_norm_params.full_layer[i] = u32::from(config.upcast_mode == UpcastMode::FullLayer);
+            qkv_norm_params.epsilon[i] = config.epsilon;
+            qkv_norm_params.scale_offset[i] = config.scale_offset.unwrap_or(0.0);
+            if config.has_scale {
+                qkv_norm_scales[i] =
+                    Some(parameter_tree.subtree(name).read_buffer("scales", &[head_dim], DataType::F32).await?);
+            }
+        }
 
-        let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
-            context,
-            data_type,
-            DataType::F32,
-            !is_kv_sharing,
-            rope_config.is_some(),
-        )
-        .map_err(AttentionNewError::Backend)?;
         let sinks = if config.has_sinks {
             Some(parameter_tree.read_buffer("sinks", &[num_q_heads], data_type).await?)
         } else {
@@ -171,22 +159,20 @@ impl<B: Backend> Attention<B> {
             },
         )
         .map_err(AttentionNewError::Kernel)?;
-        let prepare_int8 = kernel
-            .supports_int8()
-            .then(|| {
-                <B::Kernels as Kernels>::AttentionPrepareInt8Kernel::new(
-                    context,
-                    data_type,
-                    DataType::F32,
-                    head_dim,
-                    rope_config.is_some(),
-                    true,
-                    num_groups,
-                    !is_kv_sharing,
-                )
-            })
-            .transpose()
-            .map_err(AttentionNewError::Backend)?;
+        let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            data_type,
+            DataType::F32,
+            head_dim,
+            rope_config.is_some(),
+            num_groups,
+            kernel.kv_layout().backend_opaque_layout,
+            !is_kv_sharing,
+            qkv_norm_scales[0].is_some(),
+            qkv_norm_scales[1].is_some(),
+            qkv_norm_scales[2].is_some(),
+        )
+        .map_err(AttentionNewError::Backend)?;
 
         let out_projection = <dyn Linear<B>>::new(
             q_dim,
@@ -209,18 +195,165 @@ impl<B: Backend> Attention<B> {
                 data_type,
                 has_gate: config.has_gate,
                 projection_dim,
-                projection: LinearProjection {
-                    lin: projection,
-                    norm: qkv_norm,
-                },
+                projection,
+                qkv_norm_params,
+                qkv_norm_scales,
                 prepare,
-                prepare_int8,
                 sinks,
                 kernel,
                 out_projection,
             },
             in_projection_input_hadamard_factors,
         ))
+    }
+
+    fn attend(
+        &self,
+        hidden: B::ScratchBuffer,
+        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        batch_dim: &BatchTopology,
+        state: Option<MaybeMut<AttentionState<B>>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, AttentionEncodeError<B>> {
+        let qkvg = self.projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let gate = self.has_gate.then(|| {
+            qkvg.subrange(
+                (self.projection_dim - self.num_q_heads * self.head_dim) as usize * self.data_type.size_in_bytes()..,
+            )
+        });
+
+        let attention_output = {
+            let mut scratch_kv;
+            let (mut kv, cache) = match state {
+                Some(MaybeMut::Mut(state)) => {
+                    let cache = state.view();
+                    (MaybeMut::Mut(&mut state.kv), cache)
+                },
+                Some(MaybeMut::Const(state)) => (MaybeMut::Const(&state.kv), state.view()),
+                None => {
+                    assert!(self.num_kv_heads.is_some(), "stateless query-only attention");
+                    assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
+                    scratch_kv = KVCache::allocate_scratch(self.kernel.kv_layout(), batch_dim.size(), command_buffer)
+                        .map_err(AttentionEncodeError::Backend)?;
+                    let cache = self.ring_capacity.map_or_else(|| KVCacheView::full(0), |_| KVCacheView::ring(0, 0));
+                    (MaybeMut::Mut(&mut scratch_kv), cache)
+                },
+            };
+            let (queries, query_scales) = self
+                .prepare(
+                    &qkvg,
+                    &mut kv,
+                    cache.prefix_len(),
+                    self.num_q_heads,
+                    precalculated_rope,
+                    batch_dim.size(),
+                    command_buffer,
+                )
+                .map_err(AttentionEncodeError::Backend)?;
+            let input = AttentionInput {
+                query_codes: &queries,
+                query_scales: &query_scales,
+                k_codes: kv.k_codes.as_ref(),
+                k_scales: kv.k_scales.as_ref(),
+                v_codes: kv.v_codes.as_ref(),
+                v_scales: kv.v_scales.as_ref(),
+            };
+            let trie = (!batch_dim.is_flat())
+                .then(|| command_buffer.allocate_constant_from_slice(batch_dim.nodes()))
+                .transpose()
+                .map_err(AttentionEncodeError::Backend)?;
+            self.kernel
+                .encode(
+                    input,
+                    AttentionArguments {
+                        suffix_length: batch_dim.size(),
+                        trie: trie.as_ref(),
+                        sinks: self.sinks.as_ref(),
+                        cache,
+                        gate,
+                    },
+                    command_buffer,
+                )
+                .map_err(AttentionEncodeError::Kernel)?
+        };
+
+        Ok(self.out_projection.encode(attention_output, batch_dim.size(), command_buffer)?)
+    }
+
+    pub fn append_projected_kv(
+        &self,
+        key_value: impl BufferRef<Backend = B>,
+        precalculated_rope: &PrecalculatedRoPE<B>,
+        batch_dim: u32,
+        state: &mut AttentionState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        let prefix_len = state.view().prefix_len();
+        self.prepare(
+            key_value,
+            &mut MaybeMut::Mut(&mut state.kv),
+            prefix_len,
+            0,
+            Some(precalculated_rope),
+            batch_dim,
+            command_buffer,
+        )?;
+        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
+        Ok(())
+    }
+
+    fn prepare(
+        &self,
+        qkvg: impl BufferRef<Backend = B>,
+        kv: &mut MaybeMut<'_, KVCache<B>>,
+        kv_token_offset: u32,
+        num_q_heads: u32,
+        rope: Option<&PrecalculatedRoPE<B>>,
+        suffix_length: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
+        assert_eq!(kv.layout, self.kernel.kv_layout(), "shared KV layout mismatch");
+        let (k_codes, k_scales, v_codes, v_scales) = match kv {
+            MaybeMut::Mut(kv) => (
+                Some(kv.k_codes.as_mut()),
+                Some(kv.k_scales.as_mut()),
+                Some(kv.v_codes.as_mut()),
+                Some(kv.v_scales.as_mut()),
+            ),
+            MaybeMut::Const(_) => (None, None, None, None),
+        };
+        let input_row_stride = if num_q_heads == 0 {
+            2 * self.num_groups * self.head_dim
+        } else {
+            self.projection_dim
+        };
+        let query_count = num_q_heads as usize * suffix_length as usize;
+        // K/V-only calls still need bound query buffers.
+        let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
+        let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
+        self.prepare.encode(
+            qkvg,
+            &mut query_codes,
+            &mut query_scales,
+            k_codes,
+            k_scales,
+            v_codes,
+            v_scales,
+            rope.map(|rope| &rope.cosines),
+            rope.map(|rope| &rope.sines),
+            self.qkv_norm_scales[0].as_ref(),
+            self.qkv_norm_scales[1].as_ref(),
+            self.qkv_norm_scales[2].as_ref(),
+            self.qkv_norm_params,
+            num_q_heads,
+            rope.map(|rope| rope.dim),
+            kv_token_offset,
+            input_row_stride,
+            suffix_length,
+            num_q_heads / self.num_groups * suffix_length,
+            command_buffer,
+        );
+        Ok((query_codes, query_scales))
     }
 }
 

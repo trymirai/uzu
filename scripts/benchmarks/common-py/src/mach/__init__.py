@@ -75,7 +75,7 @@ class AppleTempSensors(ctypes.Structure):
         return f"{type(self).__name__}(cpu_avg={self.cpu_avg}, gpu_avg={self.gpu_avg})"
 
 
-_library = ctypes.CDLL(_mach.__file__)
+_library = ctypes.CDLL(_mach.__spec__.origin)
 _library.get_memory_counters.argtypes = [ctypes.POINTER(MemoryCounters), ctypes.c_bool]
 _library.get_memory_counters.restype = ctypes.c_int
 _library.get_memory_counters_for_pid.argtypes = [ctypes.POINTER(MemoryCounters), ctypes.c_int32, ctypes.c_bool]

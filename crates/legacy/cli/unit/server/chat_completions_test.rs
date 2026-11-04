@@ -115,6 +115,54 @@ fn reasoning_effort_merges_into_leading_system_message() {
 }
 
 #[test]
+fn developer_message_becomes_system_message() {
+    let request = request(r#"{"messages":[{"role":"developer","content":"be brief"},{"role":"user","content":"hi"}]}"#);
+    assert_eq!(
+        to_chat_messages(&request.messages),
+        vec![ChatMessage::system().with_text("be brief".to_string()), ChatMessage::user().with_text("hi".to_string())]
+    );
+}
+
+#[test]
+fn consecutive_system_messages_merge_into_one_text_block() {
+    let request = request(
+        r#"{"messages":[
+            {"role":"system","content":"be brief"},
+            {"role":"developer","content":"answer in uppercase"},
+            {"role":"system","content":""},
+            {"role":"user","content":"hi"},
+            {"role":"system","content":"late"}
+        ]}"#,
+    );
+    assert_eq!(
+        to_chat_messages(&request.messages),
+        vec![
+            ChatMessage::system().with_text("be brief\n\nanswer in uppercase".to_string()),
+            ChatMessage::user().with_text("hi".to_string()),
+            ChatMessage::system().with_text("late".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn developer_instructions_precede_tools_and_carry_reasoning_effort() {
+    let messages = messages_with_support(
+        r#"{
+            "messages":[{"role":"developer","content":"be brief"},{"role":"user","content":"hi"}],
+            "tools":[{"type":"function","function":{"name":"get_time","parameters":{"type":"object","properties":{}}}}],
+            "reasoning_effort":"high"
+        }"#,
+        any_levels(),
+    );
+    let roles = messages.iter().map(|message| message.role.clone()).collect::<Vec<_>>();
+    assert_eq!(roles, [ChatRole::System {}, ChatRole::Developer {}, ChatRole::User {}]);
+    assert_eq!(messages[0].text().as_deref(), Some("be brief"));
+    assert_eq!(messages[0].reasoning_effort(), Some(ReasoningEffort::High));
+    assert_eq!(messages[1].text(), None);
+    assert_eq!(messages[1].tool_namespaces().len(), 1);
+}
+
+#[test]
 fn reasoning_effort_default_emits_no_system_message() {
     for body in [
         r#"{"messages":[{"role":"user","content":"hi"}]}"#,

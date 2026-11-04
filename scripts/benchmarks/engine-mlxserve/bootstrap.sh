@@ -22,7 +22,7 @@ fi
 # Only source dependencies of the MLX backend. No released inference binaries.
 git -C "$SOURCE_DIR" submodule update --init --depth 1 \
     lib/mlx-src lib/mlxc-src lib/sushi lib/mlx-serve-gguf >&2
-"$SOURCE_DIR/scripts/fetch-zig.sh" >&2
+ZIG_VERSION=0.17.0 "$SOURCE_DIR/scripts/fetch-zig.sh" >&2
 "$SOURCE_DIR/scripts/build-mlx.sh" >&2
 
 for patch in "$PROJECT_DIR"/patches/*.patch; do

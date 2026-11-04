@@ -9,8 +9,8 @@ use std::{
 
 use metal::{
     MTL4CommandAllocator, MTL4CommandQueue, MTL4CommandQueueDescriptor, MTLCaptureTarget, MTLComputePipelineState,
-    MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt, MTLFunctionConstantValues, MTLGPUFamily, MTLLibrary,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSparsePageSize,
+    MTLDevice, MTLDeviceExt, MTLEvent, MTLEventExt, MTLFunctionConstantValues, MTLLibrary, MTLResidencySet,
+    MTLResidencySetDescriptor, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
@@ -42,7 +42,6 @@ pub(super) struct SparseState {
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub gpu_core_count: u32,
-    pub apple_gpu_family: MTLGPUFamily,
     pub supports_mxu: bool,
     pub device_name: String,
     pub(super) residency_set: Arc<Mutex<Retained<ProtocolObject<dyn MTLResidencySet>>>>,
@@ -124,7 +123,6 @@ impl Context for MetalContext {
 
         let device_name = device.name();
         let gpu_core_count = device.gpu_core_count();
-        let apple_gpu_family = device.newest_supported_apple_gpu_family();
         let supports_mxu = device.supports_mxu();
 
         let peak_memory_usage = Arc::new(AtomicUsize::new(0));
@@ -162,7 +160,6 @@ impl Context for MetalContext {
         Ok(Arc::new_cyclic(|weak_self: &Weak<Self>| Self {
             device,
             gpu_core_count,
-            apple_gpu_family,
             supports_mxu,
             device_name,
             residency_set: Arc::new(Mutex::new(residency_set)),

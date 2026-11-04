@@ -7,6 +7,12 @@ pub fn build(b: *std.Build) void {
         .default_target = .{ .os_version_min = .{ .semver = .{ .major = 26, .minor = 2, .patch = 0 } } },
     });
     const optimize = b.standardOptimizeOption(.{});
+    const ios = target.result.os.tag == .ios;
+    const mlx_dir = b.pathResolve(&.{
+        b.root.root_dir.path orelse ".",
+        b.option([]const u8, "mlx-dir", "MLX and mlx-c install prefix") orelse upstream ++ "lib/mlx",
+    });
+    const sdk = std.mem.trim(u8, b.run(&.{ "xcrun", "--sdk", if (ios) "iphoneos" else "macosx", "--show-sdk-path" }), " \r\n");
     const options = b.addOptions();
     options.addOption([]const u8, "version", "26.10.1");
     options.addOption([]const u8, "git_sha", "02bee553f48cd3bc7d82aba0f8073820bd924738");
@@ -14,12 +20,12 @@ pub fn build(b: *std.Build) void {
     options.addOption([]const u8, "ds4_commit", "disabled");
     options.addOption([]const u8, "llama_tag", "disabled");
     options.addOption(bool, "macos_engines", false);
-    options.addOption(bool, "ios", false);
-    options.addOption(bool, "mas", false);
+    options.addOption(bool, "ios", ios);
+    options.addOption(bool, "mas", ios);
     options.addOption(bool, "slow_tests", false);
 
     const mod = b.createModule(.{
-        .root_source_file = b.path(upstream ++ "src/bench_main.zig"),
+        .root_source_file = b.path(if (ios) upstream ++ "src/bench_ios.zig" else upstream ++ "src/bench_main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -70,6 +76,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    if (ios) {
+        const include: std.Build.LazyPath = .{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) };
+        jinja.addSystemIncludePath(include);
+        memory.addSystemIncludePath(include);
+        mod.addSystemIncludePath(include);
+        const surface = b.addWriteFiles();
+        _ = surface.add("IOSurface/IOSurface.h", "#include <IOSurface/IOSurfaceRef.h>\n");
+        mod.addIncludePath(surface.getDirectory());
+    }
     mod.addImport("memory_c", memory.createModule());
     mod.addCSourceFile(.{ .file = b.path("src/bench_memory.c"), .flags = &.{"-O2"} });
     mod.addCSourceFile(.{
@@ -77,18 +92,22 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-O2"},
     });
     mod.addIncludePath(b.path("../common-cpp/src"));
-    mod.addIncludePath(b.path(upstream ++ "lib/mlx/include"));
-    mod.addLibraryPath(b.path(upstream ++ "lib/mlx/lib"));
-    mod.addRPath(.{ .cwd_relative = b.pathResolve(&.{ b.root.root_dir.path orelse ".", upstream ++ "lib/mlx/lib" }) });
-    mod.linkSystemLibrary("mlxc", .{ .use_pkg_config = .no });
-
-    const sdk = std.mem.trim(u8, b.run(&.{ "xcrun", "--sdk", "macosx", "--show-sdk-path" }), " \r\n");
+    mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "include" }) });
     mod.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk}) });
-    inline for (.{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface", "Accelerate" }) |name| {
-        mod.linkFramework(name, .{});
+    if (ios) {
+        const lib = b.addLibrary(.{ .name = "engine-mlxserve", .root_module = mod, .linkage = .static });
+        lib.bundle_compiler_rt = true;
+        b.installArtifact(lib);
+    } else {
+        mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "lib" }) });
+        mod.addRPath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "lib" }) });
+        mod.linkSystemLibrary("mlxc", .{ .use_pkg_config = .no });
+        inline for (.{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface", "Accelerate" }) |name| {
+            mod.linkFramework(name, .{});
+        }
+        const exe = b.addExecutable(.{ .name = "engine-mlxserve", .root_module = mod });
+        b.installArtifact(exe);
     }
-    const exe = b.addExecutable(.{ .name = "engine-mlxserve", .root_module = mod });
-    b.installArtifact(exe);
 
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{

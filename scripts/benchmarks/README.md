@@ -119,6 +119,14 @@ Current configuration enables DFlash only on M5, M5 Pro, and M5 Max
 cargo run --release -p benchmarks-uzu -- -m "trymirai/Qwen3.5-9B-M"
 ```
 
+## iOS
+
+[platform-ios](platform-ios) runs these engines inside the [iOS app](../../apps/benchmarks-ios) on an iPhone or iPad:
+```bash
+uv run --project platform-ios bench-ios run -e llamacpp -m "unsloth/Qwen3.5-0.8B-GGUF:Q4_K_M"
+```
+Setup, device selection, model downloads and pushes are in the [app's README](../../apps/benchmarks-ios/README.md). `pytest engines` leaves it out because it needs a device; test it with `uv run pytest --engine ios --ios-engine ENGINE --ios-model MODEL`, adding `--ios-device UDID` or `--ios-host HOST` as needed.
+
 ## Server
 
 [./server](./server) contains tool for easy benchmarking OpenAI-compatible server

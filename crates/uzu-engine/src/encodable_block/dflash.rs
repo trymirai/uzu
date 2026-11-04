@@ -1,4 +1,4 @@
-use std::{any::Any, range::Range};
+use std::{any::Any, range::Range, sync::Arc};
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -94,6 +94,7 @@ impl<B: Backend> DFlash<B> {
     pub async fn new(
         data_type: DataType,
         config: &DFlashDraftConfig,
+        readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, DFlashNewError<B>> {
@@ -156,7 +157,7 @@ impl<B: Backend> DFlash<B> {
             config.model_dim,
             data_type,
             data_type,
-            None,
+            readout_input_hadamard_factors,
             ShortcutMode::Add,
             PostLayerScalar::None,
             &config.output_norm_config,
@@ -267,7 +268,7 @@ impl<B: Backend> DFlash<B> {
                 );
             }
         }
-        for ((layer, mixer_state), mut key_value) in
+        for ((layer, mixer_state), key_value) in
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
             mixer_state.prepare(state.context_length, num_tokens).map_err(DFlashEncodeError::Backend)?;
@@ -278,7 +279,7 @@ impl<B: Backend> DFlash<B> {
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
             attention
-                .append_projected_kv(&mut key_value, &rope, num_tokens, attention_state, command_buffer)
+                .append_projected_kv(&key_value, &rope, num_tokens, attention_state, command_buffer)
                 .map_err(DFlashEncodeError::Backend)?;
         }
 

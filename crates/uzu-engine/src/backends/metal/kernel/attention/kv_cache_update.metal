@@ -6,26 +6,7 @@
 
 namespace kv_layout = uzu::kv_layout;
 
-template <typename T>
-VARIANTS(T, bfloat)
-PUBLIC KERNEL(KVCacheUpdate) (
-    device T* in_place_keys,
-    device T* in_place_values,
-    const constant uzu::kv_cache_update::Copy* copies,
-    const constant uint& copy_count,
-    const constant uint& element_dim,
-    const uint element_idx AXIS(element_dim, 256)
-) {
-  for (uint i = 0; i < copy_count; ++i) {
-    const uint sourceIdx = copies[i].source * element_dim + element_idx;
-    const uint destIdx = copies[i].destination * element_dim + element_idx;
-
-    in_place_keys[destIdx] = in_place_keys[sourceIdx];
-    in_place_values[destIdx] = in_place_values[sourceIdx];
-  }
-}
-
-PUBLIC KERNEL(KVCacheUpdateInt8)(
+PUBLIC KERNEL(KVCacheUpdate)(
     device int8_t* in_place_k_codes,
     device uchar* in_place_v_codes,
     device bfloat* in_place_k_scales,
@@ -34,9 +15,10 @@ PUBLIC KERNEL(KVCacheUpdateInt8)(
     const constant uint& copy_count,
     const uint head_dim SPECIALIZE,
     const uint num_kv_heads SPECIALIZE,
+    const uint32_t backend_opaque_layout SPECIALIZE,
     const uint element AXIS(num_kv_heads* head_dim, 256)
 ) {
-  const kv_layout::Int8KVShape shape{head_dim, num_kv_heads};
+  const kv_layout::KVShape shape{head_dim, num_kv_heads, static_cast<kv_layout::KVLayout>(backend_opaque_layout)};
   const uint kv_head = element / head_dim;
   const uint channel = element % head_dim;
   for (uint i = 0; i < copy_count; ++i) {

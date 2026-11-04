@@ -231,29 +231,80 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
 }
 
 pub(crate) fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
-        .iter()
-        .map(|message| {
-            let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
-            let mut chat_message = ChatMessage::for_role(role);
-            // Block order matches how the session stores generated replies
-            // (reasoning, then text, then tool calls) so a client that echoes
-            // reasoning back keeps the message prefix intact.
-            if let Some(reasoning) = message.reasoning_content.as_ref().filter(|reasoning| !reasoning.is_empty()) {
-                chat_message = chat_message.with_reasoning(reasoning.clone());
-            }
-            if let Some(identifier) = &message.tool_call_id {
-                let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
-                chat_message = chat_message.with_block(result);
-            } else if let Some(content) = message.content.as_ref().filter(|content| !content.is_empty()) {
-                chat_message = chat_message.with_text(content.clone());
-            }
-            for tool_call in message.tool_calls.iter().flatten() {
-                chat_message = chat_message.with_tool_call(to_tool_call(tool_call));
-            }
-            chat_message
-        })
-        .collect()
+    merge_adjacent_system_messages(messages.iter().map(to_chat_message))
+}
+
+fn to_chat_message(message: &OaiMessage) -> ChatMessage {
+    let mut chat_message = ChatMessage::for_role(to_chat_role(&message.role));
+    // Block order matches how the session stores generated replies
+    // (reasoning, then text, then tool calls) so a client that echoes
+    // reasoning back keeps the message prefix intact.
+    if let Some(reasoning) = message.reasoning_content.as_ref().filter(|reasoning| !reasoning.is_empty()) {
+        chat_message = chat_message.with_reasoning(reasoning.clone());
+    }
+    if let Some(identifier) = &message.tool_call_id {
+        let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
+        chat_message = chat_message.with_block(result);
+    } else if let Some(content) = message.content.as_ref().filter(|content| !content.is_empty()) {
+        chat_message = chat_message.with_text(content.clone());
+    }
+    for tool_call in message.tool_calls.iter().flatten() {
+        chat_message = chat_message.with_tool_call(to_tool_call(tool_call));
+    }
+    chat_message
+}
+
+// OpenAI clients send their instructions as `developer` (the system role of o1 and
+// newer; OpenAI treats it as system for other models). The engine's developer slot
+// carries only the tool declarations (see insert_tools_message), so client
+// instructions go to the system message.
+fn to_chat_role(role: &str) -> ChatRole {
+    match ChatRole::from_str(role).unwrap_or(ChatRole::User {}) {
+        ChatRole::Developer {} => ChatRole::System {},
+        role => role,
+    }
+}
+
+// A client may send both system and developer instructions, but templates reject two
+// system messages in a row. Their texts join into one block: with two, templates get a
+// list instead of a string and Harmony concatenates them without a separator.
+fn merge_adjacent_system_messages(messages: impl Iterator<Item = ChatMessage>) -> Vec<ChatMessage> {
+    let mut merged: Vec<ChatMessage> = Vec::new();
+    for message in messages {
+        match merged.last_mut() {
+            Some(previous) if previous.role == ChatRole::System {} && message.role == ChatRole::System {} => {
+                append_system_content(previous, message.content);
+            },
+            _ => merged.push(message),
+        }
+    }
+    merged
+}
+
+fn append_system_content(
+    message: &mut ChatMessage,
+    content: Vec<ChatContentBlock>,
+) {
+    for block in content {
+        let existing_text = message.content.iter_mut().find_map(|block| match block {
+            ChatContentBlock::Text {
+                value,
+            } => Some(value),
+            _ => None,
+        });
+        match (block, existing_text) {
+            (
+                ChatContentBlock::Text {
+                    value,
+                },
+                Some(existing_text),
+            ) => {
+                existing_text.push_str("\n\n");
+                existing_text.push_str(&value);
+            },
+            (block, _) => message.content.push(block),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

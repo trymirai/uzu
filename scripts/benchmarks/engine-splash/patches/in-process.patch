@@ -1,0 +1,335 @@
+diff --git a/install/inprocess.py b/install/inprocess.py
+new file mode 100644
+index 0000000..bb863e7
+--- /dev/null
++++ b/install/inprocess.py
+@@ -0,0 +1,103 @@
++"""The engine's commands inside this process, where none can be started (iOS),
++with the subset of subprocess.run and subprocess.Popen that Splash uses."""
++
++import ctypes
++import os
++import subprocess
++import threading
++from functools import cache
++
++from . import paths
++
++
++@cache
++def _engine():
++    engine = ctypes.CDLL(str(paths.BINARY))
++    engine.benchmarks_splash_main.argtypes = [
++        ctypes.c_int,
++        ctypes.POINTER(ctypes.c_char_p),
++        ctypes.c_int,
++        ctypes.c_int,
++    ]
++    engine.benchmarks_splash_terminate.argtypes = []
++    return engine
++
++
++def _main(args, input, output):
++    argv = (ctypes.c_char_p * (len(args) + 1))(*(str(arg).encode() for arg in args), None)
++    returncode = _engine().benchmarks_splash_main(len(args), argv, input, output)
++    ctypes.CDLL(None).fflush(None)
++    return returncode
++
++
++def _drain(descriptor, chunks):
++    with os.fdopen(descriptor, "rb") as stream:
++        chunks.append(stream.read())
++
++
++def run(args, *, check=False, capture_output=False, text=False):
++    """Run a check that writes to stdout and stderr, as subprocess.run does."""
++    if not capture_output:
++        returncode = _main(args, 0, 1)
++        stdout = stderr = None
++    else:
++        saved = [os.dup(1), os.dup(2)]
++        pipes = [os.pipe(), os.pipe()]
++        outputs = [[], []]
++        readers = [threading.Thread(target=_drain, args=(pipe[0], chunks)) for pipe, chunks in zip(pipes, outputs)]
++        for reader in readers:
++            reader.start()
++        try:
++            for descriptor, pipe in zip((1, 2), pipes):
++                os.dup2(pipe[1], descriptor)
++                os.close(pipe[1])
++            returncode = _main(args, 0, 1)
++        finally:
++            for descriptor, copy in zip((1, 2), saved):
++                os.dup2(copy, descriptor)
++                os.close(copy)
++            for reader in readers:
++                reader.join()
++        stdout, stderr = (b"".join(chunks) for chunks in outputs)
++        if text:
++            stdout, stderr = stdout.decode(), stderr.decode()
++    if check and returncode:
++        raise subprocess.CalledProcessError(returncode, args, stdout, stderr)
++    return subprocess.CompletedProcess(args, returncode, stdout, stderr)
++
++
++class Popen:
++    """The native server on a thread, with pipes for its frames and the
++    shared stderr, as subprocess.Popen(stdin=PIPE, stdout=PIPE, bufsize=0)."""
++
++    def __init__(self, args, **_):
++        self.args = args
++        self.pid = os.getpid()
++        self.returncode = None
++        input, writer = os.pipe()
++        reader, output = os.pipe()
++        self.stdin = os.fdopen(writer, "wb", buffering=0)
++        self.stdout = os.fdopen(reader, "rb", buffering=0)
++        self._thread = threading.Thread(target=self._serve, args=(input, output), daemon=True)
++        self._thread.start()
++
++    def _serve(self, input, output):
++        try:
++            self.returncode = _main(self.args, input, output)
++        finally:
++            os.close(input)
++            os.close(output)
++
++    def poll(self):
++        return None if self._thread.is_alive() else self.returncode
++
++    def wait(self, timeout=None):
++        self._thread.join(timeout)
++        if self._thread.is_alive():
++            raise subprocess.TimeoutExpired(self.args, timeout)
++        return self.returncode
++
++    def terminate(self):
++        _engine().benchmarks_splash_terminate()
++
++    kill = terminate
+diff --git a/install/models.py b/install/models.py
+index 965b46b..9ddab59 100644
+--- a/install/models.py
++++ b/install/models.py
+@@ -42,9 +42,11 @@ if __name__ == "__main__" and not __package__:
+ # the standard library alone: the launcher imports this before .venv exists.
+ from server import serve_options
+ 
+-from . import paths
++from . import inprocess, paths
+ 
+ MODELS = paths.MODELS
++# The engine's checks run in this process where none can be started.
++processes = inprocess if paths.SANDBOXED else subprocess
+ # The bound on one JSON metadata file the installer reads; such files are
+ # kilobytes, so a larger one is refused unread. The engine bounds the files it
+ # reads by its own rule.
+@@ -77,7 +79,7 @@ def run_engine(arguments, check):
+     engine = paths.BINARY
+     replace = "reinstall Splash" if paths.PACKAGED else "rebuild it with make"
+     try:
+-        result = subprocess.run(
++        result = processes.run(
+             [str(engine), *arguments], capture_output=True, text=True
+         )
+     except OSError as error:
+diff --git a/install/paths.py b/install/paths.py
+index 4509cc6..5c2eff8 100644
+--- a/install/paths.py
++++ b/install/paths.py
+@@ -1,11 +1,18 @@
+ """Immutable program files and writable per-user data, for source or release."""
+ 
++import sys
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ PACKAGED = (ROOT / "release.json").is_file()
+-DATA = Path.home() / "Library/Application Support/Splash" if PACKAGED else ROOT
+-MODELS = DATA / "models" if PACKAGED else ROOT / "install/models"
+-RUNTIME = DATA / "runtime" if PACKAGED else ROOT / "build/runtime"
++SANDBOXED = sys.platform == "ios"
++PER_USER = PACKAGED or SANDBOXED
++DATA = Path.home() / "Library/Application Support/Splash" if PER_USER else ROOT
++MODELS = DATA / "models" if PER_USER else ROOT / "install/models"
++RUNTIME = DATA / "runtime" if PER_USER else ROOT / "build/runtime"
+ PYTHON = ROOT / ("python/bin/python3" if PACKAGED else ".venv/bin/python")
+-BINARY = ROOT / ("engine/splash" if PACKAGED else "build/splash")
++BINARY = (
++    Path(sys.executable).parent / "Frameworks/BenchmarksSplash.framework/BenchmarksSplash"
++    if SANDBOXED
++    else ROOT / ("engine/splash" if PACKAGED else "build/splash")
++)
+diff --git a/runtime/ane/Program.mm b/runtime/ane/Program.mm
+index 3840533..90e30a7 100644
+--- a/runtime/ane/Program.mm
++++ b/runtime/ane/Program.mm
+@@ -6,7 +6,7 @@
+ #endif
+ 
+ #import <Foundation/Foundation.h>
+-#import <IOSurface/IOSurface.h>
++#import <IOSurface/IOSurfaceRef.h>
+ 
+ #include <dispatch/dispatch.h>
+ #include <dlfcn.h>
+diff --git a/runtime/main.mm b/runtime/main.mm
+index 2127282..dd1df65 100644
+--- a/runtime/main.mm
++++ b/runtime/main.mm
+@@ -6,9 +6,12 @@
+ #include "engine/Status.hpp"
+ #include "model/ModelDescriptor.hpp"
+ 
++#include <TargetConditionals.h>
++#if TARGET_OS_OSX
+ #include <IOKit/pwr_mgt/IOPMLib.h>
++#endif
++#include <dlfcn.h>
+ #include <dispatch/dispatch.h>
+-#include <mach-o/dyld.h>
+ #include <mach/mach_error.h>
+ #include <sysexits.h>
+ #include <unistd.h>
+@@ -20,7 +23,6 @@
+ #include <chrono>
+ #include <cstdint>
+ #include <filesystem>
+-#include <limits.h>
+ #include <memory>
+ #include <optional>
+ #include <stdexcept>
+@@ -29,7 +31,6 @@
+ #include <system_error>
+ #include <thread>
+ #include <utility>
+-#include <vector>
+ 
+ #ifndef SPLASH_BUILD_ID
+ #error "production build requires the generated BuildIdentity.hpp"
+@@ -112,6 +113,7 @@ explicit MemoryPressureMonitor(std::function<void()> notify)
+ // does: the display may still sleep, and the lid, the Sleep command or a low
+ // battery still sleep the Mac; requests continue when it wakes. Without the
+ // assertion the engine serves on and says so once.
++#if TARGET_OS_OSX
+ class IdleSleepAssertion final {
+ public:
+   IdleSleepAssertion() = default;
+@@ -144,6 +146,7 @@ void hold(bool held) noexcept {
+   IOPMAssertionID assertion_ = kIOPMNullAssertionID;
+   bool reported_ = false;
+ };
++#endif
+ 
+ void printUsage(std::string_view executable) {
+   const std::string command(executable);
+@@ -160,16 +163,11 @@ void printUsage(std::string_view executable) {
+ }
+ 
+ std::filesystem::path executablePath() {
+-  uint32_t size = PATH_MAX;
+-  std::vector<char> buffer(size);
+-  if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+-    buffer.resize(size);
+-    if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+-      throw std::runtime_error("could not resolve executable path");
+-    }
+-  }
++  Dl_info info{};
++  if (!dladdr(reinterpret_cast<const void *>(&executablePath), &info) || !info.dli_fname)
++    throw std::runtime_error("could not resolve executable path");
+   std::error_code error;
+-  std::filesystem::path path = std::filesystem::canonical(buffer.data(), error);
++  std::filesystem::path path = std::filesystem::canonical(info.dli_fname, error);
+   if (error) {
+     throw std::runtime_error("could not canonicalize executable path: " +
+                              error.message());
+@@ -223,20 +221,27 @@ explicit ShutdownSignals(engine::FdTransport &transport) {
+     action.sa_handler = requestShutdownFromSignal;
+     sigemptyset(&action.sa_mask);
+     action.sa_flags = 0;
+-    for (const int number : {SIGTERM, SIGINT, SIGHUP}) {
+-      struct sigaction inherited {};
+-      if (number == SIGHUP && sigaction(number, nullptr, &inherited) == 0 &&
+-          inherited.sa_handler == SIG_IGN)
++    struct sigaction ignore {};
++    ignore.sa_handler = SIG_IGN;
++    for (std::size_t index = 0; index < std::size(kSignals); ++index) {
++      const int number = kSignals[index];
++      sigaction(number, nullptr, &inherited_[index]);
++      if (number == SIGHUP && inherited_[index].sa_handler == SIG_IGN)
+         continue;
+-      sigaction(number, &action, nullptr);
++      sigaction(number, number == SIGPIPE ? &ignore : &action, nullptr);
+     }
+-    std::signal(SIGPIPE, SIG_IGN);
+   }
+   ShutdownSignals(const ShutdownSignals &) = delete;
+   ShutdownSignals &operator=(const ShutdownSignals &) = delete;
+   ~ShutdownSignals() {
++    for (std::size_t index = 0; index < std::size(kSignals); ++index)
++      sigaction(kSignals[index], &inherited_[index], nullptr);
+     gShutdownTransport.store(nullptr, std::memory_order_release);
+   }
++
++private:
++  static constexpr int kSignals[] = {SIGTERM, SIGINT, SIGHUP, SIGPIPE};
++  struct sigaction inherited_[std::size(kSignals)] {};
+ };
+ 
+ // The time a clean stop gives the newest restore points of a persistent
+@@ -263,11 +268,13 @@ void closePersistentCache(engine::FdTransport &transport,
+                     "back on probation.");
+ }
+ 
+-int runNative(const engine::NativeArguments &arguments) {
+-  engine::FdTransport transport(STDIN_FILENO, STDOUT_FILENO);
++int runNative(const engine::NativeArguments &arguments, int input, int output) {
++  engine::FdTransport transport(input, output);
+   ShutdownSignals signals(transport);
+   MemoryPressureMonitor pressureMonitor(transport.controlNotifier());
++#if TARGET_OS_OSX
+   IdleSleepAssertion idleSleep;
++#endif
+   engine::RuntimeMetrics metrics;
+   engine::RuntimeBootstrap *published = nullptr;
+   auto statusProvider = [&] {
+@@ -286,8 +293,10 @@ int runNative(const engine::NativeArguments &arguments) {
+     config.resources.memoryPressure = [&] { return pressureMonitor.pressure(); };
+     config.resources.cancelled = [&] { return transport.shutdownRequested(); };
+     config.nativeLoop.metrics = &metrics;
++#if TARGET_OS_OSX
+     if (arguments.preventIdleSleep)
+       config.nativeLoop.holdingRequests = [&](bool held) { idleSleep.hold(held); };
++#endif
+     try {
+       bootstrap = engine::RuntimeBootstrap::start(
+           std::move(config), transport.outputSink(), statusProvider);
+@@ -383,7 +392,9 @@ int checkModel(int argc, char **argv) {
+ } // namespace
+ } // namespace splash
+ 
+-int main(int argc, char **argv) {
++extern "C" void benchmarks_splash_terminate() { splash::requestShutdownFromSignal(SIGTERM); }
++
++extern "C" int benchmarks_splash_main(int argc, char **argv, int input, int output) {
+   @autoreleasepool {
+     try {
+       if (argc == 2 && std::string_view(argv[1]) == "device-check")
+@@ -392,7 +403,7 @@ int main(int argc, char **argv) {
+         return splash::checkModel(argc, argv);
+       const splash::engine::NativeArguments arguments =
+           splash::engine::parseNativeArguments(argc, argv);
+-      return splash::runNative(arguments);
++      return splash::runNative(arguments, input, output);
+     } catch (const splash::engine::UsageError &error) {
+       splash::writeStderrLine(std::string("error: ") + error.what());
+       splash::printUsage(argc > 0 ? argv[0] : "splash");
+@@ -408,3 +419,7 @@ int main(int argc, char **argv) {
+     }
+   }
+ }
++
++int main(int argc, char **argv) {
++  return benchmarks_splash_main(argc, argv, STDIN_FILENO, STDOUT_FILENO);
++}
