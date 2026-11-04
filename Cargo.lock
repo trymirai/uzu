@@ -722,6 +722,7 @@ dependencies = [
 name = "bindings-types"
 version = "0.6.15"
 dependencies = [
+ "bindings",
  "inventory",
  "js-sys",
  "napi",

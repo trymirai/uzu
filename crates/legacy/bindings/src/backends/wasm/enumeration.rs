@@ -158,8 +158,8 @@ pub fn data_enumeration_companions(item: &syn::ItemEnum) -> TokenStream {
                 #(#accessors)*
 
                 #[wasm_bindgen(js_name = #clone_method, skip_typescript)]
-                pub fn __wasm_clone_pointer(&self) -> usize {
-                    ::bindings_types::wasm::clone_pointer(&self.inner)
+                pub fn __wasm_clone_handle(&self) -> ::wasm_bindgen::JsValue {
+                    ::bindings_types::wasm::clone_handle(&self.inner)
                 }
             }
 

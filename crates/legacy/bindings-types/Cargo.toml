@@ -50,3 +50,11 @@ pyo3-build-config = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+bindings.workspace = true
+
+[[example]]
+name = "wasm-regressions"
+crate-type = ["cdylib"]
+required-features = ["bindings-wasm"]

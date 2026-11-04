@@ -1,6 +1,6 @@
 use bindings_types::{
     js_sys::{Error as JavaScriptError, Function, Promise},
-    wasm::{FromJs, JsResult, clone_pointer, take_clone},
+    wasm::{FromJs, JsResult, clone_handle, take_clone},
 };
 use kiban::rt::MakeSendFuture;
 use shoji::types::basic::{ToolFunction, Value};
@@ -58,8 +58,8 @@ impl NativeTool {
     }
 
     #[wasm_bindgen(js_name = "__uzuCloneNativeTool", skip_typescript)]
-    pub fn clone_pointer_bindings_wasm(&self) -> usize {
-        clone_pointer(self)
+    pub fn clone_handle_bindings_wasm(&self) -> ::wasm_bindgen::JsValue {
+        clone_handle(self)
     }
 }
 

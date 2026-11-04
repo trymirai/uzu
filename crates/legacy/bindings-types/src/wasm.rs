@@ -4,7 +4,7 @@
 //! wasm package exposes the same JavaScript shapes as the napi package: camelCase fields, one class
 //! per enum variant, string enums, `null` for a missing return value, and plain objects for maps.
 
-use std::{collections::HashMap, hash::BuildHasher};
+use std::{any::Any, cell::RefCell, collections::HashMap, hash::BuildHasher};
 
 use js_sys::{Array, Function, Object, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
@@ -28,16 +28,42 @@ pub fn type_error(message: impl std::fmt::Display) -> JsValue {
     js_sys::TypeError::new(&message.to_string()).into()
 }
 
-/// Moves a clone of an exported class value to the heap for [`take_clone`]. Each class exposes this
-/// through a hidden method, so JavaScript objects passed to Rust are copied rather than consumed.
-pub fn clone_pointer<T: Clone>(value: &T) -> usize {
-    Box::into_raw(Box::new(value.clone())) as usize
+struct CloneTransfer {
+    token: JsValue,
+    value: Option<Box<dyn Any>>,
 }
 
-/// Copies the Rust value out of a JavaScript object through its hidden clone method `method`.
-///
-/// `method` must be the name of a method generated for `T` alone that returns [`clone_pointer`].
-pub fn take_clone<T>(
+thread_local! {
+    static CLONE_TRANSFERS: RefCell<Vec<CloneTransfer>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Ensures pending clones are dropped even when JavaScript throws or returns an invalid handle.
+struct CloneScope;
+
+impl Drop for CloneScope {
+    fn drop(&mut self) {
+        CLONE_TRANSFERS.with(|transfers| {
+            transfers.borrow_mut().pop();
+        });
+    }
+}
+
+/// Registers a typed clone for the active conversion and returns its opaque, instance-local token.
+/// Calling the hidden method outside a conversion does not allocate a Rust clone.
+pub fn clone_handle<T: Clone + 'static>(value: &T) -> JsValue {
+    CLONE_TRANSFERS.with(|transfers| {
+        let mut transfers = transfers.borrow_mut();
+        let Some(transfer) = transfers.last_mut() else {
+            return JsValue::UNDEFINED;
+        };
+        transfer.value = Some(Box::new(value.clone()));
+        transfer.token.clone()
+    })
+}
+
+/// Copies a Rust value through its hidden clone method, validating both token identity and type.
+/// Nested conversions have separate scopes; tokens cannot be replayed or shared across instances.
+pub fn take_clone<T: 'static>(
     value: &JsValue,
     method: &str,
     type_name: &str,
@@ -47,9 +73,21 @@ pub fn take_clone<T>(
         return Err(expected());
     }
     let function: Function = Reflect::get(value, &JsValue::from_str(method))?.dyn_into().map_err(|_| expected())?;
-    let pointer = function.call0(value)?.as_f64().ok_or_else(expected)? as usize;
-    // SAFETY: `method` is unique to `T` and returns `Box::into_raw(Box<T>)`, see `clone_pointer`.
-    Ok(unsafe { *Box::from_raw(pointer as *mut T) })
+    let token: JsValue = Object::new().into();
+    CLONE_TRANSFERS.with(|transfers| {
+        transfers.borrow_mut().push(CloneTransfer {
+            token: token.clone(),
+            value: None,
+        });
+    });
+    let _scope = CloneScope;
+    let returned = function.call0(value)?;
+    if returned != token {
+        return Err(expected());
+    }
+    let cloned =
+        CLONE_TRANSFERS.with(|transfers| transfers.borrow_mut().last_mut().and_then(|transfer| transfer.value.take()));
+    cloned.and_then(|value| value.downcast::<T>().ok()).map(|value| *value).ok_or_else(expected)
 }
 
 pub fn new_object() -> Object {
@@ -61,7 +99,13 @@ pub fn set_property(
     key: &str,
     value: JsValue,
 ) {
-    let _ = Reflect::set(object, &JsValue::from_str(key), &value);
+    // Define an own property so "__proto__" never invokes the inherited setter.
+    let descriptor = Object::new();
+    Reflect::set(&descriptor, &JsValue::from_str("value"), &value).unwrap();
+    for flag in ["enumerable", "writable", "configurable"] {
+        Reflect::set(&descriptor, &JsValue::from_str(flag), &JsValue::TRUE).unwrap();
+    }
+    Object::define_property(object, &JsValue::from_str(key), &descriptor);
 }
 
 pub fn expect_object(

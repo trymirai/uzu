@@ -108,11 +108,10 @@ pub fn accessors(
                 }
 
                 #[wasm_bindgen(setter = #js_name, skip_typescript)]
-                pub fn #setter(&mut self, value: ::wasm_bindgen::JsValue) {
-                    match <#field_ty as ::bindings_types::wasm::FromJs>::from_js(value) {
-                        Ok(__wasm_value) => { #write },
-                        Err(error) => ::wasm_bindgen::throw_val(error),
-                    }
+                pub fn #setter(&mut self, value: ::wasm_bindgen::JsValue) -> ::bindings_types::wasm::JsResult<()> {
+                    let __wasm_value = <#field_ty as ::bindings_types::wasm::FromJs>::from_js(value)?;
+                    #write
+                    Ok(())
                 }
             }
         })
