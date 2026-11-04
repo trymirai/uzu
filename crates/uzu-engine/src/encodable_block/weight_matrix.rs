@@ -7,7 +7,9 @@ use crate::{
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::{
             activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-            matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat, WeightsLayout},
+            matmul::{
+                MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat, WeightsLayout,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -174,7 +176,11 @@ impl<B: Backend> WeightMatrix<B> {
             QuantizationMethod::ScaleSymmetric => QuantizedCorrection::Symmetric,
         };
 
-        let group_size = if mode == QuantizationMode::U2 { ACTIVATION_SCALE_GROUP_SIZE } else { group_size };
+        let group_size = if mode == QuantizationMode::U2 {
+            ACTIVATION_SCALE_GROUP_SIZE
+        } else {
+            group_size
+        };
         Ok(Self {
             values,
             encoding: Encoding::Quantized(Quantized {
