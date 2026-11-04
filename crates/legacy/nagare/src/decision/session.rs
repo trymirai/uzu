@@ -33,13 +33,60 @@ pub enum DecisionSessionState {
 struct DecisionInstanceHolder {
     instance: Box<dyn DecisionInstance>,
     encoding: DecisionEncoding,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    energy_recorder: EnergyRecorder,
 }
 
 enum Executor {
     D3(DecisionInstanceHolder),
     Chat(super::chat::ChatExecutor),
+}
+
+pub(super) struct PreparedQuestion<'a> {
+    pub(super) tokens: Vec<u64>,
+    pub(super) scorer: Scorer<'a>,
+    pub(super) encoding_duration: std::time::Duration,
+}
+
+pub(super) enum Scorer<'a> {
+    D3 {
+        instance: &'a dyn DecisionInstance,
+        option_count: usize,
+    },
+    Chat {
+        instance: Arc<dyn shoji::traits::backend::chat_token::Instance>,
+        labels: Vec<u64>,
+    },
+}
+
+impl PreparedQuestion<'_> {
+    async fn score(self) -> Result<(Vec<f64>, std::time::Duration), DecisionSessionError> {
+        let error = |error: String| DecisionSessionError::Backend {
+            message: error,
+        };
+        match self.scorer {
+            Scorer::D3 {
+                instance,
+                option_count,
+            } => {
+                let output =
+                    instance.probabilities(&self.tokens, option_count).await.map_err(|e| error(e.to_string()))?;
+                Ok((output.probabilities.into_iter().map(f64::from).collect(), output.prefill_duration))
+            },
+            Scorer::Chat {
+                instance,
+                labels,
+            } => {
+                let count = labels.len();
+                let scores = tokio::task::spawn_blocking(move || {
+                    futures::executor::block_on(instance.score_token_ids(&self.tokens, &labels))
+                })
+                .await
+                .map_err(|e| error(e.to_string()))?
+                .map_err(|e| error(e.to_string()))?;
+                let duration = scores.prefill_duration;
+                Ok((super::chat::probabilities(scores, count)?, duration))
+            },
+        }
+    }
 }
 
 #[bindings::export(Class)]
@@ -72,8 +119,6 @@ impl DecisionSession {
             Ok::<_, DecisionSessionError>(DecisionInstanceHolder {
                 instance,
                 encoding,
-                #[cfg(any(target_os = "macos", target_os = "ios"))]
-                energy_recorder: EnergyRecorder::new(),
             })
         })
         .await
@@ -95,7 +140,7 @@ impl DecisionSession {
     }
 
     async fn execute(
-        executor: &mut Executor,
+        executor: &Executor,
         input: &DecisionInput,
         response: &mpsc::UnboundedSender<Result<DecisionOutput, DecisionSessionError>>,
     ) -> Result<Vec<DecisionResult>, DecisionSessionError> {
@@ -103,11 +148,59 @@ impl DecisionSession {
             return Err(DecisionSessionError::NoQuestions {});
         }
 
-        let holder = match executor {
-            Executor::D3(holder) => holder,
-            Executor::Chat(chat) => return chat.execute(input, response).await,
+        let (prepared, gate) = match executor {
+            Executor::D3(holder) => (Self::prepare_d3(holder, input)?, None),
+            Executor::Chat(chat) => (chat.prepare(input)?, Some(chat.gate.clone())),
         };
-        let prompts = input
+        let _guard = match gate.as_ref() {
+            Some(gate) => Some(tokio::select! {
+                guard = gate.write() => guard,
+                _ = response.closed() => return Err(DecisionSessionError::NoResponse {}),
+            }),
+            None => None,
+        };
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let mut energy_recorder = EnergyRecorder::new();
+        let mut results = Vec::with_capacity(prepared.len());
+        for (question, prepared) in input.questions.iter().zip(prepared) {
+            if gate.is_some() && response.is_closed() {
+                return Err(DecisionSessionError::NoResponse {});
+            }
+            let time_start = Instant::now();
+            let tokens_count = prepared.tokens.len() as i64;
+            let encoding_duration = prepared.encoding_duration;
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            energy_recorder.begin()?;
+            let output = prepared.score().await;
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            let energy = energy_recorder.finish();
+            let (probabilities, prefill_duration) = output?;
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            let energy = match energy {
+                Ok(energy) => Some(energy),
+                Err(EnergyError::Keisoku(KeisokuError::PowerReadingUnavailable)) => None,
+                Err(error) => return Err(error.into()),
+            };
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            let energy = None;
+            results.push(DecisionResult {
+                answer: answer(question, probabilities),
+                stats: DecisionStats {
+                    tokens_count,
+                    prefill_duration: prefill_duration.as_secs_f64(),
+                    total_duration: (encoding_duration + time_start.elapsed()).as_secs_f64(),
+                    energy,
+                },
+            });
+        }
+        Ok(results)
+    }
+
+    fn prepare_d3<'a>(
+        holder: &'a DecisionInstanceHolder,
+        input: &DecisionInput,
+    ) -> Result<Vec<PreparedQuestion<'a>>, DecisionSessionError> {
+        input
             .questions
             .iter()
             .enumerate()
@@ -126,52 +219,16 @@ impl DecisionSession {
                         message: error.to_string(),
                     },
                 })?;
-                Ok((prompt, time_start.elapsed()))
+                Ok(PreparedQuestion {
+                    tokens: prompt.into_iter().map(u64::from).collect(),
+                    scorer: Scorer::D3 {
+                        instance: holder.instance.as_ref(),
+                        option_count: option_count(question),
+                    },
+                    encoding_duration: time_start.elapsed(),
+                })
             })
-            .collect::<Result<Vec<_>, DecisionSessionError>>()?;
-
-        let mut results = Vec::with_capacity(prompts.len());
-        for (question, (prompt, encoding_duration)) in input.questions.iter().zip(prompts) {
-            let time_start = Instant::now();
-            let tokens_count = prompt.len();
-            let tokens = prompt.into_iter().map(u64::from).collect::<Vec<_>>();
-
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            holder.energy_recorder.begin()?;
-
-            let output = holder.instance.probabilities(&tokens, option_count(question)).await.map_err(|error| {
-                DecisionSessionError::Backend {
-                    message: error.to_string(),
-                }
-            });
-
-            // Stop sampling before propagating an inference error.
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            let energy = holder.energy_recorder.finish();
-
-            let output = output?;
-
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            let energy = match energy {
-                Ok(energy) => Some(energy),
-                Err(EnergyError::Keisoku(KeisokuError::PowerReadingUnavailable)) => None,
-                Err(error) => return Err(error.into()),
-            };
-
-            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-            let energy = None;
-
-            results.push(DecisionResult {
-                answer: answer(question, output.probabilities.into_iter().map(f64::from).collect()),
-                stats: DecisionStats {
-                    tokens_count: tokens_count as i64,
-                    prefill_duration: output.prefill_duration.as_secs_f64(),
-                    total_duration: (encoding_duration + time_start.elapsed()).as_secs_f64(),
-                    energy,
-                },
-            });
-        }
-        Ok(results)
+            .collect()
     }
 }
 
@@ -206,8 +263,8 @@ impl DecisionSession {
             }
 
             let result = {
-                let mut holder = holder.lock().await;
-                Self::execute(&mut holder, &input, &sender).await
+                let holder = holder.lock().await;
+                Self::execute(&holder, &input, &sender).await
             };
             let output = result.map(|results| DecisionOutput {
                 results,

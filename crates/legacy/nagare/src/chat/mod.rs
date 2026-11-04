@@ -127,7 +127,7 @@ pub struct ChatSession {
     state: Arc<Mutex<ChatSessionState>>,
     messages: Arc<Mutex<Vec<ChatMessage>>>,
     tool_registry: Option<Arc<Mutex<ToolRegistry>>>,
-    inference_gate: Arc<tokio::sync::Semaphore>,
+    inference_gate: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl ChatSession {
@@ -257,7 +257,7 @@ impl ChatSession {
         completed_stats: &mut Vec<ChatReplyStats>,
     ) -> Option<Vec<ChatReply>> {
         let _permit = tokio::select! {
-            permit = self.inference_gate.acquire() => match permit { Ok(permit) => permit, Err(_) => return None },
+            permit = self.inference_gate.read() => permit,
             _ = cancel_token.cancelled() => return None,
             _ = sender.closed() => return None,
         };
@@ -960,6 +960,7 @@ mod tests {
     struct ToolsThenAnswer {
         rounds: usize,
         continue_answer: Option<Arc<Notify>>,
+        entered: Option<Arc<tokio::sync::Barrier>>,
     }
 
     impl BackendInstance for ToolsThenAnswer {
@@ -983,6 +984,9 @@ mod tests {
             Box::pin(NoMetricsStream::new(futures::stream::once(async move {
                 let completed_rounds = input.iter().map(|message| message.tool_call_results().len()).sum::<usize>();
                 if completed_rounds >= self.rounds {
+                    if let Some(entered) = &self.entered {
+                        entered.wait().await;
+                    }
                     if let Some(continue_answer) = &self.continue_answer {
                         continue_answer.notified().await;
                     }
@@ -1010,6 +1014,59 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn sessions_share_chat_inference_without_serializing_each_other() {
+        let entered = Arc::new(tokio::sync::Barrier::new(3));
+        let gate = Arc::new(tokio::sync::RwLock::new(()));
+        let mut streams = Vec::new();
+        let mut releases = Vec::new();
+        for _ in 0..2 {
+            let release = Arc::new(Notify::new());
+            let mut session = tool_session(0, None).await;
+            let backend = message::Session::with_instance(Arc::new(ToolsThenAnswer {
+                rounds: 0,
+                continue_answer: Some(release.clone()),
+                entered: Some(entered.clone()),
+            }))
+            .await
+            .unwrap();
+            session.instance = Arc::new(Mutex::new(Instance::Message(backend)));
+            session.inference_gate = gate.clone();
+            streams.push(
+                session
+                    .reply_with_stream(vec![ChatMessage::user().with_text("Hello".into())], ChatReplyConfig::default())
+                    .await,
+            );
+            releases.push(release);
+        }
+        tokio::time::timeout(Duration::from_secs(3), entered.wait()).await.unwrap();
+        assert!(gate.try_write().is_err());
+        assert!(gate.try_read().is_ok());
+        for release in releases {
+            release.notify_one();
+        }
+        for stream in streams {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let mut answer = None;
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        ChatSessionStreamChunk::Replies {
+                            replies,
+                        } => answer = replies[0].message.text(),
+                        ChatSessionStreamChunk::Error {
+                            error,
+                        } => panic!("{error}"),
+                        _ => {},
+                    }
+                }
+                assert_eq!(answer.as_deref(), Some("Answer"));
+            })
+            .await
+            .unwrap();
+        }
+        assert!(gate.try_write().is_ok());
+    }
+
     async fn tool_session(
         rounds: usize,
         continue_answer: Option<Arc<Notify>>,
@@ -1017,11 +1074,12 @@ mod tests {
         let instance = message::Session::with_instance(Arc::new(ToolsThenAnswer {
             rounds,
             continue_answer,
+            entered: None,
         }))
         .await
         .unwrap();
         let mut session = ChatSession {
-            inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            inference_gate: Arc::new(tokio::sync::RwLock::new(())),
             instance: Arc::new(Mutex::new(Instance::Message(instance))),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),

@@ -181,7 +181,7 @@ fn fixture(
             kind: ChatInstanceKind::Token(backend.clone()),
             model,
             reference: String::new(),
-            inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            inference_gate: Arc::new(tokio::sync::RwLock::new(())),
         },
         backend,
     )
@@ -240,9 +240,33 @@ async fn unsupported_llm_scoring_fails_without_generation() {
 }
 
 #[tokio::test]
+async fn decision_waits_for_all_active_chats() {
+    let (loaded, backend) = fixture(None, true);
+    let first_chat = loaded.inference_gate.read().await;
+    let second_chat = loaded.inference_gate.read().await;
+    let decisions = DecisionSession::from_chat_instance(&loaded).unwrap();
+    let running = decisions.clone();
+    let waiter = tokio::spawn(async move { running.decide(input()).await });
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while decisions.state().await != crate::decision::DecisionSessionState::Deciding {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    drop(first_chat);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    drop(second_chat);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(3), waiter).await.unwrap().unwrap().unwrap();
+    assert_eq!(output.results.len(), 1);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn queued_decision_is_cancelled_before_starting_scoring() {
     let (loaded, backend) = fixture(None, true);
-    let permit = loaded.inference_gate.acquire().await.unwrap();
+    let permit = loaded.inference_gate.write().await;
     let decisions = DecisionSession::from_chat_instance(&loaded).unwrap();
     let running = decisions.clone();
     let waiter = tokio::spawn(async move { running.decide(input()).await });
@@ -291,15 +315,12 @@ async fn dropped_decision_waiter_retains_permit_until_scoring_finishes() {
     request.questions.push(request.questions[0].clone());
     let waiter = tokio::spawn(async move { decisions.decide(request).await });
     tokio::time::timeout(std::time::Duration::from_secs(3), backend.started.notified()).await.unwrap();
-    assert_eq!(loaded.inference_gate.available_permits(), 0);
+    assert!(loaded.inference_gate.try_read().is_err());
     waiter.abort();
     let _ = waiter.await;
-    assert_eq!(loaded.inference_gate.available_permits(), 0);
+    assert!(loaded.inference_gate.try_read().is_err());
     *backend.release.0.lock().unwrap() = true;
     backend.release.1.notify_all();
-    let _permit = tokio::time::timeout(std::time::Duration::from_secs(3), loaded.inference_gate.acquire())
-        .await
-        .unwrap()
-        .unwrap();
+    let _permit = tokio::time::timeout(std::time::Duration::from_secs(3), loaded.inference_gate.write()).await.unwrap();
     assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
 }

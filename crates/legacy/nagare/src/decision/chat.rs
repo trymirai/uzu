@@ -14,26 +14,20 @@ use shoji::{
         basic::ReasoningEffort,
         session::{
             chat::ChatMessage,
-            decision::{DecisionInput, DecisionQuestion, DecisionResult, DecisionStats},
+            decision::{DecisionInput, DecisionQuestion},
         },
     },
 };
-use tokio::sync::Semaphore;
+use tokio::sync::RwLock;
 
-use super::session::{DecisionSessionError, answer};
+use super::session::{DecisionSessionError, PreparedQuestion, Scorer};
 use crate::chat::{ChatInstance, ChatInstanceKind};
 
 pub(super) struct ChatExecutor {
     instance: Arc<dyn Instance>,
     config: HanashiConfig,
     disable_reasoning: bool,
-    gate: Arc<Semaphore>,
-}
-
-struct PreparedQuestion {
-    tokens: Vec<u64>,
-    labels: Vec<u64>,
-    encoding_duration: std::time::Duration,
+    pub(super) gate: Arc<RwLock<()>>,
 }
 
 impl ChatExecutor {
@@ -63,13 +57,10 @@ impl ChatExecutor {
         })
     }
 
-    fn prepare(
+    pub(super) fn prepare(
         &self,
         input: &DecisionInput,
-    ) -> Result<Vec<PreparedQuestion>, DecisionSessionError> {
-        if input.questions.is_empty() {
-            return Err(DecisionSessionError::NoQuestions {});
-        }
+    ) -> Result<Vec<PreparedQuestion<'_>>, DecisionSessionError> {
         let mut total = 0usize;
         input.questions.iter().enumerate().map(|(index, question)| {
             let started = Instant::now();
@@ -111,66 +102,12 @@ impl ChatExecutor {
                 if ids.len()!=tokens.len()+1 || !ids.starts_with(&tokens) || labels.contains(ids.last().unwrap()) { return Err(invalid("answer labels must be distinct contextual single tokens")); }
                 labels.push(*ids.last().unwrap());
             }
-            Ok(PreparedQuestion { tokens, labels, encoding_duration: started.elapsed() })
+            Ok(PreparedQuestion { tokens, scorer: Scorer::Chat { instance: self.instance.clone(), labels }, encoding_duration: started.elapsed() })
         }).collect()
-    }
-
-    pub(super) async fn execute(
-        &self,
-        input: &DecisionInput,
-        response: &tokio::sync::mpsc::UnboundedSender<
-            Result<shoji::types::session::decision::DecisionOutput, DecisionSessionError>,
-        >,
-    ) -> Result<Vec<DecisionResult>, DecisionSessionError> {
-        let prepared = self.prepare(input)?;
-        let _permit = tokio::select! {
-            permit = self.gate.acquire() => permit.map_err(encoding_error)?,
-            _ = response.closed() => return Err(DecisionSessionError::NoResponse {}),
-        };
-        let mut results = Vec::with_capacity(prepared.len());
-        for (question, prepared) in input.questions.iter().zip(prepared) {
-            if response.is_closed() {
-                return Err(DecisionSessionError::NoResponse {});
-            }
-            let started = Instant::now();
-            let tokens_count = prepared.tokens.len() as i64;
-            let instance = self.instance.clone();
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            let mut energy_recorder = crate::util::power::EnergyRecorder::new();
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            energy_recorder.begin()?;
-            let scores = tokio::task::spawn_blocking(move || {
-                futures::executor::block_on(instance.score_token_ids(&prepared.tokens, &prepared.labels))
-            })
-            .await;
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            let energy = energy_recorder.finish();
-            let scores = scores.map_err(backend_error)?.map_err(backend_error)?;
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            let energy = match energy {
-                Ok(energy) => Some(energy),
-                Err(crate::util::power::Error::Keisoku(keisoku::KeisokuError::PowerReadingUnavailable)) => None,
-                Err(error) => return Err(error.into()),
-            };
-            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-            let energy = None;
-            let prefill_duration = scores.prefill_duration.as_secs_f64();
-            let probabilities = probabilities(scores, super::session::option_count(question))?;
-            results.push(DecisionResult {
-                answer: answer(question, probabilities),
-                stats: DecisionStats {
-                    tokens_count,
-                    prefill_duration,
-                    energy,
-                    total_duration: (started.elapsed() + prepared.encoding_duration).as_secs_f64(),
-                },
-            });
-        }
-        Ok(results)
     }
 }
 
-fn probabilities(
+pub(super) fn probabilities(
     scores: TokenScores,
     count: usize,
 ) -> Result<Vec<f64>, DecisionSessionError> {

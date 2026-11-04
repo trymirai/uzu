@@ -32,7 +32,7 @@ pub struct ChatInstance {
     kind: ChatInstanceKind,
     model: Model,
     reference: String,
-    pub(crate) inference_gate: Arc<tokio::sync::Semaphore>,
+    pub(crate) inference_gate: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl ChatInstance {
@@ -72,7 +72,7 @@ impl ChatInstance {
             kind,
             model,
             reference,
-            inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            inference_gate: Arc::new(tokio::sync::RwLock::new(())),
         })
     }
 

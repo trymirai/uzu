@@ -157,7 +157,7 @@ async fn session() -> (ChatSession, Arc<FunctionGemma>) {
     );
     let instance = token::Session::with_instance(backend.clone(), String::new(), &model).await.unwrap();
     let mut session = ChatSession {
-        inference_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        inference_gate: Arc::new(tokio::sync::RwLock::new(())),
         instance: Arc::new(Mutex::new(Instance::Token(instance))),
         state: Arc::new(Mutex::new(ChatSessionState::Idle)),
         messages: Arc::new(Mutex::new(Vec::new())),
@@ -173,7 +173,7 @@ async fn session() -> (ChatSession, Arc<FunctionGemma>) {
             Box::new(move |_| {
                 let gate = gate.clone();
                 Box::new(async move {
-                    let _permit = tokio::time::timeout(Duration::from_secs(2), gate.acquire()).await.unwrap().unwrap();
+                    let _permit = tokio::time::timeout(Duration::from_secs(2), gate.write()).await.unwrap();
                     Ok(serde_json::json!("noon").into())
                 })
             }),

@@ -15,9 +15,10 @@ let output = decisions.decide(input).await?;
 
 The sessions share model weights, not conversation history or decoder state.
 Each question gets a fresh decoder state. The chat session retains its cache.
-Inference from sessions created from the same `ChatInstance` is serialized.
-The chat permit is released before registered tools run, so a tool can request a decision.
-A decision worker retains its permit until active scoring finishes, even if its caller stops waiting.
+Chat sessions created from the same `ChatInstance` retain shared access during inference.
+A decision waits for active chat inference and takes exclusive access until its scoring finishes.
+Chat access is released before registered tools run, so a tool can request a decision.
+A decision worker retains exclusive access even if its caller stops waiting.
 Queued or subsequent questions are skipped when their response receiver is dropped.
 
 The native scorer reads the final prompt logits, without sampling or a generation loop.
