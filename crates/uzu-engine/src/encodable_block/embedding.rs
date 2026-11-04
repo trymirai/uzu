@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use derive_more::Debug;
 use parking_lot::Mutex;
 use thiserror::Error;
@@ -50,6 +52,7 @@ enum EmbeddingTying<B: Backend> {
 
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
+    readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
     input_scale: f32,
     data_type: DataType,
     logit_transform: Option<LogitTransform<B>>,
@@ -72,6 +75,10 @@ impl<B: Backend> Embedding<B> {
         self.model_dim
     }
 
+    pub fn readout_input_hadamard_factors(&self) -> Option<Arc<B::GlobalGpuBuffer>> {
+        self.readout_input_hadamard_factors.clone()
+    }
+
     pub async fn new(
         vocab_size: u32,
         model_dim: u32,
@@ -79,7 +86,7 @@ impl<B: Backend> Embedding<B> {
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<B::GlobalGpuBuffer>), EmbeddingError<B>> {
+    ) -> Result<(Self, Option<Arc<B::GlobalGpuBuffer>>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
@@ -87,10 +94,9 @@ impl<B: Backend> Embedding<B> {
                 if table.as_matrix().is_none() {
                     return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
                 }
-                // The output norm fuses the readout's input rotation, so it needs its own copy of the factors.
                 let spec = embedding_tree.metadata("spec")?;
                 let readout_input_hadamard_factors = if let AnyWeightMatrixSpec::HybridSpec(_) = spec {
-                    Some(read_output_signs(&embedding_tree, model_dim).await?)
+                    Some(Arc::new(read_output_signs(&embedding_tree, model_dim).await?))
                 } else {
                     None
                 };
@@ -146,6 +152,7 @@ impl<B: Backend> Embedding<B> {
         Ok((
             Self {
                 tying,
+                readout_input_hadamard_factors: readout_input_hadamard_factors.clone(),
                 input_scale,
                 data_type,
                 logit_transform,

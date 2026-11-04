@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use derive_more::Debug;
 use thiserror::Error;
 
@@ -9,15 +11,15 @@ use crate::{
             WeaverSelectionMode::{Children, Frontier, Fused},
         },
         kernel::{
-            AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel, FullPrecisionInput,
-            WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
+            ActivationTransform, AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel,
+            FullPrecisionInput, WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
     data_type::DataType,
     encodable_block::{
         embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError, LinearEncodeError},
+        linear::{Linear, LinearBlockError, LinearEncodeError, RHTLinearWrapper},
         mixer::attention::{KVCacheView, rope::PrecalculatedRoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
@@ -126,6 +128,7 @@ pub struct Weaver<B: Backend> {
     layers: Box<[WeaverLayer<B>]>,
     readout_norm: Normalization<B>,
     readout_query_projection: Box<dyn Linear<B>>,
+    prefix_unrotation: Option<PrefixUnrotation<B>>,
     rope_config: AnyRoPEConfig,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
     top_children: <B::Kernels as Kernels>::WeaverSelectKernel,
@@ -136,6 +139,11 @@ pub struct Weaver<B: Backend> {
     target_model_dim: u32,
     max_depth: u32,
     candidate_pool_size: u32,
+}
+
+struct PrefixUnrotation<B: Backend> {
+    factors: Arc<B::GlobalGpuBuffer>,
+    transform: ActivationTransform<B>,
 }
 
 #[derive(Debug, Error)]
@@ -188,6 +196,7 @@ impl<B: Backend> Weaver<B> {
     pub async fn new(
         vocab_size: u32,
         config: &WeaverConfig,
+        readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, WeaverNewError<B>> {
@@ -274,15 +283,41 @@ impl<B: Backend> Weaver<B> {
             context,
         )
         .await?;
-        let readout_query_projection = <dyn Linear<B>>::new(
-            config.model_dim,
-            config.target_model_dim,
-            DATA_TYPE,
-            false,
-            &parameter_tree.subtree("query_projection"),
-            context,
-        )
-        .await?;
+        let query_projection_tree = parameter_tree.subtree("query_projection");
+        let readout_query_projection: Box<dyn Linear<B>> = if readout_input_hadamard_factors.is_some() {
+            // NOTE: We assume the query projection's output Hadamard signs match the tied
+            // readout's input signs, so its output can stay in the readout's rotated basis.
+            Box::new(
+                RHTLinearWrapper::new_with_rotated_output(
+                    config.model_dim,
+                    config.target_model_dim,
+                    DATA_TYPE,
+                    &query_projection_tree,
+                    context,
+                )
+                .await
+                .map_err(LinearBlockError::from)?,
+            )
+        } else {
+            <dyn Linear<B>>::new(
+                config.model_dim,
+                config.target_model_dim,
+                DATA_TYPE,
+                false,
+                &query_projection_tree,
+                context,
+            )
+            .await?
+        };
+        let prefix_unrotation = readout_input_hadamard_factors
+            .map(|factors| {
+                Ok(PrefixUnrotation {
+                    factors,
+                    transform: ActivationTransform::output_rht(context, DATA_TYPE, None, true)?,
+                })
+            })
+            .transpose()
+            .map_err(WeaverNewError::Backend)?;
         let top_k =
             <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
         let top_children = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 256, Children, false)
@@ -302,6 +337,7 @@ impl<B: Backend> Weaver<B> {
             layers: layers.into_boxed_slice(),
             readout_norm,
             readout_query_projection,
+            prefix_unrotation,
             rope_config: config.rope_config.clone(),
             top_k,
             top_children,
@@ -339,6 +375,16 @@ impl<B: Backend> Weaver<B> {
             draft_hidden.subrange(hidden_row_bytes..depth as usize * hidden_row_bytes),
             prefix_hidden.subrange_mut(hidden_row_bytes..),
         );
+        if let Some(unrotation) = &self.prefix_unrotation {
+            unrotation.transform.encode_fp_in_place(
+                &mut prefix_hidden,
+                &*unrotation.factors,
+                None,
+                depth,
+                self.target_model_dim,
+                command_buffer,
+            );
+        }
         let normalized_prefix = self
             .hidden_state_norm
             .encode(&prefix_hidden, 0, depth, None::<&mut B::ScratchBuffer>, command_buffer)

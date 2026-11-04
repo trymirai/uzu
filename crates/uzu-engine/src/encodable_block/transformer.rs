@@ -1,4 +1,4 @@
-use std::range::Range;
+use std::{range::Range, sync::Arc};
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -110,7 +110,7 @@ impl<B: Backend> Transformer<B> {
     pub async fn new(
         input_data_type: DataType,
         output_data_type: DataType,
-        output_norm_hadamard_factors: Option<B::GlobalGpuBuffer>,
+        output_norm_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         transformer_config: &TransformerConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
