@@ -10,18 +10,18 @@ use crate::{
     },
     encodable_block::{
         linear::Linear,
-        mixer::attention::rope::PrecalculatedRoPE,
+        mixer::attention::{KVCache, rope::PrecalculatedRoPE},
         mlp::Mlp,
         normalization::{Normalization, PostLayerScalar, ShortcutMode},
         weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverEncodeError, WeaverNewError},
     },
     safetensors::ParameterTree,
-    utils::size_for_shape::size_for_shape,
 };
 
 pub struct PreparedPrefixAttention<B: Backend> {
-    pub queries: B::ScratchBuffer,
-    pub kv_cache: B::ScratchBuffer,
+    pub query_codes: B::ScratchBuffer,
+    pub query_scales: B::ScratchBuffer,
+    pub kv_cache: KVCache<B>,
 }
 
 pub struct WeaverLayer<B: Backend> {
@@ -36,7 +36,6 @@ pub struct WeaverLayer<B: Backend> {
     pub attention_scale: f32,
     model_dim: u32,
     num_heads: u32,
-    head_dim: u32,
     pub max_depth: u32,
 }
 
@@ -92,9 +91,20 @@ impl<B: Backend> WeaverLayer<B> {
             },
         )
         .map_err(WeaverNewError::Attention)?;
-        let attention_prepare =
-            <B::Kernels as Kernels>::AttentionPrepareKernel::new(context, DATA_TYPE, ROPE_DATA_TYPE, true, true)
-                .map_err(WeaverNewError::Backend)?;
+        let attention_prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            DATA_TYPE,
+            ROPE_DATA_TYPE,
+            head_dim,
+            true,
+            num_heads,
+            prefix_attention.kv_layout().backend_opaque_layout,
+            true,
+            false,
+            false,
+            false,
+        )
+        .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
             model_dim,
             DATA_TYPE,
@@ -133,8 +143,13 @@ impl<B: Backend> WeaverLayer<B> {
             <dyn Mlp<B>>::new(model_dim, hidden_dim, DATA_TYPE, &mlp_config, &parameter_tree.subtree("mlp"), context)
                 .await?;
         assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
-        let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(context, head_dim, num_heads)
-            .map_err(WeaverNewError::Backend)?;
+        let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(
+            context,
+            head_dim,
+            num_heads,
+            prefix_attention.kv_layout().backend_opaque_layout,
+        )
+        .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             qkv_projection,
             out_projection,
@@ -147,7 +162,6 @@ impl<B: Backend> WeaverLayer<B> {
             attention_scale,
             model_dim,
             num_heads,
-            head_dim,
             max_depth,
         })
     }
@@ -165,32 +179,39 @@ impl<B: Backend> WeaverLayer<B> {
             .encode(residual_input, 0, token_count, Some(residual_state), command_buffer)
             .map_err(WeaverEncodeError::Backend)?;
         let qkv = self.qkv_projection.encode(input, token_count, command_buffer)?;
-        let mut queries = command_buffer
-            .allocate_scratch_for_shape(&[self.num_heads, token_count, self.head_dim], DATA_TYPE)
+        let mut query_codes = command_buffer
+            .allocate_scratch((token_count * self.model_dim) as usize)
             .map_err(WeaverEncodeError::Backend)?;
-        let kv_plane_bytes = size_for_shape(&[token_count, self.model_dim], DATA_TYPE);
-        let mut kv_cache = command_buffer
-            .allocate_scratch_for_shape(&[2, token_count, self.model_dim], DATA_TYPE)
+        let mut query_scales = command_buffer
+            .allocate_scratch_for_shape(&[token_count, self.num_heads], DATA_TYPE)
             .map_err(WeaverEncodeError::Backend)?;
-        let (keys, values) = kv_cache.split_at(kv_plane_bytes);
+        let mut kv_cache = KVCache::allocate_scratch(self.prefix_attention.kv_layout(), token_count, command_buffer)
+            .map_err(WeaverEncodeError::Backend)?;
         self.attention_prepare.encode(
             &qkv,
-            &mut queries,
-            Some(keys),
-            Some(values),
+            &mut query_codes,
+            &mut query_scales,
+            Some(kv_cache.k_codes.as_mut()),
+            Some(kv_cache.k_scales.as_mut()),
+            Some(kv_cache.v_codes.as_mut()),
+            Some(kv_cache.v_scales.as_mut()),
             Some(&rope.cosines),
             Some(&rope.sines),
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            Default::default(),
             self.num_heads,
-            Some(self.num_heads),
-            self.head_dim,
             Some(rope.dim),
-            Some(0),
+            0,
             3 * self.model_dim,
+            token_count,
             token_count,
             command_buffer,
         );
         Ok(PreparedPrefixAttention {
-            queries,
+            query_codes,
+            query_scales,
             kv_cache,
         })
     }

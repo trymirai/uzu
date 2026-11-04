@@ -1,22 +1,17 @@
 use crate::backends::common::Backend;
 
 pub mod ancestor_attention;
-pub mod attention_prepare;
-pub mod attention_single_pass;
 pub mod kv_cache_update;
-pub mod prepare_int8;
-pub mod qkv_norm;
-pub mod sigmoid_gate;
+pub mod prepare;
 
+mod compute;
 mod mask;
+mod rope;
 
 use crate::backends::{
     common::{
-        BufferRef, CommandBufferEncoding,
-        kernel::{
-            AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionSinglePassKernel,
-            SigmoidGateKernel,
-        },
+        BufferRef,
+        kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, kv_layout::KVLayout},
     },
     cpu::{Cpu, command_buffer::CpuCommandBufferEncoding, context::CpuContext, error::CpuError},
 };
@@ -38,6 +33,10 @@ impl AttentionKernel for AttentionCpuKernel {
         })
     }
 
+    fn kv_layout(&self) -> KVLayout {
+        KVLayout::new(self.config.head_dim, self.config.num_groups, 1, 0)
+    }
+
     fn encode(
         &self,
         input: AttentionInput<
@@ -48,59 +47,6 @@ impl AttentionKernel for AttentionCpuKernel {
         arguments: AttentionArguments<'_, Cpu, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
-        let AttentionInput::FullPrecision(input) = input else {
-            return Err(CpuError::NotSupported);
-        };
-        let config = self.config;
-        let mut output = command_buffer.allocate_scratch_for_shape(
-            &[arguments.suffix_length, config.num_q_heads, config.head_dim],
-            config.data_type,
-        )?;
-
-        let single_pass = <attention_single_pass::AttentionSinglePassCpuKernel as AttentionSinglePassKernel>::new(
-            command_buffer.context(),
-            config.data_type,
-            config.head_dim,
-            config.has_sinks,
-            config.is_kv_cache_ring,
-            config.is_causal,
-            arguments.trie.is_some(),
-            config.sliding_window_size.is_some(),
-        )?;
-        {
-            let command_buffer = &mut *command_buffer.debug_group("attention core");
-            single_pass.encode(
-                input.queries,
-                input.keys,
-                input.values,
-                &mut output,
-                config.num_q_heads / config.num_groups,
-                arguments.cache.prefix_len() + arguments.suffix_length,
-                config.head_dim,
-                config.num_groups * config.head_dim,
-                config.head_dim,
-                config.num_groups * config.head_dim,
-                arguments.cache.ring_params(),
-                config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()),
-                arguments.trie,
-                config.sliding_window_size,
-                arguments.sinks,
-                config.num_q_heads,
-                arguments.suffix_length,
-                command_buffer,
-            );
-        }
-        if let (Some(gate), Some(gate_row_stride)) = (arguments.gate, config.gate_row_stride) {
-            <sigmoid_gate::SigmoidGateCpuKernel as SigmoidGateKernel>::new(command_buffer.context(), config.data_type)?
-                .encode(
-                    gate,
-                    &mut output,
-                    config.num_q_heads * config.head_dim,
-                    arguments.suffix_length,
-                    gate_row_stride,
-                    command_buffer,
-                );
-        }
-        Ok(output)
+        compute::encode(input, arguments, self.config, command_buffer)
     }
 }

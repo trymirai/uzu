@@ -1,14 +1,25 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use super::attention_single_pass::attention_single_pass;
-use crate::backends::common::gpu_types::weaver::MetadataIdx;
+use crate::backends::{
+    common::gpu_types::weaver::MetadataIdx,
+    cpu::kernel::attention::{
+        compute::{Row, quantize},
+        rope::apply_rope,
+    },
+};
 
 #[kernel(AncestorAttention)]
 #[variants(HEAD_DIM, 128)]
 fn ancestor_attention<const HEAD_DIM: u32>(
-    prefix_kv: *const bf16,
-    node_kv: *mut bf16,
+    prefix_k_codes: *const i8,
+    prefix_k_scales: *const bf16,
+    prefix_v_codes: *const u8,
+    prefix_v_scales: *const bf16,
+    node_k_codes: *mut i8,
+    node_k_scales: *mut bf16,
+    node_v_codes: *mut u8,
+    node_v_scales: *mut bf16,
     current_qkv: *const bf16,
     cosines: *const f32,
     sines: *const f32,
@@ -24,115 +35,107 @@ fn ancestor_attention<const HEAD_DIM: u32>(
     max_depth: u32,
     scale: f32,
     #[specialize] num_heads: u32,
+    #[specialize] backend_opaque_layout: u32,
 ) {
-    const QKV_COMPONENTS: usize = 3;
-    const KEY_COMPONENT: usize = 1;
-    const VALUE_COMPONENT: usize = 2;
-    let head_dim = HEAD_DIM as usize;
-    let num_heads = num_heads as usize;
-    let model_dim = num_heads * head_dim;
-    let qkv_width = QKV_COMPONENTS * model_dim;
-    let prefix_length = prefix_length as usize;
-    let node_capacity = node_capacity as usize;
-    let half_dim = head_dim / 2;
-    let row_count = rows as usize;
-
-    for row in 0..row_count {
+    let dim = HEAD_DIM as usize;
+    let model_dim = num_heads as usize * dim;
+    assert_eq!(backend_opaque_layout, 0);
+    for row in 0..rows as usize {
         unsafe {
-            let current_row = current_qkv.add(row * qkv_width);
-
-            let depth = *node_metadata.add(MetadataIdx::Depth as usize * row_count + row);
+            let depth = *node_metadata.add(MetadataIdx::Depth as usize * rows as usize + row);
             assert!(depth < max_depth, "node metadata depth must be rope-safe");
-            let position = depth as usize + 1;
-            let rotate = |component: usize| {
-                let mut rotated = vec![bf16::ZERO; model_dim];
-                for head in 0..num_heads {
-                    let base = component * model_dim + head * head_dim;
-                    for pair in 0..half_dim {
-                        let low = (*current_row.add(base + pair)).to_f32();
-                        let high = (*current_row.add(base + half_dim + pair)).to_f32();
-                        let index = position * head_dim + pair;
-                        let low_cosine = *cosines.add(index);
-                        let low_sine = *sines.add(index);
-                        let high_cosine = *cosines.add(index + half_dim);
-                        let high_sine = *sines.add(index + half_dim);
-                        rotated[head * head_dim + pair] = bf16::from_f32(low * low_cosine - high * low_sine);
-                        rotated[head * head_dim + half_dim + pair] =
-                            bf16::from_f32(high * high_cosine + low * high_sine);
+            for head in 0..num_heads {
+                let qkv = current_qkv.add(row * 3 * model_dim + head as usize * dim);
+                let rotate = |component| {
+                    (0..dim)
+                        .map(|c| {
+                            apply_rope(qkv.add(component * model_dim), cosines, sines, depth as usize + 1, c, dim)
+                                .to_f32()
+                        })
+                        .collect()
+                };
+                let (q, qs) = quantize(rotate(0));
+                let (k, ks) = quantize(rotate(1));
+                let (v, vs) = quantize((0..dim).map(|c| (*qkv.add(2 * model_dim + c)).to_f32()).collect());
+                let ancestors = *ancestor_counts.add(row);
+                let mut result = Row::new(dim, None);
+                for index in 0..prefix_length + ancestors + 1 {
+                    let own = index == prefix_length + ancestors;
+                    let prefix = index < prefix_length;
+                    let slot = if prefix || own {
+                        index
+                    } else {
+                        *ancestor_indices.add(row * ancestor_stride as usize + (index - prefix_length) as usize)
+                    };
+                    if !prefix && !own {
+                        assert!(slot < node_capacity);
                     }
+                    let kc = if prefix {
+                        prefix_k_codes
+                    } else {
+                        node_k_codes
+                    };
+                    let vc = if prefix {
+                        prefix_v_codes
+                    } else {
+                        node_v_codes
+                    };
+                    let kv_row = (slot * num_heads + head) as usize;
+                    let key_scale = if own {
+                        ks
+                    } else {
+                        *(if prefix {
+                            prefix_k_scales
+                        } else {
+                            node_k_scales
+                        })
+                        .add(kv_row)
+                    }
+                    .to_f32();
+                    let value_scale = if own {
+                        vs
+                    } else {
+                        *(if prefix {
+                            prefix_v_scales
+                        } else {
+                            node_v_scales
+                        })
+                        .add(kv_row)
+                    }
+                    .to_f32();
+                    let dot: i32 = (0..dim)
+                        .map(|c| {
+                            i32::from(q[c])
+                                * i32::from(if own {
+                                    k[c]
+                                } else {
+                                    *kc.add(kv_row * dim + c)
+                                })
+                        })
+                        .sum();
+                    result.add(dot as f32 * qs.to_f32() * key_scale * scale, |c| {
+                        (if own {
+                            i32::from(v[c])
+                        } else {
+                            i32::from(*vc.add(kv_row * dim + c)) - 128
+                        }) as f32
+                            * value_scale
+                    });
                 }
-                rotated
-            };
-            let rotated_queries = rotate(0);
-            let rotated_keys = rotate(KEY_COMPONENT);
-
-            let ancestor_count = *ancestor_counts.add(row) as usize;
-            let length = prefix_length + ancestor_count + 1;
-            let mut keys = vec![bf16::ZERO; length * model_dim];
-            let mut values = vec![bf16::ZERO; length * model_dim];
-            std::ptr::copy_nonoverlapping(prefix_kv, keys.as_mut_ptr(), prefix_length * model_dim);
-            std::ptr::copy_nonoverlapping(
-                prefix_kv.add(prefix_length * model_dim),
-                values.as_mut_ptr(),
-                prefix_length * model_dim,
-            );
-            for offset in 0..ancestor_count {
-                let ancestor = *ancestor_indices.add(row * ancestor_stride as usize + offset) as usize;
-                assert!(ancestor < node_capacity, "ancestor slot exceeds tree slot count");
-                std::ptr::copy_nonoverlapping(
-                    node_kv.add(ancestor * model_dim),
-                    keys.as_mut_ptr().add((prefix_length + offset) * model_dim),
-                    model_dim,
-                );
-                std::ptr::copy_nonoverlapping(
-                    node_kv.add(node_capacity * model_dim + ancestor * model_dim),
-                    values.as_mut_ptr().add((prefix_length + offset) * model_dim),
-                    model_dim,
-                );
-            }
-            std::ptr::copy_nonoverlapping(
-                rotated_keys.as_ptr(),
-                keys.as_mut_ptr().add((length - 1) * model_dim),
-                model_dim,
-            );
-            std::ptr::copy_nonoverlapping(
-                current_row.add(VALUE_COMPONENT * model_dim),
-                values.as_mut_ptr().add((length - 1) * model_dim),
-                model_dim,
-            );
-            attention_single_pass::<bf16, HEAD_DIM>(
-                rotated_queries.as_ptr(),
-                keys.as_ptr(),
-                values.as_ptr(),
-                output.add(row * num_heads * head_dim),
-                1,
-                length as u32,
-                HEAD_DIM,
-                model_dim as u32,
-                HEAD_DIM,
-                model_dim as u32,
-                None,
-                scale,
-                None,
-                None,
-                None,
-                num_heads as u32,
-                1,
-                false,
-                false,
-                false,
-                false,
-                false,
-            );
-            if node_capacity > 0 {
-                let node = *node_indices.add(row) as usize;
-                assert!(node < node_capacity, "node slot exceeds tree slot count");
-                std::ptr::copy_nonoverlapping(rotated_keys.as_ptr(), node_kv.add(node * model_dim), model_dim);
-                std::ptr::copy_nonoverlapping(
-                    current_row.add(VALUE_COMPONENT * model_dim),
-                    node_kv.add(node_capacity * model_dim + node * model_dim),
-                    model_dim,
-                );
+                if node_capacity > 0 {
+                    let slot = *node_indices.add(row);
+                    assert!(slot < node_capacity);
+                    let kv_row = (slot * num_heads + head) as usize;
+                    for c in 0..dim {
+                        *node_k_codes.add(kv_row * dim + c) = k[c];
+                        *node_v_codes.add(kv_row * dim + c) = (i16::from(v[c]) + 128) as u8;
+                    }
+                    *node_k_scales.add(kv_row) = ks;
+                    *node_v_scales.add(kv_row) = vs;
+                }
+                for (c, value) in result.finish().into_iter().enumerate() {
+                    *output.add((row * num_heads as usize + head as usize) * dim + c) = bf16::from_f32(value);
+                }
             }
         }
     }
