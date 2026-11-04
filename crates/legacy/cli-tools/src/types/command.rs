@@ -388,6 +388,15 @@ impl Command {
         };
         command
     }
+
+    /// Creates a package per `napi.targets` entry under `npm_dir`, named and constrained (`os`, `cpu`)
+    /// the way the napi loader expects.
+    pub fn napi_create_npm_dirs(npm_dir: &Path) -> Self {
+        Self::pnpm_exec()
+            .with_argument("napi")
+            .with_argument("create-npm-dirs")
+            .with_arguments(vec!["--npm-dir".to_string(), npm_dir.to_string_lossy().to_string()])
+    }
 }
 
 impl Command {

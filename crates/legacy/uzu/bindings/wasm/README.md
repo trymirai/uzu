@@ -4,11 +4,19 @@ WebAssembly build of [uzu](https://github.com/trymirai/uzu) for the browser.
 
 ## Usage
 
+Install it next to [`@trymirai/uzu`](https://www.npmjs.com/package/@trymirai/uzu), which re-exports it in browser builds (through the `browser` export condition), so the same import works in Node and in the browser:
+
+```bash
+pnpm add @trymirai/uzu @trymirai/uzu-wasm
+```
+
 ```js
-import { Engine, EngineConfig } from '@trymirai/uzu-wasm';
+import { Engine, EngineConfig } from '@trymirai/uzu';
 
 const engine = await Engine.create(EngineConfig.create());
 ```
+
+Importing `@trymirai/uzu-wasm` directly works too.
 
 The API is the same as [`@trymirai/uzu`](https://www.npmjs.com/package/@trymirai/uzu), except for what the browser build doesn't include: text-to-speech, classification, `Player`, and the `Native` download manager.
 

@@ -1,9 +1,12 @@
+use std::path::Path;
+
 use anyhow::{Result, anyhow};
 
 use crate::{
     configs::{ALL_TARGET, CargoLock, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget},
     types::{Command, Configuration, Language},
+    utilities::fs::{copy_directory, recreate_directory},
 };
 
 pub struct WasmLanguageBackend {
@@ -70,6 +73,25 @@ impl LanguageBackend for WasmLanguageBackend {
             Command::pnpm_run("build").with_current_path(&bindings_path).run()?;
         }
         Ok(())
+    }
+
+    fn release(
+        &self,
+        _version: &str,
+        release_path: &Path,
+    ) -> Result<()> {
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()])?;
+
+        let paths = Paths::new()?;
+        let source = paths.bindings_for_language_path(self.language()).join("dist");
+        if !source.exists() {
+            return Err(anyhow!("Missing dist folder at {}", source.display()));
+        }
+
+        // Published with the TypeScript packages: `@trymirai/uzu` re-exports it for browsers.
+        let destination = release_path.join("wasm-npm");
+        recreate_directory(&destination)?;
+        copy_directory(&source, &destination)
     }
 
     fn example_target(

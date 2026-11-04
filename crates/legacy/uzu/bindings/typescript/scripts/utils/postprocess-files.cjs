@@ -37,6 +37,11 @@ async function postprocess() {
 
     const newExports = {
         '.': {
+            // Browsers get the same API from the wasm package, see browser.mjs.
+            browser: {
+                types: './browser.d.mts',
+                default: './browser.mjs',
+            },
             require: {
                 types: './index.d.ts',
                 default: './index.js',
