@@ -289,7 +289,7 @@ impl<B: Backend> DFlash<B> {
     pub fn encode_draft(
         &self,
         target_embedding: &Embedding<B>,
-        target_output_token: u32,
+        target_output_token: impl BufferRef<Backend = B>,
         batch_size: u32,
         state: &mut DFlashState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -302,9 +302,12 @@ impl<B: Backend> DFlash<B> {
             "DFlash block positions exceed configured RoPE capacity"
         );
 
-        let mut tokens = vec![self.mask_token_id; batch_size as usize];
-        tokens[0] = target_output_token;
-        let token_ids = command_buffer.allocate_constant_from_slice(&tokens).map_err(DFlashEncodeError::Backend)?;
+        let word_bytes = DataType::U32.size_in_bytes();
+        assert_eq!(target_output_token.size(), word_bytes, "target output token must be a single u32");
+        let mut token_ids = command_buffer
+            .allocate_constant_from_slice(&vec![self.mask_token_id; batch_size as usize])
+            .map_err(DFlashEncodeError::Backend)?;
+        command_buffer.encode_copy(target_output_token, token_ids.subrange_mut(..word_bytes));
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
 
