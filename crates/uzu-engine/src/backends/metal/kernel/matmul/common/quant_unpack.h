@@ -129,5 +129,15 @@ inline void dequantize(
   }
 }
 
+// A byte ored with 0x6400 is the half 1024 plus the byte, so the subtraction is exact.
+METAL_FUNC float4 bytes_to_float(const uint word, const float offset) {
+  const half2 bias = half2(half(1024.0f + offset));
+  const half2 even = as_type<half2>((word & 0x00FF00FFu) | 0x64006400u) - bias;
+  const half2 odd = as_type<half2>(((word >> 8) & 0x00FF00FFu) | 0x64006400u) - bias;
+  return float4(float(even.x), float(odd.x), float(even.y), float(odd.y));
+}
+
+METAL_FUNC float4 int8_to_float(const uint word) { return bytes_to_float(word ^ 0x80808080u, 128.0f); }
+
 } // namespace gemm
 } // namespace uzu
