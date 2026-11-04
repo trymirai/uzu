@@ -82,12 +82,12 @@ struct SimdgroupMmaCore {
       float,
       uzu::matmul::TransformNone<OutputElementType, float>>;
 
-  template <uint GEMM_ALIGNMENT_RAW, typename BLoader>
+  template <uint GEMM_ALIGNMENT_RAW, typename ALoaderType, typename BLoader>
   static METAL_FUNC void k_loop(
       threadgroup LeftElementType* a_shared,
       threadgroup RightStageType* b_shared,
       const int aligned_k_iterations,
-      thread ALoader& loader_a,
+      thread ALoaderType& loader_a,
       thread BLoader& loader_b,
       thread TileAccumulator& accumulator,
       thread const ushort& tile_block_rows,

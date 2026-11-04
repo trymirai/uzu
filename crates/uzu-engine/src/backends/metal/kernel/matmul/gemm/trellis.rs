@@ -64,8 +64,7 @@ impl TrellisGemm {
         let (m, n, k) = (arguments.m, arguments.n, arguments.k);
         let output_stride = arguments.output.row_stride.unwrap_or(n);
         let (tiling, split_k) = (plan.tiling, plan.split_k);
-        if plan.engine != GemmEngine::Mxu
-            || !arguments.output.ops.mask().is_empty()
+        if !arguments.output.ops.mask().is_empty()
             || !arguments.b_transpose
             || arguments.b_leading_dimension.is_some()
             || output_stride < n
@@ -94,6 +93,7 @@ impl TrellisGemm {
             Entry::Vacant(entry) => entry.insert(GemmTrellisMetalKernel::new(
                 command_buffer.context(),
                 tiling,
+                plan.engine == GemmEngine::Mxu,
                 alignment,
                 format.vector_width,
                 format.transition_bits,
