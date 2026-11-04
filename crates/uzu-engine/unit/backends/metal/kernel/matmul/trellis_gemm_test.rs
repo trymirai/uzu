@@ -181,7 +181,12 @@ fn run_projection(
     if let Some((tiling, split_k)) = forced_plan {
         let shape = MatmulShape::from_arguments(&arguments);
         let mut gemm = GemmKernel::new(DataType::BF16, DataType::BF16, DataType::BF16);
-        let mut plan = gemm.select_plan_for_engine(&shape, GemmEngine::Mxu, context).unwrap();
+        let engine = if tiling.is_mxu_variant() {
+            GemmEngine::Mxu
+        } else {
+            GemmEngine::Simdgroup
+        };
+        let mut plan = gemm.select_plan_for_engine(&shape, engine, context).unwrap();
         plan.tiling = tiling;
         plan.split_k = split_k;
         let output_work = MatmulOutputWork::new(context, DataType::BF16, DataType::BF16).unwrap();
@@ -233,20 +238,21 @@ fn run_projection(
 #[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
 fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     let context = shared_metal_context();
-    if !context.supports_mxu {
-        return;
-    }
     // A projection's K is a whole number of restart blocks.
     let whole_blocks = |k: usize| k.is_multiple_of(format.restart_columns.unwrap_or(1) as usize);
     for dimensions in CASES.into_iter().filter(|&(_, _, k)| whole_blocks(k)) {
         run_projection(&context, format, dimensions, None);
     }
     // The forced plans' K are whole 64-column blocks.
-    if whole_blocks(64) {
+    if whole_blocks(64) && context.supports_mxu {
         run_projection(&context, format, (129, 132, 1024), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
         run_projection(&context, format, (129, 132, 64), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
         run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile32x64x256_Simdgroups2x2, 1)));
         run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
         run_projection(&context, format, (7, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
+    } else if whole_blocks(64) {
+        run_projection(&context, format, (7, 68, 6144), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 4)));
+        run_projection(&context, format, (33, 68, 6144), Some((GemmTiling::Tile32x32x32_Simdgroups2x2, 4)));
+        run_projection(&context, format, (65, 68, 6144), Some((GemmTiling::Tile64x64x32_Simdgroups2x2, 4)));
     }
 }
