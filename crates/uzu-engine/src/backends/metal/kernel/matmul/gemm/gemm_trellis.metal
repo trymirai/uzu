@@ -100,16 +100,14 @@ KERNEL(GemmTrellis)(
     device bfloat* output,
     const constant uzu::matmul::GemmParams* params,
     threadgroup half stage[TRELLIS_STAGE_ELEMENTS],
-    const constant uint& group_count_x,
-    const constant uint& group_count_y,
-    const constant uint& group_count_z,
+    const constant uint& partition_count,
     const GemmAlignment alignment SPECIALIZE,
-    const uint trellis_vector_width SPECIALIZE,
-    const uint trellis_transition_bits SPECIALIZE,
-    const uint trellis_restart_columns SPECIALIZE,
-    const uint group_x GROUPS(group_count_x),
-    const uint group_y GROUPS(group_count_y),
-    const uint group_z GROUPS(group_count_z),
+    const uint vector_width SPECIALIZE,
+    const uint transition_bits SPECIALIZE,
+    const uint restart_columns SPECIALIZE,
+    const uint group_x GROUPS(params[0].threadgroups_per_row),
+    const uint group_y GROUPS(params[0].threadgroups_per_column),
+    const uint group_z GROUPS(partition_count),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
     const uint thread_y THREADS(gemm_tiling_simdgroups_per_column(GEMM_TILING)),
     const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING)),
@@ -128,11 +126,7 @@ KERNEL(GemmTrellis)(
   constexpr ushort TILES_M = SIMDGROUP_BLOCK_M / Ops::FRAGMENT_ROWS;
   constexpr ushort TILES_N = SIMDGROUP_BLOCK_N / Ops::FRAGMENT_COLS;
   using Products = uzu::matmul::Fragment<int, TILES_M, TILES_N, Ops>;
-  const trellis::GemmTrellisFormat trellis_format{
-      trellis_vector_width,
-      trellis_transition_bits,
-      trellis_restart_columns
-  };
+  const trellis::GemmTrellisFormat trellis_format{vector_width, transition_bits, restart_columns};
 
   const uint simdgroup = thread_context.simdgroup_index;
   const uint token_base = group_y * BLOCK_M + SIMDGROUP_BLOCK_M * (simdgroup / SIMDGROUPS_PER_COLUMN);

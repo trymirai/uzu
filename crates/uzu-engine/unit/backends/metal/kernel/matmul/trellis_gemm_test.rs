@@ -243,6 +243,10 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     for dimensions in CASES.into_iter().filter(|&(_, _, k)| whole_blocks(k)) {
         run_projection(&context, format, dimensions, None);
     }
+    // Simdgroup plans with m up to 8 run the decode kernel. K fits every restart size.
+    for m in 1..=8 {
+        run_projection(&context, format, (m, 37, 4160), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 1)));
+    }
     // The forced plans' K are whole 64-column blocks.
     if whole_blocks(64) {
         if context.supports_mxu {
@@ -252,7 +256,7 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
             run_projection(&context, format, (17, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
             run_projection(&context, format, (7, 80, 192), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
         }
-        run_projection(&context, format, (7, 68, 6144), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 4)));
+        run_projection(&context, format, (9, 68, 6144), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 4)));
         run_projection(&context, format, (33, 68, 6144), Some((GemmTiling::Tile32x32x32_Simdgroups2x2, 4)));
         run_projection(&context, format, (65, 68, 6144), Some((GemmTiling::Tile64x64x32_Simdgroups2x2, 4)));
     }

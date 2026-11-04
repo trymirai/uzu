@@ -56,6 +56,8 @@ enum class GemmTiling : uint32_t {
 
 static constant constexpr uint32_t MXU_SIMDGROUP_BLOCK_K = 32;
 
+static constant constexpr uint32_t TRELLIS_DECODE_MAX_BATCH = 8;
+
 struct GemmAlignment {
   uint32_t raw_value;
   constexpr GemmAlignment() thread : raw_value(0) {}

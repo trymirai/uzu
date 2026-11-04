@@ -9,11 +9,11 @@ use crate::backends::{
         Metal,
         command_buffer::MetalCommandBufferEncoding,
         gpu_types::{
-            gemm::{GemmAlignment, GemmTiling},
+            gemm::{GemmAlignment, GemmTiling, TRELLIS_DECODE_MAX_BATCH},
             matmul::GemmParams,
         },
         kernel::{
-            GemmTrellisMetalKernel, GemmTrellisReduceMetalKernel,
+            GemmTrellisDecodeMetalKernel, GemmTrellisMetalKernel, GemmTrellisReduceMetalKernel,
             matmul::{
                 MatmulMetalError,
                 gemm::{GemmEngine, GemmPlan, selection::TRELLIS_K_STEP as K_STEP},
@@ -22,9 +22,16 @@ use crate::backends::{
     },
 };
 
+const LANE_COLUMNS: u32 = 16;
+const MAX_CENTERED_WEIGHT: u32 = 57;
+const MAX_ACTIVATION: u32 = 128;
+const DECODE_MAX_EXACT_K: u32 =
+    ((1 << 24) - 1) / (LANE_COLUMNS * MAX_CENTERED_WEIGHT * MAX_ACTIVATION) * 32 * LANE_COLUMNS;
+
 #[derive(Default)]
 pub(super) struct TrellisGemm {
     kernels: HashMap<(GemmTiling, TrellisFormat, GemmAlignment), GemmTrellisMetalKernel>,
+    decode_kernels: HashMap<(u32, TrellisFormat), GemmTrellisDecodeMetalKernel>,
     reduce_kernel: Option<GemmTrellisReduceMetalKernel>,
 }
 
@@ -74,6 +81,36 @@ impl TrellisGemm {
             return Err(unsupported());
         }
 
+        if plan.engine == GemmEngine::Simdgroup
+            && (1..=TRELLIS_DECODE_MAX_BATCH).contains(&m)
+            && k <= DECODE_MAX_EXACT_K
+        {
+            let kernel = match self.decode_kernels.entry((m, format)) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(GemmTrellisDecodeMetalKernel::new(
+                    command_buffer.context(),
+                    m,
+                    format.vector_width,
+                    format.transition_bits,
+                    format.restart_columns.unwrap_or(0),
+                )?),
+            };
+            kernel.encode(
+                activations,
+                column_group_sums,
+                activation_scales,
+                codes,
+                row_scales,
+                codebook,
+                arguments.output.values,
+                k,
+                n,
+                output_stride,
+                command_buffer,
+            );
+            return Ok(());
+        }
+
         let params = GemmParams {
             M: m,
             N: n,
@@ -111,8 +148,6 @@ impl TrellisGemm {
                     codebook,
                     $destination,
                     std::slice::from_ref(&params),
-                    params.threadgroups_per_row,
-                    params.threadgroups_per_column,
                     split_k,
                     command_buffer,
                 )
