@@ -78,6 +78,9 @@ function main() {
             fail(`Missing ${path.relative(process.cwd(), entry)}`);
         }
     }
+    if (!fs.existsSync(path.join(packageDirectory, 'src/wasm/uzu.d.ts'))) {
+        fail('Missing src/wasm/uzu.d.ts: generate the wasm bindings first with `cargo tools build wasm`.');
+    }
 
     const program = ts.createProgram([napiEntry, wasmEntry], compilerOptions);
     const checker = program.getTypeChecker();

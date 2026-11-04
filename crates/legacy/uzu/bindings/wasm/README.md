@@ -41,4 +41,4 @@ pnpm check-api            # one line per difference
 pnpm check-api --verbose  # full TypeScript error chains
 ```
 
-It compares the committed `.d.ts` files, so it needs `pnpm install` in both packages but no Rust build.
+It compares the two packages' declarations, so it needs `pnpm install` in both packages and the wasm bindings built with `cargo tools build wasm`.
