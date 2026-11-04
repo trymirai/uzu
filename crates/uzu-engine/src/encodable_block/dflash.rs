@@ -268,7 +268,7 @@ impl<B: Backend> DFlash<B> {
                 );
             }
         }
-        for ((layer, mixer_state), mut key_value) in
+        for ((layer, mixer_state), key_value) in
             self.layers.iter().zip(state.layer_states.iter_mut()).zip(layer_key_values)
         {
             mixer_state.prepare(state.context_length, num_tokens).map_err(DFlashEncodeError::Backend)?;
@@ -279,7 +279,7 @@ impl<B: Backend> DFlash<B> {
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
             attention
-                .append_projected_kv(&mut key_value, &rope, num_tokens, attention_state, command_buffer)
+                .append_projected_kv(&key_value, &rope, num_tokens, attention_state, command_buffer)
                 .map_err(DFlashEncodeError::Backend)?;
         }
 

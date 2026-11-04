@@ -2,19 +2,7 @@
 import definitions;
 import generated.kv_cache_update;
 
-[[Variants("T", "BFloat16")]]
-[[Public]] [[Kernel]] func KVCacheUpdate<T>(
-  RWStructuredBuffer<T> in_place_keys,
-  RWStructuredBuffer<T> in_place_values,
-  [[Constant]] StructuredBuffer<Copy> copies,
-  uint32_t copy_count,
-  uint32_t element_dim,
-  [[Axis("element_dim", "256")]] uint32_t element_idx,
-) {
-  // TODO
-}
-
-[[Public]] [[Kernel]] func KVCacheUpdateInt8(
+[[Public]] [[Kernel]] func KVCacheUpdate(
   RWStructuredBuffer<int8_t> in_place_k_codes,
   RWStructuredBuffer<uint8_t> in_place_v_codes,
   RWStructuredBuffer<BFloat16> in_place_k_scales,
@@ -23,6 +11,7 @@ import generated.kv_cache_update;
   uint32_t copy_count,
   [[Specialize]] uint32_t head_dim,
   [[Specialize]] uint32_t num_kv_heads,
+  [[Specialize]] uint32_t backend_opaque_layout,
   [[Axis("num_kv_heads* head_dim", "256")]] uint32_t element,
 ) {
   // TODO
