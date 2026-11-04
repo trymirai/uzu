@@ -11,7 +11,8 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, CpuBuffer,
-        DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer, capture_matcher::CAPTURE_MATCHER,
+        DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer,
+        capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
@@ -52,6 +53,7 @@ enum GenerationJob<B: Backend> {
         batch_dim: BatchTopology,
         trie: Option<TrieNode>,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
+        capture_span: Option<CaptureMatcherSpan>,
         pending: <<B as Backend>::CommandBuffer as CommandBuffer>::Pending,
         _input_token_source: Option<B::GlobalGpuBuffer>,
     },
@@ -66,6 +68,7 @@ struct ResolvedJob<B: Backend> {
     batch_dim: BatchTopology,
     hidden_features: Option<Box<[B::ScratchBuffer]>>,
     accepted_indices_and_input_tokens: Option<(Box<[u32]>, Box<[u64]>)>,
+    capture_span: Option<CaptureMatcherSpan>,
 }
 
 impl<B: Backend> GenerationJob<B> {
@@ -162,6 +165,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 batch_dim,
                 trie,
                 hidden_features,
+                capture_span,
                 pending,
             } => {
                 wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
@@ -201,6 +205,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     batch_dim,
                     hidden_features,
                     accepted_indices_and_input_tokens,
+                    capture_span,
                 }
             },
             GenerationJob::Resolved(resolved) => resolved,
@@ -231,6 +236,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         &mut self,
         input: &[u64],
     ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
+        let _capture_span = CAPTURE_MATCHER.capture::<B>(&self.model.engine.context, "prefill")?;
+
         // NOTE: this is required for attention correctness (hardcoded suffix
         // 1024). This is really bad design, attention should be rewritten to
         // allow on-demand suffix length
@@ -402,6 +409,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             batch_dim,
             trie: None,
             hidden_features: decoder_output.hidden_features,
+            capture_span: None,
             pending: command_buffer.end_encoding().submit(),
         })
     }
@@ -603,6 +611,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     &mut command_buffer,
                 );
             }
+
+            capture_span.take();
         }
 
         let mut new_job = GenerationJob::Pending {
@@ -612,10 +622,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             batch_dim,
             trie,
             hidden_features: decoder_output.hidden_features,
+            capture_span,
             pending: command_buffer.end_encoding().submit(),
         };
-
-        capture_span.take();
 
         // Return results
         // NOTE: not a CPU bubble. The next job has already been scheduled.
@@ -638,7 +647,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
     fn encode_accept(
         &mut self,
-        resolved: &ResolvedJob<B>,
+        resolved: &mut ResolvedJob<B>,
         emitted_len: usize,
     ) -> Result<Option<<<B as Backend>::CommandBuffer as CommandBuffer>::Pending>, LanguageModelStreamError<B>> {
         let command_buffer = self
@@ -690,6 +699,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 &mut command_buffer,
             );
         }
+
+        resolved.capture_span.take();
 
         Ok(Some(command_buffer.end_encoding().submit()))
     }
@@ -749,8 +760,8 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 let resolved = self.submitter.resolve_take(job).await?;
                 self.emitting = Some((resolved, 0))
             }
-        } else if let Some((queued, emitted_len)) = self.emitting.take() {
-            let accept_pending = self.submitter.encode_accept(&queued, emitted_len)?.unwrap();
+        } else if let Some((mut queued, emitted_len)) = self.emitting.take() {
+            let accept_pending = self.submitter.encode_accept(&mut queued, emitted_len)?.unwrap();
             wait(accept_pending, self.submitter.options.timestamps.as_ref())
                 .await
                 .map_err(LanguageModelStreamError::Backend)?;
@@ -776,11 +787,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     }
 
     pub async fn close(&mut self) -> Result<(), LanguageModelStreamError<B>> {
-        let Some((last_resolved, emitted_len)) = self.emitting.take() else {
+        let Some((mut last_resolved, emitted_len)) = self.emitting.take() else {
             return Ok(());
         };
 
-        let accept_pending = self.submitter.encode_accept(&last_resolved, emitted_len)?;
+        let accept_pending = self.submitter.encode_accept(&mut last_resolved, emitted_len)?;
         if let Some(pending) = accept_pending {
             wait(pending, self.submitter.options.timestamps.as_ref())
                 .await
