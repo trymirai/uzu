@@ -1,24 +1,30 @@
+import os
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from bench import BenchResponse
+import httpx2
+from bench import BenchResponse, ModelConfig, ReasoningEffort
+from common import get_finish_reason
 from huggingface_hub import HfApi, hf_hub_download
-from mach import get_memory_counters
+from mach import get_gpu_energy, get_memory_counters
 from openai import OpenAI
 
 from ..util import get_openai_base_url
-from . import ServerEngine
+from . import ServerEngine, get_openai_reasoning
 
 SPLIT_GGUF = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
 
 
-def resolve_model(model: str) -> Path:
+def resolve_model(model: str, revision: str | None) -> Path:
     """Resolve a local GGUF or repo[:filename.gguf|quantization], including shards."""
     path = Path(model).expanduser()
+    if path.exists() and revision is not None:
+        raise ValueError(f"A local model has no revision: {model}")
     if path.is_file():
         if path.suffix.lower() != ".gguf":
             raise ValueError("Magnitude requires a GGUF model file.")
@@ -33,7 +39,7 @@ def resolve_model(model: str) -> Path:
         repository, _, selector = model.partition(":")
         files = sorted(
             file
-            for file in HfApi().list_repo_files(repository)
+            for file in HfApi().list_repo_files(repository, revision=revision)
             if file.lower().endswith(".gguf") and not Path(file).name.lower().startswith("mmproj")
         )
         local = False
@@ -64,8 +70,12 @@ def resolve_model(model: str) -> Path:
             raise ValueError(f"Incomplete split GGUF model: {parts[0]}")
     if local:
         return Path(parts[0]).absolute()
-    downloads = [hf_hub_download(repo_id=repository, filename=part) for part in parts]
+    downloads = [hf_hub_download(repo_id=repository, filename=part, revision=revision) for part in parts]
     return Path(downloads[0]).absolute()
+
+
+class MagnitudeConfig(ModelConfig):
+    revision: str | None = None
 
 
 class MagnitudeServerEngine(ServerEngine):
@@ -73,22 +83,33 @@ class MagnitudeServerEngine(ServerEngine):
     https://github.com/magnitudedev/magnitude
     """
 
-    PROJECT_DIR = Path(__file__).resolve().parents[2] / "engine" / "magnitude"
+    PROJECT_DIR = Path(__file__).resolve().parents[3] / "engine-magnitude"
+
+    def __init__(self, host: str, port: int, config: MagnitudeConfig):
+        super().__init__(host, port, config)
+        self.revision = config.revision
+        self.specdec = config.specdec
 
     def create_process(self) -> subprocess.Popen:
-        model = resolve_model(self.model)
-        subprocess.run(
-            ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
-            check=True,
-            stdin=subprocess.DEVNULL,
-            stdout=sys.stderr,
-        )
+        model = resolve_model(self.model, self.revision)
+        binary = os.environ.get("BENCHMARK_MAGNITUDE_BINARY")
+        if binary is None:
+            subprocess.run(
+                ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+            )
+            binary = str(self.PROJECT_DIR / "target/release/magnitude-engine")
         return subprocess.Popen(
             [
-                str(self.PROJECT_DIR / "target/release/magnitude-engine"),
+                binary,
                 "--model",
                 str(model),
                 "--no-projector",
+                # Without a separate draft, the model's own MTP heads are the only way to speculate.
+                "--method",
+                "mtp" if self.specdec else "plain",
                 "--host",
                 self.host,
                 "--port",
@@ -101,22 +122,37 @@ class MagnitudeServerEngine(ServerEngine):
             start_new_session=True,
         )
 
-    def handle_request(self, request: dict[str, Any]) -> BenchResponse:
+    def get_reasoning(self, effort: ReasoningEffort, messages: list[Any], body: dict[str, Any]) -> dict[str, Any]:
+        base = get_openai_base_url(self.host, self.port).copy_with(path="")
+        response = httpx2.post(f"{base}/api/v1/models/{quote(self.model, safe='')}/properties", timeout=60)
+        response.raise_for_status()
+        reasoning = get_openai_reasoning(effort)
+        if reasoning["reasoning_effort"] not in response.json()["reasoning"]["reasoning_efforts"]:
+            raise ValueError(f"The model does not support reasoning_effort {effort}")
+        return reasoning
+
+    def handle_request(self, messages: list[Any], body: dict[str, Any]) -> BenchResponse:
         process = self.process
         if process is None or process.poll() is not None:
             raise RuntimeError("Magnitude server is not running.")
 
-        body = request.copy()
-        if body.pop("stream", False):
-            raise ValueError("Magnitude benchmarks require a non-streaming request.")
-        model = body.pop("model", self.model)
-        messages = body.pop("messages")
-        body.setdefault("cache_prompt", False)
+        body.update(cache_prompt=False, repetition_penalty=1.0, presence_penalty=0.0, frequency_penalty=0.0)
         with OpenAI(base_url=get_openai_base_url(self.host, self.port), api_key="not-needed") as client:
+            energy_start = get_gpu_energy()
             started = time.perf_counter()
-            response = client.chat.completions.create(model=model, messages=messages, extra_body=body)
+            response = client.chat.completions.create(model=self.model, messages=messages, extra_body=body)
             duration = time.perf_counter() - started
+            energy_gpu = get_gpu_energy() - energy_start
         memory = get_memory_counters(pid=process.pid)
+        # Magnitude infers in a worker process and reports what it charges each store, an SSD volume among them.
+        observation = httpx2.get(f"{get_openai_base_url(self.host, self.port)}/memory", timeout=60)
+        observation.raise_for_status()
+        memory_used = sum(
+            store[kind]
+            for store in observation.json()["census"]["stores"]
+            if "Volume" not in store["store"]
+            for kind in ("model_bytes", "context_bytes", "compute_bytes", "auxiliary_bytes")
+        )
 
         timings = (response.model_extra or {}).get("timings")
         if response.usage is None or not isinstance(timings, dict):
@@ -124,13 +160,17 @@ class MagnitudeServerEngine(ServerEngine):
 
         return BenchResponse(
             text=response.choices[0].message.content or "",
-            tokens_count=response.usage.completion_tokens,
+            finish_reason=get_finish_reason(response.choices[0].finish_reason),
+            input_tokens_count=response.usage.prompt_tokens,
+            output_tokens_count=response.usage.completion_tokens,
             time_to_first_token=timings["time_to_first_token_ms"] / 1000,
-            prompt_tps=timings["prompt_per_second"],
+            prefill_tps=timings["prompt_per_second"],
             decode_tps=timings["predicted_per_second"],
             # The API reports draft acceptance but no target-forward count.
-            tokens_per_forward_pass=0.0,
+            tokens_per_forward_pass=None,
             duration=duration,
+            energy_gpu=energy_gpu,
+            memory_used=memory_used,
             memory_phys_footprint=memory.phys_footprint,
             memory_resident=memory.resident_size,
             memory_graphics_total=memory.graphics_total,

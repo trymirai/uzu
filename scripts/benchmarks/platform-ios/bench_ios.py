@@ -43,8 +43,7 @@ Engine = Annotated[
         "-e", "--engine", help="llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash or uzu, as in scripts/benchmarks."
     ),
 ]
-Model = Annotated[str, typer.Option("-m", "--model", help="Model identifier as the engine expects it.")]
-Arguments = Annotated[list[str] | None, typer.Argument(help="More engine arguments, after --, as on macOS.")]
+Model = Annotated[Path, typer.Argument(help="Engine model configuration JSON.")]
 
 
 def receive(connection: socket.socket, size: int) -> bytes:
@@ -253,11 +252,12 @@ def fits_in_memory(engine: str, model: str, memory: int) -> bool:
     return repository_size(model) <= budget
 
 
-def start(engine: str, model: str, arguments: list[str] | None, udid: str | None, host: str | None) -> socket.socket:
-    if not fits_in_memory(engine, model, physical_memory(udid, host)):
+def start(engine: str, model: Path, udid: str | None, host: str | None) -> socket.socket:
+    configuration = model.read_text()
+    if not fits_in_memory(engine, json.loads(configuration)["model"], physical_memory(udid, host)):
         print("Skip, model is too large", file=sys.stderr)
         raise typer.Exit(1)
-    command = {"command": "run", "engine": engine, "arguments": ["-m", model, *(arguments or [])]}
+    command = {"command": "run", "engine": engine, "configuration": configuration}
     return session(command, udid, host, fresh=True)
 
 
@@ -286,19 +286,17 @@ def resolve(model: str, staging: Path) -> tuple[Path, str]:
 
 
 @app.command()
-def run(engine: Engine, model: Model, arguments: Arguments = None, device: Device = None, host: Host = None) -> None:
+def run(engine: Engine, model: Model, device: Device = None, host: Host = None) -> None:
     """Run an engine session in a fresh app process: requests on stdin, responses on stdout, logs on stderr."""
-    connection = start(engine, model, arguments, device, host)
+    connection = start(engine, model, device, host)
     threading.Thread(target=forward_stdin, args=(connection,), daemon=True).start()
     raise typer.Exit(relay(connection))
 
 
 @app.command()
-def download(
-    engine: Engine, model: Model, arguments: Arguments = None, device: Device = None, host: Host = None
-) -> None:
+def download(engine: Engine, model: Model, device: Device = None, host: Host = None) -> None:
     """Load the model as the engine does, downloading it into the app's cache, without running requests."""
-    connection = start(engine, model, arguments, device, host)
+    connection = start(engine, model, device, host)
     connection.sendall(struct.pack(">I", 0))
     raise typer.Exit(relay(connection))
 

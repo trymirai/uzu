@@ -10,7 +10,7 @@ SRCS = [
 ]
 
 DEPS = [
-    ":memory_counters",
+    ":benchmark_system",
     "//ml_drift/samples/llm:llm_config",
     "//ml_drift/samples/llm:llm_runner_interface",
     "//ml_drift/samples/llm:llm_runner_metal_lib",
@@ -21,9 +21,10 @@ DEPS = [
 ]
 
 cc_library(
-    name = "memory_counters",
-    srcs = ["memory_counters.c"],
-    hdrs = ["memory_counters.h"],
+    name = "benchmark_system",
+    srcs = ["memory_counters.c", "apple_temp_sensors.c", "energy_counters.c"],
+    hdrs = ["memory_counters.h", "apple_temp_sensors.h", "energy_counters.h"],
+    linkopts = ["-framework", "IOKit", "-framework", "CoreFoundation", "-lIOReport"],
 )
 
 cc_binary(

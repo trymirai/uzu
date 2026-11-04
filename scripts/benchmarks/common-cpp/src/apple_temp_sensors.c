@@ -1,5 +1,6 @@
 #include "apple_temp_sensors.h"
 
+#include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <math.h>
 #include <stddef.h>
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysctl.h>
+#include <time.h>
 
 #if !defined(__APPLE__) || !defined(__arm64__)
 #error This implementation targets macOS on Apple Silicon.
@@ -314,4 +316,170 @@ kern_return_t get_temp_sensors(apple_temp_sensors_t* out) {
     kern_return_t close_err = apple_temps_close(ctx);
 
     return err != KERN_SUCCESS ? err : close_err;
+}
+
+typedef struct IOReportSubscription* IOReportSubscriptionRef;
+
+CFMutableDictionaryRef IOReportCopyChannelsInGroup(
+    CFStringRef,
+    CFStringRef,
+    uint64_t,
+    uint64_t,
+    uint64_t
+);
+IOReportSubscriptionRef IOReportCreateSubscription(
+    void*,
+    CFMutableDictionaryRef,
+    CFMutableDictionaryRef*,
+    uint64_t,
+    CFTypeRef
+);
+CFDictionaryRef IOReportCreateSamples(
+    IOReportSubscriptionRef,
+    CFMutableDictionaryRef,
+    CFTypeRef
+);
+CFDictionaryRef IOReportCreateSamplesDelta(
+    CFDictionaryRef,
+    CFDictionaryRef,
+    CFTypeRef
+);
+CFStringRef IOReportChannelGetChannelName(CFDictionaryRef);
+int32_t IOReportStateGetCount(CFDictionaryRef);
+CFStringRef IOReportStateGetNameForIndex(
+    CFDictionaryRef,
+    int32_t
+);
+int64_t IOReportStateGetResidency(
+    CFDictionaryRef,
+    int32_t
+);
+
+// The number of a performance state, which IOReport names P1, P2 and so on; 0 for a state that is none (OFF, NO_CLTM).
+static int performance_state(
+    CFDictionaryRef channel,
+    int32_t index
+) {
+    char name[16];
+    CFStringRef state = IOReportStateGetNameForIndex(channel, index);
+    if (state == NULL || !CFStringGetCString(state, name, sizeof(name), kCFStringEncodingUTF8) || name[0] != 'P') {
+        return 0;
+    }
+    return atoi(name + 1);
+}
+
+// Whether the thermal manager held the GPU below the state its boost controller chose for more than 2% of the time
+// since the previous call. The first call has no earlier sample to compare with and reports a cap.
+static kern_return_t gpu_was_capped(bool* capped) {
+    static IOReportSubscriptionRef subscription = NULL;
+    static CFMutableDictionaryRef subscribed_channels = NULL;
+    static CFDictionaryRef previous = NULL;
+
+    if (subscription == NULL) {
+        CFMutableDictionaryRef group = IOReportCopyChannelsInGroup(CFSTR("GPU Stats"), NULL, 0, 0, 0);
+        if (group == NULL) {
+            return kIOReturnNotFound;
+        }
+        CFArrayRef channels = CFDictionaryGetValue(group, CFSTR("IOReportChannels"));
+        CFMutableArrayRef selected = CFArrayCreateMutable(NULL, 2, &kCFTypeArrayCallBacks);
+        for (CFIndex index = 0; channels != NULL && index < CFArrayGetCount(channels); index++) {
+            CFDictionaryRef channel = CFArrayGetValueAtIndex(channels, index);
+            CFStringRef name = IOReportChannelGetChannelName(channel);
+            if (name != NULL && (CFEqual(name, CFSTR("GPU_CLTM")) || CFEqual(name, CFSTR("BSTGPUPH")))) {
+                CFArrayAppendValue(selected, channel);
+            }
+        }
+        if (CFArrayGetCount(selected) == 2) {
+            CFDictionarySetValue(group, CFSTR("IOReportChannels"), selected);
+            subscription = IOReportCreateSubscription(NULL, group, &subscribed_channels, 0, NULL);
+        }
+        CFRelease(selected);
+        CFRelease(group);
+        if (subscription == NULL) {
+            return kIOReturnNotFound;
+        }
+    }
+
+    CFDictionaryRef current = IOReportCreateSamples(subscription, subscribed_channels, NULL);
+    if (current == NULL) {
+        return kIOReturnError;
+    }
+    *capped = true;
+    if (previous != NULL) {
+        CFDictionaryRef delta = IOReportCreateSamplesDelta(previous, current, NULL);
+        CFRelease(previous);
+        previous = current;
+        if (delta == NULL) {
+            return kIOReturnError;
+        }
+        CFArrayRef channels = CFDictionaryGetValue(delta, CFSTR("IOReportChannels"));
+        CFDictionaryRef thermal = NULL;
+        int chosen = 0;
+        for (CFIndex index = 0; channels != NULL && index < CFArrayGetCount(channels); index++) {
+            CFDictionaryRef channel = CFArrayGetValueAtIndex(channels, index);
+            if (CFEqual(IOReportChannelGetChannelName(channel), CFSTR("GPU_CLTM"))) {
+                thermal = channel;
+                continue;
+            }
+            for (int32_t state = 0; state < IOReportStateGetCount(channel); state++) {
+                if (IOReportStateGetResidency(channel, state) > 0 && performance_state(channel, state) > chosen) {
+                    chosen = performance_state(channel, state);
+                }
+            }
+        }
+        if (thermal == NULL) {
+            CFRelease(delta);
+            return kIOReturnNotFound;
+        }
+        int64_t below = 0;
+        int64_t total = 0;
+        for (int32_t state = 0; state < IOReportStateGetCount(thermal); state++) {
+            const int64_t residency = IOReportStateGetResidency(thermal, state);
+            const int cap = performance_state(thermal, state);
+            total += residency;
+            if (cap > 0 && cap < chosen) {
+                below += residency;
+            }
+        }
+        *capped = below * 50 > total;
+        CFRelease(delta);
+        return KERN_SUCCESS;
+    }
+    previous = current;
+    return KERN_SUCCESS;
+}
+
+kern_return_t await_cooldown(
+    double temperature,
+    bool only_if_capped
+) {
+    if (only_if_capped) {
+        bool capped;
+        kern_return_t capped_result = gpu_was_capped(&capped);
+        if (capped_result != KERN_SUCCESS || !capped) {
+            return capped_result;
+        }
+    }
+
+    apple_temp_sensors_t temp;
+    kern_return_t result = get_temp_sensors(&temp);
+    while (result == KERN_SUCCESS && (temp.cpu_avg >= temperature || temp.gpu_avg >= temperature)) {
+        fprintf(
+            stderr,
+            "Cooling: CPU %.1f°C / GPU %.1f°C (target < %.1f°C)\n",
+            temp.cpu_avg,
+            temp.gpu_avg,
+            temperature
+        );
+        if (nanosleep(&(struct timespec){.tv_sec = 5}, NULL) != 0) {
+            return KERN_ABORTED;
+        }
+        result = get_temp_sensors(&temp);
+    }
+    if (result == KERN_SUCCESS && only_if_capped) {
+        // A cap that lingered into the wait is not the next run's.
+        bool ignored;
+        result = gpu_was_capped(&ignored);
+    }
+    return result;
 }

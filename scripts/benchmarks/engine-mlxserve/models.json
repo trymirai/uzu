@@ -1,0 +1,86 @@
+{
+  "trymirai/Qwen3.5-0.8B-L": {
+    "model": "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    "revision": "5d894f8cc4ef3e6c88537bf3746ed262f549da6a",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-0.8B-M": {
+    "model": "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    "revision": "5d894f8cc4ef3e6c88537bf3746ed262f549da6a",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.6-27B-L": {
+    "model": "ddalcu/Qwen3.6-27B-4bit-MTP-MLX-Serve",
+    "revision": "290cf680751d2ca641140734da22354778d0c289",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.6-27B-M": {
+    "model": "ddalcu/Qwen3.6-27B-4bit-MTP-MLX-Serve",
+    "revision": "290cf680751d2ca641140734da22354778d0c289",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  }
+}

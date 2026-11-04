@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -7,8 +8,9 @@ from queue import Empty, Queue
 from threading import Thread
 from typing import Any, TextIO
 
-from bench import BenchResponse
-from mach import get_memory_counters
+from bench import BenchResponse, ModelConfig, ReasoningEffort
+from common import check_specdec, get_finish_reason
+from mach import get_gpu_energy, get_memory_counters
 from openai import OpenAI
 
 from ..util import get_openai_base_url
@@ -17,30 +19,33 @@ from . import ServerEngine
 # UZU exposes these metrics in its completion log, not the HTTP response.
 COMPLETION_STATS = re.compile(
     r"^\[(?P<request_id>[0-9a-f]{8})\] completed in [\d.]+s, finish=\S+, "
-    r"prompt \d+ tok \(\d+ cached, \d+ prefilled @ (?P<prompt_tps>[\d.]+|-) tok/s\)"
+    r"prompt \d+ tok \((?P<cached>\d+) cached, \d+ prefilled @ (?P<prefill_tps>[\d.]+|-) tok/s\)"
     r"(?:, ttft (?P<time_to_first_token>[\d.]+)s)?"
     r"(?:, decode \d+ tok @ (?P<decode_tps>[\d.]+|-) tok/s)?"
     r"(?:, spec (?P<tokens_per_forward_pass>[\d.]+) tok/pass \(\d+ passes\))?"
 )
 
 
+def number(value: str | None) -> float:
+    return float(value) if value not in (None, "-") else 0.0
+
+
 class UzuServerEngine(ServerEngine):
+    supports_min_p = False
     REPO_ROOT = Path(__file__).resolve().parents[5]
 
-    def __init__(self, host: str, port: int, model: str):
-        super().__init__(host, port, model)
-        self._stats: Queue[tuple[str, dict[str, float]] | None] = Queue()
+    def __init__(self, host: str, port: int, config: ModelConfig):
+        super().__init__(host, port, config)
+        self.config = config
+        self._stats: Queue[tuple[str, dict[str, str | None]] | None] = Queue()
         self._log_thread: Thread | None = None
 
     def create_process(self) -> subprocess.Popen:
+        binary = os.environ.get("BENCHMARK_UZU_BINARY")
+        command = [binary] if binary else ["cargo", "run", "--release", "-p", "cli", "--"]
         process = subprocess.Popen(
-            [
-                "cargo",
-                "run",
-                "--release",
-                "-p",
-                "cli",
-                "--",
+            command
+            + [
                 "server",
                 "--no-prefix-cache",
                 "--host",
@@ -50,7 +55,7 @@ class UzuServerEngine(ServerEngine):
                 "--model",
                 self.model,
             ],
-            cwd=UzuServerEngine.REPO_ROOT,
+            cwd=None if binary else UzuServerEngine.REPO_ROOT,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             text=True,
@@ -62,35 +67,48 @@ class UzuServerEngine(ServerEngine):
         self._log_thread.start()
         return process
 
-    def handle_request(self, request: dict[str, Any]) -> BenchResponse:
+    def get_reasoning(self, effort: ReasoningEffort, messages: list[Any], body: dict[str, Any]) -> dict[str, Any]:
+        return {"reasoning_effort": effort}
+
+    def handle_request(self, messages: list[Any], body: dict[str, Any]) -> BenchResponse:
         process = self.process
         if process is None or process.poll() is not None:
             raise RuntimeError("UZU server is not running.")
 
-        body = request.copy()
-        model = body.pop("model", self.model)
-        messages = body.pop("messages")
         with OpenAI(
             base_url=get_openai_base_url(self.host, self.port),
             api_key="not-needed",
         ) as client:
+            energy_start = get_gpu_energy()
             started = time.perf_counter()
-            response = client.chat.completions.create(model=model, messages=messages, extra_body=body)
+            response = client.chat.completions.create(model=self.model, messages=messages, extra_body=body)
             duration = time.perf_counter() - started
+            energy_gpu = get_gpu_energy() - energy_start
 
         memory = get_memory_counters(pid=process.pid)
         usage = response.usage
-        tokens_count = usage.completion_tokens if usage is not None else 0
+        if usage is None:
+            raise RuntimeError("UZU response is missing usage statistics.")
         stats = self._response_stats(response.id)
+        if stats["cached"] != "0":
+            raise RuntimeError("UZU reused cached prompt tokens")
+        # The server reveals speculation only in a reply's statistics, and the first token needs no decode pass.
+        if usage.completion_tokens > 1:
+            check_specdec(self.config, stats["tokens_per_forward_pass"] is not None)
 
         return BenchResponse(
             text=response.choices[0].message.content or "",
-            tokens_count=tokens_count,
-            time_to_first_token=stats["time_to_first_token"],
-            prompt_tps=stats["prompt_tps"],
-            decode_tps=stats["decode_tps"],
-            tokens_per_forward_pass=stats["tokens_per_forward_pass"],
+            finish_reason=get_finish_reason(response.choices[0].finish_reason),
+            input_tokens_count=usage.prompt_tokens,
+            output_tokens_count=usage.completion_tokens,
+            time_to_first_token=number(stats["time_to_first_token"]),
+            prefill_tps=number(stats["prefill_tps"]),
+            decode_tps=number(stats["decode_tps"]),
+            tokens_per_forward_pass=None if (spec := stats["tokens_per_forward_pass"]) is None else float(spec),
             duration=duration,
+            energy_gpu=energy_gpu,
+            # The server reports no memory; the kernel's count of its graphics memory is its Metal allocation.
+            memory_used=memory.graphics_total,
             memory_phys_footprint=memory.phys_footprint,
             memory_resident=memory.resident_size,
             memory_graphics_total=memory.graphics_total,
@@ -110,18 +128,14 @@ class UzuServerEngine(ServerEngine):
                 for line in output:
                     match = COMPLETION_STATS.match(line)
                     if match is not None:
-                        fields = match.groupdict()
-                        request_id = fields.pop("request_id")
-                        stats = {
-                            name: float(value) if value not in (None, "-") else 0.0 for name, value in fields.items()
-                        }
-                        self._stats.put((request_id, stats))
+                        stats = match.groupdict()
+                        self._stats.put((stats.pop("request_id"), stats))
                     sys.stderr.write(line)
                     sys.stderr.flush()
         finally:
             self._stats.put(None)
 
-    def _response_stats(self, response_id: str) -> dict[str, float]:
+    def _response_stats(self, response_id: str) -> dict[str, str | None]:
         while True:
             try:
                 entry = self._stats.get(timeout=5)

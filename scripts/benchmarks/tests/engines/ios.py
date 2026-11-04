@@ -1,5 +1,7 @@
 """Launch an engine inside the iOS app through the platform-ios bridge."""
 
+from pathlib import Path
+
 import pytest
 
 from .engine_tests import EngineTests
@@ -20,15 +22,10 @@ class TestIOS(EngineTests):
     engine_name = "ios"
 
     @staticmethod
-    def command(config: pytest.Config) -> list[str]:
+    def command(config: pytest.Config, model: Path) -> list[str]:
         command = ["uv", "run", "--project", "platform-ios", "bench-ios", "run"]
-        command += ["--engine", config.getoption("ios_engine"), "--model", config.getoption("ios_model")]
+        command += ["--engine", config.getoption("ios_engine"), str(model)]
         for option in ("device", "host"):
             if value := config.getoption(f"ios_{option}"):
                 command += [f"--{option}", value]
         return command
-
-    @pytest.fixture(autouse=True)
-    def skip_unsupported(self, request: pytest.FixtureRequest) -> None:
-        if request.config.getoption("ios_engine") == "mldrift" and request.node.originalname == "test_sampling":
-            pytest.skip("ML Drift decodes greedily on the GPU and rejects sampling")

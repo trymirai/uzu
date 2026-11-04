@@ -1,0 +1,39 @@
+[project]
+name = "benchman"
+version = "0.1.0"
+description = "Benchmark orchestration"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "benchmarks-common",
+    "cryptography>=50.0.2",
+    "huggingface-hub>=2.4.0",
+    "prefect[gcp] @ git+https://github.com/trymirai/prefect.git@6f1c61658b3bf13839ff5cfe7a94c9d91d84e3d0",
+    "pyarrow>=26.0.1",
+    "rich>=15.0.0",
+    "typer>=0.29.0",
+    "zstandard>=0.25.0",
+]
+
+[project.scripts]
+benchman = "benchman.main:app"
+
+[build-system]
+requires = ["setuptools>=84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["benchman", "benchman.datasets", "benchman.datasets.oneoff"]
+package-dir = { benchman = "src" }
+package-data = { "benchman.datasets.oneoff" = ["*.json"] }
+
+[tool.uv.sources]
+benchmarks-common = { path = "../common-py", editable = true }
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.170.15",
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = ["error::RuntimeWarning", "error::pytest.PytestUnraisableExceptionWarning"]

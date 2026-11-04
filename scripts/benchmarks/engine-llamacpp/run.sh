@@ -14,4 +14,4 @@ cmake --build "$BUILD_DIR" \
     --config Release \
     --parallel "$PARALLEL_JOBS" >&2
 
-exec "$BIN_DIR/engine-llamacpp" "$@"
+exec "$BIN_DIR/bench-llamacpp" "$@"

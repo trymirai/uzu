@@ -1,0 +1,506 @@
+{
+  "trymirai/LFM2.5-1.2B-Instruct-L": {
+    "model": "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit",
+    "revision": "ce5150fd0de58d2bba8d88cc87f13e4fbda5977a",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-1.2B-Instruct-M": {
+    "model": "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit",
+    "revision": "7ccafdb04c36936f4f1c4685198c6c9a40275932",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-1.2B-Thinking-L": {
+    "model": "LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit",
+    "revision": "f3df05e130209459429f6f251f76b08ce030a42b",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-1.2B-Thinking-M": {
+    "model": "LiquidAI/LFM2.5-1.2B-Thinking-MLX-4bit",
+    "revision": "0703c92f46e0dfdfd4fe3c989b5f55615c6c3031",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-2.6B-L": {
+    "model": "LiquidAI/LFM2.5-2.6B-MLX-8bit",
+    "revision": "b372ebbb518c0e81617e25d8824427dd9ee1f08c",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-2.6B-M": {
+    "model": "LiquidAI/LFM2.5-2.6B-MLX-4bit",
+    "revision": "04efa23776ce61ec34ec95ec34c859854c89542b",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-230M-L": {
+    "model": "LiquidAI/LFM2.5-230M-MLX-8bit",
+    "revision": "aed8079d6d6af140b474d470cdd33008c30414e6",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-230M-M": {
+    "model": "LiquidAI/LFM2.5-230M-MLX-4bit",
+    "revision": "817c2706bbbf7a88f16346469b5747b950087e0e",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-350M-L": {
+    "model": "LiquidAI/LFM2.5-350M-MLX-8bit",
+    "revision": "2eb1bb33c541750066fad9757713ff555b3ca4bb",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/LFM2.5-350M-M": {
+    "model": "LiquidAI/LFM2.5-350M-MLX-4bit",
+    "revision": "f6cb4e006bb7a2d8a6afa14ec0a53e0586f65a5b",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.1,
+      "top_k": 50,
+      "top_p": 0.1,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "default",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Muse-Glimmer-30B-L": {
+    "model": "mlx-community/Muse-Glimmer-30B-8bit",
+    "revision": "679c45e1b331a6514a6e38076a353cc5fed21bf6",
+    "specdec": false,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 64,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "low",
+      "default": "high",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  "trymirai/Muse-Glimmer-30B-M": {
+    "model": "mlx-community/Muse-Glimmer-30B-4bit",
+    "revision": "3e7677d7a40d348a3daba263a2b1c0aa41910710",
+    "specdec": false,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 64,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "low",
+      "default": "high",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  "trymirai/Qwen3.5-0.8B-L": {
+    "model": "mlx-community/Qwen3.5-0.8B-8bit",
+    "revision": "87e768fbfa03994095f3d14527c80c5ae70c5758",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-0.8B-M": {
+    "model": "mlx-community/Qwen3.5-0.8B-4bit",
+    "revision": "da28692b5f139cb0ec58a356b437486b7dac7462",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-2B-L": {
+    "model": "mlx-community/Qwen3.5-2B-8bit",
+    "revision": "562fb8ea19bbe7565a3ddf5b7d49899ea2c88d2b",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-2B-M": {
+    "model": "mlx-community/Qwen3.5-2B-4bit",
+    "revision": "674aaa7240b91e8012fcad5d791b7dfe5ba90207",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-4B-L": {
+    "model": "mlx-community/Qwen3.5-4B-8bit",
+    "revision": "1704583a86670ba531b7f2c92530a2f725cfd45b",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.05,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-4B-M": {
+    "model": "mlx-community/Qwen3.5-4B-4bit",
+    "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-9B-L": {
+    "model": "mlx-community/Qwen3.5-9B-8bit",
+    "revision": "16daa4818c54ce5f5436f929d52542eb65bbed9d",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-9B-M": {
+    "model": "mlx-community/Qwen3.5-9B-4bit",
+    "revision": "8b2b98c00a6b4d291155e4890773ca8f769aee53",
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.6-27B-L": {
+    "model": "mlx-community/Qwen3.6-27B-8bit",
+    "revision": "c5a593c1475a746e43a543b0a02bd2b357e5745f",
+    "specdec": false,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.6-27B-M": {
+    "model": "mlx-community/Qwen3.6-27B-4bit",
+    "revision": "c000ac2c2057d94be3fa931000c31723aac53282",
+    "specdec": false,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "mlx-community/Qwen3.8-27B-8bit",
+    "revision": "815b83c0df8ffd1d1b5244cf75fd6ef14fca9ef9",
+    "specdec": false,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "revision": "10c35caafbb80f7dc6a7a432cdd11af10a6d4818",
+    "specdec": false,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  }
+}

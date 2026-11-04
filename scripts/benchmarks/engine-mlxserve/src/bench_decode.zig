@@ -17,6 +17,8 @@ pub const Speculation = struct {
     block_drafter: ?dflash.DflashModel = null,
     default_depth: u32 = 0,
     max_depth: u32 = 0,
+    depth: u32 = 0,
+    configured: bool = false,
 
     // The owner keeps this struct and the target at stable addresses.
     pub fn init(
@@ -26,10 +28,23 @@ pub const Speculation = struct {
         xfm: *Transformer,
         model_path: []const u8,
         draft_path: ?[]const u8,
+        configured_depth: ?usize,
     ) !void {
         self.* = .{ .allocator = a };
         errdefer self.deinit();
+        try self.load(io, a, xfm, model_path, draft_path);
+        self.depth = try request_utils.speculativeDepth(configured_depth, self.default_depth, self.max_depth);
+        self.configured = configured_depth != null;
+    }
 
+    fn load(
+        self: *Speculation,
+        io: std.Io,
+        a: std.mem.Allocator,
+        xfm: *Transformer,
+        model_path: []const u8,
+        draft_path: ?[]const u8,
+    ) !void {
         if (draft_path) |path| {
             if (dflash.probeIsDflash(io, a, path)) {
                 self.block_drafter = try dflash.loadDflash(io, a, xfm.s, path);
@@ -97,8 +112,8 @@ pub const Speculation = struct {
         return null;
     }
 
-    pub fn options(self: *Speculation, xfm: *Transformer, requested: ?usize) !generate.Generator.InitOptions {
-        const depth = try request_utils.speculativeDepth(requested, self.default_depth, self.max_depth);
+    pub fn options(self: *Speculation, xfm: *Transformer) generate.Generator.InitOptions {
+        const depth = self.depth;
         var out: generate.Generator.InitOptions = .{ .model_has_mtp = self.head(xfm) != null };
         if (depth == 0) {
             return out;
@@ -110,7 +125,7 @@ pub const Speculation = struct {
                 out.mtp_enabled = true;
                 out.mtp = self.head(xfm);
                 out.mtp_depth = depth;
-                xfm.mtp_depth_free = if (requested != null) depth else generate.Generator.mtpDepthCapFree(xfm.config.mtpDepth(0));
+                xfm.mtp_depth_free = if (self.configured) depth else generate.Generator.mtpDepthCapFree(xfm.config.mtpDepth(0));
             },
             .drafter => {
                 out.drafter_enabled = true;
@@ -153,9 +168,12 @@ pub const Batch = struct {
     owned: bool,
 };
 
+pub fn speculative(gen: *const generate.Generator) bool {
+    return gen.dspark_enabled or gen.mtp != null or gen.dflash != null or gen.drafter != null;
+}
+
 pub fn next(gen: *generate.Generator, a: std.mem.Allocator, single: *[1]u32) !?Batch {
-    const speculative = gen.dspark_enabled or gen.mtp != null or gen.dflash != null or gen.drafter != null;
-    if (speculative) {
+    if (speculative(gen)) {
         const result = (if (gen.dspark_enabled)
             try gen.nextDspark(a)
         else if (gen.mtp != null)

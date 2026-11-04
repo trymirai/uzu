@@ -1,7 +1,6 @@
 [project]
 name = "benchmarks-common"
 version = "0.0.1"
-requires-python = ">=3.13.7"
 dependencies = [
     "huggingface-hub>=0.36",
     "pydantic>=2.14.2",
@@ -20,7 +19,6 @@ package-dir = { "" = "src" }
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "setup.py" },
-    { file = "src/mach/*.c" },
     { file = "../common-cpp/src/*.c" },
     { file = "../common-cpp/src/*.h" },
 ]

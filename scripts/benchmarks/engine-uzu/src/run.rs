@@ -1,16 +1,22 @@
-use std::ffi::{CStr, c_char, c_int};
+use std::{
+    ffi::{CStr, c_char, c_int},
+    fs,
+};
 
+use anyhow::Error;
 use clap::Parser;
+use tokio::runtime::Runtime;
 
 use crate::{
-    args::Args,
+    args::{Args, ModelConfig},
     common::{StdoutRedirect, run_loop},
     engine::UzuEngine,
 };
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
+    let config: ModelConfig = serde_json::from_slice(&fs::read(&args.model)?)?;
     let mut redirect = StdoutRedirect::to_stderr()?;
-    let mut engine = UzuEngine::new(&args.model).await?;
+    let mut engine = UzuEngine::new(&config).await?;
     redirect.restore()?;
     run_loop(&mut engine).await
 }
@@ -30,8 +36,7 @@ pub unsafe extern "C" fn benchmarks_uzu_main(
             return error.exit_code();
         },
     };
-    let result =
-        tokio::runtime::Runtime::new().map_err(anyhow::Error::from).and_then(|runtime| runtime.block_on(run(args)));
+    let result = Runtime::new().map_err(Error::from).and_then(|runtime| runtime.block_on(run(args)));
     match result {
         Ok(()) => 0,
         Err(error) => {

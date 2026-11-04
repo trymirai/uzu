@@ -1,0 +1,32 @@
+{
+  "trymirai/LFM2.5-1.2B-Instruct-L": "unsloth/LFM2.5-1.2B-Instruct-GGUF:UD-Q8_K_XL",
+  "trymirai/LFM2.5-1.2B-Instruct-M": "unsloth/LFM2.5-1.2B-Instruct-GGUF:Q4_K_S",
+  "trymirai/LFM2.5-1.2B-Thinking-L": "unsloth/LFM2.5-1.2B-Thinking-GGUF:UD-Q8_K_XL",
+  "trymirai/LFM2.5-1.2B-Thinking-M": "unsloth/LFM2.5-1.2B-Thinking-GGUF:Q4_K_S",
+  "trymirai/LFM2.5-2.6B-L": "LiquidAI/LFM2.5-2.6B-GGUF:Q8_0",
+  "trymirai/LFM2.5-2.6B-M": "LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
+  "trymirai/LFM2.5-230M-L": "unsloth/LFM2.5-230M-GGUF:UD-Q8_K_XL",
+  "trymirai/LFM2.5-230M-M": "unsloth/LFM2.5-230M-GGUF:Q4_K_S",
+  "trymirai/LFM2.5-350M-L": "LiquidAI/LFM2.5-350M-GGUF:Q8_0",
+  "trymirai/LFM2.5-350M-M": "LiquidAI/LFM2.5-350M-GGUF:Q4_0",
+  "trymirai/Muse-Glimmer-30B-L": {
+    "model": "unsloth/Muse-Glimmer-30B-GGUF:UD-Q8_K_XL",
+    "draft_model": "unsloth/Muse-Glimmer-30B-GGUF:dflash-kquant.gguf"
+  },
+  "trymirai/Muse-Glimmer-30B-M": {
+    "model": "unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL",
+    "draft_model": "unsloth/Muse-Glimmer-30B-GGUF:dflash-kquant.gguf"
+  },
+  "trymirai/Qwen3.5-0.8B-L": "unsloth/Qwen3.5-0.8B-GGUF:UD-Q8_K_XL",
+  "trymirai/Qwen3.5-0.8B-M": "unsloth/Qwen3.5-0.8B-GGUF:Q4_K_S",
+  "trymirai/Qwen3.5-2B-L": "unsloth/Qwen3.5-2B-GGUF:UD-Q8_K_XL",
+  "trymirai/Qwen3.5-2B-M": "unsloth/Qwen3.5-2B-GGUF:Q4_K_S",
+  "trymirai/Qwen3.5-4B-L": "unsloth/Qwen3.5-4B-GGUF:UD-Q8_K_XL",
+  "trymirai/Qwen3.5-4B-M": "unsloth/Qwen3.5-4B-GGUF:Q4_K_S",
+  "trymirai/Qwen3.5-9B-L": "unsloth/Qwen3.5-9B-MTP-GGUF:UD-Q8_K_XL",
+  "trymirai/Qwen3.5-9B-M": "unsloth/Qwen3.5-9B-MTP-GGUF:Q4_K_S",
+  "trymirai/Qwen3.6-27B-L": "unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q8_K_XL",
+  "trymirai/Qwen3.6-27B-M": "unsloth/Qwen3.6-27B-MTP-GGUF:Q4_K_S",
+  "trymirai/Qwen3.8-27B-L": "unsloth/Qwen3.8-27B-GGUF:UD-Q8_K_XL",
+  "trymirai/Qwen3.8-27B-M": "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_S"
+}

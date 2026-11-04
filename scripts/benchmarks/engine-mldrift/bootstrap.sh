@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REVISION="b1124115a5c78bab42c4e8df83732d653824ae41"
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/ml-drift"
 ADAPTER_DIR="$SOURCE_DIR/benchmarks"
@@ -15,32 +14,11 @@ if ! command -v bazelisk >/dev/null; then
     exit 1
 fi
 
-if [[ ! -e "$SOURCE_DIR" ]]; then
-    mkdir -p "$PROJECT_DIR/deps"
-    git clone https://github.com/google-ai-edge/ml-drift.git "$SOURCE_DIR" >&2
-    git -C "$SOURCE_DIR" checkout --detach "$REVISION" >&2
-fi
-if [[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" != "$REVISION" ]]; then
-    echo "Unexpected ML Drift revision in $SOURCE_DIR; expected $REVISION" >&2
-    exit 1
-fi
-
-for patch in "$PROJECT_DIR"/patches/*.patch; do
-    if ! git -C "$SOURCE_DIR" apply --reverse --check "$patch" 2>/dev/null; then
-        git -C "$SOURCE_DIR" apply --check "$patch"
-        git -C "$SOURCE_DIR" apply "$patch"
-    fi
-done
-
-# Bazel cannot reference files outside the workspace, so the adapter and the
-# shared benchmark sources become a package of the upstream checkout.
+source "$PROJECT_DIR/../sources.sh"
+benchmark_source mldrift "$SOURCE_DIR" "$PROJECT_DIR"/patches/*.patch
+cp "$PROJECT_DIR/requirements.lock" "$SOURCE_DIR/requirements.txt"
 mkdir -p "$ADAPTER_DIR"
-for source in "$PROJECT_DIR"/src/* "$PROJECT_DIR"/../common-cpp/src/{bench.hpp,common.cpp,common.hpp,memory_counters.c,memory_counters.h}; do
-    destination="$ADAPTER_DIR/$(basename "$source")"
-    if ! cmp -s "$source" "$destination"; then
-        cp "$source" "$destination"
-    fi
-done
+cp "$PROJECT_DIR"/src/* "$PROJECT_DIR"/../common-cpp/src/* "$ADAPTER_DIR/"
 
 cd "$SOURCE_DIR"
 bazelisk build -c opt //benchmarks:engine-mldrift >&2

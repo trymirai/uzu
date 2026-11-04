@@ -1,42 +1,24 @@
 const std = @import("std");
-const BenchRequest = @import("bench.zig").BenchRequest;
-const BenchSampling = @import("bench.zig").BenchSampling;
+const bench = @import("bench.zig");
 
-pub fn validate(request: BenchRequest) !void {
-    if ((request.num_runs orelse 1) == 0) {
-        return error.InvalidNumRuns;
-    }
-    if (request.prompt_text) |text| {
-        if (text.len == 0) return error.EmptyPrompt;
-    } else if (request.prompt_chat) |messages| {
-        if (messages.len == 0) return error.EmptyPrompt;
-    } else {
-        return error.MissingPrompt;
-    }
-
-    const s = request.sampling orelse BenchSampling{};
-    if ((s.min_p orelse 0) != 0) {
-        return error.MinPSamplingUnsupported;
-    }
-    if (s.top_k) |k| {
-        if (k < 0) {
-            return error.InvalidTopK;
-        }
-    }
-    if (s.top_p) |p| {
-        if (!std.math.isFinite(p) or p < 0 or p > 1) {
-            return error.InvalidTopP;
-        }
-    }
-    if (s.temp) |t| {
-        if (!std.math.isFinite(t) or t < 0 or t > 2) {
-            return error.InvalidTemperature;
-        }
-    }
+pub fn validate(request: bench.BenchRequest) !void {
+    if (request.messages.len == 0) return error.EmptyPrompt;
 }
 
-pub fn speculativeDepth(requested: ?usize, default_depth: u32, max_depth: u32) !u32 {
-    const depth = requested orelse default_depth;
+pub fn samplingParams(config: bench.BenchSampling) !bench.StochasticSampling {
+    return switch (config) {
+        .greedy => .{ .temp = 0, .top_k = 1, .top_p = null, .min_p = null, .repetition_penalty = null, .suffix_repetition_length = null },
+        .stochastic => |sampling| blk: {
+            if (sampling.temp == 0) return error.ZeroTemperatureUseGreedy;
+            if ((sampling.min_p orelse 0) != 0) return error.MinPSamplingUnsupported;
+            if (sampling.repetition_penalty != null or sampling.suffix_repetition_length != null) return error.RepetitionSamplingUnsupported;
+            break :blk sampling;
+        },
+    };
+}
+
+pub fn speculativeDepth(configured: ?usize, default_depth: u32, max_depth: u32) !u32 {
+    const depth = configured orelse default_depth;
     if (depth > max_depth) {
         return error.InvalidSpeculativeDepth;
     }

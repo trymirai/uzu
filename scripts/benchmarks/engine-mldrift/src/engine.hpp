@@ -18,13 +18,16 @@ public:
         const std::filesystem::path& weights
     );
 
-    std::vector<BenchResponse> execute(const BenchRequest& request) const override;
+    BenchResponse execute(const BenchRequest& request) const override;
 
 private:
     std::string weights;
     ml_drift::ModelInfo model_info;
     size_t context_capacity;
     std::unique_ptr<ml_drift::Tokenizer> tokenizer;
+    mutable std::unique_ptr<ml_drift::LlmModelRunner> runner;
+    mutable size_t runner_prompt_size = 0;
+    mutable size_t runner_context_size = 0;
 };
 
 #endif  // __engine_mldrift_engine_hpp__

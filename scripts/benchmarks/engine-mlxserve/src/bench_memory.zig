@@ -1,11 +1,11 @@
-const c = @import("memory_c");
+const c = @import("system_c");
 
 // Native inference is single-threaded. The chunk-prefill hook and decode loop
 // sample the same request-owned accumulator, without extra GPU synchronization.
 var active: ?*MemoryPeak = null;
 
 pub const MemoryPeak = struct {
-    snapshot: c.bench_memory_snapshot,
+    snapshot: c.memory_counters_t,
 
     pub fn init() !MemoryPeak {
         return .{ .snapshot = try collect() };
@@ -25,9 +25,9 @@ pub const MemoryPeak = struct {
     }
 };
 
-fn collect() !c.bench_memory_snapshot {
-    var counters: c.bench_memory_snapshot = undefined;
-    if (c.bench_memory_collect(&counters) != 0) return error.MemoryCountersUnavailable;
+fn collect() !c.memory_counters_t {
+    var counters: c.memory_counters_t = undefined;
+    if (c.get_memory_counters(&counters, false) != 0) return error.MemoryCountersUnavailable;
     return counters;
 }
 
