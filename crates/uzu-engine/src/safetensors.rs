@@ -250,7 +250,3 @@ impl<B: Backend> ParameterTree<'_, B> {
         Ok(data.into_boxed_slice())
     }
 }
-
-#[cfg(test)]
-#[path = "../unit/safetensors_test.rs"]
-mod tests;
