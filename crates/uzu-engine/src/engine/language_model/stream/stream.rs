@@ -88,7 +88,18 @@ impl<B: Backend> GenerationJob<B> {
                 output_tokens,
                 ..
             } => output_tokens,
-            Self::Resolved(resolved) => resolved.output_tokens_buffer.as_ref().unwrap(),
+            Self::Resolved(resolved) => &resolved.output_tokens_buffer,
+            Self::Invalid => unreachable!(),
+        }
+    }
+
+    fn output_norm_buffer(&self) -> Option<&B::ScratchBuffer> {
+        match self {
+            Self::Pending {
+                output_norm,
+                ..
+            } => output_norm.as_ref(),
+            Self::Resolved(resolved) => resolved.output_norm_buffer.as_ref(),
             Self::Invalid => unreachable!(),
         }
     }
@@ -430,20 +441,29 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
             ) {
-            // TODO: CPU-bubble
-            let resolved = self.resolve(&mut last_job).await?;
-            let tokens = &resolved.output_tokens;
-            let batch_dim = &resolved.batch_dim;
-            let final_hidden = resolved.output_norm_buffer.as_ref().unwrap();
+            let batch_dim = last_job.batch_dim();
 
-            let last_norm_buffer =
-                if let Some((accepted_indices, _)) = resolved.accepted_indices_and_input_tokens.as_ref() {
-                    let row = (*accepted_indices.last().unwrap()) as usize;
-                    let row_bytes = final_hidden.size() / batch_dim.size() as usize;
-                    final_hidden.subrange(row * row_bytes..(row + 1) * row_bytes)
-                } else {
-                    final_hidden.subrange(..)
-                };
+            let (target_output_norm, target_output_token) = if batch_dim.full_accept() {
+                let norm_buffer = last_job.output_norm_buffer().unwrap();
+                let token_buffer = last_job.output_tokens_buffer();
+                (norm_buffer.subrange(..), token_buffer.subrange(..))
+            } else {
+                // TODO: CPU-bubble: for `accepted_indices`, to find where the root of the speculator should be.
+                let resolved = self.resolve(&mut last_job).await?;
+                let batch_dim = &resolved.batch_dim;
+                let norm_buffer = resolved.output_norm_buffer.as_ref().unwrap();
+                let token_buffer = &resolved.output_tokens_buffer;
+
+                let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
+
+                let row = (*accepted_indices.last().unwrap()) as usize;
+                let norm_row_bytes = norm_buffer.size() / batch_dim.size() as usize;
+                let token_word_bytes = DataType::U32.size_in_bytes();
+                (
+                    norm_buffer.subrange(row * norm_row_bytes..(row + 1) * norm_row_bytes),
+                    token_buffer.subrange(row * token_word_bytes..(row + 1) * token_word_bytes),
+                )
+            };
 
             // TODO: CPU-bubble: for next `batch_dim`. To remove we need to
             // contruct the trie nodes GPU-side and have `batch_dim` carry a
@@ -451,8 +471,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             let trie = speculator
                 .propose_tree(
                     self.model_state.speculator_state.as_mut().unwrap(),
-                    last_norm_buffer,
-                    tokens[tokens.len() - 1] as u32,
+                    target_output_norm,
+                    target_output_token,
                     self.model.decoder.embedding(),
                     shape,
                     &self.options.sampling_method,
@@ -497,7 +517,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             (constant_token_ids.as_ref().unwrap(), batch_dim)
         } else if last_job.batch_dim().size() == 1 {
             needs_last_job_input = true;
-            (last_job.output_tokens_buffer(), BatchTopology::flat(1, true))
+            (last_job.output_tokens_buffer().unwrap(), BatchTopology::flat(1, true))
         } else {
             let resolved = self.resolve(&mut last_job).await?;
             let token = *resolved.output_tokens.last().unwrap() as u32;
@@ -552,7 +572,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
                 // NOTE: Not a CPU bubble, forward pass is overlapped.
                 self.resolve(&mut last_job).await?;
-                (command_buffer, last_job.output_tokens_buffer())
+                (command_buffer, last_job.output_tokens_buffer().unwrap())
             } else {
                 (command_buffer, token_ids)
             };
