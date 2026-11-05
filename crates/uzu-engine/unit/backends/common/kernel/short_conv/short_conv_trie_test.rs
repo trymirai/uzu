@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::ShortConvTrieKernel,
+            gpu_types::trie::TrieNode, kernel::ShortConvTrieKernel,
         },
         cpu::Cpu,
     },
@@ -62,7 +62,18 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         input.base_state.iter().copied().chain(std::iter::repeat(T::zero())).take(base_state_buffer_size).collect();
     let base_state = create_buffer_with_data::<B, T>(&context, &base_state_data);
 
-    let parents = create_buffer_with_data::<B, i32>(&context, &input.parents);
+    let trie: Vec<TrieNode> = input
+        .parents
+        .iter()
+        .enumerate()
+        .map(|(node, &parent)| TrieNode {
+            trie_start: node as u32,
+            trie_end: node as u32,
+            height: 0,
+            parent,
+        })
+        .collect();
+    let trie = create_buffer_with_data::<B, u32>(&context, bytemuck::cast_slice(&trie));
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
     let mut suffix_state = create_buffer::<B, T>(&context, suffix_state_size.max(1));
@@ -73,7 +84,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         &w,
         b.as_ref(),
         &base_state,
-        &parents,
+        &trie,
         &mut out,
         &mut suffix_state,
         input.suffix_len,

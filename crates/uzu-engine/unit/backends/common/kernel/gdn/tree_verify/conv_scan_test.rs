@@ -20,7 +20,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::ConvTreeScanKernel,
+            gpu_types::trie::TrieNode, kernel::ConvTreeScanKernel,
         },
         cpu::Cpu,
     },
@@ -82,7 +82,17 @@ fn run<B: Backend>(
     let weights = create_buffer_with_data::<B, f32>(&context, &weights);
     let bias = create_buffer_with_data::<B, f32>(&context, &bias);
     let base_state_buffer = create_buffer_with_data::<B, f32>(&context, &base_state);
-    let parents = create_buffer_with_data::<B, i32>(&context, &parents(tree_size, shape));
+    let trie: Vec<TrieNode> = parents(tree_size, shape)
+        .into_iter()
+        .enumerate()
+        .map(|(node, parent)| TrieNode {
+            trie_start: node as u32,
+            trie_end: node as u32,
+            height: 0,
+            parent,
+        })
+        .collect();
+    let trie = create_buffer_with_data::<B, u32>(&context, bytemuck::cast_slice(&trie));
     let mut output = create_buffer::<B, f32>(&context, tree_size * TOTAL_PROJ_DIM);
     let mut suffix_state = create_buffer::<B, f32>(&context, tree_size * CONV_DIM * STATE_STRIDE);
 
@@ -92,7 +102,7 @@ fn run<B: Backend>(
         &weights,
         Some(&bias),
         &base_state_buffer,
-        &parents,
+        &trie,
         &mut output,
         &mut suffix_state,
         tree_size as u32,
