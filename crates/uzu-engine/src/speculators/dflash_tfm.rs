@@ -147,6 +147,7 @@ pub struct DFlashTfmSpeculator<B: Backend> {
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
+    /// `None` where no tree shape suits the device, or where the backend's weaver MLP inputs need Hadamard factors.
     pub async fn new(
         model_path: &Path,
         target_embedding: &Embedding<B>,
@@ -174,18 +175,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             &*context,
         )
         .await?;
-        let weaver = if let Some(weaver_config) = &config.weaver_config {
-            Some(
-                Weaver::new(
-                    weaver_config,
-                    target_embedding.readout_input_hadamard_factors(),
-                    &speculator_tree.subtree("weaver"),
-                    &*context,
-                )
-                .await?,
+        let weaver = match &config.weaver_config {
+            Some(weaver_config) => match Weaver::new(
+                weaver_config,
+                target_embedding.readout_input_hadamard_factors(),
+                &speculator_tree.subtree("weaver"),
+                &*context,
             )
-        } else {
-            None
+            .await
+            {
+                Err(WeaverNewError::InputHadamardFactors) => return Ok(None),
+                weaver => Some(weaver?),
+            },
+            None => None,
         };
         let confidence_head = match &config.confidence_head_config {
             Some(head_config) => Some(

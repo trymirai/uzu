@@ -28,6 +28,7 @@ pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
     decoder: Decoder<B>,
     speculator: Option<DFlashTfmSpeculator<B>>,
+    speculator_unavailable: bool,
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
@@ -79,16 +80,13 @@ impl<B: Backend> Engine<B> {
         )
         .await?;
 
-        assert!(
-            speculator_path.is_none() || decoder.speculation_supported(),
-            "attempted to load speculator for a model that doesn't support one"
-        );
-
-        let speculator = if let Some(speculator_path) = speculator_path.as_deref() {
-            DFlashTfmSpeculator::new(speculator_path, decoder.embedding(), self.context.clone()).await?
-        } else {
-            None
+        let speculator = match speculator_path.as_deref() {
+            Some(speculator_path) if decoder.speculation_supported() => {
+                DFlashTfmSpeculator::new(speculator_path, decoder.embedding(), self.context.clone()).await?
+            },
+            _ => None,
         };
+        let speculator_unavailable = speculator_path.is_some() && speculator.is_none();
 
         let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
 
@@ -109,6 +107,7 @@ impl<B: Backend> Engine<B> {
             engine: self.clone(),
             decoder,
             speculator,
+            speculator_unavailable,
             sampling,
             context_ring_update,
             generation_config,
@@ -155,6 +154,11 @@ impl<B: Backend> LanguageModel<B> {
         self.decoder.speculation_supported()
     }
 
+    /// Whether the model ships a speculator that this backend or device cannot run, so it decodes unspeculated.
+    pub fn speculator_unavailable(&self) -> bool {
+        self.speculator_unavailable
+    }
+
     pub fn default_sampling_method(&self) -> SamplingMethod {
         self.generation_config.default_sampling_method()
     }
@@ -175,3 +179,7 @@ impl<B: Backend> LanguageModel<B> {
 #[cfg(test)]
 #[path = "../../../unit/engine/language_model/logits_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../unit/engine/language_model/speculator_test.rs"]
+mod speculator_tests;

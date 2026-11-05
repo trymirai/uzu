@@ -90,6 +90,10 @@ impl Context for CpuContext {
         None
     }
 
+    fn available_memory(&self) -> Option<usize> {
+        None
+    }
+
     fn start_capture(
         &self,
         _output_path: &Path,

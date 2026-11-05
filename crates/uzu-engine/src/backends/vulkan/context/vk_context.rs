@@ -37,6 +37,12 @@ const API_VERSION_1_4: u32 = vk::make_api_version(0, 1, 4, 0);
 const NVIDIA_VENDOR_ID: u32 = 0x10DE;
 /// The file name every pipeline cache starts with, followed by its shader build's SPIR-V hash.
 const PIPELINE_CACHE_PREFIX: &str = "vulkan-pipeline-cache";
+const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
+    vk::BufferUsageFlags::STORAGE_BUFFER.as_raw()
+        | vk::BufferUsageFlags::TRANSFER_SRC.as_raw()
+        | vk::BufferUsageFlags::TRANSFER_DST.as_raw()
+        | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS.as_raw(),
+);
 pub struct VkContext {
     weak_self: Weak<VkContext>,
     _entry: ash::Entry,
@@ -258,12 +264,7 @@ impl VkContext {
         if size == 0 {
             return Err(VkBufferError::Empty.into());
         }
-        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_SRC
-                | vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        );
+        let buffer_info = vk::BufferCreateInfo::default().size(size).usage(BUFFER_USAGE);
         let discrete = self.physical_device.properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU;
         let allocation_info = memory.allocation_create_info(discrete);
         let allocator = &self.memory_allocator;
@@ -444,6 +445,28 @@ impl Context for VkContext {
     /// (pipelines, command pools, descriptors) is excluded.
     fn peak_memory_usage(&self) -> Option<usize> {
         Some(self.peak_buffer_bytes.load(Ordering::Relaxed))
+    }
+
+    /// The budget VK_EXT_memory_budget reports left over this process's usage, on the heap of the memory type device
+    /// buffers take: other device-local heaps, such as a resizable BAR's, alias the same video memory.
+    fn available_memory(&self) -> Option<usize> {
+        if !self.physical_device.capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET) {
+            return None;
+        }
+        let discrete = self.physical_device.properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU;
+        let buffer_info = vk::BufferCreateInfo::default().size(1).usage(BUFFER_USAGE);
+        let allocator = &self.memory_allocator;
+        let memory_type = unsafe {
+            allocator.find_memory_type_index_for_buffer_info(
+                &buffer_info,
+                &VkBufferMemory::Device.allocation_create_info(discrete),
+            )
+        }
+        .ok()?;
+        let heap = unsafe { allocator.get_memory_properties() }.memory_types[memory_type as usize].heap_index;
+        let budgets = allocator.get_heap_budgets().ok()?;
+        let budget = budgets.get(heap as usize)?;
+        Some(budget.budget.saturating_sub(budget.usage) as usize)
     }
 
     fn start_capture(

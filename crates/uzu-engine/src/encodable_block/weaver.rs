@@ -162,6 +162,8 @@ pub enum WeaverNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("Weaver MLP does not support input Hadamard factors")]
+    InputHadamardFactors,
     #[error("Weaver requires at least one layer")]
     InvalidLayerCount,
     #[error("model_dim must be divisible by num_heads")]
