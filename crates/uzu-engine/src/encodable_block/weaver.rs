@@ -64,73 +64,6 @@ impl<B: Backend> EncodedWeaverTree<B> {
     }
 }
 
-pub struct ProposalNode {
-    pub token_id: u32,
-    pub depth: u32,
-    pub logprob: f32,
-    pub child_indices: Vec<usize>,
-}
-
-impl<B: Backend> EncodedWeaverTree<B> {
-    pub async fn read_nodes(
-        &self,
-        context: &B::Context,
-    ) -> Result<Vec<ProposalNode>, B::Error> {
-        let (packed_tree, frontier) = futures::future::try_join(
-            context.copyout::<u32>(&self.packed_tree),
-            context.copyout::<u32>(&self.frontier),
-        )
-        .await?;
-
-        let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
-        let frontier_capacity = frontier.len() / FrontierIdx::COUNT;
-        let tree_field = |field: TreeIdx, slot: usize| packed_tree[field as usize * tree_slot_count + slot];
-        let frontier_field = |field: FrontierIdx, slot: usize| frontier[field as usize * frontier_capacity + slot];
-
-        let mut slot_to_index = vec![usize::MAX; tree_slot_count];
-        let mut nodes: Vec<ProposalNode> = Vec::new();
-        for slot in 0..tree_slot_count {
-            if tree_field(TreeIdx::Valid, slot) == 0 {
-                continue;
-            }
-            let parent_slot = tree_field(TreeIdx::ParentSlot, slot) as i32;
-            let parent = (parent_slot >= 0).then(|| {
-                let parent = slot_to_index[parent_slot as usize];
-                assert_ne!(parent, usize::MAX, "tree slot {slot} names padding slot {parent_slot} as its parent");
-                parent
-            });
-            let index = nodes.len();
-            slot_to_index[slot] = index;
-            if let Some(parent) = parent {
-                nodes[parent].child_indices.push(index);
-            }
-            nodes.push(ProposalNode {
-                token_id: tree_field(TreeIdx::TokenId, slot),
-                depth: tree_field(TreeIdx::Depth, slot),
-                logprob: f32::from_bits(tree_field(TreeIdx::EdgeLogprobBits, slot)),
-                child_indices: Vec::new(),
-            });
-        }
-        for slot in 0..frontier_capacity {
-            if frontier_field(FrontierIdx::Active, slot) == 0 {
-                continue;
-            }
-            let parent_slot = frontier_field(FrontierIdx::ParentSlot, slot) as usize;
-            let parent = slot_to_index[parent_slot];
-            assert_ne!(parent, usize::MAX, "frontier slot {slot} names padding slot {parent_slot} as its parent");
-            let index = nodes.len();
-            nodes[parent].child_indices.push(index);
-            nodes.push(ProposalNode {
-                token_id: frontier_field(FrontierIdx::TokenId, slot),
-                depth: frontier_field(FrontierIdx::Depth, slot),
-                logprob: f32::from_bits(frontier_field(FrontierIdx::EdgeLogprobBits, slot)),
-                child_indices: Vec::new(),
-            });
-        }
-        Ok(nodes)
-    }
-}
-
 pub struct Weaver<B: Backend> {
     token_embedding_norm: Normalization<B>,
     token_embedding_projection: Box<dyn Linear<B>>,
@@ -723,9 +656,8 @@ impl<B: Backend> Weaver<B> {
 
             let word_bytes = DataType::U32.size_in_bytes();
             assert_eq!(root_token.size(), word_bytes, "root token must be a single u32");
-            let mut root = command_buffer
-                .allocate_constant_from_slice(&[0u32, 1u32])
-                .map_err(WeaverEncodeError::Backend)?;
+            let mut root =
+                command_buffer.allocate_constant_from_slice(&[0u32, 1u32]).map_err(WeaverEncodeError::Backend)?;
             command_buffer.encode_copy(root_token, root.subrange_mut(..word_bytes));
             let tree_field_bytes = size_for_shape(&[tree_slot_count], DataType::U32);
             let mut packed_tree = command_buffer

@@ -19,11 +19,9 @@ use crate::{
         dflash::{DFlash, DFlashEncodeError, DFlashNewError},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
-        weaver::{EncodedWeaverTree, ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
+        weaver::{EncodedWeaverTree, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
-    engine::language_model::grammar::Grammar,
     safetensors::{ParameterLoader, ParameterLoaderError},
-    trie::TrieNode,
     utils::file,
 };
 
@@ -407,7 +405,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             context.create_buffer_gpu(budget as usize * word_bytes).map_err(DFlashTreeError::Backend)?;
         let mut seeds =
             context.create_buffer_gpu(budget as usize * size_of::<u64>()).map_err(DFlashTreeError::Backend)?;
-        let mut count = context.create_buffer_gpu(word_bytes).map_err(DFlashTreeError::Backend)?;
 
         let prng_seed = prng.seed();
         match &source {
@@ -421,7 +418,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &mut nodes,
                     &mut token_ids,
                     &mut seeds,
-                    &mut count,
                     *chain_length,
                     budget,
                     prng_seed,
@@ -446,7 +442,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &mut nodes,
                     &mut token_ids,
                     &mut seeds,
-                    &mut count,
                     &mut stack,
                     *tree_slot_count,
                     *frontier_capacity,
@@ -462,7 +457,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             nodes,
             token_ids,
             seeds,
-            count,
             max_size: budget,
             is_flat: false,
             full_accept: false,
@@ -470,34 +464,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         Ok(batch_dim)
     }
-}
-
-fn recursive_build(
-    nodes: &[ProposalNode],
-    index: usize,
-    root_position: u32,
-    mut grammar: Option<&mut Grammar>,
-    prng: &PRng,
-) -> TrieNode {
-    let node = &nodes[index];
-    let mut trie_node =
-        TrieNode::new(node.token_id as u64, prng.derive(root_position as u64 + node.depth as u64), node.logprob);
-    for &child_index in &node.child_indices {
-        if let Some(grammar) = grammar.as_mut()
-            && (grammar.is_terminated() || grammar.accept_token(nodes[child_index].token_id as u64).is_err())
-        {
-            continue;
-        }
-
-        let child = recursive_build(nodes, child_index, root_position, grammar.as_deref_mut(), prng);
-
-        if let Some(grammar) = grammar.as_mut() {
-            grammar.rollback(1);
-        }
-
-        trie_node.add(child).expect("tree children are selected without replacement");
-    }
-    trie_node
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::TreeVerifyKernel,
+            gpu_types::trie::TrieNode, kernel::TreeVerifyKernel,
         },
         cpu::Cpu,
         metal::Metal,
@@ -48,8 +48,15 @@ fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
     let h0 = create_buffer_with_data::<B, f32>(&context, &wave(V_HEADS * DIM * DIM, 0.007, 0.05, -0.01));
     let norm_weight = create_buffer_with_data::<B, f32>(&context, &wave(DIM, 0.05, 0.2, 1.0));
     // Caterpillar: odd nodes are leaves, even nodes the spine, so every 16-node block branches.
-    let trie: Vec<u32> = (0..n as u32).flat_map(|node| [node, [n as u32 - 1, node][node as usize % 2], 0]).collect();
-    let trie = create_buffer_with_data::<B, u32>(&context, &trie);
+    let trie: Vec<TrieNode> = (0..n as u32)
+        .map(|node| TrieNode {
+            trie_start: node,
+            trie_end: [n as u32 - 1, node][node as usize % 2],
+            height: 0,
+            parent: node as i32 - 1,
+        })
+        .collect();
+    let trie = create_buffer_with_data::<B, u32>(&context, bytemuck::cast_slice(&trie));
     let mut o = create_buffer_with_data::<B, T>(&context, &vec![T::zero(); n * V_HEADS * DIM]);
 
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
