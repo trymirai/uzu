@@ -86,26 +86,11 @@ impl<B: Backend> WeightMatrix<B> {
                 )),
             ),
             AnyWeightMatrixSpec::QtipGaussianSpec(spec) => {
-                if required_layout != Layout::OutputInput {
-                    return Err(WeightMatrixError::UnsupportedConfiguration(
-                        "QTIP Gaussian requires OutputInput layout".into(),
-                    ));
-                }
                 let format = TrellisFormat {
                     vector_width: spec.vector_width,
                     transition_bits: spec.transition_bits,
                     restart_columns: (spec.restart_columns != 0).then_some(spec.restart_columns),
                 };
-                let block_columns = format.restart_columns.unwrap_or(input_dim);
-                if !matches!(format.vector_width, 2 | 4)
-                    || !(4..=8).contains(&format.transition_bits)
-                    || !block_columns.is_multiple_of(2 * format.vector_width)
-                    || !input_dim.is_multiple_of(block_columns)
-                {
-                    return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                        "trellis format {format:?} with {input_dim} columns"
-                    )));
-                }
                 let code_shape = [output_dim, format.code_row_bytes(input_dim)];
                 let values = tree.read_buffer("codes", &code_shape, DataType::U8).await?;
                 let row_scales = tree.read_buffer("scales", &[output_dim], DataType::F32).await?;
@@ -148,9 +133,6 @@ impl<B: Backend> WeightMatrix<B> {
                 )));
             },
         };
-        if group_size == 0 {
-            return Err(WeightMatrixError::UnsupportedConfiguration("group size must be non-zero".into()));
-        }
         // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
         let params_layout = match layout {
             Layout::OutputInput => QuantParamsLayout::GroupOutput,

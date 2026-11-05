@@ -102,8 +102,7 @@ impl<B: Backend> EmbeddingTable<B> {
             )));
         }
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        let quantized_tree;
-        let (spec, matrix_tree, use_hadamard) = match spec {
+        let (storage, output_hadamard_factors) = match spec {
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
                 incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
@@ -111,47 +110,41 @@ impl<B: Backend> EmbeddingTable<B> {
                 incoherence_kind: IncoherenceKind::Hadamard,
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
-                quantized_tree = tree.subtree("quantized");
-                (*quantization_spec, &quantized_tree, true)
+                let quantized = tree.subtree("quantized");
+                let storage = match *quantization_spec {
+                    AnyWeightMatrixSpec::LatticeSpec(spec) => {
+                        Storage::D4S4(load_d4s4(&quantized, vocab_size, embedding_dim, data_type, spec).await?)
+                    },
+                    spec => Storage::Matrix(
+                        WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, &quantized)
+                            .await?,
+                    ),
+                };
+                (storage, Some(read_output_signs(tree, embedding_dim).await?))
             },
             spec @ AnyWeightMatrixSpec::HybridSpec(_) => {
                 return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
                     "{spec:?} with embedding dim {embedding_dim}"
                 )));
             },
-            spec => (spec, tree, false),
-        };
-        let storage = match spec {
-            AnyWeightMatrixSpec::LatticeSpec(spec) if use_hadamard => {
-                Storage::D4S4(load_d4s4(matrix_tree, vocab_size, embedding_dim, data_type, spec).await?)
-            },
-            spec => Storage::Matrix(
-                WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, matrix_tree)
-                    .await?,
+            spec => (
+                Storage::Matrix(
+                    WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree).await?,
+                ),
+                None,
             ),
         };
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => {
-                if let Some(info) = matrix.quantization() {
-                    (EmbeddingTableKind::Quantized, Some(info))
-                } else if use_hadamard {
-                    return Err(EmbeddingTableError::UnsupportedConfiguration(
-                        "output-Hadamard factors require a quantized table".into(),
-                    ));
-                } else {
-                    (EmbeddingTableKind::Dense, None)
-                }
+            Storage::Matrix(matrix) => match matrix.quantization() {
+                Some(info) => (EmbeddingTableKind::Quantized, Some(info)),
+                None => (EmbeddingTableKind::Dense, None),
             },
-        };
-        let output_hadamard_factors = if use_hadamard {
-            Some(read_output_signs(tree, embedding_dim).await?)
-        } else {
-            None
         };
         let group_size = quantization.map(|info| info.group_size);
         let mode = quantization.map(|info| info.mode);
         let method = quantization.map(|info| info.method);
+        let use_hadamard = output_hadamard_factors.is_some();
         let lookup = LookupKernel::<B>::new(context, data_type, table_kind, group_size, mode, method, use_hadamard)
             .map_err(EmbeddingTableError::BackendError)?;
 
