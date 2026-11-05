@@ -17,14 +17,18 @@ use uzu_engine::{
     backends::{Backend, BackendSelection, select_backend},
 };
 
-use crate::engine::bridge::{
-    chat_token_backend::UzuChatTokenBackendInstance, classification_backend::UzuClassificationBackendInstance,
-    decision_backend::UzuDecisionBackendInstance,
+use crate::engine::{
+    MemoryCheck,
+    bridge::{
+        chat_token_backend::UzuChatTokenBackendInstance, classification_backend::UzuClassificationBackendInstance,
+        decision_backend::UzuDecisionBackendInstance,
+    },
 };
 
 struct ChatTokenInstanceSelection {
     reference: String,
     config: ChatConfig,
+    memory_check: Option<MemoryCheck>,
 }
 
 impl BackendSelection for ChatTokenInstanceSelection {
@@ -32,7 +36,7 @@ impl BackendSelection for ChatTokenInstanceSelection {
     type Error = BackendError;
 
     async fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {
-        UzuChatTokenBackendInstance::<B>::new(self.reference, self.config)
+        UzuChatTokenBackendInstance::<B>::new(self.reference, self.config, self.memory_check)
             .await
             .map(|instance| Box::new(instance) as Box<dyn ChatTokenInstance>)
     }
@@ -68,11 +72,22 @@ impl BackendSelection for DecisionInstanceSelection {
     }
 }
 
-pub struct UzuLlmBackend;
+/// The Uzu backend; for a chat, with the memory check its model must pass before its weights load.
+pub struct UzuLlmBackend {
+    memory_check: Option<MemoryCheck>,
+}
 
 impl UzuLlmBackend {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            memory_check: None,
+        }
+    }
+
+    pub fn with_memory_check(memory_check: MemoryCheck) -> Self {
+        Self {
+            memory_check: Some(memory_check),
+        }
     }
 }
 
@@ -109,6 +124,7 @@ impl ChatTokenBackend for UzuLlmBackend {
                 ChatTokenInstanceSelection {
                     reference,
                     config,
+                    memory_check: self.memory_check.clone(),
                 },
                 BackendError::from("Unable to open any backend"),
             )

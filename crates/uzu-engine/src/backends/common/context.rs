@@ -43,6 +43,9 @@ pub trait Context: Sized + Send + Sync {
 
     fn peak_memory_usage(&self) -> Option<usize>;
 
+    /// The bytes this process can still allocate on the device, where the backend can tell.
+    fn available_memory(&self) -> Option<usize>;
+
     fn start_capture(
         &self,
         output_path: &Path,

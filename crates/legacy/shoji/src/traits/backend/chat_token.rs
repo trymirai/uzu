@@ -57,4 +57,7 @@ pub trait Instance:
     fn stop_token_ids(&self) -> Option<Box<[u64]>>;
 
     fn sampling_defaults(&self) -> SamplingParameters;
+
+    /// Why the instance decodes without the speculator its model ships, where it does.
+    fn speculation_notice(&self) -> Option<String>;
 }

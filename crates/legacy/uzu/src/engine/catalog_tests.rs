@@ -413,3 +413,73 @@ async fn discovered_downloadable_models_have_storage_entries_when_returned() {
     assert!(engine.download_state(&found).await.is_some(), "lookup returned a model before its storage entry existed");
     assert!(!engine.catalog_is_refreshing());
 }
+
+#[tokio::test]
+async fn model_by_path_matches_a_directory_however_its_path_is_written() {
+    let (engine, directory) = engine().await;
+    let path = directory.path().to_string_lossy().into_owned();
+    let on_disk = Model {
+        accessibility: ModelAccessibility::OnDevice {
+            source: shoji::types::model::ModelSource::Filesystem {
+                path: path.clone(),
+            },
+        },
+        ..model("on-disk")
+    };
+    let (registry, _complete, _started) = registry("disk", Some(vec![on_disk.clone()]));
+    engine.start_registry(registry).await.unwrap();
+    let forward = path.replace('\\', "/");
+    for written in [path.clone(), format!("{path}/"), forward.clone(), format!("{forward}/")] {
+        assert_eq!(engine.model_by_path(written.clone()).await.unwrap(), Some(on_disk.clone()), "{written}");
+    }
+}
+
+fn variant(
+    identifier: &str,
+    size: &str,
+) -> Model {
+    let metadata = |identifier: &str| serde_json::json!({ "id": identifier, "name": identifier, "description": null, "icons": [] });
+    Model {
+        family: Some(
+            serde_json::from_value(serde_json::json!({
+                "id": "qwen3.6", "vendor": { "id": "alibaba", "metadata": metadata("alibaba") }, "metadata": metadata("qwen3.6"),
+            }))
+            .unwrap(),
+        ),
+        properties: Some(
+            serde_json::from_value(
+                serde_json::json!({ "id": size, "size": 0, "version": null, "metadata": metadata(size) }),
+            )
+            .unwrap(),
+        ),
+        ..model(identifier)
+    }
+}
+
+/// A model that needs more memory than is free names the largest variant of the same model that fits, and none when
+/// no variant does.
+#[test]
+fn memory_shortfall_names_the_largest_variant_that_fits() {
+    const GB: u64 = 1_000_000_000;
+    let large = variant("qwen3.6:27b:l-8", "27b");
+    let medium = variant("qwen3.6:27b:m-4", "27b");
+    let small = variant("qwen3.6:27b:s-2", "27b");
+    let other_size = variant("qwen3.6:9b:l-8", "9b");
+    let catalog = [(&large, 29 * GB), (&medium, 16 * GB), (&small, 8 * GB), (&other_size, 10 * GB)];
+
+    assert_eq!(MemoryShortfall::new(&large, 29 * GB, 40 * GB, catalog), None);
+    let shortfall = MemoryShortfall::new(&large, 29 * GB, 24 * GB, catalog).unwrap();
+    assert_eq!(shortfall.smaller_model.as_deref(), Some("qwen3.6:27b:m-4"));
+    assert_eq!(shortfall.required_bytes, 29 * GB + 29 * GB / 10);
+    assert_eq!(
+        shortfall.to_string(),
+        "qwen3.6:27b:l-8 needs about 31.9 GB of device memory and 24.0 GB is free; use qwen3.6:27b:m-4 instead"
+    );
+    assert_eq!(
+        MemoryShortfall::new(&large, 29 * GB, 12 * GB, catalog).unwrap().smaller_model.as_deref(),
+        Some("qwen3.6:27b:s-2")
+    );
+    let none_fits = MemoryShortfall::new(&large, 29 * GB, 4 * GB, catalog).unwrap();
+    assert_eq!(none_fits.smaller_model, None);
+    assert!(none_fits.to_string().ends_with("no smaller variant of it fits"), "{none_fits}");
+}

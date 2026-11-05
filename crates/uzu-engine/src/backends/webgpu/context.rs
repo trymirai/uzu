@@ -261,6 +261,10 @@ impl Context for WebGPUContext {
         None
     }
 
+    fn available_memory(&self) -> Option<usize> {
+        None
+    }
+
     fn start_capture(
         &self,
         _trace_path: &Path,
