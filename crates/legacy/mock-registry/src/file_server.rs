@@ -1,11 +1,11 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use http::{Method, StatusCode, header::RANGE};
-use stream_throttle::{ThrottlePool, ThrottleRate};
 use tokio::{
     io::AsyncWriteExt,
     net::{TcpListener, TcpStream},
     task::JoinHandle as TokioJoinHandle,
+    time::{MissedTickBehavior, interval},
 };
 
 use crate::{
@@ -122,9 +122,10 @@ async fn write_file_body(
         return Ok(());
     }
 
-    let throttle = ThrottlePool::new(ThrottleRate::new(1, THROTTLED_CHUNK_INTERVAL));
+    let mut throttle = interval(THROTTLED_CHUNK_INTERVAL);
+    throttle.set_missed_tick_behavior(MissedTickBehavior::Delay);
     for chunk in body.chunks(THROTTLED_CHUNK_SIZE) {
-        throttle.queue().await;
+        throttle.tick().await;
         stream.write_all(chunk).await?;
         stream.flush().await?;
     }
