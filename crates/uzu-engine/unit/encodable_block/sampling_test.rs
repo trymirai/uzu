@@ -48,7 +48,7 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     let seeds_buffer = seeds.map(|seeds| command_buffer.allocate_constant_from_slice(seeds).unwrap());
     let bitmask_buffer = bitmask.map(|bitmask| command_buffer.allocate_constant_from_slice(bitmask).unwrap());
 
-    let batch_topology = BatchTopology::flat(batch_size, true);
+    let batch_topology = BatchTopology::flat(&mut command_buffer, batch_size, true).unwrap();
 
     let sampled_buffer = sampling
         .encode(

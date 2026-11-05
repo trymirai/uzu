@@ -103,6 +103,7 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             false,
             false,
+            false,
         )
         .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
@@ -207,6 +208,7 @@ impl<B: Backend> WeaverLayer<B> {
             3 * self.model_dim,
             token_count,
             token_count,
+            None::<&B::GlobalGpuBuffer>,
             command_buffer,
         );
         Ok(PreparedPrefixAttention {

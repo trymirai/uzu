@@ -14,7 +14,7 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub q: &'a B::ScratchBuffer,
     pub k: &'a B::ScratchBuffer,
     pub v: &'a B::ScratchBuffer,
-    pub trie: &'a B::ConstantBuffer,
+    pub trie: &'a B::GlobalGpuBuffer,
     pub log_decay: &'a B::ScratchBuffer,
     pub beta: &'a B::ScratchBuffer,
     pub h0: &'a B::GlobalGpuBuffer,

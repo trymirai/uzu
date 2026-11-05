@@ -11,8 +11,9 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, CpuBuffer,
-        DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer,
+        DeviceCapabilities, GlobalBufferCpuGpu,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
+        gpu_types::trie::TrieNode as TrieNodeGpu,
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
@@ -22,7 +23,7 @@ use crate::{
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
-    trie::TrieNode,
+    trie,
     utils::{
         size_for_shape::size_for_shape,
         timestamps::{record, wait},
@@ -49,12 +50,10 @@ enum GenerationJob<B: Backend> {
     Pending {
         output_norm: Option<B::ScratchBuffer>,
         output_tokens: B::GlobalGpuBuffer,
-        batch_dim: BatchTopology,
-        trie: Option<TrieNode>,
+        batch_dim: BatchTopology<B>,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
         capture_span: Option<CaptureMatcherSpan>,
         pendings: Box<[<<B as Backend>::CommandBuffer as CommandBuffer>::Pending]>,
-        _input_token_source: Option<B::GlobalGpuBuffer>,
     },
     Resolved(ResolvedJob<B>),
     Invalid,
@@ -64,14 +63,14 @@ struct ResolvedJob<B: Backend> {
     output_tokens: Box<[u64]>,
     output_norm_buffer: Option<B::ScratchBuffer>,
     output_tokens_buffer: Option<B::GlobalGpuBuffer>,
-    batch_dim: BatchTopology,
+    batch_dim: BatchTopology<B>,
     hidden_features: Option<Box<[B::ScratchBuffer]>>,
     accepted_indices_and_input_tokens: Option<(Box<[u32]>, Box<[u64]>)>,
     capture_span: Option<CaptureMatcherSpan>,
 }
 
 impl<B: Backend> GenerationJob<B> {
-    fn batch_dim(&self) -> &BatchTopology {
+    fn batch_dim(&self) -> &BatchTopology<B> {
         match self {
             Self::Pending {
                 batch_dim,
@@ -88,7 +87,7 @@ impl<B: Backend> GenerationJob<B> {
                 output_tokens,
                 ..
             } => output_tokens,
-            Self::Resolved(resolved) => &resolved.output_tokens_buffer,
+            Self::Resolved(resolved) => resolved.output_tokens_buffer.as_ref().unwrap(),
             Self::Invalid => unreachable!(),
         }
     }
@@ -172,9 +171,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             GenerationJob::Pending {
                 output_norm: output_norm_buffer,
                 output_tokens: output_tokens_buffer,
-                _input_token_source,
                 batch_dim,
-                trie,
                 hidden_features,
                 capture_span,
                 pendings,
@@ -192,23 +189,35 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
                 let mut output_tokens = gpu_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
 
-                let accepted_indices_and_input_tokens = if let Some(trie) = trie {
-                    let flat = trie.linearize();
-                    let full = flat.accept(&output_tokens, self.options.grammar.as_mut())?;
-
-                    let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
-                    let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
-                    let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                    output_tokens = accepted_output_token_ids;
-
-                    Some((accepted_token_indicies, accepted_input_token_ids))
-                } else {
+                let accepted_indices_and_input_tokens = if batch_dim.full_accept() {
                     if let Some(grammar) = self.options.grammar.as_mut() {
                         for &token_id in &output_tokens {
                             grammar.accept_token(token_id)?
                         }
                     }
                     None
+                } else {
+                    let input_tokens = self
+                        .model
+                        .engine
+                        .context
+                        .copyout::<u32>(&batch_dim.token_ids)
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let trie_nodes = self
+                        .model
+                        .engine
+                        .context
+                        .copyout::<TrieNodeGpu>(&batch_dim.nodes)
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let (accepted_token_indicies, accepted_input_token_ids, accepted_output_token_ids) =
+                        trie::accept(&trie_nodes, &output_tokens, &input_tokens, self.options.grammar.as_mut())?;
+
+                    output_tokens = accepted_output_token_ids;
+                    Some((accepted_token_indicies, accepted_input_token_ids))
                 };
 
                 ResolvedJob {
@@ -290,7 +299,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let batch_dim = BatchTopology::flat(input_chunk.len() as u32, true);
+            let batch_dim = BatchTopology::flat(input_chunk.len() as u32, true, &mut command_buffer)
+                .map_err(LanguageModelStreamError::Backend)?;
 
             let decoder_output = self.model.decoder.encode(
                 &token_ids,
@@ -418,9 +428,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         Ok(GenerationJob::Pending {
             output_norm,
             output_tokens: output_token,
-            _input_token_source: None,
             batch_dim,
-            trie: None,
             hidden_features: decoder_output.hidden_features,
             capture_span: None,
             pendings: Box::new([command_buffer.end_encoding().submit()]),
@@ -434,16 +442,27 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
+        let command_buffer = self
+            .model
+            .engine
+            .context
+            .create_command_buffer(
+                Some(&format!("decode {}", self.metrics.num_decode_forward_passes)),
+                Some(self.allocation_pool.clone()),
+            )
+            .map_err(LanguageModelStreamError::Backend)?;
+        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
-        let trie = if self.propose_trie
+        let (batch_dim, trie) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
             ) {
-            let batch_dim = last_job.batch_dim();
+            let last_batch_dim = last_job.batch_dim();
 
-            let (target_output_norm, target_output_token) = if batch_dim.full_accept() {
+            let (target_output_norm, target_output_token) = if last_batch_dim.full_accept() {
                 let norm_buffer = last_job.output_norm_buffer().unwrap();
                 let token_buffer = last_job.output_tokens_buffer();
                 (norm_buffer.subrange(..), token_buffer.subrange(..))
@@ -452,7 +471,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 let resolved = self.resolve(&mut last_job).await?;
                 let batch_dim = &resolved.batch_dim;
                 let norm_buffer = resolved.output_norm_buffer.as_ref().unwrap();
-                let token_buffer = &resolved.output_tokens_buffer;
+                let token_buffer = resolved.output_tokens_buffer.as_ref().unwrap();
 
                 let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
 
@@ -465,68 +484,48 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
             };
 
-            // TODO: CPU-bubble: for next `batch_dim`. To remove we need to
-            // contruct the trie nodes GPU-side and have `batch_dim` carry a
-            // GPU representation.
-            let trie = speculator
-                .propose_tree(
-                    self.model_state.speculator_state.as_mut().unwrap(),
-                    target_output_norm,
-                    target_output_token,
-                    self.model.decoder.embedding(),
-                    shape,
-                    &self.options.sampling_method,
-                    self.options.grammar.as_mut(),
-                    &self.model_state.prng,
-                    self.allocation_pool.clone(),
-                    Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
-                    self.options.timestamps.as_ref(),
-                )
-                .await?;
-            Some(trie)
+            let batch_dim = speculator.propose_tree(
+                self.model_state.speculator_state.as_mut().unwrap(),
+                target_output_norm,
+                target_output_token,
+                self.model.decoder.embedding(),
+                shape,
+                &self.options.sampling_method,
+                &self.model_state.prng,
+                &mut command_buffer,
+            )?;
+
+            let trie_pending = command_buffer.end_encoding().submit();
+            command_buffer = record(
+                self.model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some(&format!("decode {} (forward pass)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?,
+                self.options.timestamps.as_ref(),
+            );
+
+            (batch_dim, Some(trie_pending))
         } else {
-            None
+            let mut batch_dim =
+                BatchTopology::flat(1, true, &mut command_buffer).map_err(LanguageModelStreamError::Backend)?;
+            command_buffer.encode_copy(last_job.output_tokens_buffer(), &mut batch_dim.token_ids);
+
+            if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
+                let seed = command_buffer
+                    .allocate_constant_from_slice(&[self.model_state.prng.derive(context_length as u64)])
+                    .map_err(LanguageModelStreamError::Backend)?;
+                command_buffer.encode_copy(&seed, &mut batch_dim.seeds);
+            }
+
+            (batch_dim, None)
         };
 
         // Main (verifier) forward pass
-        let command_buffer = self
-            .model
-            .engine
-            .context
-            .create_command_buffer(
-                Some(&format!("decode {}", self.metrics.num_decode_forward_passes)),
-                Some(self.allocation_pool.clone()),
-            )
-            .map_err(LanguageModelStreamError::Backend)?;
-
-        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
-
-        let mut constant_token_ids = None;
-        let mut needs_last_job_input = false;
-        let flat_trie = trie.as_ref().map(|trie| trie.linearize());
-        let (token_ids, batch_dim): (&dyn GpuBuffer<Backend = B>, _) = if let Some(flat_trie) = flat_trie.as_ref() {
-            let batch_dim = BatchTopology::new(flat_trie.token_subtrie_ranges().collect::<Box<[_]>>(), false);
-
-            let token_ids = command_buffer
-                .allocate_constant_from_slice(
-                    &flat_trie.token_ids().map(|token_id| token_id as u32).collect::<Box<[u32]>>(),
-                )
-                .map_err(LanguageModelStreamError::Backend)?;
-
-            constant_token_ids = Some(token_ids);
-            (constant_token_ids.as_ref().unwrap(), batch_dim)
-        } else if last_job.batch_dim().size() == 1 {
-            needs_last_job_input = true;
-            (last_job.output_tokens_buffer().unwrap(), BatchTopology::flat(1, true))
-        } else {
-            let resolved = self.resolve(&mut last_job).await?;
-            let token = *resolved.output_tokens.last().unwrap() as u32;
-            let token_ids =
-                command_buffer.allocate_constant_from_slice(&[token]).map_err(LanguageModelStreamError::Backend)?;
-
-            constant_token_ids = Some(token_ids);
-            (constant_token_ids.as_ref().unwrap(), BatchTopology::flat(1, true))
-        };
+        let token_ids = batch_dim.token_ids();
 
         command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
@@ -554,29 +553,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         let mut pendings = Vec::new();
 
-        // sampling
-        let (mut command_buffer, token_ids): (_, &dyn GpuBuffer<Backend = B>) =
-            if needs_last_job_input && self.options.grammar.is_some() {
-                pendings.push(command_buffer.end_encoding().submit());
-                let command_buffer = record(
-                    self.model
-                        .engine
-                        .context
-                        .create_command_buffer(
-                            Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
-                            Some(self.allocation_pool.clone()),
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?,
-                    self.options.timestamps.as_ref(),
-                );
-
-                // NOTE: Not a CPU bubble, forward pass is overlapped.
-                self.resolve(&mut last_job).await?;
-                (command_buffer, last_job.output_tokens_buffer().unwrap())
-            } else {
-                (command_buffer, token_ids)
-            };
-
         let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
             let mut bitmask = command_buffer
                 .allocate_constant(
@@ -586,8 +562,31 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let was_filled = if let Some(flat_trie) = flat_trie.as_ref() {
-                flat_trie.fill_bitmasks(bitmask.as_slice_mut(), self.model.vocab_size, grammar)
+            let was_filled = if let Some(trie_pending) = trie_pending {
+                // Not a CPU-bubble, forward pass is overlapped.
+                wait(trie_pending, self.options.timestamps.as_ref())
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+
+                let trie_nodes = self
+                    .model
+                    .engine
+                    .context
+                    .copyout::<TrieNodeGpu>(&batch_dim.nodes)
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+
+                let trie_tokens = self
+                    .model
+                    .engine
+                    .context
+                    .copyout::<u32>(&batch_dim.token_ids)
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+
+                let trie_tokens = trie_tokens.into_iter().map(|t| t as u64).collect::<Box<[_]>>();
+
+                trie::fill_bitmasks(&trie_nodes, &trie_tokens, bitmask.as_slice_mut(), self.model.vocab_size, grammar)
             } else {
                 grammar.next_bitmask(bitmask.as_slice_mut())
             };
@@ -598,13 +597,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         };
 
         let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-            let seeds = if let Some(flat_trie) = flat_trie.as_ref() {
-                flat_trie.token_seeds().collect::<Box<[u64]>>()
-            } else {
-                Box::new([self.model_state.prng.derive(context_length as u64)])
-            };
-
-            Some(command_buffer.allocate_constant_from_slice(&seeds).map_err(LanguageModelStreamError::Backend)?)
+            Some(batch_dim.seeds())
         } else {
             None
         };
@@ -614,7 +607,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .sampling
             .encode(
                 &decoder_output.logits.unwrap(),
-                seeds.as_ref(),
+                seeds,
                 bitmask.as_ref(),
                 self.context_ring.as_ref(),
                 Some(token_ids),
@@ -625,7 +618,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             )
             .map_err(LanguageModelStreamError::Backend)?;
 
-        drop(seeds);
         drop(bitmask);
 
         // new job and statistics
@@ -659,20 +651,16 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             }
         }
 
-        drop(constant_token_ids);
-
         pendings.push(command_buffer.end_encoding().submit());
 
         if batch_dim.full_accept() {
             capture_span.take();
         }
 
-        let mut new_job = GenerationJob::Pending {
+        let new_job = GenerationJob::Pending {
             output_norm: decoder_output.final_hidden,
             output_tokens,
-            _input_token_source: None,
             batch_dim,
-            trie,
             hidden_features: decoder_output.hidden_features,
             capture_span,
             pendings: pendings.into_boxed_slice(),
@@ -680,19 +668,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Return results
         // NOTE: not a CPU bubble. The next job has already been scheduled.
-        let mut resolved_job = self.resolve_take(last_job).await?;
-
-        if needs_last_job_input {
-            // Keep previous input alive if necessary.
-            let GenerationJob::Pending {
-                _input_token_source,
-                ..
-            } = &mut new_job
-            else {
-                unreachable!()
-            };
-            *_input_token_source = resolved_job.output_tokens_buffer.take();
-        }
+        let resolved_job = self.resolve_take(last_job).await?;
 
         Ok((resolved_job, new_job))
     }

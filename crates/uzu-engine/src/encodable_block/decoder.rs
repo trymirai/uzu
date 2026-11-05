@@ -147,7 +147,7 @@ impl<B: Backend> Decoder<B> {
     pub fn encode(
         &self,
         token_ids: impl BufferRef<Backend = B>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
