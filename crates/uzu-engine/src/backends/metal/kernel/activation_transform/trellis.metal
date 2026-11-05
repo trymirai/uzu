@@ -175,7 +175,7 @@ static METAL_FUNC void rotate_columns(
 
 PUBLIC KERNEL(TrellisTransform)(
     device const bfloat* input,
-    device const float* rht_factors,
+    device const int32_t* rht_factors,
     device const float* mixing,
     device int8_t* activations,
     device float4* column_group_sums,
@@ -205,11 +205,11 @@ PUBLIC KERNEL(TrellisTransform)(
     const uint hadamard_index = hadamard_index_before_transpose(lane, simdgroup, value_index);
     const uint first_column = hadamard_index * layout.mixing_dimension;
     const device bfloat* token_input = input + token * dimension + first_column;
-    const device float* token_factors = rht_factors + first_column;
+    const device int32_t* token_factors = rht_factors + first_column;
     METAL_PRAGMA_UNROLL
     for (uint mixing_index = 0; mixing_index < layout.mixing_dimension; ++mixing_index) {
       sign_flipped_input[value_index * layout.mixing_dimension + mixing_index] =
-          float(token_input[mixing_index]) * token_factors[mixing_index];
+          float(token_input[mixing_index]) * float(token_factors[mixing_index]);
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);

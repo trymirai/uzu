@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    mem::size_of_val,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -140,11 +141,27 @@ impl<B: Backend> ParameterTree<'_, B> {
         }
     }
 
-    pub fn tensor_shape(&self, name: &str) -> Result<Box<[u32]>, ParameterLoaderError<B>> {
+    pub fn create_buffer_with_data<T: DataTypeRepr>(
+        &self,
+        data: &[T],
+    ) -> Result<B::GlobalGpuBuffer, ParameterLoaderError<B>> {
+        let mut buffer =
+            self.loader.context.create_buffer_cpu_gpu(size_of_val(data)).map_err(ParameterLoaderError::BackendError)?;
+        buffer.copyin(data);
+        Ok(buffer.handoff())
+    }
+
+    pub fn shape(
+        &self,
+        name: &str,
+    ) -> Result<&[u32], ParameterLoaderError<B>> {
         let key = format!("{}{name}", self.prefix);
-        let tensor =
-            self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
-        Ok(tensor.shape.clone())
+        self.loader
+            .header
+            .tensors
+            .get(&key)
+            .map(|tensor| tensor.shape.as_ref())
+            .ok_or(ParameterLoaderError::KeyNotFound(key))
     }
 
     pub fn metadata<T: DeserializeStrictOwned>(

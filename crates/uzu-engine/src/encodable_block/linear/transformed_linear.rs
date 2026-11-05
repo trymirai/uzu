@@ -59,11 +59,11 @@ async fn stack_parts<'t, B: Backend>(
     let AnyWeightMatrixSpec::OutputStackSpec(_) = spec else {
         return Ok(vec![(rows, spec, tree)]);
     };
-    let part_rows_shape = tree.tensor_shape("part_rows")?;
-    let [part_count] = part_rows_shape.as_ref() else {
+    let part_rows_shape = tree.shape("part_rows")?;
+    let [part_count] = part_rows_shape else {
         return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
     };
-    let part_rows = tree.read_slice::<i32>("part_rows", &part_rows_shape).await?;
+    let part_rows = tree.read_slice::<i32>("part_rows", part_rows_shape).await?;
     if part_rows.len() != *part_count as usize {
         return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
     }

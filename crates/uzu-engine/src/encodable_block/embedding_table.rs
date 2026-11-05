@@ -9,6 +9,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
+        d4s4_spec::{CODEBOOK, LADDER},
         hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
@@ -106,9 +107,13 @@ impl<B: Backend> EmbeddingTable<B> {
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let (storage, output_hadamard_factors) = match spec {
             AnyWeightMatrixSpec::D4S4Spec(spec) => {
-                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout).await?;
+                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout, false).await?;
                 let factors = tree.read_buffer("output_hadamard_factors", &[embedding_dim], DataType::I32).await?;
                 (Storage::D4S4(table), Some(factors))
+            },
+            AnyWeightMatrixSpec::LatticeSpec(spec) => {
+                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout, true).await?;
+                (Storage::D4S4(table), None)
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
@@ -122,7 +127,7 @@ impl<B: Backend> EmbeddingTable<B> {
                 let quantized_tree = tree.subtree("quantized");
                 let storage = match *quantization_spec {
                     AnyWeightMatrixSpec::LatticeSpec(spec) => {
-                        Storage::D4S4(load_d4s4(&quantized_tree, vocab_size, embedding_dim, data_type, spec.layout).await?)
+                        Storage::D4S4(load_d4s4(&quantized_tree, vocab_size, embedding_dim, data_type, spec.layout, true).await?)
                     },
                     spec => {
                         let matrix = load_matrix(&quantized_tree, spec).await?;
@@ -214,6 +219,7 @@ async fn load_d4s4<B: Backend>(
     embedding_dim: u32,
     data_type: DataType,
     layout: Layout,
+    use_lalamo_constants: bool,
 ) -> Result<D4S4Table<B>, EmbeddingTableError<B>> {
     if layout != Layout::InputOutput || !embedding_dim.is_multiple_of(d4s4::COLUMNS_PER_LADDER_INDEX_BYTE) {
         return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
@@ -226,8 +232,16 @@ async fn load_d4s4<B: Backend>(
     let ladder_indices =
         read("ladder_indices", &[vocab_size, embedding_dim / d4s4::COLUMNS_PER_LADDER_INDEX_BYTE], DataType::U8)
             .await?;
-    let ladder = read("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?;
-    let codebook = read("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?;
+    let ladder = if use_lalamo_constants {
+        tree.create_buffer_with_data(&LADDER)?
+    } else {
+        read("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?
+    };
+    let codebook = if use_lalamo_constants {
+        tree.create_buffer_with_data(&CODEBOOK)?
+    } else {
+        read("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?
+    };
     let table = D4S4Table {
         codes,
         row_scales,

@@ -10,23 +10,19 @@ pub enum IncoherenceProcessingMode {
     InputOutput,
 }
 
-#[uzu_config]
+#[uzu_config_abstract(HadamardSpec, KroneckerSpec)]
+pub struct IncoherenceProcessorSpec;
+
+#[uzu_config(self::IncoherenceProcessorSpec)]
 pub struct HadamardSpec {
-    #[serde(rename = "type")]
-    ty: monostate::MustBe!("HadamardSpec"),
     pub block_size: u32,
     pub processing_mode: IncoherenceProcessingMode,
 }
 
-#[uzu_config]
+#[uzu_config(self::IncoherenceProcessorSpec)]
 pub struct KroneckerSpec {
-    #[serde(rename = "type")]
-    ty: monostate::MustBe!("KroneckerSpec"),
     pub processing_mode: IncoherenceProcessingMode,
 }
-
-#[uzu_config_abstract(HadamardSpec, KroneckerSpec)]
-pub struct IncoherenceProcessorSpec;
 
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct HybridSpec {
