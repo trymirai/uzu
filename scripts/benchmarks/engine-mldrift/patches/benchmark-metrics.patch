@@ -1,5 +1,5 @@
 diff --git a/.bazelrc b/.bazelrc
-index 266bf65..0f4a148 100644
+index 4b8bfa8..8154a16 100644
 --- a/.bazelrc
 +++ b/.bazelrc
 @@ -2,7 +2,9 @@
@@ -14,10 +14,36 @@ index 266bf65..0f4a148 100644
  # Avoid XNNPACK using `-mavxvnniint8` (needs clang-16+/gcc-13+)
  build --define=xnn_enable_avxvnniint8=false
 diff --git a/MODULE.bazel b/MODULE.bazel
-index 098b839..e8cc263 100644
+index b12d23c..9d9a911 100644
 --- a/MODULE.bazel
 +++ b/MODULE.bazel
-@@ -266,3 +266,16 @@ http_archive(
+@@ -214,7 +214,10 @@ bazel_dep(
+ )
+ 
+ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+-rust.toolchain(edition = "2021")
++rust.toolchain(
++    edition = "2021",
++    extra_target_triples = ["aarch64-apple-ios"],
++)
+ use_repo(rust, "rust_toolchains")
+ 
+ register_toolchains("@rust_toolchains//:all")
+@@ -235,7 +238,12 @@ crate.spec(
+     package = "serde_json",
+     version = "1.0",
+ )
+-crate.from_specs()
++crate.from_specs(
++    supported_platform_triples = [
++        "aarch64-apple-darwin",
++        "aarch64-apple-ios",
++    ],
++)
+ use_repo(crate, crate_index = "crates")
+ 
+ http_archive(
+@@ -263,3 +271,16 @@ http_archive(
      strip_prefix = "tokenizers-cpp-0.1.1",
      url = "https://github.com/mlc-ai/tokenizers-cpp/archive/refs/tags/v0.1.1.tar.gz",
  )
@@ -30,17 +56,17 @@ index 098b839..e8cc263 100644
 +    includes = ["include"],
 +    visibility = ["//visibility:public"],
 +)""",
-+    sha256 = "dd7b033c5bf6e4308615bb7834c541291d5b20f64121d9a68222a39414635517",
-+    strip_prefix = "glaze-9.0.0",
-+    url = "https://github.com/stephenberry/glaze/archive/refs/tags/v9.0.0.tar.gz",
++    sha256 = "55f8a675397c505f9bee6c160e1c26b0085868f185d04d7a7727531fdbff4bd4",
++    strip_prefix = "glaze-9.1.0",
++    url = "https://github.com/stephenberry/glaze/archive/refs/tags/v9.1.0.tar.gz",
 +)
 diff --git a/ml_drift/samples/llm/BUILD b/ml_drift/samples/llm/BUILD
-index a5c281a..a55ebf1 100644
+index 8c63b10..b36c8fb 100644
 --- a/ml_drift/samples/llm/BUILD
 +++ b/ml_drift/samples/llm/BUILD
-@@ -15,7 +15,10 @@
- load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test", "objc_library")
- load("//ml_drift:pytype.default.bzl", "pytype_strict_binary")
+@@ -20,7 +20,10 @@ load(
+     "pytype_strict_library",
+ )
  
 -package(licenses = ["notice"])
 +package(
@@ -50,7 +76,7 @@ index a5c281a..a55ebf1 100644
  
  # Extracts weights from a HuggingFace model (safetensors).
  # bazel run //ml_drift/samples/llm:extract_weights_hf -- --model_path=/tmp/model.safetensors --output_dir=/tmp/extracted/
-@@ -346,8 +349,7 @@ cc_test(
+@@ -372,8 +375,7 @@ cc_test(
  )
  
  cc_library(
@@ -60,7 +86,7 @@ index a5c281a..a55ebf1 100644
      hdrs = ["llm_runner.h"],
      deps = [
          ":llm_config",
-@@ -365,6 +367,12 @@ cc_library(
+@@ -391,6 +393,12 @@ cc_library(
          "@sentencepiece//:sentencepiece_processor",
          "@tokenizers_cpp//:huggingface_tokenizer",
      ],
@@ -73,7 +99,7 @@ index a5c281a..a55ebf1 100644
      alwayslink = 1,
  )
  
-@@ -475,7 +483,7 @@ objc_library(
+@@ -501,7 +509,7 @@ objc_library(
          ":gemma4_model_builder",
          ":llm_config",
          ":llm_file_tensor_loader",

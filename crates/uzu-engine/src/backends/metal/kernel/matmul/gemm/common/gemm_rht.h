@@ -5,8 +5,10 @@
 
 using namespace metal;
 
-template <typename T, typename BiasT, bool SINGLE_SIMDGROUP = false>
+template <typename T, typename BiasT, bool SINGLE_SIMDGROUP = false, typename Source>
 static METAL_FUNC void apply_output_random_hadamard_transform(
+    Source source,
+    uint source_stride,
     device T* output_block,
     const device int32_t* rht_factors_block,
     const device BiasT* bias_block,
@@ -25,12 +27,14 @@ static METAL_FUNC void apply_output_random_hadamard_transform(
     const ushort row_local = ushort(cell / stripes_per_row);
     const ushort stripe = ushort(cell % stripes_per_row);
     const ushort col_local = stripe * ushort(HADAMARD_TRANSFORM_BLOCK_SIZE) + simd_lane;
-    const size_t output_index = size_t(row_local) * size_t(leading_dimension_d) + size_t(col_local);
-    T transformed =
-        simdgroup_output_random_hadamard_transform(simd_lane, output_block[output_index], rht_factors_block[col_local]);
+    T transformed = simdgroup_output_random_hadamard_transform(
+        simd_lane,
+        source[size_t(row_local) * size_t(source_stride) + size_t(col_local)],
+        rht_factors_block[col_local]
+    );
     if (apply_bias) {
       transformed = T(float(transformed) + float(bias_block[col_local]));
     }
-    output_block[output_index] = transformed;
+    output_block[size_t(row_local) * size_t(leading_dimension_d) + size_t(col_local)] = transformed;
   }
 }

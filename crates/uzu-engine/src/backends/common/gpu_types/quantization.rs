@@ -13,6 +13,8 @@ pub enum QuantizationMode {
     I8,
     #[serde(rename = "uint8")]
     U8,
+    #[serde(rename = "uint2")]
+    U2,
 }
 
 impl QuantizationMode {
@@ -24,7 +26,7 @@ impl QuantizationMode {
 
     pub fn storage_type(&self) -> DataType {
         match self {
-            QuantizationMode::U4 => DataType::U8,
+            QuantizationMode::U2 | QuantizationMode::U4 => DataType::U8,
             QuantizationMode::I8 => DataType::I8,
             QuantizationMode::U8 => DataType::U8,
         }
@@ -32,6 +34,7 @@ impl QuantizationMode {
 
     pub fn weight_codes_sign_flip_mask(&self) -> Option<u8> {
         match self {
+            QuantizationMode::U2 => None,
             QuantizationMode::U4 => Some(0x88),
             QuantizationMode::I8 => None,
             QuantizationMode::U8 => Some(0x80),
@@ -42,6 +45,7 @@ impl QuantizationMode {
 impl From<QuantizationMode> for DataType {
     fn from(val: QuantizationMode) -> Self {
         match val {
+            QuantizationMode::U2 => DataType::U2,
             QuantizationMode::U4 => DataType::U4,
             QuantizationMode::I8 => DataType::I8,
             QuantizationMode::U8 => DataType::U8,

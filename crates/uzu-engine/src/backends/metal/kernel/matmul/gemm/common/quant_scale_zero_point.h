@@ -20,7 +20,9 @@ template <
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
     short BITS,
-    bool SCALE_SYMMETRIC = false>
+    bool SCALE_SYMMETRIC,
+    typename StageT,
+    typename ComputeT>
 struct QuantizedBlockLoaderScaleZeroPoint {
   static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
@@ -34,6 +36,10 @@ struct QuantizedBlockLoaderScaleZeroPoint {
                                          : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
   UZU_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
   UZU_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
+  static_assert(
+      DESTINATION_LEADING_DIMENSION % 2 == 0 && (READS_PER_THREAD * PACK_FACTOR) % 2 == 0,
+      "paired stores need 4-byte alignment"
+  );
 
   const int src_leading_dim;
   const int tile_stride;
@@ -45,7 +51,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   const short tile_row_index;
   const short tile_col_index;
 
-  threadgroup T* dst;
+  threadgroup StageT* dst;
   const device uint8_t* src;
   const device T* scales;
   const device uint8_t* zero_points_row_start;
@@ -72,7 +78,8 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
-        dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * PACK_FACTOR),
+        dst(reinterpret_cast<threadgroup StageT*>(dst_) + tile_row_index * DESTINATION_LEADING_DIMENSION +
+            tile_col_index * PACK_FACTOR),
         src(src_ + tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR + tile_col_index * BYTES_PER_PACK),
         scales(scales_ + tile_row_index * params_output_stride_),
         zero_points_row_start(SCALE_SYMMETRIC ? nullptr : zero_points_row_start_),
@@ -108,10 +115,9 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     static_assert(SCALE_SYMMETRIC, "zero-point-free loader construction requires symmetric quantization");
   }
 
-  inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
+  inline void current_scale_bias(thread float& out_scale, thread float& out_bias) const {
     uint zero_point_value;
-    T scale_value;
-    scale_value = *scales;
+    const float scale_value = float(*scales);
     if constexpr (SCALE_SYMMETRIC) {
       zero_point_value = symmetric_zero_point<ushort(BITS)>();
     } else {
@@ -120,7 +126,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       zero_point_value = decode_zero_point<ushort(BITS)>(zero_points_row_start[byte_index], packed_index);
     }
     out_scale = scale_value;
-    out_bias = static_cast<T>(-scale_value * static_cast<T>(zero_point_value));
+    out_bias = -scale_value * float(zero_point_value);
   }
 
   void load_unsafe() const {
@@ -130,12 +136,10 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       }
     }
 
-    T scale;
-    T bias;
+    float scale;
+    float bias;
     current_scale_bias(scale, bias);
-    for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
-    }
+    dequantize<StageT, ComputeT, READS_PER_THREAD * PACK_FACTOR, BITS>(src, scale, bias, dst, signed_codes);
   }
 
   void load_safe(short2 src_tile_dim) const {
@@ -147,29 +151,35 @@ struct QuantizedBlockLoaderScaleZeroPoint {
 
     if (tile_row_index >= src_tile_dim.y) {
       for (int i = 0; i < READS_PER_THREAD * PACK_FACTOR; i++) {
-        dst[i] = T(0);
+        dst[i] = StageT(0);
       }
       return;
     }
 
     const int valid_cols = src_tile_dim.x;
     const int valid_packs = (valid_cols + PACK_FACTOR - 1) / PACK_FACTOR;
-    T scale;
-    T bias;
+    float scale;
+    float bias;
     current_scale_bias(scale, bias);
     for (int i = 0; i < READS_PER_THREAD; i++) {
       const int pack_index = tile_col_index + i;
       if (pack_index < valid_packs) {
-        dequantize<T, PACK_FACTOR, BITS>(src + i * BYTES_PER_PACK, scale, bias, dst + i * PACK_FACTOR, signed_codes);
+        dequantize<StageT, ComputeT, PACK_FACTOR, BITS>(
+            src + i * BYTES_PER_PACK,
+            scale,
+            bias,
+            dst + i * PACK_FACTOR,
+            signed_codes
+        );
         if (pack_index == valid_packs - 1) {
           const int remaining = valid_cols - pack_index * PACK_FACTOR;
           for (int lane = remaining; lane < PACK_FACTOR; ++lane) {
-            dst[i * PACK_FACTOR + lane] = T(0);
+            dst[i * PACK_FACTOR + lane] = StageT(0);
           }
         }
       } else {
         for (int lane = 0; lane < PACK_FACTOR; ++lane) {
-          dst[i * PACK_FACTOR + lane] = T(0);
+          dst[i * PACK_FACTOR + lane] = StageT(0);
         }
       }
     }

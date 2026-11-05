@@ -1,12 +1,13 @@
 const std = @import("std");
-pub const mlx = @import("mlx.zig");
-pub const log = @import("log.zig");
-pub const io_util = @import("io_util.zig");
-const model = @import("model.zig");
-const tokenizer = @import("tokenizer.zig");
-const chat = @import("chat.zig");
-const transformer = @import("transformer.zig");
-const generate = @import("generate.zig");
+pub const mlx = @import("mlx/ffi.zig");
+pub const log = @import("sdk/util/log.zig");
+pub const io_util = @import("sdk/util/io_util.zig");
+pub const env = @import("env.zig");
+const model = @import("sdk/config/model.zig");
+const tokenizer = @import("sdk/tokenizer/tokenizer.zig");
+const chat = @import("host/chat/chat.zig");
+const transformer = @import("engines/mlx/transformer.zig");
+const generate = @import("engines/mlx/generate.zig");
 const bench = @import("bench.zig");
 const request_utils = @import("bench_request.zig");
 const decode = @import("bench_decode.zig");
@@ -45,23 +46,26 @@ const Engine = struct {
         // Benchmark inputs must not depend on the user's app settings file.
         self.config.applyTokenizer(&self.tok, self.chat_config.eos_token);
         if (self.config.use_bidirectional_attention) return error.EmbeddingModelUnsupported;
-        self.weights = try model.loadModelWeights(io, allocator, path, &self.config, false);
+        const served = self.config.plugin != null;
+        self.weights = if (served) model.Weights.init(allocator) else try model.loadModelWeights(io, allocator, path, &self.config, false);
         errdefer self.weights.deinit();
 
-        model.resolveWeightPrefix(&self.config, &self.weights);
-        try model.narrowHadamardPackTables(&self.config, &self.weights, mlx.gpuStream());
-        self.xfm = try transformer.Transformer.init(io, allocator, self.config, &self.weights);
+        if (!served) {
+            model.resolveWeightPrefix(&self.config, &self.weights);
+            try model.narrowHadamardPackTables(&self.config, &self.weights, mlx.gpuStream());
+        }
+        self.xfm = if (served)
+            try @import("engines/mlx/plugin/driver.zig").load(io, allocator, &self.config, path, mlx.gpuStream())
+        else
+            try transformer.Transformer.init(io, allocator, self.config);
         errdefer self.xfm.deinit();
 
-        self.xfm.round_cost.layout = @import("round_cost.zig").layoutFor(&self.config);
+        self.xfm.round_cost.layout = @import("engines/mlx/spec/round_cost.zig").layoutFor(&self.config);
         generate.installSuppressMask(&self.xfm, &self.tok, self.chat_config.chat_template, self.config.eosTokenSlice());
         _ = mlx.applyWiredPolicy();
         if (self.config.hidden_act == .gelu_approx) {
             self.xfm.compileGelu();
             self.xfm.compileGeglu();
-        }
-        if (self.config.final_logit_softcapping > 0) {
-            self.xfm.compileSoftcap();
         }
         if (self.xfm.moe_layers != null) {
             self.xfm.compileMoeRouting();
@@ -176,11 +180,6 @@ const Engine = struct {
 
         const timer = io_util.Stopwatch.init(self.io);
         var gen = try generate.Generator.initWithOptions(self.io, a, &self.xfm, &self.tok, prompt, limit, sampling, self.config.eosTokenSlice(), options);
-        // Upstream's width chooser may otherwise grow back to the checkpoint's
-        // full block size after warmup, ignoring a smaller requested depth.
-        if (gen.dflash_chooser) |*chooser| {
-            chooser.max_width = @min(chooser.max_width, options.dflash_block_size - 1);
-        }
         // Even an error must drain GPU work before the next request resets it.
         defer {
             _ = mlx.mlx_synchronize(self.xfm.s);
@@ -257,6 +256,7 @@ fn stringValue(value: std.json.Value) ![]const u8 {
 }
 
 pub fn main(init: std.process.Init) !void {
+    env.init();
     const a = init.gpa;
     const io = init.io;
     var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, a);
@@ -307,10 +307,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     mlx.installErrorHandler();
-    @import("server.zig").applyMlxCacheLimit();
-    @import("server.zig").applyGpuCeilingEnv();
-    transformer.warmQsaEnvCaches();
-    @import("prefix_cache.zig").warmEnvCaches();
+    @import("mlx/state.zig").applyMlxCacheLimit();
+    @import("host/registry/memory_ceiling.zig").applyGpuCeilingEnv();
     const device = mlx.mlx_device_new_type(.gpu, 0);
     defer _ = mlx.mlx_device_free(device);
 
@@ -318,7 +316,7 @@ pub fn main(init: std.process.Init) !void {
     const engine = try Engine.init(io, a, path, draft_path);
     defer engine.deinit();
 
-    log.info("mlx-serve benchmark ready (v26.10.1, native MLX, mode={s}, depth={d}, max_depth={d})\n", .{
+    log.info("mlx-serve benchmark ready (v26.11.1, native MLX, mode={s}, depth={d}, max_depth={d})\n", .{
         @tagName(engine.speculation.mode), engine.speculation.default_depth, engine.speculation.max_depth,
     });
 

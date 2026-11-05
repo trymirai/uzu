@@ -4,12 +4,14 @@ import { useAppStore } from "@/stores/use-app-store";
 import { APP_STORE_KEY } from "@/stores/migrate-app-storage";
 import GeneralTab from "./general-tab";
 
-vi.mock("@/platform/platform-singleton", () => ({
-  getPlatform: () => ({ system: { getCliStatus: () => Promise.resolve("installed") } }),
+const cli = vi.hoisted(() => ({
+  getCliStatus: vi.fn<() => Promise<"installed" | "missing">>(async () => "installed"),
+  installCli: vi.fn<() => Promise<"installed" | "cancelled">>(async () => "installed"),
 }));
+vi.mock("@/platform/platform-singleton", () => ({ getPlatform: () => ({ system: cli }) }));
 
 vi.mock("@/platform/platform-info", () => ({
-  platformInfo: { isTauri: true, features: { logExport: true } },
+  platformInfo: { isTauri: true, features: { logExport: true, cliInstall: true } },
 }));
 
 const settings = {
@@ -42,6 +44,8 @@ const appDefaults = useAppStore.getState();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cli.getCliStatus.mockResolvedValue("installed");
+  cli.installCli.mockResolvedValue("installed");
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -57,6 +61,22 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it("installs the CLI only on an explicit click and allows retry after cancelling the prompt", async () => {
+  cli.getCliStatus.mockResolvedValue("missing");
+  cli.installCli.mockResolvedValueOnce("cancelled");
+  render(<GeneralTab />);
+  const install = await screen.findByRole("button", { name: "Install" });
+  expect(cli.installCli).not.toHaveBeenCalled();
+
+  fireEvent.click(install);
+  await waitFor(() => expect(cli.installCli).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Install" }).hasAttribute("disabled")).toBe(false));
+
+  fireEvent.click(screen.getByRole("button", { name: "Install" }));
+  await waitFor(() => expect(cli.installCli).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Install" })).toBeNull());
 });
 
 it("lets users disable model-provided chat names", () => {

@@ -132,15 +132,17 @@ struct ThreadgroupTile {
     c_fragment.map([&](AccumulatorType value) { return op.apply(value); });
   }
 
-  METAL_FUNC void apply_bias(const device BT* bias) {
-    const device BT* bias_ptr = bias + simdgroup_col_offset;
+  template <typename BiasT>
+  METAL_FUNC void apply_bias(const device BiasT* bias) {
+    const device BiasT* bias_ptr = bias + simdgroup_col_offset;
     for_each_output([&](ushort, ushort col_offset, ushort k, thread AccumulatorType& v) {
       v += static_cast<AccumulatorType>(bias_ptr[col_offset + k]);
     });
   }
 
-  METAL_FUNC void apply_bias_safe(const device BT* bias, short2 tile_dimensions) {
-    const device BT* bias_ptr = bias + simdgroup_col_offset;
+  template <typename BiasT>
+  METAL_FUNC void apply_bias_safe(const device BiasT* bias, short2 tile_dimensions) {
+    const device BiasT* bias_ptr = bias + simdgroup_col_offset;
     tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
     for_each_output([&](ushort row_offset, ushort col_offset, ushort k, thread AccumulatorType& v) {
       if (row_offset < tile_dimensions.y && col_offset + k < tile_dimensions.x)

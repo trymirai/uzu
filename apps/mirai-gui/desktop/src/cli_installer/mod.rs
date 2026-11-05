@@ -103,25 +103,6 @@ fn install_wrapper() -> AppResult<()> {
     Ok(())
 }
 
-fn install_declined() -> bool {
-    crate::storage::settings_load()
-        .ok()
-        .and_then(|s| s.get("cliInstallDeclined").and_then(|v| v.as_bool()))
-        .unwrap_or(false)
-}
-
-fn persist_declined(declined: bool) {
-    if let Err(e) = crate::storage::settings_merge(serde_json::Map::from_iter([(
-        "cliInstallDeclined".to_string(),
-        declined.into(),
-    )])) {
-        crate::logger::warn(
-            "cli-installer:settings-write-failed",
-            Some(serde_json::json!({ "declined": declined, "error": e })),
-        );
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CliStatus {
@@ -166,7 +147,6 @@ pub async fn cli_install(app: AppHandle) -> AppResult<CliInstalled> {
             let result = tokio::task::spawn_blocking(install_wrapper).await.map_err(AppError::msg)?;
             match &result {
                 Ok(()) => {
-                    persist_declined(false);
                     crate::logger::info("cli-installer:installed", Some(serde_json::json!({ "source": "settings" })));
                 },
                 Err(AppError::Authorization(AuthError::Cancelled)) => {
@@ -186,42 +166,6 @@ pub async fn cli_install(app: AppHandle) -> AppResult<CliInstalled> {
             }
         },
     }
-}
-
-pub fn trigger_if_needed(app: &AppHandle) {
-    if !available(app) {
-        return;
-    }
-    tauri::async_runtime::spawn(async move {
-        // Let the window come up before the admin prompt appears.
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        match wrapper_state() {
-            WrapperState::Current => {
-                crate::logger::info("cli-installer:skip", Some(serde_json::json!({ "reason": "installed" })));
-            },
-            WrapperState::Foreign => {
-                crate::logger::warn("cli-installer:skip", Some(serde_json::json!({ "reason": "foreign-binary" })));
-            },
-            WrapperState::Missing => {
-                if install_declined() {
-                    crate::logger::info("cli-installer:skip", Some(serde_json::json!({ "reason": "declined" })));
-                    return;
-                }
-                crate::logger::info("cli-installer:prompt", Some(serde_json::json!({ "reason": "install" })));
-                match tokio::task::spawn_blocking(install_wrapper).await {
-                    Ok(Ok(())) => crate::logger::info("cli-installer:installed", None),
-                    Ok(Err(AppError::Authorization(AuthError::Cancelled))) => {
-                        crate::logger::info("cli-installer:declined", None);
-                        persist_declined(true);
-                    },
-                    Ok(Err(e)) => crate::logger::warn("cli-installer:failed", Some(serde_json::json!({ "error": e }))),
-                    Err(e) => {
-                        crate::logger::warn("cli-installer:failed", Some(serde_json::json!({ "error": e.to_string() })))
-                    },
-                }
-            },
-        }
-    });
 }
 
 #[cfg(test)]

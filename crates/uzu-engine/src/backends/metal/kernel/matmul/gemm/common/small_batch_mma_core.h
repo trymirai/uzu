@@ -165,6 +165,8 @@ struct SmallBatchMmaCore {
       threadgroup_barrier(mem_flags::mem_device);
       apply_output_random_hadamard_transform(
           tile_output,
+          params->leading_dimension_d,
+          tile_output,
           rht_factors + tile_col_start,
           tile_bias,
           output_transform.contains(GemmDTransform::BIAS),

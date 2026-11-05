@@ -2,7 +2,7 @@ mod error;
 
 pub use error::Error;
 use keisoku::{PowerMeter, PowerReading};
-use shoji::types::session::chat::ChatReplyEnergy;
+use shoji::types::session::chat::ReplyEnergy;
 
 pub struct EnergyRecorder {
     meter: PowerMeter,
@@ -20,20 +20,20 @@ impl EnergyRecorder {
         Ok(())
     }
 
-    pub fn split(&mut self) -> Result<ChatReplyEnergy, Error> {
+    pub fn split(&mut self) -> Result<ReplyEnergy, Error> {
         Ok(energy(self.meter.split()?))
     }
 
-    pub fn finish(&mut self) -> Result<ChatReplyEnergy, Error> {
+    pub fn finish(&mut self) -> Result<ReplyEnergy, Error> {
         Ok(energy(self.meter.stop()?))
     }
 }
 
-fn energy(reading: PowerReading) -> ChatReplyEnergy {
+fn energy(reading: PowerReading) -> ReplyEnergy {
     match reading {
         PowerReading::Total {
             total,
-        } => ChatReplyEnergy::Total {
+        } => ReplyEnergy::Total {
             total: total.value() as f64,
         },
         PowerReading::Components {
@@ -41,7 +41,7 @@ fn energy(reading: PowerReading) -> ChatReplyEnergy {
             gpu,
             ane,
             ram,
-        } => ChatReplyEnergy::Components {
+        } => ReplyEnergy::Components {
             cpu: cpu.value() as f64,
             gpu: gpu.value() as f64,
             ane: ane.value() as f64,

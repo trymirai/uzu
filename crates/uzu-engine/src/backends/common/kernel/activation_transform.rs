@@ -33,12 +33,13 @@ impl ActivationQuantization {
         emit_group_sums: bool,
         code_layout: Int8CodeLayout,
     ) -> Option<Self> {
-        (scale_group_size == ACTIVATION_SCALE_GROUP_SIZE && (!emit_group_sums || matches!(weight_group_size, 32 | 64)))
-            .then_some(Self {
-                scale_group_size,
-                sum_group_size: emit_group_sums.then_some(weight_group_size),
-                code_layout,
-            })
+        (scale_group_size == ACTIVATION_SCALE_GROUP_SIZE
+            && (!emit_group_sums || matches!(weight_group_size, 32 | 64 | 128)))
+        .then_some(Self {
+            scale_group_size,
+            sum_group_size: emit_group_sums.then_some(weight_group_size),
+            code_layout,
+        })
     }
 
     pub const fn scale_group_size(self) -> u32 {
@@ -111,7 +112,6 @@ impl<B: Backend> ActivationTransform<B> {
         Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, ActivationFormat::Bf16)
     }
 
-    #[cfg(any(backend = "cpu", backend = "metal"))]
     pub fn output_rht(
         context: &B::Context,
         data_type: DataType,

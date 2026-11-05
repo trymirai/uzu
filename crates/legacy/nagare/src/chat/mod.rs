@@ -28,8 +28,8 @@ use shoji::{
         basic::{CancelToken, SamplingParameters, ToolCall, ToolDescription, ToolNamespace, Value, parse_lenient_json},
         model::Model,
         session::chat::{
-            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyEnergy,
-            ChatReplyFinishReason, ChatReplySpeculatorStats, ChatReplyStats, ChatRole,
+            ChatConfig, ChatContentBlock, ChatMessage, ChatReply, ChatReplyConfig, ChatReplyFinishReason,
+            ChatReplySpeculatorStats, ChatReplyStats, ChatRole, ReplyEnergy,
         },
     },
 };
@@ -775,7 +775,7 @@ fn aggregate_generate_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
         let intervals = u64::from(tokens - 1);
         Some((token_intervals + intervals, duration + intervals as f64 / generate_rate))
     })?;
-    (token_intervals > 0 && duration > 0.0).then(|| token_intervals as f64 / duration)
+    (token_intervals > 0 && duration > 0.0).then_some(token_intervals as f64 / duration)
 }
 
 fn aggregate_prefill_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
@@ -794,7 +794,7 @@ fn aggregate_prefill_rate(stats: &[&ChatReplyStats]) -> Option<f64> {
         }
         Some((tokens + u64::from(input_tokens), duration + f64::from(input_tokens) / prefill_rate))
     })?;
-    (tokens > 0 && duration > 0.0).then(|| tokens as f64 / duration)
+    (tokens > 0 && duration > 0.0).then_some(tokens as f64 / duration)
 }
 
 fn sum_optional_u32(
@@ -804,7 +804,7 @@ fn sum_optional_u32(
     stats.iter().try_fold(0_u32, |sum, stats| sum.checked_add(value(stats)?))
 }
 
-fn aggregate_input_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy> {
+fn aggregate_input_energy(stats: &[&ChatReplyStats]) -> Option<ReplyEnergy> {
     let mut phases = Vec::with_capacity(stats.len());
     for stats in stats {
         phases.push(stats.input_energy.as_ref()?);
@@ -812,7 +812,7 @@ fn aggregate_input_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy> 
     aggregate_energy(phases)
 }
 
-fn aggregate_output_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy> {
+fn aggregate_output_energy(stats: &[&ChatReplyStats]) -> Option<ReplyEnergy> {
     let mut phases = Vec::with_capacity(stats.len());
     for stats in stats {
         let tokens = stats.tokens_count_output?;
@@ -824,7 +824,7 @@ fn aggregate_output_energy(stats: &[&ChatReplyStats]) -> Option<ChatReplyEnergy>
     aggregate_energy(phases)
 }
 
-fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ChatReplyEnergy>) -> Option<ChatReplyEnergy> {
+fn aggregate_energy<'a>(energy: impl IntoIterator<Item = &'a ReplyEnergy>) -> Option<ReplyEnergy> {
     energy.into_iter().cloned().reduce(|total, energy| total + energy)
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.6"
-REVISION="38f0adb8f6470642aaa15f7aa46ac2d135359d23"
+VERSION="0.2.16"
+REVISION="647902ae6a577600abb1b0947ce938a452270946"
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/magnitude"
 

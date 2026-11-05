@@ -34,6 +34,9 @@ struct SimdgroupMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
+  using RightStageType = conditional_t<Right::QUANTIZED, half, RightElementType>;
+  using RightComputeType = half;
+  static_assert(sizeof(RightStageType) == sizeof(RightElementType), "staging memory is sized for the weight type");
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   static_assert(!Left::QUANTIZED, "simdgroup MMA stages full-precision left operands only");
@@ -49,13 +52,19 @@ struct SimdgroupMmaCore {
   UZU_CONST ushort SHARED_STRIDE_B = (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
   UZU_CONST ushort THREADGROUP_THREADS = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
+  UZU_CONST ushort A_READS_PER_THREAD = THREADGROUP_BLOCK_M * THREADGROUP_BLOCK_K / THREADGROUP_THREADS;
+  UZU_CONST ushort A_VECTOR_COPY_ALIGNMENT =
+      !Right::QUANTIZED
+          ? 1
+          : (A_READS_PER_THREAD * sizeof(LeftElementType) < 16 ? A_READS_PER_THREAD : 16 / sizeof(LeftElementType));
   using ALoader = uzu::matmul::ThreadgroupLoader<
       LeftElementType,
       THREADGROUP_BLOCK_M,
       THREADGROUP_BLOCK_K,
       SHARED_STRIDE_A,
       true,
-      THREADGROUP_THREADS>;
+      THREADGROUP_THREADS,
+      A_VECTOR_COPY_ALIGNMENT>;
   using FullPrecisionRightLoader = uzu::matmul::ThreadgroupLoader<
       RightElementType,
       TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
@@ -65,7 +74,7 @@ struct SimdgroupMmaCore {
       THREADGROUP_THREADS>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       LeftElementType,
-      RightElementType,
+      RightStageType,
       OutputElementType,
       THREADGROUP_BLOCK_M,
       THREADGROUP_BLOCK_N,
@@ -79,12 +88,12 @@ struct SimdgroupMmaCore {
       float,
       uzu::matmul::TransformNone<OutputElementType, float>>;
 
-  template <uint GEMM_ALIGNMENT_RAW, typename BLoader>
+  template <uint GEMM_ALIGNMENT_RAW, typename ALoaderType, typename BLoader>
   static METAL_FUNC void k_loop(
       threadgroup LeftElementType* a_shared,
-      threadgroup RightElementType* b_shared,
+      threadgroup RightStageType* b_shared,
       const int aligned_k_iterations,
-      thread ALoader& loader_a,
+      thread ALoaderType& loader_a,
       thread BLoader& loader_b,
       thread TileAccumulator& accumulator,
       thread const ushort& tile_block_rows,
@@ -166,6 +175,8 @@ struct SimdgroupMmaCore {
       threadgroup_barrier(mem_flags::mem_device);
       apply_output_random_hadamard_transform(
           d,
+          params->leading_dimension_d,
+          d,
           rht_factors_block,
           bias_block,
           needs_bias,
@@ -193,9 +204,10 @@ struct SimdgroupMmaCore {
   ) {
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_row = thread_context.threadgroup_position.y;
-    const uint2 tile = tile_id(uint2(thread_context.threadgroup_position.x, tile_row), params);
+    constexpr bool MAY_USE_MORTON = !Right::QUANTIZED;
+    const uint2 tile = tile_id<MAY_USE_MORTON>(uint2(thread_context.threadgroup_position.x, tile_row), params);
     const auto geometry = ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile, params);
-    if (geometry.out_of_bounds) {
+    if (MAY_USE_MORTON && geometry.out_of_bounds) {
       return;
     }
 
@@ -244,7 +256,7 @@ struct SimdgroupMmaCore {
         constexpr uint gemm_alignment = gemm_alignment_mask.value;
         k_loop<gemm_alignment>(
             a_shared,
-            b_shared,
+            reinterpret_cast<threadgroup RightStageType*>(b_shared),
             params->aligned_inner_iterations,
             loader_a,
             loader_b,

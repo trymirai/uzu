@@ -10,6 +10,7 @@ pub enum DataType {
     F16,
     F32,
     F64,
+    U2,
     I4,
     U4,
     I8,
@@ -25,6 +26,7 @@ pub enum DataType {
 impl DataType {
     pub const fn size_in_bits(&self) -> usize {
         match self {
+            DataType::U2 => 2,
             DataType::I4 | DataType::U4 => 4,
             DataType::I8 | DataType::U8 => 8,
             DataType::I16 | DataType::U16 => 16,

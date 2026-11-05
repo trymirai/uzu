@@ -1,8 +1,9 @@
 use anyhow::{Result, anyhow, ensure};
 use rocket::serde::{Deserialize, Serialize};
+use sysinfo::System;
 use uzu::types::{
     basic::ReasoningEffort,
-    session::chat::{ChatMessage, ChatReply, ChatReplyEnergy, ChatRole},
+    session::chat::{ChatMessage, ChatReply, ChatRole, ReplyEnergy},
 };
 
 use crate::{
@@ -98,6 +99,23 @@ pub struct BenchDevice {
     pub memory_total: u64,
 }
 
+impl BenchDevice {
+    pub fn current() -> Self {
+        let mut system_info = System::new_all();
+        system_info.refresh_all();
+
+        let os_name = System::long_os_version();
+        let cpu_name = system_info.cpus().first().map(|cpu| cpu.brand().to_string());
+        let memory_total = system_info.total_memory();
+
+        Self {
+            os_name,
+            cpu_name,
+            memory_total,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchResult {
     pub task: BenchTask,
@@ -111,8 +129,8 @@ pub struct BenchResult {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
-    pub input_energy: Option<ChatReplyEnergy>,
-    pub output_energy: Option<ChatReplyEnergy>,
+    pub input_energy: Option<ReplyEnergy>,
+    pub output_energy: Option<ReplyEnergy>,
     pub joules_per_token: Option<f64>,
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

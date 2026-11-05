@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use derive_more::Debug;
 use num_traits::AsPrimitive;
 use thiserror::Error;
@@ -237,7 +239,7 @@ impl<B: Backend> TransformerLayer<B> {
                     model_dim,
                     data_type,
                     data_type,
-                    mixer_hadamard_factors,
+                    mixer_hadamard_factors.map(Arc::new),
                     if layer_index > 0 {
                         ShortcutMode::Add
                     } else {
@@ -308,7 +310,7 @@ impl<B: Backend> TransformerLayer<B> {
             model_dim,
             data_type,
             data_type,
-            mlp_input_hadamard_factors,
+            mlp_input_hadamard_factors.map(Arc::new),
             ShortcutMode::Add,
             residual_sum_scalar,
             &layer_config.pre_mlp_norm_config,

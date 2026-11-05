@@ -1,8 +1,14 @@
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use tokenizers::Tokenizer;
 
 use crate::{traits::backend::Error, types::session::classification::TokenCodecConfig};
+
+pub struct DecisionSessionOutput {
+    pub probabilities: Vec<f32>,
+    pub prefill_duration: Duration,
+    pub memory_used_bytes: Option<usize>,
+}
 
 pub type Config = ();
 
@@ -27,5 +33,5 @@ pub trait DecisionInstance: Send + Sync {
         &'a self,
         input: &'a [u64],
         option_count: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<f32>, Error>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<DecisionSessionOutput, Error>> + Send + 'a>>;
 }

@@ -42,6 +42,20 @@ it("keeps an empty assistant placeholder through a serialize/parse round-trip", 
   expect(messages[1]).toMatchObject({ sender: "assistant", text: "" });
 });
 
+it("preserves speculative acceptance for messages and versions without adding it to AR replies", () => {
+  const original = { ...chat.messages[1]!, text: "Answer", perf: { ttftSec: 0.25, tokensPerForwardPass: 2.75 } };
+  const versions = projectAssistantVersion(original, "model", "Model");
+  versions[1] = { ...versions[1]!, text: "AR answer", perf: { ttftSec: 0.1 } };
+  const markdown = serializeToMarkdown({
+    ...chat,
+    messages: [original, { ...original, id: "versioned", versions, currentVersionIndex: 1 }],
+  });
+  const messages = extractMessageBlocks(markdown).map(parseMessage);
+  expect(messages[0]?.perf?.tokensPerForwardPass).toBe(2.75);
+  expect(messages[1]?.versions?.[0]?.perf?.tokensPerForwardPass).toBe(2.75);
+  expect(messages[1]?.versions?.[1]?.perf?.tokensPerForwardPass).toBeUndefined();
+});
+
 it("keeps ordered tool transcripts through saving and regeneration, including markup inside a turn", () => {
   const transcript: TranscriptItem[] = [
     { type: "thinking", text: "Check the time", completed: true },

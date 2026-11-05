@@ -23,9 +23,11 @@ struct QuantChunk {
       float origin,
       bool signed_codes
   ) {
-    const uint word = chunk * (BITS == 4 ? 1u : 2u);
-    const uint word0 = words[word / 4u][word % 4u];
-    const uint word1 = BITS == 4 ? 0u : words[(word + 1u) / 4u][(word + 1u) % 4u];
+    constexpr uint CHUNK_BITS = VALUES * BITS;
+    const uint first_bit = chunk * CHUNK_BITS;
+    const uint word = first_bit / WORD_BITS;
+    const uint word0 = words[word / WORD_LANES][word % WORD_LANES] >> (first_bit % WORD_BITS);
+    const uint word1 = CHUNK_BITS > WORD_BITS ? words[(word + 1u) / WORD_LANES][(word + 1u) % WORD_LANES] : 0u;
     decode_words(word0, word1, values, origin, signed_codes);
   }
 
@@ -64,7 +66,7 @@ private:
       bool signed_codes
   ) {
     constexpr uint CODES_PER_WORD = WORD_BITS / BITS;
-    if constexpr (BITS == 4) {
+    if constexpr (BITS == 2 || BITS == 4) {
       word0 ^= signed_codes ? W4_SIGN_MASK : 0u;
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < VALUES; i++) {

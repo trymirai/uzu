@@ -58,25 +58,50 @@ impl<B: Backend> RHTLinearWrapper<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
-        let weights_tree = parameter_tree.subtree("weights");
-        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if !has_input_output_rht(&spec) {
-            return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
-        }
-
-        let (rht_signs, inner_linear, activation_format) = Self::load_inner_with_output_rht(
+        let (rht_signs, inner_linear, activation_format) = Self::load_inner(
             input_dimension,
             output_dimension,
             weights_data_type,
             input_data_type,
             output_data_type,
             has_biases,
+            true,
             parameter_tree,
             context,
         )
         .await?;
         Self::build_self_contained(
             input_data_type,
+            LinearInputPreparation {
+                rht_signs,
+                activation_format,
+            },
+            inner_linear,
+            context,
+        )
+    }
+
+    pub async fn new_with_rotated_output(
+        input_dimension: u32,
+        output_dimension: u32,
+        data_type: DataType,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, RHTLinearWrapperError<B>> {
+        let (rht_signs, inner_linear, activation_format) = Self::load_inner(
+            input_dimension,
+            output_dimension,
+            data_type,
+            data_type,
+            data_type,
+            false,
+            false,
+            parameter_tree,
+            context,
+        )
+        .await?;
+        Self::build_self_contained(
+            data_type,
             LinearInputPreparation {
                 rht_signs,
                 activation_format,
@@ -103,13 +128,14 @@ impl<B: Backend> RHTLinearWrapper<B> {
             return Ok(None);
         }
 
-        let (rht_signs, inner_linear, activation_format) = Self::load_inner_with_output_rht(
+        let (rht_signs, inner_linear, activation_format) = Self::load_inner(
             input_dimension,
             output_dimension,
             weights_data_type,
             input_data_type,
             output_data_type,
             has_biases,
+            true,
             parameter_tree,
             context,
         )
@@ -126,23 +152,32 @@ impl<B: Backend> RHTLinearWrapper<B> {
         }
     }
 
-    async fn load_inner_with_output_rht(
+    async fn load_inner(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
+        restore_output_basis: bool,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(B::GlobalGpuBuffer, LinearMatmul<B>, ActivationFormat), RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
+        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        if !has_input_output_rht(&spec) {
+            return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
+        }
         let quantized_weights_tree = weights_tree.subtree("quantized");
         let quantization_spec = quantized_weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let rht_signs =
             weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?;
-        let output_factors =
-            weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?;
+        let output_factors = if restore_output_basis {
+            Some(weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?)
+        } else {
+            weights_tree.ignore("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
+            None
+        };
         let mut inner_linear = LinearMatmul::load(
             input_dimension,
             output_dimension,
@@ -150,7 +185,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             input_data_type,
             output_data_type,
             quantization_spec,
-            Some(output_factors),
+            output_factors,
             &quantized_weights_tree,
             has_biases.then_some(parameter_tree),
             context,

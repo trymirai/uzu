@@ -23,9 +23,12 @@ static METAL_FUNC uint2 morton_tile_id(uint2 threadgroup_position) {
   return uint2(morton_expand_bits(threadgroup_position.x), morton_expand_bits(threadgroup_position.x >> 1));
 }
 
+template <bool MAY_USE_MORTON = true>
 static METAL_FUNC uint2 tile_id(uint2 threadgroup_position, const constant uzu::matmul::GemmParams* params) {
-  if (params->use_morton) {
-    return morton_tile_id(threadgroup_position);
+  if constexpr (MAY_USE_MORTON) {
+    if (params->use_morton) {
+      return morton_tile_id(threadgroup_position);
+    }
   }
   return threadgroup_position;
 }

@@ -162,9 +162,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
 
   const lastAssistantIndex = messages.at(-1)?.sender === "assistant" ? messages.length - 1 : -1;
 
-  const showWaiting = !hasResidentModel && Boolean(isLoading) && !loadingMessageId;
   const isBusy = Boolean(isModelLoading || isLoading);
-  const loaderText = showWaiting ? "Waiting for the model to be ready…" : "Generating reply…";
+  const loaderText = isModelLoading || !hasResidentModel ? "Loading model…" : "Prefilling…";
 
   return (
     <div className="relative flex flex-1 flex-col overflow-clip h-full">

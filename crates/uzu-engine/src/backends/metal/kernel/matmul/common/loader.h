@@ -19,7 +19,8 @@ template <
     ushort ALIGNMENT = 1,
     ushort READS_PER_THREAD = (THREADGROUP_TILE_COLS * THREADGROUP_TILE_ROWS) / (THREADGROUP_SIZE),
     ushort THREAD_COLS = THREADGROUP_TILE_COLS / READS_PER_THREAD,
-    ushort THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS>
+    ushort THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS,
+    typename StageT = T>
 struct ThreadgroupLoader {
   const int source_leading_dimension;
   const int tile_stride;
@@ -28,7 +29,7 @@ struct ThreadgroupLoader {
   const ushort tile_row_index;
   const ushort tile_col_index;
 
-  threadgroup T* destination;
+  threadgroup StageT* destination;
   const device T* source;
 
   struct alignas(ALIGNMENT * sizeof(T)) ReadVector {
@@ -38,7 +39,7 @@ struct ThreadgroupLoader {
   METAL_FUNC ThreadgroupLoader(
       const device T* source_ptr,
       const int source_leading_dim,
-      threadgroup T* destination_ptr,
+      threadgroup StageT* destination_ptr,
       const thread ThreadContext& thread_context
   )
       : source_leading_dimension(source_leading_dim),
@@ -63,8 +64,16 @@ struct ThreadgroupLoader {
   METAL_FUNC void load_unsafe() const {
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < THREADGROUP_TILE_ROWS; i += THREAD_ROWS) {
-      *reinterpret_cast<threadgroup ReadVector*>(&destination[i * DESTINATION_LEADING_DIMENSION]) =
-          *reinterpret_cast<const device ReadVector*>(&source[i * source_leading_dimension]);
+      if constexpr (is_same_v<T, StageT>) {
+        *reinterpret_cast<threadgroup ReadVector*>(&destination[i * DESTINATION_LEADING_DIMENSION]) =
+            *reinterpret_cast<const device ReadVector*>(&source[i * source_leading_dimension]);
+      } else {
+        const ReadVector values = *reinterpret_cast<const device ReadVector*>(&source[i * source_leading_dimension]);
+        METAL_PRAGMA_UNROLL
+        for (ushort j = 0; j < READS_PER_THREAD; j++) {
+          destination[i * DESTINATION_LEADING_DIMENSION + j] = StageT(reinterpret_cast<const thread T*>(&values)[j]);
+        }
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="v26.10.1"
+VERSION="v26.11.1"
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/mlx-serve"
 
@@ -21,8 +21,7 @@ fi
 
 # Only source dependencies of the MLX backend. No released inference binaries.
 git -C "$SOURCE_DIR" submodule update --init --depth 1 \
-    lib/mlx-src lib/mlxc-src lib/sushi lib/mlx-serve-gguf >&2
-"$SOURCE_DIR/scripts/fetch-zig.sh" >&2
+    lib/mlx-src lib/mlxc-src >&2
 "$SOURCE_DIR/scripts/build-mlx.sh" >&2
 
 for patch in "$PROJECT_DIR"/patches/*.patch; do
@@ -34,13 +33,14 @@ done
 
 # Place the adapter in the upstream module so relative Zig imports keep their
 # original identity. Do not overwrite or duplicate upstream implementation files.
-for source in "$PROJECT_DIR"/src/*.zig; do
+for source in "$PROJECT_DIR"/src/*; do
     destination="$SOURCE_DIR/src/$(basename "$source")"
     if ! cmp -s "$source" "$destination"; then
         cp "$source" "$destination"
     fi
 done
 
-cd "$PROJECT_DIR"
+cp "$PROJECT_DIR/build.zig" "$SOURCE_DIR/build-benchmarks.zig"
+cd "$SOURCE_DIR"
 export ZIG_GLOBAL_CACHE_DIR="$PROJECT_DIR/.zig-cache/global"
-"$SOURCE_DIR/.zig-toolchain/zig" build -Doptimize=ReleaseFast -j8 >&2
+zig build --build-file build-benchmarks.zig --prefix "$PROJECT_DIR/zig-out" -Doptimize=ReleaseFast -j8 >&2

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REVISION="7c58cf0ec5276287b4d341bdfc96ef0fc66360af"
+REVISION="b1124115a5c78bab42c4e8df83732d653824ae41"
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/ml-drift"
 ADAPTER_DIR="$SOURCE_DIR/benchmarks"

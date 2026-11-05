@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # llama.cpp
-set(LLAMA_VERSION v0.6.0)
+set(LLAMA_VERSION v0.8.0)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build common utilities")
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Build upstream tests")
@@ -36,11 +36,18 @@ FetchContent_MakeAvailable(cli11)
 add_subdirectory(../common-cpp common-cpp)
 
 # sources
-add_executable(${PROJECT_NAME}
+set(SOURCES
     src/engine.cpp
     src/main.cpp
     src/util.cpp
 )
+if(IOS)
+    add_library(${PROJECT_NAME} SHARED ${SOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME BenchmarksLlamacpp)
+    target_link_options(${PROJECT_NAME} PRIVATE -Wl,-exported_symbol,_benchmarks_llamacpp_main)
+else()
+    add_executable(${PROJECT_NAME} ${SOURCES})
+endif()
 
 # libraries
 target_link_libraries(${PROJECT_NAME}

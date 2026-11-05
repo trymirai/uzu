@@ -47,7 +47,7 @@ fi
 MODEL_PATH="$(cd -- "$MODEL_PATH" && pwd -P)"
 
 WEIGHTS_DIR="$PROJECT_DIR/workspace/$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD)/$PRECISION"
-WEIGHTS_DIR="$WEIGHTS_DIR/$(stat -L -f '%N %z %m' "$MODEL_PATH"/*.safetensors | shasum -a 256 | cut -c1-16)"
+WEIGHTS_DIR="$WEIGHTS_DIR/$(/usr/bin/stat -L -f '%N %z %m' "$MODEL_PATH"/*.safetensors | shasum -a 256 | cut -c1-16)"
 if [[ ! -d "$WEIGHTS_DIR" ]]; then
     rm -rf "$WEIGHTS_DIR.partial"
     mkdir -p "$WEIGHTS_DIR.partial"

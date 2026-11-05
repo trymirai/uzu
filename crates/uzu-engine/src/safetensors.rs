@@ -192,6 +192,17 @@ impl<B: Backend> ParameterTree<'_, B> {
         Ok(tensor)
     }
 
+    pub fn ignore(
+        &self,
+        name: &str,
+        shape: &[u32],
+        dtype: DataType,
+    ) -> Result<(), ParameterLoaderError<B>> {
+        let tensor = self.tensor(name, shape, dtype)?;
+        tensor.read.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
     pub async fn read_buffer(
         &self,
         name: &str,

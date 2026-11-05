@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ChatReplyEnergy {
+pub enum ReplyEnergy {
     Total {
         total: f64,
     },
@@ -21,7 +21,7 @@ pub enum ChatReplyEnergy {
 }
 
 #[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
-impl ChatReplyEnergy {
+impl ReplyEnergy {
     pub fn total(&self) -> f64 {
         match self {
             Self::Total {
@@ -37,7 +37,7 @@ impl ChatReplyEnergy {
     }
 }
 
-impl ChatReplyEnergy {
+impl ReplyEnergy {
     fn per_token(
         &self,
         tokens_count: u32,
@@ -68,7 +68,7 @@ impl ChatReplyEnergy {
     }
 }
 
-impl Add for ChatReplyEnergy {
+impl Add for ReplyEnergy {
     type Output = Self;
 
     fn add(
@@ -172,8 +172,8 @@ pub struct ChatReplyStats {
     pub tokens_count_output: Option<u32>,
     pub memory_used_bytes: Option<i64>,
     pub speculator_stats: Option<ChatReplySpeculatorStats>,
-    pub input_energy: Option<ChatReplyEnergy>,
-    pub output_energy: Option<ChatReplyEnergy>,
+    pub input_energy: Option<ReplyEnergy>,
+    pub output_energy: Option<ReplyEnergy>,
 }
 
 #[bindings::export(Implementation)]
@@ -185,7 +185,7 @@ impl ChatReplyStats {
 
     #[bindings::export(Method(Getter))]
     pub fn total_joules(&self) -> Option<f64> {
-        self.input_energy.iter().chain(self.output_energy.iter()).map(ChatReplyEnergy::total).reduce(f64::add)
+        self.input_energy.iter().chain(self.output_energy.iter()).map(ReplyEnergy::total).reduce(f64::add)
     }
 
     #[bindings::export(Method(Getter))]

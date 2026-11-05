@@ -34,6 +34,8 @@ struct MxuMmaCore {
   using Right = RightOperand;
   using LeftElementType = typename Left::ElementType;
   using RightElementType = typename Right::ElementType;
+  using RightStageType = RightElementType;
+  using RightComputeType = float;
   using LeftStorage = operands::LeftStorage<Left>;
   using RightStorage = operands::RightStorage<Right>;
   using FragmentOps = uzu::matmul::MxuFragmentOps<>;
@@ -50,7 +52,7 @@ struct MxuMmaCore {
   static_assert(SIMDGROUPS_PER_K == 1 || SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN == 1, "K slices share one tile");
   UZU_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   UZU_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
-  UZU_CONST ushort SIMDGROUP_BLOCK_K = static_cast<ushort>(MXU_SIMDGROUP_BLOCK_K);
+  UZU_CONST ushort SIMDGROUP_BLOCK_K = Right::MMA_BLOCK_K;
   UZU_CONST bool TRANSPOSE_RIGHT = TRANSPOSE_B;
   UZU_CONST ushort THREADGROUP_BLOCK_K_FP = gemm_tiling_block_k(GEMM_TILING);
   static_assert(
@@ -84,9 +86,10 @@ struct MxuMmaCore {
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_y = thread_context.threadgroup_position.y;
 
-    const uint2 tile = tile_id(uint2(thread_context.threadgroup_position.x, tile_y), params);
+    constexpr bool MAY_USE_MORTON = !Right::QUANTIZED;
+    const uint2 tile = tile_id<MAY_USE_MORTON>(uint2(thread_context.threadgroup_position.x, tile_y), params);
     const auto geometry = ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile, params);
-    if (geometry.out_of_bounds) {
+    if (MAY_USE_MORTON && geometry.out_of_bounds) {
       return;
     }
 
@@ -124,69 +127,108 @@ struct MxuMmaCore {
         .abs_row_base = uint(geometry.block_row_start) + tile_row_offset,
     };
 
+    const bool simdgroup_rows_complete =
+        (alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M)) &&
+        ((Right::QUANTIZED && SIMDGROUPS_PER_ROW == 1) || simdgroup_limit_m > 0);
+    const bool simdgroup_columns_complete =
+        (alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N)) &&
+        ((Right::QUANTIZED && SIMDGROUPS_PER_COLUMN == 1) || simdgroup_limit_n > 0);
+
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool apply_rht = output_transform.contains(GemmDTransform::RHT);
 
     const device RightElementType* bias_simdgroup = output_bias + size_t(block_col) + size_t(tile_col_offset);
 
-    dispatch_bool(
-        (alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M)) && simdgroup_limit_m > 0,
-        [&](auto aligned_m) {
-          dispatch_bool(
-              (alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N)) &&
-                  simdgroup_limit_n > 0,
-              [&](auto aligned_n) {
-                AccumFragment accumulator_tile =
-                    Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value>(
-                        left,
-                        right,
-                        b_shared,
-                        params,
-                        tile_context,
-                        alignment,
-                        thread_context
-                    );
+    threadgroup OutputElementType* tile_stage = reinterpret_cast<threadgroup OutputElementType*>(b_shared);
+    if constexpr (SIMDGROUPS_PER_K > 1) {
+      static_assert(Left::QUANTIZED, "K slices park their partials in b_shared, which int8 activations leave free");
+      static_assert(THREADGROUP_BLOCK_N == HADAMARD_TRANSFORM_BLOCK_SIZE, "the staged RHT runs one stripe per row");
+      static_assert(sizeof(OutputElementType) <= sizeof(AccumulatorType), "the tile must fit the partials");
+    }
 
-                if (!accumulator_tile.template reduce_k_slices<SIMDGROUPS_PER_K, 1>(
-                        reinterpret_cast<threadgroup float*>(b_shared),
-                        thread_context
-                    )) {
-                  return;
-                }
+    dispatch_bool(simdgroup_rows_complete, [&](auto aligned_m) {
+      dispatch_bool(simdgroup_columns_complete, [&](auto aligned_n) {
+        AccumFragment accumulator_tile = Schedule::template launch<MxuMmaCore, aligned_m.value, aligned_n.value>(
+            left,
+            right,
+            b_shared,
+            params,
+            tile_context,
+            alignment,
+            thread_context
+        );
 
-                if (apply_scale) {
-                  const AccumulatorType scale = AccumulatorType(params->ab_scale);
-                  accumulator_tile.map([&](auto value) { return value * scale; });
-                }
+        if (!accumulator_tile.template reduce_k_slices<SIMDGROUPS_PER_K, 1>(
+                reinterpret_cast<threadgroup float*>(b_shared),
+                thread_context
+            )) {
+          return;
+        }
 
-                if (apply_bias && !apply_rht) {
-                  accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
-                    if constexpr (aligned_n.value) {
-                      return value + AccumulatorType(bias_simdgroup[col]);
-                    } else {
-                      if (col < simdgroup_limit_n) {
-                        return value + AccumulatorType(bias_simdgroup[col]);
-                      }
-                      return value;
-                    }
-                  });
-                }
+        if (apply_scale) {
+          const AccumulatorType scale = AccumulatorType(params->ab_scale);
+          accumulator_tile.map([&](auto value) { return value * scale; });
+        }
 
-                if constexpr (aligned_m.value && aligned_n.value) {
-                  accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
-                } else {
-                  accumulator_tile.template store_safe<aligned_m.value, aligned_n.value>(
-                      thread_context.simd_lane_id,
-                      d_simdgroup,
-                      int(params->leading_dimension_d),
-                      short2(simdgroup_limit_n, simdgroup_limit_m)
-                  );
-                }
+        if constexpr (SIMDGROUPS_PER_K > 1) {
+          if (apply_rht) {
+            simdgroup_barrier(mem_flags::mem_threadgroup);
+            accumulator_tile.template store_safe<aligned_m.value, aligned_n.value>(
+                thread_context.simd_lane_id,
+                tile_stage,
+                int(THREADGROUP_BLOCK_N),
+                short2(simdgroup_limit_n, simdgroup_limit_m)
+            );
+            return;
+          }
+        }
+
+        if (apply_bias && !apply_rht) {
+          accumulator_tile.map_coords(thread_context.simd_lane_id, [&](short, short col, auto value) {
+            if constexpr (aligned_n.value) {
+              return value + AccumulatorType(bias_simdgroup[col]);
+            } else {
+              if (col < simdgroup_limit_n) {
+                return value + AccumulatorType(bias_simdgroup[col]);
               }
+              return value;
+            }
+          });
+        }
+
+        if constexpr (aligned_m.value && aligned_n.value) {
+          accumulator_tile.store(thread_context.simd_lane_id, d_simdgroup, int(params->leading_dimension_d));
+        } else {
+          accumulator_tile.template store_safe<aligned_m.value, aligned_n.value>(
+              thread_context.simd_lane_id,
+              d_simdgroup,
+              int(params->leading_dimension_d),
+              short2(simdgroup_limit_n, simdgroup_limit_m)
           );
         }
-    );
+      });
+    });
+
+    if constexpr (SIMDGROUPS_PER_K > 1) {
+      if (apply_rht) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        apply_output_random_hadamard_transform<OutputElementType, RightElementType>(
+            tile_stage,
+            uint(THREADGROUP_BLOCK_N),
+            d + block_row * params->leading_dimension_d + block_col,
+            rht_factors + block_col,
+            output_bias + block_col,
+            apply_bias,
+            ushort(min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row))),
+            ushort(THREADGROUP_BLOCK_N),
+            params->leading_dimension_d,
+            SIMDGROUPS_PER_K,
+            thread_context
+        );
+        return;
+      }
+    }
 
     if (k_slice != 0) {
       return;
@@ -201,6 +243,8 @@ struct MxuMmaCore {
           }
           simdgroup_barrier(mem_flags::mem_device);
           apply_output_random_hadamard_transform<OutputElementType, RightElementType, true>(
+              d_simdgroup,
+              params->leading_dimension_d,
               d_simdgroup,
               rht_factors + block_col + tile_col_offset,
               bias_simdgroup,
@@ -223,7 +267,9 @@ struct MxuMmaCore {
       device OutputElementType* d_block = d + block_row * params->leading_dimension_d + block_col;
       const ushort tile_block_rows = ushort(min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row)));
       const ushort tile_block_cols = ushort(min(int(THREADGROUP_BLOCK_N), int(params->N) - int(block_col)));
-      apply_output_random_hadamard_transform(
+      apply_output_random_hadamard_transform<OutputElementType, RightElementType>(
+          d_block,
+          params->leading_dimension_d,
           d_block,
           rht_factors + block_col,
           output_bias + block_col,
