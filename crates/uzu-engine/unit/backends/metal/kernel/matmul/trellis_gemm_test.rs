@@ -16,7 +16,7 @@ use crate::{
             Metal,
             context::MetalContext,
             gpu_types::gemm::GemmTiling,
-            kernel::matmul::{GemmKernel, MatmulOutputWork, gemm::GemmEngine},
+            kernel::matmul::{GemmKernel, gemm::GemmEngine},
         },
     },
     data_type::DataType,
@@ -189,8 +189,7 @@ fn run_projection(
         let mut plan = gemm.select_plan_for_engine(&shape, engine, context).unwrap();
         plan.tiling = tiling;
         plan.split_k = split_k;
-        let output_work = MatmulOutputWork::new(context, DataType::BF16, DataType::BF16).unwrap();
-        gemm.encode_plan(arguments, plan, &output_work, &mut command_buffer).unwrap();
+        gemm.encode_plan(arguments, plan, &mut command_buffer).unwrap();
     } else {
         let mut matmul =
             <MetalMatmul as MatmulKernel>::new(context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();

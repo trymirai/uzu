@@ -117,11 +117,20 @@ impl<T> MatmulA<T> {
     }
 }
 
-/// Matches `PackedHalfLayout` in `packed_half_layout.h`.
+/// One packed-half image (8 activation rows); matches `PackedHalfLayout` in `packed_half_layout.h`.
 pub fn packed_half_bytes(
     k: u32,
     group_size: u32,
 ) -> usize {
     assert!(matches!(group_size, 32 | 64) && k.is_multiple_of(group_size));
     (k / group_size) as usize * (32 * (group_size as usize / 8) + 16) * size_of::<u32>()
+}
+
+/// Images holding `rows` activation rows: one per 8 rows, in whole 16-row tiles above 8 so a tile never reads past them.
+pub fn packed_half_images(rows: u32) -> usize {
+    if rows <= 8 {
+        1
+    } else {
+        rows.div_ceil(16) as usize * 2
+    }
 }

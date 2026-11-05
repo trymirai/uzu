@@ -13,7 +13,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
+        Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
         input_rht::InputRht,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -228,18 +228,11 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         };
         let command_buffer = &mut *command_buffer.debug_group("linear (rht)");
 
-        let format = self.inner_linear.select_activation_format(batch_dim, command_buffer.context());
+        let format = self.inner_linear.select_activation_format(batch_dim, None, command_buffer.context());
         let input = self
             .input_rht
             .prepare_in_place(input, batch_dim, format, command_buffer)
             .map_err(LinearEncodeError::Backend)?;
-        let output = self.inner_linear.encode_with_a(
-            input.as_ref(),
-            batch_dim,
-            None::<Gather<&B::ScratchBuffer>>,
-            command_buffer,
-        )?;
-
-        Ok(output)
+        self.inner_linear.encode_input(input, batch_dim, command_buffer)
     }
 }

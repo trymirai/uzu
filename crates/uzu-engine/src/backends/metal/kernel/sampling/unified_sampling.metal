@@ -151,6 +151,11 @@ PUBLIC KERNEL(UnifiedSampling) (
       thread_context
   );
 
+  if (!(has_top_k || has_top_p || has_min_p)) {
+    *output = candidate_logit_post_gumbel.index;
+    return;
+  }
+
   for (uint32_t iteration = 0; iteration < MAX_ITERS; iteration++) {
     Logit candidate_logit_pre_filter = Logit::load(logits, candidate_logit_post_gumbel.index);
     if (has_temperature) {
@@ -186,11 +191,15 @@ PUBLIC KERNEL(UnifiedSampling) (
         }
       }
 
+      float uniform;
       if (is_stochastic) {
-        logit.value += -log(-log(uniform_float(&rng)));
+        uniform = uniform_float(&rng);
       }
 
       if (above_current_pre_filter) {
+        if (is_stochastic) {
+          logit.value += -log(-log(uniform));
+        }
         thread_next_candidate_logit_post_gumbel =
             logit > thread_next_candidate_logit_post_gumbel ? logit : thread_next_candidate_logit_post_gumbel;
       }

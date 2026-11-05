@@ -28,7 +28,7 @@ use crate::{
             kernel::{
                 GemmMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,
                 matmul::{
-                    MatmulMetalError, MatmulOutputWork,
+                    MatmulMetalError,
                     gemm::{
                         GemmEngine, GemmPlan,
                         selection::{GemmProblem, outer_block_k},
@@ -191,7 +191,6 @@ impl GemmKernel {
             impl BufferRef<Backend = Metal>,
         >,
         plan: GemmPlan,
-        output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
@@ -207,16 +206,7 @@ impl GemmKernel {
         match arguments.b {
             MatmulB::FullPrecision {
                 b: weights,
-            } => self.encode_weights(
-                arguments.a,
-                weights,
-                None,
-                arguments.output,
-                shape,
-                plan,
-                output_work,
-                command_buffer,
-            ),
+            } => self.encode_weights(arguments.a, weights, None, arguments.output, shape, plan, command_buffer),
             MatmulB::Quantized(quantized) => self.encode_weights(
                 arguments.a,
                 quantized.codes,
@@ -224,7 +214,6 @@ impl GemmKernel {
                 arguments.output,
                 shape,
                 plan,
-                output_work,
                 command_buffer,
             ),
             MatmulB::Trellis {
@@ -246,7 +235,6 @@ impl GemmKernel {
         output: MatmulOutput<'_, Metal, impl BufferMut<Backend = Metal>>,
         shape: MatmulShape,
         plan: GemmPlan,
-        output_work: &MatmulOutputWork,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
@@ -364,11 +352,9 @@ impl GemmKernel {
                 output_transform,
                 output_bias,
                 soft_cap,
+                rht_factors.map(|factors| (factors, bias_after_rht)),
                 command_buffer,
             )?;
-            if let Some(factors) = rht_factors {
-                output_work.apply(d.reborrow(), factors, bias_after_rht, m, n, command_buffer);
-            }
             return Ok(());
         }
 
@@ -457,8 +443,9 @@ impl GemmKernel {
         gemm_b_layout: GemmBLayout,
         plan: GemmPlan,
         output_transform: GemmDTransform,
-        output_bias: Option<impl BufferRef<Backend = Metal>>,
+        output_bias: Option<&<Metal as Backend>::GlobalGpuBuffer>,
         soft_cap: Option<f32>,
+        fused_rht: Option<(impl BufferRef<Backend = Metal>, Option<&<Metal as Backend>::GlobalGpuBuffer>)>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
@@ -548,12 +535,18 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let reduce_transform =
+        let mut reduce_transform =
             output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::BIAS | GemmDTransform::SOFT_CAP);
-        let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
-            output_bias
+        let (rht_arg, bias_arg) = if let Some((factors, bias_after_rht)) = fused_rht {
+            debug_assert!(!reduce_transform.contains(GemmDTransform::SOFT_CAP), "fused output RHT with soft-cap");
+            reduce_transform.remove(GemmDTransform::BIAS);
+            reduce_transform.insert(GemmDTransform::RHT);
+            reduce_transform.set(GemmDTransform::BIAS, bias_after_rht.is_some());
+            (Some(factors), bias_after_rht)
+        } else if reduce_transform.contains(GemmDTransform::BIAS) {
+            (None, output_bias)
         } else {
-            None
+            (None, None)
         };
         let scale_arg = if reduce_transform.contains(GemmDTransform::SCALE) {
             Some(ab_scale)
@@ -566,6 +559,7 @@ impl GemmKernel {
             &temp,
             d.reborrow(),
             bias_arg,
+            rht_arg,
             elem as u32,
             split_k,
             group_count,

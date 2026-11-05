@@ -135,10 +135,12 @@ pub struct Weaver<B: Backend> {
     top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverSelectKernel,
     frontier_select: <B::Kernels as Kernels>::WeaverSelectKernel,
     expand_select: <B::Kernels as Kernels>::WeaverSelectKernel,
+    expand_select_with_prune_noise: <B::Kernels as Kernels>::WeaverSelectKernel,
     model_dim: u32,
     target_model_dim: u32,
     max_depth: u32,
     candidate_pool_size: u32,
+    vocab_size: u32,
 }
 
 struct PrefixUnrotation<B: Backend> {
@@ -162,7 +164,7 @@ pub enum WeaverNewError<B: Backend> {
     InvalidLayerCount,
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
-    #[error("candidate_pool_size must be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
+    #[error("candidate_pool_size must fit the vocabulary and be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
     InvalidCandidatePoolSize(u32),
     #[error("rope head_dim {actual} does not match model_dim / num_heads = {expected}")]
     InvalidRopeHeadDim {
@@ -206,7 +208,10 @@ impl<B: Backend> Weaver<B> {
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
-        if config.candidate_pool_size == 0 || config.candidate_pool_size > CANDIDATES_MAX {
+        if config.candidate_pool_size == 0
+            || config.candidate_pool_size > CANDIDATES_MAX
+            || config.candidate_pool_size > vocab_size
+        {
             return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
         let head_dim = config.model_dim / config.num_heads;
@@ -329,6 +334,9 @@ impl<B: Backend> Weaver<B> {
             .map_err(WeaverNewError::Backend)?;
         let expand_select = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 1024, Fused, false)
             .map_err(WeaverNewError::Backend)?;
+        let expand_select_with_prune_noise =
+            <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 1024, Fused, true)
+                .map_err(WeaverNewError::Backend)?;
         Ok(Self {
             token_embedding_norm,
             token_embedding_projection,
@@ -344,10 +352,12 @@ impl<B: Backend> Weaver<B> {
             top_children_with_prune_noise,
             frontier_select,
             expand_select,
+            expand_select_with_prune_noise,
             model_dim: config.model_dim,
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
             candidate_pool_size: config.candidate_pool_size,
+            vocab_size,
         })
     }
 
@@ -462,7 +472,7 @@ impl<B: Backend> Weaver<B> {
         let ancestor_stride = self.max_depth;
         let frontier_capacity = tree_slot_count * shape.expand_width;
 
-        let fuse_select = shape.expand_per_round <= 4 && shape.prune_noise_scale.is_none();
+        let fuse_select = shape.expand_per_round <= 4;
         if batch_start_slot > 0 && !fuse_select {
             self.frontier_select.encode(
                 None::<&B::ScratchBuffer>,
@@ -569,7 +579,9 @@ impl<B: Backend> Weaver<B> {
         )?;
         let next_batch_start = batch_start_slot + batch_node_count;
         let fuse_next = fuse_select && next_batch_start < tree_slot_count;
-        let select = if fuse_next {
+        let select = if fuse_next && shape.prune_noise_scale.is_some() {
+            &self.expand_select_with_prune_noise
+        } else if fuse_next {
             &self.expand_select
         } else if shape.prune_noise_scale.is_some() {
             &self.top_children_with_prune_noise
@@ -650,7 +662,7 @@ impl<B: Backend> Weaver<B> {
 
             // Rank the draft logits: the top `candidate_pool_size` tokens per
             // lookahead row form the candidate pool node expansions draw from.
-            let vocab_size = target_embedding.vocab_size();
+            let vocab_size = self.vocab_size;
             assert!(
                 logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DATA_TYPE),
                 "draft logits do not cover the lookahead rows"

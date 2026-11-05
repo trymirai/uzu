@@ -4,9 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode,
-    },
+    backends::common::{Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
@@ -51,6 +49,7 @@ pub struct DFlash<B: Backend> {
     max_context_length: u32,
     block_size: u32,
     mask_token_id: u32,
+    vocab_size: u32,
     target_feature_input_dim: u32,
     data_type: DataType,
 }
@@ -178,6 +177,7 @@ impl<B: Backend> DFlash<B> {
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
             mask_token_id,
+            vocab_size: config.vocab_size,
             target_feature_input_dim: config.model_dim * config.target_layer_ids.len() as u32,
             data_type,
         })
@@ -310,14 +310,7 @@ impl<B: Backend> DFlash<B> {
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
 
-        let nodes = (0..batch_size)
-            .map(|index| TrieNode {
-                trie_start: index,
-                trie_end: batch_size - 1,
-                height: index,
-            })
-            .collect::<Box<[_]>>();
-        let batch_topology = BatchTopology::new(&nodes, true);
+        let batch_topology = BatchTopology::flat(batch_size, true);
         let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
@@ -349,7 +342,7 @@ impl<B: Backend> DFlash<B> {
         let logits = target_embedding.encode_readout(
             &lookahead_hidden,
             batch_size - 1,
-            target_embedding.vocab_size(),
+            self.vocab_size,
             None::<&B::ScratchBuffer>,
             false,
             command_buffer,

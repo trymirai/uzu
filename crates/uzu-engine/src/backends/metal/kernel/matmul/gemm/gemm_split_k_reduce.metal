@@ -1,6 +1,8 @@
 #include "../../common/dsl.h"
 #include "../../common/soft_cap.h"
+#include "../../common/conversion.h"
 #include "../../common/thread_context.h"
+#include "../../hadamard_transform/hadamard_transform.h"
 #include "../generated/gemm.h"
 
 using namespace metal;
@@ -15,6 +17,8 @@ KERNEL(GemmSplitKReduce)(
     device T* output,
     const device T* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
+    const device int32_t* rht_factors
+        OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const constant uint& element_count,
     const constant uint& partition_count,
     const constant uint& threadgroup_count,
@@ -39,6 +43,7 @@ KERNEL(GemmSplitKReduce)(
   if (vector_index >= vector_count) {
     return;
   }
+  const bool output_rht = output_transform.contains(GemmDTransform::RHT);
 
   device vec<T, 4>* output_vectors = reinterpret_cast<device vec<T, 4>*>(output);
   const device vec<Input, 4>* partial_sum_vectors = reinterpret_cast<const device vec<Input, 4>*>(partial_sums);
@@ -50,6 +55,24 @@ KERNEL(GemmSplitKReduce)(
 
   if (output_transform.contains(GemmDTransform::SCALE)) {
     accumulator *= output_scale;
+  }
+  if (output_rht) {
+    const uint column = (vector_index * 4u) % column_count;
+    // Round to T as the stored intermediate of a separate output-RHT pass would; bias is added after the RHT.
+    float4 values = float4(vec<T, 4>(accumulator));
+    if constexpr (is_same_v<T, bfloat>) {
+      values = uzu::bfloat_to_float(vec<bfloat, 4>(accumulator));
+    }
+    values = simdgroup_hadamard_transform_vector(ushort(thread_context.simd_lane_id), values);
+    values *= float4(load_hadamard_vector(rht_factors + column));
+    if (output_transform.contains(GemmDTransform::BIAS)) {
+      if constexpr (is_same_v<T, bfloat>) {
+        values = uzu::bfloat_to_float(vec<bfloat, 4>(values));
+      }
+      values += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));
+    }
+    output_vectors[vector_index] = vec<T, 4>(values);
+    return;
   }
   if (output_transform.contains(GemmDTransform::BIAS)) {
     const uint column = (vector_index * 4u) % column_count;

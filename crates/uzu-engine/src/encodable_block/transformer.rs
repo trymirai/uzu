@@ -270,7 +270,11 @@ impl<B: Backend> Transformer<B> {
             .collect::<Result<Box<[_]>, B::Error>>()
             .map_err(TransformerEncodeError::Backend)?;
 
-        for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
+        for (layer_position, (layer, layer_rope_index)) in self.layers.iter().take(layer_count).enumerate() {
+            if layer_position == 1 {
+                // Let the GPU start on the first layer while the CPU encodes the rest.
+                command_buffer.flush().map_err(TransformerEncodeError::Backend)?;
+            }
             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {

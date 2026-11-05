@@ -4,7 +4,7 @@ use crate::{
         gpu_types::activation_type::ActivationType,
         kernel::{
             GatedActMul, GatedActMulSettings,
-            matmul::{ActivationFormat, MatmulA, packed_half_bytes},
+            matmul::{ActivationFormat, MatmulA, packed_half_bytes, packed_half_images},
         },
     },
     config::{activation::AnyActivation, clipping::ClippingBounds},
@@ -70,7 +70,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 group_size,
             } = act_format
             {
-                let mut values = command_buffer.allocate_scratch(packed_half_bytes(self.hidden_dim, group_size))?;
+                let mut values = command_buffer
+                    .allocate_scratch(packed_half_images(batch_dim) * packed_half_bytes(self.hidden_dim, group_size))?;
                 kernel.encode_pack_half(
                     fused_up,
                     &mut values,
