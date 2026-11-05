@@ -54,7 +54,11 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         v.copyin(&vec![bf16::from_f32(0.03); tree_size * V_HEADS * HEAD_DIM]);
         let mut in_proj = command_buffer.allocate_scratch(tree_size * TOTAL_PROJ_DIM * size_of::<bf16>()).unwrap();
         in_proj.copyin(&vec![bf16::from_f32(0.04); tree_size * TOTAL_PROJ_DIM]);
-        let trie_nodes = (0..tree_size as u32).flat_map(|node| [node, tree_size as u32 - 1, node]).collect::<Vec<_>>();
+        let trie_nodes = (0..tree_size as u32)
+            // (trie_start, trie_end, height, parent)
+            .flat_map(|node| [node, tree_size as u32 - 1, node, node.wrapping_sub(1)])
+            .collect::<Vec<_>>();
+        let trie = create_buffer_with_data::<Metal, u32>(&context, &trie_nodes);
         let mut log_decay = command_buffer.allocate_scratch(tree_size * V_HEADS * size_of::<f32>()).unwrap();
         log_decay.copyin(&vec![-0.01f32; tree_size * V_HEADS]);
         let mut beta = command_buffer.allocate_scratch(tree_size * V_HEADS * size_of::<f32>()).unwrap();
@@ -62,7 +66,6 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         let benchmark_path = format!("Metal/Kernel/GDNTreeVerify/T{tree_size}");
         group.bench_function(format!("T{tree_size}"), |bencher| {
             iter_encode_loop_named::<Metal, _>(context.as_ref(), bencher, &benchmark_path, |command_buffer| {
-                let trie = command_buffer.allocate_constant_from_slice(&trie_nodes).unwrap();
                 tree_verify
                     .encode(
                         TreeVerifyEncodeArguments {

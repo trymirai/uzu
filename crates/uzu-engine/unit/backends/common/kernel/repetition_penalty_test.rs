@@ -50,6 +50,21 @@ fn nodes(flat: bool) -> Vec<TrieNode> {
         .collect()
 }
 
+fn batch_topology<B: Backend>(
+    context: &B::Context,
+    nodes: &[TrieNode],
+    flat: bool,
+) -> BatchTopology<B> {
+    BatchTopology {
+        nodes: create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes)),
+        token_ids: create_buffer_with_data::<B, u32>(context, &TOKENS),
+        seeds: create_buffer_with_data::<B, u64>(context, &vec![0; TOKENS.len()]),
+        max_size: TOKENS.len() as u32,
+        is_flat: flat,
+        full_accept: flat,
+    }
+}
+
 fn ring(
     history: &[u32],
     window: usize,
@@ -153,8 +168,7 @@ fn check_sampling<B: Backend, T: DataTypeRepr + Float + Debug>() {
         suffix_repetition_length: Some(3),
     };
     for flat in [false, true] {
-        let nodes = nodes(flat);
-        let topology = BatchTopology::new(nodes.into_boxed_slice(), flat);
+        let topology = batch_topology(&*context, &nodes(flat), flat);
         for range in [0..9, 3..5, 7..9] {
             let mut logits = vec![T::from(-16.0).unwrap(); range.len() * VOCAB_SIZE];
             for row in logits.as_chunks_mut::<VOCAB_SIZE>().0 {
