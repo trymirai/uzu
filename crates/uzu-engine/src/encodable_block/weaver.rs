@@ -19,7 +19,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError, LinearEncodeError, RHTLinearWrapper},
+        linear::{Linear, LinearBlockError, LinearEncodeError, TransformedLinear},
         mixer::attention::{KVCache, KVCacheView, rope::PrecalculatedRoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
@@ -288,15 +288,14 @@ impl<B: Backend> Weaver<B> {
             // NOTE: We assume the query projection's output Hadamard signs match the tied
             // readout's input signs, so its output can stay in the readout's rotated basis.
             Box::new(
-                RHTLinearWrapper::new_with_rotated_output(
+                TransformedLinear::new_with_rotated_output(
                     config.model_dim,
                     config.target_model_dim,
                     DATA_TYPE,
                     &query_projection_tree,
                     context,
                 )
-                .await
-                .map_err(LinearBlockError::from)?,
+                .await?,
             )
         } else {
             <dyn Linear<B>>::new(

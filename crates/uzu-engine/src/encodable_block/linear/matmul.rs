@@ -43,9 +43,9 @@ pub struct LinearMatmul<B: Backend> {
     matrix: WeightMatrix<B>,
     biases: Option<B::GlobalGpuBuffer>,
     output_hadamard_factors: Option<B::GlobalGpuBuffer>,
-    input_dim: u32,
+    pub(super) input_dim: u32,
     pub(super) output_dim: u32,
-    output_data_type: DataType,
+    pub(super) output_data_type: DataType,
     prepared_activation_format: ActivationFormat,
 }
 
