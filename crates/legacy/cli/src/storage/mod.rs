@@ -2,6 +2,7 @@ mod app;
 mod events;
 mod models;
 mod sections;
+mod terminal;
 mod ui;
 
 use std::{io, sync::Arc};
@@ -10,7 +11,7 @@ use anyhow::Result;
 use clap::ValueEnum;
 use crossterm::{
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{EnterAlternateScreen, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use uzu::{
@@ -18,7 +19,11 @@ use uzu::{
     storage::DownloadManagerType,
 };
 
-use self::{app::App, events::EventHandler};
+use self::{
+    app::App,
+    events::EventHandler,
+    terminal::{require_terminal, restore_terminal, restore_terminal_on_panic},
+};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum DownloadManagerCliType {
@@ -54,6 +59,7 @@ impl From<DownloadManagerCliType> for DownloadManagerType {
 }
 
 pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> {
+    require_terminal()?;
     dotenvy::dotenv().ok();
     let runtime = tokio::runtime::Handle::current();
     let config = EngineConfig::default().with_download_manager_type(download_manager.into());
@@ -61,6 +67,7 @@ pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> 
 
     // Setup terminal
     enable_raw_mode()?;
+    restore_terminal_on_panic();
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
@@ -73,10 +80,7 @@ pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> 
     // Run app
     let res = run_app(&mut terminal, app, event_handler).await;
 
-    // Cleanup
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    restore_terminal()?;
 
     if let Err(error) = res {
         tracing::error!("Application error: {error:?}");
