@@ -15,23 +15,9 @@ pub struct LatticeSpec {
     pub layout: Layout,
 }
 
-pub const LADDER: [half::f16; 16] = [
-    half::f16::from_bits(0x25a8),
-    half::f16::from_bits(0x2800),
-    half::f16::from_bits(0x29a8),
-    half::f16::from_bits(0x2c00),
-    half::f16::from_bits(0x2da8),
-    half::f16::from_bits(0x3000),
-    half::f16::from_bits(0x31a8),
-    half::f16::from_bits(0x3400),
-    half::f16::from_bits(0x35a8),
-    half::f16::from_bits(0x3800),
-    half::f16::from_bits(0x39a8),
-    half::f16::from_bits(0x3c00),
-    half::f16::from_bits(0x3da8),
-    half::f16::from_bits(0x4000),
-    half::f16::from_bits(0x41a8),
-    half::f16::from_bits(0x4400),
+pub const LADDER: [u16; 16] = [
+    0x25a8, 0x2800, 0x29a8, 0x2c00, 0x2da8, 0x3000, 0x31a8, 0x3400, 0x35a8, 0x3800, 0x39a8, 0x3c00, 0x3da8, 0x4000,
+    0x41a8, 0x4400,
 ];
 
 pub const CODEBOOK: [i8; 1024] = {
