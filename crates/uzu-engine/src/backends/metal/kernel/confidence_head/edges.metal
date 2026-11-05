@@ -23,33 +23,33 @@ struct EdgesMemory {
 
 PUBLIC KERNEL(ConfidenceHeadEdges)(
     const device uint* node_metadata OPTIONAL(!refine),
-    const device uint* slot_rows,
+    const device uint* node_valid OPTIONAL(!refine),
+    const device uint* candidate_ids OPTIONAL(!refine),
+    const device float* pool_features OPTIONAL(!refine),
+    const device bfloat* slot_stats OPTIONAL(!refine),
+    device uint* slot_rows,
+    device uint* row_slots OPTIONAL(!refine),
     const device bfloat* nodes,
     const device bfloat* node_shifts OPTIONAL(refine),
     const device bfloat* child_shifts OPTIONAL(refine),
     const device bfloat* token_features,
-    const device float* child_numbers,
-    const device uint* child_pools,
+    device float* child_numbers,
+    device uint* child_pools,
     const device float* scores,
     device uint* frontier,
     device uint* packed_tree,
     device bfloat* child_inputs OPTIONAL(!refine),
-    const device bfloat* input_norm_scales,
-    const device bfloat* input_norm_biases,
+    const device bfloat* input_norm,
     const device bfloat* entry_weights,
     const device bfloat* entry_biases,
-    const device bfloat* block_norm_scales,
-    const device bfloat* block_norm_biases,
+    const device bfloat* block_norm,
     const device bfloat* up_weights,
     const device bfloat* up_biases,
     const device bfloat* down_weights,
     const device bfloat* down_biases,
-    const device bfloat* final_norm_scales,
-    const device bfloat* final_norm_biases,
-    const device bfloat* output_weights,
-    const device bfloat* output_biases,
-    const device bfloat* alpha_beta_weights,
-    const device bfloat* alpha_beta_biases,
+    const device bfloat* final_norm,
+    const device bfloat* readout_weights,
+    const device bfloat* readout_biases,
     const constant ConfidenceHeadParams& params,
     const constant uint& groups,
     const uint model_dim SPECIALIZE,
@@ -61,65 +61,108 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
     const uint lid THREADS(HEAD_THREADS)
 ) {
   const uint tree_slot_count = params.tree_slot_count;
-  const uint slot = refine ? group : node_metadata[uint(MetadataIdx::TreeSlot) * groups + group];
-  if (slot >= tree_slot_count || slot_rows[slot] == HEAD_NONE) {
-    return;
-  }
-  const uint row = slot_rows[slot];
   const uint children = params.children;
   const uint candidates = params.candidates;
   const uint capacity = tree_slot_count * children;
+  const uint slot = refine ? group : node_metadata[uint(MetadataIdx::TreeSlot) * groups + group];
+  if (slot >= tree_slot_count || (refine ? slot_rows[slot] == HEAD_NONE : node_valid[group] == 0u)) {
+    return;
+  }
   const uint first_entry = slot * children;
-  if (lid < model_dim) {
-    memory.node[lid] =
-        float(nodes[slot * model_dim + lid]) + (refine ? float(node_shifts[row * model_dim + lid]) : 0.0f);
-  }
-  if (lid < children) {
-    memory.pools[lid] = child_pools[first_entry + lid];
-  }
-  for (uint index = lid; index < children * model_dim; index += HEAD_THREADS) {
-    const uint child = index / model_dim;
-    const uint unit = index % model_dim;
-    const uint entry = first_entry + child;
-    const uint token = frontier[uint(FrontierIdx::TokenId) * capacity + entry];
-    memory.tokens[child * MODEL_MAX + unit] = float(token_features[token * model_dim + unit]) +
-                                              (refine ? float(child_shifts[(1 + entry) * model_dim + unit]) : 0.0f);
-  }
-  if (lid < children * SLOT_NUMBERS) {
-    memory.numbers[lid] = child_numbers[first_entry * SLOT_NUMBERS + lid];
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-
+  const uint simdgroup = context.simdgroup_index;
+  const uint lane = context.simd_lane_id;
   const uint inputs = 3u * model_dim + SLOT_NUMBERS;
-  for (uint index = lid; index < children * inputs; index += HEAD_THREADS) {
-    const uint child = index / inputs;
-    const uint column = index % inputs;
-    const uint unit = column % model_dim;
-    const float token = memory.tokens[child * MODEL_MAX + unit];
-    float value;
-    if (column < model_dim) {
-      value = memory.node[unit];
-    } else if (column < 2u * model_dim) {
-      value = token;
-    } else if (column < 3u * model_dim) {
-      value = memory.node[unit] * token;
-    } else {
-      value = memory.numbers[child * SLOT_NUMBERS + column - 3u * model_dim];
+  const uint row = refine ? slot_rows[slot] : 0u;
+  if (refine) {
+    if (lid < children) {
+      memory.pools[lid] = child_pools[first_entry + lid];
     }
-    memory.input[child * HEAD_EDGE_INPUT_MAX + column] = value;
+    if (lid < children * SLOT_NUMBERS) {
+      memory.numbers[lid] = child_numbers[first_entry * SLOT_NUMBERS + lid];
+    }
+  } else {
+    uint child_tokens[CHILDREN_MAX];
+    METAL_PRAGMA_UNROLL
+    for (uint child = 0; child < CHILDREN_MAX; ++child) {
+      child_tokens[child] =
+          child < children ? frontier[uint(FrontierIdx::TokenId) * capacity + first_entry + child] : HEAD_NONE;
+    }
+    if (lid < candidates) {
+      const uint depth = node_metadata[uint(MetadataIdx::Depth) * groups + group];
+      const uint candidate_id = candidate_ids[depth * candidates + lid];
+      for (uint child = 0; child < children; ++child) {
+        if (candidate_id == child_tokens[child]) {
+          const uint entry = first_entry + child;
+          const device float* features = pool_features + depth * POOL_FEATURES * candidates;
+          const float numbers[SLOT_NUMBERS] = {
+              features[lid],
+              max(scores[(2 * slot) * candidates + lid], HEAD_LOG_PROB_FLOOR),
+              scores[(2 * slot + 1) * candidates + lid],
+              features[2 * candidates + lid]
+          };
+          memory.pools[child] = lid;
+          child_pools[entry] = lid;
+          for (uint number = 0; number < SLOT_NUMBERS; ++number) {
+            const float value =
+                (numbers[number] - float(slot_stats[number])) / float(slot_stats[SLOT_NUMBERS + number]);
+            memory.numbers[child * SLOT_NUMBERS + number] = value;
+            child_numbers[entry * SLOT_NUMBERS + number] = value;
+          }
+        }
+      }
+    }
+    if (simdgroup == 0) {
+      uint own_row = 0;
+      if (slot != 0) {
+        const uint parent = packed_tree[uint(TreeIdx::ParentSlot) * tree_slot_count + slot];
+        const uint own_token = packed_tree[uint(TreeIdx::TokenId) * tree_slot_count + slot];
+        const bool hit =
+            lane < children && frontier[uint(FrontierIdx::TokenId) * capacity + parent * children + lane] == own_token;
+        own_row = simd_max(hit ? 1 + parent * children + lane : 0u);
+      }
+      if (lane == 0) {
+        slot_rows[slot] = own_row;
+        row_slots[own_row] = slot;
+      }
+    }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  head_layer_norm(
-      memory.input,
-      memory.input,
-      HEAD_EDGE_INPUT_MAX,
-      inputs,
-      children,
-      input_norm_scales,
-      input_norm_biases,
-      params.epsilon,
-      context
-  );
+  if (simdgroup < children) {
+    const uint entry = first_entry + simdgroup;
+    const uint token = frontier[uint(FrontierIdx::TokenId) * capacity + entry];
+    threadgroup float* line = memory.input + simdgroup * HEAD_EDGE_INPUT_MAX;
+    float total = 0.0f;
+    for (uint unit = lane; unit < model_dim; unit += METAL_SIMD_SIZE) {
+      const float node =
+          float(nodes[slot * model_dim + unit]) + (refine ? float(node_shifts[row * model_dim + unit]) : 0.0f);
+      const float vector = float(token_features[token * model_dim + unit]) +
+                           (refine ? float(child_shifts[(1 + entry) * model_dim + unit]) : 0.0f);
+      line[unit] = node;
+      line[model_dim + unit] = vector;
+      line[2u * model_dim + unit] = node * vector;
+      memory.tokens[simdgroup * MODEL_MAX + unit] = vector;
+      if (simdgroup == 0) {
+        memory.node[unit] = node;
+      }
+      total += node + vector + node * vector;
+    }
+    if (lane < SLOT_NUMBERS) {
+      const float number = memory.numbers[simdgroup * SLOT_NUMBERS + lane];
+      line[3u * model_dim + lane] = number;
+      total += number;
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    const float mean = simd_sum(total) / float(inputs);
+    float spread = 0.0f;
+    for (uint column = lane; column < inputs; column += METAL_SIMD_SIZE) {
+      spread += (line[column] - mean) * (line[column] - mean);
+    }
+    const float scale = rsqrt(simd_sum(spread) / float(inputs) + params.epsilon);
+    for (uint column = lane; column < inputs; column += METAL_SIMD_SIZE) {
+      line[column] = (line[column] - mean) * scale * float(input_norm[column]) + float(input_norm[inputs + column]);
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
   head_dense(
       entry_weights,
       entry_biases,
@@ -140,8 +183,8 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
       MODEL_MAX,
       model_dim,
       children,
-      block_norm_scales,
-      block_norm_biases,
+      block_norm,
+      block_norm + model_dim,
       params.epsilon,
       context
   );
@@ -173,28 +216,31 @@ PUBLIC KERNEL(ConfidenceHeadEdges)(
       true,
       context
   );
-  head_layer_norm(
-      memory.state,
-      memory.state,
-      MODEL_MAX,
-      model_dim,
-      children,
-      final_norm_scales,
-      final_norm_biases,
-      params.epsilon,
-      context
-  );
-  const uint simdgroup = context.simdgroup_index;
-  const uint lane = context.simd_lane_id;
   if (simdgroup < children) {
-    const float delta = head_simd_dot(output_weights, memory.state + simdgroup * MODEL_MAX, model_dim, lane);
+    const threadgroup float* line = memory.state + simdgroup * MODEL_MAX;
+    float total = 0.0f;
+    for (uint unit = lane; unit < model_dim; unit += METAL_SIMD_SIZE) {
+      total += line[unit];
+    }
+    const float mean = simd_sum(total) / float(model_dim);
+    float spread = 0.0f;
+    for (uint unit = lane; unit < model_dim; unit += METAL_SIMD_SIZE) {
+      spread += (line[unit] - mean) * (line[unit] - mean);
+    }
+    const float scale = rsqrt(simd_sum(spread) / float(model_dim) + params.epsilon);
+    float delta = 0.0f;
+    for (uint unit = lane; unit < model_dim; unit += METAL_SIMD_SIZE) {
+      const float normed = (line[unit] - mean) * scale * float(final_norm[unit]) + float(final_norm[model_dim + unit]);
+      delta += float(readout_weights[unit]) * normed;
+    }
+    delta = simd_sum(delta);
     if (lane == 0) {
-      memory.deltas[simdgroup] = delta + float(output_biases[0]);
+      memory.deltas[simdgroup] = delta + float(readout_biases[0]);
     }
   } else if (simdgroup >= CHILDREN_MAX && simdgroup < CHILDREN_MAX + 2u) {
     const uint output = simdgroup - CHILDREN_MAX;
-    const float value = head_simd_dot(alpha_beta_weights + output * model_dim, memory.node, model_dim, lane) +
-                        float(alpha_beta_biases[output]);
+    const float value = head_simd_dot(readout_weights + (1 + output) * model_dim, memory.node, model_dim, lane) +
+                        float(readout_biases[1 + output]);
     if (lane == 0) {
       memory.coefficients[output] = min(activate_softplus(value), params.logit_cap);
     }

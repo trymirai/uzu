@@ -165,37 +165,56 @@ fn weights<const N: usize>(
     std::array::from_fn(|index| values(sizes[index], salt + index as f32, 0.6))
 }
 
-fn node_weights() -> [Vec<f32>; 8] {
+fn node_weights() -> [Vec<f32>; 6] {
     let (width, pool) = (WIDTH as usize, POOL_HIDDEN as usize);
-    let mut weights = weights([3 * pool, pool, pool * pool, pool, width * 2 * pool, width, 4, 4], 0.7);
-    weights[7] = vec![1.0, 1.5, 2.0, 2.5];
-    weights
+    weights([3 * pool, pool, pool * pool, pool, width * 2 * pool, width], 0.7)
 }
 
-fn edge_weights() -> [Vec<f32>; 16] {
+fn edge_weights() -> [Vec<f32>; 12] {
     let (width, hidden) = (WIDTH as usize, EDGE_HIDDEN as usize);
     let inputs = 3 * width + 4;
-    weights(
+    let mut weights = weights(
         [
-            inputs,
-            inputs,
+            8,
+            2 * inputs,
             width * inputs,
             width,
-            width,
-            width,
+            2 * width,
             hidden * width,
             hidden,
             width * hidden,
             width,
-            width,
-            width,
-            width,
-            1,
             2 * width,
-            2,
+            3 * width,
+            3,
         ],
         3.3,
-    )
+    );
+    weights[0][4..].copy_from_slice(&[1.0, 1.5, 2.0, 2.5]);
+    weights
+}
+
+fn pool_inputs() -> (Vec<u32>, Vec<u32>, Vec<f32>) {
+    let mut metadata = vec![0; MetadataIdx::COUNT * SLOTS];
+    for slot in 0..SLOTS {
+        metadata[MetadataIdx::Depth as usize * SLOTS + slot] = depth(slot) as u32;
+        metadata[MetadataIdx::AncestorCount as usize * SLOTS + slot] = depth(slot) as u32;
+        metadata[MetadataIdx::TreeSlot as usize * SLOTS + slot] = slot as u32;
+    }
+    let ids = (0..DEPTHS)
+        .flat_map(|depth| {
+            let slot = (0..SLOTS).find(|&slot| self::depth(slot) == depth).unwrap_or(0);
+            (0..CANDIDATES).map(move |index| pool_token(slot, index))
+        })
+        .collect::<Vec<_>>();
+    let mut features = values(DEPTHS * 3 * CANDIDATES as usize, 4.1, 3.0);
+    for depth in 0..DEPTHS {
+        for index in 0..CANDIDATES as usize {
+            features[depth * 3 * CANDIDATES as usize + index] =
+                -features[depth * 3 * CANDIDATES as usize + index].abs();
+        }
+    }
+    (metadata, ids, features)
 }
 
 fn run_pools<B: Backend>() -> Vec<f32> {
@@ -228,39 +247,17 @@ fn pools_match_cpu() {
     for_each_non_cpu_backend!(|B| assert_close("pool features", &run_pools::<B>(), &expected, 1e-4));
 }
 
-fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<f32>, Vec<u32>, Vec<u32>) {
+fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let context = create_context::<B>();
-    let tree = tree();
-    let mut metadata = vec![0; MetadataIdx::COUNT * SLOTS];
-    for slot in 0..SLOTS {
-        metadata[MetadataIdx::Depth as usize * SLOTS + slot] = depth(slot) as u32;
-        metadata[MetadataIdx::AncestorCount as usize * SLOTS + slot] = depth(slot) as u32;
-        metadata[MetadataIdx::TreeSlot as usize * SLOTS + slot] = slot as u32;
-    }
-    let ids = (0..DEPTHS)
-        .flat_map(|depth| {
-            let slot = (0..SLOTS).find(|&slot| self::depth(slot) == depth).unwrap_or(0);
-            (0..CANDIDATES).map(move |index| pool_token(slot, index))
-        })
-        .collect::<Vec<_>>();
-    let mut features = values(DEPTHS * 3 * CANDIDATES as usize, 4.1, 3.0);
-    for depth in 0..DEPTHS {
-        for index in 0..CANDIDATES as usize {
-            features[depth * 3 * CANDIDATES as usize + index] =
-                -features[depth * 3 * CANDIDATES as usize + index].abs();
-        }
-    }
+    let (metadata, _, features) = pool_inputs();
     let u32s = |data: &[u32]| create_buffer_with_data::<B, u32>(&context, data);
     let f32s = |data: &[f32]| create_buffer_with_data::<B, f32>(&context, data);
     let bf16_buffer = |data: &[f32]| create_buffer_with_data::<B, bf16>(&context, &bf16s(data));
     let residual_logits = bf16_buffer(&values(SLOTS * CANDIDATES as usize, 1.7, 2.0));
     let candidate_logits = f32s(&values(DEPTHS * CANDIDATES as usize, 0.3, 6.0));
-    let candidate_ids = u32s(&ids);
     let pool_features = f32s(&features);
-    let node_metadata = u32s(&metadata);
-    let node_valid = u32s(&EXPANDED.map(u32::from));
-    let packed_tree = u32s(&tree.packed_tree);
-    let frontier = u32s(&tree.frontier);
+    let round_metadata = u32s(&metadata);
+    let round_valid = u32s(&EXPANDED.map(u32::from));
     let draft = bf16_buffer(&values(DEPTHS * WIDTH as usize, 2.3, 1.0));
     let [
         pool_entry_weights,
@@ -269,27 +266,18 @@ fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<f32>,
         pool_hidden_biases,
         pool_out_weights,
         pool_out_biases,
-        slot_mean,
-        slot_std,
     ] = node_weights().map(|values| bf16_buffer(&values));
     let mut scores = f32s(&vec![0.0; SLOTS * 2 * CANDIDATES as usize]);
     let mut nodes = bf16_buffer(&vec![0.0; SLOTS * WIDTH as usize]);
     let mut node_inputs = bf16_buffer(&vec![0.0; SLOTS * WIDTH as usize]);
-    let mut child_pools = u32s(&[0; CAPACITY]);
-    let mut child_numbers = f32s(&vec![0.0; CAPACITY * 4]);
-    let mut slot_rows = u32s(&[NONE; SLOTS]);
-    let mut row_slots = u32s(&[NONE; ROWS]);
     let kernel = <B::Kernels as Kernels>::ConfidenceHeadNodesKernel::new(&context, WIDTH, POOL_HIDDEN).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &residual_logits,
         &candidate_logits,
-        &candidate_ids,
         &pool_features,
-        &node_metadata,
-        &node_valid,
-        &packed_tree,
-        &frontier,
+        &round_metadata,
+        &round_valid,
         &draft,
         &pool_entry_weights,
         &pool_entry_biases,
@@ -297,15 +285,9 @@ fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<f32>,
         &pool_hidden_biases,
         &pool_out_weights,
         &pool_out_biases,
-        &slot_mean,
-        &slot_std,
         &mut scores,
         &mut nodes,
         &mut node_inputs,
-        &mut child_pools,
-        &mut child_numbers,
-        &mut slot_rows,
-        &mut row_slots,
         params(),
         SLOTS as u32,
         &mut command_buffer,
@@ -315,28 +297,17 @@ fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<f32>,
         buffer_to_vec::<B, f32>(&context, &scores),
         floats(&buffer_to_vec::<B, bf16>(&context, &nodes)),
         floats(&buffer_to_vec::<B, bf16>(&context, &node_inputs)),
-        buffer_to_vec::<B, u32>(&context, &child_pools),
-        buffer_to_vec::<B, f32>(&context, &child_numbers),
-        buffer_to_vec::<B, u32>(&context, &slot_rows),
-        buffer_to_vec::<B, u32>(&context, &row_slots),
     )
 }
 
 #[uzu_test]
 fn nodes_match_cpu() {
-    let (scores, nodes, _, child_pools, child_numbers, slot_rows, row_slots) = run_nodes::<Cpu>();
-    let tree = tree();
-    assert_eq!(slot_rows, tree.slot_rows);
-    assert_eq!(row_slots, tree.row_slots);
+    let (scores, nodes, _) = run_nodes::<Cpu>();
     for_each_non_cpu_backend!(|B| {
         let actual = run_nodes::<B>();
         assert_close("scores", &actual.0, &scores, 1e-4);
         assert_close("nodes", &actual.1, &nodes, 2e-2);
         assert_eq!(actual.2, actual.1);
-        assert_eq!(actual.3, child_pools);
-        assert_close("child numbers", &actual.4, &child_numbers, 1e-4);
-        assert_eq!(actual.5, slot_rows);
-        assert_eq!(actual.6, row_slots);
     });
 }
 
@@ -354,45 +325,66 @@ fn packed_edges(packed_tree: &[u32]) -> Vec<f32> {
     packed_tree[TreeIdx::EdgeLogprobBits as usize * SLOTS..][..SLOTS].iter().map(|bits| f32::from_bits(*bits)).collect()
 }
 
-fn run_edges<B: Backend>(refine: bool) -> (Vec<u32>, Vec<u32>, Vec<f32>) {
+struct EdgesOutput {
+    frontier: Vec<u32>,
+    packed_tree: Vec<u32>,
+    child_inputs: Vec<f32>,
+    child_pools: Vec<u32>,
+    child_numbers: Vec<f32>,
+    slot_rows: Vec<u32>,
+    row_slots: Vec<u32>,
+}
+
+fn child_pool_indices() -> Vec<u32> {
+    (0..CAPACITY).map(|entry| CHILD_INDEX[entry % CHILDREN] + (entry / CHILDREN) as u32).collect()
+}
+
+fn run_edges<B: Backend>(refine: bool) -> EdgesOutput {
     let context = create_context::<B>();
     let tree = tree();
-    let mut metadata = vec![0; MetadataIdx::COUNT * SLOTS];
-    for slot in 0..SLOTS {
-        metadata[MetadataIdx::TreeSlot as usize * SLOTS + slot] = slot as u32;
-    }
-    let pools =
-        (0..CAPACITY).map(|entry| CHILD_INDEX[entry % CHILDREN] + (entry / CHILDREN) as u32).collect::<Vec<_>>();
+    let (metadata, ids, features) = pool_inputs();
     let u32s = |data: &[u32]| create_buffer_with_data::<B, u32>(&context, data);
     let f32s = |data: &[f32]| create_buffer_with_data::<B, f32>(&context, data);
     let bf16_buffer = |data: &[f32]| create_buffer_with_data::<B, bf16>(&context, &bf16s(data));
     let node_metadata = u32s(&metadata);
-    let slot_rows = u32s(&tree.slot_rows);
+    let node_valid = u32s(&EXPANDED.map(u32::from));
+    let candidate_ids = u32s(&ids);
+    let pool_features = f32s(&features);
     let nodes = bf16_buffer(&values(SLOTS * WIDTH as usize, 1.1, 1.0));
     let node_shifts = bf16_buffer(&values(ROWS * WIDTH as usize, 1.3, 0.5));
     let child_shifts = bf16_buffer(&values(ROWS * WIDTH as usize, 1.9, 0.5));
     let token_features = bf16_buffer(&values(VOCAB as usize * WIDTH as usize, 3.1, 1.0));
-    let child_numbers = f32s(&values(CAPACITY * 4, 2.7, 1.0));
-    let child_pools = u32s(&pools);
     let scores = f32s(&values(SLOTS * 2 * CANDIDATES as usize, 0.5, 4.0));
     let [
-        input_norm_scales,
-        input_norm_biases,
+        slot_stats,
+        input_norm,
         entry_weights,
         entry_biases,
-        block_norm_scales,
-        block_norm_biases,
+        block_norm,
         up_weights,
         up_biases,
         down_weights,
         down_biases,
-        final_norm_scales,
-        final_norm_biases,
-        output_weights,
-        output_biases,
-        alpha_beta_weights,
-        alpha_beta_biases,
+        final_norm,
+        readout_weights,
+        readout_biases,
     ] = edge_weights().map(|values| bf16_buffer(&values));
+    let mut slot_rows = u32s(&if refine {
+        tree.slot_rows.clone()
+    } else {
+        vec![NONE; SLOTS]
+    });
+    let mut row_slots = u32s(&[NONE; ROWS]);
+    let mut child_numbers = f32s(&if refine {
+        values(CAPACITY * 4, 2.7, 1.0)
+    } else {
+        vec![0.0; CAPACITY * 4]
+    });
+    let mut child_pools = u32s(&if refine {
+        child_pool_indices()
+    } else {
+        vec![0; CAPACITY]
+    });
     let mut frontier = u32s(&tree.frontier);
     let mut packed_tree = u32s(&tree.packed_tree);
     let mut child_inputs = bf16_buffer(&vec![0.0; CAPACITY * (WIDTH as usize + 4)]);
@@ -400,61 +392,82 @@ fn run_edges<B: Backend>(refine: bool) -> (Vec<u32>, Vec<u32>, Vec<f32>) {
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         (!refine).then_some(&node_metadata),
-        &slot_rows,
+        (!refine).then_some(&node_valid),
+        (!refine).then_some(&candidate_ids),
+        (!refine).then_some(&pool_features),
+        (!refine).then_some(&slot_stats),
+        &mut slot_rows,
+        (!refine).then_some(&mut row_slots),
         &nodes,
         refine.then_some(&node_shifts),
         refine.then_some(&child_shifts),
         &token_features,
-        &child_numbers,
-        &child_pools,
+        &mut child_numbers,
+        &mut child_pools,
         &scores,
         &mut frontier,
         &mut packed_tree,
         (!refine).then_some(&mut child_inputs),
-        &input_norm_scales,
-        &input_norm_biases,
+        &input_norm,
         &entry_weights,
         &entry_biases,
-        &block_norm_scales,
-        &block_norm_biases,
+        &block_norm,
         &up_weights,
         &up_biases,
         &down_weights,
         &down_biases,
-        &final_norm_scales,
-        &final_norm_biases,
-        &output_weights,
-        &output_biases,
-        &alpha_beta_weights,
-        &alpha_beta_biases,
+        &final_norm,
+        &readout_weights,
+        &readout_biases,
         params(),
         SLOTS as u32,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    (
-        buffer_to_vec::<B, u32>(&context, &frontier),
-        buffer_to_vec::<B, u32>(&context, &packed_tree),
-        floats(&buffer_to_vec::<B, bf16>(&context, &child_inputs)),
-    )
+    EdgesOutput {
+        frontier: buffer_to_vec::<B, u32>(&context, &frontier),
+        packed_tree: buffer_to_vec::<B, u32>(&context, &packed_tree),
+        child_inputs: floats(&buffer_to_vec::<B, bf16>(&context, &child_inputs)),
+        child_pools: buffer_to_vec::<B, u32>(&context, &child_pools),
+        child_numbers: buffer_to_vec::<B, f32>(&context, &child_numbers),
+        slot_rows: buffer_to_vec::<B, u32>(&context, &slot_rows),
+        row_slots: buffer_to_vec::<B, u32>(&context, &row_slots),
+    }
 }
 
 #[uzu_test]
 fn edges_match_cpu() {
+    let tree = tree();
     for refine in [false, true] {
-        let (frontier, packed_tree, child_inputs) = run_edges::<Cpu>(refine);
-        let edges = frontier_floats(&frontier, FrontierIdx::EdgeLogprobBits);
+        let expected = run_edges::<Cpu>(refine);
+        let edges = frontier_floats(&expected.frontier, FrontierIdx::EdgeLogprobBits);
         assert!(edges[..8].iter().chain(&edges[12..]).all(|edge| *edge < 0.0));
         if refine {
-            assert!(packed_edges(&packed_tree)[1..].iter().all(|edge| *edge < 0.0));
+            assert!(packed_edges(&expected.packed_tree)[1..].iter().all(|edge| *edge < 0.0));
+        } else {
+            assert_eq!(expected.slot_rows, tree.slot_rows);
+            assert_eq!(expected.row_slots, tree.row_slots);
+            let pools = child_pool_indices();
+            for entry in (0..CAPACITY).filter(|entry| EXPANDED[entry / CHILDREN]) {
+                assert_eq!(expected.child_pools[entry], pools[entry]);
+            }
         }
         for_each_non_cpu_backend!(|B| {
             let actual = run_edges::<B>(refine);
             for field in [FrontierIdx::EdgeLogprobBits, FrontierIdx::PathLogprobBits] {
-                assert_close("frontier", &frontier_floats(&actual.0, field), &frontier_floats(&frontier, field), 1e-3);
+                assert_close(
+                    "frontier",
+                    &frontier_floats(&actual.frontier, field),
+                    &frontier_floats(&expected.frontier, field),
+                    1e-3,
+                );
             }
-            assert_close("tree edges", &packed_edges(&actual.1), &packed_edges(&packed_tree), 1e-3);
-            assert_close("child inputs", &actual.2, &child_inputs, 2e-2);
+            assert_close("tree edges", &packed_edges(&actual.packed_tree), &packed_edges(&expected.packed_tree), 1e-3);
+            assert_close("child inputs", &actual.child_inputs, &expected.child_inputs, 2e-2);
+            assert_close("child numbers", &actual.child_numbers, &expected.child_numbers, 1e-4);
+            assert_eq!(actual.child_pools, expected.child_pools);
+            assert_eq!(actual.slot_rows, expected.slot_rows);
+            assert_eq!(actual.row_slots, expected.row_slots);
         });
     }
 }

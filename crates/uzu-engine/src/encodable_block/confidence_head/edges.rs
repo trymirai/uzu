@@ -12,22 +12,18 @@ use crate::{
 pub struct Edges<B: Backend> {
     steer: <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel,
     refine: <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel,
-    input_norm_scales: B::GlobalGpuBuffer,
-    input_norm_biases: B::GlobalGpuBuffer,
+    slot_stats: B::GlobalGpuBuffer,
+    input_norm: B::GlobalGpuBuffer,
     entry_weights: B::GlobalGpuBuffer,
     entry_biases: B::GlobalGpuBuffer,
-    block_norm_scales: B::GlobalGpuBuffer,
-    block_norm_biases: B::GlobalGpuBuffer,
+    block_norm: B::GlobalGpuBuffer,
     up_weights: B::GlobalGpuBuffer,
     up_biases: B::GlobalGpuBuffer,
     down_weights: B::GlobalGpuBuffer,
     down_biases: B::GlobalGpuBuffer,
-    final_norm_scales: B::GlobalGpuBuffer,
-    final_norm_biases: B::GlobalGpuBuffer,
-    output_weights: B::GlobalGpuBuffer,
-    output_biases: B::GlobalGpuBuffer,
-    alpha_beta_weights: B::GlobalGpuBuffer,
-    alpha_beta_biases: B::GlobalGpuBuffer,
+    final_norm: B::GlobalGpuBuffer,
+    readout_weights: B::GlobalGpuBuffer,
+    readout_biases: B::GlobalGpuBuffer,
 }
 
 impl<B: Backend> Edges<B> {
@@ -42,39 +38,31 @@ impl<B: Backend> Edges<B> {
             <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel::new(context, width, hidden, refine)
                 .map_err(ConfidenceHeadError::Backend)
         };
-        let input_norm_scales = parameter_tree.read_buffer("edge.input_norm.scales", &[inputs], DATA_TYPE).await?;
-        let input_norm_biases = parameter_tree.read_buffer("edge.input_norm.biases", &[inputs], DATA_TYPE).await?;
+        let slot_stats = parameter_tree.read_buffer("slot.stats", &[2, SLOT_NUMBERS], DATA_TYPE).await?;
+        let input_norm = parameter_tree.read_buffer("edge.input_norm", &[2, inputs], DATA_TYPE).await?;
         let entry_weights = parameter_tree.read_buffer("edge.entry.weights", &[width, inputs], DATA_TYPE).await?;
         let entry_biases = parameter_tree.read_buffer("edge.entry.biases", &[width], DATA_TYPE).await?;
-        let block_norm_scales = parameter_tree.read_buffer("edge.block_norm.scales", &[width], DATA_TYPE).await?;
-        let block_norm_biases = parameter_tree.read_buffer("edge.block_norm.biases", &[width], DATA_TYPE).await?;
+        let block_norm = parameter_tree.read_buffer("edge.block_norm", &[2, width], DATA_TYPE).await?;
         let up_weights = parameter_tree.read_buffer("edge.up.weights", &[hidden, width], DATA_TYPE).await?;
         let up_biases = parameter_tree.read_buffer("edge.up.biases", &[hidden], DATA_TYPE).await?;
         let down_weights = parameter_tree.read_buffer("edge.down.weights", &[width, hidden], DATA_TYPE).await?;
         let down_biases = parameter_tree.read_buffer("edge.down.biases", &[width], DATA_TYPE).await?;
-        let final_norm_scales = parameter_tree.read_buffer("edge.final_norm.scales", &[width], DATA_TYPE).await?;
-        let final_norm_biases = parameter_tree.read_buffer("edge.final_norm.biases", &[width], DATA_TYPE).await?;
-        let output_weights = parameter_tree.read_buffer("edge.output.weights", &[1, width], DATA_TYPE).await?;
-        let output_biases = parameter_tree.read_buffer("edge.output.biases", &[1], DATA_TYPE).await?;
-        let alpha_beta_weights = parameter_tree.read_buffer("alpha_beta.weights", &[2, width], DATA_TYPE).await?;
-        let alpha_beta_biases = parameter_tree.read_buffer("alpha_beta.biases", &[2], DATA_TYPE).await?;
+        let final_norm = parameter_tree.read_buffer("edge.final_norm", &[2, width], DATA_TYPE).await?;
+        let readout_weights = parameter_tree.read_buffer("edge.readout.weights", &[3, width], DATA_TYPE).await?;
+        let readout_biases = parameter_tree.read_buffer("edge.readout.biases", &[3], DATA_TYPE).await?;
         Ok(Self {
-            input_norm_scales,
-            input_norm_biases,
+            slot_stats,
+            input_norm,
             entry_weights,
             entry_biases,
-            block_norm_scales,
-            block_norm_biases,
+            block_norm,
             up_weights,
             up_biases,
             down_weights,
             down_biases,
-            final_norm_scales,
-            final_norm_biases,
-            output_weights,
-            output_biases,
-            alpha_beta_weights,
-            alpha_beta_biases,
+            final_norm,
+            readout_weights,
+            readout_biases,
             steer: kernel(false)?,
             refine: kernel(true)?,
         })
@@ -83,13 +71,17 @@ impl<B: Backend> Edges<B> {
     pub fn encode(
         &self,
         node_metadata: Option<impl BufferRef<Backend = B>>,
-        slot_rows: impl BufferRef<Backend = B>,
+        node_valid: Option<impl BufferRef<Backend = B>>,
+        candidate_ids: Option<impl BufferRef<Backend = B>>,
+        pool_features: Option<impl BufferRef<Backend = B>>,
+        slot_rows: impl BufferMut<Backend = B>,
+        row_slots: Option<impl BufferMut<Backend = B>>,
         nodes: impl BufferRef<Backend = B>,
         node_shifts: Option<impl BufferRef<Backend = B>>,
         child_shifts: Option<impl BufferRef<Backend = B>>,
         token_features: impl BufferRef<Backend = B>,
-        child_numbers: impl BufferRef<Backend = B>,
-        child_pools: impl BufferRef<Backend = B>,
+        child_numbers: impl BufferMut<Backend = B>,
+        child_pools: impl BufferMut<Backend = B>,
         scores: impl BufferRef<Backend = B>,
         frontier: impl BufferMut<Backend = B>,
         packed_tree: impl BufferMut<Backend = B>,
@@ -98,14 +90,20 @@ impl<B: Backend> Edges<B> {
         groups: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let kernel = if node_shifts.is_some() {
+        let refine = node_shifts.is_some();
+        let kernel = if refine {
             &self.refine
         } else {
             &self.steer
         };
         kernel.encode(
             node_metadata,
+            node_valid,
+            candidate_ids,
+            pool_features,
+            (!refine).then_some(&self.slot_stats),
             slot_rows,
+            row_slots,
             nodes,
             node_shifts,
             child_shifts,
@@ -116,22 +114,17 @@ impl<B: Backend> Edges<B> {
             frontier,
             packed_tree,
             child_inputs,
-            &self.input_norm_scales,
-            &self.input_norm_biases,
+            &self.input_norm,
             &self.entry_weights,
             &self.entry_biases,
-            &self.block_norm_scales,
-            &self.block_norm_biases,
+            &self.block_norm,
             &self.up_weights,
             &self.up_biases,
             &self.down_weights,
             &self.down_biases,
-            &self.final_norm_scales,
-            &self.final_norm_biases,
-            &self.output_weights,
-            &self.output_biases,
-            &self.alpha_beta_weights,
-            &self.alpha_beta_biases,
+            &self.final_norm,
+            &self.readout_weights,
+            &self.readout_biases,
             params,
             groups,
             command_buffer,

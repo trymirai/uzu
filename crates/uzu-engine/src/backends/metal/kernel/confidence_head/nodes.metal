@@ -5,11 +5,18 @@
 
 using namespace metal;
 
+#define NODES_THREADS 1024u
+#define NODES_SIMDGROUPS (NODES_THREADS / 32u)
+#define NODES_UNITS (POOL_HIDDEN_MAX / 2u)
+
+static_assert(NODES_THREADS == 2u * CANDIDATES_MAX, "two threads per candidate, each with half of the pool units");
+static_assert(2u * POOL_HIDDEN_MAX <= NODES_SIMDGROUPS, "a simdgroup per pool summary value");
+
 struct NodesMemory {
   float4 pool_entry[POOL_HIDDEN_MAX];
   float4 pool_hidden[POOL_HIDDEN_MAX * POOL_HIDDEN_MAX / 4u];
   float pool_hidden_biases[POOL_HIDDEN_MAX];
-  float reduce[2u * HEAD_SIMDGROUPS * POOL_HIDDEN_MAX];
+  float reduce[2u * NODES_SIMDGROUPS * NODES_UNITS];
   float summary[2u * POOL_HIDDEN_MAX];
   float node[MODEL_MAX];
 };
@@ -17,12 +24,9 @@ struct NodesMemory {
 PUBLIC KERNEL(ConfidenceHeadNodes)(
     const device bfloat* residual_logits,
     const device float* candidate_logits,
-    const device uint* candidate_ids,
     const device float* pool_features,
-    const device uint* node_metadata,
-    const device uint* node_valid,
-    const device uint* packed_tree,
-    const device uint* frontier,
+    const device uint* round_metadata,
+    const device uint* round_valid,
     const device bfloat* draft,
     const device bfloat* pool_entry_weights,
     const device bfloat* pool_entry_biases,
@@ -30,15 +34,9 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     const device bfloat* pool_hidden_biases,
     const device bfloat* pool_out_weights,
     const device bfloat* pool_out_biases,
-    const device bfloat* slot_mean,
-    const device bfloat* slot_std,
     device float* scores,
     device bfloat* nodes,
     device bfloat* node_inputs,
-    device uint* child_pools,
-    device float* child_numbers,
-    device uint* slot_rows,
-    device uint* row_slots,
     const constant ConfidenceHeadParams& params,
     const constant uint& rows,
     const uint model_dim SPECIALIZE,
@@ -46,26 +44,23 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     threadgroup NodesMemory& memory,
     const ThreadContext context,
     const uint row GROUPS(rows),
-    const uint lid THREADS(HEAD_THREADS)
+    const uint lid THREADS(NODES_THREADS)
 ) {
-  const uint slot = node_metadata[uint(MetadataIdx::TreeSlot) * rows + row];
-  if (node_valid[row] == 0u || slot >= params.tree_slot_count) {
+  const uint slot = round_metadata[uint(MetadataIdx::TreeSlot) * rows + row];
+  if (round_valid[row] == 0u || slot >= params.tree_slot_count) {
     return;
   }
-  const uint depth = node_metadata[uint(MetadataIdx::Depth) * rows + row];
+  const uint depth = round_metadata[uint(MetadataIdx::Depth) * rows + row];
   const uint candidates = params.candidates;
-  const uint capacity = params.tree_slot_count * params.children;
-  const uint first_entry = slot * params.children;
   const device float* features = pool_features + depth * POOL_FEATURES * candidates;
-  const bool valid = lid < candidates;
+  const uint candidate = lid % CANDIDATES_MAX;
+  const uint half_index = lid / CANDIDATES_MAX;
+  const bool valid = candidate < candidates;
   const float logit =
-      valid ? candidate_logits[depth * candidates + lid] + float(residual_logits[row * candidates + lid]) : -INFINITY;
-  const float log_draft = valid ? features[lid] : 0.0f;
-  const float noise = valid ? features[candidates + lid] : 0.0f;
-  if (valid) {
-    scores[(2 * slot) * candidates + lid] = logit;
-    scores[(2 * slot + 1) * candidates + lid] = noise;
-  }
+      valid ? candidate_logits[depth * candidates + candidate] + float(residual_logits[row * candidates + candidate])
+            : -INFINITY;
+  const float log_draft = valid ? features[candidate] : 0.0f;
+  const float noise = valid ? features[candidates + candidate] : 0.0f;
   if (lid < POOL_HIDDEN_MAX) {
     const bool used = lid < pool_hidden;
     memory.pool_entry[lid] = used ? float4(
@@ -77,7 +72,7 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
                                   : float4(0.0f);
     memory.pool_hidden_biases[lid] = used ? float(pool_hidden_biases[lid]) : 0.0f;
   }
-  for (uint index = lid; index < POOL_HIDDEN_MAX * POOL_HIDDEN_MAX; index += HEAD_THREADS) {
+  for (uint index = lid; index < POOL_HIDDEN_MAX * POOL_HIDDEN_MAX; index += NODES_THREADS) {
     const uint unit = index / POOL_HIDDEN_MAX;
     const uint inner = index % POOL_HIDDEN_MAX;
     reinterpret_cast<threadgroup float*>(memory.pool_hidden)[index] =
@@ -87,7 +82,11 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     memory.node[lid] = float(draft[depth * model_dim + lid]);
   }
 
-  const float log_logit = logit - head_log_sum_exp(logit, memory.reduce, context);
+  const float log_logit =
+      logit - head_log_sum_exp<NODES_SIMDGROUPS>(half_index == 0u ? logit : -INFINITY, memory.reduce, context);
+  if (valid) {
+    scores[(2 * slot + half_index) * candidates + candidate] = half_index == 0u ? log_logit : noise;
+  }
   const float floored = max(log_logit, HEAD_LOG_PROB_FLOOR);
   const float weight = valid ? exp(log_logit) : 0.0f;
   const float4 inputs = float4(log_draft, floored - log_draft, noise, 1.0f);
@@ -97,46 +96,40 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     const float value = dot(memory.pool_entry[unit], inputs);
     hidden[unit / 4u][unit % 4u] = unit < pool_hidden ? activate_silu(value) : 0.0f;
   }
-  static_assert(POOL_HIDDEN_MAX == 16u, "one butterfly reduces the pool encoder's units");
-  float means[POOL_HIDDEN_MAX];
-  float peaks[POOL_HIDDEN_MAX];
+  float means[NODES_UNITS];
+  float peaks[NODES_UNITS];
   METAL_PRAGMA_UNROLL
-  for (uint unit = 0; unit < POOL_HIDDEN_MAX; ++unit) {
+  for (uint offset = 0; offset < NODES_UNITS; ++offset) {
+    const uint unit = half_index * NODES_UNITS + offset;
     float value = memory.pool_hidden_biases[unit];
     METAL_PRAGMA_UNROLL
     for (uint quad = 0; quad < POOL_HIDDEN_MAX / 4u; ++quad) {
       value += dot(memory.pool_hidden[unit * (POOL_HIDDEN_MAX / 4u) + quad], hidden[quad]);
     }
-    means[unit] = weight * value;
-    peaks[unit] = valid ? value : -INFINITY;
+    means[offset] = weight * value;
+    peaks[offset] = valid ? value : -INFINITY;
   }
-  const float mean = head_reduce16<false>(means, context.simd_lane_id);
-  const float peak = head_reduce16<true>(peaks, context.simd_lane_id);
-  const uint unit = (context.simd_lane_id >> 1u) & 15u;
-  if ((context.simd_lane_id & 1u) == 0u && unit < pool_hidden) {
-    memory.reduce[(2 * context.simdgroup_index) * pool_hidden + unit] = mean;
-    memory.reduce[(2 * context.simdgroup_index + 1) * pool_hidden + unit] = peak;
-  }
-  for (uint child = 0; child < params.children; ++child) {
-    const uint entry = first_entry + child;
-    if (valid && candidate_ids[depth * candidates + lid] == frontier[uint(FrontierIdx::TokenId) * capacity + entry]) {
-      const float numbers[SLOT_NUMBERS] = {log_draft, floored, noise, features[2 * candidates + lid]};
-      child_pools[entry] = lid;
-      for (uint number = 0; number < SLOT_NUMBERS; ++number) {
-        child_numbers[entry * SLOT_NUMBERS + number] =
-            (numbers[number] - float(slot_mean[number])) / float(slot_std[number]);
-      }
-    }
+  const uint lane = context.simd_lane_id;
+  const float mean = head_reduce<false, NODES_UNITS>(means, lane);
+  const float peak = head_reduce<true, NODES_UNITS>(peaks, lane);
+  const uint offset = (lane / (32u / NODES_UNITS)) % NODES_UNITS;
+  if (lane % (32u / NODES_UNITS) == 0u && half_index * NODES_UNITS + offset < pool_hidden) {
+    memory.reduce[(2 * context.simdgroup_index) * NODES_UNITS + offset] = mean;
+    memory.reduce[(2 * context.simdgroup_index + 1) * NODES_UNITS + offset] = peak;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (lid < 2u * pool_hidden) {
-    const bool is_mean = lid < pool_hidden;
-    float value = is_mean ? 0.0f : -INFINITY;
-    for (uint group = 0; group < HEAD_SIMDGROUPS; ++group) {
-      const float part = memory.reduce[(2 * group + (is_mean ? 0u : 1u)) * pool_hidden + lid % pool_hidden];
-      value = is_mean ? value + part : max(value, part);
+  if (context.simdgroup_index < 2u * pool_hidden) {
+    const bool is_mean = context.simdgroup_index < pool_hidden;
+    const uint unit = context.simdgroup_index % pool_hidden;
+    const uint groups = CANDIDATES_MAX / 32u;
+    const uint group = unit / NODES_UNITS * groups + lane;
+    const float part = lane < groups
+                           ? memory.reduce[(2 * group + (is_mean ? 0u : 1u)) * NODES_UNITS + unit % NODES_UNITS]
+                           : (is_mean ? 0.0f : -INFINITY);
+    const float value = is_mean ? simd_sum(part) : simd_max(part);
+    if (lane == 0u) {
+      memory.summary[context.simdgroup_index] = value;
     }
-    memory.summary[lid] = value;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   head_dense(
@@ -156,19 +149,5 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
   if (lid < model_dim) {
     nodes[slot * model_dim + lid] = bfloat(memory.node[lid]);
     node_inputs[slot * model_dim + lid] = bfloat(memory.node[lid]);
-  }
-  if (lid == 0) {
-    uint own_row = 0;
-    if (slot != 0) {
-      const uint parent = packed_tree[uint(TreeIdx::ParentSlot) * params.tree_slot_count + slot];
-      const uint own_token = packed_tree[uint(TreeIdx::TokenId) * params.tree_slot_count + slot];
-      for (uint child = 0; child < params.children; ++child) {
-        if (frontier[uint(FrontierIdx::TokenId) * capacity + parent * params.children + child] == own_token) {
-          own_row = 1 + parent * params.children + child;
-        }
-      }
-    }
-    slot_rows[slot] = own_row;
-    row_slots[own_row] = slot;
   }
 }

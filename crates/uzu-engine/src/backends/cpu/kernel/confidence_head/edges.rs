@@ -1,11 +1,11 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use super::head::{NONE, dense, layer_norm, log_sum, weights};
+use super::head::{LOG_PROB_FLOOR, NONE, dense, layer_norm, log_sum, weights};
 use crate::backends::{
     common::gpu_types::{
         activation_type::ActivationType,
-        confidence_head::{ConfidenceHeadParams, SLOT_NUMBERS},
+        confidence_head::{ConfidenceHeadParams, POOL_FEATURES, SLOT_NUMBERS},
         weaver::{FrontierIdx, MetadataIdx, TreeIdx},
     },
     cpu::kernel::weaver::weaver_selection::top_k_score_key,
@@ -14,33 +14,33 @@ use crate::backends::{
 #[kernel(ConfidenceHeadEdges)]
 pub fn confidence_head_edges(
     #[optional(!refine)] node_metadata: Option<*const u32>,
-    slot_rows: *const u32,
+    #[optional(!refine)] node_valid: Option<*const u32>,
+    #[optional(!refine)] candidate_ids: Option<*const u32>,
+    #[optional(!refine)] pool_features: Option<*const f32>,
+    #[optional(!refine)] slot_stats: Option<*const bf16>,
+    slot_rows: *mut u32,
+    #[optional(!refine)] row_slots: Option<*mut u32>,
     nodes: *const bf16,
     #[optional(refine)] node_shifts: Option<*const bf16>,
     #[optional(refine)] child_shifts: Option<*const bf16>,
     token_features: *const bf16,
-    child_numbers: *const f32,
-    child_pools: *const u32,
+    child_numbers: *mut f32,
+    child_pools: *mut u32,
     scores: *const f32,
     frontier: *mut u32,
     packed_tree: *mut u32,
     #[optional(!refine)] child_inputs: Option<*mut bf16>,
-    input_norm_scales: *const bf16,
-    input_norm_biases: *const bf16,
+    input_norm: *const bf16,
     entry_weights: *const bf16,
     entry_biases: *const bf16,
-    block_norm_scales: *const bf16,
-    block_norm_biases: *const bf16,
+    block_norm: *const bf16,
     up_weights: *const bf16,
     up_biases: *const bf16,
     down_weights: *const bf16,
     down_biases: *const bf16,
-    final_norm_scales: *const bf16,
-    final_norm_biases: *const bf16,
-    output_weights: *const bf16,
-    output_biases: *const bf16,
-    alpha_beta_weights: *const bf16,
-    alpha_beta_biases: *const bf16,
+    final_norm: *const bf16,
+    readout_weights: *const bf16,
+    readout_biases: *const bf16,
     params: ConfidenceHeadParams,
     groups: u32,
     #[specialize] model_dim: u32,
@@ -52,35 +52,82 @@ pub fn confidence_head_edges(
     let (width, hidden, groups) = (model_dim as usize, edge_hidden as usize, groups as usize);
     let slot_numbers = SLOT_NUMBERS as usize;
     let inputs = 3 * width + slot_numbers;
-    let alpha_beta = (weights(alpha_beta_weights, 2 * width), weights(alpha_beta_biases, 2));
-    let input_norm = (weights(input_norm_scales, inputs), weights(input_norm_biases, inputs));
+    let norm = |buffer: *const bf16, count: usize| {
+        let values = weights(buffer, 2 * count);
+        (values[..count].to_vec(), values[count..].to_vec())
+    };
+    let readout = (weights(readout_weights, 3 * width), weights(readout_biases, 3));
+    let input_norm = norm(input_norm, inputs);
     let entry_layer = (weights(entry_weights, width * inputs), weights(entry_biases, width));
-    let block_norm = (weights(block_norm_scales, width), weights(block_norm_biases, width));
+    let block_norm = norm(block_norm, width);
     let up = (weights(up_weights, hidden * width), weights(up_biases, hidden));
     let down = (weights(down_weights, width * hidden), weights(down_biases, width));
-    let final_norm = (weights(final_norm_scales, width), weights(final_norm_biases, width));
-    let output = (weights(output_weights, width), weights(output_biases, 1));
+    let final_norm = norm(final_norm, width);
     let capacity = slots * children;
     let value = |buffer: *const bf16, index: usize| unsafe { (*buffer.add(index)).to_f32() };
     let shift = |buffer: Option<*const bf16>, index: usize| buffer.map_or(0.0, |buffer| value(buffer, index));
+    let token_of = |entry: usize| unsafe { *frontier.add(FrontierIdx::TokenId as usize * capacity + entry) };
     for group in 0..groups {
         let slot = match node_metadata {
             Some(metadata) => (unsafe { *metadata.add(MetadataIdx::TreeSlot as usize * groups + group) }) as usize,
             None => group,
         };
-        let row = if slot < slots {
-            unsafe { *slot_rows.add(slot) }
-        } else {
-            NONE
-        };
-        if row == NONE {
+        let skip = slot >= slots
+            || match node_valid {
+                Some(valid) => (unsafe { *valid.add(group) }) == 0,
+                None => (unsafe { *slot_rows.add(slot) }) == NONE,
+            };
+        if skip {
             continue;
         }
-        let row = row as usize;
+        let entries = (slot * children..(slot + 1) * children).collect::<Vec<_>>();
+        if let (Some(metadata), Some(ids), Some(features), Some(stats), Some(row_slots)) =
+            (node_metadata, candidate_ids, pool_features, slot_stats, row_slots)
+        {
+            let depth = (unsafe { *metadata.add(MetadataIdx::Depth as usize * groups + group) }) as usize;
+            let stats = weights(stats, 2 * slot_numbers);
+            let feature = |index: usize| unsafe { *features.add(depth * POOL_FEATURES as usize * candidates + index) };
+            for &entry in &entries {
+                let token = token_of(entry);
+                if let Some(index) =
+                    (0..candidates).find(|&index| (unsafe { *ids.add(depth * candidates + index) }) == token)
+                {
+                    let numbers = [
+                        feature(index),
+                        (unsafe { *scores.add(2 * slot * candidates + index) }).max(LOG_PROB_FLOOR),
+                        unsafe { *scores.add((2 * slot + 1) * candidates + index) },
+                        feature(2 * candidates + index),
+                    ];
+                    unsafe {
+                        *child_pools.add(entry) = index as u32;
+                        for (number, value) in numbers.into_iter().enumerate() {
+                            *child_numbers.add(entry * slot_numbers + number) =
+                                (value - stats[number]) / stats[slot_numbers + number];
+                        }
+                    }
+                }
+            }
+            let own_row = if slot == 0 {
+                0
+            } else {
+                let tree = |index: TreeIdx| unsafe { *packed_tree.add(index as usize * slots + slot) };
+                let parent = tree(TreeIdx::ParentSlot) as usize;
+                let own_token = tree(TreeIdx::TokenId);
+                (0..children)
+                    .rev()
+                    .find(|&child| token_of(parent * children + child) == own_token)
+                    .map_or(0, |child| 1 + parent * children + child)
+            };
+            unsafe {
+                *slot_rows.add(slot) = own_row as u32;
+                *row_slots.add(own_row) = slot as u32;
+            }
+        }
+        let row = (unsafe { *slot_rows.add(slot) }) as usize;
         let node = (0..width)
             .map(|unit| value(nodes, slot * width + unit) + shift(node_shifts, row * width + unit))
             .collect::<Vec<_>>();
-        let raw = dense(&alpha_beta.0, &alpha_beta.1, &node);
+        let raw = dense(&readout.0[width..], &readout.1[1..], &node);
         let [alpha, beta] =
             [raw[0], raw[1]].map(|value| ActivationType::SOFTPLUS.activate(value).min(params.logit_cap));
         let mut logits = (0..candidates)
@@ -89,10 +136,9 @@ pub fn confidence_head_edges(
                     + beta * *scores.add((2 * slot + 1) * candidates + index)
             })
             .collect::<Vec<_>>();
-        let entries = (slot * children..(slot + 1) * children).collect::<Vec<_>>();
         let mut child_rows = Vec::new();
         for &entry in &entries {
-            let token = unsafe { *frontier.add(FrontierIdx::TokenId as usize * capacity + entry) } as usize;
+            let token = token_of(entry) as usize;
             let tokens = (0..width)
                 .map(|unit| {
                     value(token_features, token * width + unit) + shift(child_shifts, (1 + entry) * width + unit)
@@ -117,7 +163,7 @@ pub fn confidence_head_edges(
             let state = state.iter().zip(lowered).map(|(state, lowered)| state + lowered).collect::<Vec<_>>();
             let state = layer_norm(&state, &final_norm.0, &final_norm.1, params.epsilon);
             let pool = unsafe { *child_pools.add(entry) } as usize;
-            logits[pool] += dense(&output.0, &output.1, &state)[0];
+            logits[pool] += dense(&readout.0[..width], &readout.1[..1], &state)[0];
             child_rows.push((pool, tokens.into_iter().chain(numbers.iter().copied()).collect::<Vec<_>>()));
         }
         let log_sum = log_sum(&logits);

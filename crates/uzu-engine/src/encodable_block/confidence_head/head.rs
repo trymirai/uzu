@@ -7,7 +7,7 @@ use crate::{
                 CHILDREN_MAX, ConfidenceHeadParams, EDGE_HIDDEN_MAX, MODEL_MAX, POOL_FEATURES, POOL_HIDDEN_MAX,
                 SLOT_NUMBERS,
             },
-            weaver::CANDIDATES_MAX,
+            weaver::{CANDIDATES_MAX, MetadataIdx},
         },
         kernel::ConfidenceHeadPoolsKernel,
     },
@@ -36,6 +36,8 @@ pub struct ConfidenceHeadStep<B: Backend> {
     child_numbers: B::ScratchBuffer,
     slot_rows: B::ScratchBuffer,
     row_slots: B::ScratchBuffer,
+    round_metadata: B::ScratchBuffer,
+    round_valid: B::ScratchBuffer,
     params: ConfidenceHeadParams,
 }
 
@@ -150,6 +152,7 @@ impl<B: Backend> ConfidenceHead<B> {
         children: u32,
         tree_slot_count: u32,
         vocab_size: u32,
+        round_rows: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<ConfidenceHeadStep<B>, ConfidenceHeadError<B>> {
         let params = ConfidenceHeadParams {
@@ -185,6 +188,8 @@ impl<B: Backend> ConfidenceHead<B> {
         let child_numbers = scratch(&[entries, SLOT_NUMBERS], DataType::F32)?;
         let mut slot_rows = scratch(&[slots], DataType::U32)?;
         let mut row_slots = scratch(&[1 + entries], DataType::U32)?;
+        let round_metadata = scratch(&[MetadataIdx::COUNT as u32, round_rows], DataType::U32)?;
+        let round_valid = scratch(&[round_rows], DataType::U32)?;
         command_buffer.encode_fill(&mut slot_rows, 0xff);
         command_buffer.encode_fill(&mut row_slots, 0xff);
         self.pools.encode(
@@ -207,8 +212,21 @@ impl<B: Backend> ConfidenceHead<B> {
             child_numbers,
             slot_rows,
             row_slots,
+            round_metadata,
+            round_valid,
             params,
         })
+    }
+
+    pub fn encode_rows(
+        &self,
+        step: &mut ConfidenceHeadStep<B>,
+        node_metadata: impl BufferRef<Backend = B>,
+        node_valid: impl BufferRef<Backend = B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        command_buffer.encode_copy(node_metadata, &mut step.round_metadata);
+        command_buffer.encode_copy(node_valid, &mut step.round_valid);
     }
 
     pub fn encode_round(
@@ -217,46 +235,41 @@ impl<B: Backend> ConfidenceHead<B> {
         residual_logits: impl BufferRef<Backend = B>,
         candidate_logits: impl BufferRef<Backend = B>,
         candidate_ids: impl BufferRef<Backend = B>,
-        node_metadata: impl BufferRef<Backend = B>,
-        node_valid: impl BufferRef<Backend = B>,
-        mut packed_tree: impl BufferMut<Backend = B>,
-        mut frontier: impl BufferMut<Backend = B>,
+        packed_tree: impl BufferMut<Backend = B>,
+        frontier: impl BufferMut<Backend = B>,
         rows: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         self.nodes.encode(
             residual_logits,
             candidate_logits,
-            candidate_ids,
             &step.pool_features,
-            node_metadata,
-            node_valid,
-            packed_tree.as_ref(),
-            frontier.as_ref(),
+            &step.round_metadata,
+            &step.round_valid,
             &step.draft,
             &mut step.scores,
             &mut step.nodes,
             &mut step.node_inputs,
-            &mut step.child_pools,
-            &mut step.child_numbers,
-            &mut step.slot_rows,
-            &mut step.row_slots,
             step.params,
             rows,
             command_buffer,
         );
         self.edges.encode(
-            Some(node_metadata),
-            &step.slot_rows,
+            Some(&step.round_metadata),
+            Some(&step.round_valid),
+            Some(candidate_ids),
+            Some(&step.pool_features),
+            &mut step.slot_rows,
+            Some(&mut step.row_slots),
             &step.nodes,
             None::<&B::ScratchBuffer>,
             None::<&B::ScratchBuffer>,
             &self.token_features,
-            &step.child_numbers,
-            &step.child_pools,
+            &mut step.child_numbers,
+            &mut step.child_pools,
             &step.scores,
-            frontier.reborrow(),
-            packed_tree.reborrow(),
+            frontier,
+            packed_tree,
             Some(&mut step.child_inputs),
             step.params,
             rows,
@@ -266,7 +279,7 @@ impl<B: Backend> ConfidenceHead<B> {
 
     pub fn encode_prune(
         &self,
-        step: ConfidenceHeadStep<B>,
+        mut step: ConfidenceHeadStep<B>,
         mut packed_tree: impl BufferMut<Backend = B>,
         mut frontier: impl BufferMut<Backend = B>,
         slot_ancestors: impl BufferRef<Backend = B>,
@@ -291,13 +304,17 @@ impl<B: Backend> ConfidenceHead<B> {
         )?;
         self.edges.encode(
             None::<&B::ScratchBuffer>,
-            &step.slot_rows,
+            None::<&B::ScratchBuffer>,
+            None::<&B::ScratchBuffer>,
+            None::<&B::ScratchBuffer>,
+            &mut step.slot_rows,
+            None::<&mut B::ScratchBuffer>,
             &step.nodes,
             Some(&node_shifts),
             Some(&child_shifts),
             &self.token_features,
-            &step.child_numbers,
-            &step.child_pools,
+            &mut step.child_numbers,
+            &mut step.child_pools,
             &step.scores,
             frontier.reborrow(),
             packed_tree.reborrow(),

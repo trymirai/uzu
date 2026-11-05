@@ -459,7 +459,7 @@ impl<B: Backend> Weaver<B> {
         shape: &WeaverTreeShape,
         batch_node_count: u32,
         batch_start_slot: u32,
-        head: Option<(&ConfidenceHead<B>, &mut ConfidenceHeadStep<B>)>,
+        mut head: Option<(&ConfidenceHead<B>, &mut ConfidenceHeadStep<B>)>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), WeaverEncodeError<B>> {
         let tree_slot_count = shape.slot_count();
@@ -497,6 +497,9 @@ impl<B: Backend> Weaver<B> {
                 None,
                 command_buffer,
             );
+        }
+        if let Some((head, step)) = head.as_mut() {
+            head.encode_rows(step, node_metadata.as_ref(), node_valid.as_ref(), command_buffer);
         }
         let batch_candidate_ids = if batch_start_slot == 0 {
             candidate_ids.subrange(..)
@@ -619,8 +622,6 @@ impl<B: Backend> Weaver<B> {
                 &logit_residuals,
                 candidate_logits,
                 candidate_ids,
-                node_metadata.as_ref(),
-                node_valid.as_ref(),
                 packed_tree,
                 frontier,
                 batch_node_count,
@@ -774,6 +775,7 @@ impl<B: Backend> Weaver<B> {
                         shape.expand_width,
                         tree_slot_count,
                         vocab_size,
+                        shape.expand_per_round,
                         command_buffer,
                     )
                 })
