@@ -57,9 +57,7 @@ impl ChatInstance {
             }
         };
         #[cfg(not(target_family = "wasm"))]
-        let kind = tokio::spawn(kind_future).await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })??;
+        let kind = tokio::spawn(kind_future).await.map_err(ChatSessionError::backend)??;
         #[cfg(target_family = "wasm")]
         let kind = kind_future.await?;
 

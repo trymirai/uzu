@@ -2,9 +2,9 @@ use std::pin::Pin;
 
 use futures::{Stream, stream};
 use shoji::{
-    traits::backend::{Error as BackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
+    traits::backend::{Error as ShojiBackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
     types::basic::{
-        ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
+        BackendError, ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
         SamplingPolicy as ShojiSamplingPolicy,
     },
 };
@@ -14,16 +14,41 @@ use uzu_engine::{
     engine::language_model::{
         LanguageModel,
         grammar::{Grammar as UzuGrammar, GrammarConfig, GrammarError},
-        stream::SamplingMethod as UzuSamplingMethod,
+        stream::{LanguageModelStreamError, SamplingMethod as UzuSamplingMethod},
     },
 };
 
 pub fn error_stream<'a>(
-    message: String
-) -> Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, BackendError>> + Send + 'a>> {
-    Box::pin(stream::once(async move {
-        Err::<ChatTokenStreamOutput, BackendError>(Box::<dyn std::error::Error + Send + Sync>::from(message))
-    }))
+    error: BackendError
+) -> Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, ShojiBackendError>> + Send + 'a>> {
+    Box::pin(stream::once(async move { Err::<ChatTokenStreamOutput, ShojiBackendError>(error.into()) }))
+}
+
+/// Keeps the engine's error kind across the shoji boundary, so a context
+/// overflow reaches clients as a variant they can match instead of a message.
+pub fn stream_error<B: Backend>(error: LanguageModelStreamError<B>) -> BackendError {
+    match error {
+        LanguageModelStreamError::Backend(error) => BackendError::Backend {
+            message: error.to_string(),
+        },
+        LanguageModelStreamError::Capture(error) => BackendError::Capture {
+            message: error.to_string(),
+        },
+        LanguageModelStreamError::Decoder(error) => BackendError::Decoder {
+            message: error.to_string(),
+        },
+        LanguageModelStreamError::Grammar(error) => BackendError::Grammar {
+            message: error.to_string(),
+        },
+        LanguageModelStreamError::TrieAccept(error) => BackendError::TrieAccept {
+            message: error.to_string(),
+        },
+        LanguageModelStreamError::Speculator(error) => BackendError::Speculator {
+            message: error.to_string(),
+        },
+        LanguageModelStreamError::NoSeedToken => BackendError::NoSeedToken {},
+        LanguageModelStreamError::ContextOverflow => BackendError::ContextOverflow {},
+    }
 }
 
 pub fn get_grammar(
