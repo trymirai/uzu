@@ -113,7 +113,7 @@ impl MatmulKernel for MatmulCpuKernel {
                 offset,
             } => {
                 let (values, range) = values.parts();
-                let byte_offset = range.start + offset * self.input_data_type.size_in_bytes();
+                let byte_offset = range.start + offset;
                 AData::FullPrecision(SendPtr(
                     values.cpu_address().as_ptr().cast::<u8>().cast_const().wrapping_byte_add(byte_offset),
                 ))
