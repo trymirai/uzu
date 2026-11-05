@@ -41,6 +41,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     suffix_length: u32,
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
+    #[optional(has_trie)] trie: Option<*const TrieNode>,
     #[specialize] has_rope: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
@@ -50,6 +51,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     #[specialize] has_value_norm_scales: bool,
     #[specialize] block_mean: bool,
     #[specialize] compression_ratio: u32,
+    #[specialize] has_trie: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
@@ -91,6 +93,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
             (2, has_value_norm_scales.then(|| value_norm_scales.unwrap()))
         };
         for token in 0..suffix_length {
+            let rope_row = if has_trie {
+                unsafe { (*trie.unwrap().add(token as usize)).height as usize }
+            } else {
+                token as usize
+            };
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             if block_mean {
                 let token = token as usize;
@@ -135,7 +142,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    apply_rope(source, cosines.unwrap(), sines.unwrap(), token as usize, channel, rope_dim)
+                    apply_rope(source, cosines.unwrap(), sines.unwrap(), rope_row, channel, rope_dim)
                 } else {
                     unsafe { *source.add(channel) }
                 }

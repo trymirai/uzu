@@ -1,57 +1,68 @@
-use crate::backends::common::gpu_types::trie::TrieNode;
+use std::mem::size_of;
 
-pub struct BatchTopology {
-    nodes: Box<[TrieNode]>,
-    parents: Box<[i32]>,
-    is_flat: bool,
-    full_accept: bool,
+use crate::{
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context, gpu_types::trie::TrieNode},
+    data_type::DataType,
+};
+
+pub struct BatchTopology<B: Backend> {
+    pub(crate) nodes: B::GlobalGpuBuffer,
+    pub(crate) token_ids: B::GlobalGpuBuffer,
+    pub(crate) seeds: B::GlobalGpuBuffer,
+    pub(crate) count: B::GlobalGpuBuffer,
+    pub(crate) max_size: u32,
+    pub(crate) is_flat: bool,
+    pub(crate) full_accept: bool,
 }
 
-impl BatchTopology {
+impl<B: Backend> BatchTopology<B> {
     pub fn new(
         nodes: Box<[TrieNode]>,
         full_accept: bool,
     ) -> Self {
-        let mut stack: Vec<usize> = Vec::new();
-
-        let mut parents = Box::new_uninit_slice(nodes.len());
-        let mut is_flat = true;
-
-        for (node, index) in nodes.iter().zip(0u32..) {
-            stack.truncate(node.height as usize);
-            parents[index as usize].write(stack.last().map(|i| *i as i32).unwrap_or(-1));
-            stack.push(index as usize);
-
-            is_flat &= node.height == index;
-        }
-        let parents = unsafe { parents.assume_init() };
-        assert!(is_flat || !full_accept, "full_accept requires trie to be flat");
-
-        Self {
-            nodes,
-            parents,
-            is_flat,
-            full_accept,
-        }
+        todo!()
     }
 
     pub fn flat(
         size: u32,
         full_accept: bool,
-    ) -> Self {
-        let nodes = (0..size)
-            .map(|index| TrieNode {
-                trie_start: index,
-                trie_end: size - 1,
-                height: index,
-            })
-            .collect();
+        command_buffer: &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, <B as Backend>::Error> {
+        let context = command_buffer.context();
+        let word_bytes = DataType::U32.size_in_bytes();
+        Ok(Self {
+            nodes: context.create_buffer_gpu(size as usize * size_of::<TrieNode>())?,
+            token_ids: context.create_buffer_gpu(size as usize * word_bytes)?,
+            seeds: context.create_buffer_gpu(size as usize * size_of::<u64>())?,
+            count: context.create_buffer_gpu(word_bytes)?,
+            max_size: size,
+            is_flat: true,
+            full_accept,
+        })
+    }
 
-        Self::new(nodes, full_accept)
+    pub fn from_buffers(
+        nodes: B::GlobalGpuBuffer,
+        token_ids: B::GlobalGpuBuffer,
+        seeds: B::GlobalGpuBuffer,
+        count: B::GlobalGpuBuffer,
+        max_size: u32,
+        is_flat: bool,
+        full_accept: bool,
+    ) -> Self {
+        Self {
+            nodes,
+            token_ids,
+            seeds,
+            count,
+            max_size,
+            is_flat,
+            full_accept,
+        }
     }
 
     pub fn size(&self) -> u32 {
-        self.nodes.len() as u32
+        self.max_size
     }
 
     pub fn is_flat(&self) -> bool {
@@ -62,15 +73,19 @@ impl BatchTopology {
         self.full_accept
     }
 
-    pub fn nodes(&self) -> &[TrieNode] {
+    pub fn nodes(&self) -> &B::GlobalGpuBuffer {
         &self.nodes
     }
 
-    pub fn parents(&self) -> &[i32] {
-        &self.parents
+    pub fn token_ids(&self) -> &B::GlobalGpuBuffer {
+        &self.token_ids
     }
 
-    pub fn heights(&self) -> impl Iterator<Item = u32> {
-        self.nodes().iter().map(|t| t.height)
+    pub fn seeds(&self) -> &B::GlobalGpuBuffer {
+        &self.seeds
+    }
+
+    pub fn count(&self) -> &B::GlobalGpuBuffer {
+        &self.count
     }
 }

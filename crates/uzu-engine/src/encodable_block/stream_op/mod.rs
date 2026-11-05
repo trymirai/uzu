@@ -50,9 +50,8 @@ pub enum StreamOpEncodeError<B: Backend> {
 // TODO: n-gram injection also needs the token ids and its own state (token history + conv state).
 // lalamo rejects stateful stream ops in layers whose mixer has a KV cache, so the state could live
 // next to the mixer state in the layer state.
-#[derive(Clone, Copy)]
-pub struct StreamOpContext<'a, PerLayerInputs> {
-    pub batch_dim: &'a BatchTopology,
+pub struct StreamOpContext<'a, B: Backend, PerLayerInputs> {
+    pub batch_dim: &'a BatchTopology<B>,
     pub per_layer_inputs: Option<PerLayerInputs>,
 }
 
@@ -112,7 +111,7 @@ impl<B: Backend> StreamOp<B> {
     pub fn encode(
         &self,
         stream: B::ScratchBuffer,
-        op_context: StreamOpContext<'_, impl BufferRef<Backend = B>>,
+        op_context: &StreamOpContext<'_, B, impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, StreamOpEncodeError<B>> {
         let row_count = op_context.batch_dim.size();

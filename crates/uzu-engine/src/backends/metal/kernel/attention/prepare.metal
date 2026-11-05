@@ -59,6 +59,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
     const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
+    const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -68,6 +69,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool has_value_norm_scales SPECIALIZE,
     const bool block_mean SPECIALIZE,
     const uint32_t compression_ratio SPECIALIZE,
+    const bool has_trie SPECIALIZE,
     threadgroup float block_mean_row OPTIONAL(block_mean)[HEAD_DIM],
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
@@ -87,6 +89,7 @@ PUBLIC KERNEL(AttentionPrepare)(
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
+  const uint32_t rope_row = has_trie ? trie[token_idx].height : token_idx;
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
@@ -165,8 +168,8 @@ PUBLIC KERNEL(AttentionPrepare)(
       ));
       const float signed_paired = channel < half_dim ? -paired : paired;
       element = ElementT(
-          float(element) * float(cosines[token_idx * rope_dim + channel]) +
-          signed_paired * float(sines[token_idx * rope_dim + channel])
+          float(element) * float(cosines[rope_row * rope_dim + channel]) +
+          signed_paired * float(sines[rope_row * rope_dim + channel])
       );
     }
     values[value_index] = float(element);

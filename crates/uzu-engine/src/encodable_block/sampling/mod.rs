@@ -87,7 +87,7 @@ impl<B: Backend> Sampling<B> {
         bitmask: Option<impl BufferRef<Backend = B>>,
         context_ring: Option<impl BufferRef<Backend = B>>,
         token_ids: Option<impl BufferRef<Backend = B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         sampling_range: Range<u32>,
         sampling_method: &SamplingMethod,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -126,7 +126,7 @@ impl<B: Backend> Sampling<B> {
             let trie = if batch_dim.is_flat() {
                 None
             } else {
-                Some(command_buffer.allocate_constant_from_slice(batch_dim.nodes())?)
+                Some(batch_dim.nodes())
             };
 
             let mut logits_copy = command_buffer.allocate_scratch(logits.size())?;
@@ -143,7 +143,7 @@ impl<B: Backend> Sampling<B> {
                 &mut logits_copy,
                 context_ring.expect("context_ring is required for repetition_penalty"),
                 token_ids.expect("token_ids is required for repetition_penalty"),
-                trie.as_ref(),
+                trie,
                 repetition_penalty,
                 suffix_repetition_length,
                 self.vocab_size,

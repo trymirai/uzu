@@ -114,12 +114,14 @@ impl<B: Backend> Decision<B> {
             .map_err(DecisionError::Backend)?;
         self.input_embedding.encode_lookup(token_ids, &mut embedded, token_count, self.input_scale, command_buffer);
 
+        let batch_topology = BatchTopology::flat(token_count, true, command_buffer).map_err(DecisionError::Backend)?;
+
         let hidden = self
             .transformer
             .encode(
                 embedded,
                 None::<&B::ScratchBuffer>,
-                &BatchTopology::flat(token_count, true),
+                &batch_topology,
                 Some((token_count - 1..token_count).into()),
                 None,
                 None,

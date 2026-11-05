@@ -188,13 +188,19 @@ impl<'a> FlatTrie<'a> {
     }
 
     pub fn token_subtrie_ranges(&self) -> impl Iterator<Item = GpuTrieNode> {
-        self.tokens.iter().map(|n| {
+        let mut stack: Vec<usize> = Vec::new();
+        self.tokens.iter().enumerate().map(move |(index, n)| {
             let (start, end) = n.subtrie_range;
+
+            stack.truncate(n.height);
+            let parent = stack.last().map(|i| *i as i32).unwrap_or(-1);
+            stack.push(index);
 
             GpuTrieNode {
                 trie_start: start as u32,
                 trie_end: end as u32,
                 height: n.height as u32,
+                parent,
             }
         })
     }
@@ -203,38 +209,16 @@ impl<'a> FlatTrie<'a> {
         self.tokens.iter().map(|n| n.node.seed)
     }
 
-    pub fn fill_bitmasks(
-        &self,
-        bitmasks: &mut [u32],
-        vocab_size: usize,
-        grammar: &mut Grammar,
-    ) -> bool {
-        let vocab_size_in_u32s = vocab_size.div_ceil(DataType::U32.size_in_bits());
-        assert!(bitmasks.len() == self.tokens.len() * vocab_size_in_u32s);
-
-        let mut any_non_full = false;
-        let mut last_token_height = 0;
-        for ((token_index, token), bitmask) in
-            self.tokens.iter().enumerate().zip_eq(bitmasks.chunks_exact_mut(vocab_size_in_u32s))
-        {
-            if token_index > 0 {
-                if token.height <= last_token_height {
-                    grammar.rollback(last_token_height - token.height + 1);
-                }
-                grammar.accept_token(token.node.token).expect("flat trie doesn't match grammar");
-            }
-
-            any_non_full |= grammar.next_bitmask(bitmask);
-
-            last_token_height = token.height;
-        }
-
-        if last_token_height > 0 {
-            grammar.rollback(last_token_height);
-        }
-
-        any_non_full
-    }
+    // pub fn fill_bitmasks(
+    //     &self,
+    //     bitmasks: &mut [u32],
+    //     vocab_size: usize,
+    //     grammar: &mut Grammar,
+    // ) -> bool {
+    //     let tokens: Box<[(u64, u32)]> =
+    //         self.tokens.iter().map(|token| (token.node.token, token.height as u32)).collect();
+    //     fill_bitmasks_flat(&tokens, bitmasks, vocab_size, grammar)
+    // }
 
     pub fn root(&self) -> Option<&TrieNode> {
         self.tokens.first().map(|n| n.node)
@@ -277,6 +261,82 @@ impl<'a> FlatTrie<'a> {
 
         Ok(accepted.into_boxed_slice())
     }
+}
+
+pub fn fill_bitmasks(
+    nodes: &[GpuTrieNode],
+    tokens: &[u64],
+    bitmasks: &mut [u32],
+    vocab_size: usize,
+    grammar: &mut Grammar,
+) -> bool {
+    let vocab_size_in_u32s = vocab_size.div_ceil(DataType::U32.size_in_bits());
+    assert!(bitmasks.len() == nodes.len() * vocab_size_in_u32s);
+
+    let mut any_non_full = false;
+    let mut last_token_height = 0usize;
+    for ((token_index, &node), bitmask) in
+        nodes.iter().enumerate().zip_eq(bitmasks.chunks_exact_mut(vocab_size_in_u32s))
+    {
+        let height = node.height as usize;
+        if token_index > 0 {
+            if height <= last_token_height {
+                grammar.rollback(last_token_height - height + 1);
+            }
+            grammar.accept_token(tokens[node.trie_start as usize]).expect("flat trie doesn't match grammar");
+        }
+
+        any_non_full |= grammar.next_bitmask(bitmask);
+
+        last_token_height = height;
+    }
+
+    if last_token_height > 0 {
+        grammar.rollback(last_token_height);
+    }
+
+    any_non_full
+}
+pub fn accept(
+    nodes: &[GpuTrieNode],
+    output_tokens: &[u64],
+    input_tokens: &[u32],
+    mut grammar: Option<&mut Grammar>,
+) -> Result<(Box<[u32]>, Box<[u64]>, Box<[u64]>), TrieAcceptError> {
+    assert_eq!(nodes.len(), input_tokens.len());
+    assert_eq!(nodes.len(), output_tokens.len());
+    assert!(!nodes.is_empty(), "the trie needs at least a root");
+
+    let mut accepted_indices = Vec::new();
+    let mut accepted_input_token_ids = Vec::new();
+    let mut accepted_output_token_ids = Vec::new();
+    let mut current = 0usize;
+    loop {
+        let sampled = output_tokens[current];
+        accepted_indices.push(current as u32);
+        accepted_input_token_ids.push(input_tokens[current] as u64);
+        accepted_output_token_ids.push(sampled);
+
+        if let Some(grammar) = grammar.as_mut()
+            && !grammar.is_terminated()
+        {
+            grammar.accept_token(sampled)?;
+        }
+
+        let end = nodes[current].trie_end as usize;
+        let next = (current + 1..=end)
+            .find(|&child| nodes[child].parent == current as i32 && input_tokens[child] as u64 == sampled);
+        let Some(next) = next else {
+            break;
+        };
+        current = next;
+    }
+
+    Ok((
+        accepted_indices.into_boxed_slice(),
+        accepted_input_token_ids.into_boxed_slice(),
+        accepted_output_token_ids.into_boxed_slice(),
+    ))
 }
 
 #[cfg(test)]

@@ -434,7 +434,7 @@ impl<B: Backend> TransformerLayer<B> {
         mut stream: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
@@ -446,7 +446,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         for op in &self.prologue {
-            stream = op.encode(stream, op_context, command_buffer)?;
+            stream = op.encode(stream, &op_context, command_buffer)?;
         }
 
         stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
@@ -458,7 +458,7 @@ impl<B: Backend> TransformerLayer<B> {
         })?;
 
         for op in &self.epilogue {
-            stream = op.encode(stream, op_context, command_buffer)?;
+            stream = op.encode(stream, &op_context, command_buffer)?;
         }
 
         Ok(stream)

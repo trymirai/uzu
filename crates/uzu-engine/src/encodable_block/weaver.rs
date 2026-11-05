@@ -50,7 +50,7 @@ pub struct WeaverTreeShape {
 }
 
 impl WeaverTreeShape {
-    fn slot_count(&self) -> u32 {
+    pub fn slot_count(&self) -> u32 {
         1 + self.rounds.saturating_sub(1) * self.expand_per_round
     }
 }
@@ -58,6 +58,16 @@ impl WeaverTreeShape {
 pub struct EncodedWeaverTree<B: Backend> {
     packed_tree: B::GlobalGpuBuffer,
     frontier: B::GlobalGpuBuffer,
+}
+
+impl<B: Backend> EncodedWeaverTree<B> {
+    pub fn packed_tree(&self) -> &B::GlobalGpuBuffer {
+        &self.packed_tree
+    }
+
+    pub fn frontier(&self) -> &B::GlobalGpuBuffer {
+        &self.frontier
+    }
 }
 
 pub struct ProposalNode {
@@ -69,7 +79,7 @@ pub struct ProposalNode {
 
 impl<B: Backend> EncodedWeaverTree<B> {
     pub async fn read_nodes(
-        self,
+        &self,
         context: &B::Context,
     ) -> Result<Vec<ProposalNode>, B::Error> {
         let (packed_tree, frontier) = futures::future::try_join(

@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
+use crate::{backends::common::gpu_types::{activation_type::ActivationType, trie::TrieNode}, data_type::DataTypeRepr};
 
 #[kernel(ConvTreeScan)]
 #[variants(T, f32, bf16)]
@@ -11,7 +11,7 @@ pub fn conv_tree_scan<T: DataTypeRepr + Float>(
     conv_weight: *const f32,
     #[optional(has_bias)] bias: Option<*const f32>,
     base_state: *const f32,
-    parents: *const i32,
+    trie: *const TrieNode,
     out_proj: *mut T,
     suffix_state: *mut f32,
     suffix_len: u32,
@@ -60,7 +60,7 @@ pub fn conv_tree_scan<T: DataTypeRepr + Float>(
                 }
 
                 source_row = if source_row >= 0 {
-                    unsafe { *parents.add(source_row as usize) }
+                    unsafe { (*trie.add(source_row as usize)).parent }
                 } else {
                     source_row - 1
                 };
