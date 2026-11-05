@@ -9,7 +9,7 @@ use crate::{
             Kernels,
             matmul::{
                 ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                MatmulShape,
+                MatmulShape, QuantizedB, WeightsLayout,
             },
         },
     },
@@ -47,6 +47,8 @@ pub struct LinearMatmul<B: Backend> {
     output_dim: u32,
     output_data_type: DataType,
     prepared_activation_format: ActivationFormat,
+    /// Second copy of the weights in the small-batch GEMM's layout (see `MatmulKernel::pack_small_batch_weights`).
+    small_batch_weights: Option<(B::GlobalGpuBuffer, WeightsLayout<B>)>,
 }
 
 async fn load_biases<B: Backend>(
@@ -112,7 +114,16 @@ impl<B: Backend> LinearMatmul<B> {
             output_dim,
             output_data_type,
             prepared_activation_format: ActivationFormat::Bf16,
+            small_batch_weights: None,
         })
+    }
+
+    /// Load-time: keep an `[N, G]` copy of the quantization metadata for gathered reads (see `WeightMatrix`).
+    pub(super) async fn enable_gather_layout(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<(), B::Error> {
+        self.matrix.add_output_group_params(context).await
     }
 
     pub(super) fn prepare_activation(
@@ -127,6 +138,11 @@ impl<B: Backend> LinearMatmul<B> {
         let shape = self.matmul_shape(1, ActivationFormat::Bf16);
         self.prepared_activation_format =
             self.kernel.lock().activation_preparation(&shape, self.matmul_b().weights_layout(), context);
+        if matches!(self.prepared_activation_format, ActivationFormat::PackedHalf { .. })
+            && let MatmulB::Quantized(quantized) = self.matmul_b()
+        {
+            self.small_batch_weights = self.kernel.lock().pack_small_batch_weights(&quantized, context)?;
+        }
         Ok(self.prepared_activation_format)
     }
 
@@ -147,7 +163,21 @@ impl<B: Backend> LinearMatmul<B> {
             .encode(
                 MatmulArguments {
                     a,
-                    b: self.matmul_b(),
+                    b: match (&a, &self.small_batch_weights, self.matmul_b()) {
+                        _ if gather_indices.is_some() => self.matrix.gather_matmul_b(),
+                        (
+                            MatmulA::PackedHalf {
+                                ..
+                            },
+                            Some((codes, weights_layout)),
+                            MatmulB::Quantized(quantized),
+                        ) => MatmulB::Quantized(QuantizedB {
+                            codes,
+                            weights_layout: *weights_layout,
+                            ..quantized
+                        }),
+                        (_, _, b) => b,
+                    },
                     b_leading_dimension: None,
                     b_transpose: true,
                     output: MatmulOutput::new(&mut output, self.d_ops()),

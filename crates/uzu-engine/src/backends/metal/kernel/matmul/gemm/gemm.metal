@@ -12,7 +12,7 @@ using namespace metal;
 using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
-#define GEMM_PACKED_HALF_TILING (GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4)
+#define GEMM_PACKED_HALF_TILING (GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x1x4)
 #define GEMM_SMALL_BATCH (GEMM_PACKED_HALF_TILING || GEMM_TILING == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
 #define GEMM_SMALL_BATCH_W8 (GEMM_SMALL_BATCH && !GEMM_PACKED_HALF_TILING)
 #define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
@@ -63,7 +63,7 @@ VARIANTS(
     GemmTiling::Tile64x32x256_Simdgroups4x1,
     GemmTiling::Tile64x64x256_Simdgroups2x2,
     GemmTiling::Tile128x128x256_Simdgroups4x4,
-    GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+    GemmTiling::Tile8x32x64_Simdgroups1x1x4,
     GemmTiling::Tile8x32x128_Simdgroups1x2x4)
 VARIANTS(TRANSPOSE_B, false, true)
 VARIANTS(USE_MXU, false, true)

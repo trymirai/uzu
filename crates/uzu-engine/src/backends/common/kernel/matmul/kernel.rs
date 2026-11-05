@@ -6,6 +6,7 @@ use crate::{
         kernel::{
             ActivationQuantization,
             matmul::{
+                QuantizedB,
                 arguments::MatmulArguments,
                 routing::{ActivationFormat, MatmulShape},
             },
@@ -64,6 +65,19 @@ pub trait MatmulKernel: Sized + Send + Sync {
         _context: &<Self::Backend as Backend>::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
+    }
+
+    /// Load-time: a second copy of the quantized weights in the layout the small-batch GEMM reads fastest (None = no
+    /// such path). Other paths keep reading the original buffers.
+    fn pack_small_batch_weights(
+        &self,
+        _b: &QuantizedB<&<Self::Backend as Backend>::GlobalGpuBuffer>,
+        _context: &<Self::Backend as Backend>::Context,
+    ) -> Result<
+        Option<(<Self::Backend as Backend>::GlobalGpuBuffer, Self::WeightsLayout)>,
+        <Self::Backend as Backend>::Error,
+    > {
+        Ok(None)
     }
 
     fn optimize_weights_layout(

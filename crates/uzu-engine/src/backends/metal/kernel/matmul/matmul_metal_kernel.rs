@@ -1,12 +1,16 @@
+use half::bf16;
+
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, CpuBuffer,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu,
+            gpu_types::quantization::QuantizationMode,
             kernel::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulArguments, MatmulKernel, MatmulShape, QuantParamsLayout,
+                    QuantizedB, QuantizedCorrection,
                 },
             },
         },
@@ -18,7 +22,11 @@ use crate::{
             gpu_types::gemm::{GemmBLayout, GemmTiling},
             kernel::matmul::{
                 GemmKernel, MatmulMetalError,
-                gemm::{self, GemmPlan, GemmProblem, small_batch_format, small_m_weights},
+                gemm::{
+                    self, GemmPlan, GemmProblem, small_batch_format,
+                    small_batch_units::{Offsets, pack_small_batch_units},
+                    small_m_weights,
+                },
                 gemv::{GemvKernel, GemvSpecialization, GemvTile},
                 matmul_dispatch::MatmulDispatch,
                 matmul_output_work::MatmulOutputWork,
@@ -258,6 +266,42 @@ impl MatmulKernel for MatmulMetalKernel {
         } else {
             ActivationFormat::Bf16
         }
+    }
+
+    fn pack_small_batch_weights(
+        &self,
+        b: &QuantizedB<&<Metal as Backend>::GlobalGpuBuffer>,
+        context: &MetalContext,
+    ) -> Result<Option<(<Metal as Backend>::GlobalGpuBuffer, GemmBLayout)>, MetalError> {
+        let [n, groups] = [b.params.row_count() as usize, b.params.group_count() as usize];
+        if context.supports_mxu
+            || b.mode != QuantizationMode::U4
+            || b.params.layout() != QuantParamsLayout::GroupOutput
+            || b.weights_layout != GemmBLayout::RowMajor
+            || !n.is_multiple_of(32)
+        {
+            return Ok(None);
+        }
+        let group = b.group_size as usize;
+        let offsets = match b.correction {
+            QuantizedCorrection::ZeroPoints(zero_points) => {
+                Offsets::ZeroPoints(zero_points.as_slice::<u8>(), b.zero_point_strides())
+            },
+            QuantizedCorrection::Biases(biases) => Offsets::Biases(biases.as_slice::<bf16>()),
+            QuantizedCorrection::Symmetric => return Ok(None),
+        };
+        let units = pack_small_batch_units(
+            n,
+            groups * group,
+            group,
+            b.codes.as_slice::<u32>(),
+            b.scales.as_slice::<bf16>(),
+            b.params.scale_strides(),
+            offsets,
+        );
+        let mut buffer = context.create_buffer_cpu_gpu(units.len() * size_of::<u32>())?;
+        buffer.as_slice_mut::<u32>().copy_from_slice(&units);
+        Ok(Some((buffer.handoff(), GemmBLayout::SmallBatch)))
     }
 
     fn optimize_weights_layout(

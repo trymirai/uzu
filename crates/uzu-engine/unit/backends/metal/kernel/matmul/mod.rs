@@ -1,6 +1,8 @@
 mod a8w_bench;
+mod autotune_runner;
 mod dispatch_paths_test;
 mod gemm_bench;
+mod p2l_gather;
 mod quant_dispatch_test;
 mod quant_gemm_bench;
 mod qwen3_bench;

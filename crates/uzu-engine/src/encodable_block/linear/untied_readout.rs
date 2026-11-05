@@ -36,11 +36,13 @@ impl<B: Backend> UntiedReadout<B> {
             ..
         }) = spec
         else {
+            let mut linear = LinearMatmul::load(
+                model_dim, vocab_size, data_type, data_type, data_type, spec, None, tree, None, context,
+            )
+            .await?;
+            linear.enable_gather_layout(context).await.map_err(LinearMatmulError::BackendError)?;
             return Ok(Self {
-                linear: LinearMatmul::load(
-                    model_dim, vocab_size, data_type, data_type, data_type, spec, None, tree, None, context,
-                )
-                .await?,
+                linear,
                 input_rht: None,
             });
         };
@@ -58,6 +60,7 @@ impl<B: Backend> UntiedReadout<B> {
             context,
         )
         .await?;
+        linear.enable_gather_layout(context).await.map_err(LinearMatmulError::BackendError)?;
         let rht_signs =
             tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32).await?;
         let activation_format = linear.prepare_activation(context).map_err(LinearMatmulError::BackendError)?;

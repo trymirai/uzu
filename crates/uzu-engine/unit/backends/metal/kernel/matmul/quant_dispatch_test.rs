@@ -836,7 +836,7 @@ fn run_packed_half_pipeline(
     };
     let plan = GemmPlan {
         engine: GemmEngine::Simdgroup,
-        tiling: GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+        tiling: GemmTiling::Tile8x32x64_Simdgroups1x1x4,
         split_k,
     };
     gemm.encode_plan(arguments, plan, &output_work, &mut command_buffer).expect("prepared W4 GEMM");
@@ -857,5 +857,89 @@ fn packed_half_producers_match_bf16_reference() {
         (64, true, (5, 64), true, false, Some(0.5), ScaleBias, 2),
     ] {
         run_packed_half_pipeline(group, gated, n, bias, rht, cap, method, splits);
+    }
+}
+
+/// The lane-ordered weight units (`GemmBLayout::SmallBatch`) must reproduce the row-major packed GEMM bit for bit.
+#[uzu_test]
+fn small_batch_units_match_row_major_weights() {
+    use crate::backends::{
+        common::kernel::matmul::QuantParams,
+        metal::kernel::matmul::gemm::small_batch_units::{Offsets, pack_small_batch_units},
+    };
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    for (group_size, method) in [(32u32, ScaleZeroPoint), (64, ScaleBias)] {
+        let (batch, k, n) = (8u32, 512u32, 96u32);
+        let source: Vec<bf16> = (0..batch * k).map(|i| bf16::from_f32((i as f32 * 0.013).sin() * 0.2)).collect();
+        let source_buffer = create_buffer_with_data::<Metal, bf16>(&context, &source);
+        let signs = create_buffer_with_data::<Metal, i32>(&context, &vec![1; k as usize]);
+        let mut packed = create_buffer::<Metal, u32>(&context, packed_half_bytes(k, group_size) / size_of::<u32>());
+        let input = QuantInput::<bf16>::new(batch, k, n, group_size, 4, method, 23).with_group_output();
+        let mut row_major = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        let params = QuantParams::new(GroupOutput, n, k / group_size);
+        let scales = buffer_to_vec::<Metal, bf16>(&context, &row_major.scales);
+        let zero_points = row_major.zp.as_ref().map(|buffer| buffer_to_vec::<Metal, u8>(&context, buffer));
+        let biases = row_major.bias.as_ref().map(|buffer| buffer_to_vec::<Metal, bf16>(&context, buffer));
+        let offsets = match (&zero_points, &biases) {
+            (Some(zero_points), _) => Offsets::ZeroPoints(zero_points, params.zero_point_strides(QuantizationMode::U4)),
+            (_, Some(biases)) => Offsets::Biases(biases),
+            _ => unreachable!("zero points or biases"),
+        };
+        let units = pack_small_batch_units(
+            n as usize,
+            k as usize,
+            group_size as usize,
+            &buffer_to_vec::<Metal, u32>(&context, &row_major.w),
+            &scales,
+            params.scale_strides(),
+            offsets,
+        );
+        let mut tiled = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        tiled.w = create_buffer_with_data::<Metal, u32>(&context, &units);
+        tiled.weights_layout = GemmBLayout::SmallBatch;
+
+        let mut gemm = GemmKernel::new(DataType::BF16, DataType::BF16, DataType::BF16);
+        let output_work = MatmulOutputWork::new(&context, DataType::BF16, DataType::BF16).unwrap();
+        let mut command_buffer = context.create_command_buffer(None, None).expect("Metal command buffer");
+        ActivationTransform::<Metal>::quantize(
+            &context,
+            DataType::BF16,
+            ActivationFormat::PackedHalf {
+                group_size,
+            },
+        )
+        .expect("Metal PackedHalf pack")
+        .encode_pack_half(&source_buffer, &mut packed, &signs, batch, k, &mut command_buffer);
+        let plan = GemmPlan {
+            engine: GemmEngine::Simdgroup,
+            tiling: GemmTiling::Tile8x32x64_Simdgroups1x1x4,
+            split_k: 1,
+        };
+        for buffers in [&mut row_major, &mut tiled] {
+            let arguments = quant_arguments(buffers, &input);
+            let arguments = MatmulArguments {
+                a: MatmulA::PackedHalf {
+                    values: &packed,
+                    group_size,
+                },
+                b: arguments.b,
+                b_leading_dimension: arguments.b_leading_dimension,
+                b_transpose: arguments.b_transpose,
+                output: arguments.output,
+                gather_indices: arguments.gather_indices,
+                m: arguments.m,
+                n: arguments.n,
+                k: arguments.k,
+            };
+            gemm.encode_plan(arguments, plan, &output_work, &mut command_buffer).expect("packed W4 GEMM");
+        }
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+        let expected = buffer_to_vec::<Metal, bf16>(&context, &row_major.y);
+        let actual = buffer_to_vec::<Metal, bf16>(&context, &tiled.y);
+        assert!(expected.iter().any(|value| value.to_f32() != 0.0), "G{group_size}: reference output is all zero");
+        assert!(
+            expected.iter().zip(&actual).all(|(a, b)| a.to_bits() == b.to_bits()),
+            "G{group_size} {method:?}: weight units differ from the row-major packed GEMM"
+        );
     }
 }

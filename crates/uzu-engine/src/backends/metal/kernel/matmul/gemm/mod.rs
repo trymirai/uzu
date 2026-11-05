@@ -2,13 +2,14 @@ mod error;
 mod kernel;
 mod policy;
 mod selection;
+pub mod small_batch_units;
 mod specialization;
 mod trellis;
 
 pub use error::GemmSpecializationError;
 pub use kernel::GemmKernel;
-pub use selection::GemmPlanError;
-pub(super) use selection::{GemmProblem, small_batch_format, small_m_weights};
+pub use selection::{GemmPlanError, GemmProblem};
+pub(super) use selection::{small_batch_format, small_m_weights};
 
 use crate::backends::metal::gpu_types::gemm::GemmTiling;
 

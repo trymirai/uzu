@@ -3,11 +3,14 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend,
+        Backend, Context, CpuBuffer, GlobalBufferCpuGpu,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::{
             activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
-            matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, WeightsLayout},
+            matmul::{
+                MatmulB, QuantParams, QuantParamsLayout, QuantParamsStrides, QuantizedB, QuantizedCorrection,
+                WeightsLayout,
+            },
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
@@ -84,6 +87,14 @@ pub fn parse_spec<B: Backend>(spec: &AnyWeightMatrixSpec) -> Result<ParsedWeight
     })
 }
 
+/// Row-major (`[N, G]`) copy of the scales and zero points/biases for gathered reads: a gathered row then touches one
+/// contiguous run of metadata instead of one sector per group.
+struct OutputGroupParams<B: Backend> {
+    scales: B::GlobalGpuBuffer,
+    correction: QuantizedCorrection<B::GlobalGpuBuffer>,
+    params: QuantParams,
+}
+
 struct Quantized<B: Backend> {
     scales: B::GlobalGpuBuffer,
     correction: QuantizedCorrection<B::GlobalGpuBuffer>,
@@ -91,6 +102,7 @@ struct Quantized<B: Backend> {
     info: QuantizationInfo,
     signed_codes: bool,
     weights_layout: WeightsLayout<B>,
+    output_group: Option<OutputGroupParams<B>>,
 }
 
 pub struct WeightMatrix<B: Backend> {
@@ -172,6 +184,7 @@ impl<B: Backend> WeightMatrix<B> {
                 info,
                 signed_codes: false,
                 weights_layout: Default::default(),
+                output_group: None,
             }),
         })
     }
@@ -215,6 +228,92 @@ impl<B: Backend> WeightMatrix<B> {
             signed_codes,
             weights_layout: quantized.weights_layout,
         })
+    }
+
+    /// `matmul_b` for gathered reads: the `[N, G]` metadata copy when `add_output_group_params` made one.
+    pub fn gather_matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
+        let MatmulB::Quantized(mut quantized) = self.matmul_b() else {
+            return self.matmul_b();
+        };
+        if let Some(copy) = self.quantized.as_ref().and_then(|quantized| quantized.output_group.as_ref()) {
+            quantized.scales = &copy.scales;
+            quantized.correction = copy.correction.as_ref();
+            quantized.params = copy.params;
+        }
+        MatmulB::Quantized(quantized)
+    }
+
+    /// Load-time: transposes the `[G, N]` scales and zero points/biases into an `[N, G]` copy for gathered reads.
+    pub async fn add_output_group_params(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<(), B::Error> {
+        let Some(quantized) = self.quantized.as_mut().filter(|quantized| {
+            quantized.params.layout() == QuantParamsLayout::GroupOutput && !quantized.params.is_per_row()
+        }) else {
+            return Ok(());
+        };
+        let mode = quantized.info.mode;
+        let source = quantized.params;
+        let (rows, groups) = (source.row_count() as usize, source.group_count() as usize);
+        let destination = QuantParams::new(QuantParamsLayout::OutputGroup, source.row_count(), source.group_count());
+        let transpose = async |buffer: &B::GlobalGpuBuffer,
+                               bits: u32,
+                               source_strides: QuantParamsStrides,
+                               destination_strides: QuantParamsStrides,
+                               destination_bytes: usize|
+               -> Result<B::GlobalGpuBuffer, B::Error> {
+            let values: Vec<u8> = context.copyout(buffer).await?;
+            let mut output = context.create_buffer_cpu_gpu(destination_bytes)?;
+            let bytes = output.as_slice_mut::<u8>();
+            bytes.fill(0);
+            let read = |index: usize| -> u8 {
+                if bits == 4 {
+                    (values[index / 2] >> (4 * (index % 2))) & 0xF
+                } else {
+                    values[index]
+                }
+            };
+            for row in 0..rows {
+                for group in 0..groups {
+                    let from =
+                        row * source_strides.output_stride as usize + group * source_strides.group_stride as usize;
+                    let to = row * destination_strides.output_stride as usize
+                        + group * destination_strides.group_stride as usize;
+                    if bits == 4 {
+                        bytes[to / 2] |= read(from) << (4 * (to % 2));
+                    } else {
+                        bytes[2 * to..2 * to + 2].copy_from_slice(&values[2 * from..2 * from + 2]);
+                    }
+                }
+            }
+            Ok(output.handoff())
+        };
+        let scale_bytes = destination.scale_shape().into_iter().product::<u32>() as usize * 2;
+        let scales =
+            transpose(&quantized.scales, 16, source.scale_strides(), destination.scale_strides(), scale_bytes).await?;
+        let correction = match &quantized.correction {
+            QuantizedCorrection::Symmetric => QuantizedCorrection::Symmetric,
+            QuantizedCorrection::Biases(biases) => QuantizedCorrection::Biases(
+                transpose(biases, 16, source.scale_strides(), destination.scale_strides(), scale_bytes).await?,
+            ),
+            QuantizedCorrection::ZeroPoints(zero_points) => QuantizedCorrection::ZeroPoints(
+                transpose(
+                    zero_points,
+                    4,
+                    source.zero_point_strides(mode),
+                    destination.zero_point_strides(mode),
+                    destination.zero_point_shape(mode).into_iter().product::<u32>() as usize,
+                )
+                .await?,
+            ),
+        };
+        quantized.output_group = Some(OutputGroupParams {
+            scales,
+            correction,
+            params: destination,
+        });
+        Ok(())
     }
 
     pub fn optimize_weights_layout<E>(

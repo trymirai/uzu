@@ -59,6 +59,14 @@ impl QuantParams {
         }
     }
 
+    pub const fn row_count(self) -> u32 {
+        self.row_count
+    }
+
+    pub const fn group_count(self) -> u32 {
+        self.group_count
+    }
+
     pub const fn is_per_row(self) -> bool {
         self.group_count == 1
     }

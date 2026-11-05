@@ -47,7 +47,7 @@ pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTil
             ActivationFormat::PackedHalf {
                 group_size,
             },
-            GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+            GemmTiling::Tile8x32x64_Simdgroups1x1x4,
             512,
         )),
         (GemmBPrologueKind::ScaleSymmetricDequant, Some(8)) => {
@@ -65,7 +65,7 @@ pub fn small_batch_format(
     (shape.b_transpose
         && !shape.gathered
         && !shape.b_is_trellis
-        && layout == GemmBLayout::RowMajor
+        && matches!(layout, GemmBLayout::RowMajor | GemmBLayout::SmallBatch)
         && shape.b_leading_dimension.is_none()
         && shape.k.is_multiple_of(k_alignment)
         && (!shape.d_transform.contains(GemmDTransform::RHT) || shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)))
@@ -114,6 +114,15 @@ impl GemmProblem {
             && (4..=8).contains(&self.shape.m)
             && self.shape.k.is_multiple_of(partition_alignment * plan.split_k))
         .then_some(plan)
+    }
+
+    /// Test-only (autotune runner): the plan the selector would build for this tiling.
+    #[cfg(test)]
+    pub fn simdgroup_plan(
+        self,
+        tiling: GemmTiling,
+    ) -> GemmPlan {
+        self.finish_plan(GemmEngine::Simdgroup, tiling)
     }
 
     #[cfg(test)]
