@@ -25,19 +25,27 @@ const PATHS: [&[u32]; 9] =
 
 fn nodes(flat: bool) -> Vec<TrieNode> {
     let ends = [8, 4, 3, 3, 4, 8, 7, 7, 8];
+    let mut stack: Vec<usize> = Vec::new();
     (0..TOKENS.len())
-        .map(|index| TrieNode {
-            trie_start: index as u32,
-            trie_end: if flat {
-                8
-            } else {
-                ends[index]
-            },
-            height: if flat {
+        .map(|index| {
+            let height = if flat {
                 index as u32
             } else {
                 PATHS[index].len() as u32 - 1
-            },
+            };
+            stack.truncate(height as usize);
+            let parent = stack.last().map(|i| *i as i32).unwrap_or(-1);
+            stack.push(index);
+            TrieNode {
+                trie_start: index as u32,
+                trie_end: if flat {
+                    8
+                } else {
+                    ends[index]
+                },
+                height,
+                parent,
+            }
         })
         .collect()
 }

@@ -311,7 +311,8 @@ impl<B: Backend> DFlash<B> {
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
 
-        let batch_topology = BatchTopology::flat(batch_size, true);
+        let batch_topology =
+            BatchTopology::flat(batch_size, true, command_buffer).map_err(DFlashEncodeError::Backend)?;
         let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;

@@ -72,7 +72,7 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         &self,
         hidden: B::ScratchBuffer,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>>;

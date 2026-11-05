@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 #include "../../activation/activations.h"
 #include "../../common/dsl.h"
+#include "../../generated/trie.h"
 
 using namespace metal;
 
@@ -18,7 +19,7 @@ PUBLIC KERNEL(ConvTreeScan)(
     // [conv_dim, kernel_size - 1], read-only
     device const float* base_state,
     // [suffix_len]
-    device const int* parents,
+    device const uzu::trie::TrieNode* trie,
     // [suffix_len, total_proj_dim]
     device T* out_proj,
     // [suffix_len, conv_dim, kernel_size - 1]
@@ -61,7 +62,7 @@ PUBLIC KERNEL(ConvTreeScan)(
       suffix_state[state_idx] = sample;
     }
 
-    source_row = source_row >= 0 ? parents[source_row] : source_row - 1;
+    source_row = source_row >= 0 ? trie[source_row].parent : source_row - 1;
   }
 
   out_proj[proj_idx] = static_cast<T>(activate_silu(acc));
