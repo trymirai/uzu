@@ -1,13 +1,11 @@
 use crate::backends::{
-    common::{
-        Kernels,
-        gpu_types::{hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, matmul::MXU_TILED_PREPARE_THREADS},
-    },
+    common::{Kernels, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
     metal::{
         Metal,
         buffer::MetalBufferExt,
-        gpu_types::gemm::{
-            gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_k, gemm_tiling_simdgroups_per_row,
+        gpu_types::{
+            gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_k, gemm_tiling_simdgroups_per_row},
+            matmul::MXU_TILED_PREPARE_THREADS,
         },
     },
 };
