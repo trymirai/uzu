@@ -15,9 +15,9 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        confidence_head::{ConfidenceHeadError, DATA_TYPE, linear, norm},
+        confidence_head::{ConfidenceHeadError, DATA_TYPE},
         linear::Linear,
-        normalization::{Normalization, ShortcutMode},
+        normalization::{Normalization, PostLayerScalar, ShortcutMode},
     },
     safetensors::ParameterTree,
 };
@@ -64,12 +64,36 @@ impl<B: Backend> TreeAttention<B> {
             } else {
                 ShortcutMode::Add
             };
-            let attention_norm = norm(&layer, "attention_norm", width, first, norm_config, context).await?;
-            let qkv = linear(&layer, "qkv", width, 3 * width, context).await?;
-            let out = linear(&layer, "out", width, width, context).await?;
-            let mlp_norm = norm(&layer, "mlp_norm", width, ShortcutMode::Add, norm_config, context).await?;
-            let up = linear(&layer, "up", width, config.hidden_dim, context).await?;
-            let down = linear(&layer, "down", config.hidden_dim, width, context).await?;
+            let attention_norm = Normalization::new(
+                width,
+                DATA_TYPE,
+                DATA_TYPE,
+                None,
+                first,
+                PostLayerScalar::None,
+                norm_config,
+                &layer.subtree("attention_norm"),
+                context,
+            )
+            .await?;
+            let qkv = <dyn Linear<B>>::new(width, 3 * width, DATA_TYPE, true, &layer.subtree("qkv"), context).await?;
+            let out = <dyn Linear<B>>::new(width, width, DATA_TYPE, true, &layer.subtree("out"), context).await?;
+            let mlp_norm = Normalization::new(
+                width,
+                DATA_TYPE,
+                DATA_TYPE,
+                None,
+                ShortcutMode::Add,
+                PostLayerScalar::None,
+                norm_config,
+                &layer.subtree("mlp_norm"),
+                context,
+            )
+            .await?;
+            let up =
+                <dyn Linear<B>>::new(width, config.hidden_dim, DATA_TYPE, true, &layer.subtree("up"), context).await?;
+            let down = <dyn Linear<B>>::new(config.hidden_dim, width, DATA_TYPE, true, &layer.subtree("down"), context)
+                .await?;
             layers.push(TreeAttentionLayer {
                 attention_norm,
                 qkv,
@@ -84,15 +108,58 @@ impl<B: Backend> TreeAttention<B> {
         } else {
             ShortcutMode::Add
         };
-        let node_in = linear(parameter_tree, "node_in", head_config.model_dim, width, context).await?;
-        let child_in = linear(parameter_tree, "child_in", head_config.model_dim + SLOT_NUMBERS, width, context).await?;
+        let node_in = <dyn Linear<B>>::new(
+            head_config.model_dim,
+            width,
+            DATA_TYPE,
+            true,
+            &parameter_tree.subtree("node_in"),
+            context,
+        )
+        .await?;
+        let child_in = <dyn Linear<B>>::new(
+            head_config.model_dim + SLOT_NUMBERS,
+            width,
+            DATA_TYPE,
+            true,
+            &parameter_tree.subtree("child_in"),
+            context,
+        )
+        .await?;
         let depth_embedding =
             parameter_tree.read_buffer("depth_embedding", &[head_config.max_depth + 1, width], DATA_TYPE).await?;
         let relation_bias =
             parameter_tree.read_buffer("relation_bias", &[config.num_heads, RELATIONS], DATA_TYPE).await?;
-        let final_norm = norm(parameter_tree, "final_norm", width, final_mode, norm_config, context).await?;
-        let couple_node = linear(parameter_tree, "couple_node", width, head_config.model_dim, context).await?;
-        let couple_child = linear(parameter_tree, "couple_child", width, head_config.model_dim, context).await?;
+        let final_norm = Normalization::new(
+            width,
+            DATA_TYPE,
+            DATA_TYPE,
+            None,
+            final_mode,
+            PostLayerScalar::None,
+            norm_config,
+            &parameter_tree.subtree("final_norm"),
+            context,
+        )
+        .await?;
+        let couple_node = <dyn Linear<B>>::new(
+            width,
+            head_config.model_dim,
+            DATA_TYPE,
+            true,
+            &parameter_tree.subtree("couple_node"),
+            context,
+        )
+        .await?;
+        let couple_child = <dyn Linear<B>>::new(
+            width,
+            head_config.model_dim,
+            DATA_TYPE,
+            true,
+            &parameter_tree.subtree("couple_child"),
+            context,
+        )
+        .await?;
         let head_dim = width / config.num_heads;
         if !matches!(head_dim, 32 | 64) {
             return Err(ConfidenceHeadError::UnsupportedShape(format!("tree attention heads of width {head_dim}")));

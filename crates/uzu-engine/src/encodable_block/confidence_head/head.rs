@@ -9,18 +9,15 @@ use crate::{
             },
             weaver::CANDIDATES_MAX,
         },
-        kernel::{ConfidenceHeadEdgesKernel, ConfidenceHeadNodesKernel, ConfidenceHeadPoolsKernel},
+        kernel::ConfidenceHeadPoolsKernel,
     },
     config::confidence_head::ConfidenceHeadConfig,
     data_type::DataType,
     encodable_block::{
-        confidence_head::{
-            ConfidenceHeadError, DATA_TYPE, TreeAttention, edge_weights::EdgeWeights, linear,
-            node_weights::NodeWeights, norm,
-        },
+        confidence_head::{ConfidenceHeadError, DATA_TYPE, Edges, Nodes, TreeAttention},
         embedding::Embedding,
         linear::Linear,
-        normalization::{Normalization, ShortcutMode},
+        normalization::{Normalization, PostLayerScalar, ShortcutMode},
     },
     safetensors::ParameterTree,
     utils::size_for_shape::size_for_shape,
@@ -46,14 +43,11 @@ pub struct ConfidenceHead<B: Backend> {
     config: ConfidenceHeadConfig,
     draft_norm: Normalization<B>,
     draft_projection: Box<dyn Linear<B>>,
-    node_weights: NodeWeights<B>,
-    edge_weights: EdgeWeights<B>,
     token_features: B::GlobalGpuBuffer,
-    tree_attention: Option<TreeAttention<B>>,
     pools: <B::Kernels as Kernels>::ConfidenceHeadPoolsKernel,
-    nodes: <B::Kernels as Kernels>::ConfidenceHeadNodesKernel,
-    edges: <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel,
-    refine: <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel,
+    nodes: Nodes<B>,
+    edges: Edges<B>,
+    tree_attention: Option<TreeAttention<B>>,
 }
 
 impl<B: Backend> ConfidenceHead<B> {
@@ -68,6 +62,9 @@ impl<B: Backend> ConfidenceHead<B> {
         if width > MODEL_MAX
             || config.pool_hidden_dim > POOL_HIDDEN_MAX
             || config.edge_hidden_dim > EDGE_HIDDEN_MAX
+            || !width.is_multiple_of(4)
+            || !config.pool_hidden_dim.is_multiple_of(2)
+            || !config.edge_hidden_dim.is_multiple_of(4)
             || config.max_depth < tree_depth
         {
             return Err(ConfidenceHeadError::UnsupportedShape(format!(
@@ -77,40 +74,68 @@ impl<B: Backend> ConfidenceHead<B> {
         }
         let target_dim = target_embedding.model_dim();
         let norm_config = &config.norm_config;
-        let draft_norm =
-            norm(parameter_tree, "draft_norm", target_dim, ShortcutMode::None, norm_config, context).await?;
-        let draft_projection = linear(parameter_tree, "draft_projection", target_dim, width, context).await?;
-        let token_norm =
-            norm(parameter_tree, "token_norm", target_dim, ShortcutMode::None, norm_config, context).await?;
-        let token_projection = linear(parameter_tree, "token_projection", target_dim, width, context).await?;
+        let draft_norm = Normalization::new(
+            target_dim,
+            DATA_TYPE,
+            DATA_TYPE,
+            None,
+            ShortcutMode::None,
+            PostLayerScalar::None,
+            norm_config,
+            &parameter_tree.subtree("draft_norm"),
+            context,
+        )
+        .await?;
+        let draft_projection = <dyn Linear<B>>::new(
+            target_dim,
+            width,
+            DATA_TYPE,
+            true,
+            &parameter_tree.subtree("draft_projection"),
+            context,
+        )
+        .await?;
+        let token_norm = Normalization::new(
+            target_dim,
+            DATA_TYPE,
+            DATA_TYPE,
+            None,
+            ShortcutMode::None,
+            PostLayerScalar::None,
+            norm_config,
+            &parameter_tree.subtree("token_norm"),
+            context,
+        )
+        .await?;
+        let token_projection = <dyn Linear<B>>::new(
+            target_dim,
+            width,
+            DATA_TYPE,
+            true,
+            &parameter_tree.subtree("token_projection"),
+            context,
+        )
+        .await?;
         let token_features =
             encode_token_features(&token_norm, &*token_projection, target_embedding, width, context).await?;
-        let node_weights = NodeWeights::new(config, parameter_tree).await?;
-        let edge_weights = EdgeWeights::new(config, parameter_tree).await?;
+        let nodes = Nodes::new(config, parameter_tree, context).await?;
+        let edges = Edges::new(config, parameter_tree, context).await?;
         let tree_attention = match &config.tree_attention_config {
             Some(tree_config) => {
                 Some(TreeAttention::new(config, tree_config, &parameter_tree.subtree("tree"), context).await?)
             },
             None => None,
         };
-        let edges = |refine| {
-            <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel::new(context, width, config.edge_hidden_dim, refine)
-                .map_err(ConfidenceHeadError::Backend)
-        };
         Ok(Self {
             config: config.clone(),
             draft_norm,
             draft_projection,
-            node_weights,
-            edge_weights,
             token_features,
+            nodes,
+            edges,
             tree_attention,
             pools: <B::Kernels as Kernels>::ConfidenceHeadPoolsKernel::new(context)
                 .map_err(ConfidenceHeadError::Backend)?,
-            nodes: <B::Kernels as Kernels>::ConfidenceHeadNodesKernel::new(context, width, config.pool_hidden_dim)
-                .map_err(ConfidenceHeadError::Backend)?,
-            edges: edges(false)?,
-            refine: edges(true)?,
         })
     }
 
@@ -199,7 +224,6 @@ impl<B: Backend> ConfidenceHead<B> {
         rows: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        let weights = &self.node_weights;
         self.nodes.encode(
             residual_logits,
             candidate_logits,
@@ -210,14 +234,6 @@ impl<B: Backend> ConfidenceHead<B> {
             packed_tree.as_ref(),
             frontier.as_ref(),
             &step.draft,
-            &weights.pool_entry_weights,
-            &weights.pool_entry_biases,
-            &weights.pool_hidden_weights,
-            &weights.pool_hidden_biases,
-            &weights.pool_out_weights,
-            &weights.pool_out_biases,
-            &weights.slot_mean,
-            &weights.slot_std,
             &mut step.scores,
             &mut step.nodes,
             &mut step.node_inputs,
@@ -229,7 +245,6 @@ impl<B: Backend> ConfidenceHead<B> {
             rows,
             command_buffer,
         );
-        let weights = &self.edge_weights;
         self.edges.encode(
             Some(node_metadata),
             &step.slot_rows,
@@ -243,22 +258,6 @@ impl<B: Backend> ConfidenceHead<B> {
             frontier.reborrow(),
             packed_tree.reborrow(),
             Some(&mut step.child_inputs),
-            &weights.input_norm_scales,
-            &weights.input_norm_biases,
-            &weights.entry_weights,
-            &weights.entry_biases,
-            &weights.block_norm_scales,
-            &weights.block_norm_biases,
-            &weights.up_weights,
-            &weights.up_biases,
-            &weights.down_weights,
-            &weights.down_biases,
-            &weights.final_norm_scales,
-            &weights.final_norm_biases,
-            &weights.output_weights,
-            &weights.output_biases,
-            &weights.alpha_beta_weights,
-            &weights.alpha_beta_biases,
             step.params,
             rows,
             command_buffer,
@@ -290,8 +289,7 @@ impl<B: Backend> ConfidenceHead<B> {
             1 + slots * step.params.children,
             command_buffer,
         )?;
-        let weights = &self.edge_weights;
-        self.refine.encode(
+        self.edges.encode(
             None::<&B::ScratchBuffer>,
             &step.slot_rows,
             &step.nodes,
@@ -304,22 +302,6 @@ impl<B: Backend> ConfidenceHead<B> {
             frontier.reborrow(),
             packed_tree.reborrow(),
             None::<&mut B::ScratchBuffer>,
-            &weights.input_norm_scales,
-            &weights.input_norm_biases,
-            &weights.entry_weights,
-            &weights.entry_biases,
-            &weights.block_norm_scales,
-            &weights.block_norm_biases,
-            &weights.up_weights,
-            &weights.up_biases,
-            &weights.down_weights,
-            &weights.down_biases,
-            &weights.final_norm_scales,
-            &weights.final_norm_biases,
-            &weights.output_weights,
-            &weights.output_biases,
-            &weights.alpha_beta_weights,
-            &weights.alpha_beta_biases,
             step.params,
             slots,
             command_buffer,

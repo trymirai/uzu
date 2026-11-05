@@ -97,22 +97,25 @@ PUBLIC KERNEL(ConfidenceHeadNodes)(
     const float value = dot(memory.pool_entry[unit], inputs);
     hidden[unit / 4u][unit % 4u] = unit < pool_hidden ? activate_silu(value) : 0.0f;
   }
+  static_assert(POOL_HIDDEN_MAX == 16u, "one butterfly reduces the pool encoder's units");
+  float means[POOL_HIDDEN_MAX];
+  float peaks[POOL_HIDDEN_MAX];
   METAL_PRAGMA_UNROLL
   for (uint unit = 0; unit < POOL_HIDDEN_MAX; ++unit) {
-    if (unit >= pool_hidden) {
-      break;
-    }
     float value = memory.pool_hidden_biases[unit];
     METAL_PRAGMA_UNROLL
     for (uint quad = 0; quad < POOL_HIDDEN_MAX / 4u; ++quad) {
       value += dot(memory.pool_hidden[unit * (POOL_HIDDEN_MAX / 4u) + quad], hidden[quad]);
     }
-    const float mean = simd_sum(weight * value);
-    const float peak = simd_max(valid ? value : -INFINITY);
-    if (context.simd_lane_id == 0) {
-      memory.reduce[(2 * context.simdgroup_index) * pool_hidden + unit] = mean;
-      memory.reduce[(2 * context.simdgroup_index + 1) * pool_hidden + unit] = peak;
-    }
+    means[unit] = weight * value;
+    peaks[unit] = valid ? value : -INFINITY;
+  }
+  const float mean = head_reduce16<false>(means, context.simd_lane_id);
+  const float peak = head_reduce16<true>(peaks, context.simd_lane_id);
+  const uint unit = (context.simd_lane_id >> 1u) & 15u;
+  if ((context.simd_lane_id & 1u) == 0u && unit < pool_hidden) {
+    memory.reduce[(2 * context.simdgroup_index) * pool_hidden + unit] = mean;
+    memory.reduce[(2 * context.simdgroup_index + 1) * pool_hidden + unit] = peak;
   }
   for (uint child = 0; child < params.children; ++child) {
     const uint entry = first_entry + child;
