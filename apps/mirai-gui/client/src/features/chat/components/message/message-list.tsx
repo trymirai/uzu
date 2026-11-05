@@ -228,7 +228,10 @@ const MessageListComponent: React.FC<MessageListProps> = ({
 
             const showInlineLoader = isLoadingThisMessage && !hasVisibleParsed;
 
-            const showAssistantLoader = !loadingMessageId && isLastAssistant && isBusy;
+            // Only before the answer has anything to show. Once thinking or text has arrived the
+            // message tells its own state; on fast models the engine can still read as busy between
+            // thinking and the first words, which brought "Reading your message" back mid-answer.
+            const showAssistantLoader = !loadingMessageId && isLastAssistant && isBusy && !hasVisibleParsed;
 
             return (
               <div
@@ -262,7 +265,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
         ) : isNew ? (
           // A new chat sits in the middle of the page with the composer right under it.
           <div className="flex flex-col items-center justify-end h-full relative pb-7">
-            <NewChatCat draft={draft} missingModelAt={missingModelAt} />
+            {/* Keyed by chat, so each new chat gets its own greeting. */}
+            <NewChatCat key={chatId} draft={draft} missingModelAt={missingModelAt} />
           </div>
         ) : (
           <div className="flex gap-2 items-center justify-center h-full relative">

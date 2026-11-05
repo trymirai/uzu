@@ -10,6 +10,7 @@ import { twMerge } from "tailwind-merge";
 import LeftBar from "@/components/left-bar";
 import { ToastProvider } from "@/components/ui/toast/toast-provider";
 import { TooltipProvider } from "@/components/ui/tooltip/provider";
+import { HoverPopoverProvider } from "@/components/ui/popover/hover-popover/provider";
 import { useAppInitialization } from "@/hooks/use-app-initialization";
 
 export const Route = createRootRoute({
@@ -36,36 +37,40 @@ function RootComponent() {
   if (pathname === "/welcome") {
     return (
       <TooltipProvider>
-        <div className="h-dvh overflow-clip bg-background text-label-title">
-          <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
-          <Outlet />
-          <ToastProvider />
-        </div>
+        <HoverPopoverProvider>
+          <div className="h-dvh overflow-clip bg-background text-label-title">
+            <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
+            <Outlet />
+            <ToastProvider />
+          </div>
+        </HoverPopoverProvider>
       </TooltipProvider>
     );
   }
 
   return (
     <TooltipProvider>
-      <div className="h-dvh overflow-clip bg-bg-sidebar text-label-title flex">
-        <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
-        <LeftBar />
-        {/* Content sits in an inset, rounded panel on the window's own surface, like a sheet of
+      <HoverPopoverProvider>
+        <div className="h-dvh overflow-clip bg-bg-sidebar text-label-title flex">
+          <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
+          <LeftBar />
+          {/* Content sits in an inset, rounded panel on the window's own surface, like a sheet of
           paper on a desk: the panel's edge separates it from the sidebar, so neither needs a line. */}
-        {/* The margin around the panel is window chrome: dragging it moves the window. */}
-        <div
-          data-tauri-drag-region
-          className={twMerge(
-            "relative flex-1 min-w-0 flex flex-col overflow-clip py-2 pr-2 transition-[padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-            isSidebarOpen && !isMobile ? "pl-0" : "pl-2",
-          )}
-        >
-          <main className="flex-1 min-h-0 overflow-clip rounded-[12px] border-[0.5px] border-border-default bg-background shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
-            <Outlet />
-          </main>
+          {/* The margin around the panel is window chrome: dragging it moves the window. */}
+          <div
+            data-tauri-drag-region
+            className={twMerge(
+              "relative flex-1 min-w-0 flex flex-col overflow-clip py-2 pr-2 transition-[padding] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+              isSidebarOpen && !isMobile ? "pl-0" : "pl-2",
+            )}
+          >
+            <main className="flex-1 min-h-0 overflow-clip rounded-[12px] border-[0.5px] border-border-default bg-background shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
+              <Outlet />
+            </main>
+          </div>
+          <ToastProvider />
         </div>
-        <ToastProvider />
-      </div>
+      </HoverPopoverProvider>
     </TooltipProvider>
   );
 }

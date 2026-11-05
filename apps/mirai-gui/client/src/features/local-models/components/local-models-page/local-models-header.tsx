@@ -28,9 +28,9 @@ export function LocalModelsHeader({ selectedFamily, isMobile, onBack, animationC
       >
         {selectedFamily ? (
           <>
-            <Tooltip content="Back to local models" side="bottom">
+            <Tooltip content="Back to models" side="bottom">
               <span className="shrink-0 -ml-1.5">
-                <IconAction label="Back to local models" icon={<ChevronLeft size={18} />} onClick={onBack} />
+                <IconAction label="Back to models" icon={<ChevronLeft size={18} />} onClick={onBack} />
               </span>
             </Tooltip>
             <ModelVendorIcon vendor={selectedFamily.vendor} size={20} className="size-5" />
@@ -53,7 +53,7 @@ export function LocalModelsHeader({ selectedFamily, isMobile, onBack, animationC
             </div>
           </>
         ) : (
-          <h1 className="text-[20px] font-[600] leading-[1.2] tracking-[-0.01em] text-label-title">Local models</h1>
+          <h1 className="text-[20px] font-[600] leading-[1.2] tracking-[-0.01em] text-label-title">Models</h1>
         )}
       </div>
     </PageTitleBar>

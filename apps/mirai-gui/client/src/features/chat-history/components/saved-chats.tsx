@@ -1,10 +1,6 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import {
-  IconDotGrid1x3Horizontal,
-  IconPencil,
-  IconTrashCan,
-} from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import { IconDotGrid1x3Horizontal, IconPencil, IconTrashCan } from "@/components/icons/app-icons";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
@@ -15,9 +11,16 @@ import type { ChatMetadata } from "@/platform/services/storage";
 // The row's own fill changes with hover and selection, so its buttons darken whatever is under them
 // rather than painting a fixed grey that vanishes on the selected row.
 const ROW_BUTTON_CLASSNAME =
-  "flex size-6 shrink-0 items-center justify-center rounded-md text-label-muted outline-hidden transition-[opacity,background-color,color] duration-150 ease-out hover:bg-black/[0.07] hover:text-label-title dark:hover:bg-white/[0.08] data-[focus]:shadow-focus";
+  "absolute right-1.5 top-1/2 -translate-y-1/2 flex size-6 items-center justify-center rounded-md text-label-muted outline-hidden transition-[opacity,background-color,color] duration-150 ease-out hover:bg-black/[0.07] hover:text-label-title dark:hover:bg-white/[0.08] data-[focus]:shadow-focus";
+// Long titles fade out at the row's end instead of ending in "…". On hover (or with the menu open)
+// the options button sits over the end of the row, so the fade ends just before it.
+const TITLE_FADE_UNDER_BUTTON =
+  "[mask-image:linear-gradient(to_right,black_calc(100%-2.75rem),transparent_calc(100%-1.625rem))]";
+const TITLE_FADE =
+  "[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] group-hover:[mask-image:linear-gradient(to_right,black_calc(100%-2.75rem),transparent_calc(100%-1.625rem))] group-focus-within:[mask-image:linear-gradient(to_right,black_calc(100%-2.75rem),transparent_calc(100%-1.625rem))]";
+// Set like the sidebar's own rows (Models, Chats, New chat): 14px at 450, a 36px row, 10px corners.
 const MENU_ROW_CLASSNAME =
-  "flex w-full min-h-8 items-center gap-2 rounded-lg px-2 text-[13px] font-[400] leading-[1.3] outline-hidden cursor-pointer transition-colors duration-100 ease-out";
+  "flex w-full h-9 items-center gap-2.5 rounded-[10px] px-2.5 text-[14px] font-[450] leading-[1.3] outline-hidden cursor-pointer transition-colors duration-100 ease-out";
 
 const VISIBILITY_THRESHOLDS = Array.from({ length: 101 }, (_, index) => index / 100);
 
@@ -185,7 +188,7 @@ export default function SavedChats() {
                       e.stopPropagation();
                       startRename(chat);
                     }}
-                    className={`flex h-9 items-center gap-2 px-2.5 w-full rounded-[10px] group transition-colors duration-150 ease-out ${currentChatId === chat.id ? "bg-sidebar-chat-selected" : editingChatId === chat.id || open ? "bg-sidebar-chat-hover" : "hover:bg-sidebar-chat-hover"}`}
+                    className={`relative flex h-9 items-center pl-2.5 pr-2 w-full rounded-[10px] group transition-colors duration-150 ease-out ${currentChatId === chat.id ? "bg-sidebar-chat-selected" : editingChatId === chat.id || open ? "bg-sidebar-chat-hover" : "hover:bg-sidebar-chat-hover"}`}
                   >
                     <div className="flex-1 min-w-0">
                       {editingChatId === chat.id ? (
@@ -200,10 +203,12 @@ export default function SavedChats() {
                             if (e.key === "Escape") cancelRename();
                           }}
                           onBlur={() => void commitRename()}
-                          className="block w-full text-left text-[14px] font-[400] leading-[1.3] text-label-title bg-transparent outline-hidden border-none p-0"
+                          className="block w-full text-left text-[14px] font-[400] leading-[1.3] text-label-title bg-transparent outline-hidden border-none p-0 pr-6"
                         />
                       ) : (
-                        <p className="w-full text-left text-[14px] font-[400] leading-[1.3] text-label-title truncate">
+                        <p
+                          className={`w-full text-left text-[14px] font-[400] leading-[1.3] text-label-title overflow-hidden whitespace-nowrap ${open ? TITLE_FADE_UNDER_BUTTON : TITLE_FADE}`}
+                        >
                           {chat.title}
                         </p>
                       )}
@@ -234,7 +239,7 @@ export default function SavedChats() {
                         <MenuItems
                           transition
                           anchor="bottom end"
-                          className="w-40 rounded-xl bg-surface-popover p-1 shadow-popover [--anchor-gap:4px] origin-top-right transition-[opacity,scale] duration-150 ease-out data-[closed]:scale-95 data-[closed]:opacity-0 data-[leave]:duration-100 motion-reduce:transition-none outline-hidden z-50 translate-x-1"
+                          className="w-44 rounded-[14px] bg-surface-popover p-1 shadow-popover [--anchor-gap:4px] origin-top-right transition-[opacity,scale] duration-150 ease-out data-[closed]:scale-95 data-[closed]:opacity-0 data-[leave]:duration-100 motion-reduce:transition-none outline-hidden z-50 translate-x-1"
                         >
                           <MenuItem>
                             <button
@@ -245,7 +250,7 @@ export default function SavedChats() {
                               }}
                               className={`${MENU_ROW_CLASSNAME} text-text-primary data-[focus]:bg-selection-hover`}
                             >
-                              <IconPencil aria-hidden size={16} className="shrink-0 text-text-secondary" />
+                              <IconPencil aria-hidden size={18} className="shrink-0 text-text-secondary" />
                               Rename
                             </button>
                           </MenuItem>
@@ -258,7 +263,7 @@ export default function SavedChats() {
                               }}
                               className={`${MENU_ROW_CLASSNAME} text-danger data-[focus]:bg-danger-bg`}
                             >
-                              <IconTrashCan aria-hidden size={16} className="shrink-0" />
+                              <IconTrashCan aria-hidden size={18} className="shrink-0" />
                               Delete
                             </button>
                           </MenuItem>

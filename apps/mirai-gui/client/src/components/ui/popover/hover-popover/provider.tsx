@@ -1,5 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePopoverFloating } from "../shared/use-popover-floating";
+import { PANEL_GAP_PX } from "../../tooltip/provider";
 import type { HoverPopoverContextValue, HoverPopoverPayload, HoverPopoverProviderProps } from "./types";
 import { HoverPopoverPanel } from "./panel";
 
@@ -92,7 +93,7 @@ export function HoverPopoverProvider({ children }: HoverPopoverProviderProps) {
           items={active.items}
           side={active.side}
           align={active.align}
-          sideOffsetPx={4}
+          sideOffsetPx={PANEL_GAP_PX}
           onMouseEnter={() => setVisible(true)}
           onMouseLeave={(event) => {
             if (contains(event.relatedTarget as Node | null)) return;

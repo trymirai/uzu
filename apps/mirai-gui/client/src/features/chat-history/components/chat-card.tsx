@@ -1,7 +1,6 @@
 import React from "react";
 import { DataInteractive } from "@headlessui/react";
 import { formatDistanceToNow } from "date-fns";
-import { IconBubble5 } from "@central-icons-react/round-outlined-radius-3-stroke-2";
 import { Checkbox } from "@/components/ui/checkbox";
 import { twMerge } from "tailwind-merge";
 
@@ -52,9 +51,15 @@ const ChatCard: React.FC<ChatCardProps> = ({
         selected ? "bg-surface-tertiary" : "",
       )}
     >
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 h-14 px-4 w-full">
-        <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-          {selectMode ? (
+      {/* The title alone leads; the checkbox takes the leading slot only while selecting. */}
+      <div
+        className={twMerge(
+          "grid items-center gap-3 h-14 px-4 w-full",
+          selectMode ? "grid-cols-[auto_1fr_auto]" : "grid-cols-[1fr_auto]",
+        )}
+      >
+        {selectMode ? (
+          <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
             <span onClick={(e) => e.stopPropagation()}>
               <Checkbox
                 checked={checked}
@@ -63,10 +68,8 @@ const ChatCard: React.FC<ChatCardProps> = ({
                 aria-label={`Select ${title}`}
               />
             </span>
-          ) : (
-            <IconBubble5 aria-hidden size={18} className="text-label-muted" />
-          )}
-        </div>
+          </div>
+        ) : null}
         <div className="min-w-0">
           <h3 className="text-[14px] leading-[1.35] font-[450] text-label-title overflow-clip text-ellipsis whitespace-nowrap">
             {title}

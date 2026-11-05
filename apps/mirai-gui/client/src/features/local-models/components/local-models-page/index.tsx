@@ -14,7 +14,7 @@ import { Text } from "@/components/ui/typography";
 import { TooltipProvider } from "@/components/ui/tooltip/provider";
 import { RefreshCcw } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CHAT_COLUMN_PX, useAppStore } from "@/stores/use-app-store";
+import { useAppStore } from "@/stores/use-app-store";
 import { LocalModelsHero } from "./local-models-hero";
 import { PageScroller } from "@/components/page-title-bar";
 import { v4 as uuidv4 } from "uuid";
@@ -166,7 +166,7 @@ export function LocalModelsPage() {
     <TooltipProvider>
       <div
         className="flex h-full min-h-0 flex-col bg-background"
-        style={{ "--chat-width": `${CHAT_COLUMN_PX[chatWidth]}px` } as CSSProperties}
+        style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
       >
         <div className="w-full flex h-full min-h-0 overflow-clip">
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">

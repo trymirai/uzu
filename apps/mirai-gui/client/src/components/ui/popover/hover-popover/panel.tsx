@@ -89,7 +89,7 @@ export function HoverPopoverPanel({
                 role="menuitem"
                 disabled={!open || item.disabled === true}
                 className={twMerge(
-                  "flex min-h-8 items-center gap-2.5 w-full px-2 py-1.5 rounded-lg bg-transparent border-none outline-hidden text-left transition-colors duration-100 ease-out hover:bg-surface-tertiary focus:bg-surface-tertiary",
+                  "flex min-h-8 items-center gap-2.5 w-full px-2 py-1.5 rounded-lg bg-transparent border-none outline-hidden text-left transition-colors duration-100 ease-out hover:bg-selection-hover focus:bg-selection-hover",
                   item.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                   item.danger ? "text-red-500" : "text-text-primary",
                 )}

@@ -4,7 +4,7 @@ import GeneralTab from "./general-tab";
 import AboutTab from "./about-tab";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { PageScroller, PageTitleBar } from "@/components/page-title-bar";
-import { CHAT_COLUMN_PX, useAppStore } from "@/stores/use-app-store";
+import { useAppStore } from "@/stores/use-app-store";
 
 export type SettingsTab = "general" | "about";
 
@@ -22,7 +22,7 @@ export function SettingsPage() {
   return (
     <div
       className="h-full min-h-0 w-full bg-background text-label-title"
-      style={{ "--chat-width": `${CHAT_COLUMN_PX[chatWidth]}px` } as CSSProperties}
+      style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
     >
       <PageScroller
         header={

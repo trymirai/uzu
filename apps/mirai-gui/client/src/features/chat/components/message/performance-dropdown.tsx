@@ -1,5 +1,6 @@
-import { Popover, PopoverButton, PopoverPanel, Transition } from "@headlessui/react";
-import { Activity } from "lucide-react";
+import { IconGauge } from "@/components/icons/app-icons";
+import { Fragment } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { PerfStats } from "@/types/message";
 
 type PerformanceDropdownProps = {
@@ -13,51 +14,61 @@ const formatSeconds = (seconds?: number): string =>
 const formatTps = (tps?: number): string =>
   typeof tps === "number" && Number.isFinite(tps) ? `${Math.round(tps)}` : "—";
 
-function PerfStat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="flex flex-col gap-1 px-3 py-2">
-      <div className="text-[15px] font-[500] leading-[1.2] text-label-title tabular-nums">{value}</div>
-      <div className="text-[12px] leading-[1.3] text-label-muted whitespace-nowrap">{label}</div>
-    </div>
-  );
-}
+type Metric = { value: string; short: string; full: string };
 
+/**
+ * The run's speed figures in our tooltip, opened at once on hover and lined up under the button like
+ * the Regenerate menu beside it. One figure per line, everything aligned left: the number, then its
+ * short name; the full name stays on the abbreviation for screen readers and the title.
+ */
 export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropdownProps) {
   const tokensPerForwardPass = perf?.tokensPerForwardPass;
-  const hasSpeculation = typeof tokensPerForwardPass === "number" && Number.isFinite(tokensPerForwardPass);
+  const metrics: Metric[] = [
+    { value: formatSeconds(perf?.ttftSec), short: "TTFT", full: "Time to first token" },
+    { value: formatTps(perf?.tps), short: "TPS", full: "Tokens per second" },
+    ...(typeof tokensPerForwardPass === "number" && Number.isFinite(tokensPerForwardPass)
+      ? [{ value: `${tokensPerForwardPass.toFixed(2)} tok/pass`, short: "MAL", full: "Mean accepted length" }]
+      : []),
+    { value: formatSeconds(perf?.totalSec), short: "Time", full: "Total time" },
+  ];
+
+  const button = (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-label="Performance"
+      className="flex size-8 items-center justify-center rounded-lg text-label-muted transition-colors duration-150 ease-out enabled:hover:bg-bg-hover enabled:hover:text-label-title outline-hidden focus-visible:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      <IconGauge size={16} aria-hidden />
+    </button>
+  );
+  if (disabled) return button;
   return (
-    <Popover className="w-fit">
-      <PopoverButton
-        disabled={disabled}
-        aria-label="Performance"
-        className="flex size-8 items-center justify-center rounded-lg text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden data-[focus]:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        <Activity className="size-4" aria-hidden="true" />
-      </PopoverButton>
-      <Transition
-        enter="transition-[opacity,scale] duration-200 ease-spring motion-reduce:transition-none"
-        enterFrom="scale-95 opacity-0"
-        enterTo="scale-100 opacity-100"
-        leave="transition-[opacity,scale] duration-[140ms] ease-spring motion-reduce:transition-none"
-        leaveFrom="scale-100 opacity-100"
-        leaveTo="scale-95 opacity-0"
-      >
-        <PopoverPanel
-          anchor="top start"
-          className="[--anchor-gap:8px] origin-bottom-left rounded-xl bg-surface-popover shadow-popover z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
-        >
-          <div className="p-1">
-            <div className={`grid ${hasSpeculation ? "grid-cols-4" : "grid-cols-3"}`}>
-              <PerfStat value={formatSeconds(perf?.ttftSec)} label="Time to first token" />
-              <PerfStat value={formatTps(perf?.tps)} label="Tokens per second" />
-              {hasSpeculation && (
-                <PerfStat value={`${tokensPerForwardPass.toFixed(2)} tok/pass`} label="Acceptance rate" />
-              )}
-              <PerfStat value={formatSeconds(perf?.totalSec)} label="Total time" />
-            </div>
-          </div>
-        </PopoverPanel>
-      </Transition>
-    </Popover>
+    <Tooltip
+      side="bottom"
+      align="start"
+      variant="panel"
+      delay={0}
+      content={
+        <div className="grid grid-cols-[auto_auto] items-baseline gap-x-3 gap-y-2 text-[13px] leading-[18px]">
+          {metrics.map((metric) => (
+            <Fragment key={metric.short}>
+              <span className="font-[500] text-text-primary tabular-nums">{metric.value}</span>
+              <span className="font-[400] text-text-muted">
+                {metric.short === metric.full ? (
+                  metric.short
+                ) : (
+                  <abbr title={metric.full} className="no-underline">
+                    {metric.short}
+                  </abbr>
+                )}
+              </span>
+            </Fragment>
+          ))}
+        </div>
+      }
+    >
+      {button}
+    </Tooltip>
   );
 }

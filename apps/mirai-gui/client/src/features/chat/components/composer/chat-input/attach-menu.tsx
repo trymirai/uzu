@@ -1,4 +1,4 @@
-import { IconPageText, IconPlusMedium } from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import { IconPageText, IconPlusMedium } from "@/components/icons/app-icons";
 import { Button } from "@/components/ui/button";
 import { PopoverMenu } from "@/components/ui/popover/popover-menu";
 import { Text } from "@/components/ui/typography";

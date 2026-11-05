@@ -4,7 +4,7 @@ import {
   IconCrossSmall,
   IconExclamationCircle,
   IconExclamationTriangle,
-} from "@central-icons-react/round-outlined-radius-3-stroke-2";
+} from "@/components/icons/app-icons";
 import type { ComponentType, ReactNode } from "react";
 import type { Toast } from "react-hot-toast";
 import toast from "react-hot-toast";
@@ -39,9 +39,10 @@ export function CustomToast({ t, message, type, onClick }: CustomToastProps) {
   return (
     <div
       className={twMerge(
-        "pointer-events-auto flex min-h-10 max-w-[380px] items-center gap-2.5 rounded-[4px] bg-surface-popover py-1.5 pl-3 pr-1.5 shadow-popover",
+        // The same card as the update notice beside it: 12px corners on the floating surface.
+        "pointer-events-auto flex min-h-11 max-w-[380px] items-center gap-2.5 rounded-[12px] bg-surface-popover py-2 pl-3.5 pr-2 shadow-popover",
         t.visible ? "animate-uzu-toast-in" : "animate-uzu-toast-out",
-        isClickable && "cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-tertiary",
+        isClickable && "cursor-pointer transition-colors duration-150 ease-out hover:bg-selection-hover",
       )}
       onClick={isClickable ? onClick : undefined}
       onKeyDown={
@@ -69,7 +70,7 @@ export function CustomToast({ t, message, type, onClick }: CustomToastProps) {
           toast.dismiss(t.id);
         }}
         aria-label="Dismiss"
-        className="relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-surface-tertiary hover:text-text-primary focus-visible:shadow-focus before:absolute before:-inset-2"
+        className="relative flex size-6 shrink-0 items-center justify-center rounded-md text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-selection-hover hover:text-text-primary focus-visible:shadow-focus before:absolute before:-inset-2"
       >
         <IconCrossSmall size={16} aria-hidden />
       </button>

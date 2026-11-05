@@ -3,7 +3,6 @@ import TrashIcon from "@/components/icons/trash-icon";
 import ChatCard from "./chat-card";
 import { ChatDeleteModal } from "./chat-delete-modal";
 import { ChatRenameModal } from "./chat-rename-modal";
-import GlobalInstructions from "./global-instructions";
 import { GroupButton } from "@/components/ui/group-button";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus, X } from "lucide-react";
@@ -16,8 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { SearchInput } from "@/components/ui/search-input";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatStore } from "@/stores/use-chat-store";
-import { CHAT_COLUMN_PX, useAppStore } from "@/stores/use-app-store";
-import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
+import { useAppStore } from "@/stores/use-app-store";
 
 export function ChatHistoryPage() {
   const navigate = useNavigate();
@@ -28,9 +26,6 @@ export function ChatHistoryPage() {
   const loadSavedChats = useChatStore((s) => s.loadSavedChats);
   const deleteChat = useChatStore((s) => s.deleteChat);
   const createNewChat = useChatStore((s) => s.createNewChat);
-  const instructions = useGlobalInstructionsStore((s) => s.instructions);
-  const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
-  const saveInstructions = useGlobalInstructionsStore((s) => s.saveInstructions);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -40,8 +35,7 @@ export function ChatHistoryPage() {
 
   useEffect(() => {
     loadSavedChats();
-    loadInstructions();
-  }, [loadSavedChats, loadInstructions]);
+  }, [loadSavedChats]);
 
   const filteredChats = useMemo(() => {
     const searchLower = searchQuery.toLowerCase();
@@ -101,10 +95,7 @@ export function ChatHistoryPage() {
   const labelText = isAllSelected ? "All selected" : selectedCount === 0 ? "Select all" : `${selectedCount} selected`;
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col"
-      style={{ "--chat-width": `${CHAT_COLUMN_PX[chatWidth]}px` } as CSSProperties}
-    >
+    <div className="flex h-full min-h-0 flex-col" style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}>
       <PageScroller
         className="bg-background"
         header={
@@ -219,18 +210,6 @@ export function ChatHistoryPage() {
           )}
         </div>
       </PageScroller>
-
-      {/* Instructions for every chat sit where the composer sits in a chat: what you tell the model. */}
-      <div className="relative shrink-0">
-        {/* Chats scroll down behind the card through the same fade as under the title bar. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute left-0 right-3 -top-10 h-10 bg-linear-to-t from-background from-15% to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_top,black_35%,transparent)]"
-        />
-        <div className="px-5 pt-2 pb-5 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
-          <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
-        </div>
-      </div>
 
       <ChatDeleteModal
         isOpen={isConfirmOpen}

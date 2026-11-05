@@ -5,7 +5,7 @@ import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useModelsStore } from "@/stores/use-models-store";
-import { CHAT_COLUMN_PX, useAppStore } from "@/stores/use-app-store";
+import { useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 import { isChatGenerating } from "@/features/runtime/runtime-busy";
 import { useChatModelSelector } from "../hooks/use-chat-model-selector";
@@ -167,17 +167,23 @@ export function ChatPage() {
     return () => observer.disconnect();
   }, []);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // The glide belongs to one moment only: the first message going out in this same new chat.
+  // Arriving at a chat, from wherever, never animates; the composer is simply where it belongs.
+  const settledFromRef = useRef<{ chatId: string; centered: boolean } | null>(null);
   useLayoutEffect(() => {
     const el = composerRef.current;
     const before = composerTopRef.current;
-    if (!el || before === null || reducedMotion) return;
+    const last = settledFromRef.current;
+    settledFromRef.current = { chatId, centered };
+    const sentFirstMessage = last?.chatId === chatId && last.centered && !centered;
+    if (!el || before === null || reducedMotion || !sentFirstMessage) return;
     const delta = before - el.getBoundingClientRect().top;
     if (Math.abs(delta) < 2) return;
     el.animate([{ transform: `translateY(${delta}px)` }, { transform: "none" }], {
       duration: 520,
       easing: "cubic-bezier(0.32, 0.72, 0, 1)",
     });
-  }, [centered, reducedMotion]);
+  }, [centered, chatId, reducedMotion]);
   useLayoutEffect(() => {
     composerTopRef.current = composerRef.current?.getBoundingClientRect().top ?? null;
   });
@@ -204,9 +210,7 @@ export function ChatPage() {
   return (
     <div
       className="flex flex-col h-full min-h-0 bg-background px-5 pb-5"
-      style={
-        { "--chat-width": `${CHAT_COLUMN_PX[chatWidth]}px`, "--composer-h": `${composerHeight}px` } as CSSProperties
-      }
+      style={{ "--chat-width": `${chatWidth}px`, "--composer-h": `${composerHeight}px` } as CSSProperties}
     >
       <div className="w-full flex flex-col h-full min-h-0">
         {/* A new chat: the cat and its words (about 197px with the air above the ears, plus 32px of

@@ -1,4 +1,4 @@
-import { IconCrossSmall } from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import { IconCrossSmall } from "@/components/icons/app-icons";
 import {
   Button as HeadlessButton,
   Dialog,

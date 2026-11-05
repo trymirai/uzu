@@ -1,5 +1,5 @@
+import { IconSettingsGear2 } from "@/components/icons/app-icons";
 import { Button } from "@headlessui/react";
-import { Settings } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { twMerge } from "tailwind-merge";
 import { TextArea } from "@/components/ui/text-area";
@@ -109,7 +109,7 @@ export function ChatInput({
                 aria-label="Model settings"
                 className="flex size-7 shrink-0 items-center justify-center rounded-full bg-control-fill text-text-secondary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
-                <Settings size={16} />
+                <IconSettingsGear2 size={16} aria-hidden />
               </Button>
               {settingsModified && (
                 <span className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-danger ring-1 ring-surface-elevated" />

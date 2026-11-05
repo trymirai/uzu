@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { UzuCat } from "@/components/uzu-cat";
+import { chooseGreeting, rememberGreeting } from "./new-chat-greeting";
 
 const COMPOSER_SELECTOR = "textarea[data-composer-input]";
 
@@ -60,11 +61,14 @@ function gazeToward(target: DOMRect, face: DOMRect): { x: number; y: number } {
 }
 
 /**
- * The empty state of a new chat: the cat waits for you, glancing at the box, and while you type it
- * watches the caret move along the line.
+ * The empty state of a new chat: the cat says something (see new-chat-greeting), waits for you
+ * glancing at the box, and while you type it watches the caret move along the line.
  */
 export function NewChatCat({ draft, missingModelAt = 0 }: { draft: string; missingModelAt?: number }) {
   const catRef = useRef<HTMLSpanElement>(null);
+  // What uzu says this time: chosen once when the page opens, so it doesn't change while you type.
+  const [choice] = useState(() => chooseGreeting());
+  useEffect(() => rememberGreeting(choice), [choice]);
   const [lookAt, setLookAt] = useState<{ x: number; y: number } | null>(null);
 
   // Asked with no model chosen: not pleased for a couple of seconds, glaring at the picker.
@@ -100,8 +104,8 @@ export function NewChatCat({ draft, missingModelAt = 0 }: { draft: string; missi
         />
       </span>
       <div className="flex flex-col gap-1 text-center">
-        <h2 className="text-[15px] font-[500] leading-[1.35] text-label-title text-balance">Start a private chat</h2>
-        <p className="text-[13px] leading-[1.45] text-label-muted">It stays fully on your device</p>
+        <h2 className="text-[15px] font-[500] leading-[1.35] text-label-title text-balance">{choice.greeting.title}</h2>
+        <p className="text-[13px] leading-[1.45] text-label-muted text-pretty">{choice.greeting.subtitle}</p>
       </div>
     </div>
   );

@@ -1,3 +1,5 @@
+import GlobalInstructions from "@/features/chat-history/components/global-instructions";
+import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 import { Toggle } from "@/components/ui/toggle";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { platformInfo } from "@/platform/platform-info";
@@ -28,13 +30,24 @@ export default function GeneralTab() {
   const setTheme = useAppStore((s) => s.setTheme);
   const chatWidth = useAppStore((s) => s.chatWidth);
   const setChatWidth = useAppStore((s) => s.setChatWidth);
+  const instructions = useGlobalInstructionsStore((s) => s.instructions);
+  const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
+  const saveInstructions = useGlobalInstructionsStore((s) => s.saveInstructions);
 
   useEffect(() => {
     fetchSettings();
-  }, [fetchSettings]);
+    loadInstructions();
+  }, [fetchSettings, loadInstructions]);
 
   return (
     <div className="flex flex-col gap-7 pb-8">
+      {/* What the model is told in every chat. Its own card, so it sits under a group heading
+          rather than inside a group. */}
+      <section className="flex flex-col gap-2">
+        <h3 className="px-1 text-[13px] font-[500] leading-[1.3] text-label-muted">Instructions</h3>
+        <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
+      </section>
+
       <SettingGroup title="Appearance">
         <SettingRow
           title="Theme"

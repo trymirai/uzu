@@ -1,6 +1,6 @@
 import { flip, offset, shift, useFloating } from "@floating-ui/react-dom";
 import type { ReferenceType } from "@floating-ui/react-dom";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { TooltipContext } from "./context";
 import type { TooltipContextValue, TooltipPayload, TooltipProviderProps } from "./types";
 import { autoUpdateWithDetach } from "./utils";
@@ -10,6 +10,7 @@ import { TooltipBubble } from "./bubble";
 // neighbours open at once and without an entrance, until the pointer has been away a moment.
 const OPEN_DELAY_MS = 400;
 const WARM_FOR_MS = 300;
+export const PANEL_GAP_PX = 6;
 
 export function TooltipProvider({ children }: TooltipProviderProps) {
   const [activeTooltip, setActiveTooltip] = useState<TooltipPayload | null>(null);
@@ -27,14 +28,23 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
     [],
   );
 
-  const { refs, floatingStyles } = useFloating({
-    placement: activeTooltip?.side ?? "top",
+  const { refs, floatingStyles, isPositioned } = useFloating({
+    placement: activeTooltip
+      ? activeTooltip.align === "start"
+        ? (`${activeTooltip.side}-start` as const)
+        : activeTooltip.side
+      : "top",
     strategy: "fixed",
+    // Lets `isPositioned` fall back to false between tooltips, so each one waits for its own place.
+    open: activeTooltip !== null,
     whileElementsMounted,
-    middleware: [offset(8), flip(), shift({ padding: 8 })],
+    // Panels sit as close to their trigger as the hover menus do (PANEL_GAP_PX); label tips a touch further.
+    middleware: [offset(activeTooltip?.variant === "panel" ? PANEL_GAP_PX : 8), flip(), shift({ padding: 8 })],
   });
 
-  useEffect(() => {
+  // Before paint, so a tooltip is never measured against the previous trigger (it showed up out of
+  // place on the first hover of a new one).
+  useLayoutEffect(() => {
     refs.setReference(activeTooltip?.reference ?? null);
   }, [activeTooltip, refs]);
 
@@ -54,7 +64,7 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
     openTimerRef.current = setTimeout(() => {
       setInstant(false);
       setActiveTooltip(payload);
-    }, OPEN_DELAY_MS);
+    }, payload.delay ?? OPEN_DELAY_MS);
   }, []);
 
   const hide = useCallback((id: string) => {
@@ -83,10 +93,13 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
         <TooltipBubble
           key={activeTooltip.id}
           side={activeTooltip.side}
+          align={activeTooltip.align ?? "center"}
+          variant={activeTooltip.variant ?? "label"}
           instant={instant}
           tooltipId={tooltipId}
           content={activeTooltip.content}
           floatingStyles={floatingStyles}
+          positioned={isPositioned}
           setFloating={refs.setFloating}
         />
       )}

@@ -4,21 +4,19 @@ import { platformInfo } from "@/platform/platform-info";
 import { UzuCat } from "@/components/uzu-cat";
 import { SettingGroup } from "./general/setting-row";
 import { Button } from "@/components/ui/button";
-const links = [
-  {
-    title: "Website",
-    url: "https://trymirai.com/",
-  },
+const connectLinks = [
+  { title: "Website", url: "https://trymirai.com/" },
+  { title: "About us", url: "https://trymirai.com/about-us" },
   { title: "GitHub", url: "https://github.com/trymirai" },
-  { title: "Vision", url: "https://trymirai.com/about-us" },
-  { title: "Docs", url: "https://docs.trymirai.com/" },
+  { title: "Discord", url: "https://discord.gg/trymirai" },
 ];
 
-const productLinks = [
+const moreLinks = [
+  { title: "Metrics", description: "uzu against MLX, MTPLX and llama.cpp.", url: "https://trymirai.com/metrics" },
   {
-    title: "Mirai platform",
-    description: "A web console for setting up the SDK in your product.",
-    url: "https://platform.trymirai.com",
+    title: "Models",
+    description: "25 Mirai checkpoints with per-device benchmarks.",
+    url: "https://trymirai.com/models",
   },
   {
     title: "Command-line interface",
@@ -30,6 +28,7 @@ const productLinks = [
     description: "Runs models on the hardware they were built for.",
     url: "https://github.com/trymirai/uzu",
   },
+  { title: "Careers", description: "Explore open positions.", url: "https://trymirai.com/careers" },
 ];
 
 const legalLinks = [
@@ -91,27 +90,27 @@ export default function AboutTab() {
         <div className="mb-1">
           <UzuCat state="welcome" size={96} className="text-text-primary" label="uzu, saying hello" />
         </div>
-        <h3 className="text-[15px] font-[500] leading-[1.35] text-label-title text-balance">
-          Built by a team that shares a vision for accessible and powerful local AI.
+        <h3 className="max-w-[440px] text-[15px] font-[500] leading-[1.35] text-label-title text-balance">
+          Built by a small, senior team building the full on-device stack to achieve realtime local intelligence.
         </h3>
         <Button
           size="sm"
-          href="https://discord.gg/trymirai"
+          href="https://x.com/trymirai"
           target="_blank"
           className="mt-5 rounded-full bg-blue/10 text-blue hover:bg-blue/20 active:bg-blue/25"
         >
-          Join our Discord
+          Connect with us on X
         </Button>
       </div>
 
-      <SettingGroup title="Mirai">
-        {links.map((link) => (
+      <SettingGroup title="Connect">
+        {connectLinks.map((link) => (
           <LinkRow key={link.url} title={link.title} url={link.url} />
         ))}
       </SettingGroup>
 
-      <SettingGroup title="Our products">
-        {productLinks.map((link) => (
+      <SettingGroup title="More from Mirai Labs">
+        {moreLinks.map((link) => (
           <LinkRow key={link.url} title={link.title} description={link.description} url={link.url} />
         ))}
       </SettingGroup>

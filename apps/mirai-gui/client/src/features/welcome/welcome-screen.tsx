@@ -1,5 +1,5 @@
 import { Field, Label } from "@headlessui/react";
-import { IconCircleInfo } from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import { IconCircleInfo } from "@/components/icons/app-icons";
 import { useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useState } from "react";
 import { twMerge } from "tailwind-merge";

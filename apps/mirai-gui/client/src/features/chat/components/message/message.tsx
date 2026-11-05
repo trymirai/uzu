@@ -13,7 +13,6 @@ import { ModelSelector } from "./model-selector";
 import { PerformanceDropdown } from "./performance-dropdown";
 import { UserMessage, type UserMessageProps } from "./user-message";
 import { TextShimmer } from "@/components/ui/text-shimmer";
-import { Tooltip } from "@/components/ui/tooltip";
 import { AssistantCat, PendingStatus, type AssistantPhase } from "./assistant-cat";
 import { UzuBirdOffer } from "./uzu-bird";
 
@@ -367,21 +366,15 @@ const AssistantMessage: React.FC<MessageProps> = ({
           (!streamInProgress && (isStreamFinished || isCanceled || text.length === 0 || !!visibleChainOfThought))) && (
           <div className="flex flex-wrap items-center gap-1 mt-2">
             {(visibleResponseText.length !== 0 || hasError || transcript?.some((item) => item.type === "chart")) && (
-              <Tooltip content="Copy">
-                <CopyButton className="[&_svg]:size-4" onCopy={handleMessageCopy} />
-              </Tooltip>
+              <CopyButton className="[&_svg]:size-4" onCopy={handleMessageCopy} />
             )}
-            <Tooltip content="Regenerate">
-              <ModelSelector
-                selectedModel={effectiveModelId || ""}
-                onModelSelect={handleModelSelect}
-                disabled={(anyStreamInProgress && hasVersions) || isEjecting || blockedByOtherChat}
-              />
-            </Tooltip>
+            <ModelSelector
+              selectedModel={effectiveModelId || ""}
+              onModelSelect={handleModelSelect}
+              disabled={(anyStreamInProgress && hasVersions) || isEjecting || blockedByOtherChat}
+            />
             {shouldShowPerf && (
-              <Tooltip content="Speed">
-                <PerformanceDropdown perf={effectivePerf} disabled={anyStreamInProgress && hasVersions} />
-              </Tooltip>
+              <PerformanceDropdown perf={effectivePerf} disabled={anyStreamInProgress && hasVersions} />
             )}
             {hasVersions && (
               <MessageVersionControls

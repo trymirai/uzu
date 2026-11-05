@@ -166,9 +166,6 @@ importers:
 
   .:
     dependencies:
-      '@central-icons-react/round-outlined-radius-3-stroke-2':
-        specifier: ^1.2.23
-        version: 1.2.23(react@18.3.1)
       '@floating-ui/react-dom':
         specifier: ^2.1.9
         version: 2.1.9(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -400,11 +397,6 @@ packages:
 
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
-
-  '@central-icons-react/round-outlined-radius-3-stroke-2@1.2.23':
-    resolution: {integrity: sha512-nFDPL3hwk2HDZ7ZJ9LkGkO+cPlsKc8ANofSTush1gqDM6G48iIxlEDs0l2vTOLJqgonRtUBemaaxO5JKKytN5Q==}
-    peerDependencies:
-      react: '>=16.6.0 <20'
 
   '@csstools/color-helpers@5.1.0':
     resolution: {integrity: sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==}
@@ -3119,10 +3111,6 @@ snapshots:
     dependencies:
       hashery: 1.5.1
       keyv: 5.6.0
-
-  '@central-icons-react/round-outlined-radius-3-stroke-2@1.2.23(react@18.3.1)':
-    dependencies:
-      react: 18.3.1
 
   '@csstools/color-helpers@5.1.0': {}
 

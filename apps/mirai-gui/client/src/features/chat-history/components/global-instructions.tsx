@@ -103,14 +103,14 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
   );
 
   return (
-    <div className="rounded-xl bg-surface-elevated shadow-md dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)]">
+    <div className="rounded-2xl bg-surface-soft">
       <button
         type="button"
         aria-expanded={isExpanded}
-        className="group flex min-h-12 w-full items-center gap-3 rounded-xl pl-3 pr-4 py-2.5 text-left outline-hidden focus-visible:shadow-focus"
+        className="group flex min-h-12 w-full items-center gap-3 rounded-2xl pl-3 pr-4 py-2.5 text-left outline-hidden focus-visible:shadow-focus"
         onClick={handleToggleExpand}
       >
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-tertiary text-label-muted transition-colors duration-150 ease-out group-hover:bg-control-surface-hover group-hover:text-label-title">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-control-fill text-label-muted transition-colors duration-150 ease-out group-hover:bg-control-fill-hover group-hover:text-label-title">
           <Plus
             aria-hidden
             className={`size-4 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${isExpanded ? "rotate-45" : ""}`}
@@ -137,7 +137,7 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
               onBlur={flushSave}
               placeholder="Add instructions to all chats"
               tabIndex={isExpanded ? 0 : -1}
-              className="w-full rounded-xl bg-surface-soft px-3 py-2.5 text-[14px] leading-[1.5] text-label-title placeholder:text-label-muted focus:outline-hidden resize-none overscroll-y-auto thin-scrollbar"
+              className="w-full rounded-xl bg-control-fill px-3 py-2.5 text-[14px] leading-[1.5] text-label-title placeholder:text-label-muted focus:outline-hidden resize-none overscroll-y-auto thin-scrollbar"
               rows={6}
             />
           </div>

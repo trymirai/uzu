@@ -3,7 +3,15 @@ import { TooltipContext } from "./context";
 import { useTooltipAria } from "./use-tooltip-aria";
 import type { TooltipContextValue, TooltipProps } from "./types";
 
-function TooltipShared({ content, side = "top", children, context }: TooltipProps & { context: TooltipContextValue }) {
+function TooltipShared({
+  content,
+  side = "top",
+  delay,
+  align,
+  variant,
+  children,
+  context,
+}: TooltipProps & { context: TooltipContextValue }) {
   const instanceId = useId();
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const visible = context.activeId === instanceId;
@@ -18,8 +26,11 @@ function TooltipShared({ content, side = "top", children, context }: TooltipProp
       reference: wrapperRef.current,
       content,
       side,
+      delay,
+      align,
+      variant,
     });
-  }, [content, context, instanceId, side]);
+  }, [align, content, context, delay, instanceId, side, variant]);
 
   const hide = useCallback(() => {
     context.hide(instanceId);

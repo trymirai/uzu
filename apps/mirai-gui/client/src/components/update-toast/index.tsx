@@ -1,6 +1,6 @@
 import React from "react";
 import { twMerge } from "tailwind-merge";
-import { IconArrowDownCircle, IconCrossSmall } from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import { IconArrowDownCircle, IconCrossSmall } from "@/components/icons/app-icons";
 import { Button } from "@/components/ui/button";
 import {
   SURFACE_BUTTON_SMALL_CLASSNAME,

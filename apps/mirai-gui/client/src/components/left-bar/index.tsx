@@ -5,18 +5,14 @@ import { platformInfo } from "@/platform/platform-info";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import {
-  Icon3dBoxTop,
-  IconBubble5,
-  IconPencilLine,
-  IconSidebarSimpleLeftWide,
-} from "@central-icons-react/round-outlined-radius-3-stroke-2";
+import { ChatsIcon, ModelsIcon, NewChatIcon, SidebarIcon } from "./nav-icons";
 import { twMerge } from "tailwind-merge";
 import { v4 as uuidv4 } from "uuid";
 import MenuItem from "./menu-item";
 import SavedChats from "@/features/chat-history/components/saved-chats";
 import Settings from "./settings";
 import { FooterBar } from "../footer-bar";
+import { SidebarResizer } from "./sidebar-resizer";
 
 function LeftBar() {
   const location = useLocation();
@@ -28,26 +24,28 @@ function LeftBar() {
   const isSidebarOpen = useSidebarStore((s) => s.isOpen);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
   const closeOnMobile = useSidebarStore((s) => s.closeOnMobile);
+  const sidebarWidth = useSidebarStore((s) => s.width);
+  const [resizing, setResizing] = useState(false);
 
   const mainItems = [
     ...(platformInfo.features.localModelDownloads
       ? [
           {
-            icon: Icon3dBoxTop,
-            title: "Local models",
+            icon: ModelsIcon,
+            title: "Models",
             url: "/local-models",
             isActive: location.pathname.startsWith("/local-models"),
           },
         ]
       : []),
     {
-      icon: IconBubble5,
+      icon: ChatsIcon,
       title: "Chats",
       url: "/chats",
       isActive: location.pathname.startsWith("/chats"),
     },
     {
-      icon: IconPencilLine,
+      icon: NewChatIcon,
       title: "New chat",
       onClick: () => {
         const newChatId = uuidv4();
@@ -65,6 +63,10 @@ function LeftBar() {
   // Narrow windows: the sidebar floats over the content instead of pushing it. Hovering the button
   // peeks it in, leaving lets it go again after a moment; a click keeps it open.
   const [peek, setPeek] = useState(false);
+  // Mouse hover on the toggle, for its icon's preview. A click freezes the icon as it is until the
+  // pointer leaves, so the preview doesn't flip straight back to the opposite state.
+  const [toggleHovered, setToggleHovered] = useState(false);
+  const [toggleFrozen, setToggleFrozen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdPeek = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -96,6 +98,7 @@ function LeftBar() {
       aria-expanded={visible}
       aria-controls="sidebar"
       onClick={() => {
+        setToggleFrozen(true);
         if (floating && peek && !isSidebarOpen) {
           // Already showing from the hover: the click keeps it.
           setPeek(false);
@@ -105,12 +108,15 @@ function LeftBar() {
         setPeek(false);
         toggleSidebar();
       }}
-      onPointerEnter={() => {
+      onPointerEnter={(e) => {
+        if (e.pointerType === "mouse") setToggleHovered(true);
         if (!floating || isSidebarOpen) return;
         holdPeek();
         setPeek(true);
       }}
       onPointerLeave={() => {
+        setToggleHovered(false);
+        setToggleFrozen(false);
         if (floating && peek) releasePeek();
       }}
       className={twMerge(
@@ -126,18 +132,27 @@ function LeftBar() {
             : "top-4 left-3 translate-x-1",
       )}
     >
-      <IconSidebarSimpleLeftWide aria-hidden size={20} className="text-label-title" />
+      {/* The sidebar's real state, not a hover peek: peeking is itself the preview of opening. */}
+      <SidebarIcon
+        size={20}
+        open={isSidebarOpen}
+        active={toggleHovered && !toggleFrozen}
+        className="text-label-title"
+      />
     </button>
   );
 
   return (
     <div
       className={twMerge(
-        "relative z-30 h-full min-h-0 shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-        !floating && isSidebarOpen ? "w-62" : "w-0",
+        "relative z-30 h-full min-h-0 shrink-0 motion-reduce:transition-none",
+        // Follows the pointer while its edge is dragged; glides when toggled.
+        !resizing && "transition-[width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
       )}
+      style={{ width: !floating && isSidebarOpen ? sidebarWidth : 0 }}
     >
       {toggleSidebarButton}
+      {!floating && <SidebarResizer onDraggingChange={setResizing} />}
 
       {/* Opened with a click: clicking anywhere else puts it away. No dimming, as in Claude. */}
       {floating && isSidebarOpen && <div className="fixed inset-0 z-40" onClick={closeOnMobile} aria-hidden />}
@@ -148,6 +163,7 @@ function LeftBar() {
           if (element) element.inert = !visible;
         }}
         aria-hidden={!visible}
+        style={floating ? undefined : { width: sidebarWidth }}
         data-tauri-drag-region
         onPointerEnter={() => {
           if (floating && peek) holdPeek();
@@ -159,7 +175,7 @@ function LeftBar() {
           "relative min-h-0 bg-bg-sidebar flex flex-col py-2 overflow-clip motion-reduce:transition-none",
           floating
             ? "fixed top-2 left-2 bottom-2 w-[280px] z-50 rounded-2xl shadow-[0_0_0_0.5px_var(--color-border-default),0_24px_48px_-12px_rgb(0_0_0/0.28),0_8px_16px_-8px_rgb(0_0_0/0.12)] transition-[translate,opacity]"
-            : "h-full w-62 transition-transform",
+            : "h-full transition-transform",
           visible
             ? "translate-x-0 opacity-100 duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
             : floating
@@ -180,7 +196,6 @@ function LeftBar() {
                   onClick={item.onClick}
                 />
               ))}
-              <Settings />
             </nav>
 
             <h2 className="px-[18px] pt-5 pb-1.5 text-[14px] font-[500] leading-[1.3] text-label-muted">Recent</h2>
@@ -195,7 +210,7 @@ function LeftBar() {
               aria-hidden
               className="pointer-events-none absolute inset-x-0 -top-10 h-10 bg-linear-to-t from-bg-sidebar from-15% to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_top,black_35%,transparent)]"
             />
-            <FooterBar />
+            <FooterBar leading={<Settings />} />
           </div>
         </div>
       </div>
