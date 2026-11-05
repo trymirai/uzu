@@ -9,7 +9,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
@@ -39,10 +39,12 @@ pub struct RHTLinearWrapper<B: Backend> {
 fn input_rht_mode(spec: &AnyWeightMatrixSpec) -> Option<IncoherenceProcessingMode> {
     match spec {
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-            incoherence_processing_mode:
-                mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
-            incoherence_kind: IncoherenceKind::Hadamard,
+            incoherence_spec:
+                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    processing_mode: mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
+                    ..
+                })),
             ..
         }) => Some(mode.clone()),
         _ => None,

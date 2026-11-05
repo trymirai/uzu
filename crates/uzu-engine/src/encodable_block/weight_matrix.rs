@@ -12,7 +12,10 @@ use crate::{
             },
         },
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
+    config::weight_matrix::{
+        AnyWeightMatrixSpec, Layout,
+        qtip_gaussian::{CODEBOOK_V2, CODEBOOK_V4},
+    },
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -94,7 +97,11 @@ impl<B: Backend> WeightMatrix<B> {
                 let code_shape = [output_dim, format.code_row_bytes(input_dim)];
                 let values = tree.read_buffer("codes", &code_shape, DataType::U8).await?;
                 let row_scales = tree.read_buffer("scales", &[output_dim], DataType::F32).await?;
-                let codebook = tree.read_buffer("codebook", &[5], DataType::F32).await?;
+                let codebook = tree.create_buffer_with_data(match spec.vector_width {
+                    2 => &CODEBOOK_V2,
+                    4 => &CODEBOOK_V4,
+                    _ => unreachable!("unsupported Trellis vector width"),
+                })?;
                 return Ok(Self {
                     values,
                     encoding: Encoding::Trellis(Trellis {

@@ -9,8 +9,8 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
-        d4s4_spec::LatticeSpec,
-        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
+        d4s4_spec::{CODEBOOK, LADDER, LatticeSpec},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
@@ -105,9 +105,12 @@ impl<B: Backend> EmbeddingTable<B> {
         let (storage, output_hadamard_factors) = match spec {
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-                incoherence_processing_mode: IncoherenceProcessingMode::Output,
-                incoherence_kind: IncoherenceKind::Hadamard,
+                incoherence_spec:
+                    Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    })),
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
                 let quantized = tree.subtree("quantized");
@@ -212,8 +215,8 @@ async fn load_d4s4<B: Backend>(
     let ladder_indices = tree
         .read_buffer("ladder_indices", &[vocab_size, embedding_dim / d4s4::COLUMNS_PER_LADDER_INDEX_BYTE], DataType::U8)
         .await?;
-    let ladder = tree.read_buffer("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?;
-    let codebook = tree.read_buffer("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?;
+    let ladder = tree.create_buffer_with_data(&LADDER)?;
+    let codebook = tree.create_buffer_with_data(&CODEBOOK)?;
     Ok(D4S4Table {
         codes,
         row_scales,

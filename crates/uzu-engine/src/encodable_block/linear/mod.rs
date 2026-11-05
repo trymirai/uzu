@@ -20,7 +20,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceKind, IncoherenceProcessingMode},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -119,9 +119,12 @@ impl<B: Backend> dyn Linear<B> {
                 Ok(Box::new(block))
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                incoherence_block_size: Some(block_size),
-                incoherence_processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
-                incoherence_kind: IncoherenceKind::Hadamard,
+                incoherence_spec:
+                    Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                        block_size,
+                        processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
+                        ..
+                    })),
                 ..
             }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(
                 RHTLinearWrapper::new(
@@ -136,9 +139,9 @@ impl<B: Backend> dyn Linear<B> {
                 )
                 .await?,
             )),
-            spec @ (AnyWeightMatrixSpec::RowStackSpec(_)
+            spec @ (AnyWeightMatrixSpec::OutputStackSpec(_)
             | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                incoherence_kind: IncoherenceKind::Kronecker,
+                incoherence_spec: Some(AnyIncoherenceProcessorSpec::KroneckerSpec(_)),
                 ..
             })) => Ok(Box::new(
                 TransformedLinear::new(
