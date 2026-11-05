@@ -4,7 +4,7 @@ use crate::{
         gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::{
             ActivationTransformKernel,
-            matmul::{ActivationFormat, Int8CodeLayout},
+            matmul::{ActivationFormat, Int8CodeLayout, packed_half_bytes},
         },
     },
     data_type::DataType,
@@ -60,6 +60,7 @@ pub struct ActivationTransform<B: Backend> {
     in_place: bool,
     has_bias: bool,
     format: ActivationFormat,
+    data_type: DataType,
 }
 
 impl<B: Backend> ActivationTransform<B> {
@@ -101,6 +102,7 @@ impl<B: Backend> ActivationTransform<B> {
             in_place,
             has_bias,
             format,
+            data_type,
         })
     }
 
@@ -242,26 +244,36 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn encode_pack_half(
         &self,
         input: impl BufferRef<Backend = B>,
-        output: impl BufferMut<Backend = B>,
+        mut output: impl BufferMut<Backend = B>,
         rht_factors: impl BufferRef<Backend = B>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(matches!(self.format, ActivationFormat::PackedHalf { .. }) && batch_size <= 8);
+        let ActivationFormat::PackedHalf {
+            group_size,
+        } = self.format
+        else {
+            panic!("packed-half transform required")
+        };
         assert_row_width(element_count);
-        self.kernel.encode(
-            Some(input),
-            None::<&mut B::ScratchBuffer>,
-            None::<&B::GlobalGpuBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            rht_factors,
-            batch_size,
-            element_count,
-            Some(output),
-            command_buffer,
-        );
+        // One dispatch per 8-row image.
+        let image_bytes = packed_half_bytes(element_count, group_size);
+        let row_bytes = element_count as usize * self.data_type.size_in_bytes();
+        for image in 0..batch_size.div_ceil(8) as usize {
+            self.kernel.encode(
+                Some(input.subrange(image * 8 * row_bytes..)),
+                None::<&mut B::ScratchBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                rht_factors,
+                (batch_size - 8 * image as u32).min(8),
+                element_count,
+                Some(output.reborrow().subrange_mut(image * image_bytes..)),
+                command_buffer,
+            );
+        }
     }
 }

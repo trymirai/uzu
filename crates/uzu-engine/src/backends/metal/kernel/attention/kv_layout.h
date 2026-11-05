@@ -55,6 +55,48 @@ struct KVShape {
     return block_region(key / kv_layout::TILE_KEYS, kv_head) + pair * kv_layout::FRAGMENT_BYTES +
            lane * kv_layout::LANE_BYTES + lane_offset;
   }
+
+  // k_code_index(key, head, channel) == k_key_offset(key, head) + k_channel_offset(channel) and likewise for V: the
+  // channel part does not depend on the key, so a kernel that visits many keys computes it once.
+  METAL_FUNC size_t k_key_offset(const uint key, const uint kv_head) const {
+    if (layout == KVLayout::RowMajor)
+      return size_t(scale_index(key, kv_head)) * head_dim;
+    const uint row = key % kv_layout::TILE_KEYS;
+    return block_region(key / kv_layout::TILE_KEYS, kv_head) +
+           mma_lane(row % kv_layout::GROUP_ROWS, 0) * kv_layout::LANE_BYTES +
+           row / kv_layout::GROUP_ROWS * kv_layout::LANE_COLS;
+  }
+
+  METAL_FUNC uint k_channel_offset(const uint channel) const {
+    if (layout == KVLayout::RowMajor)
+      return channel;
+    return channel / kv_layout::TILE_DIMS * kv_layout::FRAGMENT_BYTES +
+           mma_lane(0, channel % kv_layout::TILE_DIMS / kv_layout::LANE_COLS) * kv_layout::LANE_BYTES +
+           channel % kv_layout::LANE_COLS;
+  }
+
+  METAL_FUNC size_t v_key_offset(const uint key, const uint kv_head) const {
+    if (layout == KVLayout::RowMajor)
+      return k_key_offset(key, kv_head);
+    const uint row = key % kv_layout::TILE_KEYS;
+    const uint tiles = kv_layout::SLICE_DIMS / kv_layout::TILE_DIMS;
+    const uint half_rows = kv_layout::TILE_KEYS / 2;
+    return block_region(key / kv_layout::TILE_KEYS, kv_head) +
+           tiles / 2 * (row / half_rows) * kv_layout::FRAGMENT_BYTES +
+           mma_lane(row % kv_layout::GROUP_ROWS, 0) * kv_layout::LANE_BYTES +
+           row % half_rows / kv_layout::GROUP_ROWS * kv_layout::LANE_COLS;
+  }
+
+  METAL_FUNC uint v_channel_offset(const uint channel) const {
+    if (layout == KVLayout::RowMajor)
+      return channel;
+    const uint slice_channel = channel % kv_layout::SLICE_DIMS;
+    const uint tile = slice_channel / kv_layout::TILE_DIMS;
+    const uint tiles = kv_layout::SLICE_DIMS / kv_layout::TILE_DIMS;
+    return (tiles * (channel / kv_layout::SLICE_DIMS) + tile / 2) * kv_layout::FRAGMENT_BYTES +
+           mma_lane(0, slice_channel % kv_layout::TILE_DIMS / kv_layout::LANE_COLS) * kv_layout::LANE_BYTES +
+           tile % 2 * (kv_layout::LANE_BYTES / 2) + channel % kv_layout::LANE_COLS;
+  }
 };
 
 METAL_FUNC float rotation_sign(const uint channel) {

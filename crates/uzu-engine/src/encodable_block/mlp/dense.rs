@@ -89,7 +89,7 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
 
         let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
-        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let act_format = self.down.select_activation_format(batch_dim, None, command_buffer.context());
         let down_input = self
             .gate
             .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)

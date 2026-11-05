@@ -47,7 +47,7 @@ pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTil
             ActivationFormat::PackedHalf {
                 group_size,
             },
-            GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+            GemmTiling::Tile8x32x64_Simdgroups1x1x4,
             512,
         )),
         (GemmBPrologueKind::ScaleSymmetricDequant, Some(8)) => {
@@ -104,6 +104,17 @@ impl GemmProblem {
         layout: GemmBLayout,
     ) -> Option<GemmPlan> {
         let (activation, tiling) = small_batch_format(self.shape, layout)?;
+        // W4 above 8 rows: the 16-row tile decodes each weight once for two 8-row packed images.
+        let tiling = if tiling.is_packed_w4() && self.shape.m > 8 {
+            GemmTiling::Tile16x32x64_Simdgroups1x2x4
+        } else {
+            tiling
+        };
+        let max_rows = if tiling.is_packed_w4() {
+            16
+        } else {
+            8
+        };
         let plan = self.finish_plan(GemmEngine::Simdgroup, tiling);
         let partition_alignment = if tiling.is_packed_w4() || plan.split_k == 1 {
             256
@@ -111,7 +122,7 @@ impl GemmProblem {
             512
         };
         (self.shape.a == activation
-            && (4..=8).contains(&self.shape.m)
+            && (4..=max_rows).contains(&self.shape.m)
             && self.shape.k.is_multiple_of(partition_alignment * plan.split_k))
         .then_some(plan)
     }

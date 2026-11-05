@@ -28,6 +28,22 @@ use crate::{
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
+fn flat_trie(
+    prefix_length: usize,
+    tokens: &[u64],
+    prng: &PRng,
+) -> TrieNode {
+    assert!(!tokens.is_empty(), "need seed node");
+
+    let mut node = TrieNode::new(tokens[0], prng.derive(prefix_length as u64), 0.0);
+    for (index, token) in tokens.iter().copied().enumerate().skip(1).rev() {
+        let mut parent = TrieNode::new(token, prng.derive((prefix_length + index) as u64), 0.0);
+        parent.add(node).unwrap();
+        node = parent;
+    }
+    node
+}
+
 pub(super) fn fill_attention(
     count: usize,
     phase: f32,
@@ -85,7 +101,7 @@ fn attention_matches_cpu() {
                 ])
                 .to_vec()
             } else {
-                TrieNode::flat(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect()
+                flat_trie(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect()
             };
             let (shape, nodes) =
                 ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));

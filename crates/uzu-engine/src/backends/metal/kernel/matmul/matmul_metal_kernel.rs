@@ -314,7 +314,7 @@ impl MatmulKernel for MatmulMetalKernel {
             MatmulDispatch::Gemm(plan) => plan,
         };
 
-        self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
+        self.gemm.encode_plan(arguments, plan, command_buffer)
     }
 }
 
@@ -335,6 +335,6 @@ impl MatmulMetalKernel {
     ) -> Result<(), MatmulMetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
         let plan = self.gemm.select_plan_for_engine(&shape, engine, command_buffer.context())?;
-        self.gemm.encode_plan(arguments, plan, &self.output_work, command_buffer)
+        self.gemm.encode_plan(arguments, plan, command_buffer)
     }
 }

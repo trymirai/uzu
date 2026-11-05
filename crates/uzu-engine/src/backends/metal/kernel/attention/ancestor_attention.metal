@@ -79,42 +79,67 @@ PUBLIC KERNEL(AncestorAttention)(
   float maximum = -INFINITY;
   float denominator = 0.0f;
   const uint ancestors = ancestor_counts[row];
-  for (uint index = 0; index < prefix_length + ancestors + 1; ++index) {
-    const bool own = index == prefix_length + ancestors;
-    const bool prefix = index < prefix_length;
-    const uint slot = prefix || own ? index : ancestor_indices[row * ancestor_stride + index - prefix_length];
-    const device int8_t* kc = prefix ? prefix_k_codes : node_k_codes;
-    const device uchar* vc = prefix ? prefix_v_codes : node_v_codes;
-    const float key_scale =
-        own ? float(ks) : float((prefix ? prefix_k_scales : node_k_scales)[shape.scale_index(slot, head)]);
-    const float value_scale =
-        own ? float(vs) : float((prefix ? prefix_v_scales : node_v_scales)[shape.scale_index(slot, head)]);
-    int dot = 0;
+  const uint total = prefix_length + ancestors + 1;
+  // The channel part of a KV code offset does not depend on the key: compute it once per lane.
+  uint k_channel[N], v_channel[N];
+  METAL_PRAGMA_UNROLL
+  for (ushort i = 0; i < N; ++i) {
+    const uint channel = i * METAL_SIMD_SIZE + lane;
+    k_channel[i] = shape.k_channel_offset(channel);
+    v_channel[i] = shape.v_channel_offset(channel);
+  }
+  // Keys go in chunks: every load of a chunk is issued before the online-softmax recurrence consumes them in key order.
+  constexpr ushort CHUNK = 2;
+  for (uint base = 0; base < total; base += CHUNK) {
+    int key_code[CHUNK][N], value_code[CHUNK][N];
+    float key_scale[CHUNK], value_scale[CHUNK];
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < N; ++i) {
-      const uint channel = i * METAL_SIMD_SIZE + lane;
-      dot += q[i] * (own ? k[i] : int(kc[shape.k_code_index(slot, head, channel)]));
+    for (ushort u = 0; u < CHUNK; ++u) {
+      const uint index = base + u;
+      const bool stored = index < total && index != prefix_length + ancestors;
+      const bool prefix = index < prefix_length;
+      const uint slot =
+          !stored ? 0u : (prefix ? index : ancestor_indices[row * ancestor_stride + index - prefix_length]);
+      const device int8_t* kc = (prefix ? prefix_k_codes : node_k_codes) + shape.k_key_offset(slot, head);
+      const device uchar* vc = (prefix ? prefix_v_codes : node_v_codes) + shape.v_key_offset(slot, head);
+      const uint scale_slot = shape.scale_index(slot, head);
+      key_scale[u] = stored ? float((prefix ? prefix_k_scales : node_k_scales)[scale_slot]) : 0.0f;
+      value_scale[u] = stored ? float((prefix ? prefix_v_scales : node_v_scales)[scale_slot]) : 0.0f;
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < N; ++i) {
+        key_code[u][i] = stored ? int(kc[k_channel[i]]) : 0;
+        value_code[u][i] = stored ? int(vc[v_channel[i]]) - 128 : 0;
+      }
     }
-    const float score = float(simd_sum(dot)) * qs * key_scale * scale;
-    const float next_max = max(maximum, score);
-    const float correction = fast::exp(maximum - next_max);
-    const float probability = fast::exp(score - next_max);
-    denominator = denominator * correction + probability;
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < N; ++i) {
-      const uint channel = i * METAL_SIMD_SIZE + lane;
-      const int code = own ? v[i] : int(vc[shape.v_code_index(slot, head, channel)]) - 128;
-      result[i] = result[i] * correction + probability * value_scale * float(code);
+    for (ushort u = 0; u < CHUNK; ++u) {
+      if (base + u < total) {
+        const bool own = base + u == prefix_length + ancestors;
+        int dot = 0;
+        METAL_PRAGMA_UNROLL
+        for (ushort i = 0; i < N; ++i)
+          dot += q[i] * (own ? k[i] : key_code[u][i]);
+        const float score = float(simd_sum(dot)) * qs * (own ? float(ks) : key_scale[u]) * scale;
+        const float next_max = max(maximum, score);
+        const float correction = fast::exp(maximum - next_max);
+        const float probability = fast::exp(score - next_max);
+        denominator = denominator * correction + probability;
+        const float weight = probability * (own ? float(vs) : value_scale[u]);
+        METAL_PRAGMA_UNROLL
+        for (ushort i = 0; i < N; ++i)
+          result[i] = result[i] * correction + weight * float(own ? v[i] : value_code[u][i]);
+        maximum = next_max;
+      }
     }
-    maximum = next_max;
   }
   if (node_capacity > 0) {
     const uint node = node_indices[row];
+    const size_t k_base = shape.k_key_offset(node, head);
+    const size_t v_base = shape.v_key_offset(node, head);
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < N; ++i) {
-      const uint channel = i * METAL_SIMD_SIZE + lane;
-      node_k_codes[shape.k_code_index(node, head, channel)] = int8_t(k[i]);
-      node_v_codes[shape.v_code_index(node, head, channel)] = uchar(v[i] + 128);
+      node_k_codes[k_base + k_channel[i]] = int8_t(k[i]);
+      node_v_codes[v_base + v_channel[i]] = uchar(v[i] + 128);
     }
     if (lane == 0) {
       node_k_scales[shape.scale_index(node, head)] = ks;

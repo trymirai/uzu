@@ -138,7 +138,7 @@ PUBLIC KERNEL(TreeVerify)(
         diag_a.clear();
         diag_q.clear();
         extra.clear();
-        _Pragma("clang loop unroll_count(2)") for (ushort step = 0; step < HEAD_K_DIM / Ops::FRAGMENT_ROWS; ++step) {
+        _Pragma("clang loop unroll_count(1)") for (ushort step = 0; step < HEAD_K_DIM / Ops::FRAGMENT_ROWS; ++step) {
           const uint kb = step * Ops::FRAGMENT_ROWS;
           if (kb < k_dim) {
             GramLeftFragment k_left;
@@ -201,8 +201,8 @@ PUBLIC KERNEL(TreeVerify)(
     const device float* h0_rows = h0 + ((batch_idx * num_v_heads + hv_idx) * head_v_dim + dv_base) * k_dim;
     uzu::dispatch_bool(rows_left >= short(TOKENS), [&](auto full) UZU_ALWAYS_INLINE {
       using TokenRightFragment = OperandFragment<float, 1, TOKEN_FRAGMENTS, Ops, ReadTranspose>;
-      METAL_PRAGMA_UNROLL
-      for (ushort step = 0; step < HEAD_K_DIM / Ops::FRAGMENT_ROWS; ++step) {
+      // Rolled: full unrolling keeps all 16 steps of h0/k/q operands live (124 regs on G14, one threadgroup per core).
+      _Pragma("clang loop unroll_count(1)") for (ushort step = 0; step < HEAD_K_DIM / Ops::FRAGMENT_ROWS; ++step) {
         const uint kb = step * Ops::FRAGMENT_ROWS;
         if (kb < k_dim) {
           OperandFragment<float, 2, 1, Ops> h0_frag;

@@ -86,6 +86,12 @@ pub trait CommandBufferEncoding: Send {
 
     fn with_timestamps(self) -> Self;
 
+    /// Submits everything encoded so far so the GPU can start while the rest is still being encoded.
+    fn flush(&mut self) -> Result<(), <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Error> {
+        Ok(())
+    }
+
+    #[track_caller]
     fn end_encoding(self) -> <Self::CommandBuffer as CommandBuffer>::Executable;
 }
 

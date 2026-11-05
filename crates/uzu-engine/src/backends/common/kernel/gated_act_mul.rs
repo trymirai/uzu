@@ -7,7 +7,10 @@ use crate::{
             activation_type::ActivationType, gated_act_mul::GatedActMulOp,
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         },
-        kernel::{GatedActMulKernel, matmul::ActivationFormat},
+        kernel::{
+            GatedActMulKernel,
+            matmul::{ActivationFormat, packed_half_bytes},
+        },
     },
     config::clipping::ClippingBounds,
     data_type::DataType,
@@ -34,6 +37,7 @@ pub struct GatedActMul<B: Backend> {
     options: GatedActMulOptions,
     settings: GatedActMulSettings,
     format: ActivationFormat,
+    data_type: DataType,
 }
 
 impl<B: Backend> GatedActMul<B> {
@@ -103,6 +107,7 @@ impl<B: Backend> GatedActMul<B> {
             options,
             settings,
             format,
+            data_type,
         })
     }
 
@@ -206,37 +211,47 @@ impl<B: Backend> GatedActMul<B> {
     pub fn encode_pack_half(
         &self,
         act_operand: impl BufferRef<Backend = B>,
-        output: impl BufferMut<Backend = B>,
+        mut output: impl BufferMut<Backend = B>,
         hadamard_factors: impl BufferRef<Backend = B>,
         gated_dim: u32,
         batch_dim: u32,
         act_type: ActivationType,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
-        assert!(matches!(self.format, ActivationFormat::PackedHalf { .. }) && batch_dim <= 8);
+        let ActivationFormat::PackedHalf {
+            group_size,
+        } = self.format
+        else {
+            panic!("packed-half gated activation required")
+        };
         assert!(gated_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
         let (gate_clip_min, gate_clip_max) = self.settings.gate_clipping.into_pair().unzip();
         let (value_clip_min, value_clip_max) = self.settings.value_clipping.into_pair().unzip();
-        self.kernel.encode(
-            act_operand,
-            None::<&B::ScratchBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            None::<&mut B::ScratchBuffer>,
-            Some(hadamard_factors),
-            gated_dim,
-            batch_dim,
-            0,
-            0,
-            act_type,
-            self.settings.activation_alpha,
-            gate_clip_min,
-            gate_clip_max,
-            value_clip_min,
-            value_clip_max,
-            Some(output),
-            command_buffer,
-        );
+        // One dispatch per 8-row image; the input rows hold the gate and value interleaved.
+        let image_bytes = packed_half_bytes(gated_dim, group_size);
+        let row_bytes = 2 * gated_dim as usize * self.data_type.size_in_bytes();
+        for image in 0..batch_dim.div_ceil(8) as usize {
+            self.kernel.encode(
+                act_operand.subrange(image * 8 * row_bytes..),
+                None::<&B::ScratchBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                None::<&mut B::ScratchBuffer>,
+                Some(hadamard_factors),
+                gated_dim,
+                (batch_dim - 8 * image as u32).min(8),
+                0,
+                0,
+                act_type,
+                self.settings.activation_alpha,
+                gate_clip_min,
+                gate_clip_max,
+                value_clip_min,
+                value_clip_max,
+                Some(output.reborrow().subrange_mut(image * image_bytes..)),
+                command_buffer,
+            );
+        }
     }
 }

@@ -45,7 +45,12 @@ struct PackedSchedule {
         uzu::matmul::GeneratedFragment<half, Core::TILES_M, K_STEPS_PER_GROUP, Ops, WeightDecoder<WORDS_PER_LANE>>;
     using ActivationFragment = uzu::matmul::Fragment<half, K_STEPS_PER_GROUP, Core::TILES_N, Ops>;
 
+    const uint block_words = (params->K / WEIGHT_GROUP_SIZE) * WORDS_PER_GROUP;
+    // The activation rows are stacked 8-row images, `block_words` apart; a 16-row tile starts at its first image.
     const device uint* packed_activations = left.packed_half;
+    if constexpr (Core::TILES_N > 1) {
+      packed_activations += tile_context.block_geometry.tile_id.y * Core::TILES_N * block_words;
+    }
     const uint fragment_column_pair = uint(tile_context.lane_position.x) / 2;
     const uint lane_row = uint(tile_context.lane_position.y);
     const uint weight_sign_mask = right.sign_mask();
@@ -70,9 +75,27 @@ struct PackedSchedule {
           activation_fragment.fragment_at(4 * vector + 2, 0) = as_type<half2>(raw.z);
           activation_fragment.fragment_at(4 * vector + 3, 0) = as_type<half2>(raw.w);
         }
-        const float4 activation_sums = reinterpret_cast<const device float4*>(
+        float4 activation_sums[Core::TILES_N];
+        activation_sums[0] = reinterpret_cast<const device float4*>(
             packed_group + PackedHalfLayout<WEIGHT_GROUP_SIZE>::sums_offset()
         )[fragment_column_pair];
+        METAL_PRAGMA_UNROLL
+        for (ushort row_block = 1; row_block < Core::TILES_N; ++row_block) {
+          const device uint* image_group = packed_group + row_block * block_words;
+          const device uint* image_pairs =
+              image_group + PackedHalfLayout<WEIGHT_GROUP_SIZE>::pair_offset(fragment_column_pair, lane_row);
+          METAL_PRAGMA_UNROLL
+          for (ushort vector = 0; vector < K_STEPS_PER_GROUP / 4; ++vector) {
+            const uint4 raw = reinterpret_cast<const device uint4*>(image_pairs)[vector];
+            activation_fragment.fragment_at(4 * vector, row_block) = as_type<half2>(raw.x);
+            activation_fragment.fragment_at(4 * vector + 1, row_block) = as_type<half2>(raw.y);
+            activation_fragment.fragment_at(4 * vector + 2, row_block) = as_type<half2>(raw.z);
+            activation_fragment.fragment_at(4 * vector + 3, row_block) = as_type<half2>(raw.w);
+          }
+          activation_sums[row_block] = reinterpret_cast<const device float4*>(
+              image_group + PackedHalfLayout<WEIGHT_GROUP_SIZE>::sums_offset()
+          )[fragment_column_pair];
+        }
 
         uint weight_rows[Core::TILES_M];
         float weight_scales[Core::TILES_M];
@@ -103,17 +126,39 @@ struct PackedSchedule {
         WeightFragment weight_fragment{weight_decoder};
         typename Core::AccumFragment group_product;
         group_product.clear();
-        uzu::matmul::fragment_mma(group_product, weight_fragment, activation_fragment);
+        if constexpr (Core::TILES_N == 1) {
+          uzu::matmul::fragment_mma(group_product, weight_fragment, activation_fragment);
+        } else {
+          // Decode each weight fragment once and feed it to every row block.
+          using Mma = uzu::matmul::SimdgroupMMA<float, Ops::FRAGMENT_ROWS, Ops::FRAGMENT_COLS, half, half>;
+          METAL_PRAGMA_UNROLL
+          for (ushort tile_m = 0; tile_m < Core::TILES_M; ++tile_m) {
+            METAL_PRAGMA_UNROLL
+            for (ushort step = 0; step < K_STEPS_PER_GROUP; ++step) {
+              const half2 weights = weight_fragment.fragment_at(tile_m, step);
+              METAL_PRAGMA_UNROLL
+              for (ushort row_block = 0; row_block < Core::TILES_N; ++row_block) {
+                Mma::mma(
+                    group_product.fragment_at(tile_m, row_block),
+                    weights,
+                    activation_fragment.fragment_at(step, row_block),
+                    group_product.fragment_at(tile_m, row_block)
+                );
+              }
+            }
+          }
+        }
         accumulator.for_each_lane(
             [&](ushort tile_m, ushort input_index, thread float& accumulator_value, thread float& group_product_value) {
+              const float row_sum = activation_sums[input_index / 2][2 * (input_index % 2)];
+              const float row_weighted_sum = activation_sums[input_index / 2][2 * (input_index % 2) + 1];
               if constexpr (HAS_BIAS) {
                 accumulator_value =
-                    fma(group_product_value - activation_sums[2 * input_index + 1],
+                    fma(group_product_value - row_weighted_sum,
                         weight_scales[tile_m],
-                        fma(weight_offsets[tile_m], activation_sums[2 * input_index], accumulator_value));
+                        fma(weight_offsets[tile_m], row_sum, accumulator_value));
               } else {
-                const float correction =
-                    fma(weight_offsets[tile_m], activation_sums[2 * input_index], activation_sums[2 * input_index + 1]);
+                const float correction = fma(weight_offsets[tile_m], row_sum, row_weighted_sum);
                 accumulator_value = fma(group_product_value - correction, weight_scales[tile_m], accumulator_value);
               }
             },
