@@ -162,21 +162,10 @@ impl<B: Backend> LinearMatmul<B> {
     ) -> Result<(), LinearEncodeError<B>> {
         let element = self.output_data_type.size_in_bytes();
         if !self.matmul_b().is_trellis() {
-            // Only the trellis GEMM writes strided rows: the others run contiguous, then copy into their columns.
-            let part = self.encode_with_a(a, batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)?;
-            let (row_bytes, stride_bytes) = (self.output_dim as usize * element, row_stride as usize * element);
-            for row in 0..batch_dim as usize {
-                let start = row * stride_bytes + column as usize * element;
-                command_buffer.encode_copy(
-                    (&part).subrange(row * row_bytes..(row + 1) * row_bytes),
-                    (&mut *output).subrange_mut(start..start + row_bytes),
-                );
-            }
-            return Ok(());
+            unreachable!("TODO: support strided output in ordinary GEMM/GEMV");
         }
-        let values = output.subrange_mut(column as usize * element..);
         let output = MatmulOutput {
-            values,
+            values: output.subrange_mut(column as usize * element..),
             row_stride: Some(row_stride),
             ops: self.d_ops(),
         };
