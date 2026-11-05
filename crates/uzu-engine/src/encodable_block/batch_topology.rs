@@ -9,20 +9,12 @@ pub struct BatchTopology<B: Backend> {
     pub(crate) nodes: B::GlobalGpuBuffer,
     pub(crate) token_ids: B::GlobalGpuBuffer,
     pub(crate) seeds: B::GlobalGpuBuffer,
-    pub(crate) count: B::GlobalGpuBuffer,
     pub(crate) max_size: u32,
     pub(crate) is_flat: bool,
     pub(crate) full_accept: bool,
 }
 
 impl<B: Backend> BatchTopology<B> {
-    pub fn new(
-        nodes: Box<[TrieNode]>,
-        full_accept: bool,
-    ) -> Self {
-        todo!()
-    }
-
     pub fn flat(
         size: u32,
         full_accept: bool,
@@ -34,31 +26,10 @@ impl<B: Backend> BatchTopology<B> {
             nodes: context.create_buffer_gpu(size as usize * size_of::<TrieNode>())?,
             token_ids: context.create_buffer_gpu(size as usize * word_bytes)?,
             seeds: context.create_buffer_gpu(size as usize * size_of::<u64>())?,
-            count: context.create_buffer_gpu(word_bytes)?,
             max_size: size,
             is_flat: true,
             full_accept,
         })
-    }
-
-    pub fn from_buffers(
-        nodes: B::GlobalGpuBuffer,
-        token_ids: B::GlobalGpuBuffer,
-        seeds: B::GlobalGpuBuffer,
-        count: B::GlobalGpuBuffer,
-        max_size: u32,
-        is_flat: bool,
-        full_accept: bool,
-    ) -> Self {
-        Self {
-            nodes,
-            token_ids,
-            seeds,
-            count,
-            max_size,
-            is_flat,
-            full_accept,
-        }
     }
 
     pub fn size(&self) -> u32 {
@@ -83,9 +54,5 @@ impl<B: Backend> BatchTopology<B> {
 
     pub fn seeds(&self) -> &B::GlobalGpuBuffer {
         &self.seeds
-    }
-
-    pub fn count(&self) -> &B::GlobalGpuBuffer {
-        &self.count
     }
 }

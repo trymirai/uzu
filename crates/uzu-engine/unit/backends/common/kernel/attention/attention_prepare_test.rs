@@ -106,6 +106,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[2],
         block_mean,
         4 * u32::from(block_mean),
+        false,
     )
     .unwrap();
     let nodes = create_buffer_with_data::<B, u32>(&context, &[0, 0, 0, 0, 0, 4]);
@@ -141,6 +142,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         SUFFIX as u32,
         num_q_heads * SUFFIX as u32,
         block_mean.then_some(PREFIX),
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

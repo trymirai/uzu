@@ -68,7 +68,6 @@ pub fn linearize_chain(
     nodes: *mut TrieNode,
     token_ids: *mut u32,
     seeds: *mut u64,
-    count: *mut u32,
     chain_length: u32,
     budget: u32,
     prng_seed: u64,
@@ -107,9 +106,6 @@ pub fn linearize_chain(
             unsafe { pad_node(nodes, token_ids, seeds, i) };
         }
     }
-    unsafe {
-        *count = chain as u32;
-    }
 }
 
 #[kernel(LinearizeTree)]
@@ -119,7 +115,6 @@ pub fn linearize_tree(
     nodes: *mut TrieNode,
     token_ids: *mut u32,
     seeds: *mut u64,
-    count: *mut u32,
     stack: *mut u32,
     tree_slot_count: u32,
     frontier_capacity: u32,
@@ -287,8 +282,5 @@ pub fn linearize_tree(
 
     for i in emitted..budget {
         unsafe { pad_node(nodes, token_ids, seeds, i) };
-    }
-    unsafe {
-        *count = emitted as u32;
     }
 }

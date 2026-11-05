@@ -22,19 +22,25 @@ struct LinearizeOutputs {
   device TrieNode* nodes;
   device uint* token_ids;
   device uint64_t* seeds;
-  device uint* count;
 };
 
-inline void linearize_emit(LinearizeOutputs out, uint flat, int parent_flat, uint token, uint depth, uint64_t prng_seed,
-                           uint root_position) {
+inline void linearize_emit(
+    LinearizeOutputs out,
+    uint flat,
+    int parent_flat,
+    uint token,
+    uint depth,
+    uint64_t prng_seed,
+    uint root_position
+) {
   out.nodes[flat] = TrieNode{flat, flat, depth, parent_flat};
-    out.token_ids[flat] = token;
+  out.token_ids[flat] = token;
   out.seeds[flat] = prng_derive(prng_seed, (uint64_t)root_position + depth);
 }
 
 inline void linearize_pad(LinearizeOutputs out, uint flat) {
   out.nodes[flat] = TrieNode{0xffffffffU, 0, 0, -1};
-    out.token_ids[flat] = 0;
+  out.token_ids[flat] = 0;
   out.seeds[flat] = 0;
 }
 
@@ -42,15 +48,14 @@ PUBLIC KERNEL(LinearizeChain)(
     const device uint* sampled,
     const device uint* target_output_token,
     device TrieNode* nodes,
-      device uint* token_ids,
+    device uint* token_ids,
     device uint64_t* seeds,
-    device uint* count,
     constant const uint& chain_length,
     constant const uint& budget,
     constant const uint64_t& prng_seed,
     constant const uint& root_position
 ) {
-  LinearizeOutputs out{nodes, token_ids, seeds, count};
+  LinearizeOutputs out{nodes, token_ids, seeds};
 
   const uint chain = min(chain_length + 1, budget);
   for (uint i = 0; i < budget; i++) {
@@ -62,16 +67,14 @@ PUBLIC KERNEL(LinearizeChain)(
       linearize_pad(out, i);
     }
   }
-  *out.count = chain;
 }
 
 PUBLIC KERNEL(LinearizeTree)(
     const device uint* packed_tree,
     const device uint* frontier,
     device TrieNode* nodes,
-      device uint* token_ids,
+    device uint* token_ids,
     device uint64_t* seeds,
-    device uint* count,
     device uint* stack,
     constant const uint& tree_slot_count,
     constant const uint& frontier_capacity,
@@ -118,7 +121,7 @@ PUBLIC KERNEL(LinearizeTree)(
     return frontier_field((uint)FrontierIdx::PathLogprobBits, slot - tree_slots);
   };
 
-  LinearizeOutputs out{nodes, token_ids, seeds, count};
+  LinearizeOutputs out{nodes, token_ids, seeds};
 
   device uint* state = stack;
   device uint* dfs_stack = stack + total_slots;
@@ -201,5 +204,4 @@ PUBLIC KERNEL(LinearizeTree)(
   for (uint i = emitted; i < budget; i++) {
     linearize_pad(out, i);
   }
-  *out.count = emitted;
 }
