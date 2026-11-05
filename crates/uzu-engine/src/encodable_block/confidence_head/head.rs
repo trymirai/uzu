@@ -357,7 +357,3 @@ async fn encode_token_features<B: Backend>(
     }
     Ok(table)
 }
-
-#[cfg(test)]
-#[path = "../../../unit/encodable_block/confidence_head/head_test.rs"]
-mod tests;

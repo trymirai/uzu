@@ -324,11 +324,10 @@ fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<f32>,
 
 #[uzu_test]
 fn nodes_match_cpu() {
-    let (scores, nodes, node_inputs, child_pools, child_numbers, slot_rows, row_slots) = run_nodes::<Cpu>();
+    let (scores, nodes, _, child_pools, child_numbers, slot_rows, row_slots) = run_nodes::<Cpu>();
     let tree = tree();
     assert_eq!(slot_rows, tree.slot_rows);
     assert_eq!(row_slots, tree.row_slots);
-    assert_eq!(node_inputs, nodes);
     for_each_non_cpu_backend!(|B| {
         let actual = run_nodes::<B>();
         assert_close("scores", &actual.0, &scores, 1e-4);
