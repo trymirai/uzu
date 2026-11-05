@@ -1,11 +1,11 @@
 [project]
 name = "benchmarks-mtplx"
 version = "0.0.1"
-requires-python = ">=3.13.7"
-dependencies = ["benchmarks-common", "mtplx==2.12.2", "typer>=0.27.2"]
+requires-python = ">=3.13.7,<3.15"
+dependencies = ["benchmarks-common", "mtplx==2.12.2", "typer>=0.27.3"]
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]

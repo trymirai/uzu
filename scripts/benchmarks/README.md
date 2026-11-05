@@ -59,6 +59,8 @@ uv run --project engine-mlx bench-mlx -m "mlx-community/Qwen3.5-0.8B-4bit"
 
 ### [mlx-serve](https://github.com/ddalcu/mlx-serve)
 
+Requires Zig 0.17, pkg-config and libwebp.
+
 ```bash
 ./engine-mlxserve/run.sh -m "mlx-community/Qwen3.5-0.8B-4bit"
 ```
@@ -139,6 +141,8 @@ uv run bench-server uzu \
 Output will show average metrics.
 By default, each run waits until CPU and GPU temperatures are at or below 60°C.
 Add `--no-wait-cooldown` to send requests without waiting for cooling.
+
+TensorFold requires Zig 0.17.
 
 ## Tests
 Unit tests

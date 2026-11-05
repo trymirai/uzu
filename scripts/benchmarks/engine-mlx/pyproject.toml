@@ -2,10 +2,10 @@
 name = "benchmarks-mlx"
 version = "0.0.1"
 requires-python = ">=3.13.7"
-dependencies = ["benchmarks-common", "mlx==0.32.3", "mlx-lm==0.32.0", "typer>=0.27.2"]
+dependencies = ["benchmarks-common", "mlx==0.32.4", "mlx-lm==0.32.2", "typer>=0.27.3"]
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]

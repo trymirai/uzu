@@ -6,6 +6,9 @@ PYTHON_SUPPORT_SHA256="22b96f3d0c3663225f078556b036d2ee6ce3ff98c8857065852406813
 PYTHON_VERSION="3.13.16"
 OPENSSL_URL="https://github.com/beeware/cpython-apple-source-deps/releases/download/OpenSSL-3.5.9-1/openssl-3.5.9-1-iphoneos.arm64.tar.gz"
 OPENSSL_SHA256="aa8c3a96138a5650f51a1416076f947fec9ae7a5fba83afb0015fefe314107dc"
+LIBWEBP_VERSION="1.6.0"
+LIBWEBP_URL="https://github.com/webmproject/libwebp/archive/v$LIBWEBP_VERSION.tar.gz"
+LIBWEBP_SHA256="93a852c2b3efafee3723efd4636de855b46f9fe1efddd607e1f42f60fc8f2136"
 NATIVE_PACKAGES=(llguidance markupsafe numpy openai-harmony pydantic-core pyyaml regex rpds-py safetensors tokenizers)
 OMLX_UNUSED_PACKAGES=(cohere-melody cryptography llguidance lxml miniaudio onnxruntime opencv-python primp psutil
     pypdfium2 scipy setproctitle tiktoken)
@@ -213,6 +216,20 @@ MLXSERVE_SOURCE_DIR="$MLXSERVE_DIR/deps/mlx-serve"
 MLXSERVE_BUILD_DIR="$DEPS_DIR/mlxserve-build"
 MLXSERVE_STAGE_DIR="$MLXSERVE_BUILD_DIR/stage"
 "$MLXSERVE_DIR/bootstrap.sh"
+WEBP_BUILD_DIR="$DEPS_DIR/webp-build"
+WEBP_SOURCE_DIR="$SOURCES_DIR/libwebp-$LIBWEBP_VERSION"
+if [[ ! -d "$WEBP_SOURCE_DIR" ]]; then
+    curl -fsSL -o "$SOURCES_DIR/libwebp.tar.gz" "$LIBWEBP_URL"
+    echo "$LIBWEBP_SHA256  $SOURCES_DIR/libwebp.tar.gz" | shasum -a 256 -c -
+    tar -xzf "$SOURCES_DIR/libwebp.tar.gz" -C "$SOURCES_DIR"
+    rm "$SOURCES_DIR/libwebp.tar.gz"
+fi
+cmake -S "$WEBP_SOURCE_DIR" -B "$WEBP_BUILD_DIR" \
+    -G "Unix Makefiles" -DCMAKE_TOOLCHAIN_FILE="$DEPS_DIR/ios.cmake" -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
+    -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF \
+    -DWEBP_BUILD_WEBPMUX=OFF >/dev/null
+cmake --build "$WEBP_BUILD_DIR" --target webp >/dev/null
 version="$(sed -En 's/^#define MLX_VERSION_(MAJOR|MINOR|PATCH) ([0-9]+)$/\2/p' \
     "$MLXSERVE_SOURCE_DIR/lib/mlx-src/mlx/version.h" | paste -sd. -)"
 cmake -S "$(mlx_source "$version")" -B "$MLXSERVE_BUILD_DIR/mlx" -G "Unix Makefiles" \
@@ -226,10 +243,12 @@ cmake -S "$MLXSERVE_SOURCE_DIR/lib/mlxc-src" -B "$MLXSERVE_BUILD_DIR/mlxc" -G "U
     -DCMAKE_PREFIX_PATH="$MLXSERVE_STAGE_DIR" -DCMAKE_INSTALL_PREFIX="$MLXSERVE_STAGE_DIR" >/dev/null
 cmake --build "$MLXSERVE_BUILD_DIR/mlxc" --target install >/dev/null
 
-rsync -a --delete "$MLXSERVE_SOURCE_DIR/.zig-toolchain/lib/" "$MLXSERVE_BUILD_DIR/zig-lib/"
+ZIG_LIB_DIR="$(ZIG_GLOBAL_CACHE_DIR="$MLXSERVE_DIR/.zig-cache/global" zig env | sed -n 's/^[[:space:]]*\.lib_dir = "\(.*\)",$/\1/p')"
+rsync -a --delete "$ZIG_LIB_DIR/" "$MLXSERVE_BUILD_DIR/zig-lib/"
+chmod -R u+w "$MLXSERVE_BUILD_DIR/zig-lib"
 patch -d "$MLXSERVE_BUILD_DIR/zig-lib" -p1 < "$APP_DIR/patches/zig-ios-null-file.patch" >/dev/null
-(cd "$MLXSERVE_DIR" && ZIG_LIB_DIR="$MLXSERVE_BUILD_DIR/zig-lib" ZIG_GLOBAL_CACHE_DIR="$MLXSERVE_DIR/.zig-cache/global" \
-    "$MLXSERVE_SOURCE_DIR/.zig-toolchain/zig" build -Doptimize=ReleaseFast -Dtarget="aarch64-ios.$IPHONEOS_DEPLOYMENT_TARGET" \
+(cd "$MLXSERVE_SOURCE_DIR" && ZIG_LIB_DIR="$MLXSERVE_BUILD_DIR/zig-lib" ZIG_GLOBAL_CACHE_DIR="$MLXSERVE_DIR/.zig-cache/global" \
+    zig build --build-file build-benchmarks.zig -Doptimize=ReleaseFast -Dtarget="aarch64-ios.$IPHONEOS_DEPLOYMENT_TARGET" \
     -Dmlx-dir="$MLXSERVE_STAGE_DIR" --prefix "$MLXSERVE_BUILD_DIR/zig")
 
 framework Mlxserve mlxserve
@@ -237,6 +256,7 @@ xcrun --sdk iphoneos clang++ -target "arm64-apple-ios$IPHONEOS_DEPLOYMENT_TARGET
     -o "$FRAMEWORK_DIR/BenchmarksMlxserve" -install_name @rpath/BenchmarksMlxserve.framework/BenchmarksMlxserve \
     -Wl,-force_load,"$MLXSERVE_BUILD_DIR/zig/lib/libengine-mlxserve.a" "$MLXSERVE_STAGE_DIR/lib/libmlxc.a" \
     "$MLXSERVE_STAGE_DIR/lib/libmlx.a" "$MLXSERVE_BUILD_DIR/mlx/mlx/io/libgguflib.a" \
+    "$WEBP_BUILD_DIR/libwebp.a" "$WEBP_BUILD_DIR/libsharpyuv.a" \
     -framework Accelerate -framework CoreFoundation -framework Foundation -framework IOKit -framework IOSurface \
     -framework Metal -framework QuartzCore -Wl,-exported_symbol,_benchmarks_mlxserve_main
 cp "$MLXSERVE_STAGE_DIR/lib/mlx.metallib" "$FRAMEWORK_DIR/"

@@ -3,8 +3,9 @@ use crate::backends::{
     metal::{
         Metal,
         buffer::MetalBufferExt,
-        gpu_types::gemm::{
-            gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_k, gemm_tiling_simdgroups_per_row,
+        gpu_types::{
+            gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_k, gemm_tiling_simdgroups_per_row},
+            matmul::MXU_TILED_PREPARE_THREADS,
         },
     },
 };

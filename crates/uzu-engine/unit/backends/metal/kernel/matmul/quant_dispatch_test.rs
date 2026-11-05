@@ -463,6 +463,9 @@ fn mxu_quant_parity_bf16(
 #[case::w4_m128_bias(128u32, 512u32, 256u32, 64u32, 4u32, QuantizationMethod::ScaleBias)]
 #[case::w4_m16_k17408(16u32, 17408u32, 64u32, 64u32, 4u32, QuantizationMethod::ScaleZeroPoint)]
 #[case::w8_m16_k17408(16u32, 17408u32, 64u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w2_m1(1u32, 4096u32, 1024u32, 128u32, 2u32, QuantizationMethod::ScaleBias)]
+#[case::w2_m16(16u32, 4096u32, 1024u32, 128u32, 2u32, QuantizationMethod::ScaleBias)]
+#[case::w2_m65(65u32, 4096u32, 160u32, 128u32, 2u32, QuantizationMethod::ScaleBias)]
 fn a8w_mxu_parity_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -473,14 +476,19 @@ fn a8w_mxu_parity_bf16(
     #[values(GemmBLayout::RowMajor, GemmBLayout::MxuTiled)] gemm_b_layout: GemmBLayout,
 ) {
     let context = block_on(MetalContext::new()).expect("Metal context");
-    if !context.supports_mxu {
+    if !context.supports_mxu || (bits == 2 && gemm_b_layout == GemmBLayout::RowMajor) {
         return;
     }
-    let (input, reference_input) = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0)
-        .with_prepared_a_and_reference(
-            ACTIVATION_SCALE_GROUP_SIZE,
-            (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
-        );
+    let input = QuantInput::<bf16>::new(m, k, n, weight_gs, bits, method, 0);
+    let input = if bits == 2 {
+        input.with_one_group_per_row()
+    } else {
+        input
+    };
+    let (input, reference_input) = input.with_prepared_a_and_reference(
+        ACTIVATION_SCALE_GROUP_SIZE,
+        (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
+    );
     let actual = run_quant_metal(&context, &input.with_group_output(), gemm_b_layout, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
@@ -690,6 +698,7 @@ fn gemv_reads_mxu_tiled_layout_bf16(
 #[test_attr(uzu_test)]
 #[case::w4_zp_gs32(4u32, 32u32, ScaleZeroPoint)]
 #[case::w8_sym_gs64(8u32, 64u32, QuantizationMethod::ScaleSymmetric)]
+#[case::w2_bias_gs128(2u32, 128u32, QuantizationMethod::ScaleBias)]
 fn gathered_gemv_reads_mxu_tiled_layout_bf16(
     #[case] bits: u32,
     #[case] group_size: u32,
@@ -701,10 +710,10 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
     }
     let (k, vocab, gathered_rows) = (256u32, 256u32, 10u32);
     let input = QuantInput::<bf16>::new(1, k, vocab, group_size, bits, method, 0).with_group_output();
-    let input = if bits == 8 {
-        input.with_signed_weight_codes()
-    } else {
-        input
+    let input = match bits {
+        2 => input.with_one_group_per_row(),
+        8 => input.with_signed_weight_codes(),
+        _ => input,
     };
     let ids: Vec<u32> = (0..gathered_rows).map(|row| (row * 37 + 11) % vocab).collect();
     let dense = run_quant_cpu::<bf16>(&input);
@@ -719,7 +728,9 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         bf16::data_type(),
     )
     .expect("Metal matmul kernel");
-    tile_weights(&matmul, &mut buffers, &input, &context);
+    if bits != 2 {
+        tile_weights(&matmul, &mut buffers, &input, &context);
+    }
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let mut arguments = quant_arguments(&mut buffers, &input);
     arguments.gather_indices = Some(&ids_buffer);

@@ -8,8 +8,7 @@ use crate::{
         common::{
             Backend, Context, Kernels,
             kernel::matmul::{
-                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape,
-                TRELLIS_CODES_TAIL_BYTES, TrellisFormat,
+                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape, TrellisFormat,
             },
         },
         metal::{
@@ -99,7 +98,14 @@ const PADDING: usize = 24;
 const SENTINEL: u16 = 0x7F7F;
 const RELATIVE_TOLERANCE: f32 = 1e-2;
 // Cases are ordered as (m, n, k).
-const CASES: [(usize, usize, usize); 9] = [
+const CASES: [(usize, usize, usize); 16] = [
+    (1, 1, 64),
+    (1, 1, 512),
+    (1, 1, 2048),
+    (1, 1, 320),
+    (1, 85, 512),
+    (1, 33, 2048),
+    (1, 17, 5120),
     (1, 80, 5120),
     (7, 80, 5120),
     (17, 80, 5120),
@@ -146,10 +152,7 @@ fn run_projection(
     let activations = create_buffer_with_data::<Metal, i8>(context, &values);
     let group_sums = create_buffer_with_data::<Metal, f32>(context, &group_sums_host);
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
-    // The GEMM may read a word past the last row's codes; the tail must not change the result.
-    let mut codes_with_tail = stored.clone();
-    codes_with_tail.resize(stored.len() + TRELLIS_CODES_TAIL_BYTES, 0xA5);
-    let codes = create_buffer_with_data::<Metal, u8>(context, &codes_with_tail);
+    let codes = create_buffer_with_data::<Metal, u8>(context, &stored);
     let row_scales_buffer = create_buffer_with_data::<Metal, f32>(context, &row_scales);
     let codebook = create_buffer_with_data::<Metal, f32>(context, &CODEBOOK);
     let mut output = create_buffer_with_data::<Metal, u16>(context, &vec![SENTINEL; m * (n + PADDING)]);
@@ -236,6 +239,9 @@ fn run_projection(
 #[case::v4_t7(V4_T7)]
 #[case::v4_t6_r40(V4_T6_R40)]
 #[case::v4_t8_no_restart(V4_T8_NO_RESTART)]
+#[case::v2_t1(TrellisFormat { transition_bits: 1, ..V2_T4 })]
+#[case::v4_t1(TrellisFormat { transition_bits: 1, ..V4_T8_NO_RESTART })]
+#[case::v4_t2(TrellisFormat { transition_bits: 2, ..V4_T8_NO_RESTART })]
 fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     let context = shared_metal_context();
     // A projection's K is a whole number of restart blocks.
@@ -249,6 +255,12 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     }
     // The forced plans' K are whole 64-column blocks.
     if whole_blocks(64) {
+        for k in [512, 2048] {
+            run_projection(&context, format, (1, 1, k), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 1)));
+            if context.supports_mxu {
+                run_projection(&context, format, (1, 1, k), Some((GemmTiling::Tile16x32x256_Simdgroups1x1, 1)));
+            }
+        }
         if context.supports_mxu {
             run_projection(&context, format, (129, 132, 1024), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));
             run_projection(&context, format, (129, 132, 64), Some((GemmTiling::Tile128x128x256_Simdgroups4x4, 1)));

@@ -15,13 +15,14 @@ from common import InferenceEngine, get_model_path, get_tokenized_prompt, run_lo
 from mach import MemoryCounters, get_memory_counters
 from omlx.engine.base import GenerationOutput
 from omlx.engine.batched import BatchedEngine
-from omlx.engine.dflash import DFlashEngine, is_dflash_compatible
+from omlx.engine_core import get_mlx_executor
 from omlx.model_settings import MAX_LIGHTNING_MTP_DRAFT_TOKENS, ModelSettings
+from omlx.speculative.dflash import load_dflash_drafter
 from omlx.utils.model_loading import _checkpoint_has_mtp_weights, _is_mtp_compatible
 
 
 class OMLXEngine(InferenceEngine):
-    engine: BatchedEngine | DFlashEngine
+    engine: BatchedEngine
     runner: asyncio.Runner
     closed: bool
     mtp: bool
@@ -37,16 +38,13 @@ class OMLXEngine(InferenceEngine):
     ):
         super().__init__()
         self.mtp = False
+        self.dflash = draft_model is not None
         self.mtp_model = None
         self.max_depth = 0
         local_path = Path(model).expanduser()
         model_path = str(local_path) if local_path.is_dir() else get_model_path(model)
 
         if draft_model is not None:
-            compatible, reason = is_dflash_compatible(model_path)
-            if not compatible:
-                raise ValueError(reason)
-
             draft_path = Path(draft_model).expanduser()
             draft_path = str(draft_path) if draft_path.is_dir() else get_model_path(draft_model)
             config = json.loads((Path(draft_path) / "config.json").read_text())
@@ -54,15 +52,12 @@ class OMLXEngine(InferenceEngine):
             if self.max_depth < 1:
                 raise ValueError("DFlash requires a draft checkpoint with block_size >= 2")
 
-            self.engine = DFlashEngine(
+            self.engine = BatchedEngine(
                 model_name=model_path,
-                draft_model_path=draft_path,
-                # Preserve the checkpoint's precision and benchmark full prefills.
-                draft_quant_enabled=False,
                 model_settings=ModelSettings(
                     dflash_enabled=True,
                     dflash_draft_model=draft_path,
-                    dflash_in_memory_cache=False,
+                    dflash_draft_quant_enabled=False,
                     dflash_verify_mode="dflash",
                 ),
             )
@@ -85,14 +80,16 @@ class OMLXEngine(InferenceEngine):
         self.closed = False
         try:
             self.runner.run(self.engine.start())
-            if self.mtp:
+            if self.dflash:
+                self.default_depth = self.max_depth = self.runner.run(self._load_drafter(draft_path))
+                self.mtp_model = self.engine._model
+            elif self.mtp:
                 from omlx.patches.mlx_lm_mtp.batch_generator import (
                     _model_has_mtp_module,
                     _model_mtp_decode_enabled,
                     _resolve_mtp_chain_depth,
                 )
 
-                assert isinstance(self.engine, BatchedEngine)
                 self.mtp_model = self.engine._model
                 if not _model_has_mtp_module(self.mtp_model) or not _model_mtp_decode_enabled(self.mtp_model):
                     raise ValueError("Detected MTP weights, but oMLX did not load and enable the model's MTP heads")
@@ -103,14 +100,25 @@ class OMLXEngine(InferenceEngine):
             self.close()
             raise
 
+    async def _load_drafter(self, path: str) -> int:
+        def load():
+            return load_dflash_drafter(
+                path,
+                self.engine.prepare_dflash_target(),
+                tokenizer=self.engine.tokenizer,
+                quant_enabled=False,
+                verify_mode="dflash",
+            )
+
+        drafter = await asyncio.get_running_loop().run_in_executor(get_mlx_executor(), load)
+        self.engine.set_dflash_drafter(drafter)
+        return drafter.depth
+
     def _configure_depth(self, depth: int) -> None:
         if depth < 0 or self.max_depth < depth:
             raise ValueError(f"speculative_depth must be between 0 and {self.max_depth} for this engine")
 
-        if isinstance(self.engine, DFlashEngine):
-            # DFlash blocks include the target's anchor token as well as drafts.
-            self.engine._block_size = depth + 1
-        elif self.mtp:
+        if self.mtp or self.dflash:
             model = self.mtp_model
             for host in (model, getattr(model, "language_model", model), getattr(model, "_language_model", model)):
                 host._omlx_mtp_decode_enabled = depth > 0
@@ -149,8 +157,6 @@ class OMLXEngine(InferenceEngine):
         generate = partial(
             self.engine.stream_generate,
             prompt=prompt,
-            # DFlash compares prompt + output limit against sys.maxsize even
-            # with its context cap disabled. Leave room to avoid its AR fallback.
             max_tokens=request.max_tokens or (sys.maxsize - len(prompt) - 1),
             temperature=sampling.temp if sampling.temp is not None else 0.7,
             top_p=sampling.top_p if sampling.top_p is not None else 0.9,
@@ -169,13 +175,11 @@ class OMLXEngine(InferenceEngine):
         response: GenerationOutput | None = None
         mem_counters_max: MemoryCounters = get_memory_counters()
         decode_forwards = speculative_forwards = 0
-        summary: Any = None
-        dflash = isinstance(self.engine, DFlashEngine)
 
-        # Public outputs omit target-forward counts and DFlash token timestamps.
+        # Public outputs omit target-forward counts.
         # Keep hooks and their state local to this run; restore even on failure.
         with ExitStack() as hooks:
-            if self.mtp:
+            if self.mtp or self.dflash:
                 model_type = type(self.mtp_model)
                 original_forward = model_type.__call__
 
@@ -192,36 +196,9 @@ class OMLXEngine(InferenceEngine):
                     return original_forward(instance, inputs, *args, **kwargs)
 
                 hooks.enter_context(patch.object(model_type, "__call__", counted))
-            elif isinstance(self.engine, DFlashEngine):
-                from dflash_mlx.engine.events import SummaryEvent, TokenEvent
-
-                original_events = self.engine._stream_dflash_events
-
-                def measured_events(*args, **kwargs):
-                    events, flow, stop_ids = original_events(*args, **kwargs)
-
-                    def measured():
-                        nonlocal time_first_token, time_last_token, completion_tokens, summary
-                        try:
-                            for event in events:
-                                if isinstance(event, TokenEvent) and event.token_id not in stop_ids:
-                                    time_last_token = time.perf_counter()
-                                    if time_first_token is None:
-                                        time_first_token = time_last_token
-                                    completion_tokens += 1
-                                elif isinstance(event, SummaryEvent):
-                                    summary = event
-                                yield event
-                        finally:
-                            events.close()
-
-                    return measured(), flow, stop_ids
-
-                hooks.enter_context(patch.object(self.engine, "_stream_dflash_events", measured_events))
-
             time_start = time.perf_counter()
             async for response in generate():
-                if not dflash and response.completion_tokens > completion_tokens:
+                if response.completion_tokens > completion_tokens:
                     generated_at = response.generated_at
                     if generated_at is None:
                         generated_at = time.perf_counter()
@@ -241,24 +218,14 @@ class OMLXEngine(InferenceEngine):
             raise RuntimeError("oMLX generation failed; see engine stderr")
 
         forward_passes = None
-        if self.mtp:
+        if self.mtp or self.dflash:
             forward_passes = decode_forwards
             if depth and completion_tokens > 2 and speculative_forwards == 0:
-                raise RuntimeError("MTP requested but no speculative verification ran")
+                raise RuntimeError("Speculative decoding requested but no verification ran")
             print(
-                f"oMLX MTP depth={depth}: {speculative_forwards} speculative verifications, "
+                f"oMLX {'DFlash' if self.dflash else 'MTP'} depth={depth}: "
+                f"{speculative_forwards} speculative verifications, "
                 f"{decode_forwards} target decode forwards",
-                file=sys.stderr,
-            )
-        elif dflash:
-            if summary is None:
-                raise RuntimeError("DFlash did not report a generation summary")
-            if summary.fallback_ar:
-                raise RuntimeError(f"DFlash fell back to ordinary decoding: {summary.fallback_reason}")
-            forward_passes = summary.cycles_completed
-            print(
-                f"oMLX DFlash: {forward_passes} verification cycles, "
-                f"{summary.accepted_from_draft} accepted draft tokens",
                 file=sys.stderr,
             )
 

@@ -26,6 +26,7 @@ use crate::{
 };
 
 const GEMV_MAX_BATCH: u32 = 8;
+const QUANT_K_BLOCK_BYTES: u32 = 256;
 const MXU_TILED_KERNEL_MIN_K: u32 = 2048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,15 +104,16 @@ impl GemvSpecialization {
             return None;
         }
         let bits = shape.b_bits.unwrap_or(0);
+        if bits == 2 && gemm_b_layout == GemmBLayout::MxuTiled {
+            return None;
+        }
         if !is_quant && (shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH) {
             return None;
         }
         let block_size = if !is_quant {
             FP_K_BLOCK
-        } else if bits == 4 {
-            512
         } else {
-            256
+            QUANT_K_BLOCK_BYTES * 8 / bits
         };
         let input_aligned = shape.k.is_multiple_of(block_size);
         // Gathered quantized rows cannot share one input tile, and batched tiles need whole K blocks.

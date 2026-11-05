@@ -51,10 +51,12 @@ pub struct QuantInput<T: DataTypeRepr + Float> {
     pub params_layout: QuantParamsLayout,
     pub signed_codes: bool,
     pub prepared_a: Option<PreparedInt8A>,
+    pub one_group_per_row: bool,
 }
 
 fn mode_for_bits(bits: u32) -> QuantizationMode {
     match bits {
+        2 => QuantizationMode::U2,
         4 => QuantizationMode::U4,
         8 => QuantizationMode::U8,
         _ => unreachable!("unsupported bits: {bits}"),
@@ -182,12 +184,30 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             params_layout: QuantParamsLayout::OutputGroup,
             signed_codes: false,
             prepared_a: None,
+            one_group_per_row: false,
         }
     }
 
     pub fn with_signed_weight_codes(mut self) -> Self {
         self.signed_codes = true;
         self
+    }
+
+    pub fn with_one_group_per_row(mut self) -> Self {
+        self.one_group_per_row = true;
+        self.scales.truncate(self.n as usize);
+        if let Some(biases) = &mut self.biases {
+            biases.truncate(self.n as usize);
+        }
+        self
+    }
+
+    fn group_count(&self) -> u32 {
+        if self.one_group_per_row {
+            1
+        } else {
+            self.k.div_ceil(self.group_size)
+        }
     }
 
     pub fn with_group_output(mut self) -> Self {
@@ -227,7 +247,7 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
         sum_group_size: Option<u32>,
         code_layout: Int8CodeLayout,
     ) -> Self {
-        self.signed_codes = self.mode != QuantizationMode::U4;
+        self.signed_codes = self.mode == QuantizationMode::U8;
         let rows = self.m;
         let columns = self.k;
         assert!(columns.is_multiple_of(activation_scale_group_size));
@@ -313,7 +333,7 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         context: &B::Context,
         input: &QuantInput<T>,
     ) -> Self {
-        let groups = input.k.div_ceil(input.group_size);
+        let groups = input.group_count();
         let params_layout = input.params_layout;
         let params = QuantParams::new(params_layout, input.n, groups);
         let metadata_elements = params.scale_shape().into_iter().product::<u32>() as usize;
@@ -386,7 +406,7 @@ fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
     weights_layout: WeightsLayout<TB::Backend>,
     input: &QuantInput<T>,
 ) -> MatmulB<TB> {
-    let params = QuantParams::new(params_layout, input.n, input.k.div_ceil(input.group_size));
+    let params = QuantParams::new(params_layout, input.n, input.group_count());
     let correction = match input.quant_method {
         QuantizationMethod::ScaleBias => QuantizedCorrection::Biases(biases.expect("bias buffer")),
         QuantizationMethod::ScaleZeroPoint => QuantizedCorrection::ZeroPoints(zero_points.expect("zp buffer")),
