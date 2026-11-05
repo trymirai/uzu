@@ -9,7 +9,7 @@ mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
-pub use transformed_linear::{TransformedLinear, TransformedLinearError};
+pub use transformed_linear::TransformedLinear;
 pub use untied_readout::UntiedReadout;
 
 use crate::{
@@ -74,8 +74,8 @@ pub enum LinearBlockError<B: Backend> {
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("RHTLinearWrapper error: {0}")]
     RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
-    #[error("TransformedLinear error: {0}")]
-    TransformedLinearError(#[from] TransformedLinearError<B>),
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
