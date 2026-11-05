@@ -9,6 +9,10 @@ impl PRng {
         }
     }
 
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
     pub fn derive(
         &self,
         index: u64,

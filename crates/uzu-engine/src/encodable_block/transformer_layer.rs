@@ -378,7 +378,7 @@ impl<B: Backend> TransformerLayer<B> {
         mut shortcut: impl BufferMut<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {

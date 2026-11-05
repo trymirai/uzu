@@ -243,7 +243,7 @@ impl<B: Backend> Transformer<B> {
         &self,
         input: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
@@ -261,7 +261,7 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
+        let token_positions = (0..batch_dim.size()).map(|row| context_length + row).collect::<Box<[u32]>>();
 
         let precalculated_ropes = self
             .ropes
