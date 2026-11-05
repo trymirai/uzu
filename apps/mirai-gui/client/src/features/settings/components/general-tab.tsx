@@ -41,13 +41,6 @@ export default function GeneralTab() {
 
   return (
     <div className="flex flex-col gap-7 pb-8">
-      {/* What the model is told in every chat. Its own card, so it sits under a group heading
-          rather than inside a group. */}
-      <section className="flex flex-col gap-2">
-        <h3 className="px-1 text-[13px] font-[500] leading-[1.3] text-label-muted">Instructions</h3>
-        <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
-      </section>
-
       <SettingGroup title="Appearance">
         <SettingRow
           title="Theme"
@@ -96,6 +89,13 @@ export default function GeneralTab() {
         )}
         <CliInstallSetting />
       </SettingGroup>
+
+      {/* What the model is told in every chat. Its own card, so it sits under a group heading
+          rather than inside a group. */}
+      <section className="flex flex-col gap-2">
+        <h3 className="px-1 text-[13px] font-[500] leading-[1.3] text-label-muted">Instructions</h3>
+        <GlobalInstructions instructions={instructions} onSave={saveInstructions} />
+      </section>
 
       <SettingGroup title="Privacy">
         <AnalyticsSetting enabled={analyticsEnabled} onChange={setAnalyticsEnabled} />

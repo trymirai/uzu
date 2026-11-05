@@ -8,6 +8,11 @@ type GlobalInstructionsProps = {
   onSave: (instructions: string) => Promise<boolean>;
 };
 
+const LABELS = [
+  { hasInstructions: false, text: "Add instructions to all chats" },
+  { hasInstructions: true, text: "Change instructions for all chats" },
+] as const;
+
 const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, onSave }) => {
   const toast = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -102,6 +107,8 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
     [scheduleSave],
   );
 
+  const hasInstructions = instructions.trim() !== "";
+
   return (
     <div className="rounded-2xl bg-surface-soft">
       <button
@@ -116,8 +123,22 @@ const GlobalInstructions: React.FC<GlobalInstructionsProps> = ({ instructions, o
             className={`size-4 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${isExpanded ? "rotate-45" : ""}`}
           />
         </span>
-        <span className="flex-1 min-w-0 text-[14px] font-[450] leading-[1.3] text-label-title">
-          Add instructions to all chats
+        {/* Saved instructions, not the draft, so the label doesn't flip while typing the first word.
+            Both labels share one grid cell and cross-fade with a touch of blur, like the copy button's
+            icons; the hidden one is left out of the button's name. */}
+        <span className="grid flex-1 min-w-0 text-[14px] font-[450] leading-[1.3] text-label-title">
+          {LABELS.map((label) => {
+            const shown = label.hasInstructions === hasInstructions;
+            return (
+              <span
+                key={label.text}
+                aria-hidden={!shown}
+                className={`[grid-area:1/1] transition-[opacity,filter] duration-200 ease-out will-change-[opacity,filter] motion-reduce:transition-none ${shown ? "opacity-100 [filter:blur(0px)]" : "opacity-0 [filter:blur(2px)]"}`}
+              >
+                {label.text}
+              </span>
+            );
+          })}
         </span>
         <span className="hidden sm:block text-[13px] leading-[1.3] text-label-muted">
           Tailor the way the model responds

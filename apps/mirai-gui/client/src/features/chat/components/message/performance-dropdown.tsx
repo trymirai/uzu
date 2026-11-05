@@ -9,27 +9,28 @@ type PerformanceDropdownProps = {
 };
 
 const formatSeconds = (seconds?: number): string =>
-  typeof seconds === "number" && Number.isFinite(seconds) ? `${seconds.toFixed(3)}s` : "—";
+  typeof seconds === "number" && Number.isFinite(seconds) ? `${seconds.toFixed(3)} s` : "—";
 
 const formatTps = (tps?: number): string =>
-  typeof tps === "number" && Number.isFinite(tps) ? `${Math.round(tps)}` : "—";
+  typeof tps === "number" && Number.isFinite(tps) ? `${Math.round(tps)} tok/s` : "—";
 
 type Metric = { value: string; short: string; full: string };
 
 /**
  * The run's speed figures in our tooltip, opened at once on hover and lined up under the button like
- * the Regenerate menu beside it. One figure per line, everything aligned left: the number, then its
- * short name; the full name stays on the abbreviation for screen readers and the title.
+ * the Regenerate menu beside it. One figure per line, everything aligned left: the number with its
+ * unit (always spelled the same way: s, tok/s, tok/pass), then its short name in lowercase; the
+ * full name stays on the abbreviation for screen readers and the title.
  */
 export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropdownProps) {
   const tokensPerForwardPass = perf?.tokensPerForwardPass;
   const metrics: Metric[] = [
-    { value: formatSeconds(perf?.ttftSec), short: "TTFT", full: "Time to first token" },
-    { value: formatTps(perf?.tps), short: "TPS", full: "Tokens per second" },
+    { value: formatSeconds(perf?.ttftSec), short: "ttft", full: "Time to first token" },
+    { value: formatTps(perf?.tps), short: "tps", full: "Tokens per second" },
     ...(typeof tokensPerForwardPass === "number" && Number.isFinite(tokensPerForwardPass)
-      ? [{ value: `${tokensPerForwardPass.toFixed(2)} tok/pass`, short: "MAL", full: "Mean accepted length" }]
+      ? [{ value: `${tokensPerForwardPass.toFixed(2)} tok/pass`, short: "mal", full: "Mean accepted length" }]
       : []),
-    { value: formatSeconds(perf?.totalSec), short: "Time", full: "Total time" },
+    { value: formatSeconds(perf?.totalSec), short: "time", full: "Total time" },
   ];
 
   const button = (
