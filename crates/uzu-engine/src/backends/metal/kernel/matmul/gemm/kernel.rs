@@ -7,10 +7,7 @@ use crate::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context,
-            gpu_types::{
-                gemm::{GemmBPrologueKind, GemmDTransform},
-                matmul::{MXU_TILED_BLOCK_ROWS, MXU_TILED_PREPARE_THREADS, MXU_TILED_W2_BLOCK_ROWS},
-            },
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
                 QuantParamsStrides, QuantizedB,
@@ -23,7 +20,7 @@ use crate::{
             error::MetalError,
             gpu_types::{
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBLayout},
-                matmul::GemmParams,
+                matmul::{GemmParams, MXU_TILED_BLOCK_ROWS, MXU_TILED_PREPARE_THREADS, MXU_TILED_W2_BLOCK_ROWS},
             },
             kernel::{
                 GemmMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,

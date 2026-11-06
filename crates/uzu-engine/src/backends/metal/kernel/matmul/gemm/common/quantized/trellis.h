@@ -126,13 +126,48 @@ static METAL_FUNC uint4 decode_biased_weight_quad(
     const uint first_bit =
         block * block_size + block_size - STATE_BITS - (state_in_block + window_states - 1) * transition_bits;
     const uint byte = row_start_byte + first_bit / BYTE_BITS;
-    const uint shift = byte % WORD_BYTES * BYTE_BITS + first_bit % BYTE_BITS;
-    const device uint* words = reinterpret_cast<const device uint*>(codes) + byte / WORD_BYTES;
-    const uint first = words[0], second = words[1];
-    const uint third = third_word_possible ? words[1 + uint(shift + bits_in_window > 2 * WORD_BITS)] : 0u;
-    const uint word0 = (first >> shift) | ((second << 1) << (WORD_BITS - 1 - shift));
-    const uint word1 = (second >> shift) | ((third << 1) << (WORD_BITS - 1 - shift));
-    const uint word2 = third >> shift;
+    uint3 words(0u);
+    uint bit_offset;
+    if (format.restart_columns != 0) {
+      bit_offset = byte % WORD_BYTES * BYTE_BITS + first_bit % BYTE_BITS;
+      const device uint* aligned_words = reinterpret_cast<const device uint*>(codes) + byte / WORD_BYTES;
+      const bool word_pair_fits = format.vector_width == 4 && transition_bits == 8 && format.restart_columns == 64;
+      words.x = aligned_words[0];
+      // Reuse an existing word to avoid conditional loads.
+      const uint second_index = word_pair_fits || bit_offset + bits_in_window > WORD_BITS ? 1u : 0u;
+      words.y = aligned_words[second_index];
+      const uint third_index = bit_offset + bits_in_window > 2 * WORD_BITS ? 2u : (word_pair_fits ? 1u : 0u);
+      words.z = third_word_possible ? aligned_words[third_index] : 0u;
+    } else {
+      const uint max_bit_offset = format.vector_width == 2 || transition_bits % 2 == 0 ? 0u : 4u;
+      bit_offset = max_bit_offset == 0 ? 0u : first_bit % BYTE_BITS;
+      const uint min_byte_count = div_ceil(bits_in_window, BYTE_BITS);
+      const uint full_word_bytes = min_byte_count / WORD_BYTES * WORD_BYTES;
+      const uint max_byte_count = div_ceil(bits_in_window + max_bit_offset, BYTE_BITS);
+      const device packed_uchar4* packed_words = reinterpret_cast<const device packed_uchar4*>(codes + byte);
+      if (full_word_bytes >= WORD_BYTES) {
+        words.x = as_type<uint>(packed_words[0]);
+      }
+      if (full_word_bytes >= 2 * WORD_BYTES) {
+        words.y = as_type<uint>(packed_words[1]);
+      }
+      METAL_PRAGMA_UNROLL
+      for (uint byte_index = full_word_bytes; byte_index < max_byte_count; ++byte_index) {
+        if (byte_index * BYTE_BITS < bit_offset + bits_in_window) {
+          const uint value = uint(codes[byte + byte_index]) << (byte_index % WORD_BYTES * BYTE_BITS);
+          if (byte_index < WORD_BYTES) {
+            words.x |= value;
+          } else if (byte_index < 2 * WORD_BYTES) {
+            words.y |= value;
+          } else {
+            words.z |= value;
+          }
+        }
+      }
+    }
+    const uint word0 = (words.x >> bit_offset) | ((words.y << 1) << (WORD_BITS - 1 - bit_offset));
+    const uint word1 = (words.y >> bit_offset) | ((words.z << 1) << (WORD_BITS - 1 - bit_offset));
+    const uint word2 = words.z >> bit_offset;
     METAL_PRAGMA_UNROLL
     for (uint output = 0; output < window_states / states_per_weight_word; ++output) {
       const uint first_state_bit = (window_states - 1 - output * states_per_weight_word) * transition_bits;

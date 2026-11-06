@@ -1,3 +1,7 @@
+pub const MXU_TILED_BLOCK_ROWS: u32 = 32;
+pub const MXU_TILED_W2_BLOCK_ROWS: u32 = 16;
+pub const MXU_TILED_PREPARE_THREADS: u32 = 1024;
+
 #[repr(C)]
 #[allow(non_snake_case)]
 #[derive(Debug, Default, Copy, Clone)]
