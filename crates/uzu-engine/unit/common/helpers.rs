@@ -12,6 +12,14 @@ use crate::{
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
 macro_rules! for_each_backend {
+    (webgpu, |$B:ident| $body:expr) => {{
+        for_each_backend!(|$B| $body);
+        #[cfg(backend = "webgpu")]
+        {
+            type $B = crate::backends::webgpu::WebGPU;
+            $body
+        }
+    }};
     (|$B:ident| $body:expr) => {{
         #[cfg(backend = "metal")]
         {
@@ -27,6 +35,14 @@ macro_rules! for_each_backend {
 pub(crate) use for_each_backend;
 
 macro_rules! for_each_non_cpu_backend {
+    (webgpu, |$B:ident| $body:expr) => {{
+        for_each_non_cpu_backend!(|$B| $body);
+        #[cfg(backend = "webgpu")]
+        {
+            type $B = crate::backends::webgpu::WebGPU;
+            $body
+        }
+    }};
     (|$B:ident| $body:expr) => {{
         #[cfg(backend = "metal")]
         {

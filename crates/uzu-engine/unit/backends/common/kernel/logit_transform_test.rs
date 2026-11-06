@@ -53,7 +53,7 @@ fn test_logit_transform<T: DataTypeRepr + Float + Display>(
         1e-5
     };
 
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let actual = get_output::<T, B>(&logits, scale, soft_cap);
         let message = format!(
             "LogitTransform failed with backend={}, scale={}, soft_cap={:?}",

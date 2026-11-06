@@ -113,5 +113,5 @@ fn check_kv_copy<B: Backend>() {
 
 #[uzu_test]
 fn test_kv_copy() {
-    for_each_backend!(|B| check_kv_copy::<B>());
+    for_each_backend!(webgpu, |B| check_kv_copy::<B>());
 }

@@ -131,7 +131,7 @@ fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
         1e-5
     };
     let (input, expected) = get_test_data_basic::<T>();
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let output = get_output::<T, B>(&input, false);
         assert_eq_float::<T>(
             &expected,
@@ -149,7 +149,7 @@ fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
         1e-5
     };
     let (input, expected) = get_test_data_large::<T>();
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let output = get_output::<T, B>(&input, false);
         assert_eq_float::<T>(
             &expected,
@@ -167,7 +167,7 @@ fn test_edge<T: DataTypeRepr + Float + Debug + Display>() {
         1e-5
     };
     let (input, expected) = get_test_data_edge::<T>();
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let output = get_output::<T, B>(&input, false);
         assert_eq_float::<T>(
             &expected,
@@ -185,7 +185,7 @@ fn test_in_place<T: DataTypeRepr + Float + Debug + Display>() {
         1e-5
     };
     let (input, expected) = get_test_data_basic::<T>();
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let output = get_output::<T, B>(&input, true);
         assert_eq_float::<T>(
             &expected,

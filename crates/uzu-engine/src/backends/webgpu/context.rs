@@ -204,10 +204,15 @@ impl Context for WebGPUContext {
         buffer: impl BufferRef<Backend = WebGPU, Buffer = WebGPUDenseBufferGpu>,
     ) -> impl Future<Output = Result<Vec<T>, <Self::Backend as Backend>::Error>> + Send {
         let (buffer, buffer_range) = buffer.parts();
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT as usize;
+        let copy_start = buffer_range.start / alignment * alignment;
+        let copy_end = buffer_range.end.next_multiple_of(alignment);
+        let read_start = buffer_range.start - copy_start;
+        let read_end = read_start + buffer_range.iter().len();
 
         let cpu_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: buffer_range.iter().len() as u64,
+            size: (copy_end - copy_start) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -215,10 +220,10 @@ impl Context for WebGPUContext {
         let mut command_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         command_encoder.copy_buffer_to_buffer(
             buffer.wgpu_buffer(),
-            buffer_range.start as u64,
+            copy_start as u64,
             &cpu_buffer,
             0,
-            buffer_range.iter().len() as u64,
+            (copy_end - copy_start) as u64,
         );
         let submission_index = self.queue.submit([command_encoder.finish()]);
 
@@ -242,7 +247,8 @@ impl Context for WebGPUContext {
 
         async move {
             receiver.await.map_err(|_| WebGPUError::CommandBuffer)??;
-            Ok(bytemuck::cast_slice(&cpu_buffer.get_mapped_range(..)?).to_vec())
+            let mapped = cpu_buffer.get_mapped_range(..)?;
+            Ok(bytemuck::cast_slice(&mapped[read_start..read_end]).to_vec())
         }
     }
 

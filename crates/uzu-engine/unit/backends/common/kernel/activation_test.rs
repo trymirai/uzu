@@ -104,7 +104,7 @@ fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
         1e-5
     };
 
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let actual = get_output::<T, B>(input);
         let msg = format!("Activation {} failed with backend={}", test_name, std::any::type_name::<B>(),);
         assert_eq_float::<T>(expected, &actual, eps, &msg);

@@ -131,7 +131,7 @@ fn test<T: DataTypeRepr + Float + Debug + Display>(
     eps: f32,
 ) {
     let (input, expected) = get_test_data::<T>(m, k, n);
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let output = get_output::<T, B>(&input);
         assert_eq_float(&expected, &output, eps, &format!("backend {}", std::any::type_name::<B>()));
     });
@@ -225,7 +225,7 @@ macro_rules! check_gather {
             let (dense, gather) = $run;
             assert_gather(&dense, &gather, &$ids, $m, $vocab, $ids_per_row, $eps, "Cpu");
         }
-        for_each_non_cpu_backend!(|$B| {
+        for_each_non_cpu_backend!(webgpu, |$B| {
             let (dense, gather) = $run;
             assert_gather(&dense, &gather, &$ids, $m, $vocab, $ids_per_row, $eps, std::any::type_name::<$B>());
         });

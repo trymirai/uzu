@@ -90,7 +90,7 @@ fn interleaved_test<T: DataTypeRepr + Float + Debug + Display>(act_type: Activat
     };
     let input = interleaved_input::<T>(act_type);
     let expected = run_interleaved::<T, Cpu>(&input, false);
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let output = run_interleaved::<T, B>(&input, false);
         let message = format!("interleaved mismatch for backend {}", std::any::type_name::<B>());
         assert_eq_float::<T>(&expected, &output, eps, &message);
@@ -102,7 +102,7 @@ fn interleaved_test<T: DataTypeRepr + Float + Debug + Display>(act_type: Activat
 fn test_gated_act_mul_interleaved_hadamard_bf16() {
     let input = interleaved_input::<bf16>(ActivationType::SILU);
     let expected = run_interleaved::<bf16, Cpu>(&input, true);
-    for_each_non_cpu_backend!(|B| {
+    for_each_non_cpu_backend!(webgpu, |B| {
         let actual = run_interleaved::<bf16, B>(&input, true);
         assert_eq_float::<bf16>(&expected, &actual, 0.02, "Hadamard gated activation mismatch");
     });
@@ -251,7 +251,7 @@ fn run_separate<T: DataTypeRepr + Float, B: Backend>(input: &SeparateInput<T>) -
 
 fn separate_test<T: DataTypeRepr + Float + Debug>() {
     let (input, expected) = separate_input::<T>();
-    for_each_backend!(|B| {
+    for_each_backend!(webgpu, |B| {
         let output = run_separate::<T, B>(&input);
         assert_eq!(expected, output, "separate mismatch for backend {}", std::any::type_name::<B>());
     });
@@ -300,7 +300,7 @@ fn transformed_interleaved_test<T: DataTypeRepr + Float + Debug + Display>(
         value_clipping,
     };
 
-    for_each_backend!(|B| {
+    for_each_backend!(webgpu, |B| {
         let context = block_on(<B as Backend>::Context::new()).expect("create context");
         let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false, settings)
             .expect("create transformed GatedActMul");
