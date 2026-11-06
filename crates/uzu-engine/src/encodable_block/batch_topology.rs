@@ -1,7 +1,4 @@
-use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context},
-    data_type::DataType,
-};
+use crate::backends::common::Backend;
 
 pub struct BatchTopology<B: Backend> {
     /// Present iff the batch is a trie.
@@ -16,21 +13,8 @@ pub struct BatchTopology<B: Backend> {
 }
 
 impl<B: Backend> BatchTopology<B> {
-    pub fn flat(
-        size: u32,
-        full_accept: bool,
-    ) -> Self {
-        Self::new(None, None, None, size, full_accept)
-    }
-
-    pub(crate) fn with_token_ids(
-        mut self,
-        command_buffer: &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<Self, <B as Backend>::Error> {
-        let context = command_buffer.context();
-        let word_bytes = DataType::U32.size_in_bytes();
-        self.token_ids = Some(context.create_buffer_gpu(self.max_size as usize * word_bytes)?);
-        Ok(self)
+    pub fn flat(size: u32) -> Self {
+        Self::new(None, None, None, size, true, true)
     }
 
     pub(crate) fn new(
@@ -51,15 +35,12 @@ impl<B: Backend> BatchTopology<B> {
             seeds,
             max_size,
             full_accept,
+            is_flat,
         }
     }
 
     pub fn size(&self) -> u32 {
         self.max_size
-    }
-
-    pub fn is_flat(&self) -> bool {
-        self.nodes.is_none()
     }
 
     pub fn full_accept(&self) -> bool {

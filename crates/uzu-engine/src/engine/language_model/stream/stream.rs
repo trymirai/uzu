@@ -63,7 +63,7 @@ enum GenerationJob<B: Backend> {
 struct ResolvedJob<B: Backend> {
     output_tokens: Box<[u64]>,
     output_norm_buffer: Option<B::ScratchBuffer>,
-    output_tokens_buffer: Option<B::GlobalGpuBuffer>,
+    output_tokens_buffer: B::GlobalGpuBuffer,
     batch_dim: BatchTopology<B>,
     hidden_features: Option<Box<[B::ScratchBuffer]>>,
     accepted_indices_and_input_tokens: Option<(Box<[u32]>, Box<[u64]>)>,
@@ -221,7 +221,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 ResolvedJob {
                     output_tokens,
                     output_norm_buffer,
-                    output_tokens_buffer: Some(output_tokens_buffer),
+                    output_tokens_buffer,
                     batch_dim,
                     hidden_features,
                     accepted_indices_and_input_tokens,
@@ -816,8 +816,11 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             });
 
             if !context_full {
-                let (_, new_job) = self.submitter.get_and_queue_pass(GenerationJob::Resolved(queued)).await?;
+                // Important to keep `last_resolved` alive
+                let (last_resolved, new_job) =
+                    self.submitter.get_and_queue_pass(GenerationJob::Resolved(queued)).await?;
                 let resolved_new = self.submitter.resolve_take(new_job).await?;
+                drop(last_resolved);
                 self.emitting = Some((resolved_new, 0))
             } else {
                 assert!(self.emit_token().is_none());

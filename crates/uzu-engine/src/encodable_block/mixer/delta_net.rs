@@ -436,14 +436,14 @@ impl<B: Backend> DeltaNet<B> {
         Ok(output)
     }
 
-    // Runs a fully accepted batch from zero conv and SSM states that live only for this encode.
+    // Runs a sequential batch from zero conv and SSM states that live only for this encode.
     fn encode_stateless(
         &self,
         hidden: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
-        assert!(batch_dim.full_accept(), "stateless delta net doesn't support trie");
+        assert!(batch_dim.is_flat(), "stateless delta net requires sequential token order");
 
         let mut conv_state = command_buffer
             .allocate_scratch_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)
