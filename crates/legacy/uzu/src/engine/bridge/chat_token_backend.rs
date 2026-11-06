@@ -34,8 +34,8 @@ use uzu_engine::{
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{
-        error_stream, get_grammar, get_max_context_length, get_sampling_method, grammar_trigger_token_sequence,
-        grammar_trigger_token_sequence_for_prompt, stream_error,
+        error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
+        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
     },
 };
 
@@ -132,7 +132,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
-                    return Box::pin(NoMetricsStream::new(error_stream(BackendError::Grammar {
+                    return Box::pin(NoMetricsStream::new(error_to_stream_output(BackendError::Grammar {
                         message: err.to_string(),
                     })));
                 },
@@ -144,7 +144,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let sampling_method = match get_sampling_method::<B>(&self.model, &config.sampling_policy) {
             Ok(sampling_method) => sampling_method,
             Err(err) => {
-                return Box::pin(NoMetricsStream::new(error_stream(BackendError::other(err))));
+                return Box::pin(NoMetricsStream::new(error_to_stream_output(BackendError::other(err))));
             },
         };
 
@@ -155,7 +155,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         let stream = match self.model.stream(input, state.value.get_mut(), options) {
             Ok(stream) => stream,
             Err(err) => {
-                return Box::pin(NoMetricsStream::new(error_stream(stream_error(err))));
+                return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));
             },
         };
 
@@ -169,7 +169,11 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 } else if token_limit.is_some_and(|token_limit| tokens_generated >= token_limit) {
                     (Some(Ok(TokenStreamOutput::LimitReached)), true)
                 } else {
-                    match stream.generate().await.map_err(|error| ShojiBackendError::from(stream_error(error))) {
+                    match stream
+                        .generate()
+                        .await
+                        .map_err(|error| ShojiBackendError::from(stream_error_to_backend_error(error)))
+                    {
                         Ok(Some(token)) => {
                             tokens_generated += 1;
                             (Some(Ok(TokenStreamOutput::Token(token))), self.stop_token_ids.contains(&(token as i32)))
@@ -183,7 +187,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                     if let Err(error) = stream.close().await
                         && !matches!(&output, Some(Err(_)))
                     {
-                        output = Some(Err(stream_error(error).into()));
+                        output = Some(Err(stream_error_to_backend_error(error).into()));
                     }
                 }
                 let metrics = stream.metrics().clone();

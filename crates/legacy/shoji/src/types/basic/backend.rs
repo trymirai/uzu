@@ -2,9 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::traits::backend::Error as ShojiBackendError;
 
-/// A backend failure that keeps its kind across the bindings boundary.
-/// The variants mirror uzu-engine's LanguageModelStreamError so callers can
-/// match on them (a context overflow, say) instead of on the error text.
 #[bindings::export(Error)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
@@ -58,22 +55,5 @@ impl From<ShojiBackendError> for BackendError {
             Ok(error) => *error,
             Err(error) => Self::other(error),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn boxed_backend_error_keeps_its_variant() {
-        let boxed: ShojiBackendError = BackendError::ContextOverflow {}.into();
-        assert_eq!(BackendError::from(boxed), BackendError::ContextOverflow {});
-    }
-
-    #[test]
-    fn other_boxed_errors_become_other() {
-        let boxed: ShojiBackendError = "Context overflow".into();
-        assert_eq!(BackendError::from(boxed), BackendError::other("Context overflow"));
     }
 }

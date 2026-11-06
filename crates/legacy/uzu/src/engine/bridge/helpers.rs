@@ -18,15 +18,13 @@ use uzu_engine::{
     },
 };
 
-pub fn error_stream<'a>(
+pub fn error_to_stream_output<'a>(
     error: BackendError
 ) -> Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, ShojiBackendError>> + Send + 'a>> {
     Box::pin(stream::once(async move { Err::<ChatTokenStreamOutput, ShojiBackendError>(error.into()) }))
 }
 
-/// Keeps the engine's error kind across the shoji boundary, so a context
-/// overflow reaches clients as a variant they can match instead of a message.
-pub fn stream_error<B: Backend>(error: LanguageModelStreamError<B>) -> BackendError {
+pub fn stream_error_to_backend_error<B: Backend>(error: LanguageModelStreamError<B>) -> BackendError {
     match error {
         LanguageModelStreamError::Backend(error) => BackendError::Backend {
             message: error.to_string(),
