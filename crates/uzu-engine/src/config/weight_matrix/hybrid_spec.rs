@@ -14,6 +14,13 @@ pub enum IncoherenceProcessingMode {
 pub struct HybridSpec {
     pub quantization_spec: Box<AnyWeightMatrixSpec>,
     pub adapter_spec: Option<Unsupported>,
-    pub incoherence_block_size: Option<u32>,
-    pub incoherence_processing_mode: IncoherenceProcessingMode,
+    pub incoherence_spec: Option<HadamardSpec>,
+}
+
+#[uzu_config]
+pub struct HadamardSpec {
+    #[serde(rename = "type")]
+    ty: monostate::MustBe!("HadamardSpec"),
+    pub block_size: u32,
+    pub processing_mode: IncoherenceProcessingMode,
 }

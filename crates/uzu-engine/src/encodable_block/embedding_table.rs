@@ -10,7 +10,7 @@ use crate::{
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         d4s4_spec::D4S4Spec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
@@ -112,8 +112,12 @@ impl<B: Backend> EmbeddingTable<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-                incoherence_processing_mode: IncoherenceProcessingMode::Output,
+                incoherence_spec:
+                    Some(HadamardSpec {
+                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    }),
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
                 let matrix = load_matrix(&tree.subtree("quantized"), *quantization_spec).await?;

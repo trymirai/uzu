@@ -9,7 +9,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
@@ -40,8 +40,11 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
     matches!(
         spec,
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            incoherence_block_size: Some(block_size),
-            incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            incoherence_spec: Some(HadamardSpec {
+                block_size,
+                processing_mode: IncoherenceProcessingMode::InputOutput,
+                ..
+            }),
             ..
         }) if *block_size == HADAMARD_TRANSFORM_BLOCK_SIZE
     )
