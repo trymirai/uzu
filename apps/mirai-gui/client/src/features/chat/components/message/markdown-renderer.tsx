@@ -1,3 +1,4 @@
+import { IconArrowInbox, IconCircleCheckFilled, IconSquareBehindSquare1 } from "@/components/icons/app-icons";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAppStore } from "@/stores/use-app-store";
@@ -26,6 +27,14 @@ type MarkdownRendererProps = {
 const LINK_SAFETY = { enabled: false } as const;
 // The default placeholder href gets sanitized into "[blocked]" mid-stream.
 const REMEND = { linkMode: "text-only" } as const;
+// Code blocks keep Streamdown's own buttons and copy/download behaviour, with our icons in them: the
+// copy icon and filled check from under messages, and the tray for download. Streamdown asks for
+// 14px; ours are drawn for 16.
+const CODE_BLOCK_ICONS = {
+  CopyIcon: () => <IconSquareBehindSquare1 size={16} />,
+  CheckIcon: () => <IconCircleCheckFilled size={16} className="text-label-title" />,
+  DownloadIcon: () => <IconArrowInbox size={16} />,
+};
 
 type MarkdownComponentProps<K extends keyof JSX.IntrinsicElements> = JSX.IntrinsicElements[K] & { node?: Element };
 
@@ -330,6 +339,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
         lineNumbers={false}
         codeBlockMaxHeight="none"
         linkSafety={LINK_SAFETY}
+        icons={CODE_BLOCK_ICONS}
         remend={REMEND}
         components={useOneFontSize ? OneFontSizeComponents : CustomComponents}
         plugins={plugins}

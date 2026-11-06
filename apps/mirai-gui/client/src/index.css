@@ -142,23 +142,37 @@
     content-visibility: visible !important;
   }
 
+  /* No divider under the header: the language label and the buttons sit on the block itself. */
   [data-streamdown="code-block-header"] {
-    @apply relative border-b border-cell-border bg-bg-modal px-3 py-2 text-xs text-label-muted;
+    @apply relative bg-bg-modal px-3 py-2 text-xs text-label-muted;
+    border-bottom: 0 !important;
     padding-right: 2.5rem;
   }
 
+  /* The two buttons sit close: 4px between their hover squares. */
   [data-streamdown="code-block-actions"] {
     border: 0 !important;
     padding: 0 !important;
+    gap: 4px !important;
     backdrop-filter: none !important;
   }
 
+  /* The same square as the actions under a message: hover fills it, focus rings it. */
   [data-streamdown="code-block-actions"] button {
-    @apply min-w-6 min-h-6;
+    @apply flex size-8 items-center justify-center rounded-lg p-0 text-label-muted outline-hidden transition-colors duration-150 ease-out;
+  }
+  /* The block is already a raised grey, so hover uses the stronger fill from menus to show on it. */
+  [data-streamdown="code-block-actions"] button:enabled:hover {
+    @apply bg-selection-hover text-label-title;
+  }
+  [data-streamdown="code-block-actions"] button:focus-visible {
+    @apply shadow-focus;
   }
 
+  /* The code starts as far below the language label as the label sits below the block's top edge. */
   [data-streamdown="code-block-body"] {
     @apply p-4;
+    padding-top: 1px !important;
     /* Horizontal code scrolling stays local; vertical gestures scroll the chat. */
     overscroll-behavior: contain auto;
     background: transparent !important;
