@@ -453,9 +453,7 @@ impl ToolCallArgumentStream {
 }
 
 fn stream_error(message: &str) -> ChatSessionError {
-    ChatSessionError::Backend {
-        message: message.to_string(),
-    }
+    ChatSessionError::backend(message)
 }
 
 #[cfg(test)]

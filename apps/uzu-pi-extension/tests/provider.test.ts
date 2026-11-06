@@ -451,8 +451,12 @@ test("malformed, unterminated and overflowing streams fail instead of executing 
 
 test("native input overflow triggers Pi's compaction detector without relabeling other errors", async () => {
   for (const error of [
-    { type: "Backend", message: "Context overflow" },
-    { type: "Backend", message: "Unable to allocate buffer" },
+    { type: "Backend", error: { type: "ContextOverflow" } },
+    { type: "Backend", error: { type: "Other", message: "Context overflow" } },
+    {
+      type: "Backend",
+      error: { type: "Backend", message: "Unable to allocate buffer" },
+    },
     { type: "Loading", message: "Context overflow" },
   ] as const) {
     const f = fixture();
@@ -461,7 +465,7 @@ test("native input overflow triggers Pi's compaction detector without relabeling
       f.stream(definition, context(), { sessionId: "s" }),
     );
     const overflow =
-      error.type === "Backend" && error.message === "Context overflow";
+      error.type === "Backend" && error.error.type === "ContextOverflow";
     assert.equal(message.stopReason, "error");
     assert.equal(isContextOverflow(message), overflow);
     if (!overflow) assert.equal(message.errorMessage, JSON.stringify(error));
@@ -535,7 +539,10 @@ test("session cleanup releases weights after failure, cancellation, or disabled 
     const controller = new AbortController();
     if (outcome === "failure")
       f.setChunks([
-        new ChatSessionStreamChunkError({ type: "Backend", message: "failed" }),
+        new ChatSessionStreamChunkError({
+          type: "Backend",
+          error: { type: "Other", message: "failed" },
+        }),
       ]);
     else
       f.setReplies([

@@ -11,7 +11,7 @@ use shoji::{
     traits::{
         State,
         backend::{
-            Error as BackendError, Instance as BackendInstance, InstanceStream, NoMetricsStream,
+            Error as ShojiBackendError, Instance as BackendInstance, InstanceStream, NoMetricsStream,
             chat_token::{
                 Instance as ChatTokenBackendInstance, StreamInput as ChatTokenStreamInput,
                 StreamMetrics as ChatTokenStreamMetrics, StreamOutput as ChatTokenStreamOutput, TokenStreamMetrics,
@@ -20,7 +20,7 @@ use shoji::{
         },
     },
     types::{
-        basic::{SamplingParameters, SamplingSeed},
+        basic::{BackendError, SamplingParameters, SamplingSeed},
         session::chat::{ChatConfig, ChatReplyConfig},
     },
 };
@@ -34,8 +34,8 @@ use uzu_engine::{
 use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{
-        error_stream, get_grammar, get_max_context_length, get_sampling_method, grammar_trigger_token_sequence,
-        grammar_trigger_token_sequence_for_prompt,
+        error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
+        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
     },
 };
 
@@ -54,7 +54,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub async fn new(
         model_path: String,
         config: ChatConfig,
-    ) -> Result<Self, BackendError> {
+    ) -> Result<Self, ShojiBackendError> {
         let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).await.map_err(|err| err.to_string())?;
@@ -91,7 +91,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
     type StreamOutput = ChatTokenStreamOutput;
     type StreamMetrics = ChatTokenStreamMetrics;
 
-    fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, BackendError>> + Send + '_>> {
+    fn state(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn State>, ShojiBackendError>> + Send + '_>> {
         Box::pin(async move {
             let sampling_seed = match &self.config.sampling_seed {
                 SamplingSeed::Default {} => rand::random(),
@@ -101,7 +101,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             };
             self.model
                 .create_empty_state(self.max_context_length, sampling_seed)
-                .map_err(|err| BackendError::from(err.to_string()))
+                .map_err(|err| ShojiBackendError::from(err.to_string()))
                 .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state, sampling_seed)) as Box<dyn State>)
         })
     }
@@ -114,7 +114,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         cancel_token: CancellationToken,
     ) -> Pin<
         Box<
-            dyn InstanceStream<Item = Result<Self::StreamOutput, BackendError>, Metrics = Self::StreamMetrics>
+            dyn InstanceStream<Item = Result<Self::StreamOutput, ShojiBackendError>, Metrics = Self::StreamMetrics>
                 + Send
                 + 'a,
         >,
@@ -132,17 +132,27 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
                 Ok(grammar) => Some(grammar),
                 Err(err) => {
-                    return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
+                    return Box::pin(NoMetricsStream::new(error_to_stream_output(BackendError::Grammar {
+                        message: err.to_string(),
+                    })));
                 },
             }
         } else {
             None
         };
 
+        let model_state = state.value.get_mut();
+        model_state.set_sampling_seed(match config.sampling_seed {
+            SamplingSeed::Default {} => state.sampling_seed,
+            SamplingSeed::Custom {
+                seed,
+            } => seed as u64,
+        });
+
         let sampling_method = match get_sampling_method::<B>(&self.model, &config.sampling_policy) {
             Ok(sampling_method) => sampling_method,
             Err(err) => {
-                return Box::pin(NoMetricsStream::new(error_stream(err)));
+                return Box::pin(NoMetricsStream::new(error_to_stream_output(BackendError::other(err))));
             },
         };
 
@@ -150,18 +160,10 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-let model_state = state.value.get_mut();
-
-model_state.set_sampling_seed(match config.sampling_seed {
-    SamplingSeed::Default {} => state.sampling_seed,
-    SamplingSeed::Custom { seed } => seed as u64,
-});
-        model_state.set_sampling_seed(sampling_seed);
-
         let stream = match self.model.stream(input, model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
-                return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));
+                return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));
             },
         };
 
@@ -175,7 +177,11 @@ model_state.set_sampling_seed(match config.sampling_seed {
                 } else if token_limit.is_some_and(|token_limit| tokens_generated >= token_limit) {
                     (Some(Ok(TokenStreamOutput::LimitReached)), true)
                 } else {
-                    match stream.generate().await.map_err(|error| BackendError::from(error.to_string())) {
+                    match stream
+                        .generate()
+                        .await
+                        .map_err(|error| ShojiBackendError::from(stream_error_to_backend_error(error)))
+                    {
                         Ok(Some(token)) => {
                             tokens_generated += 1;
                             (Some(Ok(TokenStreamOutput::Token(token))), self.stop_token_ids.contains(&(token as i32)))
@@ -189,7 +195,7 @@ model_state.set_sampling_seed(match config.sampling_seed {
                     if let Err(error) = stream.close().await
                         && !matches!(&output, Some(Err(_)))
                     {
-                        output = Some(Err(BackendError::from(error.to_string())));
+                        output = Some(Err(stream_error_to_backend_error(error).into()));
                     }
                 }
                 let metrics = stream.metrics().clone();
@@ -245,14 +251,14 @@ struct UzuChatTokenStream<S> {
 
 impl<S> Stream for UzuChatTokenStream<S>
 where
-    S: Stream<Item = (Result<TokenStreamOutput, BackendError>, TokenStreamMetrics)>,
+    S: Stream<Item = (Result<TokenStreamOutput, ShojiBackendError>, TokenStreamMetrics)>,
 {
-    type Item = Result<TokenStreamOutput, BackendError>;
+    type Item = Result<TokenStreamOutput, ShojiBackendError>;
 
     fn poll_next(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<TokenStreamOutput, BackendError>>> {
+    ) -> Poll<Option<Result<TokenStreamOutput, ShojiBackendError>>> {
         let self_mut = self.get_mut();
         self_mut.inner.as_mut().poll_next(cx).map(|item| {
             item.map(|(output, metrics)| {
@@ -265,7 +271,7 @@ where
 
 impl<S> InstanceStream for UzuChatTokenStream<S>
 where
-    S: Stream<Item = (Result<TokenStreamOutput, BackendError>, TokenStreamMetrics)>,
+    S: Stream<Item = (Result<TokenStreamOutput, ShojiBackendError>, TokenStreamMetrics)>,
 {
     type Metrics = ChatTokenStreamMetrics;
 

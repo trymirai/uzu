@@ -17,9 +17,9 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::Instrument;
 use uzu::{
-    session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
+    session::chat::{ChatSession, ChatSessionError, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
-        basic::{Grammar, ReasoningEffort, SamplingMethod, SamplingSeed},
+        basic::{BackendError, Grammar, ReasoningEffort, SamplingMethod, SamplingSeed},
         session::chat::{
             ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole,
         },
@@ -632,6 +632,25 @@ fn oai_error_body(
     }
 }
 
+/// OpenAI clients compact the conversation on context_length_exceeded, so an
+/// overflow must not reach them as a generic backend_error.
+fn stream_error_body(error: &ChatSessionError) -> OaiErrorResponse {
+    match error {
+        ChatSessionError::Backend {
+            error: BackendError::ContextOverflow {},
+        } => {
+            let mut body = oai_error_body(
+                Status::BadRequest,
+                "context_length_exceeded",
+                "Input exceeds the context window of this model",
+            );
+            body.error.param = Some("messages".to_string());
+            body
+        },
+        _ => oai_error_body(Status::BadRequest, "backend_error", &error.to_string()),
+    }
+}
+
 fn send_error_body(
     sender: &mpsc::UnboundedSender<Vec<u8>>,
     body: &OaiErrorResponse,
@@ -847,7 +866,7 @@ async fn run_blocking(
                 error,
             } => {
                 log.fail(&error.to_string());
-                send_error_body(&sender, &oai_error_body(Status::BadRequest, "backend_error", &error.to_string()));
+                send_error_body(&sender, &stream_error_body(&error));
                 return;
             },
         }
@@ -1147,7 +1166,7 @@ async fn run_stream(
                 errored = true;
                 log.fail(&error.to_string());
                 // Committed 200 stream: report as an OpenAI-style error event.
-                let body = oai_error_body(Status::BadRequest, "backend_error", &error.to_string());
+                let body = stream_error_body(&error);
                 let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
                 break;
             },

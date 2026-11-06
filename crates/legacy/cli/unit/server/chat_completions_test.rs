@@ -667,3 +667,24 @@ fn backend_error_bodies_are_openai_errors_with_collapsed_prefixes() {
     assert_eq!(body["error"]["type"], "server_error");
     assert_eq!(body["error"]["message"], "No response generated");
 }
+
+#[test]
+fn context_overflow_is_reported_as_context_length_exceeded() {
+    let error = ChatSessionError::Backend {
+        error: BackendError::ContextOverflow {},
+    };
+    let body = serde_json::to_value(stream_error_body(&error)).expect("serializable error body");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert_eq!(body["error"]["code"], "context_length_exceeded");
+    assert_eq!(body["error"]["param"], "messages");
+    assert_eq!(body["error"]["message"], "Input exceeds the context window of this model");
+}
+
+#[test]
+fn overflow_text_without_the_variant_stays_a_backend_error() {
+    let body =
+        serde_json::to_value(stream_error_body(&ChatSessionError::backend("Context overflow"))).expect("serializable");
+    assert_eq!(body["error"]["code"], "backend_error");
+    assert_eq!(body["error"]["param"], serde_json::Value::Null);
+    assert_eq!(body["error"]["message"], "Context overflow");
+}
