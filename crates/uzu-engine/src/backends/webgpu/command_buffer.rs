@@ -176,11 +176,14 @@ impl CommandBufferExecutable for WebGPUCommandBufferExecutable {
         let submission_index = self.context.queue.submit([self.command_buffer]);
 
         #[cfg(not(target_arch = "wasm32"))]
-        thread::spawn(move || {
-            let _ = self.context.device.poll(wgpu::PollType::Wait {
-                submission_index: Some(submission_index),
-                timeout: None,
-            });
+        thread::spawn({
+            let context = self.context.clone();
+            move || {
+                let _ = context.device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission_index),
+                    timeout: None,
+                });
+            }
         });
 
         #[cfg(target_arch = "wasm32")]
@@ -188,12 +191,14 @@ impl CommandBufferExecutable for WebGPUCommandBufferExecutable {
 
         WebGPUCommandBufferPending {
             completed_signal: receiver,
+            context: self.context,
         }
     }
 }
 
 pub struct WebGPUCommandBufferPending {
     completed_signal: oneshot::Receiver<()>,
+    context: Arc<WebGPUContext>,
 }
 
 impl CommandBufferPending for WebGPUCommandBufferPending {
@@ -201,6 +206,7 @@ impl CommandBufferPending for WebGPUCommandBufferPending {
 
     async fn wait_until_completed(self) -> Result<WebGPUCommandBufferCompleted, WebGPUError> {
         self.completed_signal.await.map_err(|_| WebGPUError::CommandBuffer)?;
+        self.context.device_errors.take()?;
 
         Ok(WebGPUCommandBufferCompleted)
     }

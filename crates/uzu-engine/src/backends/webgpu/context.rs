@@ -17,7 +17,7 @@ use crate::backends::{
         WebGPU,
         buffer::dense::{WebGPUDenseBufferCpuGpu, WebGPUDenseBufferGpu},
         command_buffer::WebGPUCommandBufferEncoding,
-        error::WebGPUError,
+        error::{DeviceErrors, WebGPUError},
     },
 };
 
@@ -35,6 +35,7 @@ pub struct WebGPUContext {
     bind_group_layout_cache: Mutex<HashMap<Vec<wgpu::BindGroupLayoutEntry>, wgpu::BindGroupLayout>>,
     shader_module_cache: Mutex<HashMap<&'static str, wgpu::ShaderModule>>,
     pub(super) queue: wgpu::Queue,
+    pub(super) device_errors: DeviceErrors,
     pub(super) limits: wgpu::Limits,
     pub(super) device: wgpu::Device,
     _adapter: wgpu::Adapter,
@@ -154,12 +155,27 @@ impl Context for WebGPUContext {
             })
             .await?;
 
+        let device_errors = DeviceErrors::default();
+        device.on_uncaptured_error(Arc::new({
+            let device_errors = device_errors.clone();
+            move |error: wgpu::Error| device_errors.record(error.to_string())
+        }));
+        device.set_device_lost_callback({
+            let device_errors = device_errors.clone();
+            move |reason, message| {
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    device_errors.record(format!("device lost: {message}"));
+                }
+            }
+        });
+
         Ok(Arc::new_cyclic(|weak_self| WebGPUContext {
             pipeline_cache: Mutex::new(HashMap::new()),
             pipeline_layout_cache: Mutex::new(HashMap::new()),
             bind_group_layout_cache: Mutex::new(HashMap::new()),
             shader_module_cache: Mutex::new(HashMap::new()),
             queue,
+            device_errors,
             limits: device.limits(),
             device,
             device_name: adapter.get_info().name,
@@ -245,8 +261,10 @@ impl Context for WebGPUContext {
         #[cfg(target_arch = "wasm32")]
         let _ = submission_index;
 
+        let device_errors = self.device_errors.clone();
         async move {
             receiver.await.map_err(|_| WebGPUError::CommandBuffer)??;
+            device_errors.take()?;
             let mapped = cpu_buffer.get_mapped_range(..)?;
             Ok(bytemuck::cast_slice(&mapped[read_start..read_end]).to_vec())
         }
