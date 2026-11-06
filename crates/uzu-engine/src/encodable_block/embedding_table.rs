@@ -117,18 +117,19 @@ impl<B: Backend> EmbeddingTable<B> {
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                    processing_mode: IncoherenceProcessingMode::Output,
-                    ..
-                })),
+                incoherence_spec:
+                    Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    })),
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
                 let quantized_tree = tree.subtree("quantized");
                 let storage = match *quantization_spec {
-                    AnyWeightMatrixSpec::LatticeSpec(spec) => {
-                        Storage::D4S4(load_d4s4(&quantized_tree, vocab_size, embedding_dim, data_type, spec.layout, true).await?)
-                    },
+                    AnyWeightMatrixSpec::LatticeSpec(spec) => Storage::D4S4(
+                        load_d4s4(&quantized_tree, vocab_size, embedding_dim, data_type, spec.layout, true).await?,
+                    ),
                     spec => {
                         let matrix = load_matrix(&quantized_tree, spec).await?;
                         if matrix.quantization().is_none() {

@@ -31,11 +31,12 @@ impl<B: Backend> UntiedReadout<B> {
     ) -> Result<Self, LinearMatmulError<B>> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
-            incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                processing_mode: IncoherenceProcessingMode::Input,
-                ..
-            })),
+            incoherence_spec:
+                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    processing_mode: IncoherenceProcessingMode::Input,
+                    ..
+                })),
             ..
         }) = spec
         else {

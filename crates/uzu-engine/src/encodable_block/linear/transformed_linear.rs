@@ -44,11 +44,11 @@ use LinearBlockError::UnsupportedConfiguration as Unsupported;
 
 async fn matrix_parts<'t, B: Backend>(
     spec: AnyWeightMatrixSpec,
-    rows: u32,
+    expected_rows: u32,
     tree: ParameterTree<'t, B>,
 ) -> Result<Vec<(u32, AnyWeightMatrixSpec, ParameterTree<'t, B>)>, LinearBlockError<B>> {
     if !matches!(spec, AnyWeightMatrixSpec::OutputStackSpec(_)) {
-        return Ok(vec![(rows, spec, tree)]);
+        return Ok(vec![(expected_rows, spec, tree)]);
     }
     let part_rows_shape = tree.shape("part_rows")?;
     let [part_count] = part_rows_shape else {
@@ -72,8 +72,8 @@ async fn matrix_parts<'t, B: Backend>(
     let Some(stacked_rows) = stacked_rows else {
         return Err(Unsupported("output-stack row count overflow".into()));
     };
-    if stacked_rows != rows {
-        return Err(Unsupported(format!("output-stack parts sum to {stacked_rows} rows, expected {rows}")));
+    if stacked_rows != expected_rows {
+        return Err(Unsupported(format!("output-stack parts sum to {stacked_rows} rows, expected {expected_rows}")));
     }
     Ok(parts)
 }
@@ -170,7 +170,7 @@ impl<B: Backend> TransformedLinear<B> {
                     block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
                     processing_mode: mode @ (Input | InputOutput),
                     ..
-                })) => {
+                })) if in_place => {
                     let (preparation, linear) = Self::load_hadamard(
                         input_dim,
                         rows,
