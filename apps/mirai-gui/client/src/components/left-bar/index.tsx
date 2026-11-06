@@ -63,10 +63,6 @@ function LeftBar() {
   // Narrow windows: the sidebar floats over the content instead of pushing it. Hovering the button
   // peeks it in, leaving lets it go again after a moment; a click keeps it open.
   const [peek, setPeek] = useState(false);
-  // Mouse hover on the toggle, for its icon's preview. A click freezes the icon as it is until the
-  // pointer leaves, so the preview doesn't flip straight back to the opposite state.
-  const [toggleHovered, setToggleHovered] = useState(false);
-  const [toggleFrozen, setToggleFrozen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdPeek = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -98,7 +94,6 @@ function LeftBar() {
       aria-expanded={visible}
       aria-controls="sidebar"
       onClick={() => {
-        setToggleFrozen(true);
         if (floating && peek && !isSidebarOpen) {
           // Already showing from the hover: the click keeps it.
           setPeek(false);
@@ -108,15 +103,12 @@ function LeftBar() {
         setPeek(false);
         toggleSidebar();
       }}
-      onPointerEnter={(e) => {
-        if (e.pointerType === "mouse") setToggleHovered(true);
+      onPointerEnter={() => {
         if (!floating || isSidebarOpen) return;
         holdPeek();
         setPeek(true);
       }}
       onPointerLeave={() => {
-        setToggleHovered(false);
-        setToggleFrozen(false);
         if (floating && peek) releasePeek();
       }}
       className={twMerge(
@@ -132,13 +124,9 @@ function LeftBar() {
             : "top-4 left-3 translate-x-1",
       )}
     >
-      {/* The sidebar's real state, not a hover peek: peeking is itself the preview of opening. */}
-      <SidebarIcon
-        size={20}
-        open={isSidebarOpen}
-        active={toggleHovered && !toggleFrozen}
-        className="text-label-title"
-      />
+      {/* The sidebar's real state, not a hover peek. In narrow windows, where hovering opens the
+          floating sidebar, the icon always keeps its divider and doesn't change on tap. */}
+      <SidebarIcon size={20} open={floating || isSidebarOpen} className="text-label-title" />
     </button>
   );
 
@@ -172,7 +160,7 @@ function LeftBar() {
           if (floating && peek) releasePeek();
         }}
         className={twMerge(
-          "relative min-h-0 bg-bg-sidebar flex flex-col py-2 overflow-clip motion-reduce:transition-none",
+          "relative min-h-0 bg-bg-sidebar flex flex-col pt-2 overflow-clip motion-reduce:transition-none",
           floating
             ? "fixed top-2 left-2 bottom-2 w-[280px] z-50 rounded-2xl shadow-[0_0_0_0.5px_var(--color-border-default),0_24px_48px_-12px_rgb(0_0_0/0.28),0_8px_16px_-8px_rgb(0_0_0/0.12)] transition-[translate,opacity]"
             : "h-full transition-transform",
@@ -203,14 +191,23 @@ function LeftBar() {
 
           <SavedChats />
 
-          <div className="relative shrink-0">
-            {/* Chats scroll down behind the footer through a fade: the sidebar colour melting to
-                clear upward, with a blur that fades the same way. */}
+          {/* The footer floats over the end of the chat list: the whole block is one fade, the
+              sidebar colour melting to clear upward with a blur that fades the same way, so chats
+              scroll down behind it. The settings button sits 12px in from the left and the bottom,
+              with as much room above it. */}
+          <div className="relative z-10 -mt-14 shrink-0">
+            {/* Two layers: the blur fades out through a mask, the colour on top of it unmasked, so
+                the lower part stays fully solid behind the buttons. The fade starts 40px above the
+                block and turns solid 34px from the bottom, around the button's middle. */}
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 -top-10 h-10 bg-linear-to-t from-bg-sidebar from-15% to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_top,black_35%,transparent)]"
+              className="pointer-events-none absolute inset-x-0 bottom-0 -top-10 backdrop-blur-[3px] [mask-image:linear-gradient(to_top,black_34px,transparent)]"
             />
-            <FooterBar leading={<Settings />} />
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-0 -top-10 bg-[linear-gradient(to_top,var(--color-bg-sidebar)_34px,transparent)]"
+            />
+            <FooterBar leading={<Settings />} className="relative h-14" />
           </div>
         </div>
       </div>

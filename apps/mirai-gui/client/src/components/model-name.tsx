@@ -21,3 +21,17 @@ export function ModelName({ name, className }: { name: string; className?: strin
     </span>
   );
 }
+
+/**
+ * The same name set inline, for a sentence ("Couldn't download Qwen3.5 2B Mirai M"): wraps with the
+ * text around it instead of truncating, the variant still muted.
+ */
+export function InlineModelName({ name }: { name: string }) {
+  const { base, variant } = splitModelName(name);
+  return (
+    <>
+      {base}
+      {variant ? <span className="whitespace-nowrap text-text-muted"> {variant}</span> : null}
+    </>
+  );
+}

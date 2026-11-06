@@ -17,7 +17,7 @@ const formatTps = (tps?: number): string =>
 type Metric = { value: string; short: string; full: string };
 
 /**
- * The run's speed figures in our tooltip, opened at once on hover and lined up under the button like
+ * The run's speed figures in our tooltip, opened at once on hover and lined up above the button like
  * the Regenerate menu beside it. One figure per line, everything aligned left: the number with its
  * unit (always spelled the same way: s, tok/s, tok/pass), then its short name in lowercase; the
  * full name stays on the abbreviation for screen readers and the title.
@@ -46,7 +46,7 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
   if (disabled) return button;
   return (
     <Tooltip
-      side="bottom"
+      side="top"
       align="start"
       variant="panel"
       delay={0}

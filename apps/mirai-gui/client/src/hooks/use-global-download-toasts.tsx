@@ -1,3 +1,4 @@
+import { InlineModelName } from "@/components/model-name";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { getPlatform } from "@/platform/platform-singleton";
 import { navigationRequestTypes } from "@/platform/platform-client";
@@ -24,13 +25,28 @@ export const useGlobalDownloadToasts = (): void => {
         const name = modelName(event.identifier);
         switch (event.kind) {
           case "done":
-            toast.success(`Downloaded ${name}`, { onClick: () => openChatForModel(event.identifier) });
+            toast.success(
+              <>
+                <InlineModelName name={name} /> is ready
+              </>,
+              { description: "Click to start a chat", onClick: () => openChatForModel(event.identifier) },
+            );
             return;
           case "error":
-            toast.error(`Failed to download ${name}: ${event.error}`);
+            toast.error(
+              <>
+                Couldn't download <InlineModelName name={name} />
+              </>,
+              { description: event.error },
+            );
             return;
           case "locked":
-            toast.info(`${name} download is locked by another process (${event.lockedBy}).`);
+            toast.info(
+              <>
+                <InlineModelName name={name} /> is downloading in another app
+              </>,
+              { description: `Held by ${event.lockedBy}` },
+            );
             return;
         }
       }),

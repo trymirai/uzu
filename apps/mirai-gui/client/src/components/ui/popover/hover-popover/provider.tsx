@@ -91,6 +91,8 @@ export function HoverPopoverProvider({ children }: HoverPopoverProviderProps) {
           afterLeave={handleAfterLeave}
           close={() => hide(active.id)}
           items={active.items}
+          footerItems={active.footerItems}
+          maxVisibleItems={active.maxVisibleItems}
           side={active.side}
           align={active.align}
           sideOffsetPx={PANEL_GAP_PX}

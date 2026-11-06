@@ -1,3 +1,4 @@
+import { InlineModelName } from "@/components/model-name";
 import { useToast } from "@/components/ui/toast/use-toast";
 import type { PlatformModel } from "@/types/models";
 import { useCallback } from "react";
@@ -6,8 +7,8 @@ import { modelDownloadPhases } from "@/types/model-manager";
 import { getPlatform } from "@/platform/platform-singleton";
 
 const failureCopy = {
-  start: (name: string) => `Failed to start download for ${name}`,
-  resume: (name: string) => `Failed to resume ${name}`,
+  start: "Couldn't start downloading",
+  resume: "Couldn't resume",
 } as const;
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -33,7 +34,12 @@ export const useDownloadManager = () => {
       } catch (e) {
         const error = errorText(e);
         updateModelState(model.repoId, { phase: modelDownloadPhases.error, error });
-        toast.error(`${failureCopy[action](model.name)}: ${error}`);
+        toast.error(
+          <>
+            {failureCopy[action]} <InlineModelName name={model.name} />
+          </>,
+          { description: error },
+        );
       }
     },
     [toast],
@@ -47,7 +53,12 @@ export const useDownloadManager = () => {
       try {
         await getPlatform().models.pauseDownload(model.repoId);
       } catch (e) {
-        toast.error(`Failed to pause ${model.name}: ${errorText(e)}`);
+        toast.error(
+          <>
+            Couldn't pause <InlineModelName name={model.name} />
+          </>,
+          { description: errorText(e) },
+        );
       }
     },
     [toast],
@@ -60,7 +71,12 @@ export const useDownloadManager = () => {
       } catch (e) {
         const error = errorText(e);
         useModelsStore.getState().updateModelState(model.repoId, { phase: modelDownloadPhases.error, error });
-        toast.error(`Failed to cancel ${model.name}: ${error}`);
+        toast.error(
+          <>
+            Couldn't cancel <InlineModelName name={model.name} />
+          </>,
+          { description: error },
+        );
       }
     },
     [toast],

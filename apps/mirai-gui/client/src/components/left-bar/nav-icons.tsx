@@ -116,15 +116,13 @@ export function SettingsIcon({ size, className, active = false }: NavIconProps) 
 }
 
 /**
- * Sidebar toggle. The divider shows where the sidebar edge is: at rest it's there when the sidebar
- * is open and gone when it's closed. Hovering previews the click: an open sidebar's divider slides
- * fully into the left edge and fades, a closed one's slides back out to where the sidebar would be.
- * The caller freezes `active` after a click, so the icon keeps its look until the pointer leaves.
- * Under reduced motion the state still changes, it just doesn't slide.
+ * Sidebar toggle. The divider shows where the sidebar edge is: there when the sidebar is open, slid
+ * into the left edge and faded when it's closed. It moves only when the sidebar opens or closes,
+ * never on hover. Under reduced motion it changes without sliding.
  */
-export function SidebarIcon({ size, className, active = false, open }: NavIconProps & { open: boolean }) {
+export function SidebarIcon({ size, className, open }: Omit<NavIconProps, "active"> & { open: boolean }) {
   const still = useReducedMotion();
-  const shown = open !== active;
+  const shown = open;
   const x = shown ? 9 : 3;
   return (
     <Svg size={size} className={className}>

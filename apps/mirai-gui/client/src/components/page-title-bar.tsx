@@ -1,5 +1,6 @@
 import { type ReactNode, type Ref, useLayoutEffect, useRef, useState } from "react";
 import { twMerge } from "tailwind-merge";
+import { useIsMobile } from "@/hooks/use-media-query";
 
 /**
  * The title row at the top of a page. Content passes under it through a fade: the page colour at
@@ -8,6 +9,9 @@ import { twMerge } from "tailwind-merge";
  * scrollbar stays visible over it. Give it to a PageScroller as its header.
  */
 export function PageTitleBar({ children, className }: { children: ReactNode; className?: string }) {
+  // Narrow windows have no sidebar beside the page: the sidebar button sits over the page's top-left
+  // corner (beside the traffic lights in the Mac app), so the title starts lower, clear of it.
+  const narrow = useIsMobile();
   return (
     // Only the row itself takes the pointer: the strip around it belongs to the scroller below, so its
     // scrollbar can still be grabbed at the top.
@@ -19,6 +23,7 @@ export function PageTitleBar({ children, className }: { children: ReactNode; cla
       <div
         className={twMerge(
           "pointer-events-auto flex min-h-[72px] items-center gap-3 px-5 pt-7 pb-3 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto min-w-0",
+          narrow && "pt-14",
           className,
         )}
       >

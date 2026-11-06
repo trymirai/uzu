@@ -57,7 +57,7 @@ export default function GeneralTab() {
                 value={String(chatWidth)}
                 onChange={(value) => setChatWidth(Number(value))}
                 options={[
-                  { value: "800", label: "Narrow" },
+                  { value: "768", label: "Narrow" },
                   { value: "1000", label: "Medium" },
                   { value: "1200", label: "Wide" },
                 ]}

@@ -1,58 +1,64 @@
 {
-  "groups": [
+  "fill" : "system-light",
+  "groups" : [
     {
-      "layers": [
+      "layers" : [
         {
-          "blend-mode": "screen",
-          "fill-specializations": [
+          "blend-mode-specializations" : [
             {
-              "appearance": "dark",
-              "value": {
-                "automatic-gradient": "srgb:1.00000,1.00000,1.00000,1.00000"
+              "value" : "soft-light"
+            },
+            {
+              "appearance" : "tinted",
+              "value" : "normal"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.00000,0.00000,0.00000,1.00000"
               }
             },
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+              "appearance" : "dark",
+              "value" : {
+                "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-srgb:1.00000,0.80000,0.00000,1.00000"
               }
             }
           ],
-          "glass": true,
-          "image-name": "SVG Image 4.svg",
-          "name": "SVG Image 4",
-          "position": {
-            "scale": 5,
-            "translation-in-points": [
-              0,
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "SVG Image 4.svg",
+          "name" : "SVG Image 4",
+          "position" : {
+            "scale" : 5.2,
+            "translation-in-points" : [
+              -8.526512829121202e-14,
               -20
             ]
           }
         }
       ],
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.5
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
       },
-      "translucency": {
-        "enabled": true,
-        "value": 0.5
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
       }
     }
   ],
-  "supported-platforms": {
-    "circles": [
+  "supported-platforms" : {
+    "circles" : [
       "watchOS"
     ],
-    "squares": "shared"
-  },
-  "fill-specializations": [
-    {
-      "value": "system-light"
-    },
-    {
-      "appearance": "dark",
-      "value": "system-dark"
-    }
-  ]
+    "squares" : "shared"
+  }
 }

@@ -1,3 +1,4 @@
+import { InlineModelName } from "@/components/model-name";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { ejectRuntimeSessionAndWait } from "@/features/runtime/eject-runtime-session";
 import { useModelsStore } from "@/stores/use-models-store";
@@ -62,14 +63,23 @@ export const useFooterRuntimeModel = (): FooterRuntimeModel => {
         reason: runtimeSessionEjectReasons.user,
       });
       if (ok) {
-        toast.success("Model ejected successfully");
+        toast.success(
+          <>
+            Ejected <InlineModelName name={label} />
+          </>,
+        );
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to eject model");
+      toast.error(
+        <>
+          Couldn't eject <InlineModelName name={label} />
+        </>,
+        { description: error instanceof Error ? error.message : undefined },
+      );
     } finally {
       setEjectAwaiting(false);
     }
-  }, [residentSession, toast]);
+  }, [residentSession, label, toast]);
 
   if (!activeSession || status === "hidden") {
     return {
