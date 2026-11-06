@@ -348,7 +348,7 @@ impl<B: Backend> DeltaNet<B> {
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let tree_verify = self.tree_verify.as_ref().expect("DeltaNet tree verification is unsupported");
         let tree_size = batch_dim.size();
-        let trie = batch_dim.nodes();
+        let trie = batch_dim.nodes().expect("tree verification requires trie nodes");
 
         let mut conv_states = command_buffer
             .allocate_scratch_for_shape(&[tree_size, self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE)

@@ -258,8 +258,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     state,
                     command_buffer,
                 )?;
-                let batch_topology =
-                    BatchTopology::flat(chain_length, true, command_buffer).map_err(DFlashTreeError::Backend)?;
+                let batch_topology = BatchTopology::flat(chain_length);
                 let sampled = self
                     .sampling
                     .encode(
@@ -430,16 +429,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             },
         }
 
-        let batch_dim = BatchTopology {
-            nodes,
-            token_ids,
-            seeds,
-            max_size: budget,
-            is_flat: false,
-            full_accept: false,
-        };
-
-        Ok(batch_dim)
+        Ok(BatchTopology::new(Some(nodes), Some(token_ids), Some(seeds), budget, false, false))
     }
 }
 
