@@ -33,12 +33,21 @@ function Svg({ size = 20, className, children }: { size?: number; className?: st
   );
 }
 
-/** Models: still. It takes `active` like the others so the rows can treat every icon alike. */
-export function ModelsIcon({ size, className }: NavIconProps) {
+/** Models: a rounded square that turns a little about its centre, on the same spring and by the same
+ * angle as the New chat pencil. */
+export function ModelsIcon({ size, className, active = false }: NavIconProps) {
+  const still = useReducedMotion();
+  const on = active && !still;
   return (
     <Svg size={size} className={className}>
-      <path d="M9.6001 3.38565C10.4744 2.88086 10.9116 2.62846 11.3764 2.52967C11.7876 2.44226 12.2126 2.44226 12.6238 2.52967C13.0886 2.62846 13.5258 2.88086 14.4001 3.38565L18.2604 5.61437C19.1347 6.11916 19.5718 6.37156 19.8898 6.72467C20.1711 7.0371 20.3836 7.40517 20.5135 7.80501C20.6604 8.25691 20.6604 8.7617 20.6604 9.77129V14.2287C20.6604 15.2383 20.6604 15.7431 20.5135 16.195C20.3836 16.5949 20.1711 16.9629 19.8898 17.2754C19.5718 17.6285 19.1347 17.8809 18.2604 18.3857L14.4001 20.6144C13.5258 21.1192 13.0886 21.3716 12.6238 21.4704C12.2126 21.5578 11.7876 21.5578 11.3764 21.4704C10.9116 21.3716 10.4744 21.1192 9.6001 20.6144L5.73984 18.3857C4.86551 17.8809 4.42835 17.6285 4.11041 17.2754C3.8291 16.9629 3.61659 16.5949 3.48667 16.195C3.33984 15.7431 3.33984 15.2383 3.33984 14.2287V9.77129C3.33984 8.7617 3.33984 8.25691 3.48667 7.80501C3.61659 7.40517 3.8291 7.0371 4.11041 6.72467C4.42835 6.37156 4.86551 6.11916 5.73984 5.61437L9.6001 3.38565Z" />
-      <path d="M20.6604 7L12 12M12 22V12M3.33984 7L12 12" />
+      <motion.path
+        d="M17 4H7C5.34315 4 4 5.34315 4 7V17C4 18.6569 5.34315 20 7 20H17C18.6569 20 20 18.6569 20 17V7C20 5.34315 18.6569 4 17 4Z"
+        strokeLinejoin="round"
+        style={{ originX: 0.5, originY: 0.5 }}
+        initial={false}
+        animate={{ rotate: on ? -9 : 0 }}
+        transition={SPRING}
+      />
     </Svg>
   );
 }
