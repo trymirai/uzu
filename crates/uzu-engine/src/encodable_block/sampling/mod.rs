@@ -126,7 +126,7 @@ impl<B: Backend> Sampling<B> {
             let trie = if batch_dim.is_flat() {
                 None
             } else {
-                Some(batch_dim.nodes())
+                batch_dim.nodes()
             };
 
             let mut logits_copy = command_buffer.allocate_scratch(logits.size())?;

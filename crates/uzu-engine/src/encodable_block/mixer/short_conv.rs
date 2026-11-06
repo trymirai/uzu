@@ -336,7 +336,7 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
             });
             conv_output
         } else {
-            let token_parents = batch_dim.nodes();
+            let token_parents = batch_dim.nodes().expect("trie conv requires trie nodes");
             let (conv_output, conv_states) = self
                 .encode_trie_conv(&in_projected, token_parents, batch_dim.size(), state, command_buffer)
                 .map_err(MixerEncodeError::Backend)?;

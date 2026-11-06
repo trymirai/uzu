@@ -114,7 +114,7 @@ impl<B: Backend> Decision<B> {
             .map_err(DecisionError::Backend)?;
         self.input_embedding.encode_lookup(token_ids, &mut embedded, token_count, self.input_scale, command_buffer);
 
-        let batch_topology = BatchTopology::flat(token_count, true, command_buffer).map_err(DecisionError::Backend)?;
+        let batch_topology = BatchTopology::flat(token_count);
 
         let hidden = self
             .transformer

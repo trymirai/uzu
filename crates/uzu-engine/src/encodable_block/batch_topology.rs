@@ -1,58 +1,82 @@
-use std::mem::size_of;
-
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context, gpu_types::trie::TrieNode},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context},
     data_type::DataType,
 };
 
 pub struct BatchTopology<B: Backend> {
-    pub(crate) nodes: B::GlobalGpuBuffer,
-    pub(crate) token_ids: B::GlobalGpuBuffer,
-    pub(crate) seeds: B::GlobalGpuBuffer,
-    pub(crate) max_size: u32,
-    pub(crate) is_flat: bool,
-    pub(crate) full_accept: bool,
+    /// Present iff the batch is a trie.
+    nodes: Option<B::GlobalGpuBuffer>,
+    /// Present unless on prefill.
+    token_ids: Option<B::GlobalGpuBuffer>,
+    /// Present iff (trie && stochastic sampling).
+    seeds: Option<B::GlobalGpuBuffer>,
+    max_size: u32,
+    full_accept: bool,
+    is_flat: bool,
 }
 
 impl<B: Backend> BatchTopology<B> {
-    pub fn flat(
-        size: u32,
-        full_accept: bool,
+    pub fn flat(size: u32) -> Self {
+        Self::new(None, None, None, size, true, true)
+    }
+
+    pub(crate) fn with_token_ids(
+        mut self,
         command_buffer: &mut <<B as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, <B as Backend>::Error> {
         let context = command_buffer.context();
         let word_bytes = DataType::U32.size_in_bytes();
-        Ok(Self {
-            nodes: context.create_buffer_gpu(size as usize * size_of::<TrieNode>())?,
-            token_ids: context.create_buffer_gpu(size as usize * word_bytes)?,
-            seeds: context.create_buffer_gpu(size as usize * size_of::<u64>())?,
-            max_size: size,
-            is_flat: true,
+        self.token_ids = Some(context.create_buffer_gpu(self.max_size as usize * word_bytes)?);
+        Ok(self)
+    }
+
+    pub(crate) fn new(
+        nodes: Option<B::GlobalGpuBuffer>,
+        token_ids: Option<B::GlobalGpuBuffer>,
+        seeds: Option<B::GlobalGpuBuffer>,
+        max_size: u32,
+        full_accept: bool,
+        is_flat: bool,
+    ) -> Self {
+        let is_trie = nodes.is_some();
+        assert_eq!(full_accept, !is_trie, "a batch is either a trie or fully accepted");
+        assert!(is_trie || is_flat, "node-less batches are sequential");
+        assert!(!is_trie || token_ids.is_some(), "trie batches carry token ids");
+        Self {
+            nodes,
+            token_ids,
+            seeds,
+            max_size,
             full_accept,
-        })
+            is_flat,
+        }
     }
 
     pub fn size(&self) -> u32 {
         self.max_size
     }
 
-    pub fn is_flat(&self) -> bool {
-        self.is_flat
-    }
-
     pub fn full_accept(&self) -> bool {
         self.full_accept
     }
 
-    pub fn nodes(&self) -> &B::GlobalGpuBuffer {
-        &self.nodes
+    pub fn is_flat(&self) -> bool {
+        self.is_flat
     }
 
-    pub fn token_ids(&self) -> &B::GlobalGpuBuffer {
-        &self.token_ids
+    pub fn nodes(&self) -> Option<&B::GlobalGpuBuffer> {
+        self.nodes.as_ref()
     }
 
-    pub fn seeds(&self) -> &B::GlobalGpuBuffer {
-        &self.seeds
+    pub fn token_ids(&self) -> Option<&B::GlobalGpuBuffer> {
+        self.token_ids.as_ref()
+    }
+
+    pub(crate) fn token_ids_mut(&mut self) -> &mut Option<B::GlobalGpuBuffer> {
+        &mut self.token_ids
+    }
+
+    pub fn seeds(&self) -> Option<&B::GlobalGpuBuffer> {
+        self.seeds.as_ref()
     }
 }
