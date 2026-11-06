@@ -18,7 +18,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         unsafe { SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) }?;
     }
     let mut redirect = StdoutRedirect::to_stderr()?;
-    let mut engine = UzuEngine::new(&args.model).await?;
+    let mut engine = UzuEngine::new(&args.model, args.context_length).await?;
     redirect.restore()?;
     let result = run_loop(&mut engine).await;
     // Release DXGI adapters before the engine unloads its graphics driver.

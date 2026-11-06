@@ -11,6 +11,24 @@
 
 #include "util.hpp"
 
+static const std::vector<std::string> REASONING_EFFORTS = {"low", "medium", "xhigh"};
+
+#ifndef __APPLE__
+// Linux has no per-process GPU accounting: the GPUs' used memory, across processes.
+static uint64_t gpu_memory_used() {
+    uint64_t used = 0;
+    for (size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+        ggml_backend_dev_t device = ggml_backend_dev_get(index);
+        if (ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+            size_t free = 0, total = 0;
+            ggml_backend_dev_memory(device, &free, &total);
+            used += total - free;
+        }
+    }
+    return used;
+}
+#endif
+
 struct LlamaEngine::RunConfig {
     std::optional<size_t> max_tokens;
     llama_context_params ctx_params;
@@ -22,6 +40,9 @@ LlamaEngine::LlamaEngine(
     const std::string& model,
     const std::string& draft_model
 ) {
+#ifndef __APPLE__
+    this->graphics_baseline = gpu_memory_used();
+#endif
     const std::filesystem::path model_path = get_model_path(model);
     llama_model_params params = llama_model_default_params();
     params.load_mtp = draft_model.empty() && has_mtp_weights(model_path);
@@ -122,6 +143,27 @@ std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) cons
         }
         inputs.use_jinja = true;
         inputs.add_generation_prompt = true;
+        if (request.reasoning_effort.has_value()) {
+            // Like performance-benchmarks, reject a template that ignores the effort or renders it like another level.
+            const std::string& effort = request.reasoning_effort.value();
+            const auto level = std::find(REASONING_EFFORTS.begin(), REASONING_EFFORTS.end(), effort);
+            if (level == REASONING_EFFORTS.end()) {
+                throw std::invalid_argument("Unsupported reasoning effort: " + effort);
+            }
+            inputs.enable_thinking = true;
+            std::vector<std::string> renders;
+            for (const std::string& other : REASONING_EFFORTS) {
+                inputs.chat_template_kwargs["reasoning_effort"] = "\"" + other + "\"";
+                renders.push_back(common_chat_templates_apply(this->chat_templates.get(), inputs).prompt.str());
+            }
+            const std::string& requested = renders[level - REASONING_EFFORTS.begin()];
+            if (std::count(renders.begin(), renders.end(), requested) > 1) {
+                throw std::invalid_argument(
+                    "The chat template renders reasoning effort " + effort + " like another level"
+                );
+            }
+            inputs.chat_template_kwargs["reasoning_effort"] = "\"" + effort + "\"";
+        }
 
         const std::string formatted_prompt =
             common_chat_templates_apply(this->chat_templates.get(), inputs).prompt.str();
@@ -205,9 +247,17 @@ BenchResponse LlamaEngine::run_single(
     size_t tokens_generated = 0;
     std::string output_text;
 
-    memory_counters_t memory_counters_max = collect_memory_counters();
+    const auto collect = [this]() {
+        memory_counters_t memory_counters = collect_memory_counters();
+#ifndef __APPLE__
+        const uint64_t used = gpu_memory_used();
+        memory_counters.graphics_total = used > this->graphics_baseline ? used - this->graphics_baseline : 0;
+#endif
+        return memory_counters;
+    };
+    memory_counters_t memory_counters_max = collect();
     const auto update_memory = [&]() {
-        const memory_counters_t memory_counters = collect_memory_counters();
+        const memory_counters_t memory_counters = collect();
         if (memory_counters.graphics_total > memory_counters_max.graphics_total) {
             memory_counters_max = memory_counters;
         }
@@ -375,7 +425,8 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
         throw std::invalid_argument("num_runs must be 1 or greater");
     }
 
-    const size_t speculative_depth = request.speculative_depth.value_or(0);
+    // An omitted depth uses the DFlash draft's block size minus one, as in the other adapters; 0 decodes without it.
+    const size_t speculative_depth = request.speculative_depth.value_or(this->draft_model ? this->dflash_depth : 0);
     if (speculative_depth > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
         throw std::invalid_argument("speculative_depth exceeds the supported range");
     }

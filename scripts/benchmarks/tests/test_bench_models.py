@@ -51,6 +51,7 @@ OMIT_WHEN_NONE = {
     "ChatMessage.tool_call_id": "call-1",
     "BenchRequest.tools": [],
     "BenchRequest.tool_choice": "auto",
+    "BenchRequest.reasoning_effort": "low",
 }
 
 PYTHON_MODELS = {
@@ -174,7 +175,9 @@ def read_python_models() -> dict[str, dict[str, Field]]:
             path = f"{name}.{field_name}"
             # These request fields are unsigned in all native models.
             unsigned_request_fields = {
-                "BenchRequest.max_tokens", "BenchRequest.speculative_depth", "BenchRequest.num_runs"
+                "BenchRequest.max_tokens",
+                "BenchRequest.speculative_depth",
+                "BenchRequest.num_runs",
             }
             expected_metadata = [Ge(0)] if path in unsigned_request_fields else []
             assert field.metadata == expected_metadata, (
