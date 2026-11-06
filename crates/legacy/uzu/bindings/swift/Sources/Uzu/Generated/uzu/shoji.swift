@@ -3468,6 +3468,155 @@ public func FfiConverterTypeValue_lower(_ value: Value) -> RustBuffer {
     return FfiConverterTypeValue.lower(value)
 }
 
+
+public enum BackendError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
+
+    
+    
+    case Backend(message: String
+    )
+    case Capture(message: String
+    )
+    case Decoder(message: String
+    )
+    case Grammar(message: String
+    )
+    case TrieAccept(message: String
+    )
+    case Speculator(message: String
+    )
+    case NoSeedToken
+    case ContextOverflow
+    /**
+     * Any failure that does not come from the language model stream.
+     */
+    case Other(message: String
+    )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension BackendError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBackendError: FfiConverterRustBuffer {
+    typealias SwiftType = BackendError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BackendError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .Backend(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .Capture(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .Decoder(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .Grammar(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 5: return .TrieAccept(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 6: return .Speculator(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 7: return .NoSeedToken
+        case 8: return .ContextOverflow
+        case 9: return .Other(
+            message: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: BackendError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .Backend(message):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .Capture(message):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .Decoder(message):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .Grammar(message):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .TrieAccept(message):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .Speculator(message):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case .NoSeedToken:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .ContextOverflow:
+            writeInt(&buf, Int32(8))
+        
+        
+        case let .Other(message):
+            writeInt(&buf, Int32(9))
+            FfiConverterString.write(message, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackendError_lift(_ buf: RustBuffer) throws -> BackendError {
+    return try FfiConverterTypeBackendError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBackendError_lower(_ value: BackendError) -> RustBuffer {
+    return FfiConverterTypeBackendError.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 

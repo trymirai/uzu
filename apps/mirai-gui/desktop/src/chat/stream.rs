@@ -2,7 +2,7 @@ use tauri::{AppHandle, Manager, ipc::Channel};
 use uzu::{
     session::chat::{ChatSessionError, ChatSessionStreamChunk},
     types::{
-        basic::ReasoningEffort,
+        basic::{BackendError, ReasoningEffort},
         session::chat::{ChatContentBlock, ChatReply, ChatReplyConfig, ChatReplyFinishReason},
     },
 };
@@ -19,10 +19,6 @@ use crate::{
     analytics::{AnalyticsState, Event},
     error::{AppError, AppResult},
 };
-
-// uzu turns LanguageModelStreamError::ContextOverflow into Backend { message },
-// so the variant cannot tell an overflow from any other backend failure.
-const ENGINE_CONTEXT_OVERFLOW: &str = "Context overflow";
 
 #[derive(Default)]
 struct ReplyText {
@@ -95,10 +91,8 @@ fn final_parsed(
 fn stream_error(error: ChatSessionError) -> AppError {
     match &error {
         ChatSessionError::Backend {
-            message,
-        } if message == ENGINE_CONTEXT_OVERFLOW => {
-            AppError::msg("Conversation is too long for this model's context window.")
-        },
+            error: BackendError::ContextOverflow {},
+        } => AppError::msg("Conversation is too long for this model's context window."),
         _ => error.into(),
     }
 }
@@ -303,22 +297,22 @@ mod tests {
 
     use super::*;
 
-    fn backend(message: &str) -> ChatSessionError {
+    fn backend(error: BackendError) -> ChatSessionError {
         ChatSessionError::Backend {
-            message: message.to_string(),
+            error,
         }
     }
 
     #[test]
     fn engine_context_overflow_gets_a_readable_message() {
-        let error = stream_error(backend(ENGINE_CONTEXT_OVERFLOW));
+        let error = stream_error(backend(BackendError::ContextOverflow {}));
         assert_eq!(error.to_string(), "Conversation is too long for this model's context window.");
     }
 
     #[test]
     fn other_backend_errors_pass_through() {
-        let error = stream_error(backend("No seed token"));
-        assert_eq!(error.to_string(), "Backend error: No seed token");
+        let error = stream_error(backend(BackendError::NoSeedToken {}));
+        assert_eq!(error.to_string(), "Backend error: No seed token (both state and input are empty)");
     }
 
     fn reply(

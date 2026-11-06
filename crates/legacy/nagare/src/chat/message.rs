@@ -23,16 +23,12 @@ impl Session {
         config: ChatConfig,
         reference: String,
     ) -> Result<Arc<dyn Instance>, ChatSessionError> {
-        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        let instance = backend.instance(reference, config).await.map_err(ChatSessionError::from)?;
         Ok(Arc::from(instance))
     }
 
     pub async fn with_instance(instance: Arc<dyn Instance>) -> Result<Self, ChatSessionError> {
-        let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        let state = instance.state().await.map_err(ChatSessionError::from)?;
         Ok(Self {
             instance,
             state,
@@ -40,9 +36,7 @@ impl Session {
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        self.state = self.instance.state().await.map_err(ChatSessionError::from)?;
         Ok(())
     }
 
@@ -54,11 +48,7 @@ impl Session {
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         self.instance
             .stream(input, self.state.as_mut(), config, cancel_token)
-            .map(|event| {
-                event.map_err(|error| ChatSessionError::Backend {
-                    message: error.to_string(),
-                })
-            })
+            .map(|event| event.map_err(ChatSessionError::from))
             .boxed()
     }
 

@@ -153,7 +153,7 @@ export declare class ToolCallArgumentStream {
 }
 
 export type ChatSessionError =
-  | { type: 'Backend'; message: string }
+  | { type: 'Backend'; error: BackendError }
   | { type: 'Loading'; message: string }
   | { type: 'UnsupportedModel' }
   | { type: 'UnableToPerformOperationInCurrentState' }
@@ -874,6 +874,17 @@ export declare class Value {
   json: string
   constructor(json: string)
 }
+
+export type BackendError =
+  | { type: 'Backend'; message: string }
+  | { type: 'Capture'; message: string }
+  | { type: 'Decoder'; message: string }
+  | { type: 'Grammar'; message: string }
+  | { type: 'TrieAccept'; message: string }
+  | { type: 'Speculator'; message: string }
+  | { type: 'NoSeedToken' }
+  | { type: 'ContextOverflow' }
+  | { type: 'Other'; message: string }
 
 export type ChatContentBlock =
   ChatContentBlockIdentity | ChatContentBlockReasoningEffort | ChatContentBlockConversationStartDate | ChatContentBlockKnowledgeCutoff | ChatContentBlockBuiltinTools | ChatContentBlockTools | ChatContentBlockText | ChatContentBlockImage | ChatContentBlockVideo | ChatContentBlockAudio | ChatContentBlockFile | ChatContentBlockReasoning | ChatContentBlockToolCall | ChatContentBlockToolCallCandidate | ChatContentBlockToolCallResult | ChatContentBlockTranslation | ChatContentBlockCustom
