@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import typer
 from bench import BenchRequest, BenchResponse
-from common import InferenceEngine, get_model_path, get_tokenized_prompt, run_loop
+from common import InferenceEngine, get_model_path, get_tokenized_prompt, process_memory, run_loop
 
 # vLLM reads these when imported: logs stay off the JSON channel, and the engine core runs in this process so its
 # timings and memory are this process's.
@@ -115,16 +115,6 @@ class VLLMEngine(InferenceEngine):
                 )
             )
         return responses
-
-
-def process_memory() -> tuple[int, int]:
-    """Private anonymous memory including swap, as the footprint, and the resident set, from /proc."""
-    fields = {}
-    for line in Path("/proc/self/status").read_text().splitlines():
-        name, _, value = line.partition(":")
-        if name in ("RssAnon", "VmSwap", "VmRSS"):
-            fields[name] = int(value.split()[0]) * 1024
-    return fields["RssAnon"] + fields.get("VmSwap", 0), fields["VmRSS"]
 
 
 def graphics_memory() -> int:

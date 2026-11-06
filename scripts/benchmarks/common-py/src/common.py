@@ -53,6 +53,16 @@ def get_tokenized_prompt(request: BenchRequest, tokenizer: Any) -> list[int]:
     return prompt
 
 
+def process_memory(pid: int | str = "self") -> tuple[int, int]:
+    """A Linux process's private anonymous memory including swap, as the footprint, and its resident set, from /proc."""
+    fields = {}
+    for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+        name, _, value = line.partition(":")
+        if name in ("RssAnon", "VmSwap", "VmRSS"):
+            fields[name] = int(value.split()[0]) * 1024
+    return fields["RssAnon"] + fields.get("VmSwap", 0), fields["VmRSS"]
+
+
 def run_loop(engine: InferenceEngine) -> None:
     response_adapter = TypeAdapter(list[BenchResponse])
 

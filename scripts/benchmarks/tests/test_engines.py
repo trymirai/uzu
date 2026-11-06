@@ -2,6 +2,7 @@
 
 from .engines.ios import TestIOS
 from .engines.llamacpp import TestLlamaCpp
+from .engines.lucebox import TestLucebox
 from .engines.mldrift import TestMLDrift
 from .engines.mlx import TestMLX
 from .engines.mlxserve import TestMLXServe
@@ -14,6 +15,7 @@ from .engines.vllm import TestVLLM
 __all__ = [
     "TestIOS",
     "TestLlamaCpp",
+    "TestLucebox",
     "TestMLDrift",
     "TestMLX",
     "TestMLXServe",

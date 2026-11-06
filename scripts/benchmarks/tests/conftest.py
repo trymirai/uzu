@@ -4,11 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import ios, llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash, uzu, vllm
+from tests.engines import ios, llamacpp, lucebox, mldrift, mlx, mlxserve, mtplx, omlx, splash, uzu, vllm
 
 ENGINE_TEST_CLASSES = {
     "ios": "TestIOS",
     "llamacpp": "TestLlamaCpp",
+    "lucebox": "TestLucebox",
     "mldrift": "TestMLDrift",
     "mlx": "TestMLX",
     "mlxserve": "TestMLXServe",
@@ -32,6 +33,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--engine-timeout", type=float, default=600, help="Response timeout in seconds, including startup.")
     ios.add_options(parser)
     llamacpp.add_options(parser)
+    lucebox.add_options(parser)
     mldrift.add_options(parser)
     mlx.add_options(parser)
     mlxserve.add_options(parser)
@@ -48,7 +50,9 @@ def pytest_configure(config: pytest.Config) -> None:
     test_file = Path(__file__).with_name("test_engines.py")
     if "engines" in config.args:
         config.args[:] = [str(test_file) if arg == "engines" else arg for arg in config.args]
-        engines.extend(name for name in ENGINE_TEST_CLASSES if name not in engines and name not in ("ios", "vllm"))
+        engines.extend(
+            name for name in ENGINE_TEST_CLASSES if name not in engines and name not in ("ios", "lucebox", "vllm")
+        )
 
     for name, test_class in ENGINE_TEST_CLASSES.items():
         if name not in config.args:
