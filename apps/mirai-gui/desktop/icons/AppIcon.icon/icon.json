@@ -28,7 +28,7 @@
             {
               "appearance" : "tinted",
               "value" : {
-                "solid" : "extended-srgb:1.00000,0.80000,0.00000,1.00000"
+                "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
               }
             }
           ],
@@ -37,7 +37,7 @@
           "image-name" : "SVG Image 4.svg",
           "name" : "SVG Image 4",
           "position" : {
-            "scale" : 5.2,
+            "scale" : 5.1,
             "translation-in-points" : [
               -8.526512829121202e-14,
               -20
