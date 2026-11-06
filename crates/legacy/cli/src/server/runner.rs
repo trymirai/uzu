@@ -86,12 +86,9 @@ pub async fn run_server(
         (rocket, "System One server", details.to_string())
     } else {
         let thinking_support = ThinkingSupport::for_model(&resolved);
-        let mut chat_config = ChatConfig::default();
-        if let Some(seed) = seed {
-            chat_config = chat_config.with_sampling_seed(SamplingSeed::Custom {
-                seed,
-            });
-        }
+let chat_config = seed.map_or_else(ChatConfig::default, |seed| {
+    ChatConfig::default().with_sampling_seed(SamplingSeed::Custom { seed })
+});
         let session = engine.chat(resolved, chat_config).await.context("Failed to create chat session")?;
         let state = ChatState {
             session: Arc::new(Mutex::new(session)),
