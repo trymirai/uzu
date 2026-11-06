@@ -3469,11 +3469,6 @@ public func FfiConverterTypeValue_lower(_ value: Value) -> RustBuffer {
 }
 
 
-/**
- * A backend failure that keeps its kind across the bindings boundary.
- * The variants mirror uzu-engine's LanguageModelStreamError so callers can
- * match on them (a context overflow, say) instead of on the error text.
- */
 public enum BackendError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
     

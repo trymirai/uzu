@@ -875,11 +875,6 @@ export declare class Value {
   constructor(json: string)
 }
 
-/**
- * A backend failure that keeps its kind across the bindings boundary.
- * The variants mirror uzu-engine's LanguageModelStreamError so callers can
- * match on them (a context overflow, say) instead of on the error text.
- */
 export type BackendError =
   | { type: 'Backend'; message: string }
   | { type: 'Capture'; message: string }
