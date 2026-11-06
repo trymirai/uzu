@@ -102,6 +102,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[0],
         affine[1],
         affine[2],
+        false,
     )
     .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
@@ -129,6 +130,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
         num_q_heads * SUFFIX as u32,
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

@@ -10,6 +10,7 @@ mod convolution;
 mod embedding;
 mod gated_act_mul;
 mod gdn;
+mod linearize_tree;
 mod logit_transform;
 mod matmul;
 mod moe;

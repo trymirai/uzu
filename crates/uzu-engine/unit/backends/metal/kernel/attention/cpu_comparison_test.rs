@@ -40,20 +40,7 @@ fn run<B: Backend, T: DataTypeRepr>(
     let mut kv = KVCache::<B>::allocate_scratch(kernel.kv_layout(), prefix + suffix, &mut command).unwrap();
     let mut q = create_buffer::<B, i8>(&context, (config.num_q_heads * suffix * dim) as usize);
     let mut qs = create_buffer::<B, bf16>(&context, (config.num_q_heads * suffix) as usize);
-    let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
-        &context,
-        config.data_type,
-        DataType::F32,
-        dim,
-        false,
-        config.num_groups,
-        kernel.kv_layout().backend_opaque_layout,
-        true,
-        false,
-        false,
-        false,
-    )
-    .unwrap();
+    let trie = create_buffer_with_data::<B, u32>(&context, bytemuck::cast_slice(nodes));
     command.encode_fill(kv.k_codes.as_mut(), 0x7f);
     command.encode_fill(kv.v_codes.as_mut(), 0xff);
     command.encode_fill(kv.k_scales.as_mut(), 0xff);
@@ -69,6 +56,22 @@ fn run<B: Backend, T: DataTypeRepr>(
                 0
             }) as usize
             * config.data_type.size_in_bytes();
+        let trie = (heads != 0 && is_trie).then_some(&trie);
+        let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            &context,
+            config.data_type,
+            DataType::F32,
+            dim,
+            false,
+            config.num_groups,
+            kernel.kv_layout().backend_opaque_layout,
+            true,
+            false,
+            false,
+            false,
+            trie.is_some(),
+        )
+        .unwrap();
         prepare.encode(
             data.subrange(offset..),
             &mut q,
@@ -89,10 +92,10 @@ fn run<B: Backend, T: DataTypeRepr>(
             stride,
             length,
             heads / config.num_groups * length,
+            trie,
             &mut command,
         );
     }
-    let trie = create_buffer_with_data::<B, u32>(&context, bytemuck::cast_slice(nodes));
     let sinks = config
         .has_sinks
         .then(|| create_buffer_with_data::<B, T>(&context, &vec![T::from(1.5).unwrap(); config.num_q_heads as usize]));
@@ -136,15 +139,16 @@ fn run<B: Backend, T: DataTypeRepr>(
 
 #[uzu_test]
 fn attention_windows_sinks_and_head_dims() {
-    let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 3], TrieNode>(&[
-        [0, 7, 0],
-        [1, 3, 1],
-        [2, 2, 2],
-        [3, 3, 2],
-        [4, 7, 1],
-        [5, 6, 2],
-        [6, 6, 3],
-        [7, 7, 2],
+    // (trie_start, trie_end, height, parent)
+    let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 4], TrieNode>(&[
+        [0, 7, 0, u32::MAX],
+        [1, 3, 1, 0],
+        [2, 2, 2, 1],
+        [3, 3, 2, 1],
+        [4, 7, 1, 0],
+        [5, 6, 2, 4],
+        [6, 6, 3, 5],
+        [7, 7, 2, 4],
     ]);
     for dim in [64, 128, 256, 512] {
         for (causal, ring, window, prefix, scale) in [
@@ -196,12 +200,12 @@ fn attention_windows_sinks_and_head_dims() {
 
 #[uzu_test]
 fn attention_large_tree_and_f32() {
-    let words: Vec<[u32; 3]> = (0..80)
+    let words: Vec<[u32; 4]> = (0..80)
         .map(|i| {
             if i == 0 {
-                [0, 79, 0]
+                [0, 79, 0, u32::MAX]
             } else {
-                [i, i, 1]
+                [i, i, 1, 0]
             }
         })
         .collect();
@@ -237,7 +241,7 @@ fn attention_large_tree_and_f32() {
 
 #[uzu_test]
 fn attention_single_query() {
-    let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 3], TrieNode>(&[[0, 0, 0]]);
+    let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 4], TrieNode>(&[[0, 0, 0, u32::MAX]]);
     for dim in [64, 128, 256, 512] {
         for q_heads in [6, 8] {
             for prefix in [0, 31, 32, 37, 1025] {
@@ -275,7 +279,7 @@ fn attention_single_query() {
 
 #[uzu_test]
 fn attention_vector_partial_rows() {
-    let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 3], TrieNode>(&[[0, 1, 0], [1, 1, 1]]);
+    let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 4], TrieNode>(&[[0, 1, 0, u32::MAX], [1, 1, 1, 0]]);
     for prefix in [17, 1031] {
         for ring in [false, true] {
             let mut config = default_attention_config::<f32>(128, 6, 3, true);
