@@ -21,8 +21,8 @@ struct Cli {
     /// Overrides the saved preference for this run only; never persisted.
     #[arg(long, value_name = "EFFORT")]
     reasoning_effort: Option<ReasoningEffort>,
-    /// Sampling seed for chat sessions.
-    #[arg(long, value_name = "SEED", allow_negative_numbers = true)]
+    /// Sampling seed for chat sessions. In server mode, the seed for requests that don't set `seed`.
+    #[arg(long, value_name = "SEED", allow_negative_numbers = true, global = true)]
     seed: Option<i64>,
     /// Disable built-in tools in interactive chat sessions.
     #[arg(long)]
@@ -89,7 +89,9 @@ async fn main() -> Result<()> {
             prefix_cache,
             no_prefix_cache,
             verbose_file_log,
-        }) => server::run_server(model, host, port, prefix_cache || !no_prefix_cache, verbose_file_log).await?,
+        }) => {
+            server::run_server(model, host, port, prefix_cache || !no_prefix_cache, verbose_file_log, cli.seed).await?
+        },
         Some(Commands::Storage {
             download_manager,
         }) => storage::run(download_manager).await?,

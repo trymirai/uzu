@@ -366,7 +366,9 @@ export declare class ChatReplyConfig {
    * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
    */
   toolTurnLimit?: number
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number)
+  /** Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`. */
+  samplingSeed: SamplingSeed
+  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number, samplingSeed: SamplingSeed)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
@@ -374,6 +376,7 @@ export declare class ChatReplyConfig {
   withSamplingMethod(samplingMethod: SamplingMethod): ChatReplyConfig
   withToolTurnLimit(toolTurnLimit?: number | undefined | null): ChatReplyConfig
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
+  withSamplingSeed(samplingSeed: SamplingSeed): ChatReplyConfig
 }
 
 export declare class ChatReplyJoulesPerTokenComponents {

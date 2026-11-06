@@ -19,7 +19,7 @@ use tracing::Instrument;
 use uzu::{
     session::chat::{ChatSession, ChatSessionError, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
-        basic::{BackendError, Grammar, ReasoningEffort, SamplingMethod},
+        basic::{BackendError, Grammar, ReasoningEffort, SamplingMethod, SamplingSeed},
         session::chat::{
             ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole,
         },
@@ -104,6 +104,8 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    #[serde(default)]
+    pub seed: Option<i64>,
     // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
@@ -551,6 +553,11 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
             min_p: None,
             repetition_penalty: None,
             suffix_repetition_length: None,
+        });
+    }
+    if let Some(seed) = request.seed {
+        config = config.with_sampling_seed(SamplingSeed::Custom {
+            seed,
         });
     }
 
