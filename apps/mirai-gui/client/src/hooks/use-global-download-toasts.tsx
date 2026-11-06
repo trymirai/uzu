@@ -29,7 +29,7 @@ export const useGlobalDownloadToasts = (): void => {
               <>
                 <InlineModelName name={name} /> is ready
               </>,
-              { description: "Click to start a chat", onClick: () => openChatForModel(event.identifier) },
+              { onClick: () => openChatForModel(event.identifier) },
             );
             return;
           case "error":

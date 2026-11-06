@@ -1,4 +1,5 @@
-import { Download, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { IconArrowInbox } from "@/components/icons/app-icons";
+import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import { IconAction } from "@/components/ui/icon-action";
 import { IconPauseFilled } from "@/components/icons/pause-filled-icon";
 import { IconPlayFilled } from "@/components/icons/play-filled-icon";
@@ -59,7 +60,7 @@ export function DownloadActions({
           <span>
             <IconAction
               label="Download model"
-              icon={<Download size={16} />}
+              icon={<IconArrowInbox size={16} />}
               onClick={onDownload}
               className={ACTION_BUTTON_CLASS}
             />
