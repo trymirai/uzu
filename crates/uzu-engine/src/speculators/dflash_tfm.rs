@@ -13,7 +13,6 @@ pub use crate::encodable_block::dflash::DFlashState;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
-        gpu_types::trie::TrieNode as GpuTrieNode,
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
     data_type::DataType,
@@ -260,14 +259,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     state,
                     &mut command_buffer,
                 )?;
-                let topology_nodes = (0..chain_length)
-                    .map(|index| GpuTrieNode {
-                        trie_start: index,
-                        trie_end: chain_length - 1,
-                        height: index,
-                    })
-                    .collect::<Box<[_]>>();
-                let batch_topology = BatchTopology::new(&topology_nodes, true);
+                let batch_topology = BatchTopology::flat(chain_length, true);
                 let sampled = self
                     .sampling
                     .encode(
