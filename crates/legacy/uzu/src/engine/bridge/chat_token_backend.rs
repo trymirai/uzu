@@ -150,13 +150,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-        let sampling_seed = match config.sampling_seed {
-            SamplingSeed::Default {} => state.sampling_seed,
-            SamplingSeed::Custom {
-                seed,
-            } => seed as u64,
-        };
-        let model_state = state.value.get_mut();
+let model_state = state.value.get_mut();
+
+model_state.set_sampling_seed(match config.sampling_seed {
+    SamplingSeed::Default {} => state.sampling_seed,
+    SamplingSeed::Custom { seed } => seed as u64,
+});
         model_state.set_sampling_seed(sampling_seed);
 
         let stream = match self.model.stream(input, model_state, options) {
