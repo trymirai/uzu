@@ -25,6 +25,7 @@ pub const BenchRequest = struct {
     speculative_depth: ?usize = null,
     sampling: ?BenchSampling = null,
     num_runs: ?usize = null,
+    reasoning_effort: ?[]const u8 = null,
 };
 
 pub const BenchResponse = struct {

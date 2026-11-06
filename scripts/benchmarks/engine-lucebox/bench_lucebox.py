@@ -8,23 +8,20 @@ import json
 import os
 import queue
 import re
-import socket
 import subprocess
 import sys
 import threading
 import time
 from contextlib import redirect_stdout
-from http.client import HTTPConnection
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 from bench import BenchRequest, BenchResponse, BenchSampling
-from common import InferenceEngine, process_memory, run_loop
+from common import LOCAL_HOST, InferenceEngine, LocalServer, free_port, gpu_memory_used, run_loop
 from huggingface_hub import hf_hub_download
 
 PROJECT_DIR = Path(__file__).resolve().parent
-HOST = "127.0.0.1"
 # luce_server's stderr summary of each decode: the target forwards of a speculative decode, and the tokens of plain
 # autoregressive decoding, which takes one forward per token.
 SPEC_FORWARDS = re.compile(r"\[spec-decode\] target_forwards=(\d+) ")
@@ -32,27 +29,29 @@ AR_TOKENS = re.compile(r"\[ar-decode\] tokens=(\d+) ")
 
 
 class LuceboxEngine(InferenceEngine):
+    supports_reasoning_effort = True
+
     def __init__(self, model: str, draft_model: str | None, max_ctx: int, ddtree_budget: int):
         super().__init__()
         binary = subprocess.run(
             ["bash", str(PROJECT_DIR / "bootstrap.sh")], check=True, stdout=subprocess.PIPE, text=True
         ).stdout.strip()
-        with socket.socket() as probe:
-            probe.bind((HOST, 0))
-            self.port = probe.getsockname()[1]
-        # The server gets SIGTERM if the adapter dies, so a killed benchmark never leaves it holding the GPU.
-        command = ["setpriv", "--pdeathsig", "TERM", binary, resolve(model), "--host", HOST, "--port", str(self.port)]
+        port = free_port()
+        command = [binary, resolve(model), "--host", LOCAL_HOST, "--port", str(port)]
         command += ["--max-ctx", str(max_ctx), "--default-max-tokens", str(max_ctx)]
         # Every run starts from an empty cache, as in the other adapters.
         command += ["--prefix-cache-slots", "0", "--no-agent-turn-cache", "--no-kv-cache"]
+        # A reasoning effort turns on its thinking budget, which reserves 4096 reply tokens by closing thinking early.
+        command += ["--hard-limit-reply-budget", "0"]
         self.speculative = draft_model is not None
         if draft_model is not None:
             command += ["--draft", resolve(draft_model), "--ddtree", "--ddtree-budget", str(ddtree_budget)]
 
         self.graphics_baseline = gpu_memory_used()
-        self.process = subprocess.Popen(
+        self.server = LocalServer(
+            "luce_server",
+            port,
             command,
-            stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
             stderr=subprocess.PIPE,
             text=True,
@@ -61,36 +60,19 @@ class LuceboxEngine(InferenceEngine):
         )
         self.decodes: queue.Queue[tuple[str, int]] = queue.Queue()
         threading.Thread(target=self.read_log, daemon=True).start()
-        while not self.ready():
-            time.sleep(1)
+        self.server.wait_ready()
 
     def read_log(self) -> None:
-        assert self.process.stderr is not None
-        for line in self.process.stderr:
+        assert self.server.process.stderr is not None
+        for line in self.server.process.stderr:
             sys.stderr.write(line)
             if match := SPEC_FORWARDS.search(line):
                 self.decodes.put(("spec", int(match[1])))
             elif match := AR_TOKENS.search(line):
                 self.decodes.put(("ar", int(match[1])))
 
-    def ready(self) -> bool:
-        if (code := self.process.poll()) is not None:
-            raise RuntimeError(f"luce_server exited with code {code} while loading")
-        # It listens only once its models are loaded.
-        try:
-            connection = HTTPConnection(HOST, self.port, timeout=5)
-            connection.request("GET", "/health")
-            return connection.getresponse().status == 200
-        except OSError:
-            return False
-
     def close(self) -> None:
-        self.process.terminate()
-        try:
-            self.process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
+        self.server.close()
 
     def execute(self, request: BenchRequest) -> list[BenchResponse]:
         num_runs = request.num_runs if request.num_runs is not None else 1
@@ -102,10 +84,8 @@ class LuceboxEngine(InferenceEngine):
     def run_single(self, body: dict[str, Any]) -> BenchResponse:
         while not self.decodes.empty():
             self.decodes.get_nowait()
-        connection = HTTPConnection(HOST, self.port)
         started = time.perf_counter()
-        connection.request("POST", "/v1/chat/completions", json.dumps(body), {"Content-Type": "application/json"})
-        response = connection.getresponse()
+        response = self.server.request("POST", "/v1/chat/completions", body)
         if response.status != 200:
             raise RuntimeError(f"luce_server answered {response.status}: {response.read().decode()}")
         pieces, usage = [], None
@@ -123,7 +103,7 @@ class LuceboxEngine(InferenceEngine):
                 delta = choice["delta"]
                 pieces += [delta.get("reasoning_content") or "", delta.get("content") or ""]
         duration = time.perf_counter() - started
-        connection.close()
+        response.close()
         if usage is None:
             raise RuntimeError("luce_server sent no usage")
 
@@ -134,7 +114,7 @@ class LuceboxEngine(InferenceEngine):
         # Server clocks: the prefill, then the decode from the prefill's first token to the last token.
         prefill = timings["prefill_ms"] / 1000
         decode = timings["decode_ms"] / 1000
-        phys_footprint, resident = process_memory(self.process.pid)
+        phys_footprint, resident = self.server.memory()
         return BenchResponse(
             text="".join(pieces),
             tokens_count=tokens,
@@ -179,7 +159,8 @@ def request_body(request: BenchRequest) -> dict[str, Any]:
         "stream": True,
         # luce_server renders Qwen chats without thinking unless a request asks for it; the other adapters keep the
         # template's default, which thinks.
-        "chat_template_kwargs": {"enable_thinking": True},
+        "chat_template_kwargs": {"enable_thinking": True}
+        | ({"reasoning_effort": request.reasoning_effort} if request.reasoning_effort is not None else {}),
         # Explicit values: luce_server fills omitted ones from the model card, which samples at temperature 1.
         "temperature": sampling.temp if sampled else 0.0,
         "top_p": sampling.top_p if sampled and sampling.top_p else 1.0,
@@ -202,17 +183,6 @@ def resolve(model: str) -> str:
     if not repository or not filename.endswith(".gguf"):
         raise ValueError(f"{model}: expected a GGUF file or REPOSITORY:FILE.gguf")
     return hf_hub_download(repository, filename)
-
-
-def gpu_memory_used() -> int:
-    """The GPU's used memory across all processes: WSL has no per-process GPU accounting."""
-    output = subprocess.run(
-        ["nvidia-smi", "--id=0", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    return int(output) * 2**20
 
 
 def run(

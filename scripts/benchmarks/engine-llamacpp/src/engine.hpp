@@ -18,6 +18,10 @@ public:
 
     std::vector<BenchResponse> execute(const BenchRequest& request) const override;
 
+    bool supports_reasoning_effort() const override {
+        return true;
+    }
+
 private:
     struct RunConfig;
 
@@ -35,6 +39,8 @@ private:
     const llama_vocab* tokenizer;
     common_chat_templates_ptr chat_templates;
     bool has_mtp;
+    // GPU memory in use before the model loaded; Linux reports usage above it.
+    uint64_t graphics_baseline = 0;
 };
 
 std::string decode_token(

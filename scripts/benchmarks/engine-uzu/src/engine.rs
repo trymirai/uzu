@@ -2,7 +2,10 @@ use std::{collections::HashMap, io, io::Write, str::FromStr, sync::Arc, time::In
 
 use anyhow::{Context, ensure};
 use futures::StreamExt;
-use hanashi::{Encoding as _, chat::hanashi::HanashiEncodingImpl};
+use hanashi::{
+    Encoding as _,
+    chat::hanashi::{HanashiEncodingImpl, config::HanashiConfig},
+};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use uzu::{
@@ -10,7 +13,9 @@ use uzu::{
     session::chat::ChatInstanceKind,
     traits::backend::chat_token::{Instance, TokenStreamOutput},
     types::{
-        basic::{SamplingMethod, ToolCall, ToolDescription, ToolFunction, ToolNamespace},
+        basic::{
+            ContextLength, ReasoningEffort, SamplingMethod, ToolCall, ToolDescription, ToolFunction, ToolNamespace,
+        },
         session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatRole},
     },
 };
@@ -25,10 +30,14 @@ pub struct UzuEngine {
     instance: Arc<dyn Instance>,
     encoding: HanashiEncodingImpl,
     stop_tokens: Box<[u64]>,
+    reasoning_efforts: Vec<ReasoningEffort>,
 }
 
 impl UzuEngine {
-    pub async fn new(model: &str) -> anyhow::Result<Self> {
+    pub async fn new(
+        model: &str,
+        context_length: Option<i64>,
+    ) -> anyhow::Result<Self> {
         let config = EngineConfig::default().with_allow_ollama_usage(false).with_allow_lmstudio_usage(false);
         let engine = Engine::new(config).await?;
         let model = engine.model(model.to_string()).await?.context("Model not found")?;
@@ -42,10 +51,17 @@ impl UzuEngine {
         eprintln!();
 
         engine.model_path(&model).await.context("Model download did not complete")?;
-        let encoding_config =
+        let encoding_config: HanashiConfig =
             serde_json::from_str(&model.encoding.as_ref().context("Model has no chat encoding")?.json)
                 .context("Invalid Hanashi encoding config")?;
-        let shared = engine.chat_instance(model, ChatConfig::default()).await?;
+        let reasoning_efforts = encoding_config.capabilities()?.reasoning_efforts;
+        let config = match context_length {
+            Some(length) => ChatConfig::default().with_context_length(ContextLength::Custom {
+                length,
+            }),
+            None => ChatConfig::default(),
+        };
+        let shared = engine.chat_instance(model, config).await?;
         let ChatInstanceKind::Token(instance) = shared.kind() else {
             anyhow::bail!("Uzu benchmarks require a token backend");
         };
@@ -56,6 +72,7 @@ impl UzuEngine {
             instance,
             encoding,
             stop_tokens,
+            reasoning_efforts,
         })
     }
 
@@ -64,11 +81,12 @@ impl UzuEngine {
         request: &BenchRequest,
     ) -> anyhow::Result<Vec<u64>> {
         if let Some(text) = &request.prompt_text {
+            ensure!(request.reasoning_effort.is_none(), "reasoning_effort needs prompt_chat");
             let encoded = self.instance.tokenizer().encode(text.as_str(), true).map_err(anyhow::Error::msg)?;
             return Ok(encoded.get_ids().iter().copied().map(u64::from).collect());
         }
 
-        let messages = get_chat_messages(request)?;
+        let messages = get_chat_messages(request, &self.reasoning_efforts)?;
         self.encoding.reset()?;
         self.encoding.encode(messages)?;
         let tokens = self.encoding.state().tokens.iter().map(|token| u64::from(token.id)).collect();
@@ -196,7 +214,10 @@ fn get_config(request: &BenchRequest) -> anyhow::Result<(usize, ChatReplyConfig)
     Ok((num_runs, config))
 }
 
-fn get_chat_messages(request: &BenchRequest) -> anyhow::Result<Vec<ChatMessage>> {
+fn get_chat_messages(
+    request: &BenchRequest,
+    reasoning_efforts: &[ReasoningEffort],
+) -> anyhow::Result<Vec<ChatMessage>> {
     let input = request.prompt_chat.as_ref().context("prompt_text and prompt_chat are absent")?;
     ensure!(!input.is_empty(), "prompt_chat must not be empty");
 
@@ -239,6 +260,16 @@ fn get_chat_messages(request: &BenchRequest) -> anyhow::Result<Vec<ChatMessage>>
             });
         }
         messages.push(converted);
+    }
+
+    // The first system message carries the effort, as in `cli bench`.
+    if let Some(effort) = &request.reasoning_effort {
+        let effort = ReasoningEffort::from_str(effort).map_err(anyhow::Error::msg)?;
+        ensure!(reasoning_efforts.contains(&effort), "The model does not support reasoning effort {effort}");
+        match messages.first_mut() {
+            Some(first) if first.role == (ChatRole::System {}) => *first = first.clone().with_reasoning_effort(effort),
+            _ => messages.insert(0, ChatMessage::system().with_reasoning_effort(effort)),
+        }
     }
 
     let mut tools = Vec::new();
