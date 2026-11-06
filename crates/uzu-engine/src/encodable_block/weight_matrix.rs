@@ -88,7 +88,18 @@ impl<B: Backend> WeightMatrix<B> {
                     },
                 )),
             ),
-            AnyWeightMatrixSpec::QtipGaussianSpec(spec) => {
+            AnyWeightMatrixSpec::QtipGaussianSpec(spec)
+                if spec.layout == Layout::OutputInput && required_layout == Layout::OutputInput =>
+            {
+                let codebook = match spec.vector_width {
+                    2 => &CODEBOOK_V2,
+                    4 => &CODEBOOK_V4,
+                    width => {
+                        return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                            "Trellis vector width {width}"
+                        )));
+                    },
+                };
                 let format = TrellisFormat {
                     vector_width: spec.vector_width,
                     transition_bits: spec.transition_bits,
@@ -97,11 +108,7 @@ impl<B: Backend> WeightMatrix<B> {
                 let code_shape = [output_dim, format.code_row_bytes(input_dim)];
                 let values = tree.read_buffer("codes", &code_shape, DataType::U8).await?;
                 let row_scales = tree.read_buffer("scales", &[output_dim], DataType::F32).await?;
-                let codebook = tree.create_buffer_with_data(match spec.vector_width {
-                    2 => &CODEBOOK_V2,
-                    4 => &CODEBOOK_V4,
-                    _ => unreachable!("unsupported Trellis vector width"),
-                })?;
+                let codebook = tree.create_buffer_with_data(codebook)?;
                 return Ok(Self {
                     values,
                     encoding: Encoding::Trellis(Trellis {

@@ -16,7 +16,7 @@ use crate::{
         Gather, Linear, LinearBlockError, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul,
         input_rht::InputRht,
     },
-    safetensors::{ParameterLoaderError, ParameterTree},
+    safetensors::ParameterTree,
 };
 
 enum Rotation<B: Backend> {
@@ -44,16 +44,22 @@ use LinearBlockError::UnsupportedConfiguration as Unsupported;
 
 async fn matrix_parts<'t, B: Backend>(
     spec: AnyWeightMatrixSpec,
-    rows: u32,
+    expected_rows: u32,
     tree: ParameterTree<'t, B>,
-) -> Result<Vec<(u32, AnyWeightMatrixSpec, ParameterTree<'t, B>)>, ParameterLoaderError<B>> {
+) -> Result<Vec<(u32, AnyWeightMatrixSpec, ParameterTree<'t, B>)>, LinearBlockError<B>> {
     if !matches!(spec, AnyWeightMatrixSpec::OutputStackSpec(_)) {
-        return Ok(vec![(rows, spec, tree)]);
+        return Ok(vec![(expected_rows, spec, tree)]);
     }
     let shape = tree.shape("part_rows")?;
-    let rows = tree.read_slice::<i32>("part_rows", shape).await?;
+    let part_rows = tree.read_slice::<i32>("part_rows", shape).await?;
+    if part_rows.iter().any(|&rows| rows <= 0)
+        || part_rows.iter().map(|&rows| i64::from(rows)).sum::<i64>() != i64::from(expected_rows)
+    {
+        return Err(Unsupported(format!("output-stack rows must be positive and sum to {expected_rows}")));
+    }
     let parts = tree.subtree("parts");
-    rows.iter()
+    part_rows
+        .iter()
         .enumerate()
         .map(|(index, &rows)| {
             let tree = parts.subtree(&index.to_string());
@@ -90,7 +96,7 @@ impl<B: Backend> TransformedLinear<B> {
         context: &B::Context,
     ) -> Result<Self, LinearBlockError<B>> {
         if bias_tree.is_some() && input_rht_mode(&spec).is_none() {
-            todo!("fuse biases into final output stores for output-stacked or Kronecker linears");
+            return Err(Unsupported("biases on output-stacked or Kronecker linears".into()));
         }
         let parts = matrix_parts(spec, output_dim, weights_tree).await?;
         let in_place = parts.len() == 1;
@@ -119,6 +125,9 @@ impl<B: Backend> TransformedLinear<B> {
                     let parts = matrix_parts(quantization_spec, rows, quantized_tree).await?;
                     let mut blocks = Vec::with_capacity(parts.len());
                     for (rows, spec, tree) in parts {
+                        if !matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) {
+                            return Err(Unsupported(format!("{spec:?} in a Kronecker linear")));
+                        }
                         blocks.push(
                             LinearMatmul::load(
                                 input_dim,
@@ -141,7 +150,7 @@ impl<B: Backend> TransformedLinear<B> {
                     block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
                     processing_mode: mode @ (Input | InputOutput),
                     ..
-                })) => {
+                })) if in_place => {
                     let (preparation, linear) = Self::load_hadamard(
                         input_dim,
                         rows,
