@@ -4,15 +4,14 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::TensorAddScaleKernel,
-    },
+    backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        residual::{ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     safetensors::ParameterTree,
@@ -88,6 +87,8 @@ pub enum TransformerNewError<B: Backend> {
     Layer(#[from] TransformerLayerError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
+    #[error("Residual error: {0}")]
+    Residual(#[from] ResidualNewError<B>),
 }
 
 #[derive(Debug, Error)]
@@ -101,9 +102,9 @@ pub enum TransformerEncodeError<B: Backend> {
 pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
-    output_norm: Normalization<B>,
+    output_norm: Option<Normalization<B>>,
     model_dim: u32,
-    residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
+    residual_head: ResidualHead<B>,
 }
 
 impl<B: Backend> Transformer<B> {
@@ -116,6 +117,10 @@ impl<B: Backend> Transformer<B> {
         context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
+
+        let residual_config = transformer_config.residual_config.clone();
+        let residual_head =
+            ResidualHead::new(&residual_config, input_data_type, &parameter_tree.subtree("residual_head"), context)?;
 
         let num_layers = transformer_config.layer_configs.len() as u32;
         let mut layers = Vec::with_capacity(num_layers as usize);
@@ -136,6 +141,7 @@ impl<B: Backend> Transformer<B> {
                 layer_index,
                 input_data_type,
                 layer_config,
+                &residual_config,
                 &layer_loader,
                 context,
             )
@@ -144,28 +150,31 @@ impl<B: Backend> Transformer<B> {
             layers.push((layer, rope));
         }
 
-        let output_norm = Normalization::new(
-            transformer_config.model_dim,
-            input_data_type,
-            output_data_type,
-            output_norm_hadamard_factors,
-            ShortcutMode::Add,
-            PostLayerScalar::None,
-            &transformer_config.output_norm_config,
-            &parameter_tree.subtree("output_norm"),
-            context,
-        )
-        .await?;
-
-        let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, input_data_type, false)
-            .map_err(TransformerNewError::Backend)?;
+        let output_norm = if let Some(output_norm_config) = &transformer_config.output_norm_config {
+            Some(
+                Normalization::new(
+                    transformer_config.model_dim,
+                    input_data_type,
+                    output_data_type,
+                    output_norm_hadamard_factors,
+                    ShortcutMode::Add,
+                    PostLayerScalar::None,
+                    output_norm_config,
+                    &parameter_tree.subtree("output_norm"),
+                    context,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
             layers: layers.into_boxed_slice(),
             output_norm,
             model_dim: transformer_config.model_dim,
-            residual_add,
+            residual_head,
         })
     }
 
@@ -178,7 +187,7 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let mut output = command_buffer.allocate_scratch(hidden.size())?;
         let elements = batch_size * self.model_dim;
-        self.residual_add.encode(Some(shortcut), hidden, &mut output, elements, elements, 1.0, command_buffer);
+        self.residual_head.encode_update(shortcut, hidden, &mut output, elements, command_buffer)?;
         Ok(output)
     }
 
@@ -249,7 +258,8 @@ impl<B: Backend> Transformer<B> {
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
-        let mut hidden = input;
+        // TODO: change shortcut for residual
+        let mut hidden = self.residual_head.expand(input);
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
         } else {
@@ -333,19 +343,25 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        let output_normalized = self
-            .output_norm
-            .encode(
-                &hidden,
-                output_range.start,
-                output_range.end - output_range.start,
-                Some(&mut shortcut),
-                command_buffer,
-            )
-            .map_err(TransformerEncodeError::Backend)?;
+        // TODO: route the final combine through `residual_head.readout` (stream + last update)
+        // instead of the ShortcutMode::Add fused into the output norm.
+        let output = match &self.output_norm {
+            Some(output_norm) => output_norm
+                .encode(
+                    &hidden,
+                    output_range.start,
+                    output_range.end - output_range.start,
+                    Some(&mut shortcut),
+                    command_buffer,
+                )
+                .map_err(TransformerEncodeError::Backend)?,
+            None => self
+                .capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)
+                .map_err(TransformerEncodeError::Backend)?,
+        };
 
         Ok(TransformerEncodeOutput {
-            output: Some(output_normalized),
+            output: Some(output),
             hidden_features,
         })
     }

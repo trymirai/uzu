@@ -144,29 +144,38 @@ async fn chat_model_info_reads_capabilities_and_context_without_weights() {
     });
     let layer = |length| {
         serde_json::json!({
-            "pre_mixer_norm_config": null, "post_mixer_norm_config": null,
-            "mixer_conv_config": null, "mlp_conv_config": null, "post_mlp_norm_config": null,
-            "hidden_dim": null, "ple_config": null, "has_post_layer_scalar": false,
-            "kv_source_layer_index": null, "pre_mlp_norm_config": norm,
+            "prologue_configs": [],
+            "mixer": {
+                "pre_norm_config": null, "conv_config": null, "post_norm_config": null,
+                "body_config": {
+                    "type": "AttentionConfig", "qkvg_projection_config": {}, "out_projection_config": {},
+                    "query_norm_config": null, "key_norm_config": null, "num_heads": 1, "num_groups": 1,
+                    "head_dim": 4, "is_causal": true, "scale": null, "sliding_window_size": null,
+                    "logit_soft_cap": null, "has_sinks": false, "has_qkvg_biases": false,
+                    "has_out_biases": false, "has_gate": false, "normalize_values": false, "is_kv_sharing": false,
+                },
+            },
+            "mlp": {
+                "pre_norm_config": norm, "conv_config": null, "post_norm_config": null,
+                "body_config": {
+                    "type": "DenseMLPConfig", "linear_config": {}, "activation": { "type": "SiLU", "alpha": 1.0 },
+                    "has_up_biases": false, "has_down_biases": false, "gate_clipping": null, "up_clipping": null,
+                },
+            },
+            "epilogue_configs": [],
+            "hidden_dim": null,
+            "kv_source_layer_index": null,
             "rope_config": { "type": "UnscaledRoPEConfig", "base": 10000.0, "max_sequence_length": length, "head_dim": 4 },
-            "mixer_config": {
-                "type": "AttentionConfig", "qkvg_projection_config": {}, "out_projection_config": {},
-                "query_norm_config": null, "key_norm_config": null, "num_heads": 1, "num_groups": 1,
-                "head_dim": 4, "is_causal": true, "scale": null, "sliding_window_size": null,
-                "logit_soft_cap": null, "has_sinks": false, "has_qkvg_biases": false,
-                "has_out_biases": false, "has_gate": false, "normalize_values": false, "is_kv_sharing": false,
-            },
-            "mlp_config": {
-            "type": "DenseMLPConfig", "linear_config": {}, "activation": { "type": "SiLU", "alpha": 1.0 },
-                "has_up_biases": false, "has_down_biases": false, "gate_clipping": null, "up_clipping": null,
-            },
         })
     };
     let config = serde_json::json!({
         "type": "LanguageModelConfig", "token_codec_config": { "type": "RawTextCodecConfig" },
         "decoder_config": {
             "embedding_config": { "type": "TiedEmbeddingConfig", "input_scale": null, "logit_soft_cap": null, "logit_scale": null },
-            "transformer_config": { "layer_configs": [layer(32768), layer(16384)], "model_dim": 4, "hidden_dim": 4, "output_norm_config": norm },
+            "transformer_config": {
+                "residual_config": { "type": "AdditiveResidualConfig" },
+                "layer_configs": [layer(32768), layer(16384)], "model_dim": 4, "hidden_dim": 4, "output_norm_config": norm,
+            },
             "vocab_size": 4, "ple_model_config": null, "embedding_norm_config": null,
         },
         "generation_config": {
