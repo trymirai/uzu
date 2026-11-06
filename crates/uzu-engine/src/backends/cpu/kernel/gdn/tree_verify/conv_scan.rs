@@ -2,7 +2,10 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{backends::common::gpu_types::{activation_type::ActivationType, trie::TrieNode}, data_type::DataTypeRepr};
+use crate::{
+    backends::common::gpu_types::{activation_type::ActivationType, trie::TrieNode},
+    data_type::DataTypeRepr,
+};
 
 #[kernel(ConvTreeScan)]
 #[variants(T, f32, bf16)]
