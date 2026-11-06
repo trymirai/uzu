@@ -20,14 +20,17 @@ METAL_FUNC T prepare_norm(
     bool full_layer,
     float scale_offset
 ) {
-  if (!enabled)
+  if (!enabled) {
     return value;
+  }
   const float normalized = float(value) * inverse_rms;
-  if (!has_scales)
+  if (!has_scales) {
     return T(normalized);
+  }
   const float scale = scales[channel] + scale_offset;
-  if (full_layer)
+  if (full_layer) {
     return T(normalized * scale);
+  }
   return T(T(normalized) * T(scale));
 }
 
@@ -90,8 +93,9 @@ PUBLIC KERNEL(AttentionPrepare)(
   const float norm_scale_offset = norm_params.scale_offset[norm_index];
   const bool has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
   const device float* norm_scales = nullptr;
-  if (has_scales)
+  if (has_scales) {
     norm_scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
+  }
   float inverse_rms = 1.0f;
   if (norm_enabled) {
     float sum = 0.0f;

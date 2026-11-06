@@ -69,6 +69,80 @@ PUBLIC KERNEL(LinearizeChain)(
   }
 }
 
+#define LINEARIZE_SIMDGROUP_COUNT 8
+#define LINEARIZE_THREADGROUP_SIZE (LINEARIZE_SIMDGROUP_COUNT * METAL_SIMD_SIZE)
+
+// expand_width >= 1 bounds tree slots by the same limit as frontier slots.
+UZU_CONST uint LINEARIZE_MAX_TREE_SLOTS = FRONTIER_MAX_SLOTS;
+UZU_CONST uint LINEARIZE_MAX_SLOTS = LINEARIZE_MAX_TREE_SLOTS + FRONTIER_MAX_SLOTS;
+UZU_CONST uint LINEARIZE_SLOTS_PER_THREAD =
+    (LINEARIZE_MAX_SLOTS + LINEARIZE_THREADGROUP_SIZE - 1) / LINEARIZE_THREADGROUP_SIZE;
+
+static_assert(LINEARIZE_SIMDGROUP_COUNT <= METAL_SIMD_SIZE, "winner reduction must fit in one SIMD group");
+static_assert(LINEARIZE_SLOTS_PER_THREAD <= numeric_limits<uint>::digits, "selection masks must fit in uint");
+
+inline uint linearize_winner(
+    float logprob,
+    uint slot,
+    uint first_open,
+    uint first_nan,
+    threadgroup uint4* reduction,
+    threadgroup uint& selected_slot,
+    uint tid
+) {
+  constexpr uint NONE = FRONTIER_NO_WINNER;
+  const uint lane = tid % METAL_SIMD_SIZE;
+  const uint group = tid / METAL_SIMD_SIZE;
+  const float maximum = simd_max(logprob);
+  const uint winner = simd_min(logprob == maximum ? slot : NONE);
+  first_open = simd_min(first_open);
+  first_nan = simd_min(first_nan);
+  if (lane == 0) {
+    reduction[group] = uint4(as_type<uint>(maximum), winner, first_open, first_nan);
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  if (group == 0) {
+    const uint4 value =
+        lane < LINEARIZE_SIMDGROUP_COUNT ? reduction[lane] : uint4(as_type<uint>(-INFINITY), NONE, NONE, NONE);
+    const float group_logprob = as_type<float>(value.x);
+    const float best_logprob = simd_max(group_logprob);
+    const uint best = simd_min(group_logprob == best_logprob ? value.y : NONE);
+    const uint first = simd_min(value.z);
+    const uint nan = simd_min(value.w);
+    if (lane == 0) {
+      // A serial scan keeps its first open candidate when that score is NaN.
+      selected_slot = first != NONE && first == nan ? first : best;
+    }
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  return selected_slot;
+}
+
+inline uint2 linearize_range(
+    uint slot,
+    uint kept,
+    threadgroup const ushort* selected,
+    threadgroup const ushort* parents
+) {
+  uint before = 0;
+  uint descendants = 0;
+  for (uint index = 0; index < kept; index++) {
+    const uint other = selected[index];
+    uint2 ancestors(slot, other);
+    uint2 children = ancestors;
+    // Weaver appends children after parents, so the larger slot can walk up.
+    while (ancestors.x != ancestors.y) {
+      const uint side = uint(ancestors.x < ancestors.y);
+      children[side] = ancestors[side];
+      ancestors[side] = parents[ancestors[side]];
+    }
+    const uint common = ancestors.x;
+    descendants += common == slot;
+    before += common != slot && (common == other || children.y < children.x);
+  }
+  return uint2(before, before + descendants - 1);
+}
+
 PUBLIC KERNEL(LinearizeTree)(
     const device uint* packed_tree,
     const device uint* frontier,
@@ -80,128 +154,110 @@ PUBLIC KERNEL(LinearizeTree)(
     constant const uint& frontier_capacity,
     constant const uint& budget,
     constant const uint64_t& prng_seed,
-    constant const uint& root_position
+    constant const uint& root_position,
+    threadgroup ushort parent_slots[LINEARIZE_MAX_SLOTS],
+    threadgroup ushort selected_slots[LINEARIZE_MAX_SLOTS],
+    threadgroup uint4 reduction[LINEARIZE_SIMDGROUP_COUNT],
+    threadgroup uint& selected_slot,
+    const uint tid THREADS(LINEARIZE_THREADGROUP_SIZE)
 ) {
-  const uint tree_slots = tree_slot_count;
-  const uint frontier_slots = frontier_capacity;
-  const uint total_slots = tree_slots + frontier_slots;
-
-  auto tree_field = [&](uint field, uint slot) -> uint { return packed_tree[field * tree_slots + slot]; };
-  auto frontier_field = [&](uint field, uint slot) -> uint { return frontier[field * frontier_slots + slot]; };
-
-  auto slot_valid = [&](uint slot) -> bool {
-    if (slot < tree_slots) {
-      return tree_field((uint)TreeIdx::Valid, slot) != 0;
-    }
-    return frontier_field((uint)FrontierIdx::Active, slot - tree_slots) != 0;
-  };
-  // Parent references are always tree-slot indices (FRONTIER_NO_WINNER for the root).
-  auto slot_parent = [&](uint slot) -> uint {
-    if (slot < tree_slots) {
-      return tree_field((uint)TreeIdx::ParentSlot, slot);
-    }
-    return frontier_field((uint)FrontierIdx::ParentSlot, slot - tree_slots);
-  };
-  auto slot_token = [&](uint slot) -> uint {
-    if (slot < tree_slots) {
-      return tree_field((uint)TreeIdx::TokenId, slot);
-    }
-    return frontier_field((uint)FrontierIdx::TokenId, slot - tree_slots);
-  };
-  auto slot_depth = [&](uint slot) -> uint {
-    if (slot < tree_slots) {
-      return tree_field((uint)TreeIdx::Depth, slot);
-    }
-    return frontier_field((uint)FrontierIdx::Depth, slot - tree_slots);
-  };
-  auto slot_path_logprob = [&](uint slot) -> uint {
-    if (slot < tree_slots) {
-      return tree_field((uint)TreeIdx::PathLogprobBits, slot);
-    }
-    return frontier_field((uint)FrontierIdx::PathLogprobBits, slot - tree_slots);
+  constexpr uint NONE = FRONTIER_NO_WINNER;
+  const uint total_slots = tree_slot_count + frontier_capacity;
+  auto slot_field = [&](uint slot, TreeIdx tree_field, FrontierIdx frontier_field) -> uint {
+    const bool tree = slot < tree_slot_count;
+    const device uint* source = tree ? packed_tree : frontier;
+    const uint stride = tree ? tree_slot_count : frontier_capacity;
+    const uint index = tree ? slot : slot - tree_slot_count;
+    const uint column = tree ? uint(tree_field) : uint(frontier_field);
+    return source[column * stride + index];
   };
 
-  LinearizeOutputs out{nodes, token_ids, seeds};
-
-  device uint* state = stack;
-  device uint* dfs_stack = stack + total_slots;
-  const uint OPEN = 1;
-  const uint KEPT = 2;
-
-  for (uint slot = 0; slot < total_slots; slot++) {
-    state[slot] = 0;
+  uint parents[LINEARIZE_SLOTS_PER_THREAD];
+  float path_logprobs[LINEARIZE_SLOTS_PER_THREAD];
+  uint open_mask = 0;
+  uint kept_mask = uint(tid == 0);
+  METAL_PRAGMA_UNROLL
+  for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
+    parents[item] = NONE;
+    path_logprobs[item] = -INFINITY;
+    const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
+    if (slot >= total_slots) {
+      continue;
+    }
+    const bool valid = slot_field(slot, TreeIdx::Valid, FrontierIdx::Active) != 0;
+    parents[item] = valid ? slot_field(slot, TreeIdx::ParentSlot, FrontierIdx::ParentSlot) : NONE;
+    path_logprobs[item] = as_type<float>(slot_field(slot, TreeIdx::PathLogprobBits, FrontierIdx::PathLogprobBits));
+    parent_slots[slot] = ushort(parents[item]);
+    open_mask |= uint(parents[item] == 0) << item;
   }
-  state[0] = KEPT;
+  if (tid == 0) {
+    selected_slots[0] = 0;
+  }
+
   uint kept = 1;
-  for (uint child = 0; child < total_slots; child++) {
-    if (slot_valid(child) && slot_parent(child) == 0 && slot_parent(child) != FRONTIER_NO_WINNER) {
-      state[child] = OPEN;
-    }
-  }
   while (kept < budget) {
-    int best = -1;
-    float best_logprob = 0.0;
-    for (uint slot = 0; slot < total_slots; slot++) {
-      if (state[slot] != OPEN) {
+    float best_logprob = -INFINITY;
+    uint best = NONE;
+    uint first_open = NONE;
+    uint first_nan = NONE;
+    METAL_PRAGMA_UNROLL
+    for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
+      if ((open_mask & (1u << item)) == 0) {
         continue;
       }
-      const float logprob = as_type<float>(slot_path_logprob(slot));
-      if (best < 0 || logprob > best_logprob) {
-        best = (int)slot;
-        best_logprob = logprob;
-      }
+      const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
+      const float logprob = path_logprobs[item];
+      first_open = min(first_open, slot);
+      first_nan = min(first_nan, isnan(logprob) ? slot : NONE);
+      const bool better = logprob > best_logprob || (logprob == best_logprob && slot < best);
+      best = better ? slot : best;
+      best_logprob = better ? logprob : best_logprob;
     }
-    if (best < 0) {
+    best = linearize_winner(best_logprob, best, first_open, first_nan, reduction, selected_slot, tid);
+    if (best == NONE) {
       break;
     }
-    state[best] = KEPT;
+    if (tid == 0) {
+      selected_slots[kept] = ushort(best);
+    }
+    uint children = 0;
+    METAL_PRAGMA_UNROLL
+    for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
+      const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
+      kept_mask |= uint(slot == best) << item;
+      children |= uint(parents[item] == best) << item;
+    }
+    open_mask = (open_mask | children) & ~kept_mask;
     kept++;
-    for (uint child = 0; child < total_slots; child++) {
-      if (slot_valid(child) && slot_parent(child) == (uint)best && slot_parent(child) != FRONTIER_NO_WINNER) {
-        state[child] = OPEN;
-      }
-    }
   }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  linearize_emit(out, 0, -1, slot_token(0), slot_depth(0), prng_seed, root_position);
-  uint emitted = 1;
-
-  uint stack_depth = 1;
-  dfs_stack[0] = 0;
-  dfs_stack[1] = 0;
-  dfs_stack[2] = 0;
-
-  while (stack_depth > 0) {
-    const uint base = (stack_depth - 1) * 3;
-    const uint parent_slot = dfs_stack[base];
-    const uint parent_flat = dfs_stack[base + 1];
-    const uint cursor = dfs_stack[base + 2];
-
-    uint child = cursor;
-    while (child < total_slots) {
-      if (slot_valid(child) && slot_parent(child) == parent_slot && slot_parent(child) != FRONTIER_NO_WINNER &&
-          state[child] == KEPT) {
-        break;
-      }
-      child++;
+  LinearizeOutputs out{nodes, token_ids, seeds};
+  METAL_PRAGMA_UNROLL
+  for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
+    if ((kept_mask & (1u << item)) == 0) {
+      continue;
     }
-
-    if (child < total_slots) {
-      dfs_stack[base + 2] = child + 1;
-      const uint flat = emitted;
-      linearize_emit(out, flat, (int)parent_flat, slot_token(child), slot_depth(child), prng_seed, root_position);
-      emitted++;
-      dfs_stack[stack_depth * 3] = child;
-      dfs_stack[stack_depth * 3 + 1] = flat;
-      dfs_stack[stack_depth * 3 + 2] = 0;
-      stack_depth++;
-    } else {
-      out.nodes[parent_flat].trie_end = emitted - 1;
-      stack_depth--;
-    }
+    const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
+    const uint2 range = linearize_range(slot, kept, selected_slots, parent_slots);
+    const uint token = slot_field(slot, TreeIdx::TokenId, FrontierIdx::TokenId);
+    const uint depth = slot_field(slot, TreeIdx::Depth, FrontierIdx::Depth);
+    linearize_emit(out, range.x, -1, token, depth, prng_seed, root_position);
+    nodes[range.x].trie_end = range.y;
+    // Reuse the existing scratch buffer as the slot-to-flat map.
+    stack[slot] = range.x;
   }
-
-  for (uint i = emitted; i < budget; i++) {
-    linearize_pad(out, i);
+  threadgroup_barrier(mem_flags::mem_device);
+  METAL_PRAGMA_UNROLL
+  for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
+    if ((kept_mask & (1u << item)) == 0) {
+      continue;
+    }
+    const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
+    const uint parent = parents[item];
+    nodes[stack[slot]].parent = parent == NONE ? -1 : int(stack[parent]);
+  }
+  for (uint flat = kept + tid; flat < budget; flat += LINEARIZE_THREADGROUP_SIZE) {
+    linearize_pad(out, flat);
   }
 }
