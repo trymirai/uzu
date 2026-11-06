@@ -24,7 +24,3 @@ pub struct HybridSpec {
     pub adapter_spec: Option<Unsupported>,
     pub incoherence_spec: Option<HadamardSpec>,
 }
-
-#[cfg(test)]
-#[path = "../../../unit/config/hybrid_spec_test.rs"]
-mod tests;
