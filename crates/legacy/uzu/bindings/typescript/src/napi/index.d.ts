@@ -42,7 +42,7 @@ export declare class DownloadState {
   get name(): string
 }
 
-export declare enum DownloadManagerType {
+export declare const enum DownloadManagerType {
   Native = 'Native',
   Universal = 'Universal'
 }
@@ -153,14 +153,14 @@ export declare class ToolCallArgumentStream {
 }
 
 export type ChatSessionError =
-  | { type: 'Backend'; message: string }
+  | { type: 'Backend'; error: BackendError }
   | { type: 'Loading'; message: string }
   | { type: 'UnsupportedModel' }
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
   | { type: 'ToolTurnLimitExceeded'; limit: number }
 
-export declare enum ChatSessionState {
+export declare const enum ChatSessionState {
   Idle = 'Idle',
   Generation = 'Generation',
   ToolCalling = 'ToolCalling',
@@ -176,7 +176,7 @@ export type ClassificationSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare enum ClassificationSessionState {
+export declare const enum ClassificationSessionState {
   Idle = 'Idle',
   Classifying = 'Classifying'
 }
@@ -190,7 +190,7 @@ export type DecisionSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare enum DecisionSessionState {
+export declare const enum DecisionSessionState {
   Idle = 'Idle',
   Deciding = 'Deciding'
 }
@@ -201,7 +201,7 @@ export type TextToSpeechSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare enum TextToSpeechSessionState {
+export declare const enum TextToSpeechSessionState {
   Idle = 'Idle',
   Synthesizing = 'Synthesizing'
 }
@@ -366,7 +366,9 @@ export declare class ChatReplyConfig {
    * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
    */
   toolTurnLimit?: number | null
-  constructor(tokenLimit?: number | null, samplingPolicy: SamplingPolicy, grammar?: Grammar | null, toolTurnLimit?: number | null)
+  /** Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`. */
+  samplingSeed: SamplingSeed
+  constructor(tokenLimit?: number | null, samplingPolicy: SamplingPolicy, grammar?: Grammar | null, toolTurnLimit?: number | null, samplingSeed: SamplingSeed)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
@@ -374,6 +376,7 @@ export declare class ChatReplyConfig {
   withSamplingMethod(samplingMethod: SamplingMethod): ChatReplyConfig
   withToolTurnLimit(toolTurnLimit?: number | undefined | null): ChatReplyConfig
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
+  withSamplingSeed(samplingSeed: SamplingSeed): ChatReplyConfig
 }
 
 export declare class ChatReplyJoulesPerTokenComponents {
@@ -875,10 +878,21 @@ export declare class Value {
   constructor(json: string)
 }
 
+export type BackendError =
+  | { type: 'Backend'; message: string }
+  | { type: 'Capture'; message: string }
+  | { type: 'Decoder'; message: string }
+  | { type: 'Grammar'; message: string }
+  | { type: 'TrieAccept'; message: string }
+  | { type: 'Speculator'; message: string }
+  | { type: 'NoSeedToken' }
+  | { type: 'ContextOverflow' }
+  | { type: 'Other'; message: string }
+
 export type ChatContentBlock =
   ChatContentBlockIdentity | ChatContentBlockReasoningEffort | ChatContentBlockConversationStartDate | ChatContentBlockKnowledgeCutoff | ChatContentBlockBuiltinTools | ChatContentBlockTools | ChatContentBlockText | ChatContentBlockImage | ChatContentBlockVideo | ChatContentBlockAudio | ChatContentBlockFile | ChatContentBlockReasoning | ChatContentBlockToolCall | ChatContentBlockToolCallCandidate | ChatContentBlockToolCallResult | ChatContentBlockTranslation | ChatContentBlockCustom
 
-export declare enum ChatContentBlockType {
+export declare const enum ChatContentBlockType {
   Identity = 'Identity',
   ReasoningEffort = 'ReasoningEffort',
   ConversationStartDate = 'ConversationStartDate',
@@ -902,7 +916,7 @@ export interface ChatMessageMetadata {
   values: Record<string, Value>
 }
 
-export declare enum ChatReplyFinishReason {
+export declare const enum ChatReplyFinishReason {
   Stop = 'Stop',
   Length = 'Length',
   Cancelled = 'Cancelled',
@@ -921,7 +935,7 @@ export interface ClassificationOutputProbabilities {
   values: Record<string, number>
 }
 
-export declare enum ClassificationRole {
+export declare const enum ClassificationRole {
   User = 'User',
   Assistant = 'Assistant'
 }
@@ -938,19 +952,19 @@ export type DecisionQuestion =
 export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
 
-export declare enum HashMethod {
+export declare const enum HashMethod {
   CRC32C = 'CRC32C',
   Sha256 = 'Sha256',
   GitBlobSha1 = 'GitBlobSha1'
 }
 
-export declare enum ImageFormat {
+export declare const enum ImageFormat {
   Png = 'Png',
   Webp = 'Webp',
   Svg = 'Svg'
 }
 
-export declare enum ImageTheme {
+export declare const enum ImageTheme {
   Light = 'Light',
   Dark = 'Dark'
 }
@@ -970,7 +984,7 @@ export type ModelSpecialization =
 export type PcmBatchError =
   | { type: 'UnableToSaveAsWav'; message: string }
 
-export declare enum ReasoningEffort {
+export declare const enum ReasoningEffort {
   Disabled = 'Disabled',
   Default = 'Default',
   Low = 'Low',
