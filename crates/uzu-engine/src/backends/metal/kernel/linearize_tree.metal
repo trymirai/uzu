@@ -8,7 +8,7 @@ using namespace metal;
 using namespace uzu::trie;
 using namespace uzu::weaver;
 
-inline uint64_t prng_derive(uint64_t seed, uint64_t index) {
+METAL_FUNC uint64_t prng_derive(uint64_t seed, uint64_t index) {
   uint64_t hash = seed + index;
   hash ^= hash >> 33;
   hash *= 0xff51afd7ed558ccdUL;
@@ -24,7 +24,7 @@ struct LinearizeOutputs {
   device uint64_t* seeds;
 };
 
-inline void linearize_emit(
+METAL_FUNC void linearize_emit(
     LinearizeOutputs out,
     uint flat,
     int parent_flat,
@@ -38,7 +38,7 @@ inline void linearize_emit(
   out.seeds[flat] = prng_derive(prng_seed, (uint64_t)root_position + depth);
 }
 
-inline void linearize_pad(LinearizeOutputs out, uint flat) {
+METAL_FUNC void linearize_pad(LinearizeOutputs out, uint flat) {
   out.nodes[flat] = TrieNode{0xffffffffU, 0, 0, -1};
   out.token_ids[flat] = 0;
   out.seeds[flat] = 0;
@@ -81,7 +81,7 @@ UZU_CONST uint LINEARIZE_SLOTS_PER_THREAD =
 static_assert(LINEARIZE_SIMDGROUP_COUNT <= METAL_SIMD_SIZE, "winner reduction must fit in one SIMD group");
 static_assert(LINEARIZE_SLOTS_PER_THREAD <= numeric_limits<uint>::digits, "selection masks must fit in uint");
 
-inline uint linearize_winner(
+METAL_FUNC uint linearize_winner(
     float logprob,
     uint slot,
     uint first_open,
@@ -118,12 +118,8 @@ inline uint linearize_winner(
   return selected_slot;
 }
 
-inline uint2 linearize_range(
-    uint slot,
-    uint kept,
-    threadgroup const ushort* selected,
-    threadgroup const ushort* parents
-) {
+METAL_FUNC uint2
+linearize_range(uint slot, uint kept, threadgroup const ushort* selected, threadgroup const ushort* parents) {
   uint before = 0;
   uint descendants = 0;
   for (uint index = 0; index < kept; index++) {
