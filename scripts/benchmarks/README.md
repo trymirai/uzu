@@ -151,6 +151,26 @@ the memory vLLM uses.
 From Windows, the tests and `compare/` start it through `wsl.exe` with its virtual environment under
 `~/.cache/uzu-benchmarks` inside WSL, so model paths must be Hugging Face ids or paths WSL can open.
 
+### [Lucebox](https://github.com/Luce-Org/lucebox)
+
+Linux and CUDA only; on Windows it runs inside WSL like vLLM. The first run builds `luce_server` at a pinned commit for
+the local GPU under `~/.cache/uzu-benchmarks/lucebox` (CUDA 12+, CMake 3.21+). Models are GGUF files, given as paths or
+`REPOSITORY:FILE.gguf`:
+```bash
+uv run --project engine-lucebox bench-lucebox \
+    -m "Lucebox/Qwen3.8-27B-IQ4_XS-fast-GGUF:Qwen3.8-27B-IQ4_XS-pure.gguf" \
+    -d "Lucebox/Qwen3.8-27B-DFlash2-GGUF:Qwen3.8-27B-DFlash2-Q8_0.gguf"
+```
+
+The adapter serves the model on a local port with every prompt cache off and streams chat completions; luce_server has
+no raw-text route, so requests need `prompt_chat`. It verifies the DFlash draft's proposals as a tree (`--ddtree-budget`,
+default 22: the fastest on an RTX 4090 for this Qwen3.8 pair, ahead of 16, 28 and 36). Chats render the template's default, which thinks for Qwen, although
+luce_server alone leaves thinking off. Requests without sampling decode greedily: the adapter sends every sampling field,
+since luce_server fills omitted ones from the model card. Time to first token and decode throughput come from
+luce_server's prefill and decode timers (first to last token). `tokens_per_forward_pass` divides the generated tokens by
+the prefill plus the target forwards luce_server logs for the request. `memory_graphics_total` is the GPU's used memory
+above what was in use before the server started, because WSL has no per-process GPU accounting.
+
 ## iOS
 
 [platform-ios](platform-ios) runs these engines inside the [iOS app](../../apps/benchmarks-ios) on an iPhone or iPad:
@@ -165,11 +185,12 @@ Setup, device selection, model downloads and pushes are in the [app's README](..
 one run of the first request as a warmup, then, unless `--no-wait-cooldown`, waits for the CPU and GPU (macOS) or the
 NVIDIA GPU (elsewhere) to cool to 60°C before each measured request.
 
-uzu against vLLM on one NVIDIA GPU, each with its own speculative decoding, on Windows only: uzu runs natively and vLLM
-in WSL. vLLM's default target, `Ar4ikov/Qwen3.8-27B-AWQ-W4A16-ASYM`, is a 4-bit Qwen3.8-27B checkpoint that fits the GPU
-next to its draft with a 2048-token context, so each prompt plus `--max-tokens` must fit in 2048 tokens:
+uzu against vLLM and Lucebox on one NVIDIA GPU, each with its own speculative decoding, on Windows only: uzu runs
+natively and the others in WSL, one after another; `--engine vllm` or `--engine lucebox` runs one of them. vLLM's
+default target, `Ar4ikov/Qwen3.8-27B-AWQ-W4A16-ASYM`, is a 4-bit Qwen3.8-27B checkpoint that fits the GPU next to its
+draft with a 2048-token context, so each prompt plus `--max-tokens` must fit in 2048 tokens:
 ```bash
-uv run compare/uzu_vllm.py
+uv run compare/uzu_nvidia.py
 ```
 
 ## Server
@@ -203,5 +224,5 @@ Specific engine test
 uv run pytest --engine uzu
 ```
 
-`pytest engines` leaves vLLM out because it needs CUDA; test it with `uv run pytest --engine vllm`. On Windows,
-`--engine uzu` builds and runs uzu natively and `--engine vllm` runs vLLM inside WSL.
+`pytest engines` leaves vLLM and Lucebox out because they need CUDA; test them with `uv run pytest --engine vllm` and
+`--engine lucebox`. On Windows, `--engine uzu` builds and runs uzu natively, and the other two run inside WSL.

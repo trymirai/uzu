@@ -31,6 +31,13 @@ class EngineTests:
     pytestmark = pytest.mark.integration
     engine_name: ClassVar[str]
     command: ClassVar[Callable[[pytest.Config], list[str]]]
+    # Engines without a raw-text route get the text prompts as one user message.
+    chat_only: ClassVar[bool] = False
+
+    def prompt(self, text: str) -> dict:
+        if self.chat_only:
+            return {"prompt_chat": [ChatMessage(role="user", content=text)]}
+        return {"prompt_text": text}
 
     @pytest.fixture(scope="class")
     @classmethod
@@ -49,7 +56,7 @@ class EngineTests:
             yield process
 
     def test_text_generation(self, engine: EngineProcess) -> None:
-        request = BenchRequest(prompt_text="The capital of France is", max_tokens=8)
+        request = BenchRequest(**self.prompt("The capital of France is"), max_tokens=8)
         assert_responses(engine.request(request), 1)
 
     def test_chat_generation(self, engine: EngineProcess) -> None:
@@ -60,20 +67,20 @@ class EngineTests:
         assert_responses(engine.request(request), 1)
 
     def test_multiple_runs(self, engine: EngineProcess) -> None:
-        request = BenchRequest(prompt_text="Count from one to five:", max_tokens=8, num_runs=2)
+        request = BenchRequest(**self.prompt("Count from one to five:"), max_tokens=8, num_runs=2)
         assert_responses(engine.request(request), 2)
 
     def test_sampling(self, engine: EngineProcess) -> None:
         request = BenchRequest(
-            prompt_text="The capital of France is",
+            **self.prompt("The capital of France is"),
             max_tokens=8,
             sampling=BenchSampling(top_k=20, top_p=0.9, temp=0.7),
         )
         assert_responses(engine.request(request), 1)
 
     def test_multiple_requests_in_one_process(self, engine: EngineProcess) -> None:
-        first = BenchRequest(prompt_text="Complete this sentence: The sky is", max_tokens=8, num_runs=1)
+        first = BenchRequest(**self.prompt("Complete this sentence: The sky is"), max_tokens=8, num_runs=1)
         assert_responses(engine.request(first), 1)
 
-        second = BenchRequest(prompt_text="Complete this sentence: The grass is", max_tokens=8, num_runs=2)
+        second = BenchRequest(**self.prompt("Complete this sentence: The grass is"), max_tokens=8, num_runs=2)
         assert_responses(engine.request(second), 2)
