@@ -3,31 +3,34 @@ import definitions;
 import generated.trie;
 
 [[Public]] [[Kernel]] func LinearizeChain(
-  StructuredBuffer<uint> sampled,
-  StructuredBuffer<uint> target_output_token,
+  StructuredBuffer<uint32_t> sampled,
+  StructuredBuffer<uint32_t> target_output_token,
   RWStructuredBuffer<TrieNode> nodes,
-  RWStructuredBuffer<uint> token_ids,
-  RWStructuredBuffer<uint64_t> seeds,
-  uint chain_length,
-  uint budget,
+  RWStructuredBuffer<uint32_t> token_ids,
+  [[Optional("with_seeds")]] RWStructuredBuffer<uint64_t> seeds,
+  uint32_t chain_length,
+  uint32_t budget,
   uint64_t prng_seed,
-  uint root_position
+  uint32_t root_position,
+  [[Specialize]] bool with_seeds,
 ) {
   // TODO
 }
 
 [[Public]] [[Kernel]] func LinearizeTree(
-  StructuredBuffer<uint> packed_tree,
-  StructuredBuffer<uint> frontier,
+  StructuredBuffer<uint32_t> packed_tree,
+  StructuredBuffer<uint32_t> frontier,
   RWStructuredBuffer<TrieNode> nodes,
-  RWStructuredBuffer<uint> token_ids,
-  RWStructuredBuffer<uint64_t> seeds,
-  RWStructuredBuffer<uint> stack,
-  uint tree_slot_count,
-  uint frontier_capacity,
-  uint budget,
+  RWStructuredBuffer<uint32_t> token_ids,
+  [[Optional("with_seeds")]] RWStructuredBuffer<uint64_t> seeds,
+  RWStructuredBuffer<uint32_t> stack,
+  uint32_t tree_slot_count,
+  uint32_t frontier_capacity,
+  uint32_t budget,
   uint64_t prng_seed,
-  uint root_position
+  uint32_t root_position,
+  [[Specialize]] bool with_seeds,
+  [[Threads("(8 * 32)")]] uint32_t tid,
 ) {
   // TODO
 }
