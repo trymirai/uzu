@@ -1075,6 +1075,10 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
      * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
      */
     public var toolTurnLimit: UInt32?
+    /**
+     * Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`.
+     */
+    public var samplingSeed: SamplingSeed
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -1082,11 +1086,15 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
         /**
          * Maximum number of automatic tool-call turns per reply.
          * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
-         */toolTurnLimit: UInt32?) {
+         */toolTurnLimit: UInt32?, 
+        /**
+         * Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`.
+         */samplingSeed: SamplingSeed) {
         self.tokenLimit = tokenLimit
         self.samplingPolicy = samplingPolicy
         self.grammar = grammar
         self.toolTurnLimit = toolTurnLimit
+        self.samplingSeed = samplingSeed
     }
 
     
@@ -1113,6 +1121,15 @@ public func withSamplingPolicy(samplingPolicy: SamplingPolicy) -> ChatReplyConfi
     uniffi_shoji_fn_method_chatreplyconfig_with_sampling_policy(
             FfiConverterTypeChatReplyConfig_lower(self),
         FfiConverterTypeSamplingPolicy_lower(samplingPolicy),$0
+    )
+})
+}
+    
+public func withSamplingSeed(samplingSeed: SamplingSeed) -> ChatReplyConfig  {
+    return try!  FfiConverterTypeChatReplyConfig_lift(try! rustCall() {
+    uniffi_shoji_fn_method_chatreplyconfig_with_sampling_seed(
+            FfiConverterTypeChatReplyConfig_lower(self),
+        FfiConverterTypeSamplingSeed_lower(samplingSeed),$0
     )
 })
 }
@@ -1153,7 +1170,8 @@ public struct FfiConverterTypeChatReplyConfig: FfiConverterRustBuffer {
                 tokenLimit: FfiConverterOptionUInt32.read(from: &buf), 
                 samplingPolicy: FfiConverterTypeSamplingPolicy.read(from: &buf), 
                 grammar: FfiConverterOptionTypeGrammar.read(from: &buf), 
-                toolTurnLimit: FfiConverterOptionUInt32.read(from: &buf)
+                toolTurnLimit: FfiConverterOptionUInt32.read(from: &buf), 
+                samplingSeed: FfiConverterTypeSamplingSeed.read(from: &buf)
         )
     }
 
@@ -1162,6 +1180,7 @@ public struct FfiConverterTypeChatReplyConfig: FfiConverterRustBuffer {
         FfiConverterTypeSamplingPolicy.write(value.samplingPolicy, into: &buf)
         FfiConverterOptionTypeGrammar.write(value.grammar, into: &buf)
         FfiConverterOptionUInt32.write(value.toolTurnLimit, into: &buf)
+        FfiConverterTypeSamplingSeed.write(value.samplingSeed, into: &buf)
     }
 }
 

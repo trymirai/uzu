@@ -102,7 +102,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             self.model
                 .create_empty_state(self.max_context_length, sampling_seed)
                 .map_err(|err| BackendError::from(err.to_string()))
-                .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state)) as Box<dyn State>)
+                .map(|state| Box::new(UzuChatTokenBackendInstanceState::new(state, sampling_seed)) as Box<dyn State>)
         })
     }
 
@@ -150,7 +150,16 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-        let stream = match self.model.stream(input, state.value.get_mut(), options) {
+        let sampling_seed = match config.sampling_seed {
+            SamplingSeed::Default {} => state.sampling_seed,
+            SamplingSeed::Custom {
+                seed,
+            } => seed as u64,
+        };
+        let model_state = state.value.get_mut();
+        model_state.set_sampling_seed(sampling_seed);
+
+        let stream = match self.model.stream(input, model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_stream(err.to_string())));

@@ -2,10 +2,13 @@
 
 use uzu::{
     engine::{Engine, EngineConfig},
-    session::chat::ChatSessionStreamChunk,
-    types::session::{
-        chat::{ChatConfig, ChatMessage, ChatReplyConfig},
-        classification::ClassificationMessage,
+    session::chat::{ChatSession, ChatSessionStreamChunk},
+    types::{
+        basic::{ReasoningEffort, SamplingMethod, SamplingSeed},
+        session::{
+            chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig},
+            classification::ClassificationMessage,
+        },
     },
 };
 
@@ -95,6 +98,76 @@ async fn test_engine_chat() {
     for message in messages {
         println!("Message: {message:?}");
     }
+}
+
+async fn reply_content(
+    session: &ChatSession,
+    messages: Vec<ChatMessage>,
+    config: ChatReplyConfig,
+) -> Vec<ChatContentBlock> {
+    let replies = session.reply(messages, config).await.unwrap();
+    replies.last().unwrap().message.content.clone()
+}
+
+async fn fresh_reply(
+    session: &ChatSession,
+    config: ChatReplyConfig,
+) -> Vec<ChatContentBlock> {
+    session.reset().await.unwrap();
+    // Without thinking, so the sample isn't spent on the model's fixed reasoning preamble.
+    let messages = vec![
+        ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled),
+        ChatMessage::user().with_text("Write one sentence about a random animal.".to_string()),
+    ];
+    reply_content(session, messages, config).await
+}
+
+async fn follow_up_reply(
+    session: &ChatSession,
+    config: ChatReplyConfig,
+) -> Vec<ChatContentBlock> {
+    reply_content(session, vec![ChatMessage::user().with_text("Now another one.".to_string())], config).await
+}
+
+#[ignore]
+#[tokio::test]
+async fn test_engine_chat_reply_seed() {
+    let engine = Engine::new(EngineConfig::default()).await.unwrap();
+    let model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4".to_string()).await.unwrap().unwrap();
+    let download = engine.download(&model).await.unwrap();
+    while download.next().await.is_some() {}
+
+    let session_config = ChatConfig::default().with_sampling_seed(SamplingSeed::Custom {
+        seed: 1,
+    });
+    let session = engine.chat(model, session_config).await.unwrap();
+    let config =
+        ChatReplyConfig::default().with_token_limit(Some(32)).with_sampling_method(SamplingMethod::Stochastic {
+            temperature: Some(1.0),
+            top_k: None,
+            top_p: None,
+            min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        });
+    let with_seed = |seed| {
+        config.with_sampling_seed(SamplingSeed::Custom {
+            seed,
+        })
+    };
+
+    let session_seed = fresh_reply(&session, config.clone()).await;
+    let other_seed = fresh_reply(&session, with_seed(2)).await;
+    let same_seed_per_reply = fresh_reply(&session, with_seed(1)).await;
+    assert_ne!(session_seed, other_seed, "a reply seed should change the sample");
+    assert_eq!(session_seed, same_seed_per_reply, "a reply seed should match the same session seed");
+
+    // The follow-up continues on the state the seeded reply sampled with.
+    fresh_reply(&session, with_seed(2)).await;
+    let follow_up_without_seed = follow_up_reply(&session, config.clone()).await;
+    fresh_reply(&session, with_seed(2)).await;
+    let follow_up_with_session_seed = follow_up_reply(&session, with_seed(1)).await;
+    assert_eq!(follow_up_without_seed, follow_up_with_session_seed, "a reply seed should not outlive its reply");
 }
 
 #[ignore]

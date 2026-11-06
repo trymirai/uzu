@@ -21,6 +21,34 @@ fn response_format_maps_to_grammar() {
 }
 
 #[test]
+fn seed_maps_to_reply_sampling_seed() {
+    assert_eq!(reply_config(r#"{"messages":[]}"#).sampling_seed, SamplingSeed::Default {});
+    assert_eq!(
+        reply_config(r#"{"messages":[],"seed":42}"#).sampling_seed,
+        SamplingSeed::Custom {
+            seed: 42
+        }
+    );
+    assert_eq!(
+        reply_config(r#"{"messages":[],"seed":-7}"#).sampling_seed,
+        SamplingSeed::Custom {
+            seed: -7
+        }
+    );
+    // A seed alone leaves the model's default sampling in place.
+    assert_eq!(
+        reply_config(r#"{"messages":[],"seed":42}"#).sampling_policy,
+        uzu::types::basic::SamplingPolicy::Default {}
+    );
+}
+
+#[test]
+fn seed_must_be_an_integer() {
+    assert!(serde_json::from_str::<ChatCompletionRequest>(r#"{"messages":[],"seed":1.5}"#).is_err());
+    assert!(serde_json::from_str::<ChatCompletionRequest>(r#"{"messages":[],"seed":"42"}"#).is_err());
+}
+
+#[test]
 fn response_format_unrecognized_is_invalid() {
     let error = build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#))
         .expect_err("unrecognized response_format should be rejected");
