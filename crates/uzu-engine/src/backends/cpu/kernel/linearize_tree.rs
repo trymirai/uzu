@@ -22,7 +22,7 @@ fn prng_derive(
 unsafe fn emit_node(
     nodes: *mut TrieNode,
     token_ids: *mut u32,
-    seeds: *mut u64,
+    seeds: Option<*mut u64>,
     flat: usize,
     parent_flat: i32,
     token: u32,
@@ -38,7 +38,9 @@ unsafe fn emit_node(
             parent: parent_flat,
         };
         *token_ids.add(flat) = token;
-        *seeds.add(flat) = prng_derive(prng_seed, root_position as u64 + depth as u64);
+        if let Some(seeds) = seeds {
+            *seeds.add(flat) = prng_derive(prng_seed, root_position as u64 + depth as u64);
+        }
     }
 }
 
@@ -46,7 +48,7 @@ unsafe fn emit_node(
 unsafe fn pad_node(
     nodes: *mut TrieNode,
     token_ids: *mut u32,
-    seeds: *mut u64,
+    seeds: Option<*mut u64>,
     flat: usize,
 ) {
     unsafe {
@@ -57,7 +59,9 @@ unsafe fn pad_node(
             parent: -1,
         };
         *token_ids.add(flat) = 0;
-        *seeds.add(flat) = 0;
+        if let Some(seeds) = seeds {
+            *seeds.add(flat) = 0;
+        }
     }
 }
 
@@ -67,12 +71,14 @@ pub fn linearize_chain(
     target_output_token: *const u32,
     nodes: *mut TrieNode,
     token_ids: *mut u32,
-    seeds: *mut u64,
+    #[optional(with_seeds)] seeds: Option<*mut u64>,
     chain_length: u32,
     budget: u32,
     prng_seed: u64,
     root_position: u32,
+    #[specialize] with_seeds: bool,
 ) {
+    let seeds = with_seeds.then_some(seeds).flatten();
     let budget = budget as usize;
     let chain = (chain_length as usize + 1).min(budget);
     for i in 0..budget {
@@ -114,14 +120,16 @@ pub fn linearize_tree(
     frontier: *const u32,
     nodes: *mut TrieNode,
     token_ids: *mut u32,
-    seeds: *mut u64,
+    #[optional(with_seeds)] seeds: Option<*mut u64>,
     stack: *mut u32,
     tree_slot_count: u32,
     frontier_capacity: u32,
     budget: u32,
     prng_seed: u64,
     root_position: u32,
+    #[specialize] with_seeds: bool,
 ) {
+    let seeds = with_seeds.then_some(seeds).flatten();
     let tree_slots = tree_slot_count as usize;
     let frontier_slots = frontier_capacity as usize;
     let total_slots = tree_slots + frontier_slots;

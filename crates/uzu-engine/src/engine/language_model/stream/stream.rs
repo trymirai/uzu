@@ -614,14 +614,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             None
         };
 
-        let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-            batch_dim
-                .seeds()
-                .map(|seeds| seeds as &dyn GpuBuffer<Backend = B>)
-                .or_else(|| flat_seed.as_ref().map(|seed| seed as &dyn GpuBuffer<Backend = B>))
-        } else {
-            None
-        };
+        let seeds = batch_dim
+            .seeds()
+            .map(|seeds| seeds as &dyn GpuBuffer<Backend = B>)
+            .or_else(|| flat_seed.as_ref().map(|seed| seed as &dyn GpuBuffer<Backend = B>));
 
         let output_tokens = self
             .model
@@ -673,6 +669,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             capture_span.take();
         }
+
+        drop(flat_seed);
 
         let new_job = GenerationJob::Pending {
             output_norm: decoder_output.final_hidden,

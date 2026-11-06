@@ -94,8 +94,8 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     dflash: DFlash<B>,
     weaver: Option<Weaver<B>>,
     sampling: Sampling<B>,
-    linearize_chain: <B::Kernels as Kernels>::LinearizeChainKernel,
-    linearize_tree: <B::Kernels as Kernels>::LinearizeTreeKernel,
+    linearize_chain: [<B::Kernels as Kernels>::LinearizeChainKernel; 2],
+    linearize_tree: [<B::Kernels as Kernels>::LinearizeTreeKernel; 2],
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
 }
@@ -152,10 +152,18 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
 
-        let linearize_chain = <B::Kernels as Kernels>::LinearizeChainKernel::new(&*context)
-            .map_err(DFlashSpeculatorLoadError::Backend)?;
-        let linearize_tree =
-            <B::Kernels as Kernels>::LinearizeTreeKernel::new(&*context).map_err(DFlashSpeculatorLoadError::Backend)?;
+        let linearize_chain = [
+            <B::Kernels as Kernels>::LinearizeChainKernel::new(&*context, false)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+            <B::Kernels as Kernels>::LinearizeChainKernel::new(&*context, true)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+        ];
+        let linearize_tree = [
+            <B::Kernels as Kernels>::LinearizeTreeKernel::new(&*context, false)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+            <B::Kernels as Kernels>::LinearizeTreeKernel::new(&*context, true)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+        ];
 
         Ok(Some(Self {
             context,
@@ -379,8 +387,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             context.create_buffer_gpu(budget as usize * size_of::<GpuTrieNode>()).map_err(DFlashTreeError::Backend)?;
         let mut token_ids =
             context.create_buffer_gpu(budget as usize * word_bytes).map_err(DFlashTreeError::Backend)?;
-        let mut seeds =
-            context.create_buffer_gpu(budget as usize * size_of::<u64>()).map_err(DFlashTreeError::Backend)?;
+        let with_seeds = matches!(sampling_method, SamplingMethod::Stochastic { .. });
+        let mut seeds = if with_seeds {
+            Some(context.create_buffer_gpu(budget as usize * size_of::<u64>()).map_err(DFlashTreeError::Backend)?)
+        } else {
+            None
+        };
 
         let prng_seed = prng.seed();
         match &source {
@@ -388,12 +400,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 sampled,
                 chain_length,
             } => {
-                self.linearize_chain.encode(
+                self.linearize_chain[usize::from(with_seeds)].encode(
                     sampled,
                     target_output_token,
                     &mut nodes,
                     &mut token_ids,
-                    &mut seeds,
+                    seeds.as_mut(),
                     *chain_length,
                     budget,
                     prng_seed,
@@ -412,12 +424,12 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let mut stack = command_buffer
                     .allocate_scratch((total_slots + 3 * (shape.max_tree_depth as usize + 2)) * word_bytes)
                     .map_err(DFlashTreeError::Backend)?;
-                self.linearize_tree.encode(
+                self.linearize_tree[usize::from(with_seeds)].encode(
                     tree.packed_tree(),
                     tree.frontier(),
                     &mut nodes,
                     &mut token_ids,
-                    &mut seeds,
+                    seeds.as_mut(),
                     &mut stack,
                     *tree_slot_count,
                     *frontier_capacity,
@@ -429,7 +441,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             },
         }
 
-        Ok(BatchTopology::new(Some(nodes), Some(token_ids), Some(seeds), budget, false, false))
+        let is_flat = matches!(source, ProposalSource::Argmax { .. });
+
+        Ok(BatchTopology::new(Some(nodes), Some(token_ids), seeds, budget, false, is_flat))
     }
 }
 
