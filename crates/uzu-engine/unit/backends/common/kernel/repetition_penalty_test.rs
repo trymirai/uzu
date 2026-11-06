@@ -61,7 +61,6 @@ fn batch_topology<B: Backend>(
         None,
         TOKENS.len() as u32,
         flat,
-        flat,
     )
 }
 

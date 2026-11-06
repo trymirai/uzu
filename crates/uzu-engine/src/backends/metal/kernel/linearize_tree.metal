@@ -26,6 +26,7 @@ struct LinearizeOutputs {
 
 METAL_FUNC void linearize_emit(
     LinearizeOutputs out,
+    bool with_seeds,
     uint flat,
     int parent_flat,
     uint token,
@@ -35,13 +36,17 @@ METAL_FUNC void linearize_emit(
 ) {
   out.nodes[flat] = TrieNode{flat, flat, depth, parent_flat};
   out.token_ids[flat] = token;
-  out.seeds[flat] = prng_derive(prng_seed, (uint64_t)root_position + depth);
+  if (with_seeds) {
+    out.seeds[flat] = prng_derive(prng_seed, (uint64_t)root_position + depth);
+  }
 }
 
-METAL_FUNC void linearize_pad(LinearizeOutputs out, uint flat) {
+METAL_FUNC void linearize_pad(LinearizeOutputs out, bool with_seeds, uint flat) {
   out.nodes[flat] = TrieNode{0xffffffffU, 0, 0, -1};
   out.token_ids[flat] = 0;
-  out.seeds[flat] = 0;
+  if (with_seeds) {
+    out.seeds[flat] = 0;
+  }
 }
 
 PUBLIC KERNEL(LinearizeChain)(
@@ -49,11 +54,12 @@ PUBLIC KERNEL(LinearizeChain)(
     const device uint* target_output_token,
     device TrieNode* nodes,
     device uint* token_ids,
-    device uint64_t* seeds,
+    device uint64_t* seeds OPTIONAL(with_seeds),
     constant const uint& chain_length,
     constant const uint& budget,
     constant const uint64_t& prng_seed,
-    constant const uint& root_position
+    constant const uint& root_position,
+    const bool with_seeds SPECIALIZE
 ) {
   LinearizeOutputs out{nodes, token_ids, seeds};
 
@@ -61,10 +67,10 @@ PUBLIC KERNEL(LinearizeChain)(
   for (uint i = 0; i < budget; i++) {
     if (i < chain) {
       const uint token = (i == 0) ? target_output_token[0] : sampled[i - 1];
-      linearize_emit(out, i, (i == 0) ? -1 : (int)(i - 1), token, i, prng_seed, root_position);
+      linearize_emit(out, with_seeds, i, (i == 0) ? -1 : (int)(i - 1), token, i, prng_seed, root_position);
       out.nodes[i].trie_end = chain - 1;
     } else {
-      linearize_pad(out, i);
+      linearize_pad(out, with_seeds, i);
     }
   }
 }
@@ -144,13 +150,14 @@ PUBLIC KERNEL(LinearizeTree)(
     const device uint* frontier,
     device TrieNode* nodes,
     device uint* token_ids,
-    device uint64_t* seeds,
+    device uint64_t* seeds OPTIONAL(with_seeds),
     device uint* stack,
     constant const uint& tree_slot_count,
     constant const uint& frontier_capacity,
     constant const uint& budget,
     constant const uint64_t& prng_seed,
     constant const uint& root_position,
+    const bool with_seeds SPECIALIZE,
     threadgroup ushort parent_slots[LINEARIZE_MAX_SLOTS],
     threadgroup ushort selected_slots[LINEARIZE_MAX_SLOTS],
     threadgroup uint4 reduction[LINEARIZE_SIMDGROUP_COUNT],
@@ -238,7 +245,7 @@ PUBLIC KERNEL(LinearizeTree)(
     const uint2 range = linearize_range(slot, kept, selected_slots, parent_slots);
     const uint token = slot_field(slot, TreeIdx::TokenId, FrontierIdx::TokenId);
     const uint depth = slot_field(slot, TreeIdx::Depth, FrontierIdx::Depth);
-    linearize_emit(out, range.x, -1, token, depth, prng_seed, root_position);
+    linearize_emit(out, with_seeds, range.x, -1, token, depth, prng_seed, root_position);
     nodes[range.x].trie_end = range.y;
     // Reuse the existing scratch buffer as the slot-to-flat map.
     stack[slot] = range.x;
@@ -254,6 +261,6 @@ PUBLIC KERNEL(LinearizeTree)(
     nodes[stack[slot]].parent = parent == NONE ? -1 : int(stack[parent]);
   }
   for (uint flat = kept + tid; flat < budget; flat += LINEARIZE_THREADGROUP_SIZE) {
-    linearize_pad(out, flat);
+    linearize_pad(out, with_seeds, flat);
   }
 }
