@@ -11,7 +11,7 @@ use shoji::traits::backend::chat_token::TokenStreamMetrics;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, CpuBuffer,
-        DeviceCapabilities, GlobalBufferCpuGpu,
+        DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
         gpu_types::trie::TrieNode as TrieNodeGpu,
         kernel::ContextRingUpdateKernel,
@@ -201,7 +201,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         .model
                         .engine
                         .context
-                        .copyout::<u32>(&batch_dim.token_ids)
+                        .copyout::<u32>(batch_dim.token_ids().expect("trie batch carries token ids"))
                         .await
                         .map_err(LanguageModelStreamError::Backend)?;
 
@@ -209,7 +209,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         .model
                         .engine
                         .context
-                        .copyout::<TrieNodeGpu>(&batch_dim.nodes)
+                        .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie batch carries trie nodes"))
                         .await
                         .map_err(LanguageModelStreamError::Backend)?;
 
@@ -299,8 +299,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let batch_dim = BatchTopology::flat(input_chunk.len() as u32, true, &mut command_buffer)
-                .map_err(LanguageModelStreamError::Backend)?;
+            let batch_dim = BatchTopology::flat(input_chunk.len() as u32);
 
             let decoder_output = self.model.decoder.encode(
                 &token_ids,
@@ -455,7 +454,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
-        let (batch_dim, trie) = if self.propose_trie
+        let (batch_dim, trie_pending, flat_seed) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -508,24 +507,48 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 self.options.timestamps.as_ref(),
             );
 
-            (batch_dim, Some(trie_pending))
+            (batch_dim, Some(trie_pending), None)
         } else {
-            let mut batch_dim =
-                BatchTopology::flat(1, true, &mut command_buffer).map_err(LanguageModelStreamError::Backend)?;
-            command_buffer.encode_copy(last_job.output_tokens_buffer(), &mut batch_dim.token_ids);
+            let mut batch_dim = BatchTopology::flat(1);
+            let context = command_buffer.context();
+            let token_word_bytes = DataType::U32.size_in_bytes();
+            *batch_dim.token_ids_mut() = Some(
+                context
+                    .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
+                    .map_err(LanguageModelStreamError::Backend)?,
+            );
 
-            if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-                let seed = command_buffer
-                    .allocate_constant_from_slice(&[self.model_state.prng.derive(context_length as u64)])
-                    .map_err(LanguageModelStreamError::Backend)?;
-                command_buffer.encode_copy(&seed, &mut batch_dim.seeds);
-            }
+            let token_range = if last_job.batch_dim().full_accept() {
+                0..token_word_bytes
+            } else {
+                // Technically a bubble, but only hit if at the very end of
+                // context window.
+                let resolved = self.resolve(&mut last_job).await?;
+                let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
+                let row = (*accepted_indices.last().unwrap()) as usize;
+                row * token_word_bytes..(row + 1) * token_word_bytes
+            };
 
-            (batch_dim, None)
+            command_buffer.encode_copy(
+                last_job.output_tokens_buffer().subrange(token_range),
+                batch_dim.token_ids_mut().as_mut().expect("decode batch carries token ids"),
+            );
+
+            let seed = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
+                Some(
+                    command_buffer
+                        .allocate_constant_from_slice(&[self.model_state.prng.derive(context_length as u64)])
+                        .map_err(LanguageModelStreamError::Backend)?,
+                )
+            } else {
+                None
+            };
+
+            (batch_dim, None, seed)
         };
 
         // Main (verifier) forward pass
-        let token_ids = batch_dim.token_ids();
+        let token_ids = batch_dim.token_ids().expect("decode batch carries token ids");
 
         command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
@@ -572,7 +595,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     .model
                     .engine
                     .context
-                    .copyout::<TrieNodeGpu>(&batch_dim.nodes)
+                    .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie decode carries trie nodes"))
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
 
@@ -580,7 +603,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     .model
                     .engine
                     .context
-                    .copyout::<u32>(&batch_dim.token_ids)
+                    .copyout::<u32>(batch_dim.token_ids().expect("trie decode carries token ids"))
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
 
@@ -597,7 +620,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         };
 
         let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-            Some(batch_dim.seeds())
+            batch_dim
+                .seeds()
+                .map(|seeds| seeds as &dyn GpuBuffer<Backend = B>)
+                .or_else(|| flat_seed.as_ref().map(|seed| seed as &dyn GpuBuffer<Backend = B>))
         } else {
             None
         };

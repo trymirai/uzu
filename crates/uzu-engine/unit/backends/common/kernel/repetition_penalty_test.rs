@@ -55,14 +55,14 @@ fn batch_topology<B: Backend>(
     nodes: &[TrieNode],
     flat: bool,
 ) -> BatchTopology<B> {
-    BatchTopology {
-        nodes: create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes)),
-        token_ids: create_buffer_with_data::<B, u32>(context, &TOKENS),
-        seeds: create_buffer_with_data::<B, u64>(context, &vec![0; TOKENS.len()]),
-        max_size: TOKENS.len() as u32,
-        is_flat: flat,
-        full_accept: flat,
-    }
+    BatchTopology::new(
+        (!flat).then(|| create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes))),
+        (!flat).then(|| create_buffer_with_data::<B, u32>(context, &TOKENS)),
+        None,
+        TOKENS.len() as u32,
+        flat,
+        flat,
+    )
 }
 
 fn ring(

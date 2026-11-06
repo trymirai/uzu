@@ -257,7 +257,7 @@ impl<B: Backend> Attention<B> {
                     (MaybeMut::Mut(&mut scratch_kv), cache)
                 },
             };
-            let trie = (!batch_dim.is_flat()).then(|| batch_dim.nodes());
+            let trie = batch_dim.nodes();
             let (queries, query_scales) = self
                 .prepare(
                     &qkvg,

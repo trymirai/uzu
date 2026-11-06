@@ -132,7 +132,7 @@ impl<B: Backend> Classifier<B> {
             .encode(&embedded, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(ClassifierError::Backend)?;
 
-        let batch_topology = BatchTopology::flat(batch_dim, true, command_buffer).map_err(ClassifierError::Backend)?;
+        let batch_topology = BatchTopology::flat(batch_dim);
 
         let hidden = self
             .transformer
