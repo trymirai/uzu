@@ -42,7 +42,7 @@ export declare class DownloadState {
   get name(): string
 }
 
-export declare const enum DownloadManagerType {
+export declare enum DownloadManagerType {
   Native = 'Native',
   Universal = 'Universal'
 }
@@ -160,7 +160,7 @@ export type ChatSessionError =
   | { type: 'NoResponse' }
   | { type: 'ToolTurnLimitExceeded'; limit: number }
 
-export declare const enum ChatSessionState {
+export declare enum ChatSessionState {
   Idle = 'Idle',
   Generation = 'Generation',
   ToolCalling = 'ToolCalling',
@@ -176,7 +176,7 @@ export type ClassificationSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare const enum ClassificationSessionState {
+export declare enum ClassificationSessionState {
   Idle = 'Idle',
   Classifying = 'Classifying'
 }
@@ -190,7 +190,7 @@ export type DecisionSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare const enum DecisionSessionState {
+export declare enum DecisionSessionState {
   Idle = 'Idle',
   Deciding = 'Deciding'
 }
@@ -201,7 +201,7 @@ export type TextToSpeechSessionError =
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }
 
-export declare const enum TextToSpeechSessionState {
+export declare enum TextToSpeechSessionState {
   Idle = 'Idle',
   Synthesizing = 'Synthesizing'
 }
@@ -286,15 +286,15 @@ export declare class ChatContentBlockToolCall {
 
 export declare class ChatContentBlockToolCallCandidate {
   value: Value
-  identifier?: string
-  constructor(value: Value, identifier?: string)
+  identifier?: string | null
+  constructor(value: Value, identifier?: string | null)
 }
 
 export declare class ChatContentBlockToolCallResult {
-  identifier?: string
-  name?: string
+  identifier?: string | null
+  name?: string | null
   value: Value
-  constructor(identifier?: string, name?: string, value: Value)
+  constructor(identifier?: string | null, name?: string | null, value: Value)
 }
 
 export declare class ChatContentBlockTools {
@@ -353,22 +353,22 @@ export declare class ChatModelCapabilities {
 export declare class ChatReply {
   message: ChatMessage
   stats: ChatReplyStats
-  finishReason?: ChatReplyFinishReason
-  constructor(message: ChatMessage, stats: ChatReplyStats, finishReason?: ChatReplyFinishReason)
+  finishReason?: ChatReplyFinishReason | null
+  constructor(message: ChatMessage, stats: ChatReplyStats, finishReason?: ChatReplyFinishReason | null)
 }
 
 export declare class ChatReplyConfig {
-  tokenLimit?: number
+  tokenLimit?: number | null
   samplingPolicy: SamplingPolicy
-  grammar?: Grammar
+  grammar?: Grammar | null
   /**
    * Maximum number of automatic tool-call turns per reply.
    * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
    */
-  toolTurnLimit?: number
+  toolTurnLimit?: number | null
   /** Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`. */
   samplingSeed: SamplingSeed
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number, samplingSeed: SamplingSeed)
+  constructor(tokenLimit?: number | null, samplingPolicy: SamplingPolicy, grammar?: Grammar | null, toolTurnLimit?: number | null, samplingSeed: SamplingSeed)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
@@ -400,17 +400,17 @@ export declare class ChatReplySpeculatorStats {
 
 export declare class ChatReplyStats {
   duration: number
-  timeToFirstToken?: number
-  prefillTokensPerSecond?: number
-  generateTokensPerSecond?: number
-  tokensCountInput?: number
-  tokensCountInputCached?: number
-  tokensCountOutput?: number
-  memoryUsedBytes?: number
-  speculatorStats?: ChatReplySpeculatorStats
-  inputEnergy?: ReplyEnergy
-  outputEnergy?: ReplyEnergy
-  constructor(duration: number, timeToFirstToken?: number, prefillTokensPerSecond?: number, generateTokensPerSecond?: number, tokensCountInput?: number, tokensCountInputCached?: number, tokensCountOutput?: number, memoryUsedBytes?: number, speculatorStats?: ChatReplySpeculatorStats, inputEnergy?: ReplyEnergy, outputEnergy?: ReplyEnergy)
+  timeToFirstToken?: number | null
+  prefillTokensPerSecond?: number | null
+  generateTokensPerSecond?: number | null
+  tokensCountInput?: number | null
+  tokensCountInputCached?: number | null
+  tokensCountOutput?: number | null
+  memoryUsedBytes?: number | null
+  speculatorStats?: ChatReplySpeculatorStats | null
+  inputEnergy?: ReplyEnergy | null
+  outputEnergy?: ReplyEnergy | null
+  constructor(duration: number, timeToFirstToken?: number | null, prefillTokensPerSecond?: number | null, generateTokensPerSecond?: number | null, tokensCountInput?: number | null, tokensCountInputCached?: number | null, tokensCountOutput?: number | null, memoryUsedBytes?: number | null, speculatorStats?: ChatReplySpeculatorStats | null, inputEnergy?: ReplyEnergy | null, outputEnergy?: ReplyEnergy | null)
   get tokensCount(): number | null
   get totalJoules(): number | null
   get inputJoulesPerToken(): ChatReplyJoulesPerToken | null
@@ -518,8 +518,8 @@ export declare class DecisionInput {
 
 export declare class DecisionOption {
   key: string
-  description?: string
-  constructor(key: string, description?: string)
+  description?: string | null
+  constructor(key: string, description?: string | null)
 }
 
 export declare class DecisionOutput {
@@ -528,22 +528,22 @@ export declare class DecisionOutput {
 }
 
 export declare class DecisionQuestionChoice {
-  instructions?: string
+  instructions?: string | null
   options: Array<DecisionOption>
-  constructor(instructions?: string, options: Array<DecisionOption>)
+  constructor(instructions?: string | null, options: Array<DecisionOption>)
 }
 
 export declare class DecisionQuestionScore {
-  instructions?: string
+  instructions?: string | null
   levels: Array<string>
-  constructor(instructions?: string, levels: Array<string>)
+  constructor(instructions?: string | null, levels: Array<string>)
 }
 
 export declare class DecisionQuestionYesNo {
-  instructions?: string
-  noDescription?: string
-  yesDescription?: string
-  constructor(instructions?: string, noDescription?: string, yesDescription?: string)
+  instructions?: string | null
+  noDescription?: string | null
+  yesDescription?: string | null
+  constructor(instructions?: string | null, noDescription?: string | null, yesDescription?: string | null)
 }
 
 export declare class DecisionResult {
@@ -556,8 +556,8 @@ export declare class DecisionStats {
   tokensCount: number
   prefillDuration: number
   totalDuration: number
-  energy?: ReplyEnergy
-  constructor(tokensCount: number, prefillDuration: number, totalDuration: number, energy?: ReplyEnergy)
+  energy?: ReplyEnergy | null
+  constructor(tokensCount: number, prefillDuration: number, totalDuration: number, energy?: ReplyEnergy | null)
 }
 
 export declare class Feature {
@@ -600,18 +600,18 @@ export declare class Image {
   url: string
   theme: ImageTheme
   format: ImageFormat
-  description?: string
-  width?: number
-  height?: number
-  constructor(id: string, url: string, theme: ImageTheme, format: ImageFormat, description?: string, width?: number, height?: number)
+  description?: string | null
+  width?: number | null
+  height?: number | null
+  constructor(id: string, url: string, theme: ImageTheme, format: ImageFormat, description?: string | null, width?: number | null, height?: number | null)
 }
 
 export declare class Metadata {
   identifier: string
   name: string
-  description?: string
+  description?: string | null
   icons: Array<Image>
-  constructor(identifier: string, name: string, description?: string, icons: Array<Image>)
+  constructor(identifier: string, name: string, description?: string | null, icons: Array<Image>)
 
   static external(name: string): Metadata
 }
@@ -620,13 +620,13 @@ export declare class Model {
   identifier: ModelIdentifier
   registry: ModelRegistry
   backends: Array<ModelBackend>
-  family?: ModelFamily
-  properties?: ModelProperties
-  quantization?: ModelQuantization
+  family?: ModelFamily | null
+  properties?: ModelProperties | null
+  quantization?: ModelQuantization | null
   specializations: Array<ModelSpecialization>
   accessibility: ModelAccessibility
-  encoding?: Value
-  constructor(identifier: ModelIdentifier, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily, properties?: ModelProperties, quantization?: ModelQuantization, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: Value)
+  encoding?: Value | null
+  constructor(identifier: ModelIdentifier, registry: ModelRegistry, backends: Array<ModelBackend>, family?: ModelFamily | null, properties?: ModelProperties | null, quantization?: ModelQuantization | null, specializations: Array<ModelSpecialization>, accessibility: ModelAccessibility, encoding?: Value | null)
   get name(): string
   get isOnDevice(): boolean
   get isRemote(): boolean
@@ -651,8 +651,8 @@ export declare class ModelAccessibilityOnDevice {
 }
 
 export declare class ModelAccessibilityRemote {
-  repository?: Repository
-  constructor(repository?: Repository)
+  repository?: Repository | null
+  constructor(repository?: Repository | null)
 }
 
 export declare class ModelBackend {
@@ -674,9 +674,9 @@ export declare class ModelFamily {
 export declare class ModelProperties {
   identifier: string
   size: number
-  version?: string
+  version?: string | null
   metadata: Metadata
-  constructor(identifier: string, size: number, version?: string, metadata: Metadata)
+  constructor(identifier: string, size: number, version?: string | null, metadata: Metadata)
   get name(): string
 }
 
@@ -704,10 +704,10 @@ export declare class ModelSourceFilesystem {
 
 export declare class ModelSourceRegistry {
   toolchainVersion: string
-  repository?: Repository
-  sourceRepository?: Repository
+  repository?: Repository | null
+  sourceRepository?: Repository | null
   files: Array<File>
-  constructor(toolchainVersion: string, repository?: Repository, sourceRepository?: Repository, files: Array<File>)
+  constructor(toolchainVersion: string, repository?: Repository | null, sourceRepository?: Repository | null, files: Array<File>)
 }
 
 export declare class ModelSpecializationChat {
@@ -768,9 +768,9 @@ export declare class ReplyEnergyTotal {
 
 export declare class Repository {
   identifier: string
-  commitHash?: string
-  paths?: Array<string>
-  constructor(identifier: string, commitHash?: string, paths?: Array<string>)
+  commitHash?: string | null
+  paths?: Array<string> | null
+  constructor(identifier: string, commitHash?: string | null, paths?: Array<string> | null)
 }
 
 export declare class SamplingMethodGreedy {
@@ -778,23 +778,23 @@ export declare class SamplingMethodGreedy {
 }
 
 export declare class SamplingMethodStochastic {
-  temperature?: number
-  topK?: number
-  topP?: number
-  minP?: number
-  repetitionPenalty?: number
-  suffixRepetitionLength?: number
-  constructor(temperature?: number, topK?: number, topP?: number, minP?: number, repetitionPenalty?: number, suffixRepetitionLength?: number)
+  temperature?: number | null
+  topK?: number | null
+  topP?: number | null
+  minP?: number | null
+  repetitionPenalty?: number | null
+  suffixRepetitionLength?: number | null
+  constructor(temperature?: number | null, topK?: number | null, topP?: number | null, minP?: number | null, repetitionPenalty?: number | null, suffixRepetitionLength?: number | null)
 }
 
 export declare class SamplingParameters {
-  temperature?: number
-  topK?: number
-  topP?: number
-  minP?: number
-  repetitionPenalty?: number
-  suffixRepetitionLength?: number
-  constructor(temperature?: number, topK?: number, topP?: number, minP?: number, repetitionPenalty?: number, suffixRepetitionLength?: number)
+  temperature?: number | null
+  topK?: number | null
+  topP?: number | null
+  minP?: number | null
+  repetitionPenalty?: number | null
+  suffixRepetitionLength?: number | null
+  constructor(temperature?: number | null, topK?: number | null, topP?: number | null, minP?: number | null, repetitionPenalty?: number | null, suffixRepetitionLength?: number | null)
 }
 
 export declare class SamplingPolicyCustom {
@@ -837,10 +837,10 @@ export declare class Token {
 }
 
 export declare class ToolCall {
-  identifier?: string
+  identifier?: string | null
   name: string
   arguments: any
-  constructor(identifier?: string, name: string, arguments: any)
+  constructor(identifier?: string | null, name: string, arguments: any)
 }
 
 export declare class ToolDescriptionFunction {
@@ -851,16 +851,16 @@ export declare class ToolDescriptionFunction {
 export declare class ToolFunction {
   name: string
   description: string
-  parameters?: any
-  returnDefinition?: any
-  constructor(name: string, description: string, parameters?: any, returnDefinition?: any)
+  parameters?: Value | null
+  returnDefinition?: Value | null
+  constructor(name: string, description: string, parameters?: Value | null, returnDefinition?: Value | null)
 }
 
 export declare class ToolNamespace {
   name: string
-  description?: string
+  description?: string | null
   tools: Array<ToolDescription>
-  constructor(name: string, description?: string, tools: Array<ToolDescription>)
+  constructor(name: string, description?: string | null, tools: Array<ToolDescription>)
 }
 
 export declare class TranslationPayloadImage {
@@ -892,7 +892,7 @@ export type BackendError =
 export type ChatContentBlock =
   ChatContentBlockIdentity | ChatContentBlockReasoningEffort | ChatContentBlockConversationStartDate | ChatContentBlockKnowledgeCutoff | ChatContentBlockBuiltinTools | ChatContentBlockTools | ChatContentBlockText | ChatContentBlockImage | ChatContentBlockVideo | ChatContentBlockAudio | ChatContentBlockFile | ChatContentBlockReasoning | ChatContentBlockToolCall | ChatContentBlockToolCallCandidate | ChatContentBlockToolCallResult | ChatContentBlockTranslation | ChatContentBlockCustom
 
-export declare const enum ChatContentBlockType {
+export declare enum ChatContentBlockType {
   Identity = 'Identity',
   ReasoningEffort = 'ReasoningEffort',
   ConversationStartDate = 'ConversationStartDate',
@@ -916,7 +916,7 @@ export interface ChatMessageMetadata {
   values: Record<string, Value>
 }
 
-export declare const enum ChatReplyFinishReason {
+export declare enum ChatReplyFinishReason {
   Stop = 'Stop',
   Length = 'Length',
   Cancelled = 'Cancelled',
@@ -935,7 +935,7 @@ export interface ClassificationOutputProbabilities {
   values: Record<string, number>
 }
 
-export declare const enum ClassificationRole {
+export declare enum ClassificationRole {
   User = 'User',
   Assistant = 'Assistant'
 }
@@ -952,19 +952,19 @@ export type DecisionQuestion =
 export type Grammar =
   GrammarJsonAny | GrammarJsonSchema | GrammarRegex
 
-export declare const enum HashMethod {
+export declare enum HashMethod {
   CRC32C = 'CRC32C',
   Sha256 = 'Sha256',
   GitBlobSha1 = 'GitBlobSha1'
 }
 
-export declare const enum ImageFormat {
+export declare enum ImageFormat {
   Png = 'Png',
   Webp = 'Webp',
   Svg = 'Svg'
 }
 
-export declare const enum ImageTheme {
+export declare enum ImageTheme {
   Light = 'Light',
   Dark = 'Dark'
 }
@@ -984,7 +984,7 @@ export type ModelSpecialization =
 export type PcmBatchError =
   | { type: 'UnableToSaveAsWav'; message: string }
 
-export declare const enum ReasoningEffort {
+export declare enum ReasoningEffort {
   Disabled = 'Disabled',
   Default = 'Default',
   Low = 'Low',
@@ -1019,18 +1019,18 @@ export type TranslationPayload =
 /** Chat metadata available without loading model weights or allocating a session. */
 export declare class ChatModelInfo {
   /** Architectural limit; absent before download or for models without a finite limit. */
-  contextLength?: number
+  contextLength?: number | null
   capabilities: ChatModelCapabilities
-  defaultReasoningEffort?: ReasoningEffort
-  constructor(contextLength?: number, capabilities: ChatModelCapabilities, defaultReasoningEffort?: ReasoningEffort)
+  defaultReasoningEffort?: ReasoningEffort | null
+  constructor(contextLength?: number | null, capabilities: ChatModelCapabilities, defaultReasoningEffort?: ReasoningEffort | null)
 }
 
 export declare class Device {
-  osName?: string
-  cpuName?: string
-  memoryTotal?: number
+  osName?: string | null
+  cpuName?: string | null
+  memoryTotal?: number | null
   homePath: string
-  constructor(osName?: string, cpuName?: string, memoryTotal?: number, homePath: string)
+  constructor(osName?: string | null, cpuName?: string | null, memoryTotal?: number | null, homePath: string)
 
   static create(): Device
 }
@@ -1107,19 +1107,19 @@ export declare class EngineCallback {
 }
 
 export declare class EngineConfig {
-  miraiApiKey?: string
-  localPath?: string
-  huggingfaceApiKey?: string
-  openaiApiKey?: string
-  anthropicApiKey?: string
-  geminiApiKey?: string
-  xaiApiKey?: string
-  basetenApiKey?: string
-  openrouterApiKey?: string
+  miraiApiKey?: string | null
+  localPath?: string | null
+  huggingfaceApiKey?: string | null
+  openaiApiKey?: string | null
+  anthropicApiKey?: string | null
+  geminiApiKey?: string | null
+  xaiApiKey?: string | null
+  basetenApiKey?: string | null
+  openrouterApiKey?: string | null
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
   downloadManagerType: DownloadManagerType
-  constructor(miraiApiKey?: string, localPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
+  constructor(miraiApiKey?: string | null, localPath?: string | null, huggingfaceApiKey?: string | null, openaiApiKey?: string | null, anthropicApiKey?: string | null, geminiApiKey?: string | null, xaiApiKey?: string | null, basetenApiKey?: string | null, openrouterApiKey?: string | null, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
 
   static create(): EngineConfig
   withMiraiApiKey(miraiApiKey: string): EngineConfig

@@ -1,1 +1,3 @@
-pub struct AliasContext;
+pub struct AliasContext<'item> {
+    pub item: &'item syn::ItemType,
+}

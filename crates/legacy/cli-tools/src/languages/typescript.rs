@@ -6,7 +6,7 @@ use crate::{
     configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget},
     types::{Command, Configuration, Language},
-    utilities::fs::copy_directory,
+    utilities::fs::{copy_directory, recreate_directory, remove_files_with_extension},
 };
 
 pub struct TypeScriptLanguageBackend {
@@ -92,16 +92,46 @@ impl LanguageBackend for TypeScriptLanguageBackend {
         self.build(Configuration::Release, vec![ALL_TARGET.to_string()])?;
 
         let paths = Paths::new()?;
-        let source = paths.bindings_for_language_path(self.language()).join("dist");
+        let bindings_path = paths.bindings_for_language_path(self.language());
+        let source = bindings_path.join("dist");
         if !source.exists() {
             anyhow::bail!("Missing dist folder at {}", source.display());
         }
 
+        // The umbrella package: the loader requires the binary for the platform it runs on from that
+        // platform's package, which package managers install from `optionalDependencies` when its
+        // `os` and `cpu` match.
         let destination = release_path.join("typescript-npm");
-        if destination.exists() {
-            fs::remove_dir_all(&destination)?;
-        }
+        recreate_directory(&destination)?;
         copy_directory(&source, &destination)?;
-        Ok(())
+        remove_files_with_extension(&destination, "node")?;
+
+        // A package per `napi.targets` entry holding its binary, published before the umbrella package.
+        let platforms_path = release_path.join("typescript-npm-platforms");
+        recreate_directory(&platforms_path)?;
+        Command::napi_create_npm_dirs(&platforms_path).with_current_path(&bindings_path).run()?;
+        copy_platform_binaries(&paths.napi_output_path(), &platforms_path)
     }
+}
+
+/// Copies each platform package's binary (its `main`) from the napi build output. Fails when one
+/// is missing, which would publish a package that installs but can't load. (`napi artifacts`
+/// would do this, but it resolves absolute paths against its working directory.)
+fn copy_platform_binaries(
+    output_path: &Path,
+    platforms_path: &Path,
+) -> Result<()> {
+    for entry in fs::read_dir(platforms_path)? {
+        let package_path = entry?.path();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(package_path.join("package.json"))?)?;
+        let binary =
+            manifest["main"].as_str().ok_or_else(|| anyhow::anyhow!("Missing `main` in {}", package_path.display()))?;
+        let source = output_path.join(binary);
+        if !source.exists() {
+            anyhow::bail!("Missing {} for {}", source.display(), package_path.display());
+        }
+        fs::copy(&source, package_path.join(binary))?;
+    }
+    Ok(())
 }

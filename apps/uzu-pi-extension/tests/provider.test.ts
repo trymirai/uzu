@@ -297,7 +297,9 @@ test("tool declarations use the developer role while instructions and reasoning 
   const tool = messages[1]!.toolNamespaces[0]!.tools[0]!;
   assert.ok(tool instanceof ToolDescriptionFunction);
   assert.equal(tool.toolFunction.name, "read");
-  assert.deepEqual(JSON.parse(tool.toolFunction.parameters.json), {
+  const parameters = tool.toolFunction.parameters;
+  assert.ok(parameters);
+  assert.deepEqual(JSON.parse(parameters.json), {
     type: "object",
     properties: { path: { type: "string" } },
     required: ["path"],

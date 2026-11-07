@@ -1,0 +1,36 @@
+import { ChatConfig, ChatMessage, ChatReplyConfig, Engine, EngineConfig } from '@trymirai/uzu-wasm';
+
+async function main() {
+    let output = document.getElementById('output')!;
+
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('alibaba:qwen3.5:0.8b:mirai:mirai-m:4');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+
+    for await (const update of await engine.download(model)) {
+        output.textContent = `Download progress: ${(update.progress * 100).toFixed(2)}%`;
+    }
+
+    let session = await engine.chat(model, ChatConfig.create());
+
+    let messages = [
+        ChatMessage.system().withText('You are a helpful assistant'),
+        ChatMessage.user().withText('Tell me a short, funny story about a robot')
+    ];
+
+    let reply = await session.reply(messages, ChatReplyConfig.create());
+    let message = reply[0]?.message;
+
+    if (message) {
+        output.textContent += `\nReasoning: ${message.reasoning}\nText: ${message.text}`;
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+    document.getElementById('output')!.textContent += `\nError: ${error}`;
+});

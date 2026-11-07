@@ -25,7 +25,10 @@ pub fn sync_docs(
 
     let mut check_errors = Vec::new();
 
-    for language in platforms.languages.keys() {
+    for (language, language_config) in &platforms.languages {
+        if language_config.examples_path.is_none() {
+            continue;
+        }
         let source_root = platforms.examples_path_for_language(*language)?;
         for example_name in platforms.examples.keys() {
             let converted_name = language.convert_file_name(example_name);

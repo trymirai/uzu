@@ -30,9 +30,12 @@ use futures_util::stream::FuturesUnordered;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
 pub use model_info::ChatModelInfo;
-use nagare::chat::{ChatInstance, ChatSession};
+use nagare::{
+    chat::{ChatInstance, ChatSession},
+    decision::DecisionSession,
+};
 #[cfg(not(target_family = "wasm"))]
-use nagare::{classification::ClassificationSession, decision::DecisionSession, text_to_speech::TextToSpeechSession};
+use nagare::{classification::ClassificationSession, text_to_speech::TextToSpeechSession};
 use shoji::{
     traits::{Backend, Registry},
     types::{
@@ -671,7 +674,6 @@ impl Engine {
         }
     }
 
-    #[cfg(not(target_family = "wasm"))]
     #[bindings::export(Method)]
     pub async fn decision(
         &self,
