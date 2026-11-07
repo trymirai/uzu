@@ -8,6 +8,7 @@ pub(crate) mod activation_transform;
 mod attention;
 mod confidence_head;
 mod convolution;
+pub(crate) mod dequant;
 mod embedding;
 mod gated_act_mul;
 mod gdn;

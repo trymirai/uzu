@@ -4,11 +4,11 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, kernel::matmul::ActivationFormat},
     config::mlp::dense_mlp::DenseMLPConfig,
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearBlockError},
+        linear::{Linear, LinearBlockError, LinearInput, LinearInputPreparation},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     safetensors::ParameterTree,
@@ -46,7 +46,65 @@ impl<B: Backend> DenseMlp<B> {
             context,
         )
         .await?;
+        let mlp =
+            Self::with_up(up, model_dimension, hidden_dimension, data_type, config, parameter_tree, context).await?;
 
+        Ok((mlp, up_input_hadamard_factors))
+    }
+
+    pub async fn new_for_fused_input(
+        model_dimension: u32,
+        hidden_dimension: u32,
+        data_type: DataType,
+        config: &DenseMLPConfig,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<(Self, Option<LinearInputPreparation<B>>), DenseMlpNewError<B>> {
+        let (up, up_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
+            model_dimension,
+            2 * hidden_dimension,
+            data_type,
+            config.has_up_biases,
+            &parameter_tree.subtree("up_projection"),
+            context,
+        )
+        .await?;
+        let mlp =
+            Self::with_up(up, model_dimension, hidden_dimension, data_type, config, parameter_tree, context).await?;
+
+        Ok((mlp, up_input_preparation))
+    }
+
+    pub fn encode_input(
+        &self,
+        input: LinearInput<B>,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
+
+        let fused_up = self.up.encode_input(input, batch_dim, command_buffer)?;
+        self.encode_gate_and_down(&fused_up, batch_dim, command_buffer)
+    }
+
+    pub fn select_activation_format(
+        &self,
+        batch_dim: u32,
+        context: &B::Context,
+    ) -> ActivationFormat {
+        self.up.select_activation_format(batch_dim, context)
+    }
+
+    /// Loads the gated activation and the down projection around an up projection the caller loaded.
+    async fn with_up(
+        up: Box<dyn Linear<B>>,
+        model_dimension: u32,
+        hidden_dimension: u32,
+        data_type: DataType,
+        config: &DenseMLPConfig,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, DenseMlpNewError<B>> {
         let (down, down_input_preparation) = <dyn Linear<B>>::new_for_fused_input(
             hidden_dimension,
             model_dimension,
@@ -68,14 +126,28 @@ impl<B: Backend> DenseMlp<B> {
         )
         .map_err(DenseMlpNewError::Backend)?;
 
-        Ok((
-            Self {
-                up,
-                gate,
-                down,
-            },
-            up_input_hadamard_factors,
-        ))
+        Ok(Self {
+            up,
+            gate,
+            down,
+        })
+    }
+
+    /// Runs the gated activation on the up projection's output, then the down projection.
+    fn encode_gate_and_down(
+        &self,
+        fused_up: &B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
+        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let down_input = self
+            .gate
+            .encode_for_linear(fused_up, batch_dim, act_format, command_buffer)
+            .map_err(MlpEncodeError::Backend)?;
+        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
+
+        Ok(output)
     }
 }
 
@@ -86,16 +158,6 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
-
-        let fused_up = self.up.encode(input, batch_dim, command_buffer)?;
-        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
-        let down_input = self
-            .gate
-            .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)
-            .map_err(MlpEncodeError::Backend)?;
-        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
-
-        Ok(output)
+        self.encode_input(LinearInput::<B>::full_precision(input), batch_dim, command_buffer)
     }
 }

@@ -162,7 +162,12 @@ impl<B: Backend> ParameterTree<'_, B> {
         let key = format!("{}{name}", self.prefix);
         let tensor =
             self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
-        if (tensor.shape.as_ref(), tensor.dtype) != (shape, dtype) {
+        let shape_as_read = match &tensor.shape[..] {
+            stored if stored == shape => stored,
+            [1, rest @ ..] if rest == shape => rest,
+            _ => &tensor.shape,
+        };
+        if (shape_as_read, tensor.dtype) != (shape, dtype) {
             return Err(ParameterLoaderError::InvalidTensor {
                 key,
                 shape: tensor.shape.clone(),
