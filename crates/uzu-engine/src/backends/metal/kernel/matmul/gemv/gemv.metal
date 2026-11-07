@@ -130,8 +130,10 @@ KERNEL(Gemv)(
   dispatch_bool(full_tile, [&](auto full_tile_constant) {
     constexpr bool FullTile = decltype(full_tile_constant)::value;
     using Tile = GemvTile<INPUT_ROW_TILE, OUTPUT_ROW_TILE, REDUCTION_LANES, GROUP_LANES, NUM_SIMDGROUPS, K_SPLIT>;
+    const uint traversed_rows =
+        gemm_b_layout == GemmBLayout::MxuTiled && !gathered ? ((out_vec_size + 31) / 32) * 32 : out_vec_size;
     const OutputTile<Tile, FullTile> tile =
-        OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
+        OutputTile<Tile, FullTile>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, traversed_rows);
     thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
     if constexpr (BITS == 0) {

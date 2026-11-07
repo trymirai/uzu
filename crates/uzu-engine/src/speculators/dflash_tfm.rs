@@ -118,6 +118,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
         let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
+        let draft_vocab_size = config.draft_config.vocab_size;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
@@ -133,7 +134,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weaver = if let Some(weaver_config) = &config.weaver_config {
             Some(
                 Weaver::new(
-                    config.draft_config.vocab_size,
+                    draft_vocab_size,
                     weaver_config,
                     target_embedding.readout_input_hadamard_factors(),
                     &speculator_tree.subtree("weaver"),
@@ -160,7 +161,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         weight_loader.assert_all_tensors_read()?;
 
-        let sampling = Sampling::new(config.draft_config.vocab_size, data_type);
+        let sampling = Sampling::new(draft_vocab_size, data_type);
 
         Ok(Some(Self {
             context,

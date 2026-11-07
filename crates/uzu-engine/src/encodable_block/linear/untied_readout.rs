@@ -10,7 +10,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
     },
     safetensors::ParameterTree,
 };
@@ -78,20 +78,21 @@ impl<B: Backend> UntiedReadout<B> {
         &self,
         input: impl BufferRef<Backend = B>,
         batch_dim: u32,
-        gather: Option<Gather<impl BufferRef<Backend = B>>>,
+        output_dim: u32,
+        gather_indices: Option<impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let Some(input_rht) = &self.input_rht else {
             let a = MatmulA::full_precision(input);
-            return self.linear.encode_with_a(a, batch_dim, gather, command_buffer);
+            return self.linear.encode_with_a(a, batch_dim, output_dim, gather_indices, command_buffer);
         };
 
-        let format = if gather.is_some() {
+        let format = if gather_indices.is_some() {
             ActivationFormat::Bf16
         } else {
-            self.linear.select_activation_format(batch_dim, command_buffer.context())
+            self.linear.select_activation_format(batch_dim, Some(output_dim), command_buffer.context())
         };
         let input = input_rht.prepare(input, batch_dim, format, command_buffer).map_err(LinearEncodeError::Backend)?;
-        self.linear.encode_with_a(input.as_ref(), batch_dim, gather, command_buffer)
+        self.linear.encode_with_a(input.as_ref(), batch_dim, output_dim, gather_indices, command_buffer)
     }
 }

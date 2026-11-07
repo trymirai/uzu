@@ -372,6 +372,8 @@ fn cpu_group_major_quantized_gemm_matches_row_major() {
 #[case::group_output_padded_n(GroupOutput, 192, 66, 64, 4, ScaleZeroPoint, 66)]
 #[case::output_group_bias_prefix(OutputGroup, 128, 12, 32, 4, ScaleBias, 4)]
 #[case::group_output_bias_prefix(GroupOutput, 128, 12, 32, 4, ScaleBias, 4)]
+#[case::output_group_zero_point_odd_prefix(OutputGroup, 128, 64, 64, 4, ScaleZeroPoint, 19)]
+#[case::group_output_zero_point_odd_prefix(GroupOutput, 128, 64, 64, 4, ScaleZeroPoint, 19)]
 fn quant_gemm_parameter_layout_prefix_matches_cpu(
     #[case] params_layout: QuantParamsLayout,
     #[case] k: u32,
@@ -639,6 +641,43 @@ fn a8w_mxu_output_bias_parity_bf16(
         0.08,
         0.8,
     );
+}
+
+#[uzu_test]
+fn gemv_mxu_tiled_prefix_preserves_output_bounds() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    if !context.supports_mxu {
+        return;
+    }
+    let mut matmul = MatmulMetalKernel::new(&context, DataType::BF16, DataType::BF16, DataType::BF16).unwrap();
+    for m in [1, 4] {
+        let input = QuantInput::<bf16>::new(m, 2048, 2080, 64, 8, QuantizationMethod::ScaleSymmetric, 0)
+            .with_group_output()
+            .with_signed_weight_codes();
+        let expected_full = run_quant_cpu(&input);
+        let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        tile_weights(&matmul, &mut buffers, &input, &context);
+        for width in [16, 19, 33, 2049] {
+            let sentinel = bf16::from_f32(-123.0);
+            let output_len = (m * width) as usize;
+            buffers.y = create_buffer_with_data::<Metal, bf16>(&context, &vec![sentinel; output_len + 32]);
+            let mut commands = context.create_command_buffer(None, None).unwrap();
+            let mut args = quant_arguments(&mut buffers, &input);
+            args.n = width;
+            matmul.encode(args, &mut commands).unwrap();
+            block_on(commands.end_encoding().submit().wait_until_completed()).unwrap();
+            let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y);
+            let expected: Vec<_> = expected_full
+                .chunks_exact(input.n as usize)
+                .flat_map(|row| row[..width as usize].iter().copied())
+                .collect();
+            assert_parity(&format!("tiled prefix m={m} n={width}"), &expected, &actual[..output_len], 0.05, 0.5);
+            assert!(
+                actual[output_len..].iter().all(|value| *value == sentinel),
+                "prefix wrote past output m={m} n={width}"
+            );
+        }
+    }
 }
 
 #[rstest]

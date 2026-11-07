@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{Gather, LinearEncodeError, LinearMatmulError, UntiedReadout},
+        linear::{LinearEncodeError, LinearMatmulError, UntiedReadout},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -199,18 +199,15 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("embedding readout");
 
-        assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
+        assert!(
+            batch_dim > 0 && output_dim > 0 && (gather_indices.is_some() || output_dim <= self.vocab_size),
+            "invalid embedding readout dimensions"
+        );
         let mut output_buffer = match &self.tying {
             EmbeddingTying::Untied {
                 output,
                 ..
-            } => {
-                let gather = gather_indices.map(|indices| Gather {
-                    indices,
-                    output_dim,
-                });
-                output.encode(input_buffer, batch_dim, gather, command_buffer)?
-            },
+            } => output.encode(input_buffer, batch_dim, output_dim, gather_indices, command_buffer)?,
             EmbeddingTying::Tied {
                 table,
                 readout,
