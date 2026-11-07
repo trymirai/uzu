@@ -365,15 +365,10 @@ export declare class ChatReplyConfig {
    * Maximum number of automatic tool-call turns per reply.
    * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
    */
-<<<<<<< HEAD
   toolTurnLimit?: number | null
-  constructor(tokenLimit?: number | null, samplingPolicy: SamplingPolicy, grammar?: Grammar | null, toolTurnLimit?: number | null)
-=======
-  toolTurnLimit?: number
   /** Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`. */
   samplingSeed: SamplingSeed
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number, samplingSeed: SamplingSeed)
->>>>>>> main
+  constructor(tokenLimit?: number | null, samplingPolicy: SamplingPolicy, grammar?: Grammar | null, toolTurnLimit?: number | null, samplingSeed: SamplingSeed)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
