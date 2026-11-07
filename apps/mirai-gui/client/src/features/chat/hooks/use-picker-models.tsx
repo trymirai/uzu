@@ -1,6 +1,7 @@
 import { useModelsStore } from "@/stores/use-models-store";
 import { modelDownloadPhases } from "@/types/model-manager";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
+import { formatMemoryHint } from "@/utils/format";
 import type { ChatInputModel } from "../components/composer/chat-input/types";
 import { useMemo } from "react";
 
@@ -16,6 +17,7 @@ export const useInstalledPickerModels = (): ChatInputModel[] => {
           id: m.repoId,
           name: m.name,
           logo: <ModelVendorIcon vendor={m.vendor} />,
+          hint: formatMemoryHint(m.freeMemoryBytes),
         })),
     [models, modelPhasesById],
   );

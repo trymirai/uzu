@@ -125,14 +125,21 @@ export function ModelPicker({
                             <span className="shrink-0 flex items-center justify-center w-4 h-4 [&>svg]:w-4 [&>svg]:h-4">
                               {model.logo}
                             </span>
-                            <Text
-                              as="span"
-                              color="primary"
-                              opticalSize={14}
-                              className={`whitespace-nowrap ${TEXT_13_CLASSNAME}`}
-                            >
-                              {model.name}
-                            </Text>
+                            <span className="flex flex-col items-start">
+                              <Text
+                                as="span"
+                                color="primary"
+                                opticalSize={14}
+                                className={`whitespace-nowrap ${TEXT_13_CLASSNAME}`}
+                              >
+                                {model.name}
+                              </Text>
+                              {model.hint && (
+                                <Text as="span" color="muted" className="whitespace-nowrap text-[11px] leading-[1.3]">
+                                  {model.hint}
+                                </Text>
+                              )}
+                            </span>
                           </SelectionRow>
                         )}
                       </MenuItem>

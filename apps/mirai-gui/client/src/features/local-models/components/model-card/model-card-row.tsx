@@ -16,6 +16,7 @@ export function ModelCardRow({
   logo,
   parameters,
   size,
+  hint,
   state,
   onDownload,
   onPause,
@@ -55,7 +56,7 @@ export function ModelCardRow({
           compact ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_80px_200px_120px]",
         )}
       >
-        <ModelHeading name={name} logo={logo} />
+        <ModelHeading name={name} logo={logo} hint={hint} />
 
         {!compact && (
           <div className="text-left">

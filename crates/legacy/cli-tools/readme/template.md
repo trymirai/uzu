@@ -61,12 +61,14 @@ You can run any example via `cargo tools example` \<{% for language in languages
 `uzu` is a native Rust crate with bindings available for:
 
 - `Swift` via [uniffi-rs](https://github.com/mozilla/uniffi-rs)
+- `Kotlin` via [uniffi-rs](https://github.com/mozilla/uniffi-rs)
 - `Python` via [pyo3](https://github.com/PyO3/pyo3)
 - `TypeScript` via [napi-rs](https://github.com/napi-rs/napi-rs)
 
 Supported backends:
 
 - `metal`
+- `vulkan`
 - `cpu`
 
 <br>
@@ -99,7 +101,9 @@ You can run `uzu` in CLI mode:
 cargo run --release -p cli
 ```
 
-This launches an interactive app where you can browse, download, and interact with models.
+On Linux and Windows this runs on Vulkan. The CLI names the backend it runs on when it starts.
+
+This launches an interactive app where you can browse, download, and interact with models. On Windows it drops emoji typed or pasted into it: crossterm 0.29 does not pair the UTF-16 halves the console sends with a key release between them.
 
 You can also preselect a model with `--model`, passing its identifier or repository id:
 
@@ -108,6 +112,27 @@ cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
 ```
 
 If the model is not downloaded yet, the CLI starts downloading it automatically.
+
+On Linux and Windows, Vulkan needs:
+
+- the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) through `VULKAN_SDK`, or Slang 2026.17 or newer through `SLANG_DIR`, or `SLANG_INCLUDE_DIR` and `SLANG_LIB_DIR`
+- libclang, which Windows finds through `LIBCLANG_PATH`
+- a Vulkan 1.4 driver: a GPU's, or Mesa's lavapipe, which runs Vulkan on the CPU
+- `VK_LAYER_KHRONOS_validation` (part of the SDK) for the library tests
+
+On Linux, `nix develop` provides everything but the GPU driver. To build the CLI for the CPU backend alone, without Vulkan:
+
+```bash
+cargo run --release -p cli --no-default-features --features cpu
+```
+
+A Windows release build that runs without the Visual C++ Redistributable links the C and C++ runtimes statically. Set the flag for the target alone and name the target, so build scripts keep the dynamic runtime: Windows Defender quarantines statically linked build scripts as a false positive.
+
+```powershell
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
+cargo build --release -p cli --target x86_64-pc-windows-msvc  # target\x86_64-pc-windows-msvc\release\cli.exe
+Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS
+```
 
 ## Benchmarks
 

@@ -6,7 +6,7 @@ import { useModelsStore } from "@/stores/use-models-store";
 import type { PlatformModel } from "@/types/models";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
 import { createNewestTextModelComparator, createSizeAccessor } from "../../lib/model-sort";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { FamilyCard, type FamilyCardBadge } from "../family-card";
 import { Modal } from "@/components/ui/modal";
@@ -31,13 +31,16 @@ export function LocalModelsPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [modelsSearch, setModelsSearch] = useState("");
-  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
+  const { family: selectedFamilyId } = useSearch({ from: "/local-models" });
   const [refreshing, setRefreshing] = useState(false);
 
-  const selectFamily = useCallback((id: string | null) => {
-    setSelectedFamilyId(id);
-    setModelsSearch("");
-  }, []);
+  const selectFamily = useCallback(
+    (id: string | null) => {
+      void navigate({ to: "/local-models", search: id ? { family: id } : {} });
+      setModelsSearch("");
+    },
+    [navigate],
+  );
 
   const models = useModelsStore((s) => s.models);
   const loadingModels = useModelsStore((s) => s.loading);

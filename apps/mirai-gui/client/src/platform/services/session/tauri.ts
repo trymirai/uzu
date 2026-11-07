@@ -35,5 +35,6 @@ const subscribe = <T>(set: Set<(p: T) => void>, cb: (p: T) => void): (() => void
 export const tauriSession: SessionService = {
   onSessionState: (cb) => subscribe(stateListeners, cb),
   onSessionLoading: (cb) => subscribe(loadingListeners, cb),
+  getResidentSession: () => invoke<string | null>("resident_session"),
   ejectSession: ({ repoId }) => invoke("eject_session", { repoId }),
 };

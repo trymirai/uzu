@@ -60,9 +60,18 @@ const applyChatLoading = (payload: SessionLoadingPayload): void => {
 
 export const bindChatSessionState = (): (() => void) => {
   const { session } = getPlatform();
-  return session.onSessionState((payload) => {
+  const unbind = session.onSessionState((payload) => {
     applyChatSessionState(payload, toChatSession(payload));
   });
+  // A reloaded page starts without the model the backend still holds.
+  void session
+    .getResidentSession()
+    .then((repoId) => {
+      const runtime = useRuntimeSessionStore.getState();
+      if (repoId && !runtime.residentSession) runtime.setResidentSession({ repoId });
+    })
+    .catch((error: unknown) => console.error("[session] failed to read the resident session", error));
+  return unbind;
 };
 
 export const bindChatLoading = (): (() => void) => getPlatform().session.onSessionLoading(applyChatLoading);

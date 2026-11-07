@@ -11,6 +11,7 @@ use uzu::{
     engine::{Engine, EngineConfig},
     storage::DownloadPhase,
 };
+use uzu_engine::backends::selected_backend;
 
 use crate::{
     common::thinking::ThinkingSupport,
@@ -26,6 +27,7 @@ pub async fn run_non_interactive(
     reasoning_effort: Option<ReasoningEffort>,
     seed: Option<i64>,
 ) -> Result<()> {
+    eprintln!("Backend: {}", selected_backend());
     let preferences = ApplicationState::load_preferences().unwrap_or_default();
     let config = EngineConfig::default();
     let engine = Engine::new(config).await?;
@@ -59,7 +61,10 @@ pub async fn run_non_interactive(
             .map_err(|error| anyhow::anyhow!("Invalid --reasoning-effort: {error}"))?,
         None => support.with_preference(&preferences.thinking).reasoning_effort(),
     };
-    let session = create_session(&engine, &model, seed, true).await?;
+    let (session, notice) = create_session(&engine, &model, seed, true).await?;
+    if let Some(notice) = notice {
+        eprintln!("{notice}");
+    }
     let mut messages = Vec::new();
     if let Some(effort) = effort {
         messages.push(ChatMessage::system().with_reasoning_effort(effort));

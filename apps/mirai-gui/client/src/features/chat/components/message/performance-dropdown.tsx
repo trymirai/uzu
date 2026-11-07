@@ -52,7 +52,7 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
               <PerfStat value={formatSeconds(perf?.ttftSec)} label="Time to first token" />
               <PerfStat value={formatTps(perf?.tps)} label="Tokens per second" />
               {hasSpeculation && (
-                <PerfStat value={`${tokensPerForwardPass.toFixed(2)} tok/pass`} label="Acceptance rate" />
+                <PerfStat value={`${tokensPerForwardPass.toFixed(2)} tok/pass`} label="Tokens per pass" />
               )}
               <PerfStat value={formatSeconds(perf?.totalSec)} label="Total time" />
             </div>

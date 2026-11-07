@@ -78,10 +78,15 @@ impl SessionState for ChatSessionState {
         true
     }
 
+    /// Prefill runs as one submission, so an interrupt takes effect at the first output.
     fn status_text(&self) -> Option<String> {
         let status = match self.status {
             ChatSessionStatus::Idle => "loaded".to_string(),
             ChatSessionStatus::Loading => "loading".to_string(),
+            ChatSessionStatus::Generating if self.cancel_token.as_ref().is_some_and(CancelToken::is_cancelled) => {
+                "stopping".to_string()
+            },
+            ChatSessionStatus::Generating if self.pending_items.is_empty() => "processing prompt".to_string(),
             ChatSessionStatus::Generating => format!("generating ({})", HINT_SESSION_INTERRUPT),
         };
         Some(status)
@@ -122,7 +127,14 @@ pub async fn ensure_session(
         (state.engine.clone(), state.seed, state.no_tools)
     };
     let session = match create_session(&engine, model, seed, no_tools).await {
-        Ok(session) => session,
+        Ok((session, notice)) => {
+            if let Some(notice) = notice {
+                state.write().history.push(HistoryCellType::CommandResult {
+                    result: notice,
+                });
+            }
+            session
+        },
         Err(error) => {
             let mut state = state.write();
             if let Some(model_state) = state.model_state.as_mut() {
@@ -146,24 +158,26 @@ pub async fn ensure_session(
     Some(session)
 }
 
+/// The session, with the notice of a speculator its model ships but this backend cannot run.
 pub async fn create_session(
     engine: &Engine,
     model: &Model,
     seed: Option<i64>,
     no_tools: bool,
-) -> anyhow::Result<ChatSession> {
+) -> anyhow::Result<(ChatSession, Option<String>)> {
     let mut config = ChatConfig::default();
     if let Some(seed) = seed {
         config = config.with_sampling_seed(SamplingSeed::Custom {
             seed,
         });
     }
-    let mut session = engine.chat(model.clone(), config).await?;
+    let instance = engine.chat_instance(model.clone(), config).await?;
+    let mut session = engine.chat_with_instance(&instance).await?;
     if !no_tools && session.supports_tool_calls().await {
         session.add_tool(get_current_date_time).await?;
         session.add_tool(sleep).await?;
     }
-    Ok(session)
+    Ok((session, instance.speculation_notice()))
 }
 
 pub async fn run_session(

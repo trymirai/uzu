@@ -1,5 +1,6 @@
-#[cfg(not(target_vendor = "apple"))]
-compile_error!("keisoku supports Apple platforms only (macOS and iOS)");
+// Apple platforms only (macOS and iOS). Elsewhere the crate is empty, so workspace-wide
+// builds (`cargo build`, `cargo clippy --workspace`) still work on Windows and Linux.
+#![cfg(target_vendor = "apple")]
 
 mod device;
 #[cfg(target_os = "macos")]

@@ -40,7 +40,7 @@ export function LocalModelsHeader({
             {selectedFamily ? (
               <>
                 <Tooltip content="Back to families" side="bottom">
-                  <span className="shrink-0">
+                  <span className="z-20 shrink-0">
                     <IconAction label="Back to families" icon={<ChevronLeft size={16} />} onClick={onBack} />
                   </span>
                 </Tooltip>
@@ -68,7 +68,7 @@ export function LocalModelsHeader({
                 value={search.value}
                 onChange={search.onChange}
                 placeholder={search.placeholder}
-                className="w-[260px] shrink-0"
+                className="z-20 w-[260px] shrink-0"
               />
             )}
           </div>

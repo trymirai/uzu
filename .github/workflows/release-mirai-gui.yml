@@ -190,7 +190,7 @@ jobs:
         run: |
           set -euo pipefail
           # Only the .app: Tauri cannot style the DMG on CI (tauri-apps/tauri#1731).
-          pnpm build --bundles app --config desktop/tauri.release.conf.json
+          pnpm build --target aarch64-apple-darwin --bundles app --config desktop/tauri.release.conf.json
 
       - name: Build DMG (headless, dmgbuild)
         run: |

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
-import { useParams, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 
 import { ChatHeader } from "./chat-header";
 import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
@@ -38,6 +38,7 @@ type ChatSearchParams = {
 export function ChatPage() {
   const { chatId } = useParams({ from: "/chat/$chatId" });
   const search = useSearch({ strict: false }) as ChatSearchParams;
+  const navigate = useNavigate();
 
   const toast = useToast();
 
@@ -90,6 +91,7 @@ export function ChatPage() {
     isNewChat: !!search.isNew,
     replayActiveBuffer: applyActiveBufferToMessage,
     resetLocalUi,
+    forgetNewChat: () => void navigate({ to: "/chat/$chatId", params: { chatId }, replace: true }),
   });
 
   useEffect(() => {

@@ -4,6 +4,7 @@ export type ChatInputModel = {
   id: string;
   name: string;
   logo: ReactNode;
+  hint?: string;
 };
 
 export type ChatInputFile = {

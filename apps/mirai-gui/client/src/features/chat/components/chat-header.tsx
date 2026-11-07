@@ -4,6 +4,7 @@ import { platformInfo } from "@/platform/platform-info";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { useParams } from "@tanstack/react-router";
 import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
+import { HEADER_RIGHT_RESERVE_PX } from "@/components/window-controls";
 
 const HEADER_LEFT_RESERVE_PX = platformInfo.features.nativeTitleBar ? 120 : 56;
 
@@ -32,6 +33,7 @@ export const ChatHeader = ({
     <div
       data-tauri-drag-region="deep"
       className={twMerge("flex items-center justify-between pb-4 text-center lg:text-left", className)}
+      style={{ paddingRight: HEADER_RIGHT_RESERVE_PX }}
     >
       <div
         aria-hidden={opacity === 0}

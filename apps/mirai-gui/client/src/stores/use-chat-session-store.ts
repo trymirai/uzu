@@ -26,14 +26,14 @@ type SessionStoreState = {
   isTitleGenerating: boolean;
   titleGenChatId: string | null;
   // Set by cancelActiveRunForChat while that chat's title is generating; the
-  // send flow that owns the run consumes it and settles the placeholder.
+  // send flow that owns the run consumes it.
   titleGenAbortChatId: string | null;
   activeGeneratingChatId: string | null;
   activeAssistantMessageId: string | null;
   activeAssistantMessageText: string | null;
   activeAssistantMessageOutput: OutputShape | null;
   // The assistant placeholder from its creation until the reply settles; it
-  // exists before the run does (title generation runs in between).
+  // exists before the run does (the prompt is saved in between).
   loadingMessage: ChatMessageRef | null;
   canceledMessage: ChatMessageRef | null;
 

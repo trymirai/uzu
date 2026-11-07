@@ -3,6 +3,8 @@ import { LocalModelsPage } from "@/features/local-models/components/local-models
 
 export const Route = createFileRoute("/local-models")({
   component: LocalModelsRoute,
+  validateSearch: (search: Record<string, unknown>): { family?: string } =>
+    typeof search.family === "string" ? { family: search.family } : {},
 });
 
 function LocalModelsRoute() {

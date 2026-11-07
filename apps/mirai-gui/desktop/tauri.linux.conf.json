@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "shortDescription": "Chat with local LLMs on your own device",
+    "longDescription": "Mirai runs language models locally with the uzu engine, on a Vulkan GPU or Mesa's lavapipe.",
+    "linux": {
+      "deb": { "depends": ["libvulkan1", "xdg-utils"] }
+    }
+  }
+}

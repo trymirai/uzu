@@ -30,7 +30,8 @@ Benchmarks live inside the `uzu-engine` library test target (registered with `#[
 |-----------------------------------------|-------------------------------------|
 | `Metal/Kernel/Matmul/GEMM`              | `Metal/Kernel/Matmul/GEMM`          |
 | `Metal/Kernel/Matmul/GEMM_MXU`          | `Metal/Kernel/Matmul/GEMM_MXU`      |
-| `Metal/Kernel/A8W/w4`, `.../w8`         | `Metal/Kernel/A8W`                  |
+| `Metal/Kernel/A8W/w4`, `.../w8`         | `Metal/Kernel/A8W/`                 |
+| `Metal/Kernel/A8W4/...`, `Vulkan/...`   | `<Backend>/Kernel/A8W4`             |
 | `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
 | `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
@@ -56,6 +57,14 @@ CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
   -p uzu-engine \
   --lib -- "Metal/Kernel/Matmul" \
   --save-baseline matmul_baseline_m2_max
+```
+
+On Windows and Linux, Vulkan groups take the `vulkan` feature:
+
+```bash
+CRITERION_HOME="$PWD/target/criterion/rtx4090" cargo +nightly bench \
+  -p uzu-engine --no-default-features --features cpu,vulkan \
+  --lib -- "Vulkan/Kernel/A8W4"
 ```
 
 Set `UZU_CAPTURE='<benchmark path>'` to capture the first matching batch; named helpers use exact Criterion paths.

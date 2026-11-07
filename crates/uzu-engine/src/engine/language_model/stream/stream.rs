@@ -404,15 +404,13 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                     self.metrics.num_tokens_returned += 1;
                     (ForwardPassChaining::InFlight(forward_pass_pending), None)
                 } else {
+                    let sampled_tokens = context.copyout::<u32>(&*forward_pass_pending.output_tokens);
                     for pending in forward_pass_pending.pending {
                         wait(pending, self.options.timestamps.as_ref())
                             .await
                             .map_err(LanguageModelStreamError::Backend)?;
                     }
-                    let sampled_tokens = context
-                        .copyout::<u32>(&*forward_pass_pending.output_tokens)
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
+                    let sampled_tokens = sampled_tokens.await.map_err(LanguageModelStreamError::Backend)?;
                     let sampled_tokens = sampled_tokens.iter().map(|token| u64::from(*token)).collect::<Box<[u64]>>();
                     let flat_trie = forward_pass_pending.input_trie.linearize();
                     let full = flat_trie.accept(&sampled_tokens, self.options.grammar.as_mut())?;

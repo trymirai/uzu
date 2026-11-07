@@ -29,6 +29,7 @@ import generated.weaver;
   uint32_t ancestor_stride,
   uint32_t lookahead_count,
   uint32_t candidate_depth_count,
+  [[Optional("mode != WeaverSelectionMode::Frontier")]] float children_noise_scale,
   [[Optional("has_prune_noise")]] float prune_noise_scale,
   [[Specialize]] WeaverSelectionMode mode,
   [[Specialize]] bool has_prune_noise,

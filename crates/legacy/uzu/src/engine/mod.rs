@@ -1,3 +1,4 @@
+mod available_memory_selection;
 pub mod bridge;
 mod callback;
 #[cfg(test)]
@@ -6,6 +7,7 @@ pub mod config;
 mod downloader;
 mod downloader_stream;
 mod error;
+mod memory_shortfall;
 mod model_info;
 mod sampling;
 mod shorthand;
@@ -29,8 +31,10 @@ pub use error::EngineError;
 use futures_util::stream::FuturesUnordered;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
+pub use memory_shortfall::MemoryShortfall;
+use memory_shortfall::directory_bytes;
 pub use model_info::ChatModelInfo;
-use nagare::chat::{ChatInstance, ChatSession};
+use nagare::chat::{ChatInstance, ChatSession, ChatSessionError};
 #[cfg(not(target_family = "wasm"))]
 use nagare::{classification::ClassificationSession, decision::DecisionSession, text_to_speech::TextToSpeechSession};
 use shoji::{
@@ -42,10 +46,11 @@ use shoji::{
 };
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use uzu_engine::backends::select_backend;
 
 use crate::{
     device::Device,
-    engine::bridge::UzuLlmBackend,
+    engine::{available_memory_selection::AvailableMemorySelection, bridge::UzuLlmBackend},
     helpers::SharedAccess,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
@@ -60,6 +65,9 @@ use crate::{
     logs,
     registry::openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
 };
+
+/// Refuses, with the shortfall, a model too large for the memory a device has free.
+pub type MemoryCheck = Arc<dyn Fn(u64) -> Option<MemoryShortfall> + Send + Sync>;
 
 #[bindings::export(Class)]
 #[derive(Clone)]
@@ -542,7 +550,7 @@ impl Engine {
             if candidate.as_deref() != Some(Path::new(&path)) {
                 continue;
             }
-            if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
+            if self.model_path(&model).await.is_some_and(|model_path| Path::new(&model_path) == Path::new(&path)) {
                 matches.push(model);
             }
         }
@@ -636,8 +644,11 @@ impl Engine {
     ) -> Result<ChatInstance, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend) = model.backends.first() {
-            let backend =
+            let mut backend =
                 self.backends.lock().await.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?.clone();
+            if let Some(memory_check) = self.memory_check(&model).await? {
+                backend = Arc::new(UzuLlmBackend::with_memory_check(memory_check));
+            }
             let instance = ChatInstance::new(backend, config, model, path).await?;
             Ok(instance)
         } else {
@@ -744,6 +755,54 @@ impl Engine {
     pub async fn catalog_snapshot(&self) -> Result<(Vec<Model>, bool), EngineError> {
         let (models, complete) = self.published_catalog.lock().await.clone();
         Ok((models, complete && self.catalog_refreshes.load(Ordering::SeqCst) == 0))
+    }
+
+    /// The bytes free on the selected backend's device, where the backend reports them.
+    pub async fn available_memory(&self) -> Result<Option<u64>, EngineError> {
+        let available = select_backend(AvailableMemorySelection, "Unable to open any backend".to_string())
+            .await
+            .map_err(ChatSessionError::backend)?;
+        Ok(available.map(|bytes| bytes as u64))
+    }
+
+    /// The memory check of a downloaded model the Uzu backend runs, which sizes it like its catalog variants by its
+    /// download, or by its files without one; `None` where its size is unknown.
+    pub async fn memory_check(
+        &self,
+        model: &Model,
+    ) -> Result<Option<MemoryCheck>, EngineError> {
+        if model.backends.first().is_none_or(|backend| backend.identifier != "uzu") {
+            return Ok(None);
+        }
+        let Some(path) = self.model_path(model).await else {
+            return Ok(None);
+        };
+        let sizes = self.download_states().await;
+        let download_bytes = |model: &Model| {
+            sizes.get(&model.identifier).map(|state| state.total_bytes as u64).filter(|bytes| *bytes > 0)
+        };
+        let weight_bytes = match download_bytes(model) {
+            Some(bytes) => bytes,
+            None => match directory_bytes(Path::new(&path)).await {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(None),
+            },
+        };
+        let variants: Vec<(Model, u64)> = self
+            .models()
+            .await?
+            .into_iter()
+            .filter_map(|variant| download_bytes(&variant).map(|bytes| (variant, bytes)))
+            .collect();
+        let model = model.clone();
+        Ok(Some(Arc::new(move |available_bytes| {
+            MemoryShortfall::new(
+                &model,
+                weight_bytes,
+                available_bytes,
+                variants.iter().map(|(variant, bytes)| (variant, *bytes)),
+            )
+        })))
     }
 
     async fn handle_registry_refresh(

@@ -2,6 +2,7 @@
 
 from .engines.ios import TestIOS
 from .engines.llamacpp import TestLlamaCpp
+from .engines.lucebox import TestLucebox
 from .engines.mldrift import TestMLDrift
 from .engines.mlx import TestMLX
 from .engines.mlxserve import TestMLXServe
@@ -9,10 +10,12 @@ from .engines.mtplx import TestMTPLX
 from .engines.omlx import TestOMLX
 from .engines.splash import TestSplash
 from .engines.uzu import TestUzu
+from .engines.vllm import TestVLLM
 
 __all__ = [
     "TestIOS",
     "TestLlamaCpp",
+    "TestLucebox",
     "TestMLDrift",
     "TestMLX",
     "TestMLXServe",
@@ -20,4 +23,5 @@ __all__ = [
     "TestOMLX",
     "TestSplash",
     "TestUzu",
+    "TestVLLM",
 ]

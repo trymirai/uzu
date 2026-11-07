@@ -7,6 +7,7 @@ import { bindChatLoading, bindChatSessionState } from "./adapters";
 const mocks = vi.hoisted(() => ({
   loading: null as ((p: SessionLoadingPayload) => void) | null,
   state: null as ((p: SessionStatePayload) => void) | null,
+  resident: null as string | null,
 }));
 vi.mock("@/platform/platform-singleton", () => ({
   getPlatform: () => ({
@@ -19,6 +20,7 @@ vi.mock("@/platform/platform-singleton", () => ({
         mocks.state = cb;
         return () => {};
       },
+      getResidentSession: async () => mocks.resident,
     },
   }),
 }));
@@ -28,6 +30,7 @@ const runtimeDefaults = useRuntimeSessionStore.getState();
 const REPO = "vendor/model";
 
 beforeEach(() => {
+  mocks.resident = null;
   useChatSessionStore.setState(sessionDefaults, true);
   useRuntimeSessionStore.setState(runtimeDefaults, true);
   bindChatLoading();
@@ -76,4 +79,11 @@ it("turns a finished load into the resident session", () => {
   expect(useChatSessionStore.getState().isModelLoading).toBe(false);
   expect(useRuntimeSessionStore.getState().loadingSession).toBeNull();
   expect(useRuntimeSessionStore.getState().residentSession).toEqual({ repoId: REPO });
+});
+
+it("shows the model the backend kept loaded across a page reload", async () => {
+  mocks.resident = REPO;
+  bindChatSessionState();
+
+  await vi.waitFor(() => expect(useRuntimeSessionStore.getState().residentSession).toEqual({ repoId: REPO }));
 });

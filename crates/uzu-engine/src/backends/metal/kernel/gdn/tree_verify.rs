@@ -50,6 +50,9 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             &[arguments.tree_size, self.arguments.num_v_heads, self.arguments.head_v_dim],
             self.arguments.data_type,
         )?;
+        if let Some((path, state_advance)) = arguments.advance {
+            path.encode_advance(state_advance, &mut *arguments.h0, command_buffer)?;
+        }
         self.kernels[(arguments.tree_size > TOKEN_BLOCK) as usize].encode(
             arguments.q,
             arguments.k,
@@ -57,7 +60,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             arguments.trie,
             arguments.log_decay,
             arguments.beta,
-            arguments.h0,
+            &*arguments.h0,
             arguments.in_proj,
             arguments.norm_weight,
             &mut output,

@@ -13,7 +13,10 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+        helpers::{
+            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
+            supported_kernel,
+        },
     },
 };
 
@@ -28,7 +31,7 @@ fn run_moe_combine<B: Backend>(
     shared_output: &[bf16],
     shared_gate: &[bf16],
     batch_dim: u32,
-) -> Vec<bf16> {
+) -> Option<Vec<bf16>> {
     let context = create_context::<B>();
     let routed_buf = create_buffer_with_data::<B, bf16>(&context, routed_outputs);
     let weights_buf = create_buffer_with_data::<B, f32>(&context, expert_weights);
@@ -36,8 +39,11 @@ fn run_moe_combine<B: Backend>(
     let shared_gate_buf = create_buffer_with_data::<B, bf16>(&context, shared_gate);
     let mut output_buf = create_buffer::<B, bf16>(&context, (batch_dim * MODEL_DIM) as usize);
 
-    let kernel =
-        <B::Kernels as Kernels>::MoeCombineKernel::new(&context, DataType::BF16, MOE_COMBINE_BLOCK_DIM).unwrap();
+    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::MoeCombineKernel::new(
+        &context,
+        DataType::BF16,
+        MOE_COMBINE_BLOCK_DIM,
+    ))?;
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &routed_buf,
@@ -51,7 +57,7 @@ fn run_moe_combine<B: Backend>(
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, _>(&context, &output_buf)
+    Some(buffer_to_vec::<B, _>(&context, &output_buf))
 }
 
 #[uzu_test]
@@ -71,11 +77,13 @@ fn moe_combine_matches_cpu() {
         let shared_gate: Vec<bf16> = (0..batch_dim as usize).map(|i| bf16::from_f32((i as f32 - 1.5) * 0.7)).collect();
 
         let expected =
-            run_moe_combine::<Cpu>(&routed_outputs, &expert_weights, &shared_output, &shared_gate, batch_dim);
+            run_moe_combine::<Cpu>(&routed_outputs, &expert_weights, &shared_output, &shared_gate, batch_dim).unwrap();
         for_each_non_cpu_backend!(|B| {
-            let actual =
-                run_moe_combine::<B>(&routed_outputs, &expert_weights, &shared_output, &shared_gate, batch_dim);
-            assert_eq_float(&expected, &actual, 1e-2, &format!("MoeCombine ({batch_dim} tokens)"));
+            if let Some(actual) =
+                run_moe_combine::<B>(&routed_outputs, &expert_weights, &shared_output, &shared_gate, batch_dim)
+            {
+                assert_eq_float(&expected, &actual, 1e-2, &format!("MoeCombine ({batch_dim} tokens)"));
+            }
         });
     }
 }

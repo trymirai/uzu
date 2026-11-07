@@ -32,6 +32,8 @@ pub trait Context: Sized + Send + Sync {
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
 
+    /// Reads `buffer` as the work submitted before the call leaves it; the result may be polled only after that work
+    /// completes.
     fn copyout<T: AnyBitPattern>(
         &self,
         buffer: impl BufferRef<Backend = Self::Backend, Buffer = <Self::Backend as Backend>::GlobalGpuBuffer>,
@@ -40,6 +42,9 @@ pub trait Context: Sized + Send + Sync {
     fn create_allocation_pool(&self) -> Arc<<Self::Backend as Backend>::AllocationPool>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
+
+    /// The bytes this process can still allocate on the device, where the backend can tell.
+    fn available_memory(&self) -> Option<usize>;
 
     fn start_capture(
         &self,

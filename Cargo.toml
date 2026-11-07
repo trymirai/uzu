@@ -146,6 +146,9 @@ futures-util = "0.3.34"
 async-fs = "2.2.0"
 http = "1.5.0"
 httparse = "1.10.1"
+rustls-platform-verifier = "0.7.1"
+jni = "0.22.4"
+ndk-context = "0.1.1"
 reqwest = { version = "0.13.5", features = [
     "json",
     "stream",
@@ -215,8 +218,12 @@ tauri = "2.12.4"
 tauri-build = "2.7.3"
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
+tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-updater = "2.14.0"
 plist = "1.10.1"
+ash = "0.38.0"
+vk-mem = "0.5.0"
+windows = "0.62.2"
 
 [workspace.lints.clippy]
 # TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal

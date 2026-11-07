@@ -9,6 +9,8 @@ use crate::{
     },
     data_type::DataTypeRepr,
 };
+#[cfg(backend = "vulkan")]
+use crate::{backends::vulkan, utils::downcast::downcast_ref};
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
 macro_rules! for_each_backend {
@@ -16,6 +18,11 @@ macro_rules! for_each_backend {
         #[cfg(backend = "metal")]
         {
             type $B = crate::backends::metal::Metal;
+            $body
+        }
+        #[cfg(backend = "vulkan")]
+        {
+            type $B = crate::backends::vulkan::Vulkan;
             $body
         }
         {
@@ -31,6 +38,11 @@ macro_rules! for_each_non_cpu_backend {
         #[cfg(backend = "metal")]
         {
             type $B = crate::backends::metal::Metal;
+            $body
+        }
+        #[cfg(backend = "vulkan")]
+        {
+            type $B = crate::backends::vulkan::Vulkan;
             $body
         }
         {
@@ -101,4 +113,16 @@ pub fn buffer_readback<B: Backend>(
     submit_command_buffer(command_buffer);
 
     output_buffer
+}
+
+/// `kernel` once built, or `None` where its backend does not support it, so a shared test skips that backend. Vulkan
+/// builds the kernels it lacks as `Unsupported`, which fails with `NotSupported`.
+pub fn supported_kernel<B: Backend, K>(kernel: Result<K, B::Error>) -> Option<K> {
+    #[cfg(backend = "vulkan")]
+    if let Err(error) = &kernel
+        && let Some(vulkan::Error::NotSupported) = downcast_ref::<vulkan::Error>(error)
+    {
+        return None;
+    }
+    Some(kernel.expect("kernel"))
 }

@@ -6,6 +6,7 @@ pub fn validate(request: BenchRequest) !void {
     if ((request.num_runs orelse 1) == 0) {
         return error.InvalidNumRuns;
     }
+    if (request.reasoning_effort != null) return error.ReasoningEffortUnsupported;
     if (request.prompt_text) |text| {
         if (text.len == 0) return error.EmptyPrompt;
     } else if (request.prompt_chat) |messages| {

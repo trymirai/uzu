@@ -1,14 +1,19 @@
+use tauri::{AppHandle, Manager};
+#[cfg(target_os = "macos")]
 use tauri::{
-    AppHandle, Emitter, Manager,
+    Emitter,
     menu::{AboutMetadata, HELP_SUBMENU_ID, MenuBuilder, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID},
 };
 
+#[cfg(target_os = "macos")]
 const MENU_NEW_CHAT_ID: &str = "menu:new-chat";
+#[cfg(target_os = "macos")]
 const MENU_SETTINGS_ID: &str = "menu:settings";
 
 // Before the startup setting was removed, tauri-plugin-autostart used the
 // product name (Mirai) and LaunchAgent mode. Retire only that registration for
 // this executable; a similarly named agent may belong to something else.
+#[cfg(target_os = "macos")]
 pub fn remove_legacy_autostart() -> std::io::Result<()> {
     let Some(home) = std::env::var_os("HOME") else {
         return Ok(());
@@ -17,6 +22,7 @@ pub fn remove_legacy_autostart() -> std::io::Result<()> {
     remove_legacy_autostart_at(&path, &std::env::current_exe()?.canonicalize()?)
 }
 
+#[cfg(target_os = "macos")]
 fn remove_legacy_autostart_at(
     path: &std::path::Path,
     executable: &std::path::Path,
@@ -58,6 +64,8 @@ pub(crate) fn show_and_focus_main(app: &AppHandle) {
     }
 }
 
+// Windows and Linux chat apps have no menu bar; the client handles Ctrl+N and Ctrl+, there.
+#[cfg(target_os = "macos")]
 pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let package = app.package_info();
     let bundle = &app.config().bundle;
@@ -136,7 +144,7 @@ pub fn set_window_theme(
     app.get_webview_window("main").map(|w| w.set_theme(theme).is_ok()).unwrap_or(false)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 

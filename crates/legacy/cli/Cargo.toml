@@ -13,10 +13,12 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["cpu", "metal"]
+default = ["cpu", "metal", "vulkan"]
 cpu = ["uzu/cpu"]
 metal = ["uzu/metal"]
 webgpu = ["uzu/webgpu"]
+# Vulkan on every platform but Apple's, which runs Metal.
+vulkan = ["dep:uzu-engine"]
 
 [dependencies]
 anyhow.workspace = true
@@ -52,6 +54,9 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, default-features = false }
+
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+uzu-engine = { workspace = true, optional = true, features = ["vulkan"] }
 
 [lints]
 workspace = true

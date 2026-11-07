@@ -37,6 +37,8 @@ export type EngineModel = {
   quantization?: string | null;
   quantizationBits?: number;
   state: ModelDownloadState;
+  /** Device memory free when the downloaded model was found too large for it. */
+  freeMemoryBytes?: number;
 };
 
 export type ModelCatalog = {

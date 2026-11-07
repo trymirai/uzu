@@ -3,6 +3,8 @@ import { platformInfo } from "@/platform/platform-info";
 import { useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
 import { attachmentStorage } from "@/features/chat/services/attachment-storage";
+import { saveInterruptedReply } from "@/features/chat/services/interrupted-reply";
+import { getPlatform } from "@/platform/platform-singleton";
 import { useEffect } from "react";
 import { useSessionWiring } from "./session-wiring";
 import { useDownloadWiring } from "./use-download-wiring";
@@ -23,4 +25,6 @@ export const useAppInitialization = () => {
       void useAppStore.getState().fetchVersion();
     }
   }, []);
+
+  useEffect(() => getPlatform().system.onCloseRequested(saveInterruptedReply), []);
 };

@@ -18,7 +18,7 @@ use crate::{
         kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
         mangling::static_mangle,
     },
-    slang::{SlangArgumentType, SlangBufferAccess, SlangKernel, SlangParameterType, Specializer, slang2rust},
+    slang::{SlangArgumentType, SlangKernel, SlangParameterType, Specializer, slang2rust},
 };
 
 pub fn bindgen_file(
@@ -59,6 +59,14 @@ fn bindgen_kernel(
 ) -> anyhow::Result<TokenStream> {
     let kernel_trait_name = format_ident!("{}Kernel", kernel.name.as_str());
     let kernel_struct_name = format_ident!("{}WebGPUKernel", kernel.name.as_str());
+
+    ensure!(
+        kernel.preconditions.is_empty()
+            && kernel.required_subgroup_size.is_none()
+            && !kernel.arguments.iter().any(|argument| argument.pipeline_variants),
+        "{}: the WebGPU binding implements no Precondition, RequiredSubgroupSize or PipelineVariants",
+        kernel.name
+    );
 
     let globals = shader.global_params_type_layout().unwrap();
 
@@ -431,7 +439,7 @@ fn bindgen_kernel(
 
                     let buffer_name = parameter_name.to_string();
 
-                    let read_only = matches!(access_type, SlangBufferAccess::Read);
+                    let read_only = matches!(access_type, KernelBufferAccess::Read);
 
                     let source_type = match kernel_argument.unwrap().binding_type.as_ref().unwrap() {
                         KernelArgumentType::Value(_) => {

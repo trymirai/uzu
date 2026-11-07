@@ -13,7 +13,10 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+        helpers::{
+            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
+            supported_kernel,
+        },
     },
 };
 
@@ -38,7 +41,7 @@ struct MoeGemvCase<'a> {
     a_per_token: bool,
 }
 
-fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
+fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Option<Vec<bf16>> {
     let (in_dim, out_dim) = (case.in_dim, case.out_dim);
     let num_routes = case.expert_ids.len() as u32;
     let num_groups = in_dim / GROUP_SIZE;
@@ -51,9 +54,13 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     let hadamard_factors = create_buffer_with_data::<B, i32>(&context, case.hadamard_factors);
     let mut output = create_buffer::<B, bf16>(&context, (num_routes * out_dim) as usize);
 
-    let kernel =
-        <B::Kernels as Kernels>::MoeGemvKernel::new(&context, DataType::BF16, GROUP_SIZE, case.bits, case.a_per_token)
-            .unwrap();
+    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::MoeGemvKernel::new(
+        &context,
+        DataType::BF16,
+        GROUP_SIZE,
+        case.bits,
+        case.a_per_token,
+    ))?;
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &weights,
@@ -78,7 +85,7 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    buffer_to_vec::<B, _>(&context, &output)
+    Some(buffer_to_vec::<B, _>(&context, &output))
 }
 
 // Runs each projection at 1, 2 and 16 tokens, with the CPU twin as the reference. The weight scales keep outputs
@@ -124,14 +131,11 @@ fn compare_projections(
                 out_dim,
                 a_per_token,
             };
-            let expected = run_moe_gemv::<Cpu>(&case);
+            let expected = run_moe_gemv::<Cpu>(&case).unwrap();
             for_each_non_cpu_backend!(|B| {
-                assert_eq_float(
-                    &expected,
-                    &run_moe_gemv::<B>(&case),
-                    2e-2,
-                    &format!("{bits} bit {name}, {tokens} tokens"),
-                );
+                if let Some(actual) = run_moe_gemv::<B>(&case) {
+                    assert_eq_float(&expected, &actual, 2e-2, &format!("{bits} bit {name}, {tokens} tokens"));
+                }
             });
         }
     }

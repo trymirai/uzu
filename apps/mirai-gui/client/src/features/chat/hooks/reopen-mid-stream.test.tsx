@@ -35,7 +35,13 @@ const chatData = (id: string, messages: ChatData["messages"]): ChatData => ({
 const usePageWiring = (chatId: string) => {
   const stream = useLlmStream(chatId);
   const replay = useActiveAssistantBuffer(chatId);
-  useChatSwitchEffect({ chatId, isNewChat: false, replayActiveBuffer: replay, resetLocalUi: () => {} });
+  useChatSwitchEffect({
+    chatId,
+    isNewChat: false,
+    replayActiveBuffer: replay,
+    resetLocalUi: () => {},
+    forgetNewChat: () => {},
+  });
   return stream;
 };
 
