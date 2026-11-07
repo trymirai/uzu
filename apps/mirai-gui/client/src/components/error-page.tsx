@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { Logo } from "./icons/logo";
 import { LogoLightMode } from "./icons/logo-light-mode";
-import { ErrorIcon } from "./icons/error-icon";
+import { UzuCat } from "./uzu-cat";
 
 export function ErrorPage() {
   const isDarkMode = useAppStore((s) => s.isDarkMode);
@@ -22,9 +22,9 @@ export function ErrorPage() {
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-4">
         <div className="flex min-h-full flex-col items-center justify-center gap-10 py-4">
-          <ErrorIcon color="#FF2020" />
+          <UzuCat state="idle" size={96} className="text-text-primary" label="uzu, looking around" />
           <div className="flex flex-col items-center justify-center gap-3 text-center">
-            <h1 className="text-2xl font-bold">Page Not Found</h1>
+            <h1 className="text-2xl font-bold">Page not found</h1>
             <p className="text-base text-label-muted">An unexpected error occurred</p>
           </div>
           <Button kind="primary" icon={<ArrowLeft size={16} />} onClick={handleAction}>

@@ -17,14 +17,21 @@ RuntimeLoader.setWasmUrl(riveWasmUrl);
 const appState = useAppStore.getState();
 document.documentElement.classList.toggle("dark", appState.isDarkMode);
 
-if (platformInfo.isTauri) {
-  initPlatform(new TauriPlatformClient());
-} else {
-  initPlatform(new WebPlatformClient());
+async function boot() {
+  if (platformInfo.isTauri) {
+    initPlatform(new TauriPlatformClient());
+  } else if (platformInfo.isDemo) {
+    const { DemoPlatformClient } = await import("./platform/demo-platform-client");
+    initPlatform(new DemoPlatformClient());
+  } else {
+    initPlatform(new WebPlatformClient());
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <RouterProvider router={createAppRouter()} />
+    </React.StrictMode>,
+  );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <RouterProvider router={createAppRouter()} />
-  </React.StrictMode>,
-);
+void boot();

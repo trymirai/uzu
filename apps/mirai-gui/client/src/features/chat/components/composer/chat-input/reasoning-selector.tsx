@@ -65,7 +65,7 @@ export const ReasoningSelector = ({ repoId, disabled = false }: ReasoningSelecto
         disabled={disabled}
         aria-label={selected ? `Reasoning: ${label}${isDefault ? ", model default" : ""}` : "Reasoning"}
         title={selected ? `Reasoning: ${label}` : "Reasoning"}
-        className="flex h-7 items-center gap-1.5 rounded-md bg-surface-tertiary px-2 text-text-muted text-[13px] font-[450] leading-[1.3] outline-hidden hover:bg-control-surface-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-surface-active data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-surface-hover data-[focus]:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
+        className="flex h-7 items-center gap-1.5 rounded-full bg-control-fill px-2.5 text-text-secondary text-[13px] font-[450] leading-[1.3] outline-hidden hover:bg-control-fill-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-fill-hover data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-fill-hover data-[focus]:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
       >
         <Brain size={14} aria-hidden="true" />
         <span>{label}</span>
@@ -73,16 +73,16 @@ export const ReasoningSelector = ({ repoId, disabled = false }: ReasoningSelecto
       </MenuButton>
       <Transition
         as={Fragment}
-        enter="transition-[opacity,scale] duration-[120ms] ease-spring"
-        enterFrom="opacity-0 scale-90"
+        enter="transition-[opacity,scale] duration-200 ease-spring motion-reduce:transition-none"
+        enterFrom="opacity-0 scale-95"
         enterTo="opacity-100 scale-100"
-        leave="transition-[opacity,scale] duration-[80ms] ease-spring"
+        leave="transition-[opacity,scale] duration-[140ms] ease-spring motion-reduce:transition-none"
         leaveFrom="opacity-100 scale-100"
-        leaveTo="opacity-0 scale-90"
+        leaveTo="opacity-0 scale-95"
       >
-        <div className="absolute right-0 bottom-full pb-1 z-50 origin-bottom-right">
+        <div className="absolute right-0 bottom-full pb-2 z-50 origin-bottom-right">
           <MenuItems aria-label="Reasoning" className="outline-hidden">
-            <SelectionPanel className="min-w-[160px] pt-1.5">
+            <SelectionPanel className="min-w-[160px] py-1">
               <SelectionSection>
                 {options.map((option) => (
                   <MenuItem key={option} disabled={disabled}>

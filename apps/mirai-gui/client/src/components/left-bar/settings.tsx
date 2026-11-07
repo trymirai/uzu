@@ -1,26 +1,22 @@
 import { Link } from "@tanstack/react-router";
-import { Settings as SettingsIcon } from "lucide-react";
+import { useState } from "react";
+import { SettingsIcon } from "./nav-icons";
 
+/** Settings as a gear in the sidebar's bottom-left corner, lined up with the nav icons above. */
 function Settings() {
+  const [hovered, setHovered] = useState(false);
   return (
-    <div>
-      <div className="border-t border-cell-border mb-2" />
-      <Link
-        to="/settings"
-        search={{ tab: "general" }}
-        className="flex px-2"
-        activeOptions={{ includeSearch: false, exact: true }}
-      >
-        {({ isActive }) => (
-          <div
-            className={`flex items-center gap-2 px-2 py-[6px] w-full rounded-md transition-colors duration-150 ${isActive ? "bg-sidebar-chat-selected" : "hover:bg-sidebar-chat-hover"}`}
-          >
-            <SettingsIcon aria-hidden="true" className="size-5 shrink-0 text-label-muted" />
-            <span className="text-[13px] font-[350] leading-[150%] text-label-title">Settings</span>
-          </div>
-        )}
-      </Link>
-    </div>
+    <Link
+      to="/settings"
+      search={{ tab: "general" }}
+      aria-label="Settings"
+      activeOptions={{ includeSearch: false, exact: true }}
+      onPointerEnter={(e) => e.pointerType === "mouse" && setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      className="flex size-8 shrink-0 items-center justify-center rounded-[10px] text-label-title outline-hidden transition-colors duration-150 ease-out hover:bg-sidebar-chat-hover focus-visible:shadow-focus data-[status=active]:bg-sidebar-chat-selected"
+    >
+      <SettingsIcon size={20} active={hovered} />
+    </Link>
   );
 }
 

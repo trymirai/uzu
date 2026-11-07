@@ -64,14 +64,14 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
   };
 
   return (
-    <div className="group/user">
+    <div className="group/user relative">
       {hasAttachments && (
         <div className="mb-3 ml-auto w-fit">
           <AttachedFilesDisplay files={attachmentStorage.getFiles(attachmentIds ?? [])} />
         </div>
       )}
       {editing ? (
-        <div className="ml-auto flex w-full flex-col gap-3 rounded-lg bg-bg-hover p-3">
+        <div className="ml-auto flex w-full flex-col gap-3 rounded-[18px] bg-user-bubble p-3">
           <TextArea
             aria-label="Edit message"
             aria-describedby={descriptionId}
@@ -80,7 +80,7 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
             onChange={setDraft}
             disabled={saving}
             maxHeightPx={320}
-            className="bg-transparent text-[15px] leading-[140%]"
+            className="bg-transparent text-[15px] leading-[1.5]"
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing) return;
               if (event.key === "Escape") {
@@ -111,10 +111,11 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
         </div>
       ) : (
         <>
-          <div className="font-[350] text-label-title relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto">
+          <div className="font-[400] text-user-bubble-text relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[18px] text-[15px] leading-[1.5] px-3.5 py-2 bg-user-bubble ml-auto">
             {text}
           </div>
-          <div className="mt-2 flex h-8 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100 [@media(hover:none)]:opacity-100">
+          {/* Floats under the bubble on hover rather than holding an empty row open below it. */}
+          <div className="absolute right-0 top-full z-10 mt-1 flex h-8 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100 [@media(hover:none)]:opacity-100">
             <CopyButton className="[&_svg]:size-4" onCopy={copy} />
             {onEdit && (
               <HeadlessButton
@@ -124,7 +125,7 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
                 title="Edit message"
                 disabled={!canEdit}
                 onClick={startEditing}
-                className="flex min-h-8 min-w-8 items-center justify-center rounded-[5px] p-[6px] text-label-muted outline-hidden transition-colors hover:bg-card-hover hover:text-label-title data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex min-h-8 min-w-8 items-center justify-center rounded-lg p-[6px] text-label-muted outline-hidden transition-colors hover:bg-card-hover hover:text-label-title data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 <Pencil className="size-4" />
               </HeadlessButton>

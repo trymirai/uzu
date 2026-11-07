@@ -1,4 +1,5 @@
-import { Download, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { IconArrowInbox } from "@/components/icons/app-icons";
+import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import { IconAction } from "@/components/ui/icon-action";
 import { IconPauseFilled } from "@/components/icons/pause-filled-icon";
 import { IconPlayFilled } from "@/components/icons/play-filled-icon";
@@ -6,7 +7,8 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { ModelCardStatus } from "./types";
 
 const ACTION_BUTTON_CLASS =
-  "h-7 px-1.5 py-0.5 rounded bg-border-default text-text-primary hover:bg-control-surface-hover active:bg-control-surface-active";
+  // Raised off the card (a lighter surface and a hairline) so it reads on the soft fill.
+  "size-7 flex items-center justify-center rounded-full bg-surface-popover shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_2px_rgb(0_0_0/0.06)] dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)] text-text-primary transition-colors duration-150 ease-out hover:bg-surface-tertiary active:bg-control-surface-active";
 
 type DownloadActionsProps = {
   status: ModelCardStatus;
@@ -58,7 +60,7 @@ export function DownloadActions({
           <span>
             <IconAction
               label="Download model"
-              icon={<Download size={16} />}
+              icon={<IconArrowInbox size={16} />}
               onClick={onDownload}
               className={ACTION_BUTTON_CLASS}
             />

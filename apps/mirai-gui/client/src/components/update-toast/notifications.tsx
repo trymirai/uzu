@@ -1,7 +1,7 @@
 import { UpdateToast } from "@/components/update-toast";
 import { toast } from "react-hot-toast";
 
-const toastPosition = "bottom-right" as const;
+const toastPosition = "top-right" as const;
 
 type ReadyToastParams = {
   version: string;
@@ -23,8 +23,9 @@ export const showReadyUpdateToast = ({
   errorMessage,
 }: ReadyToastParams): void => {
   toast.custom(
-    () => (
+    (t) => (
       <UpdateToast
+        visible={t.visible}
         version={version}
         onApplyNow={onApplyNow}
         onLater={onLater}

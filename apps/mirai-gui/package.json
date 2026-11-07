@@ -11,6 +11,7 @@
     "client:build": "vite build",
     "web:dev": "vite --mode web",
     "web:build": "vite build --mode web",
+    "demo:dev": "vite --mode demo",
     "typecheck": "tsc -p client/tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { IconCrossSmall } from "@/components/icons/app-icons";
 import {
   Button as HeadlessButton,
   Dialog,
@@ -11,6 +11,7 @@ import { Fragment } from "react";
 import { twMerge } from "tailwind-merge";
 import { Button } from "../button";
 import { Text } from "../typography";
+import { SURFACE_BUTTON_CLASSNAME, SURFACE_CLOSE_CLASSNAME, SURFACE_SOFT_BUTTON_CLASSNAME } from "./constants";
 import type { ModalProps } from "./types";
 
 const SPRING_ENTER =
@@ -50,7 +51,7 @@ export function Modal(props: ModalProps) {
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-overlay" />
+          <div className="fixed inset-0 bg-overlay motion-reduce:transition-none" />
         </TransitionChild>
 
         <div className="fixed inset-0 flex items-center justify-center p-4">
@@ -63,15 +64,17 @@ export function Modal(props: ModalProps) {
             leaveFrom="opacity-100 scale-100"
             leaveTo="opacity-0 scale-[0.96]"
           >
-            <DialogPanel
-              className={twMerge(
-                "rounded-lg bg-surface-elevated border border-border-default p-4 text-text-primary",
-                "w-[468px]",
-              )}
-            >
+            {/* The same lifted surface as menus and toasts, so a dialog is one more layer of the
+                app rather than a different kind of window. */}
+            <DialogPanel className="w-[440px] max-w-full rounded-2xl bg-surface-popover shadow-popover p-5 text-text-primary motion-reduce:transition-none">
               <div className="flex items-start justify-between gap-3">
-                <DialogTitle className="flex-1 min-w-0">
-                  <Text as="span" color="primary" opticalSize={14} className="text-[18px] font-[450] leading-[28px]">
+                <DialogTitle className="flex-1 min-w-0 pt-0.5">
+                  <Text
+                    as="span"
+                    color="primary"
+                    opticalSize={16}
+                    className="block text-[16px] font-[500] leading-[1.35] text-balance"
+                  >
                     {title}
                   </Text>
                 </DialogTitle>
@@ -79,25 +82,41 @@ export function Modal(props: ModalProps) {
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
-                  className="shrink-0 flex items-center justify-center size-7 rounded-md text-text-muted hover:text-text-primary hover:bg-tertiary-hover transition-colors duration-150 ease-out outline-hidden data-[focus]:shadow-focus cursor-pointer"
+                  className={twMerge(SURFACE_CLOSE_CLASSNAME, "-mr-1 -mt-0.5")}
                 >
-                  <X size={16} />
+                  <IconCrossSmall size={18} aria-hidden />
                 </HeadlessButton>
               </div>
               {description && (
-                <Text as="p" color="muted" opticalSize={20} className="mt-1.5 text-[15px] font-[450] leading-[1.6]">
+                <Text
+                  as="p"
+                  color="secondary"
+                  opticalSize={14}
+                  className="mt-1.5 text-[14px] font-[400] leading-[1.5] text-pretty [overflow-wrap:anywhere]"
+                >
                   {description}
                 </Text>
               )}
 
-              {children && <div className="mt-5">{children}</div>}
+              {children && <div className="mt-4">{children}</div>}
 
               <div className="mt-6 flex justify-end gap-2 flex-wrap">
-                <Button kind="secondary" size="sm" onClick={handleSecondary}>
+                <Button
+                  kind="secondary"
+                  size="sm"
+                  onClick={handleSecondary}
+                  className={twMerge(SURFACE_BUTTON_CLASSNAME, SURFACE_SOFT_BUTTON_CLASSNAME)}
+                >
                   {secondaryLabel}
                 </Button>
                 {hasPrimary && (
-                  <Button kind={primaryKind} size="sm" onClick={handlePrimary} disabled={primaryDisabled}>
+                  <Button
+                    kind={primaryKind}
+                    size="sm"
+                    onClick={handlePrimary}
+                    disabled={primaryDisabled}
+                    className={SURFACE_BUTTON_CLASSNAME}
+                  >
                     {primaryLabel}
                   </Button>
                 )}

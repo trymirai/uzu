@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
-import { getAnimationClassName, getOriginClassName } from "./utils";
+import { getOriginClassName } from "./utils";
 import type { PopoverAlign, PopoverSide } from "./types";
 
 type PopoverSurfaceProps = {
@@ -16,9 +16,10 @@ export function PopoverSurface({ open, side, align, className, children, animate
   return (
     <div
       className={twMerge(
-        "rounded-lg bg-surface-elevated shadow-sm p-1.5 min-w-[140px]",
+        "rounded-xl bg-surface-popover shadow-popover p-1 min-w-[180px]",
+        // The panel mounts already open, so the entrance is a keyframe rather than a transition.
         animated ? getOriginClassName(side, align) : undefined,
-        animated ? getAnimationClassName(open) : undefined,
+        animated && open ? "animate-uzu-pop" : undefined,
         className,
       )}
     >

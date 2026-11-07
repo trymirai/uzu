@@ -1,5 +1,5 @@
+import { IconSettingsGear2 } from "@/components/icons/app-icons";
 import { Button } from "@headlessui/react";
-import { Settings } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { twMerge } from "tailwind-merge";
 import { TextArea } from "@/components/ui/text-area";
@@ -50,7 +50,7 @@ export function ChatInput({
   }, []);
 
   return (
-    <div className="rounded-xl bg-surface-elevated shadow-md p-4 w-full">
+    <div className="rounded-[20px] bg-surface-elevated shadow-md px-4 pt-4 pb-3 w-full transition-shadow duration-150 ease-out focus-within:shadow-lg dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)] dark:focus-within:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.18)]">
       <input
         ref={fileInputRef}
         type="file"
@@ -75,6 +75,7 @@ export function ChatInput({
 
       <TextArea
         ref={controller.textareaRef}
+        data-composer-input
         value={value}
         onChange={onChange}
         onKeyDown={controller.handleKeyDown}
@@ -106,9 +107,10 @@ export function ChatInput({
                 onClick={onModelSettingsClick}
                 disabled={settingsDisabled}
                 aria-label="Model settings"
-                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-control-surface-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-control-fill text-text-secondary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
-                <Settings size={16} />
+                {/* Lands half a point low on Retina screens; lifted back to the circle's centre. */}
+                <IconSettingsGear2 size={16} aria-hidden className="-translate-y-[0.5px]" />
               </Button>
               {settingsModified && (
                 <span className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-danger ring-1 ring-surface-elevated" />

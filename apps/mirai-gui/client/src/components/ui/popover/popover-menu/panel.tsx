@@ -44,7 +44,7 @@ export function PopoverMenuPanel({
             disabled={item.disabled ?? false}
             className={({ focus, disabled }) =>
               twMerge(
-                "flex items-center gap-2 w-full px-2.5 py-2 rounded-md bg-transparent border-none outline-hidden text-left",
+                "flex min-h-8 items-center gap-2.5 w-full px-2 py-1.5 rounded-lg bg-transparent border-none outline-hidden text-left transition-colors duration-100 ease-out",
                 focus ? "bg-surface-tertiary" : undefined,
                 disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                 item.danger ? "text-red-500" : "text-text-primary",

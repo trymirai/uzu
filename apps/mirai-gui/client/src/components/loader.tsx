@@ -3,6 +3,7 @@ import { useRive } from "@rive-app/react-canvas";
 import React, { type HTMLAttributes } from "react";
 import { twMerge } from "tailwind-merge";
 import { TextShimmer } from "./ui/text-shimmer";
+import { UzuCat } from "./uzu-cat";
 
 type LoaderProps = {
   showText?: boolean;
@@ -40,7 +41,7 @@ export const Loader: React.FC<LoaderProps> = ({
 }) => {
   return (
     <div className={twMerge("flex items-center justify-center gap-2", className)}>
-      <LoaderIcon width={iconWidth} height={iconHeight} />
+      <UzuCat state="loading" size={Math.max(16, iconWidth, iconHeight)} className="text-text-primary" />
       {showText && text && (
         <div className="flex items-baseline gap-[2px]">
           <TextShimmer
