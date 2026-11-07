@@ -41,7 +41,8 @@ import generated.trie;
   uint32_t suffix_position = is_ring ? ring.ring_length : prefix_length;
   uint32_t query_position = suffix_position + (is_trie ? trie[query].height : query);
   float query_scale = tensorLoad<BFloat16>(q_scales, q_row);
-  float maximum = has_sinks ? tensorLoad<T>(sinks, head) : asfloat(0xff800000u);
+  // -FLT_MAX, not -inf: WGSL rejects shaders with a constant expression that evaluates to infinity.
+  float maximum = has_sinks ? tensorLoad<T>(sinks, head) : asfloat(0xff7fffffu);
   float denominator = has_sinks ? 1.0 : 0.0;
   float values[HEAD_DIM];
   for (uint32_t channel = 0; channel < HEAD_DIM; ++channel)

@@ -49,22 +49,20 @@ public float tensorLoad<T : ITensorElement>(RWStructuredBuffer<Atomic<uint>> buf
   return T.decode(bits);
 }
 
+// Writes the `mask`-wide field at `shift` without touching neighbouring fields that other
+// threads may be writing. Uses and/or instead of a compare-exchange loop: Safari's WGSL-to-MSL
+// translator emits uncompilable Metal for atomicCompareExchangeWeak.
+void storeMasked(RWStructuredBuffer<Atomic<uint>> buffer, uint wordIndex, uint shift, uint mask, uint value) {
+  buffer[wordIndex].and(~(mask << shift));
+  buffer[wordIndex].or((value & mask) << shift);
+}
+
 public void tensorStore<T : ITensorElement>(RWStructuredBuffer<Atomic<uint>> buffer, uint index, float value) {
   uint bits = T.encode(value);
   if (T.byteSize() == 4) {
     buffer[index].store(bits);
   } else {
-    uint wordIndex = index / 2;
-    uint shift = (index % 2) * 16;
-    uint mask = 0xffff << shift;
-    uint old = buffer[wordIndex].load();
-    while (true) {
-      uint next = (old & ~mask) | ((bits & 0xffff) << shift);
-      uint observed = buffer[wordIndex].compareExchange(old, next);
-      if (observed == old)
-        break;
-      old = observed;
-    }
+    storeMasked(buffer, index / 2, (index % 2) * 16, 0xffff, bits);
   }
 }
 
@@ -75,16 +73,7 @@ public uint byteLoad(RWStructuredBuffer<Atomic<uint>> buffer, uint index) {
 }
 
 public void byteStore(RWStructuredBuffer<Atomic<uint>> buffer, uint index, uint value) {
-  uint shift = (index % 4) * 8;
-  uint mask = 0xff << shift;
-  uint old = buffer[index / 4].load();
-  while (true) {
-    uint next = (old & ~mask) | ((value & 0xff) << shift);
-    uint observed = buffer[index / 4].compareExchange(old, next);
-    if (observed == old)
-      break;
-    old = observed;
-  }
+  storeMasked(buffer, index / 4, (index % 4) * 8, 0xff, value);
 }
 
 public T choose<T>(T a, T b, bool condition) { return condition ? b : a; }
