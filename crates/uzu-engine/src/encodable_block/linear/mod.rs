@@ -3,11 +3,11 @@ use thiserror::Error;
 
 mod input_rht;
 mod matmul;
-mod rht_wrapper;
+mod transformed_linear;
 mod untied_readout;
 
 pub use matmul::{LinearMatmul, LinearMatmulError};
-pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
+pub use transformed_linear::TransformedLinear;
 pub use untied_readout::UntiedReadout;
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -74,8 +74,8 @@ pub struct LinearInputPreparation<B: Backend> {
 pub enum LinearBlockError<B: Backend> {
     #[error("LinearMatmul error: {0}")]
     LinearMatmulError(#[from] LinearMatmulError<B>),
-    #[error("RHTLinearWrapper error: {0}")]
-    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported linear configuration: {0}")]
@@ -114,19 +114,28 @@ impl<B: Backend> dyn Linear<B> {
                 .await?;
                 Ok(Box::new(block))
             },
-            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                incoherence_block_size: Some(block_size),
-                incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            spec @ (AnyWeightMatrixSpec::OutputStackSpec(_)
+            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                incoherence_spec:
+                    Some(
+                        AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                            block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                            processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
+                            ..
+                        })
+                        | AnyIncoherenceProcessorSpec::KroneckerSpec(_),
+                    ),
                 ..
-            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(
-                RHTLinearWrapper::new(
+            })) => Ok(Box::new(
+                TransformedLinear::new(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
                     input_data_type,
                     output_data_type,
-                    has_biases,
-                    parameter_tree,
+                    has_biases.then_some(parameter_tree),
+                    spec,
+                    weights_tree,
                     context,
                 )
                 .await?,
@@ -166,7 +175,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalGpuBuffer>), LinearBlockError<B>> {
-        if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+        let (linear, preparation) = TransformedLinear::new_with_input_preparation(
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -177,23 +186,8 @@ impl<B: Backend> dyn Linear<B> {
             parameter_tree,
             context,
         )
-        .await?
-        {
-            return Ok((linear.0, linear.1.map(|preparation| preparation.rht_signs)));
-        }
-
-        let linear = Self::new_mixed_precision(
-            input_dimension,
-            output_dimension,
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-            has_biases,
-            parameter_tree,
-            context,
-        )
         .await?;
-        Ok((linear, None))
+        Ok((linear, preparation.map(|preparation| preparation.rht_signs)))
     }
 
     pub async fn new_for_fused_input(
@@ -204,7 +198,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
-        if let Some(linear) = RHTLinearWrapper::try_new_with_input_preparation(
+        TransformedLinear::new_with_input_preparation(
             input_dimension,
             output_dimension,
             data_type,
@@ -215,23 +209,7 @@ impl<B: Backend> dyn Linear<B> {
             parameter_tree,
             context,
         )
-        .await?
-        {
-            return Ok(linear);
-        }
-
-        let linear = Self::new_mixed_precision(
-            input_dimension,
-            output_dimension,
-            data_type,
-            data_type,
-            data_type,
-            has_biases,
-            parameter_tree,
-            context,
-        )
-        .await?;
-        Ok((linear, None))
+        .await
     }
 
     pub async fn new_with_input_rht(

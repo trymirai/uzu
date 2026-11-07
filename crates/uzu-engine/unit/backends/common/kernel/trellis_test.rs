@@ -26,9 +26,9 @@ fn random_transform_data(
     rng: &mut SmallRng,
     columns: u32,
     batch: u32,
-) -> (Vec<f32>, Vec<f32>, Vec<bf16>) {
+) -> (Vec<i32>, Vec<f32>, Vec<bf16>) {
     let mixing_dimension = mixing_dimension(columns);
-    let rht_factors = (0..columns).map(|_| [1.0, -1.0][rng.random_range(0..2)]).collect();
+    let rht_factors = (0..columns).map(|_| [1, -1][rng.random_range(0..2)]).collect();
     let mixing = (0..mixing_dimension * mixing_dimension)
         .map(|_| rng.random_range(-MIXING_ENTRY_BOUND..MIXING_ENTRY_BOUND))
         .collect();
@@ -41,7 +41,7 @@ fn random_transform_data(
 fn run<B: Backend>(
     columns: u32,
     batch: u32,
-    rht_factors: &[f32],
+    rht_factors: &[i32],
     mixing: &[f32],
     input: &[bf16],
 ) -> (Vec<i8>, Vec<f32>, Vec<f32>) {
@@ -51,7 +51,7 @@ fn run<B: Backend>(
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     // kept alive until the command buffer has run: the CPU backend reads them at submit time
     let input = create_buffer_with_data::<B, bf16>(context.as_ref(), input);
-    let rht_factors = create_buffer_with_data::<B, f32>(context.as_ref(), rht_factors);
+    let rht_factors = create_buffer_with_data::<B, i32>(context.as_ref(), rht_factors);
     let mixing = create_buffer_with_data::<B, f32>(context.as_ref(), mixing);
     let mut activations = create_buffer::<B, i8>(context.as_ref(), (batch * columns) as usize);
     let mut column_group_sums = create_buffer::<B, f32>(context.as_ref(), COLUMN_GROUP_COUNT as usize * batch as usize);

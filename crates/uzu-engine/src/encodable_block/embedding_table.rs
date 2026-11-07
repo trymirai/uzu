@@ -9,8 +9,8 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
-        d4s4_spec::D4S4Spec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        d4s4_spec::{CODEBOOK, LADDER, LatticeSpec},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
@@ -101,45 +101,47 @@ impl<B: Backend> EmbeddingTable<B> {
                 "input embedding lookup does not support {data_type:?}"
             )));
         }
-        let load_matrix = async |tree: &ParameterTree<B>, spec| {
-            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree).await
-        };
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let (storage, output_hadamard_factors) = match spec {
-            AnyWeightMatrixSpec::D4S4Spec(spec) => {
-                let (table, factors) = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec).await?;
-                (Storage::D4S4(table), Some(factors))
-            },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
-                incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-                incoherence_processing_mode: IncoherenceProcessingMode::Output,
+                incoherence_spec:
+                    Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
+                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    })),
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
-                let matrix = load_matrix(&tree.subtree("quantized"), *quantization_spec).await?;
-                if matrix.quantization().is_none() {
-                    return Err(EmbeddingTableError::UnsupportedConfiguration(
-                        "output-Hadamard factors require a quantized table".into(),
-                    ));
-                }
-                (Storage::Matrix(matrix), Some(read_output_signs(tree, embedding_dim).await?))
+                let quantized = tree.subtree("quantized");
+                let storage = match *quantization_spec {
+                    AnyWeightMatrixSpec::LatticeSpec(spec) => {
+                        Storage::D4S4(load_d4s4(&quantized, vocab_size, embedding_dim, data_type, spec).await?)
+                    },
+                    spec => Storage::Matrix(
+                        WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, &quantized)
+                            .await?,
+                    ),
+                };
+                (storage, Some(read_output_signs(tree, embedding_dim).await?))
             },
             spec @ AnyWeightMatrixSpec::HybridSpec(_) => {
                 return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
                     "{spec:?} with embedding dim {embedding_dim}"
                 )));
             },
-            spec => (Storage::Matrix(load_matrix(tree, spec).await?), None),
+            spec => (
+                Storage::Matrix(
+                    WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree).await?,
+                ),
+                None,
+            ),
         };
-
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => {
-                if let Some(info) = matrix.quantization() {
-                    (EmbeddingTableKind::Quantized, Some(info))
-                } else {
-                    (EmbeddingTableKind::Dense, None)
-                }
+            Storage::Matrix(matrix) => match matrix.quantization() {
+                Some(info) => (EmbeddingTableKind::Quantized, Some(info)),
+                None => (EmbeddingTableKind::Dense, None),
             },
         };
         let group_size = quantization.map(|info| info.group_size);
@@ -201,30 +203,27 @@ async fn load_d4s4<B: Backend>(
     vocab_size: u32,
     embedding_dim: u32,
     data_type: DataType,
-    spec: D4S4Spec,
-) -> Result<(D4S4Table<B>, B::GlobalGpuBuffer), EmbeddingTableError<B>> {
+    spec: LatticeSpec,
+) -> Result<D4S4Table<B>, EmbeddingTableError<B>> {
     if spec.layout != Layout::InputOutput || !embedding_dim.is_multiple_of(d4s4::COLUMNS_PER_LADDER_INDEX_BYTE) {
         return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
             "{spec:?} with {data_type:?} and embedding dim {embedding_dim}"
         )));
     }
-    let read = async |name: &str, shape: &[u32], data_type| tree.read_buffer(name, shape, data_type).await;
-    let codes = read("codes", &[vocab_size, embedding_dim / d4s4::VALUES_PER_CODE], DataType::U8).await?;
-    let row_scales = read("row_scales", &[vocab_size], data_type).await?;
-    let ladder_indices =
-        read("ladder_indices", &[vocab_size, embedding_dim / d4s4::COLUMNS_PER_LADDER_INDEX_BYTE], DataType::U8)
-            .await?;
-    let ladder = read("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?;
-    let codebook = read("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?;
-    let table = D4S4Table {
+    let codes = tree.read_buffer("codes", &[vocab_size, embedding_dim / d4s4::VALUES_PER_CODE], DataType::U8).await?;
+    let row_scales = tree.read_buffer("row_scales", &[vocab_size], data_type).await?;
+    let ladder_indices = tree
+        .read_buffer("ladder_indices", &[vocab_size, embedding_dim / d4s4::COLUMNS_PER_LADDER_INDEX_BYTE], DataType::U8)
+        .await?;
+    let ladder = tree.create_buffer_with_data(&LADDER)?;
+    let codebook = tree.create_buffer_with_data(&CODEBOOK)?;
+    Ok(D4S4Table {
         codes,
         row_scales,
         ladder_indices,
         ladder,
         codebook,
-    };
-    let factors = read("output_hadamard_factors", &[embedding_dim], DataType::I32).await?;
-    Ok((table, factors))
+    })
 }
 
 pub(super) async fn read_output_signs<B: Backend>(

@@ -11,7 +11,6 @@ pub mod gated_act_mul;
 pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
-#[cfg(any(backend = "cpu", test))]
 mod trellis;
 
 pub use activation_transform::{ActivationQuantization, ActivationTransform};
@@ -19,7 +18,6 @@ pub use attention::{AttentionArguments, AttentionInput, AttentionKernel, Attenti
 pub use gated_act_mul::{GatedActMul, GatedActMulSettings};
 pub use matmul::ActivationFormat;
 
-#[cfg(any(backend = "cpu", test))]
 pub use crate::backends::common::kernel::trellis::mixing_dimension;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));

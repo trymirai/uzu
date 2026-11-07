@@ -158,6 +158,7 @@ fn check<T: DataTypeRepr + Float + Display>(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::dense(Dense, None, false)]
+#[case::dense_hadamard(Dense, None, true)]
 #[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), false)]
 #[case::u4_zero_point_odd_group(Quantized, Some((U4, ScaleZeroPoint, 48)), false)]
 #[case::u4_symmetric(Quantized, Some((U4, ScaleSymmetric, 32)), false)]
@@ -178,6 +179,7 @@ fn input_embedding_lookup_bf16(
 #[rstest]
 #[test_attr(uzu_test)]
 #[case::dense(Dense, None, false)]
+#[case::dense_hadamard(Dense, None, true)]
 #[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), false)]
 fn input_embedding_lookup_f32(
     #[case] table_kind: EmbeddingTableKind,
