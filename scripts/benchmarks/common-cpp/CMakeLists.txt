@@ -2,15 +2,8 @@ cmake_minimum_required(VERSION 3.31)
 
 project(benchmarks_common LANGUAGES C CXX)
 
-include(FetchContent)
-
-FetchContent_Declare(
-    glaze
-    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-    GIT_TAG v9.1.0
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(glaze)
+include(dependencies.cmake)
+benchmark_dependency(glaze)
 
 find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
 

@@ -6,8 +6,6 @@ These checks need network access but do not build engines or download models.
 
 import json
 import os
-import re
-import shlex
 import tomllib
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -18,6 +16,7 @@ from packaging.requirements import Requirement
 from packaging.version import InvalidVersion, Version
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCES = json.loads((ROOT / "sources.json").read_text())
 pytestmark = [pytest.mark.engine_versions]
 
 
@@ -83,45 +82,6 @@ def test_pypi_engine_uses_latest_version(engine: str, package: str) -> None:
     )
 
 
-def test_llamacpp_uses_latest_version() -> None:
-    path = ROOT / "engine-llamacpp/CMakeLists.txt"
-    source = re.sub(r"#[^\n]*", "", path.read_text())
-    declaration = re.search(r"FetchContent_Declare\(\s*llama_cpp\b([^)]*)\)", source)
-    assert declaration, f"{path.name}: missing llama_cpp declaration"
-    tag = re.search(r"\bGIT_TAG\s+([^\s)]+)", declaration[1])
-    assert tag, f"{path.name}: missing llama_cpp GIT_TAG"
-    assert tag[1].strip('"') == "${LLAMA_VERSION}", f"{path.name}: llama_cpp GIT_TAG must use LLAMA_VERSION"
-    version = re.search(r"\bset\(\s*LLAMA_VERSION\s+([^\s)]+)\s*\)", source)
-    assert version, f"{path.name}: missing LLAMA_VERSION"
-    current = version[1].strip('"')
-    latest = latest_github_tag("ggml-org/llama.cpp")
-    assert current == latest, f"engine-llamacpp/CMakeLists.txt: LLAMA_VERSION is {current}, latest release is {latest}"
-
-
-def test_mldrift_uses_latest_revision() -> None:
-    source = (ROOT / "engine-mldrift/bootstrap.sh").read_text()
-    revision = re.search(r'^REVISION="([0-9a-f]{40})"$', source, re.MULTILINE)
-    assert revision, "engine-mldrift/bootstrap.sh: missing REVISION"
-    latest = fetch_json("https://api.github.com/repos/google-ai-edge/ml-drift/commits/main")["sha"]
-    assert revision[1] == latest, (
-        f"engine-mldrift/bootstrap.sh: REVISION is {revision[1]}, latest main commit is {latest}; "
-        "ML Drift has no releases, so update REVISION and refresh patches/benchmark-metrics.patch"
-    )
-
-
-def test_mlxserve_uses_latest_version() -> None:
-    project = ROOT / "engine-mlxserve"
-    source = (project / "bootstrap.sh").read_text()
-    clone = re.search(r"git clone --depth 1 --branch (\S+) https://github.com/ddalcu/mlx-serve.git", source)
-    assert clone, "engine-mlxserve/bootstrap.sh: expected a pinned source clone"
-    assert clone[1] == '"$VERSION"', "engine-mlxserve/bootstrap.sh: --branch must use VERSION"
-    version = re.search(r'^VERSION="([^"]+)"$', source, re.MULTILINE)
-    assert version, "engine-mlxserve/bootstrap.sh: missing VERSION"
-    current = version[1]
-    latest = latest_github_tag("ddalcu/mlx-serve")
-    assert current == latest, f"mlx-serve is {current}, latest release is {latest}"
-
-
 def test_omlx_uses_latest_version() -> None:
     project = ROOT / "engine-omlx"
     source = read_toml(project / "pyproject.toml")["tool"]["uv"]["sources"]["omlx"]
@@ -137,43 +97,17 @@ def test_omlx_uses_latest_version() -> None:
     )
 
 
-def test_splash_uses_latest_version() -> None:
-    path = ROOT / "engine-splash/bootstrap.sh"
-    source = path.read_text().replace("\\\n", " ")
-    clones = [shlex.split(line, comments=True) for line in source.splitlines() if re.match(r"\s*git\s+clone\s", line)]
-    assert len(clones) == 1 and "--branch" in clones[0], f"{path.name}: expected a git clone with a pinned --branch"
-    command = clones[0]
-    assert command[command.index("--branch") + 1] == "$VERSION", f"{path.name}: --branch must use VERSION"
-    version = re.search(r'^VERSION="([^"]+)"$', source, re.MULTILINE)
-    assert version, f"{path.name}: missing VERSION"
-    current = version[1]
-    latest = latest_github_tag("incoai/splash")
-    assert current == latest, f"engine-splash/bootstrap.sh: VERSION is {current}, latest release is {latest}"
+@pytest.mark.parametrize("engine", ["llama_cpp", "mlxserve", "splash", "magnitude", "tensorfold", "cli11", "glaze"])
+def test_source_uses_latest_version(engine: str) -> None:
+    source = SOURCES[engine]
+    latest = latest_github_tag(f"{source['owner']}/{source['repo']}")
+    assert source["rev"] == latest, f"sources.json: {engine} is {source['rev']}, latest release is {latest}"
 
 
-@pytest.mark.parametrize(
-    "engine,repository,prefix",
-    [("magnitude", "magnitudedev/magnitude", "@magnitudedev/cli@"), ("tensorfold", "ashhart/TensorFold", "")],
-)
-def test_server_engine_uses_latest_version(engine: str, repository: str, prefix: str) -> None:
-    source = (ROOT / "server/engine" / engine / "bootstrap.sh").read_text()
-    version = re.search(r'^VERSION="([^"]+)"$', source, re.MULTILINE)
-    assert version, f"{engine}/bootstrap.sh: missing VERSION"
-    latest = latest_github_tag(repository)
-    assert prefix + version[1] == latest, f"{engine}: VERSION is {version[1]}, latest release is {latest}"
-    revision = re.search(r'^REVISION="([0-9a-f]{40})"$', source, re.MULTILINE)
-    if revision:
-        commit = fetch_json(f"https://api.github.com/repos/{repository}/commits/{latest}")["sha"]
-        assert revision[1] == commit, f"{engine}: REVISION does not match {latest}"
-
-
-@pytest.mark.parametrize(
-    "path,repository",
-    [("common-cpp/CMakeLists.txt", "stephenberry/glaze"), ("engine-llamacpp/CMakeLists.txt", "CLIUtils/CLI11")],
-)
-def test_cpp_dependency_uses_latest_version(path: str, repository: str) -> None:
-    source = (ROOT / path).read_text()
-    version = re.search(rf"GIT_REPOSITORY https://github.com/{re.escape(repository)}\.git\s+GIT_TAG (\S+)", source)
-    assert version, f"{path}: missing {repository} pin"
-    latest = latest_github_tag(repository)
-    assert version[1] == latest, f"{path}: {repository} is {version[1]}, latest release is {latest}"
+def test_mldrift_uses_latest_revision() -> None:
+    source = SOURCES["mldrift"]
+    latest = fetch_json(f"https://api.github.com/repos/{source['owner']}/{source['repo']}/commits/main")["sha"]
+    assert source["rev"] == latest, (
+        f"sources.json: ML Drift is {source['rev']}, latest main commit is {latest}; "
+        "update the pin and refresh patches/benchmark-metrics.patch"
+    )

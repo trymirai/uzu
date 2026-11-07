@@ -3,7 +3,15 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$PROJECT_DIR/deps/ml-drift"
-"$PROJECT_DIR/bootstrap.sh"
+if [[ -n "${BENCHMARK_MLDRIFT_BINARY:-}" ]]; then
+    WORKSPACE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/uzu-benchmarks/mldrift/$BENCHMARK_MLDRIFT_REVISION"
+    extract_weights() { "$BENCHMARK_MLDRIFT_EXTRACTOR" "$@"; }
+else
+    "$PROJECT_DIR/bootstrap.sh"
+    BENCHMARK_MLDRIFT_BINARY="$SOURCE_DIR/bazel-bin/benchmarks/engine-mldrift"
+    WORKSPACE_DIR="$PROJECT_DIR/workspace/$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD)"
+    extract_weights() { (cd "$SOURCE_DIR" && bazelisk run -c opt //ml_drift/samples/llm:extract_weights_hf -- "$@"); }
+fi
 
 MODEL=""
 PRECISION="q4_0"
@@ -46,8 +54,7 @@ if [[ ! -d "$MODEL_PATH" ]]; then
 fi
 MODEL_PATH="$(cd -- "$MODEL_PATH" && pwd -P)"
 
-WEIGHTS_DIR="$PROJECT_DIR/workspace/$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD)/$PRECISION"
-WEIGHTS_DIR="$WEIGHTS_DIR/$(/usr/bin/stat -L -f '%N %z %m' "$MODEL_PATH"/*.safetensors | shasum -a 256 | cut -c1-16)"
+WEIGHTS_DIR="$WORKSPACE_DIR/$PRECISION/$(/usr/bin/stat -L -f '%N %z %m' "$MODEL_PATH"/*.safetensors | shasum -a 256 | cut -c1-16)"
 if [[ ! -d "$WEIGHTS_DIR" ]]; then
     rm -rf "$WEIGHTS_DIR.partial"
     mkdir -p "$WEIGHTS_DIR.partial"
@@ -55,13 +62,13 @@ if [[ ! -d "$WEIGHTS_DIR" ]]; then
     if [[ "$PRECISION" == q4_0 ]]; then
         QUANTIZATION=(--quantize --embedding_quant_bits=4 --attention_quant_bits=4 --feedforward_quant_bits=4 --block_size=32)
     fi
-    (cd "$SOURCE_DIR" && bazelisk run -c opt //ml_drift/samples/llm:extract_weights_hf -- \
+    extract_weights \
         --model_path="$MODEL_PATH" \
         --output_dir="$WEIGHTS_DIR.partial" \
-        ${QUANTIZATION[@]+"${QUANTIZATION[@]}"}) >&2
+        ${QUANTIZATION[@]+"${QUANTIZATION[@]}"} >&2
     mv "$WEIGHTS_DIR.partial" "$WEIGHTS_DIR"
 fi
 
-exec "$SOURCE_DIR/bazel-bin/benchmarks/engine-mldrift" \
+exec "$BENCHMARK_MLDRIFT_BINARY" \
     --checkpoint="$MODEL_PATH" \
     --weights="$WEIGHTS_DIR"

@@ -16,9 +16,9 @@ from common import InferenceEngine, run_loop
 from mach import get_memory_counters
 
 PROJECT_DIR = Path(__file__).resolve().parent
-SPLASH_DIR = PROJECT_DIR / "deps" / "splash"
+SPLASH_DIR = Path(os.environ.get("BENCHMARK_SPLASH_ROOT", PROJECT_DIR / "deps" / "splash"))
 BUILD_DIR = SPLASH_DIR / "build"
-SPLASH_BINARY = BUILD_DIR / "splash"
+SPLASH_BINARY = SPLASH_DIR / "engine/splash" if "BENCHMARK_SPLASH_ROOT" in os.environ else BUILD_DIR / "splash"
 MEMORY_SAMPLE_INTERVAL = 0.1
 
 

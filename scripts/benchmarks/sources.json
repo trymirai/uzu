@@ -1,0 +1,83 @@
+{
+  "splash": {
+    "owner": "incoai",
+    "repo": "splash",
+    "rev": "1.5.0",
+    "hash": "sha256-Q6JK3uy3tvptASg0ONYX9IDiUS3L1IR2SH1Txu4mGBQ="
+  },
+  "llama_cpp": {
+    "owner": "ggml-org",
+    "repo": "llama.cpp",
+    "rev": "v0.8.0",
+    "hash": "sha256-WQAtD8Hos6fEtgPQId7nZiLGyP4asAMKJYEXZid1nqc="
+  },
+  "cli11": {
+    "owner": "CLIUtils",
+    "repo": "CLI11",
+    "rev": "v2.7.2",
+    "hash": "sha256-lFMv7WH/Gv+lRjs9tH6QYk+E/QC39ndzvtYKwpGNkmg="
+  },
+  "glaze": {
+    "owner": "stephenberry",
+    "repo": "glaze",
+    "rev": "v9.1.0",
+    "hash": "sha256-eL6Y2frjqttrGQuRbovrQumZ1nvzHyOtBFZDy6Grcz8="
+  },
+  "magnitude": {
+    "owner": "magnitudedev",
+    "repo": "magnitude",
+    "rev": "@magnitudedev/cli@0.2.16",
+    "hash": "sha256-0HFVMVf7YTyHUZuvt2Pd65MWeFmzX0ApUwUYSkdCqbY="
+  },
+  "tensorfold": {
+    "owner": "ashhart",
+    "repo": "TensorFold",
+    "rev": "v1.2.2",
+    "hash": "sha256-ZEItBlTu84XF1InhMsi9/mvoLKLLHaPvR+RWh+Xlr4E="
+  },
+  "mlxserve": {
+    "owner": "ddalcu",
+    "repo": "mlx-serve",
+    "rev": "v26.11.1",
+    "fetchSubmodules": true,
+    "hash": "sha256-as6tgmlzapJahxecbzoIUbg1AFYGcYF8j8C/fJ/9NEY="
+  },
+  "metal-cpp": {
+    "url": "https://developer.apple.com/metal/cpp/files/metal-cpp_26.zip",
+    "hash": "sha256-7n2eI2lw/S+Us6l7YPAATKwcIbRRpaQ8VmES7S8ZjY8="
+  },
+  "json": {
+    "url": "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz",
+    "hash": "sha256-cnGfiVhXzqfj5Fay823wntWcTnbh8r2SefDLslb1Dh0="
+  },
+  "gguf": {
+    "owner": "antirez",
+    "repo": "gguf-tools",
+    "rev": "8fa6eb65236618e28fd7710a0fba565f7faa1848",
+    "hash": "sha256-15FvyPOFqTOr5vdWQoPnZz+mYH919++EtghjozDlnSA="
+  },
+  "mldrift": {
+    "owner": "google-ai-edge",
+    "repo": "ml-drift",
+    "rev": "b1124115a5c78bab42c4e8df83732d653824ae41",
+    "hash": "sha256-sz4MV/iG5hPi6RVFGnPt+bT6+gZ/x+qD2GyXR8ONyKk="
+  },
+  "rules-rust": {
+    "owner": "bazelbuild",
+    "repo": "rules_rust",
+    "rev": "0.69.0",
+    "hash": "sha256-JkJkHmxRql3S69DLbT/AO+R/e0kMyNXdTliG2K2NJt0="
+  },
+  "rules-cc": {
+    "owner": "bazelbuild",
+    "repo": "rules_cc",
+    "rev": "0.2.22",
+    "hash": "sha256-e1ukhunXqlR5qty3EEiV3epJSL9TamalP5eAmNygSJ8="
+  },
+  "bazel-registry": {
+    "owner": "bazelbuild",
+    "repo": "bazel-central-registry",
+    "rev": "9bc19aec3357f320fc262ab71a8d054af6b6a74d",
+    "hash": "sha256-ivZhG5v1Z0NUsP8tRkZHO8RQiJwcULjmPLCmjBfjotI="
+  }
+}

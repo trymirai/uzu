@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import time
@@ -22,17 +23,23 @@ class TensorFoldServerEngine(ServerEngine):
     def create_process(self) -> subprocess.Popen:
         model_path = Path(self.model).expanduser()
         model = str(model_path.resolve()) if model_path.is_dir() else self.model
-        subprocess.run(
-            ["bash", str(self.PROJECT_DIR / "bootstrap.sh"), model],
-            check=True,
-            stdin=subprocess.DEVNULL,
-            stdout=sys.stderr,
-        )
+        binary = os.environ.get("BENCHMARK_TENSORFOLD_BINARY")
+        if binary is None:
+            subprocess.run(
+                ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+            )
+            binary = str(self.PROJECT_DIR / "deps/tensorfold/zig-out/native/bin/tensorfold-native")
+        if not model_path.is_dir():
+            # Complete downloads before the server's readiness timeout starts.
+            subprocess.run([binary, "pull", model], check=True, stdin=subprocess.DEVNULL, stdout=sys.stderr)
         # Launch the server directly so process.pid identifies the inference
         # process for memory measurements and process-group cleanup.
         return subprocess.Popen(
             [
-                str(self.PROJECT_DIR / "deps/tensorfold/zig-out/native/bin/tensorfold-native"),
+                binary,
                 "serve",
                 model,
                 "--host",

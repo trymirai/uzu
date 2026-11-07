@@ -69,24 +69,27 @@ class SplashServerEngine(ServerEngine):
 
     def create_process(self) -> subprocess.Popen:
         # Reuse the native benchmark's pinned sources and isolated dependencies.
-        environment = os.environ.copy()
-        environment.pop("VIRTUAL_ENV", None)
-        subprocess.run(
-            ["uv", "sync", "--project", str(self.PROJECT_DIR), "--frozen"],
-            check=True,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=sys.stderr,
-        )
-        subprocess.run(
-            ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
-            check=True,
-            stdin=subprocess.DEVNULL,
-            stdout=sys.stderr,
-        )
+        python = os.environ.get("BENCHMARK_SPLASH_PYTHON")
+        if python is None:
+            environment = os.environ.copy()
+            environment.pop("VIRTUAL_ENV", None)
+            subprocess.run(
+                ["uv", "sync", "--project", str(self.PROJECT_DIR), "--frozen"],
+                check=True,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+            )
+            subprocess.run(
+                ["bash", str(self.PROJECT_DIR / "bootstrap.sh")],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+            )
+            python = str(self.PROJECT_DIR / ".venv/bin/python")
         return subprocess.Popen(
             [
-                str(self.PROJECT_DIR / ".venv/bin/python"),
+                python,
                 # Keep this splash.py from shadowing the upstream splash package.
                 "-P",
                 str(Path(__file__).resolve()),

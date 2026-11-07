@@ -1,0 +1,63 @@
+--- a/cc/private/toolchain/unix_cc_toolchain_config.bzl
++++ b/cc/private/toolchain/unix_cc_toolchain_config.bzl
+@@ -161,6 +161,8 @@
+     return action_configs, features
+
+ all_compile_actions = [
++    ACTION_NAMES.objc_compile,
++    ACTION_NAMES.objcpp_compile,
+     ACTION_NAMES.c_compile,
+     ACTION_NAMES.cpp_compile,
+     ACTION_NAMES.linkstamp_compile,
+@@ -177,6 +179,7 @@
+ ]
+
+ all_cpp_compile_actions = [
++    ACTION_NAMES.objcpp_compile,
+     ACTION_NAMES.cpp_compile,
+     ACTION_NAMES.linkstamp_compile,
+     ACTION_NAMES.cpp_header_parsing,
+@@ -189,6 +192,8 @@
+ ]
+
+ preprocessor_compile_actions = [
++    ACTION_NAMES.objc_compile,
++    ACTION_NAMES.objcpp_compile,
+     ACTION_NAMES.c_compile,
+     ACTION_NAMES.cpp_compile,
+     ACTION_NAMES.linkstamp_compile,
+@@ -255,7 +260,15 @@
+         for name, path in ctx.attr.tool_paths.items()
+         if name != "libtool"
+     ]
+-    action_configs = []
++    objc_actions = [ACTION_NAMES.objc_compile, ACTION_NAMES.objcpp_compile]
++    action_configs = [
++        action_config(
++            action_name = action,
++            enabled = True,
++            tools = [tool(path = ctx.attr.tool_paths["gcc"])],
++        )
++        for action in objc_actions
++    ]
+
+     action_configs.append(action_config(
+         action_name = ACTION_NAMES.cpp_link_static_library,
+@@ -2025,6 +2038,17 @@
+     )
+     action_configs += parse_headers_action_configs
+     features += parse_headers_features
++    features.append(feature(
++        name = "objc_arc",
++        enabled = True,
++        flag_sets = [flag_set(
++            actions = objc_actions,
++            flag_groups = [
++                flag_group(flags = ["-fobjc-arc"], expand_if_available = "objc_arc"),
++                flag_group(flags = ["-fno-objc-arc"], expand_if_available = "no_objc_arc"),
++            ],
++        )],
++    ))
+
+     if symbol_check:
+         features.append(symbol_check)
