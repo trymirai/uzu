@@ -1485,7 +1485,7 @@ cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M --host 0.0.0.
 
 It exposes the following endpoints, available both at the root and under `/v1`:
 
-- `POST /v1/chat/completions` — chat completions, with streaming when `"stream": true`. Honors `temperature`, `top_p`, `top_k`, and `max_tokens`.
+- `POST /v1/chat/completions` — chat completions, with streaming when `"stream": true`. Honors `temperature`, `top_p`, `top_k`, `max_tokens`, and `seed`. Requests without a `seed` use the one passed with `--seed`, or a random one.
 - `GET /v1/models` — lists the loaded model.
 
 ```bash

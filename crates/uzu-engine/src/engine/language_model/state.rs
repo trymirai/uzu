@@ -20,6 +20,13 @@ impl<B: Backend> LanguageModelState<B> {
     pub fn tokens(&self) -> &[u64] {
         &self.tokens
     }
+
+    pub fn set_sampling_seed(
+        &mut self,
+        sampling_seed: u64,
+    ) {
+        self.prng = PRng::new(sampling_seed);
+    }
 }
 
 #[derive(Debug, Error)]

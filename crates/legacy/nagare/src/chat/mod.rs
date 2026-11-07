@@ -157,9 +157,7 @@ impl ChatSession {
             }
         };
         #[cfg(not(target_family = "wasm"))]
-        let instance = tokio::spawn(instance_future).await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })??;
+        let instance = tokio::spawn(instance_future).await.map_err(ChatSessionError::backend)??;
         #[cfg(target_family = "wasm")]
         let instance = instance_future.await?;
 
@@ -191,9 +189,7 @@ impl ChatSession {
             return Ok(());
         }
         let Some(registry) = self.tool_registry.as_ref() else {
-            return Err(ChatSessionError::Backend {
-                message: "Tool calls are not supported by this model".to_string(),
-            });
+            return Err(ChatSessionError::backend("Tool calls are not supported by this model"));
         };
 
         // register first so the owned set covers both prior and incoming definitions;

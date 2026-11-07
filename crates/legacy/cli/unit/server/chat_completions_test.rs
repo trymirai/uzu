@@ -21,6 +21,34 @@ fn response_format_maps_to_grammar() {
 }
 
 #[test]
+fn seed_maps_to_reply_sampling_seed() {
+    assert_eq!(reply_config(r#"{"messages":[]}"#).sampling_seed, SamplingSeed::Default {});
+    assert_eq!(
+        reply_config(r#"{"messages":[],"seed":42}"#).sampling_seed,
+        SamplingSeed::Custom {
+            seed: 42
+        }
+    );
+    assert_eq!(
+        reply_config(r#"{"messages":[],"seed":-7}"#).sampling_seed,
+        SamplingSeed::Custom {
+            seed: -7
+        }
+    );
+    // A seed alone leaves the model's default sampling in place.
+    assert_eq!(
+        reply_config(r#"{"messages":[],"seed":42}"#).sampling_policy,
+        uzu::types::basic::SamplingPolicy::Default {}
+    );
+}
+
+#[test]
+fn seed_must_be_an_integer() {
+    assert!(serde_json::from_str::<ChatCompletionRequest>(r#"{"messages":[],"seed":1.5}"#).is_err());
+    assert!(serde_json::from_str::<ChatCompletionRequest>(r#"{"messages":[],"seed":"42"}"#).is_err());
+}
+
+#[test]
 fn response_format_unrecognized_is_invalid() {
     let error = build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#))
         .expect_err("unrecognized response_format should be rejected");
@@ -638,4 +666,25 @@ fn backend_error_bodies_are_openai_errors_with_collapsed_prefixes() {
             .expect("serializable error body");
     assert_eq!(body["error"]["type"], "server_error");
     assert_eq!(body["error"]["message"], "No response generated");
+}
+
+#[test]
+fn context_overflow_is_reported_as_context_length_exceeded() {
+    let error = ChatSessionError::Backend {
+        error: BackendError::ContextOverflow {},
+    };
+    let body = serde_json::to_value(stream_error_body(&error)).expect("serializable error body");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert_eq!(body["error"]["code"], "context_length_exceeded");
+    assert_eq!(body["error"]["param"], "messages");
+    assert_eq!(body["error"]["message"], "Input exceeds the context window of this model");
+}
+
+#[test]
+fn overflow_text_without_the_variant_stays_a_backend_error() {
+    let body =
+        serde_json::to_value(stream_error_body(&ChatSessionError::backend("Context overflow"))).expect("serializable");
+    assert_eq!(body["error"]["code"], "backend_error");
+    assert_eq!(body["error"]["param"], serde_json::Value::Null);
+    assert_eq!(body["error"]["message"], "Context overflow");
 }

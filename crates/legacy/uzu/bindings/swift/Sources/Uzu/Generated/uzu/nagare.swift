@@ -1962,7 +1962,7 @@ public enum ChatSessionError: Swift.Error, Equatable, Hashable, Codable, Foundat
 
     
     
-    case Backend(message: String
+    case Backend(error: BackendError
     )
     case Loading(message: String
     )
@@ -2001,7 +2001,7 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
 
         
         case 1: return .Backend(
-            message: try FfiConverterString.read(from: &buf)
+            error: try FfiConverterTypeBackendError.read(from: &buf)
             )
         case 2: return .Loading(
             message: try FfiConverterString.read(from: &buf)
@@ -2024,9 +2024,9 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
 
         
         
-        case let .Backend(message):
+        case let .Backend(error):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterTypeBackendError.write(error, into: &buf)
             
         
         case let .Loading(message):
