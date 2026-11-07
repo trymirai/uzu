@@ -45,7 +45,7 @@ impl BatchTopology {
                 trie_end: size - 1,
                 height: index,
             })
-            .collect::<Box<[_]>>();
+            .collect();
 
         Self::new(nodes, full_accept)
     }

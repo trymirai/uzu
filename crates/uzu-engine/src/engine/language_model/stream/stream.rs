@@ -31,9 +31,7 @@ use crate::{
 
 pub struct LanguageModelStream<'a, B: Backend> {
     submitter: StreamEnqueuer<'a, B>,
-    /// Currently running job
     job: Option<GenerationJob<B>>,
-    /// Resolved job from which we're emitting tokens
     emitting: Option<(ResolvedJob<B>, usize)>,
 }
 
@@ -44,6 +42,7 @@ struct StreamEnqueuer<'a, B: Backend> {
     allocation_pool: Arc<B::AllocationPool>,
     context_ring: Option<B::GlobalGpuBuffer>,
     metrics: TokenStreamMetrics,
+    propose_trie: bool,
 }
 
 enum GenerationJob<B: Backend> {
@@ -54,7 +53,7 @@ enum GenerationJob<B: Backend> {
         trie: Option<TrieNode>,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
         capture_span: Option<CaptureMatcherSpan>,
-        pending: <<B as Backend>::CommandBuffer as CommandBuffer>::Pending,
+        pendings: Box<[<<B as Backend>::CommandBuffer as CommandBuffer>::Pending]>,
         _input_token_source: Option<B::GlobalGpuBuffer>,
     },
     Resolved(ResolvedJob<B>),
@@ -102,7 +101,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
-        if model_state.tokens.is_empty() && input.is_empty() {
+        if input.is_empty() {
             return Err(LanguageModelStreamError::NoSeedToken);
         };
 
@@ -149,6 +148,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             allocation_pool,
             context_ring,
             metrics,
+            propose_trie: true,
         })
     }
 
@@ -166,9 +166,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 trie,
                 hidden_features,
                 capture_span,
-                pending,
+                pendings,
             } => {
-                wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
+                for pending in pendings {
+                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
+                }
                 let gpu_tokens = self
                     .model
                     .engine
@@ -410,7 +412,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             trie: None,
             hidden_features: decoder_output.hidden_features,
             capture_span: None,
-            pending: command_buffer.end_encoding().submit(),
+            pendings: Box::new([command_buffer.end_encoding().submit()]),
         })
     }
 
@@ -423,7 +425,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
-        let trie = if let Some(speculator) = &self.model.speculator
+        let trie = if self.propose_trie
+            && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
             ) {
@@ -529,10 +532,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             &mut command_buffer,
         )?;
 
+        let mut pendings = Vec::new();
+
         // sampling
         let (mut command_buffer, token_ids): (_, &dyn GpuBuffer<Backend = B>) =
             if needs_last_job_input && self.options.grammar.is_some() {
-                command_buffer.end_encoding().submit();
+                pendings.push(command_buffer.end_encoding().submit());
                 let command_buffer = record(
                     self.model
                         .engine
@@ -607,7 +612,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         self.metrics.num_decode_forward_passes += 1;
         self.metrics.num_tokens_proposed += batch_dim.size() as usize;
 
-        drop(constant_token_ids);
         if batch_dim.full_accept() {
             self.model_state
                 .transformer_state
@@ -626,14 +630,20 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
                 self.model.context_ring_update.encode(
-                    &output_tokens,
+                    token_ids,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
                     batch_dim.size(),
                     &mut command_buffer,
                 );
             }
+        }
 
+        drop(constant_token_ids);
+
+        pendings.push(command_buffer.end_encoding().submit());
+
+        if batch_dim.full_accept() {
             capture_span.take();
         }
 
@@ -645,7 +655,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             trie,
             hidden_features: decoder_output.hidden_features,
             capture_span,
-            pending: command_buffer.end_encoding().submit(),
+            pendings: pendings.into_boxed_slice(),
         };
 
         // Return results
@@ -670,8 +680,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     fn encode_accept(
         &mut self,
         resolved: &mut ResolvedJob<B>,
-        emitted_len: usize,
+        accept_len: usize,
     ) -> Result<Option<<<B as Backend>::CommandBuffer as CommandBuffer>::Pending>, LanguageModelStreamError<B>> {
+        let batch_dim = &resolved.batch_dim;
+
+        if batch_dim.full_accept() {
+            return Ok(None);
+        }
+
         let command_buffer = self
             .model
             .engine
@@ -680,16 +696,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .map_err(LanguageModelStreamError::Backend)?;
         let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
 
-        let batch_dim = &resolved.batch_dim;
-
-        if batch_dim.full_accept() {
-            return Ok(None);
-        }
-
         let (accepted_token_indices, accepted_input_token_ids) =
             resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
-        let accepted_token_indices = &accepted_token_indices[..emitted_len];
-        let accepted_input_token_ids = &accepted_input_token_ids[..emitted_len];
+        let accepted_token_indices = &accepted_token_indices[..accept_len];
+        let accepted_input_token_ids = &accepted_input_token_ids[..accept_len];
 
         self.model_state
             .transformer_state
@@ -722,9 +732,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             );
         }
 
+        let pending = command_buffer.end_encoding().submit();
         resolved.capture_span.take();
 
-        Ok(Some(command_buffer.end_encoding().submit()))
+        Ok(Some(pending))
     }
 }
 
@@ -788,7 +799,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
                 wait(pending, self.submitter.options.timestamps.as_ref())
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
-            };
+            }
 
             let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
                 self.submitter.model_state.transformer_state.context_length() >= max_context_length
@@ -811,18 +822,44 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     }
 
     pub async fn close(&mut self) -> Result<(), LanguageModelStreamError<B>> {
-        let Some((mut last_resolved, emitted_len)) = self.emitting.take() else {
-            return Ok(());
+        if let Some((mut last_resolved, emitted_len)) = self.emitting.take() {
+            let output_len = last_resolved.output_tokens.len();
+            let accept_len = output_len.min(emitted_len + 1);
+            let accept_pending = self.submitter.encode_accept(&mut last_resolved, accept_len)?;
+            if let Some(pending) = accept_pending {
+                wait(pending, self.submitter.options.timestamps.as_ref())
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+            }
+
+            let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
+                self.submitter.model_state.transformer_state.context_length() >= max_context_length
+            });
+
+            // Make sure last token is accepted.
+            if emitted_len == output_len && !context_full {
+                let next_job = match self.job.take() {
+                    Some(job) => job,
+                    None => {
+                        self.submitter.propose_trie = false;
+                        let queued = self.submitter.get_and_queue_pass(GenerationJob::Resolved(last_resolved)).await;
+                        self.submitter.propose_trie = true;
+                        queued?.1
+                    },
+                };
+                let mut next_resolved = self.submitter.resolve_take(next_job).await?;
+                let accept_pending = self.submitter.encode_accept(&mut next_resolved, 1)?;
+                if let Some(pending) = accept_pending {
+                    wait(pending, self.submitter.options.timestamps.as_ref())
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+                }
+            }
         };
 
-        let accept_pending = self.submitter.encode_accept(&mut last_resolved, emitted_len)?;
-        if let Some(pending) = accept_pending {
-            wait(pending, self.submitter.options.timestamps.as_ref())
-                .await
-                .map_err(LanguageModelStreamError::Backend)?;
-        };
-
-        self.submitter.resolve_take(self.job.take().unwrap()).await?;
+        if let Some(job) = self.job.take() {
+            self.submitter.resolve_take(job).await?;
+        }
 
         Ok(())
     }
