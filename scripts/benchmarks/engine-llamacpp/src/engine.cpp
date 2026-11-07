@@ -38,8 +38,10 @@ struct LlamaEngine::RunConfig {
 
 LlamaEngine::LlamaEngine(
     const std::string& model,
-    const std::string& draft_model
-) {
+    const std::string& draft_model,
+    ggml_type kv_cache_type
+)
+    : kv_cache_type(kv_cache_type) {
 #ifndef __APPLE__
     this->graphics_baseline = gpu_memory_used();
 #endif
@@ -461,6 +463,8 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
         .max_tokens = max_tokens,
         .ctx_params = llama_context_default_params(),
     };
+    config.ctx_params.type_k = this->kv_cache_type;
+    config.ctx_params.type_v = this->kv_cache_type;
     config.ctx_params.n_ctx = max_tokens.has_value()
         ? std::max<size_t>(config.ctx_params.n_ctx, tokens.size() + max_tokens.value())
         : 0;  // Let llama.cpp use the model's declared context capacity for EOS-only generation.

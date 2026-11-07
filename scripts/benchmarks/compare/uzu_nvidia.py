@@ -2,9 +2,10 @@
 
 uzu runs a trymirai checkpoint with its speculator on Vulkan. Inside WSL on CUDA, llama.cpp runs a GGUF target with a
 DFlash draft, vLLM with HyperQwen's patches its own 4-bit Qwen3.8-27B with a DFlash2 draft, and Lucebox a GGUF target
-with a DFlash draft it verifies as a tree. All answer the same chat requests: task files, or the replay rows
-compare/mixture_export.py writes. Tokens per forward pass counts generated tokens per target forward including prefill:
-the mean accepted length.
+with a DFlash draft it verifies as a tree. As far as each engine allows, they run uzu's precisions: 4-bit weights of
+about its size, INT8 activations and an 8-bit KV cache. All answer the same chat requests: task files, or the replay
+rows compare/mixture_export.py writes. Tokens per forward pass counts generated tokens per target forward including
+prefill: the mean accepted length.
 """
 
 import json
@@ -42,7 +43,7 @@ def main(
     uzu_model: Annotated[str, typer.Option(help="uzu checkpoint.")] = "trymirai/Qwen3.8-27B-M",
     llamacpp_model: Annotated[
         str, typer.Option(help="llama.cpp 4-bit GGUF target: a path WSL can open or REPOSITORY:QUANT.")
-    ] = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+    ] = "Lucebox/Qwen3.8-27B-IQ4_XS-fast-GGUF:IQ4_XS",
     llamacpp_draft_model: Annotated[
         str, typer.Option(help="llama.cpp DFlash draft GGUF, in the same forms.")
     ] = "ggml-org/Qwen3.8-27B-GGUF:Q8_0",
@@ -94,18 +95,28 @@ def main(
         ]
     uzu_context = ["--context-length", str(context)] if context is not None else []
     lucebox_context = ["--max-ctx", str(context)] if context is not None else []
+    # ggml's 8-bit K and V, the nearest to uzu's INT8 per-token-head cache.
+    kv_cache = ["--kv-cache-type", "q8_0"]
     commands = {
         "uzu": ["cargo", "run", "--release", "-p", "benchmarks-uzu", "--", "--model", uzu_model, *uzu_context],
         # llama.cpp sizes each run's context to its prompt and generation cap.
         Engine.LLAMACPP: linux_command(
-            ["bash", "engine-llamacpp/run.sh", "--model", llamacpp_model, "--draft-model", llamacpp_draft_model]
+            [
+                "bash",
+                "engine-llamacpp/run.sh",
+                "--model",
+                llamacpp_model,
+                "--draft-model",
+                llamacpp_draft_model,
+                *kv_cache,
+            ]
         ),
-        # HyperQwen serves 64K tokens of context beside its draft.
+        # HyperQwen serves 128K tokens of context beside its draft.
         Engine.VLLM: linux_uv_command("engine-vllm", "bench-vllm", ["--hyperqwen"]),
         Engine.LUCEBOX: linux_uv_command(
             "engine-lucebox",
             "bench-lucebox",
-            ["--model", lucebox_model, "--draft-model", lucebox_draft_model, *lucebox_context],
+            ["--model", lucebox_model, "--draft-model", lucebox_draft_model, *lucebox_context, *kv_cache],
         ),
     }
 

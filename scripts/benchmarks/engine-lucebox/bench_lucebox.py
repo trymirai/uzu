@@ -31,7 +31,9 @@ AR_TOKENS = re.compile(r"\[ar-decode\] tokens=(\d+) ")
 class LuceboxEngine(InferenceEngine):
     supports_reasoning_effort = True
 
-    def __init__(self, model: str, draft_model: str | None, max_ctx: int, ddtree_budget: int):
+    def __init__(
+        self, model: str, draft_model: str | None, max_ctx: int, ddtree_budget: int, kv_cache_type: str | None
+    ):
         super().__init__()
         binary = subprocess.run(
             ["bash", str(PROJECT_DIR / "bootstrap.sh")], check=True, stdout=subprocess.PIPE, text=True
@@ -43,6 +45,8 @@ class LuceboxEngine(InferenceEngine):
         command += ["--prefix-cache-slots", "0", "--no-agent-turn-cache", "--no-kv-cache"]
         # A reasoning effort turns on its thinking budget, which reserves 4096 reply tokens by closing thinking early.
         command += ["--hard-limit-reply-budget", "0"]
+        if kv_cache_type is not None:
+            command += ["--cache-type-k", kv_cache_type, "--cache-type-v", kv_cache_type]
         self.speculative = draft_model is not None
         if draft_model is not None:
             command += ["--draft", resolve(draft_model), "--ddtree", "--ddtree-budget", str(ddtree_budget)]
@@ -192,9 +196,13 @@ def run(
     ] = None,
     max_ctx: Annotated[int, typer.Option(help="Context length luce_server allocates.")] = 16384,
     ddtree_budget: Annotated[int, typer.Option(help="DDTree verification candidates per step.")] = 22,
+    kv_cache_type: Annotated[
+        str | None,
+        typer.Option(help="K and V cache element type, such as q8_0; luce_server's default for Qwen is q4_0."),
+    ] = None,
 ) -> None:
     with redirect_stdout(sys.stderr):
-        engine = LuceboxEngine(model, draft_model, max_ctx, ddtree_budget)
+        engine = LuceboxEngine(model, draft_model, max_ctx, ddtree_budget, kv_cache_type)
     try:
         run_loop(engine)
     finally:

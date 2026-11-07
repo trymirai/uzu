@@ -42,7 +42,8 @@ Also DFlash is supported
 ```
 
 With a DFlash draft, a request that omits `speculative_depth` proposes the draft's block size minus one tokens per step;
-`0` decodes without it. On Linux, `run.sh` builds with CUDA for the local GPU (CMake 3.31+); on Windows it runs inside
+`0` decodes without it. `--kv-cache-type` sets the target's and the draft's K and V caches by ggml type name (default
+`f16`; `q8_0` for 8-bit). On Linux, `run.sh` builds with CUDA for the local GPU (CMake 3.31+); on Windows it runs inside
 WSL, where `compare/` starts it through `wsl.exe`. There `memory_graphics_total` is the GPUs' used memory above what was
 in use before the model loaded, because Linux has no per-process GPU accounting.
 
@@ -163,9 +164,11 @@ From Windows, the tests and `compare/` start it through `wsl.exe` with its virtu
 
 On a 24 GB GPU, stock vLLM leaves a 4-bit Qwen3.8-27B and its DFlash2 draft room for about 8K tokens of context.
 `--hyperqwen` serves [HyperQwen](https://github.com/syv-ai/HyperQwen) instead: vLLM 0.32.0 with syv-ai's patches, their
-Qwen3.8-27B with 4-bit lm_head and embeddings, and the W4A16 DFlash2 drafter, in its single-user profile (64K tokens of
-context, 7 proposed tokens per step, lookup drafting). `engine-vllm/hyperqwen.sh` installs it at a pinned commit under
-`~/.cache/uzu-benchmarks` the first time (about 35 GB). The adapter starts its launcher with prefix caching off, renders
+Qwen3.8-27B with 4-bit lm_head and embeddings, and the W4A16 DFlash2 drafter, in its single-user DFlash2 profile (7
+proposed tokens per step, lookup drafting). It runs uzu's precisions: INT8 activations on the 4-bit weights (W4A8
+Marlin, `INT8_ACT=int8`) and an INT8 per-token-head KV cache, which its long-context arm reads with the pth-flash-attn
+kernel (`CTX=long PTH_FA=1`, 128K tokens of context). `engine-vllm/hyperqwen.sh` installs it at a pinned commit under
+`~/.cache/uzu-benchmarks` the first time (about 40 GB). The adapter starts its launcher with prefix caching off, renders
 prompts like the in-process engine and streams completions of their tokens. Time to first token and decode throughput are
 client clocks on that stream, `tokens_per_forward_pass` comes from the server's speculative-decoding counters, and
 `memory_graphics_total` is the GPU's used memory above what was in use before the server started.
@@ -192,7 +195,8 @@ thinking early once a request sets a reasoning effort, is off. Requests without 
 sends every sampling field, since luce_server fills omitted ones from the model card. Time to first token and decode throughput come from
 luce_server's prefill and decode timers (first to last token). `tokens_per_forward_pass` divides the generated tokens by
 the prefill plus the target forwards luce_server logs for the request. `memory_graphics_total` is the GPU's used memory
-above what was in use before the server started, because WSL has no per-process GPU accounting.
+above what was in use before the server started, because WSL has no per-process GPU accounting. `--kv-cache-type` sets
+its K and V caches (luce_server keeps Qwen's at `q4_0` by default; its model card serves this pair at `q8_0`).
 
 ## iOS
 
@@ -210,8 +214,11 @@ or the NVIDIA GPU (elsewhere) to cool to 60°C before each measured request.
 
 uzu against llama.cpp, vLLM and Lucebox on one NVIDIA GPU, each with its own speculative decoding and a 4-bit
 Qwen3.8-27B, on Windows only: uzu runs natively and the others in WSL, one after another; `--engine NAME` (repeatable)
-picks some of them. vLLM runs as HyperQwen (`bench-vllm --hyperqwen`). With task files (`--input`, default
-london-summary), engines decode greedily up to `--max-tokens` unless `--temperature` is set:
+picks some of them. vLLM runs as HyperQwen (`bench-vllm --hyperqwen`). As far as each engine allows, all run uzu's
+precisions: 4-bit weights of about its 13.5 GiB (llama.cpp shares Lucebox's IQ4_XS GGUF), INT8 activations (ggml
+quantizes them to 8 bits in its quantized matmuls; HyperQwen runs W4A8) and an 8-bit KV cache (`q8_0` in ggml,
+HyperQwen's INT8 per token and head like uzu's). With task files (`--input`, default london-summary), engines decode
+greedily up to `--max-tokens` unless `--temperature` is set:
 ```bash
 uv run compare/uzu_nvidia.py
 ```
@@ -226,7 +233,7 @@ uv run compare/mixture_export.py --performance-benchmarks PATH/TO/performance-be
 
 Each row carries its chat, tools, reasoning effort and generation cap, as performance-benchmarks replays them. Engines
 that size their context at load get the largest row's prompt, cap and 64 tokens, like performance-benchmarks'
-`context_size: auto` for each row; llama.cpp sizes every run itself, and HyperQwen serves 64K tokens. With the
+`context_size: auto` for each row; llama.cpp sizes every run itself, and HyperQwen serves 128K tokens. With the
 settings of performance-benchmarks' Qwen3.8 comparison:
 ```bash
 uv run compare/uzu_nvidia.py --rows workspace/mixture/benchmarks-mixture-fast.jsonl \
