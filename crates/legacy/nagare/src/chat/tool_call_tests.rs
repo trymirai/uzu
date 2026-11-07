@@ -45,25 +45,28 @@ fn candidates_and_completed_calls_keep_the_same_identifier() {
 #[test]
 fn xml_stream_preserves_escapes_and_closing_tag_prefixes() {
     let text = "héllo 🙂\n\"quoted\"\\\n</parametric>\n";
-    let raw = format!("<function=write>\n<parameter=content>\n{text}\n</parameter>\n</function>");
-    let stream = ToolCallArgumentStream::create(Vec::new());
-    let mut json = String::new();
-    for (index, _) in raw.char_indices() {
-        json.push_str(&stream.update(raw[..index].into()).unwrap().arguments);
+    for parameter in ["content", "file-path", "content.type"] {
+        let raw = format!("<function=write>\n<parameter={parameter}>\n{text}\n</parameter>\n</function>");
+        let arguments = serde_json::json!({parameter: text});
+        let stream = ToolCallArgumentStream::create(Vec::new());
+        let mut json = String::new();
+        for (index, _) in raw.char_indices() {
+            json.push_str(&stream.update(raw[..index].into()).unwrap().arguments);
+        }
+        json.push_str(&stream.update(raw).unwrap().arguments);
+        assert!(json.contains("héllo"), "arguments must appear before completion");
+        json.push_str(
+            &stream
+                .finish(ToolCall {
+                    identifier: None,
+                    name: "write".into(),
+                    arguments: Value::from(arguments.clone()),
+                })
+                .unwrap()
+                .arguments,
+        );
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&json).unwrap(), arguments);
     }
-    json.push_str(&stream.update(raw).unwrap().arguments);
-    assert!(json.contains("héllo"), "arguments must appear before completion");
-    json.push_str(
-        &stream
-            .finish(ToolCall {
-                identifier: None,
-                name: "write".into(),
-                arguments: Value::from(serde_json::json!({"content": text})),
-            })
-            .unwrap()
-            .arguments,
-    );
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&json).unwrap(), serde_json::json!({"content": text}));
 }
 
 #[test]
