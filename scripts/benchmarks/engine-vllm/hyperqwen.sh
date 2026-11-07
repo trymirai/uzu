@@ -30,6 +30,13 @@ if [[ ! -f venv/.uzu-patched ]]; then
     bash patches/apply.sh venv/lib/python3.12/site-packages/vllm >&2
     touch venv/.uzu-patched
 fi
+# The pth-flash-attn kernel, which reads the INT8 per-token-head KV cache the adapter serves with. Its installer builds
+# the op library for sm_80/86/89 and installs it with the venv's pip.
+if [[ ! -f venv/.uzu-pthfa ]]; then
+    uv pip install --quiet --python venv/bin/python pip >&2
+    bash pthfa/install.sh >&2
+    touch venv/.uzu-pthfa
+fi
 
 run() {
     uv run --quiet --no-project --python venv/bin/python "$@" >&2

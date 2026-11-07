@@ -13,7 +13,8 @@ class LlamaEngine final : public InferenceEngine {
 public:
     explicit LlamaEngine(
         const std::string& model,
-        const std::string& draft_model = ""
+        const std::string& draft_model = "",
+        ggml_type kv_cache_type = GGML_TYPE_F16
     );
 
     std::vector<BenchResponse> execute(const BenchRequest& request) const override;
@@ -36,6 +37,8 @@ private:
     llama_model_ptr model;
     llama_model_ptr draft_model;
     size_t dflash_depth = 0;
+    // The element type of the target's and the draft's K and V caches.
+    ggml_type kv_cache_type;
     const llama_vocab* tokenizer;
     common_chat_templates_ptr chat_templates;
     bool has_mtp;

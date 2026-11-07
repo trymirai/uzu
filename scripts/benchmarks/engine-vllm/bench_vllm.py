@@ -30,6 +30,9 @@ DRAFTS = "vllm:spec_decode_num_drafts"
 # The checkpoint hyperqwen.sh requantizes. HyperQwen serves its variant with a 4-bit lm_head, with the same tokenizer.
 HYPERQWEN_MODEL = "models/Qwen3.8-27B-W4A16-AutoRound"
 HYPERQWEN_NAME = "qwen3.8-27b"
+# The launcher's DFlash2 profile with INT8 activations (W4A8 Marlin) and its long-context arm's INT8 per-token-head KV
+# cache on the pth-flash-attn kernel, without prefix caching.
+HYPERQWEN_SETTINGS = {"SPEC": "dflash2", "CTX": "long", "PTH_FA": "1", "INT8_ACT": "int8", "PREFIX_CACHE": "0"}
 
 
 class VLLMEngine(InferenceEngine):
@@ -128,8 +131,9 @@ class VLLMEngine(InferenceEngine):
 
 class HyperQwenEngine(InferenceEngine):
     """HyperQwen's single-user DFlash2 server: vLLM 0.32.0 with syv-ai's patches, serving their requantized Qwen3.8-27B
-    with the W4A16 DFlash2 drafter. Prompts render as in VLLMEngine and go to the server as tokens, with prefix caching
-    off as in the other adapters."""
+    with the W4A16 DFlash2 drafter. It runs INT8 activations on its 4-bit weights and an INT8 per-token-head KV cache
+    read by the pth-flash-attn kernel, the precisions uzu runs. Prompts render as in VLLMEngine and go to the server as
+    tokens, with prefix caching off as in the other adapters."""
 
     supports_reasoning_effort = True
 
@@ -145,13 +149,15 @@ class HyperQwenEngine(InferenceEngine):
         self.tokenizer = AutoTokenizer.from_pretrained(directory / HYPERQWEN_MODEL)
         port = free_port()
         self.graphics_baseline = gpu_memory_used()
+        # The server keeps its own engine process, which this module's in-process setting would otherwise reach.
+        environment = {name: value for name, value in os.environ.items() if name != "VLLM_ENABLE_V1_MULTIPROCESSING"}
         self.server = LocalServer(
             "HyperQwen",
             port,
             ["bash", "single-user/start_qwen.sh"],
             cwd=directory,
             stdout=sys.stderr,
-            env=os.environ | {"SPEC": "dflash2", "PREFIX_CACHE": "0", "PORT": str(port)},
+            env=environment | HYPERQWEN_SETTINGS | {"PORT": str(port)},
         )
         self.server.wait_ready()
 
