@@ -1,7 +1,8 @@
 use uzu_engine_macros::uzu_config;
 
 use crate::config::{
-    linear::LinearConfig, normalization::NormalizationConfig, token_mixer::convolutions::SeparableCausalConvConfig,
+    activation::AnyActivation, linear::LinearConfig, normalization::NormalizationConfig,
+    token_mixer::convolutions::SeparableCausalConvConfig,
 };
 
 #[uzu_config(super::TokenMixerConfig)]
@@ -16,4 +17,5 @@ pub struct DeltaNetConfig {
     pub head_dim: u32,
     pub value_head_dim: u32,
     pub kernel_size: u32,
+    pub output_gate: AnyActivation,
 }

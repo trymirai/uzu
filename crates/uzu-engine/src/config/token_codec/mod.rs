@@ -12,13 +12,16 @@ impl From<&AnyTokenCodecConfig> for ShojiTokenCodecConfig {
         match config {
             AnyTokenCodecConfig::ChatCodecConfig(config) => ShojiTokenCodecConfig::Chat(ChatTokenCodecConfig {
                 prompt_template: config.prompt_template.clone(),
-                output_parser_regex: config.output_parser_regex.clone(),
+                output_parser_regex: config
+                    .response_format
+                    .as_ref()
+                    .and_then(|format| format.reasoning_pattern.clone()),
                 system_role_name: config.system_role_name.clone(),
                 user_role_name: config.user_role_name.clone(),
                 assistant_role_name: config.assistant_role_name.clone(),
                 eos_token: config.eos_token.clone(),
                 bos_token: config.bos_token.clone(),
-                end_of_thinking_tag: config.end_of_thinking_tag.clone(),
+                end_of_thinking_tag: config.end_of_thinking_tag().map(str::to_owned),
                 default_system_prompt: config.default_system_prompt.clone(),
             }),
             AnyTokenCodecConfig::RawTextCodecConfig(_) => ShojiTokenCodecConfig::RawText,

@@ -69,6 +69,7 @@ mod tests {
                     "logit_soft_cap": null, "logit_scale": null,
                 },
                 "transformer_config": {
+                    "residual_config": { "type": "AdditiveResidualConfig" },
                     "layer_configs": [], "model_dim": 4, "hidden_dim": 4,
                     "output_norm_config": {
                         "epsilon": 0.00001, "scale_offset": null,
