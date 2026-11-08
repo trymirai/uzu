@@ -4,10 +4,10 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
-        common::gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+        common::gpu_types::{hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, moe},
         cpu::kernel::{
             activation_transform::hadamard_transform,
-            dequant::{dequantize_weight, read_zero_point},
+            matmul::{read_zero_point, unpack_code},
         },
     },
     data_type::DataTypeRepr,
@@ -40,11 +40,10 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     #[specialize] a_per_token: bool,
 ) {
     assert_eq!(zero_points.is_some(), BITS == 4);
-    // A reduction block holds 512 W4 or 256 W8 values, and the output rotation works on blocks of 32.
     let block_size = if BITS == 4 {
-        512
+        moe::GEMV_W4_INPUT_BLOCK
     } else {
-        256
+        moe::GEMV_W8_INPUT_BLOCK
     };
     assert!(in_vec_size.is_multiple_of(block_size));
     assert!(out_vec_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
@@ -77,20 +76,19 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
             for input_dim_idx in 0..k_u {
                 let a_val = unsafe { *route_a.add(input_dim_idx) }.to_f32().unwrap();
                 let weight_linear_index = output_dim_idx * k_u + input_dim_idx;
+                let quantized_value = unsafe { unpack_code(expert_b as *const u32, weight_linear_index, bits, false) };
                 let group_index = input_dim_idx / group_size;
                 let metadata_index =
                     output_dim_idx * scale_output_stride as usize + group_index * scale_group_stride as usize;
                 let scale = unsafe { *expert_scales.add(metadata_index) }.to_f32().unwrap();
-                let zero_point = if BITS == 4 {
-                    let zp_index = output_dim_idx * zero_point_output_stride as usize
+                let midpoint = (1u32 << (bits - 1)) as f32;
+                let zero_point = expert_zero_points.map(|expert_zero_points| {
+                    let zero_point_index = output_dim_idx * zero_point_output_stride as usize
                         + group_index * zero_point_group_stride as usize;
-                    Some(unsafe { read_zero_point(expert_zero_points.unwrap(), zp_index, bits) })
-                } else {
-                    None
-                };
-                let b_val = unsafe {
-                    dequantize_weight(expert_b as *const u32, weight_linear_index, bits, false, scale, zero_point)
-                };
+                    unsafe { read_zero_point(expert_zero_points, zero_point_index, bits) }
+                });
+                let zero_point_offset = -scale * zero_point.unwrap_or(midpoint);
+                let b_val = scale * quantized_value + zero_point_offset;
                 acc += a_val * b_val;
             }
             *out_slot = acc;

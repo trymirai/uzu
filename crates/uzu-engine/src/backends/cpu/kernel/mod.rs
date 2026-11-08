@@ -7,7 +7,6 @@ mod activation;
 pub(crate) mod activation_transform;
 mod attention;
 mod convolution;
-pub(crate) mod dequant;
 mod embedding;
 mod gated_act_mul;
 mod gdn;

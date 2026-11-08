@@ -13,12 +13,10 @@ use crate::{
             buffer::CpuBufferExt,
             command_buffer::CpuCommandBufferEncoding,
             context::CpuContext,
-            kernel::{
-                dequant::{dequantize_weight, dequantize_weight_with_bias, read_zero_point},
-                matmul::{
-                    MatmulCpuError,
-                    reference::{WeightData, load, store},
-                },
+            kernel::matmul::{
+                MatmulCpuError, read_zero_point,
+                reference::{WeightData, load, store},
+                unpack_code,
             },
         },
     },
@@ -230,35 +228,30 @@ impl MatmulKernel for MatmulCpuKernel {
                                     signed_codes,
                                 } => {
                                     let weight_linear_index = b_col * k_u + inner;
+                                    let quantized_value = unpack_code(
+                                        weights.as_ptr() as *const u32,
+                                        weight_linear_index,
+                                        *bits,
+                                        *signed_codes,
+                                    );
                                     let group_index = inner / group_size;
                                     let metadata_index = b_col * scale_strides.output_stride as usize
                                         + group_index * scale_strides.group_stride as usize;
                                     let scale = load(scales.as_ptr(), weights_data_type, metadata_index);
+                                    let midpoint = (1u32 << (bits - 1)) as f32;
                                     let zero_point = zero_points.as_ref().map(|(zp, strides)| {
                                         let zero_point_index = b_col * strides.output_stride as usize
                                             + group_index * strides.group_stride as usize;
                                         read_zero_point(zp.as_ptr(), zero_point_index, *bits)
                                     });
-                                    if let Some(b) = biases {
-                                        let bias_term = load(b.as_ptr(), weights_data_type, metadata_index);
-                                        dequantize_weight_with_bias(
-                                            weights.as_ptr() as *const u32,
-                                            weight_linear_index,
-                                            *bits,
-                                            *signed_codes,
-                                            scale,
-                                            bias_term,
-                                        )
+                                    let bias_term = if let Some(zp) = zero_point {
+                                        -scale * zp
+                                    } else if let Some(b) = biases {
+                                        load(b.as_ptr(), weights_data_type, metadata_index)
                                     } else {
-                                        dequantize_weight(
-                                            weights.as_ptr() as *const u32,
-                                            weight_linear_index,
-                                            *bits,
-                                            *signed_codes,
-                                            scale,
-                                            zero_point,
-                                        )
-                                    }
+                                        -scale * midpoint
+                                    };
+                                    scale * quantized_value + bias_term
                                 },
                             };
                             accumulator += a_value * b_value;
