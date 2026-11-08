@@ -50,9 +50,7 @@ impl Session {
         config: ChatConfig,
         reference: String,
     ) -> Result<Arc<dyn ChatTokenBackendInstance>, ChatSessionError> {
-        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        let instance = backend.instance(reference, config).await.map_err(ChatSessionError::from)?;
         Ok(Arc::from(instance))
     }
 
@@ -96,9 +94,7 @@ impl Session {
                 message: "can not get encoding config".to_string(),
             }),
         }?;
-        let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        let state = instance.state().await.map_err(ChatSessionError::from)?;
         let stop_token_ids = instance.stop_token_ids().ok_or_else(|| ChatSessionError::Loading {
             message: "stop_token_ids is None".to_string(),
         })?;
@@ -115,9 +111,7 @@ impl Session {
     }
 
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
-        self.encoding.reset().map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        self.encoding.reset().map_err(ChatSessionError::backend)?;
         self.state_reset().await?;
         Ok(())
     }
@@ -191,12 +185,7 @@ impl Session {
                 }
 
                 match state.encoding.flush() {
-                    Err(error) => Some((
-                        Err(ChatSessionError::Backend {
-                            message: error.to_string(),
-                        }),
-                        (inner, state, true, true),
-                    )),
+                    Err(error) => Some((Err(ChatSessionError::backend(error)), (inner, state, true, true))),
                     Ok(flushed) if !terminated && (flushed || state.cancel_token.is_cancelled()) => {
                         let finish_reason =
                             state.cancel_token.is_cancelled().then_some(ChatReplyFinishReason::Cancelled);
@@ -215,9 +204,7 @@ impl Session {
     }
 
     async fn state_reset(&mut self) -> Result<(), ChatSessionError> {
-        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })?;
+        self.state = self.instance.state().await.map_err(ChatSessionError::from)?;
         Ok(())
     }
 
@@ -226,9 +213,7 @@ impl Session {
         messages: &[ChatMessage],
     ) -> Result<usize, ChatSessionError> {
         let cached = self.encoding.state().tokens.clone();
-        if let Some(suffix) = self.encoding.try_append(messages).map_err(|error| ChatSessionError::Backend {
-            message: error.to_string(),
-        })? {
+        if let Some(suffix) = self.encoding.try_append(messages).map_err(ChatSessionError::backend)? {
             self.input_tokens = suffix.into_iter().map(u64::from).collect();
             return Ok(cached.len());
         }
@@ -257,12 +242,8 @@ impl Session {
         &mut self,
         all_messages: &[ChatMessage],
     ) -> Result<StreamInput, ChatSessionError> {
-        self.encoding.reset().map_err(|err| ChatSessionError::Backend {
-            message: err.to_string(),
-        })?;
-        self.encoding.encode(all_messages.to_vec()).map_err(|err| ChatSessionError::Backend {
-            message: err.to_string(),
-        })?;
+        self.encoding.reset().map_err(ChatSessionError::backend)?;
+        self.encoding.encode(all_messages.to_vec()).map_err(ChatSessionError::backend)?;
         let all_tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
         Ok(all_tokens)
     }
@@ -272,9 +253,7 @@ impl Session {
         state: &mut StreamingState<'_>,
     ) -> Result<Output, ChatSessionError> {
         let now = Instant::now();
-        let result = event.map_err(|err| ChatSessionError::Backend {
-            message: err.to_string(),
-        })?;
+        let result = event.map_err(ChatSessionError::from)?;
 
         match result {
             StreamOutput::LimitReached => Self::render_output(state, Some(ChatReplyFinishReason::Length)),
@@ -294,9 +273,7 @@ impl Session {
                 state.time_last_token = Some(now);
 
                 if let Err(err) = state.encoding.decode(vec![token as TokenId]) {
-                    return Err(ChatSessionError::Backend {
-                        message: err.to_string(),
-                    });
+                    return Err(ChatSessionError::backend(err));
                 }
 
                 let finish_reason = state.get_finish_reason(token);
@@ -311,9 +288,7 @@ impl Session {
     ) -> Result<Output, ChatSessionError> {
         let have_finish_reason = finish_reason.is_some();
         if have_finish_reason {
-            state.encoding.flush().map_err(|error| ChatSessionError::Backend {
-                message: error.to_string(),
-            })?;
+            state.encoding.flush().map_err(ChatSessionError::backend)?;
         }
         let stats = state.get_stats(have_finish_reason)?;
         let Some(message) = state.encoding.state().messages.last() else {

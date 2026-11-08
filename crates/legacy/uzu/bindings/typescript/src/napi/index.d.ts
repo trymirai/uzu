@@ -153,7 +153,7 @@ export declare class ToolCallArgumentStream {
 }
 
 export type ChatSessionError =
-  | { type: 'Backend'; message: string }
+  | { type: 'Backend'; error: BackendError }
   | { type: 'Loading'; message: string }
   | { type: 'UnsupportedModel' }
   | { type: 'UnableToPerformOperationInCurrentState' }
@@ -366,7 +366,9 @@ export declare class ChatReplyConfig {
    * `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
    */
   toolTurnLimit?: number
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number)
+  /** Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`. */
+  samplingSeed: SamplingSeed
+  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, toolTurnLimit?: number, samplingSeed: SamplingSeed)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
@@ -374,6 +376,7 @@ export declare class ChatReplyConfig {
   withSamplingMethod(samplingMethod: SamplingMethod): ChatReplyConfig
   withToolTurnLimit(toolTurnLimit?: number | undefined | null): ChatReplyConfig
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
+  withSamplingSeed(samplingSeed: SamplingSeed): ChatReplyConfig
 }
 
 export declare class ChatReplyJoulesPerTokenComponents {
@@ -874,6 +877,17 @@ export declare class Value {
   json: string
   constructor(json: string)
 }
+
+export type BackendError =
+  | { type: 'Backend'; message: string }
+  | { type: 'Capture'; message: string }
+  | { type: 'Decoder'; message: string }
+  | { type: 'Grammar'; message: string }
+  | { type: 'TrieAccept'; message: string }
+  | { type: 'Speculator'; message: string }
+  | { type: 'NoSeedToken' }
+  | { type: 'ContextOverflow' }
+  | { type: 'Other'; message: string }
 
 export type ChatContentBlock =
   ChatContentBlockIdentity | ChatContentBlockReasoningEffort | ChatContentBlockConversationStartDate | ChatContentBlockKnowledgeCutoff | ChatContentBlockBuiltinTools | ChatContentBlockTools | ChatContentBlockText | ChatContentBlockImage | ChatContentBlockVideo | ChatContentBlockAudio | ChatContentBlockFile | ChatContentBlockReasoning | ChatContentBlockToolCall | ChatContentBlockToolCallCandidate | ChatContentBlockToolCallResult | ChatContentBlockTranslation | ChatContentBlockCustom
