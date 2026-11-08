@@ -4,7 +4,10 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, kernel::matmul::ActivationFormat},
+    backends::common::{
+        Backend, CommandBuffer, CommandBufferEncoding,
+        kernel::matmul::{ActivationFormat, MatmulA},
+    },
     config::mlp::dense_mlp::DenseMLPConfig,
     data_type::DataType,
     encodable_block::{
@@ -47,7 +50,8 @@ impl<B: Backend> DenseMlp<B> {
         )
         .await?;
         let mlp =
-            Self::with_up(up, model_dimension, hidden_dimension, data_type, config, parameter_tree, context).await?;
+            Self::load_gate_and_down(model_dimension, hidden_dimension, data_type, up, config, parameter_tree, context)
+                .await?;
 
         Ok((mlp, up_input_hadamard_factors))
     }
@@ -70,7 +74,8 @@ impl<B: Backend> DenseMlp<B> {
         )
         .await?;
         let mlp =
-            Self::with_up(up, model_dimension, hidden_dimension, data_type, config, parameter_tree, context).await?;
+            Self::load_gate_and_down(model_dimension, hidden_dimension, data_type, up, config, parameter_tree, context)
+                .await?;
 
         Ok((mlp, up_input_preparation))
     }
@@ -84,7 +89,14 @@ impl<B: Backend> DenseMlp<B> {
         let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
 
         let fused_up = self.up.encode_input(input, batch_dim, command_buffer)?;
-        self.encode_gate_and_down(&fused_up, batch_dim, command_buffer)
+        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let down_input = self
+            .gate
+            .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)
+            .map_err(MlpEncodeError::Backend)?;
+        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
+
+        Ok(output)
     }
 
     pub fn select_activation_format(
@@ -95,12 +107,11 @@ impl<B: Backend> DenseMlp<B> {
         self.up.select_activation_format(batch_dim, context)
     }
 
-    /// Loads the gated activation and the down projection around an up projection the caller loaded.
-    async fn with_up(
-        up: Box<dyn Linear<B>>,
+    async fn load_gate_and_down(
         model_dimension: u32,
         hidden_dimension: u32,
         data_type: DataType,
+        up: Box<dyn Linear<B>>,
         config: &DenseMLPConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
@@ -132,23 +143,6 @@ impl<B: Backend> DenseMlp<B> {
             down,
         })
     }
-
-    /// Runs the gated activation on the up projection's output, then the down projection.
-    fn encode_gate_and_down(
-        &self,
-        fused_up: &B::ScratchBuffer,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
-        let down_input = self
-            .gate
-            .encode_for_linear(fused_up, batch_dim, act_format, command_buffer)
-            .map_err(MlpEncodeError::Backend)?;
-        let output = self.down.encode_input(down_input, batch_dim, command_buffer)?;
-
-        Ok(output)
-    }
 }
 
 impl<B: Backend> Mlp<B> for DenseMlp<B> {
@@ -158,6 +152,6 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
-        self.encode_input(LinearInput::<B>::full_precision(input), batch_dim, command_buffer)
+        self.encode_input(MatmulA::full_precision(input), batch_dim, command_buffer)
     }
 }
