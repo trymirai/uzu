@@ -242,12 +242,4 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
 
         Ok(output)
     }
-
-    fn select_activation_format(
-        &self,
-        batch_dim: u32,
-        context: &B::Context,
-    ) -> ActivationFormat {
-        self.inner_linear.select_activation_format(batch_dim, context)
-    }
 }

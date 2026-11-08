@@ -12,14 +12,14 @@ use crate::{
     data_type::DataType,
 };
 
-pub(crate) struct InputRht<B: Backend> {
+pub(super) struct InputRht<B: Backend> {
     rht_signs: B::GlobalGpuBuffer,
     rht: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,
 }
 
 impl<B: Backend> InputRht<B> {
-    pub(crate) fn new(
+    pub(super) fn new(
         data_type: DataType,
         preparation: LinearInputPreparation<B>,
         in_place: bool,
@@ -41,7 +41,7 @@ impl<B: Backend> InputRht<B> {
         })
     }
 
-    pub(crate) fn prepare(
+    pub(super) fn prepare(
         &self,
         input: impl BufferRef<Backend = B>,
         batch_dim: u32,
