@@ -5,7 +5,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::MoeRouterTopKKernel,
+            gpu_types::moe, kernel::MoeRouterTopKKernel,
         },
         cpu::Cpu,
     },
@@ -16,8 +16,6 @@ use crate::{
     },
 };
 
-const MOE_ROUTER_MAX_TOP_K: u32 = 8;
-// Qwen3.5-35B-A3B routes each token to 8 of 256 experts.
 const NUM_EXPERTS: u32 = 256;
 const TOP_K: u32 = 8;
 
@@ -31,7 +29,7 @@ fn run_router_top_k<B: Backend>(
     let mut expert_weights = create_buffer::<B, f32>(&context, (batch_dim * TOP_K) as usize);
 
     let kernel =
-        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(&context, DataType::F32, MOE_ROUTER_MAX_TOP_K).unwrap();
+        <B::Kernels as Kernels>::MoeRouterTopKKernel::new(&context, DataType::F32, moe::ROUTER_MAX_TOP_K).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &logits_buf,

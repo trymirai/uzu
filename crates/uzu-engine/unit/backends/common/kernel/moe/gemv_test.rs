@@ -6,7 +6,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::MoeGemvKernel,
+            gpu_types::moe, kernel::MoeGemvKernel,
         },
         cpu::Cpu,
     },
@@ -17,12 +17,10 @@ use crate::{
     },
 };
 
-const MOE_GEMV_OUTPUT_ROW_TILE: u32 = 32;
-const GROUP_SIZE: u32 = 64;
 const NUM_EXPERTS: u32 = 16;
 const ACTIVE_EXPERTS: u32 = 8;
-// Qwen3.5-35B-A3B expert projections: up (gate and up together) reads one input row per token and down reads
-// one row per route. Every projection rotates its output.
+// Expert projections: up (gate and up together) reads one input row per token and down reads one row per route.
+// Every projection rotates its output.
 const PROJECTIONS: [(&str, u32, u32, bool); 2] = [("up", 2048, 1024, true), ("down", 512, 2048, false)];
 
 struct MoeGemvCase<'a> {
@@ -41,7 +39,7 @@ struct MoeGemvCase<'a> {
 fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     let (in_dim, out_dim) = (case.in_dim, case.out_dim);
     let num_routes = case.expert_ids.len() as u32;
-    let num_groups = in_dim / GROUP_SIZE;
+    let num_groups = in_dim / moe::GEMV_GROUP_SIZE;
     let context = create_context::<B>();
     let weights = create_buffer_with_data::<B, u8>(&context, case.weights);
     let scales = create_buffer_with_data::<B, bf16>(&context, case.scales);
@@ -51,9 +49,14 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     let hadamard_factors = create_buffer_with_data::<B, i32>(&context, case.hadamard_factors);
     let mut output = create_buffer::<B, bf16>(&context, (num_routes * out_dim) as usize);
 
-    let kernel =
-        <B::Kernels as Kernels>::MoeGemvKernel::new(&context, DataType::BF16, GROUP_SIZE, case.bits, case.a_per_token)
-            .unwrap();
+    let kernel = <B::Kernels as Kernels>::MoeGemvKernel::new(
+        &context,
+        DataType::BF16,
+        moe::GEMV_GROUP_SIZE,
+        case.bits,
+        case.a_per_token,
+    )
+    .unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &weights,
@@ -67,7 +70,7 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
         out_dim,
         num_routes,
         ACTIVE_EXPERTS,
-        out_dim / MOE_GEMV_OUTPUT_ROW_TILE,
+        out_dim / moe::GEMV_OUTPUT_ROW_TILE,
         out_dim * in_dim * case.bits / 8,
         num_groups * out_dim,
         num_groups * (out_dim / 2),
@@ -139,9 +142,8 @@ fn compare_projections(
 
 #[uzu_test]
 fn moe_gemv_u4_zero_point_matches_cpu() {
-    // Qwen3.5-35B-A3B-M: 4-bit weights with zero points, groups of 64.
     compare_projections(4, |in_dim, out_dim| {
-        let num_groups = in_dim / GROUP_SIZE;
+        let num_groups = in_dim / moe::GEMV_GROUP_SIZE;
         let weights =
             (0..(NUM_EXPERTS * out_dim * (in_dim / 2)) as usize).map(|i| ((i * 73 + 19) % 251) as u8).collect();
         let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
@@ -156,9 +158,8 @@ fn moe_gemv_u4_zero_point_matches_cpu() {
 
 #[uzu_test]
 fn moe_gemv_u8_symmetric_matches_cpu() {
-    // Qwen3.5-35B-A3B-L: 8-bit symmetric weights, groups of 64.
     compare_projections(8, |in_dim, out_dim| {
-        let num_groups = in_dim / GROUP_SIZE;
+        let num_groups = in_dim / moe::GEMV_GROUP_SIZE;
         let weights = (0..(NUM_EXPERTS * out_dim * in_dim) as usize).map(|i| ((i * 59 + 11) % 251) as u8).collect();
         let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
             .map(|i| bf16::from_f32((((i * 23 + 7) % 37) as f32 + 1.0) * 0.000012))
