@@ -104,36 +104,30 @@ jobs:
 
           : "${NODE_AUTH_TOKEN:?NPM_TOKEN secret is required}"
 
-          npm_package_name="@trymirai/uzu"
           npm_username=$(npm whoami --registry=https://registry.npmjs.org)
-          npm_package_owners=$(npm owner ls "$npm_package_name" --registry=https://registry.npmjs.org)
-          npm_package_versions_json=$(npm view "$npm_package_name" versions --json --registry=https://registry.npmjs.org)
+          npm_view_stderr="$RUNNER_TEMP/npm-view-stderr"
 
-          NPM_PACKAGE_NAME="$npm_package_name" \
-          NPM_PACKAGE_OWNERS="$npm_package_owners" \
-          NPM_PACKAGE_VERSIONS_JSON="$npm_package_versions_json" \
-          NPM_USERNAME="$npm_username" \
-            node --input-type=module <<'NODE'
-          
-          # The umbrella package, its platform packages (one per [languages.typescript] target in .config/platforms.toml), 
-          # and the wasm package it re-exports for browsers.
-          # for npm_package_name in @trymirai/uzu @trymirai/uzu-darwin-arm64 @trymirai/uzu-darwin-x64 @trymirai/uzu-wasm; do
-          #   if ! npm_package_versions_json=$(npm view "$npm_package_name" versions --json --registry=https://registry.npmjs.org 2>&1); then
-          #     if grep -q E404 <<<"$npm_package_versions_json"; then
-          #       echo "${npm_package_name} is not on npm yet; the first publish creates it in the @trymirai scope."
-          #       continue
-          #     fi
-          #     echo "$npm_package_versions_json" >&2
-          #     exit 1
-          #   fi
-          #   npm_package_owners=$(npm owner ls "$npm_package_name" --registry=https://registry.npmjs.org)
-          #
-          #   NPM_PACKAGE_NAME="$npm_package_name" \
-          #   NPM_PACKAGE_OWNERS="$npm_package_owners" \
-          #   NPM_PACKAGE_VERSIONS_JSON="$npm_package_versions_json" \
-          #   NPM_USERNAME="$npm_username" \
-          #   node --input-type=module <<'NODE'
-          
+          # The umbrella package and its platform packages (one per [languages.typescript] target in
+          # .config/platforms.toml). @trymirai/uzu-wasm, which the umbrella re-exports for browsers,
+          # joins them once the WebGPU kernels land.
+          for npm_package_name in @trymirai/uzu @trymirai/uzu-darwin-arm64 @trymirai/uzu-darwin-x64; do
+            # With --json npm reports errors on stdout, so stderr is kept out of the JSON.
+            if ! npm_package_versions_json=$(npm view "$npm_package_name" versions --json --registry=https://registry.npmjs.org 2>"$npm_view_stderr"); then
+              if grep -q E404 <<<"$npm_package_versions_json"; then
+                echo "${npm_package_name} is not on npm yet; the first publish creates it in the @trymirai scope."
+                continue
+              fi
+              cat "$npm_view_stderr" >&2
+              echo "$npm_package_versions_json" >&2
+              exit 1
+            fi
+            npm_package_owners=$(npm owner ls "$npm_package_name" --registry=https://registry.npmjs.org)
+
+            NPM_PACKAGE_NAME="$npm_package_name" \
+            NPM_PACKAGE_OWNERS="$npm_package_owners" \
+            NPM_PACKAGE_VERSIONS_JSON="$npm_package_versions_json" \
+            NPM_USERNAME="$npm_username" \
+              node --input-type=module <<'NODE'
           const packageName = process.env.NPM_PACKAGE_NAME;
           const packageOwners = (process.env.NPM_PACKAGE_OWNERS ?? "")
             .split("\n")
@@ -156,7 +150,7 @@ jobs:
 
           console.log(`NPM user ${process.env.NPM_USERNAME} is an owner of ${packageName}.`);
           NODE
-          # done
+          done
 
       - name: "Binaries: Import developer identity certificate"
         shell: bash
@@ -390,17 +384,16 @@ jobs:
       # Publish TypeScript
       # ---------------------------------------------------------------
       - name: "Publish TypeScript"
-        working-directory: ${{ env.UZU_RELEASE_PATH }}/typescript-npm
-        # working-directory: ${{ env.UZU_RELEASE_PATH }}
+        working-directory: ${{ env.UZU_RELEASE_PATH }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --access public --no-git-checks
-      #        run: |
-      #          set -euo pipefail
-      #           The umbrella package goes last: it depends on the platform packages and the wasm package.
-      #          for package_path in typescript-npm-platforms/*/ wasm-npm/ typescript-npm/; do
-      #            (cd "$package_path" && pnpm publish --access public --no-git-checks)
-      #          done
+        run: |
+          set -euo pipefail
+          # The umbrella package goes last: it depends on the platform packages. wasm-npm/ goes before it
+          # once the WebGPU kernels land.
+          for package_path in typescript-npm-platforms/*/ typescript-npm/; do
+            (cd "$package_path" && pnpm publish --access public --no-git-checks)
+          done
 
       # ---------------------------------------------------------------
       # Publish Python

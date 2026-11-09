@@ -42,6 +42,10 @@ pub fn run_release(
     binaries::stage_binaries(&paths, &platforms, release_path)?;
 
     for language in platforms.languages.keys() {
+        // Not released until the WebGPU kernels land: the package would install but couldn't run a model.
+        if *language == Language::Wasm {
+            continue;
+        }
         let backend = backend_for_language(*language, platforms.clone());
         backend.release(version, release_path)?;
     }
