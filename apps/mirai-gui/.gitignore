@@ -7,6 +7,7 @@ client/dist-tauri/
 desktop/target/
 desktop/gen/
 desktop/resources/cli/
+web/dist/
 
 # Python (dmgbuild settings)
 __pycache__/

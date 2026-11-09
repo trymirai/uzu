@@ -5,10 +5,12 @@ import reactHooks from "eslint-plugin-react-hooks";
 
 export default defineConfig([
   // eslint does not read .gitignore.
-  { ignores: ["client/dist-*/**", "desktop/target/**", "desktop/gen/**", "client/src/route-tree.gen.ts"] },
+  {
+    ignores: ["client/dist-*/**", "web/dist/**", "desktop/target/**", "desktop/gen/**", "client/src/route-tree.gen.ts"],
+  },
   js.configs.recommended,
   {
-    files: ["vite.config.ts"],
+    files: ["vite.config.ts", "web/vite.config.ts"],
     languageOptions: {
       parser: tseslint.parser,
       globals: {
@@ -18,7 +20,7 @@ export default defineConfig([
     },
   },
   {
-    files: ["client/src/**/*.{ts,tsx}"],
+    files: ["client/src/**/*.{ts,tsx}", "web/src/**/*.{ts,tsx}"],
     extends: [tseslint.configs.recommended],
     plugins: { "react-hooks": reactHooks },
     rules: {
