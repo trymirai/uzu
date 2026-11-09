@@ -180,6 +180,7 @@ pyo3-stub-gen = "0.23.1"
 inventory = "0.3.25"
 wasm-bindgen = { version = "=0.2.129", features = ["serde-serialize"] }
 wasm-bindgen-futures = "0.4.79"
+wasm-bindgen-test = "=0.3.79" # Matches wasm-bindgen and wasm-bindgen-cli in flake.nix.
 openai-harmony = "0.0.8"
 dirs = "7.0.0"
 dotenvy = "0.15.7"
