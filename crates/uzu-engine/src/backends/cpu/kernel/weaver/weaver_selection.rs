@@ -253,7 +253,7 @@ pub fn weaver_select<const BLOCK_THREADS: u32>(
 
 const F32_SIGN_BIT: u32 = 1 << (u32::BITS - 1);
 
-fn top_k_score_key(score: f32) -> u32 {
+pub fn top_k_score_key(score: f32) -> u32 {
     let bits = score.to_bits();
     if bits & F32_SIGN_BIT == 0 {
         bits ^ F32_SIGN_BIT
