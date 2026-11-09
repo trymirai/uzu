@@ -29,6 +29,7 @@ import generated.gated_act_mul;
   [[Specialize]] bool use_hadamard,
   [[Specialize]] uint32_t activation_scale_group_size,
   [[Specialize]] uint32_t sum_group_size,
+  [[Specialize]] uint32_t weight_bits,
   [[Specialize]] bool custom_activation_alpha,
   [[Specialize]] bool clip_gate,
   [[Specialize]] bool clip_value,

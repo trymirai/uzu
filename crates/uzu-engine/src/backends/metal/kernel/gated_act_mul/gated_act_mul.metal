@@ -46,6 +46,7 @@ PUBLIC KERNEL(GatedActMul) (
     const bool use_hadamard SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
+    const uint weight_bits SPECIALIZE,
     const bool custom_activation_alpha SPECIALIZE,
     const bool clip_gate SPECIALIZE,
     const bool clip_value SPECIALIZE,
@@ -126,7 +127,7 @@ PUBLIC KERNEL(GatedActMul) (
 
   if (PACKED_HALF) {
     if (valid_count > 0) {
-      store_packed_half(results, lane_index, first_index, batch_idx, sum_group_size, packed_half_out);
+      store_packed_half(results, lane_index, first_index, batch_idx, sum_group_size, weight_bits, packed_half_out);
     }
     return;
   }
