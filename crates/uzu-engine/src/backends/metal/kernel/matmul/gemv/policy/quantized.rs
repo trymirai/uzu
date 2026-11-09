@@ -40,7 +40,7 @@ pub fn select(
     bf16_io: bool,
 ) -> Option<GemvTile> {
     // The GEMV pipelines exist for BF16 I/O only. Rows 5..=8 stay on GEMV for tiny N only.
-    if !bf16_io || bits == 2 || (m > 4 && n > 64) {
+    if !bf16_io || (m > 4 && n > 64) {
         return None;
     }
     gathered_tile(bits, group, m, n)

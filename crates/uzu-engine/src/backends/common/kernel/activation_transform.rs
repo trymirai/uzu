@@ -72,17 +72,19 @@ impl<B: Backend> ActivationTransform<B> {
         format: ActivationFormat,
     ) -> Result<Self, B::Error> {
         let has_bias = bias_data_type.is_some();
-        let (codes_grouped_by_nibble, scale_group_size, sum_group_size) = match format {
+        let (codes_grouped_by_nibble, scale_group_size, sum_group_size, weight_bits) = match format {
             ActivationFormat::Int8(q) => (
                 q.code_layout().is_grouped_by_nibble(),
                 q.scale_group_size(),
                 q.sum_group_size().unwrap_or(q.scale_group_size()),
+                0,
             ),
             ActivationFormat::PackedHalf {
-                group_size,
-            } => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
+                block_k,
+                bits,
+            } => (false, HADAMARD_TRANSFORM_BLOCK_SIZE, block_k, bits),
             ActivationFormat::Bf16 | ActivationFormat::Trellis => {
-                (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE)
+                (false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE, 0)
             },
         };
         let kernel = <B::Kernels as Kernels>::ActivationTransformKernel::new(
@@ -94,6 +96,7 @@ impl<B: Backend> ActivationTransform<B> {
             in_place,
             scale_group_size,
             sum_group_size,
+            weight_bits,
             has_bias,
         )?;
         Ok(Self {

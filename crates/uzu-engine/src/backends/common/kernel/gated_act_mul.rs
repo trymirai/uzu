@@ -67,7 +67,7 @@ impl<B: Backend> GatedActMul<B> {
         settings: GatedActMulSettings,
         format: ActivationFormat,
     ) -> Result<Self, B::Error> {
-        let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size) = match format {
+        let (ops, codes_grouped_by_nibble, scale_group_size, sum_group_size, weight_bits) = match format {
             ActivationFormat::Int8(quantization) => (
                 if quantization.sum_group_size().is_some() {
                     GatedActMulOp::QuantizeWithGroupSums
@@ -77,12 +77,14 @@ impl<B: Backend> GatedActMul<B> {
                 quantization.code_layout().is_grouped_by_nibble(),
                 quantization.scale_group_size(),
                 quantization.sum_group_size().unwrap_or(quantization.scale_group_size()),
+                0,
             ),
             ActivationFormat::PackedHalf {
-                group_size,
-            } => (GatedActMulOp::PackHalf, false, HADAMARD_TRANSFORM_BLOCK_SIZE, group_size),
+                block_k,
+                bits,
+            } => (GatedActMulOp::PackHalf, false, HADAMARD_TRANSFORM_BLOCK_SIZE, block_k, bits),
             ActivationFormat::Bf16 | ActivationFormat::Trellis => {
-                (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE)
+                (GatedActMulOp::FullPrecision, false, HADAMARD_TRANSFORM_BLOCK_SIZE, HADAMARD_TRANSFORM_BLOCK_SIZE, 0)
             },
         };
         let kernel = <B::Kernels as Kernels>::GatedActMulKernel::new(
@@ -94,6 +96,7 @@ impl<B: Backend> GatedActMul<B> {
             options.contains(GatedActMulOptions::HADAMARD),
             scale_group_size,
             sum_group_size,
+            weight_bits,
             settings.activation_alpha.is_some(),
             settings.gate_clipping.into_pair().is_some(),
             settings.value_clipping.into_pair().is_some(),
