@@ -38,19 +38,22 @@ pub enum GemmPlanError {
     UnsupportedLayout(&'static str),
 }
 
-/// The weight formats with small-M kernels (batched GEMV and register GEMM): W4 zero-point or scale-bias, and W8
-/// symmetric, at group size 32 or 64. Returns the GEMM's activation format, tiling and K alignment.
+/// Activation format, tiling and K alignment of the small-M GEMM for W4 and W8 (group 32 or 64) and W2 (group 128).
 pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTiling, u32)> {
-    let group_size = shape.b_group_size.filter(|group_size| matches!(group_size, 32 | 64))?;
-    match (shape.b_prologue, shape.b_bits) {
-        (GemmBPrologueKind::ScaleZeroPointDequant | GemmBPrologueKind::ScaleBiasDequant, Some(4)) => Some((
-            ActivationFormat::PackedHalf {
-                group_size,
-            },
-            GemmTiling::Tile8x32x64_Simdgroups1x2x4,
-            512,
-        )),
-        (GemmBPrologueKind::ScaleSymmetricDequant, Some(8)) => {
+    let bits = shape.b_bits?;
+    let group_size = shape.b_group_size?;
+    let packed_half = ActivationFormat::PackedHalf {
+        block_k: group_size,
+        bits,
+    };
+    match (shape.b_prologue, bits, group_size) {
+        (GemmBPrologueKind::ScaleBiasDequant, 2, 128) => {
+            Some((packed_half, GemmTiling::Tile8x32x128_Simdgroups1x2x4, 512))
+        },
+        (GemmBPrologueKind::ScaleZeroPointDequant | GemmBPrologueKind::ScaleBiasDequant, 4, 32 | 64) => {
+            Some((packed_half, GemmTiling::Tile8x32x64_Simdgroups1x2x4, 512))
+        },
+        (GemmBPrologueKind::ScaleSymmetricDequant, 8, 32 | 64) => {
             Some((ActivationFormat::Bf16, GemmTiling::Tile8x32x128_Simdgroups1x2x4, 256))
         },
         _ => None,
@@ -105,13 +108,14 @@ impl GemmProblem {
     ) -> Option<GemmPlan> {
         let (activation, tiling) = small_batch_format(self.shape, layout)?;
         let plan = self.finish_plan(GemmEngine::Simdgroup, tiling);
-        let partition_alignment = if tiling.is_packed_w4() || plan.split_k == 1 {
+        let partition_alignment = if plan.split_k == 1 {
             256
         } else {
-            512
+            tiling.simdgroups_k() * tiling.block_k()
         };
         (self.shape.a == activation
-            && (4..=8).contains(&self.shape.m)
+            && (2..=8).contains(&self.shape.m)
+            && (self.shape.m >= 4 || self.shape.b_bits == Some(2))
             && self.shape.k.is_multiple_of(partition_alignment * plan.split_k))
         .then_some(plan)
     }
@@ -163,7 +167,10 @@ impl GemmProblem {
     ) -> u32 {
         let shape = self.shape;
         let splittable = shape.is_quant() || (shape.b_transpose && shape.b_leading_dimension.is_none());
-        if !splittable || !self.split_k_output_supported() {
+        if !splittable
+            || !self.split_k_output_supported()
+            || (shape.b_bits == Some(2) && tiling == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
+        {
             return 1;
         }
         let base_tiles = shape.n.div_ceil(tiling.block_n()).saturating_mul(shape.m.div_ceil(tiling.block_m()));

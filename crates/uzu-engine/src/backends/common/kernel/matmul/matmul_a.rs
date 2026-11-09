@@ -54,7 +54,8 @@ pub enum MatmulA<T> {
     },
     PackedHalf {
         values: T,
-        group_size: u32,
+        block_k: u32,
+        bits: u32,
     },
     Int8Symmetric {
         values: T,
@@ -88,10 +89,12 @@ impl<T> MatmulA<T> {
             },
             Self::PackedHalf {
                 values,
-                group_size,
+                block_k,
+                bits,
             } => MatmulA::PackedHalf {
                 values,
-                group_size: *group_size,
+                block_k: *block_k,
+                bits: *bits,
             },
             Self::Int8Symmetric {
                 values,
@@ -120,8 +123,9 @@ impl<T> MatmulA<T> {
 /// Matches `PackedHalfLayout` in `packed_half_layout.h`.
 pub fn packed_half_bytes(
     k: u32,
-    group_size: u32,
+    block_k: u32,
+    bits: u32,
 ) -> usize {
-    assert!(matches!(group_size, 32 | 64) && k.is_multiple_of(group_size));
-    (k / group_size) as usize * (32 * (group_size as usize / 8) + 16) * size_of::<u32>()
+    assert!(matches!((bits, block_k), (4, 32 | 64) | (2, 128)) && k.is_multiple_of(block_k));
+    (k / block_k) as usize * (32 * (block_k as usize / 8) + 16) * size_of::<u32>()
 }
