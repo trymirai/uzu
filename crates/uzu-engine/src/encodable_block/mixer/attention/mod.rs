@@ -145,18 +145,18 @@ impl<B: Backend> Attention<B> {
 
         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
-            AttentionKernelConfig {
+            AttentionKernelConfig::new(
                 head_dim,
                 num_groups,
                 num_q_heads,
-                has_sinks: sinks.is_some(),
-                gate_row_stride: config.has_gate.then_some(projection_dim),
+                sinks.is_some(),
+                config.has_gate.then_some(projection_dim),
                 is_kv_cache_ring,
                 is_causal,
                 sliding_window_size,
-                scale: config.scale,
+                config.scale,
                 data_type,
-            },
+            ),
         )
         .map_err(AttentionNewError::Kernel)?;
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(

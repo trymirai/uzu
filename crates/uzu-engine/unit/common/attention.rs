@@ -11,13 +11,17 @@ pub fn kv_layout<B: Backend>(
     head_dim: u32,
     num_kv_heads: u32,
 ) -> KVLayout {
-    let config = AttentionKernelConfig {
+    let config = AttentionKernelConfig::new(
         head_dim,
-        num_groups: num_kv_heads,
-        num_q_heads: num_kv_heads,
-        is_causal: true,
-        data_type: DataType::BF16,
-        ..
-    };
+        num_kv_heads,
+        num_kv_heads,
+        false,
+        None,
+        false,
+        true,
+        None,
+        None,
+        DataType::BF16,
+    );
     <B::Kernels as Kernels>::AttentionKernel::new(context, config).unwrap().kv_layout()
 }

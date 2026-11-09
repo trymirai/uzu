@@ -77,18 +77,18 @@ impl<B: Backend> WeaverLayer<B> {
         .await?;
         let prefix_attention = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
-            AttentionKernelConfig {
+            AttentionKernelConfig::new(
                 head_dim,
-                num_groups: num_heads,
-                num_q_heads: num_heads,
-                has_sinks: false,
-                gate_row_stride: None,
-                is_kv_cache_ring: false,
-                is_causal: true,
-                sliding_window_size: None,
-                scale: Some(attention_scale),
-                data_type: DATA_TYPE,
-            },
+                num_heads,
+                num_heads,
+                false,
+                None,
+                false,
+                true,
+                None,
+                Some(attention_scale),
+                DATA_TYPE,
+            ),
         )
         .map_err(WeaverNewError::Attention)?;
         let attention_prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(

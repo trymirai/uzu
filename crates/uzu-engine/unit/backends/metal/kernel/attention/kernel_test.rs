@@ -107,16 +107,18 @@ fn attention_matches_cpu() {
                 ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
             let gate_stride = q_heads * head_dim + 17;
             let gates = matches!(prefix, 37 | 4096).then(|| fill_attention(suffix * gate_stride, 3.0));
-            let config = AttentionKernelConfig {
-                head_dim: head_dim as u32,
-                num_groups: kv_heads as u32,
-                num_q_heads: q_heads as u32,
-                gate_row_stride: gates.as_ref().map(|_| gate_stride as u32),
-                is_causal: true,
-                scale: Some(1.0 / (head_dim as f32).sqrt()),
-                data_type: DataType::BF16,
-                ..
-            };
+            let config = AttentionKernelConfig::new(
+                head_dim as u32,
+                kv_heads as u32,
+                q_heads as u32,
+                false,
+                gates.as_ref().map(|_| gate_stride as u32),
+                false,
+                true,
+                None,
+                Some(1.0 / (head_dim as f32).sqrt()),
+                DataType::BF16,
+            );
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
             let (queries, keys, values) = attention_inputs(shape);

@@ -169,18 +169,18 @@ fn attention_windows_sinks_and_head_dims() {
             (false, true, Some(17), 37, None),
             (true, true, Some(7), 37, None),
         ] {
-            let config = AttentionKernelConfig {
-                head_dim: dim,
-                num_groups: 2,
-                num_q_heads: 8,
-                has_sinks: window != Some(0),
-                gate_row_stride: Some(8 * dim + 7),
-                is_kv_cache_ring: ring,
-                is_causal: causal,
-                sliding_window_size: window,
+            let config = AttentionKernelConfig::new(
+                dim,
+                2,
+                8,
+                window != Some(0),
+                Some(8 * dim + 7),
+                ring,
+                causal,
+                window,
                 scale,
-                data_type: DataType::BF16,
-            };
+                DataType::BF16,
+            );
             let cache = if ring {
                 KVCacheView::ring(prefix, 11)
             } else {
@@ -216,15 +216,18 @@ fn attention_large_tree_and_f32() {
         })
         .collect();
     let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
-    let config = AttentionKernelConfig {
-        head_dim: 128,
-        num_groups: 2,
-        num_q_heads: 8,
-        is_causal: true,
-        scale: Some(1.0 / 128.0_f32.sqrt()),
-        data_type: DataType::F32,
-        ..
-    };
+    let config = AttentionKernelConfig::new(
+        128,
+        2,
+        8,
+        false,
+        None,
+        false,
+        true,
+        None,
+        Some(1.0 / 128.0_f32.sqrt()),
+        DataType::F32,
+    );
     let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
     for_each_non_cpu_backend!(|B| {
         let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
@@ -233,18 +236,18 @@ fn attention_large_tree_and_f32() {
     for (causal, ring, window) in
         [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
     {
-        let config = AttentionKernelConfig {
-            head_dim: 256,
-            num_groups: 4,
-            num_q_heads: 24,
-            has_sinks: true,
-            is_kv_cache_ring: ring,
-            is_causal: causal,
-            sliding_window_size: window,
-            scale: Some(1.0 / 256.0_f32.sqrt()),
-            data_type: DataType::BF16,
-            ..
-        };
+        let config = AttentionKernelConfig::new(
+            256,
+            4,
+            24,
+            true,
+            None,
+            ring,
+            causal,
+            window,
+            Some(1.0 / 256.0_f32.sqrt()),
+            DataType::BF16,
+        );
         let cache = if ring {
             KVCacheView::ring(37, 11)
         } else {
@@ -272,18 +275,18 @@ fn attention_single_query() {
         for q_heads in [6, 8] {
             for prefix in [0, 31, 32, 37, 1025] {
                 for ring in [false, true] {
-                    let config = AttentionKernelConfig {
-                        head_dim: dim,
-                        num_groups: 2,
-                        num_q_heads: q_heads,
-                        has_sinks: true,
-                        gate_row_stride: Some(q_heads * dim + 7),
-                        is_kv_cache_ring: ring,
-                        is_causal: true,
-                        sliding_window_size: ring.then_some(17),
-                        scale: Some(1.0 / (dim as f32).sqrt()),
-                        data_type: DataType::BF16,
-                    };
+                    let config = AttentionKernelConfig::new(
+                        dim,
+                        2,
+                        q_heads,
+                        true,
+                        Some(q_heads * dim + 7),
+                        ring,
+                        true,
+                        ring.then_some(17),
+                        Some(1.0 / (dim as f32).sqrt()),
+                        DataType::BF16,
+                    );
                     let cache = if ring {
                         KVCacheView::ring(
                             prefix,
@@ -317,18 +320,18 @@ fn attention_vector_partial_rows() {
     let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 3], TrieNode>(&[[0, 1, 0], [1, 1, 1]]);
     for prefix in [17, 1031] {
         for ring in [false, true] {
-            let config = AttentionKernelConfig {
-                head_dim: 128,
-                num_groups: 3,
-                num_q_heads: 6,
-                has_sinks: true,
-                gate_row_stride: Some(6 * 128 + 3),
-                is_kv_cache_ring: ring,
-                is_causal: true,
-                sliding_window_size: ring.then_some(19),
-                scale: Some(1.0 / 128.0_f32.sqrt()),
-                data_type: DataType::F32,
-            };
+            let config = AttentionKernelConfig::new(
+                128,
+                3,
+                6,
+                true,
+                Some(6 * 128 + 3),
+                ring,
+                true,
+                ring.then_some(19),
+                Some(1.0 / 128.0_f32.sqrt()),
+                DataType::F32,
+            );
             let cache = if ring {
                 KVCacheView::ring(prefix, 7)
             } else {
