@@ -13,18 +13,15 @@ use crate::{
 
 const GROUPS: [&str; 3] = ["decoder", "decoder/layer 0", "decoder/layer 1"];
 
-fn fill<B: Backend>(command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding) {
-    let mut buffer = command_buffer.allocate_scratch(256).unwrap();
-    command_buffer.encode_fill(&mut buffer, 7);
-}
-
 fn record<B: Backend>(mut command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding) -> Box<[TimestampSpan]> {
     {
         let command_buffer = &mut *command_buffer.debug_group("decoder");
-        fill::<B>(command_buffer);
+        let mut buffer = command_buffer.allocate_scratch(256).unwrap();
+        command_buffer.encode_fill(&mut buffer, 7);
         for layer in ["layer 0", "layer 1"] {
             let command_buffer = &mut *command_buffer.debug_group(layer);
-            fill::<B>(command_buffer);
+            let mut buffer = command_buffer.allocate_scratch(256).unwrap();
+            command_buffer.encode_fill(&mut buffer, 7);
         }
     }
     let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
