@@ -2,7 +2,6 @@ use std::error::Error;
 
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
-    data_type::DataType,
     encodable_block::mixer::attention::KVCacheView,
 };
 
@@ -34,19 +33,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
 }
 
-#[derive(Clone, Copy)]
-pub struct AttentionKernelConfig {
-    pub head_dim: u32,
-    pub num_groups: u32,
-    pub num_q_heads: u32,
-    pub has_sinks: bool,
-    pub gate_row_stride: Option<u32>,
-    pub is_kv_cache_ring: bool,
-    pub is_causal: bool,
-    pub sliding_window_size: Option<u32>,
-    pub scale: Option<f32>,
-    pub data_type: DataType,
-}
+pub use super::attention_kernel_config::AttentionKernelConfig;
 
 pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
     pub suffix_length: u32,

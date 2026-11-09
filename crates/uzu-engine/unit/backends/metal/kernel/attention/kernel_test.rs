@@ -7,7 +7,9 @@ use crate::{
         common::{
             Backend, CommandBufferEncoding, Context, Kernels,
             gpu_types::trie::TrieNode as GpuTrieNode,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareKernel},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+            },
         },
         metal::{Metal, kernel::attention::AttentionMetalKernel},
     },
@@ -18,7 +20,6 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        attention::default_attention_config,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
     trie::TrieNode,
@@ -103,7 +104,7 @@ fn attention_matches_cpu() {
             };
             let (shape, nodes) =
                 ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
-            let mut config = default_attention_config::<bf16>(head_dim, q_heads, kv_heads, true);
+            let mut config = AttentionKernelConfig::new::<bf16>(head_dim, q_heads, kv_heads, true);
             let gate_stride = q_heads * head_dim + 17;
             let gates = matches!(prefix, 37 | 4096).then(|| fill_attention(suffix * gate_stride, 3.0));
             config.gate_row_stride = gates.as_ref().map(|_| gate_stride as u32);

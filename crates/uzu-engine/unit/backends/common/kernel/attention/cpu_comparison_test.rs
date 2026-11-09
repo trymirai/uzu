@@ -16,7 +16,6 @@ use crate::{
     encodable_block::mixer::attention::{KVCache, KVCacheView},
     tests::{
         assert::assert_eq_float,
-        attention::default_attention_config,
         helpers::{
             buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
             submit_command_buffer,
@@ -170,7 +169,7 @@ fn attention_windows_sinks_and_head_dims() {
             (false, true, Some(17), 37, None),
             (true, true, Some(7), 37, None),
         ] {
-            let mut config = default_attention_config::<bf16>(dim, 8, 2, causal);
+            let mut config = AttentionKernelConfig::new::<bf16>(dim, 8, 2, causal);
             config.has_sinks = window != Some(0);
             config.gate_row_stride = Some(8 * dim as u32 + 7);
             config.is_kv_cache_ring = ring;
@@ -211,7 +210,7 @@ fn attention_large_tree_and_f32() {
         })
         .collect();
     let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
-    let config = default_attention_config::<f32>(128, 8, 2, true);
+    let config = AttentionKernelConfig::new::<f32>(128, 8, 2, true);
     let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
     for_each_non_cpu_backend!(|B| {
         let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
@@ -220,7 +219,7 @@ fn attention_large_tree_and_f32() {
     for (causal, ring, window) in
         [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
     {
-        let mut config = default_attention_config::<bf16>(256, 24, 4, causal);
+        let mut config = AttentionKernelConfig::new::<bf16>(256, 24, 4, causal);
         config.has_sinks = true;
         config.is_kv_cache_ring = ring;
         config.sliding_window_size = window;
@@ -251,7 +250,7 @@ fn attention_single_query() {
         for q_heads in [6, 8] {
             for prefix in [0, 31, 32, 37, 1025] {
                 for ring in [false, true] {
-                    let mut config = default_attention_config::<bf16>(dim, q_heads, 2, true);
+                    let mut config = AttentionKernelConfig::new::<bf16>(dim, q_heads, 2, true);
                     config.has_sinks = true;
                     config.gate_row_stride = Some(q_heads as u32 * dim as u32 + 7);
                     config.is_kv_cache_ring = ring;
@@ -289,7 +288,7 @@ fn attention_vector_partial_rows() {
     let nodes: &[TrieNode] = bytemuck::cast_slice::<[u32; 3], TrieNode>(&[[0, 1, 0], [1, 1, 1]]);
     for prefix in [17, 1031] {
         for ring in [false, true] {
-            let mut config = default_attention_config::<f32>(128, 6, 3, true);
+            let mut config = AttentionKernelConfig::new::<f32>(128, 6, 3, true);
             config.has_sinks = true;
             config.gate_row_stride = Some(6 * 128 + 3);
             config.is_kv_cache_ring = ring;

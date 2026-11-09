@@ -5,6 +5,7 @@ use crate::backends::common::Backend;
 
 pub mod activation_transform;
 pub mod attention;
+mod attention_kernel_config;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
