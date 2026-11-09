@@ -9,8 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::activation_type::ActivationType,
-            kernel::TreeVerifyKernel,
+            gpu_types::activation_type::ActivationType, kernel::TreeVerifyKernel,
         },
         cpu::Cpu,
         metal::Metal,
@@ -39,8 +38,13 @@ fn wave<T: Float>(
 
 fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("context");
-    let kernel =
-        <B::Kernels as Kernels>::TreeVerifyKernel::new(&context, T::data_type(), (n > 16) as u32 + 1, false).unwrap();
+    let kernel = <B::Kernels as Kernels>::TreeVerifyKernel::new(
+        &context,
+        T::data_type(),
+        (n > 16) as u32 + 1,
+        ActivationType::SILU,
+    )
+    .unwrap();
     let q = create_buffer_with_data::<B, T>(&context, &wave(n * K_HEADS * DIM, 0.017, 0.2, 0.01));
     let k = create_buffer_with_data::<B, T>(&context, &wave(n * K_HEADS * DIM, 0.019, 0.18, -0.02));
     let v = create_buffer_with_data::<B, T>(&context, &wave(n * V_HEADS * DIM, 0.023, 0.5, 0.03));
@@ -68,8 +72,7 @@ fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
         &mut o,
         1.0,
         1e-6,
-        ActivationType::SILU,
-        None,
+        1.0,
         1,
         n as u32,
         K_HEADS as u32,

@@ -23,8 +23,7 @@ pub fn tree_verify<T: DataTypeRepr + Float, const NB: u32>(
     o: *mut T,
     scale: f32,
     norm_epsilon: f32,
-    act_type: ActivationType,
-    #[optional(custom_activation_alpha)] activation_alpha: Option<f32>,
+    activation_alpha: f32,
     batch_size: u32,
     tree_size: u32,
     num_k_heads: u32,
@@ -33,7 +32,7 @@ pub fn tree_verify<T: DataTypeRepr + Float, const NB: u32>(
     head_v_dim: u32,
     conv_dim: u32,
     total_proj_dim: u32,
-    #[specialize] custom_activation_alpha: bool,
+    #[specialize] act_type: ActivationType,
 ) {
     let batch_size = batch_size as usize;
     let tree_size = tree_size as usize;
@@ -106,9 +105,8 @@ pub fn tree_verify<T: DataTypeRepr + Float, const NB: u32>(
         conv_dim,
         total_proj_dim,
         norm_epsilon,
-        act_type,
         activation_alpha,
         (batch_size * tree_size) as u32,
-        custom_activation_alpha,
+        act_type,
     );
 }

@@ -83,9 +83,13 @@ fn run_delta_net_update<B: Backend, T: DataTypeRepr>(
     let mut state_buffer = create_buffer_with_data::<B, f32>(&context, state);
     let mut out = create_buffer::<B, T>(&context, value_dim as usize);
 
-    let kernel =
-        <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, T::data_type(), head_k_dim, false)
-            .expect("Failed to create kernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(
+        &context,
+        T::data_type(),
+        head_k_dim,
+        ActivationType::SILU,
+    )
+    .expect("Failed to create kernel");
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
@@ -101,8 +105,7 @@ fn run_delta_net_update<B: Backend, T: DataTypeRepr>(
         key_dim,
         value_dim,
         1e-6f32,
-        ActivationType::SILU,
-        None,
+        1.0,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -382,8 +385,12 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: DataTypeRepr>(
     let prefill_k =
         <<B as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(&context, T::data_type(), head_k_dim as u32)
             .unwrap();
-    let norm_k =
-        <<B as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, T::data_type(), false).unwrap();
+    let norm_k = <<B as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(
+        &context,
+        T::data_type(),
+        ActivationType::SILU,
+    )
+    .unwrap();
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     prep_k.encode(
@@ -429,8 +436,7 @@ fn run_prefill_with_norm_gate_typed<B: Backend, T: DataTypeRepr>(
         conv_dim as u32,
         total_proj_dim as u32,
         1e-6f32,
-        ActivationType::SILU,
-        None,
+        1.0,
         suffix_len as u32,
         &mut command_buffer,
     );
@@ -701,8 +707,12 @@ fn bench_delta_net_prefill() {
         head_k_dim as u32,
     )
     .unwrap();
-    let norm_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::F32, false).unwrap();
+    let norm_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(
+        &context,
+        DataType::F32,
+        ActivationType::SILU,
+    )
+    .unwrap();
 
     eprintln!("\n=== DeltaNet Prefill Benchmark (Qwen3.5 shapes) ===");
     eprintln!(
@@ -781,8 +791,7 @@ fn bench_delta_net_prefill() {
             conv_dim as u32,
             total_proj_dim as u32,
             1e-6f32,
-            ActivationType::SILU,
-            None,
+            1.0,
             suffix_len as u32,
             &mut command_buffer,
         );

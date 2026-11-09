@@ -29,9 +29,8 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     constant const uint& key_dim,
     constant const uint& value_dim,
     constant const float& norm_epsilon,
-    constant const ActivationType& act_type,
-    constant const float& activation_alpha OPTIONAL(custom_activation_alpha),
-    const bool custom_activation_alpha SPECIALIZE,
+    constant const float& activation_alpha,
+    const ActivationType act_type SPECIALIZE,
     threadgroup float shared_o[UPDATE_MAX_HEAD_V_DIM],
     threadgroup float shared_scratch[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
@@ -125,9 +124,8 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     if (lane == 0) {
       const float nw = float(norm_weight[dv]);
       const float z_i = float(in_proj[conv_dim + hv_idx * head_v_dim + dv]);
-      const float z_gate = (custom_activation_alpha && act_type == ActivationType::SILU)
-                                ? activate_silu_alpha(z_i, activation_alpha)
-                                : activate(z_i, act_type);
+      const float z_gate =
+          (act_type == ActivationType::SILU) ? activate_silu_alpha(z_i, activation_alpha) : activate(z_i, act_type);
       out[hv_idx * head_v_dim + dv] = static_cast<T>(shared_o[dv] * inv_rms * nw * z_gate);
     }
   }

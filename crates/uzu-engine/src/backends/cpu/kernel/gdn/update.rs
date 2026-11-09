@@ -29,9 +29,8 @@ pub fn delta_net_update<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
     key_dim: u32,
     value_dim: u32,
     norm_epsilon: f32,
-    act_type: ActivationType,
-    #[optional(custom_activation_alpha)] activation_alpha: Option<f32>,
-    #[specialize] custom_activation_alpha: bool,
+    activation_alpha: f32,
+    #[specialize] act_type: ActivationType,
 ) {
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
@@ -138,8 +137,8 @@ pub fn delta_net_update<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
         for i in 0..head_v_dim {
             let norm_w = unsafe { *norm_weight.add(i) };
             let z_i = unsafe { (*in_proj.add(conv_dim + hv * head_v_dim + i)).to_f32().unwrap() };
-            let z_gate = if custom_activation_alpha && act_type == ActivationType::SILU {
-                activation_silu_alpha(z_i, activation_alpha.unwrap())
+            let z_gate = if act_type == ActivationType::SILU {
+                activation_silu_alpha(z_i, activation_alpha)
             } else {
                 act_type.activate(z_i)
             };

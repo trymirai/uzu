@@ -26,10 +26,9 @@ PUBLIC KERNEL(DeltaNetNormGate)(
     constant const uint& conv_dim,
     constant const uint& total_proj_dim,
     constant const float& norm_epsilon,
-    constant const ActivationType& act_type,
-    constant const float& activation_alpha OPTIONAL(custom_activation_alpha),
+    constant const float& activation_alpha,
     constant const uint& suffix_len,
-    const bool custom_activation_alpha SPECIALIZE,
+    const ActivationType act_type SPECIALIZE,
     threadgroup float shared_scratch[32],
     const ThreadContext thread_context,
     const uint token_idx GROUPS(suffix_len),
@@ -53,9 +52,8 @@ PUBLIC KERNEL(DeltaNetNormGate)(
     float nw = float(norm_weight[tid]);
     uint z_idx = token_idx * total_proj_dim + conv_dim + hv_idx * head_v_dim + tid;
     float z_i = float(in_proj[z_idx]);
-    float z_gate = (custom_activation_alpha && act_type == ActivationType::SILU)
-                        ? activate_silu_alpha(z_i, activation_alpha)
-                        : activate(z_i, act_type);
+    float z_gate =
+        (act_type == ActivationType::SILU) ? activate_silu_alpha(z_i, activation_alpha) : activate(z_i, act_type);
     in_out[base + tid] = static_cast<T>(o_i * inv_rms * nw * z_gate);
   }
 }

@@ -10,7 +10,7 @@ pub struct TreeVerifyNewArguments {
     pub num_v_heads: u32,
     pub head_k_dim: u32,
     pub head_v_dim: u32,
-    pub custom_activation_alpha: bool,
+    pub act_type: ActivationType,
 }
 
 #[derive(Clone, Copy)]
@@ -27,8 +27,7 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub conv_dim: u32,
     pub total_proj_dim: u32,
     pub norm_epsilon: f32,
-    pub act_type: ActivationType,
-    pub activation_alpha: Option<f32>,
+    pub activation_alpha: f32,
     pub tree_size: u32,
 }
 

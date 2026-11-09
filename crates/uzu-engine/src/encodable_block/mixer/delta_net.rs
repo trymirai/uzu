@@ -4,7 +4,6 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Context, GpuBuffer, Kernels,
-        gpu_types::activation_type::ActivationType,
         kernel::{
             ConvTreeScanKernel, DeltaNetConvPackKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
@@ -138,8 +137,7 @@ pub struct DeltaNet<B: Backend> {
     dt_bias: B::GlobalGpuBuffer,
     norm_weight: B::GlobalGpuBuffer,
     norm_epsilon: f32,
-    output_gate: ActivationType,
-    output_gate_alpha: Option<f32>,
+    output_gate_alpha: f32,
     delta_net_update: <B::Kernels as Kernels>::DeltaNetUpdateKernel,
     delta_net_prefill_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
     delta_net_tree_prep: <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel,
@@ -188,10 +186,6 @@ impl<B: Backend> DeltaNet<B> {
                 config.value_head_dim
             )));
         }
-
-        let output_gate = config.output_gate.act_type();
-        let output_gate_alpha = config.output_gate.custom_alpha();
-        let custom_output_gate_alpha = output_gate_alpha.is_some();
 
         let key_dim = config.num_groups * config.head_dim;
         let value_dim = config.num_heads * config.value_head_dim;
@@ -255,7 +249,7 @@ impl<B: Backend> DeltaNet<B> {
             context,
             outer_data_type,
             config.head_dim,
-            custom_output_gate_alpha,
+            config.output_gate.act_type(),
         )
         .map_err(DeltaNetNewError::Backend)?;
         let delta_net_prefill_prep = <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
@@ -279,9 +273,12 @@ impl<B: Backend> DeltaNet<B> {
         let delta_net_prefill =
             <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, outer_data_type, config.head_dim)
                 .map_err(DeltaNetNewError::Backend)?;
-        let delta_net_norm_gate =
-            <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type, custom_output_gate_alpha)
-                .map_err(DeltaNetNewError::Backend)?;
+        let delta_net_norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(
+            context,
+            outer_data_type,
+            config.output_gate.act_type(),
+        )
+        .map_err(DeltaNetNewError::Backend)?;
         let tree_verify =
             if <<B::Kernels as Kernels>::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait>::is_supported(context) {
                 Some(
@@ -293,7 +290,7 @@ impl<B: Backend> DeltaNet<B> {
                             num_v_heads: config.num_heads,
                             head_k_dim: config.head_dim,
                             head_v_dim: config.value_head_dim,
-                            custom_activation_alpha: custom_output_gate_alpha,
+                            act_type: config.output_gate.act_type(),
                         },
                     )
                     .map_err(DeltaNetNewError::Backend)?,
@@ -345,8 +342,7 @@ impl<B: Backend> DeltaNet<B> {
                 dt_bias,
                 norm_weight,
                 norm_epsilon,
-                output_gate,
-                output_gate_alpha,
+                output_gate_alpha: config.output_gate.alpha(),
                 delta_net_update,
                 delta_net_prefill_prep,
                 delta_net_tree_prep,
@@ -442,7 +438,6 @@ impl<B: Backend> DeltaNet<B> {
                     conv_dim: self.conv_dim,
                     total_proj_dim: self.total_proj_dim,
                     norm_epsilon: self.norm_epsilon,
-                    act_type: self.output_gate,
                     activation_alpha: self.output_gate_alpha,
                     tree_size,
                 },
@@ -522,7 +517,6 @@ impl<B: Backend> DeltaNet<B> {
                 self.key_dim,
                 self.value_dim,
                 self.norm_epsilon,
-                self.output_gate,
                 self.output_gate_alpha,
                 command_buffer,
             );
@@ -630,7 +624,6 @@ impl<B: Backend> DeltaNet<B> {
                 self.conv_dim,
                 self.total_proj_dim,
                 self.norm_epsilon,
-                self.output_gate,
                 self.output_gate_alpha,
                 suffix_length,
                 command_buffer,

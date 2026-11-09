@@ -40,8 +40,7 @@ PUBLIC KERNEL(TreeVerify)(
     device T* o,
     constant const float& scale,
     constant const float& norm_epsilon,
-    constant const ActivationType& act_type,
-    constant const float& activation_alpha OPTIONAL(custom_activation_alpha),
+    constant const float& activation_alpha,
     constant const uint& batch_size,
     constant const uint& tree_size,
     constant const uint& num_k_heads,
@@ -50,7 +49,7 @@ PUBLIC KERNEL(TreeVerify)(
     constant const uint& head_v_dim,
     constant const uint& conv_dim,
     constant const uint& total_proj_dim,
-    const bool custom_activation_alpha SPECIALIZE,
+    const ActivationType act_type SPECIALIZE,
     threadgroup T out_tile[NB * BLOCK_SIZE * OUT_STRIDE],
     threadgroup float a_tiles[NB * NB * BLOCK_SIZE * BLOCK_SIZE],
     threadgroup float qkd_tile[NB * NB * BLOCK_SIZE * BLOCK_SIZE],
@@ -288,9 +287,8 @@ PUBLIC KERNEL(TreeVerify)(
     METAL_PRAGMA_UNROLL
     for (uint j = 0; j < 4; ++j) {
       const float z_i = float(z_row[j]);
-      const float z_gate = (custom_activation_alpha && act_type == ActivationType::SILU)
-                               ? activate_silu_alpha(z_i, activation_alpha)
-                               : activate(z_i, act_type);
+      const float z_gate =
+          (act_type == ActivationType::SILU) ? activate_silu_alpha(z_i, activation_alpha) : activate(z_i, act_type);
       result[j] = static_cast<T>(values[j] * inv_rms * norm_weight[dv + j] * z_gate);
     }
     *reinterpret_cast<device T4*>(o + value_base + token * value_token_stride + dv) = result;
