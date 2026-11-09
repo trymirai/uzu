@@ -51,14 +51,16 @@ impl<B: Backend> InputRht<B> {
         if let Some(quantizer) = self.quantizer.as_ref().filter(|quantizer| quantizer.format() == format) {
             let input_dim = self.input_dim();
             if let ActivationFormat::PackedHalf {
-                group_size,
+                block_k,
+                bits,
             } = format
             {
-                let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, group_size))?;
+                let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, block_k, bits))?;
                 quantizer.encode_pack_half(input, &mut values, &self.rht_signs, batch_dim, input_dim, command_buffer);
                 return Ok(MatmulA::PackedHalf {
                     values,
-                    group_size,
+                    block_k,
+                    bits,
                 });
             }
             let ActivationFormat::Int8(quantization) = format else {

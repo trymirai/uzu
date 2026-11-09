@@ -38,6 +38,7 @@ PUBLIC KERNEL(ActivationTransform)(
     const bool in_place SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
+    const uint weight_bits SPECIALIZE,
     const bool has_bias SPECIALIZE,
     uint activation_tile_index GROUPS(element_count.div_ceil(TILE_ELEMENTS)),
     uint batch_index GROUPS(batch_size),
@@ -83,7 +84,7 @@ PUBLIC KERNEL(ActivationTransform)(
 
   if (PACKED_HALF) {
     if (in_bounds) {
-      store_packed_half(values, lane_index, first_index, batch_index, sum_group_size, packed_half_out);
+      store_packed_half(values, lane_index, first_index, batch_index, sum_group_size, weight_bits, packed_half_out);
     }
     return;
   }
