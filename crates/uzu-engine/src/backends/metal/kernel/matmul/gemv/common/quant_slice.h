@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../gemm/common/mxu_tiled_layout.h"
 #include "arguments.h"
 #include "quant_chunk.h"
 #include "quant_metadata.h"
@@ -39,18 +40,25 @@ private:
 
   static_assert(GROUP_SIZE % Tile::GROUP_LANES == 0, "group lanes must divide the quantization group");
   static_assert(VALUES_PER_LANE % CHUNK_VALUES == 0, "group lane slices must contain complete chunks");
-  static_assert(SLICE_VALUES <= MAX_SLICE_VALUES, "QMV slice exceeds its staged-value limit");
   static_assert(VALUES_PER_LANE % SLICE_VALUES == 0, "a lane loads complete group slices");
 
   uint4 weights[Tile::ROWS_PER_LANE][SLICE_WORDS];
 
+  using Layout = MxuTiledLayout<BITS>;
+  using Ops = typename Layout::Ops;
+
   static METAL_FUNC uint mxu_tiled_offset(uint row, uint row_stride, uint byte) {
-    constexpr uint CHUNK_BYTES = BITS * 4;
-    const uint y = row % 8;
-    const uint x = byte % CHUNK_BYTES / BITS;
+    constexpr uint CHUNK_BYTES = Ops::FRAGMENT_COLS * Layout::COL_FRAGMENTS;
+    constexpr uint COLUMN_GROUP_BYTES = Ops::THREAD_ELEMENT_COLS * Layout::COL_FRAGMENTS;
+    const uint y = row % Ops::THREAD_ELEMENT_ROW_STRIDE;
+    const uint x = byte % CHUNK_BYTES / COLUMN_GROUP_BYTES;
+    // Inverse of Ops::get_position.
     const uint lane = (x & 1) | ((y & 1) << 1) | ((y >> 1 & 1) << 2) | ((x >> 1) << 3) | ((y >> 2) << 4);
-    return row / 32 * 32 * row_stride + (byte / CHUNK_BYTES * 32 + lane) * CHUNK_BYTES + row % 32 / 8 * BITS +
-           byte % BITS;
+    return row / Layout::BLOCK_ROWS * Layout::BLOCK_ROWS * row_stride +
+           (byte / CHUNK_BYTES * METAL_SIMD_SIZE + lane) * Layout::LANE_BYTES +
+           row % Layout::BLOCK_ROWS / Ops::THREAD_ELEMENT_ROW_STRIDE * (BITS == 2 ? 1 : Layout::COL_FRAGMENTS) *
+               QuantChunk<BITS>::WORD_BYTES +
+           byte % COLUMN_GROUP_BYTES;
   }
 
   METAL_FUNC void load_mxu_tiled_weights(
@@ -91,6 +99,25 @@ private:
     }
   }
 
+  METAL_FUNC void load_mxu_tiled_w2_weights(
+      const device uint8_t* weights_base,
+      const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
+      uint row_stride,
+      uint offset_bytes
+  ) thread {
+    static_assert(SLICE_BYTES == Ops::THREAD_ELEMENT_COLS * Layout::COL_FRAGMENTS, "2-bit slice is one column group");
+    Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
+      constexpr uint R = decltype(output_index)::value;
+      const device uint8_t* source = weights_base + mxu_tiled_offset(weight_row_indices[R], row_stride, offset_bytes);
+      weights[R][0] = uint4(
+          *reinterpret_cast<const device uint*>(source),
+          *reinterpret_cast<const device uint*>(source + Ops::THREAD_ELEMENT_ROWS * QuantChunk<BITS>::WORD_BYTES),
+          0u,
+          0u
+      );
+    });
+  }
+
 public:
   static METAL_FUNC uint row_stride(const thread GemvParams& params) {
     return params.in_vec_size * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
@@ -106,11 +133,13 @@ public:
   ) thread {
     const uint k = position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES;
     const uint offset_bytes = k * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
-    if constexpr (BITS == 4 || BITS == 8) {
-      if (params.gemm_b_layout == GemmBLayout::MxuTiled) {
+    if (params.gemm_b_layout == GemmBLayout::MxuTiled) {
+      if constexpr (BITS == 2) {
+        load_mxu_tiled_w2_weights(weights_base, weight_row_indices, row_stride, offset_bytes);
+      } else {
         load_mxu_tiled_weights(weights_base, weight_row_indices, row_stride, offset_bytes, params.gathered);
-        return;
       }
+      return;
     }
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;
@@ -158,7 +187,17 @@ public:
             position.group * GROUP_SIZE + group_offset + position.slice * SLICE_VALUES + chunk * CHUNK_VALUES;
         const uint input_row = tile.input_row + source_row;
         float input_values[CHUNK_VALUES];
-        if (BITS == 8 && params.gemm_b_layout == GemmBLayout::MxuTiled) {
+        if (BITS == 2 && params.gemm_b_layout == GemmBLayout::MxuTiled) {
+          const device AT* input =
+              ops.a + input_row * params.in_vec_size + position.group * GROUP_SIZE +
+              chunk / 2 * (CHUNK_VALUES / 2) * Ops::FRAGMENT_COLS +
+              (group_offset + position.slice * SLICE_VALUES) / SLICE_VALUES * Ops::THREAD_ELEMENT_COLS + chunk % 2 * 2;
+          METAL_PRAGMA_UNROLL
+          for (uint i = 0; i < CHUNK_VALUES / 2; i++) {
+            input_values[i] = float(input[Ops::FRAGMENT_COLS * i]);
+            input_values[CHUNK_VALUES / 2 + i] = float(input[Ops::FRAGMENT_COLS * i + 1]);
+          }
+        } else if (BITS == 8 && params.gemm_b_layout == GemmBLayout::MxuTiled) {
           const device AT* input = ops.a + input_row * params.in_vec_size + k - k % 32 / 2;
           METAL_PRAGMA_UNROLL
           for (uint i = 0; i < CHUNK_VALUES / 2; i++) {
