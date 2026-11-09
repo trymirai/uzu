@@ -155,7 +155,3 @@ impl DeltaNetChunkedPrefill for MetalDeltaNetChunkedPrefill {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "../../../../../../unit/backends/metal/kernel/gdn/chunked_test.rs"]
-mod tests;

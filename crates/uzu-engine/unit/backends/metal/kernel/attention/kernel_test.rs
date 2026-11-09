@@ -1,18 +1,18 @@
 use futures::executor::block_on;
 use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, Context, Kernels,
-            gpu_types::trie::TrieNode as GpuTrieNode,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareKernel},
+            gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+            },
         },
-        metal::{
-            Metal,
-            kernel::attention::{AttentionMetalKernel, tests::default_attention_config},
-        },
+        metal::{Metal, kernel::attention::AttentionMetalKernel},
     },
     data_type::DataType,
     encodable_block::{
@@ -105,10 +105,20 @@ fn attention_matches_cpu() {
             };
             let (shape, nodes) =
                 ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
-            let mut config = default_attention_config::<bf16>(head_dim, q_heads, kv_heads, true);
             let gate_stride = q_heads * head_dim + 17;
             let gates = matches!(prefix, 37 | 4096).then(|| fill_attention(suffix * gate_stride, 3.0));
-            config.gate_row_stride = gates.as_ref().map(|_| gate_stride as u32);
+            let config = AttentionKernelConfig {
+                head_dim: head_dim as u32,
+                num_groups: kv_heads as u32,
+                num_q_heads: q_heads as u32,
+                has_sinks: false,
+                gate_row_stride: gates.as_ref().map(|_| gate_stride as u32),
+                is_kv_cache_ring: false,
+                is_causal: true,
+                sliding_window_size: None,
+                scale: Some(1.0 / (head_dim as f32).sqrt()),
+                data_type: DataType::BF16,
+            };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
             let (queries, keys, values) = attention_inputs(shape);
@@ -245,7 +255,6 @@ fn attention_matches_cpu() {
 }
 
 fn attention_inputs(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>, Vec<bf16>) {
-    use rand::{RngExt, SeedableRng, rngs::SmallRng};
     let (dim, q_heads, kv_heads, suffix, prefix, _) = shape;
     let mut rng = SmallRng::seed_from_u64(42);
     let queries = (0..q_heads * suffix * dim).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
@@ -260,7 +269,6 @@ fn quantized_attention_reference(
     shape: AttentionShape,
     nodes: Option<&[GpuTrieNode]>,
 ) -> Vec<bf16> {
-    use crate::backends::common::gpu_types::kv_layout;
     fn hadamard_transform(row: &mut [f32]) {
         let mut width = 1;
         while width < row.len() {
