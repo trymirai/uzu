@@ -12,7 +12,6 @@ use crate::{
     encodable_block::batch_topology::BatchTopology,
     engine::Engine,
     tests::{helpers::for_each_non_cpu_backend, path::get_test_model_path},
-    trie::TrieNode,
 };
 
 const PROMPT: &str = "The lighthouse keeper climbed the spiral stairs every evening at dusk. He trimmed the wick, \
@@ -36,7 +35,7 @@ fn log_probabilities<B: Backend>(
     let mut state = model.create_empty_state(Some(tokens.len() as u32), 0).expect("state");
     let context = &model.engine.context;
     let mut rows = Vec::new();
-    for (index, chunk) in tokens.chunks(step).enumerate() {
+    for chunk in tokens.chunks(step) {
         let length = chunk.len() as u32;
         state.transformer_state.prepare(state.transformer_state.context_length(), length).expect("prepare");
         let mut command_buffer =
@@ -46,13 +45,11 @@ fn log_probabilities<B: Backend>(
             let token_ids = command_buffer
                 .allocate_constant_from_slice(&chunk.iter().map(|&token| token as u32).collect::<Box<[u32]>>())
                 .expect("token ids");
-            let trie = TrieNode::flat(index * step, chunk, &state.prng);
-            let nodes = trie.linearize().token_subtrie_ranges().collect::<Box<[_]>>();
             let output = model
                 .decoder
                 .encode(
                     &token_ids,
-                    &BatchTopology::new(&nodes, true),
+                    &BatchTopology::flat(length, true),
                     Some((0..length).into()),
                     None,
                     &mut state.transformer_state,

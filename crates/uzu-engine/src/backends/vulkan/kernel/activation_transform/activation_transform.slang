@@ -39,6 +39,7 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   [[Specialize]] bool in_place,
   [[Specialize]] uint activation_scale_group_size,
   [[Specialize]] uint sum_group_size,
+  [[Specialize]] uint weight_bits,
   [[Specialize]] bool has_bias,
 ) {
   static_assert(ACTIVATION_QUANTIZATION_TILE == 128, "one tile per workgroup");

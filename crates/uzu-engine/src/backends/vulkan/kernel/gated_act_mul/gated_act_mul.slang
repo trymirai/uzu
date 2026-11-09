@@ -50,6 +50,7 @@ func GatedActMul<T: IStorageFloat>(
   [[Specialize]] bool use_hadamard,
   [[Specialize]] uint activation_scale_group_size,
   [[Specialize]] uint sum_group_size,
+  [[Specialize]] uint weight_bits,
   [[Specialize]] bool custom_activation_alpha,
   [[Specialize]] bool clip_gate,
   [[Specialize]] bool clip_value,
