@@ -1,4 +1,6 @@
 use crate::data_type::DataType;
+#[cfg(test)]
+use crate::data_type::DataTypeRepr;
 
 #[derive(Clone, Copy)]
 pub struct AttentionKernelConfig {
@@ -16,7 +18,7 @@ pub struct AttentionKernelConfig {
 
 #[cfg(test)]
 impl AttentionKernelConfig {
-    pub fn new<T: crate::data_type::DataTypeRepr>(
+    pub fn new<T: DataTypeRepr>(
         head_dim: usize,
         num_q_heads: usize,
         num_groups: usize,

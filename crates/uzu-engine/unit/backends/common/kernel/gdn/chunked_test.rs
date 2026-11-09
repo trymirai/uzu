@@ -13,7 +13,10 @@ use crate::{
         },
     },
     data_type::DataType,
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+    tests::helpers::{
+        buffer_readback, buffer_to_vec, create_buffer, create_buffer_with_data, create_context,
+        for_each_non_cpu_backend,
+    },
 };
 
 const NUM_V_HEADS: usize = 6;
@@ -136,7 +139,7 @@ fn run_prefill<B: Backend>(
             );
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let out = crate::tests::helpers::buffer_readback::<B>(context, &out);
+    let out = buffer_readback::<B>(context, &out);
     buffer_to_vec::<B, bf16>(context, &out).into_iter().map(f32::from).collect()
 }
 

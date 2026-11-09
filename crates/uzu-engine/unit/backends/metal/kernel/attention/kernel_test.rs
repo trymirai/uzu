@@ -1,12 +1,13 @@
 use futures::executor::block_on;
 use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, Context, Kernels,
-            gpu_types::trie::TrieNode as GpuTrieNode,
+            gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             },
@@ -244,7 +245,6 @@ fn attention_matches_cpu() {
 }
 
 fn attention_inputs(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>, Vec<bf16>) {
-    use rand::{RngExt, SeedableRng, rngs::SmallRng};
     let (dim, q_heads, kv_heads, suffix, prefix, _) = shape;
     let mut rng = SmallRng::seed_from_u64(42);
     let queries = (0..q_heads * suffix * dim).map(|_| bf16::from_f32(rng.random_range(-2.0..2.0))).collect();
@@ -259,7 +259,6 @@ fn quantized_attention_reference(
     shape: AttentionShape,
     nodes: Option<&[GpuTrieNode]>,
 ) -> Vec<bf16> {
-    use crate::backends::common::gpu_types::kv_layout;
     fn hadamard_transform(row: &mut [f32]) {
         let mut width = 1;
         while width < row.len() {

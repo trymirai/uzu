@@ -1,9 +1,13 @@
+#[cfg(backend = "metal")]
+use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{
@@ -226,10 +230,10 @@ fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
 
-    let mut runner = Runner::<crate::backends::metal::Metal>::new(8, 16, 8, 65);
+    let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
     let mut run = || runner.encode(BATCH).div_f64(BATCH as f64);
-    let warmup = std::time::Instant::now();
-    while warmup.elapsed() < std::time::Duration::from_millis(500) {
+    let warmup = Instant::now();
+    while warmup.elapsed() < Duration::from_millis(500) {
         run();
     }
     let mut samples = (0..SAMPLES).map(|_| run()).collect::<Vec<_>>();

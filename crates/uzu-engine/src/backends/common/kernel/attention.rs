@@ -1,5 +1,6 @@
 use std::error::Error;
 
+pub use super::attention_kernel_config::AttentionKernelConfig;
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
     encodable_block::mixer::attention::KVCacheView,
@@ -32,8 +33,6 @@ pub trait AttentionKernel: Sized + Send + Sync {
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
 }
-
-pub use super::attention_kernel_config::AttentionKernelConfig;
 
 pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
     pub suffix_length: u32,
