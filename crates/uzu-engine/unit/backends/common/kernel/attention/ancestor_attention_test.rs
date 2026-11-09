@@ -211,11 +211,11 @@ impl<B: Backend> Runner<B> {
 
 #[uzu_test]
 fn ancestor_attention_matches_cpu() {
-    let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
-    cpu.encode(1);
-    let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
-
     for_each_non_cpu_backend!(|B| {
+        let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
+        cpu.encode(1);
+        let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+
         let mut runner = Runner::<B>::new(4, 5, 3, 16);
         runner.encode(1);
         let actual = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);

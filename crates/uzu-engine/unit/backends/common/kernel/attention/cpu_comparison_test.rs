@@ -191,8 +191,8 @@ fn attention_windows_sinks_and_head_dims() {
                 KVCacheView::full(prefix)
             };
             for is_trie in [false, true] {
-                let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
                 for_each_non_cpu_backend!(|B| {
+                    let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
                     let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
                     assert_eq_float(
                         &expected,
@@ -232,8 +232,8 @@ fn attention_large_tree_and_f32() {
         scale: Some(1.0 / 128.0_f32.sqrt()),
         data_type: DataType::F32,
     };
-    let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
     for_each_non_cpu_backend!(|B| {
+        let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
         let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
         assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
     });
@@ -258,8 +258,8 @@ fn attention_large_tree_and_f32() {
             KVCacheView::full(37)
         };
         for is_trie in [false, true] {
-            let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
             for_each_non_cpu_backend!(|B| {
+                let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
                 let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
                 assert_eq_float(
                     &expected,
@@ -303,8 +303,8 @@ fn attention_single_query() {
                     } else {
                         KVCacheView::full(prefix)
                     };
-                    let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, false);
                     for_each_non_cpu_backend!(|B| {
+                        let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, false);
                         let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, false);
                         assert_eq_float(
                             &expected,
@@ -341,8 +341,8 @@ fn attention_vector_partial_rows() {
             } else {
                 KVCacheView::full(prefix)
             };
-            let (expected, _) = run::<Cpu, f32>(config, cache, nodes, true);
             for_each_non_cpu_backend!(|B| {
+                let (expected, _) = run::<Cpu, f32>(config, cache, nodes, true);
                 let (actual, tolerance) = run::<B, f32>(config, cache, nodes, true);
                 assert_eq_float(&expected, &actual, tolerance, "INT8 vector partial rows, tree, F32, sinks and gate");
             });
