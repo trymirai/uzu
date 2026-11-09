@@ -83,11 +83,16 @@ impl<B: Backend> Embedding<B> {
         vocab_size: u32,
         model_dim: u32,
         data_type: DataType,
-        config: &AnyEmbeddingConfig,
+        embedding_config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Arc<B::GlobalGpuBuffer>>), EmbeddingError<B>> {
-        let (tying, readout_input_hadamard_factors) = match config {
+        let has_index_permutation = embedding_config.permute_indices();
+        if has_index_permutation {
+            parameter_tree.ignore("index_permutation", &[vocab_size], DataType::I32)?;
+        }
+
+        let (tying, readout_input_hadamard_factors) = match embedding_config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
                 let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context).await?;
@@ -133,9 +138,9 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
-        let input_scale = config.input_scale().unwrap_or(1.0);
-        let logit_scale = config.logit_scale().unwrap_or(1.0);
-        let logit_soft_cap = *config.logit_soft_cap();
+        let input_scale = embedding_config.input_scale().unwrap_or(1.0);
+        let logit_scale = embedding_config.logit_scale().unwrap_or(1.0);
+        let logit_soft_cap = *embedding_config.logit_soft_cap();
         let logit_transform = if logit_scale != 1.0 || logit_soft_cap.is_some() {
             let kernel =
                 <B::Kernels as Kernels>::LogitTransformKernel::new(context, data_type, logit_soft_cap.is_some())
