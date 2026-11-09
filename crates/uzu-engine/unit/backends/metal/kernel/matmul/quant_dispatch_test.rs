@@ -699,27 +699,34 @@ fn gemv_reads_mxu_tiled_layout_bf16(
 #[case::w4_zp_gs32(4u32, 32u32, ScaleZeroPoint)]
 #[case::w8_sym_gs64(8u32, 64u32, QuantizationMethod::ScaleSymmetric)]
 #[case::w2_bias_gs128(2u32, 128u32, QuantizationMethod::ScaleBias)]
-fn gathered_gemv_reads_mxu_tiled_layout_bf16(
+fn gathered_gemv_reads_weight_layout_bf16(
     #[case] bits: u32,
     #[case] group_size: u32,
     #[case] method: QuantizationMethod,
+    #[values(GemmBLayout::RowMajor, GemmBLayout::MxuTiled)] gemm_b_layout: GemmBLayout,
+    #[values(1, 3, 8)] m: u32,
+    #[values(256, 4096)] k: u32,
 ) {
     let context = block_on(MetalContext::new()).expect("Metal context");
-    if !context.supports_mxu {
+    if gemm_b_layout == GemmBLayout::MxuTiled && !context.supports_mxu {
         return;
     }
-    let (k, vocab, gathered_rows) = (256u32, 256u32, 10u32);
-    let input = QuantInput::<bf16>::new(1, k, vocab, group_size, bits, method, 0).with_group_output();
+    let (weight_rows, gathered_rows) = (256u32, 10u32);
+    let input = QuantInput::<bf16>::new(m, k, weight_rows, group_size, bits, method, 0).with_group_output();
     let input = match bits {
         2 => input.with_one_group_per_row(),
         8 => input.with_signed_weight_codes(),
         _ => input,
     };
-    let ids: Vec<u32> = (0..gathered_rows).map(|row| (row * 37 + 11) % vocab).collect();
-    let dense = run_quant_cpu::<bf16>(&input);
-    let expected: Vec<bf16> = ids.iter().map(|&id| dense[id as usize]).collect();
+    let gather_indices: Vec<u32> = (0..m * gathered_rows).map(|i| (i * 37 + 11) % weight_rows).collect();
+    let dense_output = run_quant_cpu::<bf16>(&input);
+    let expected: Vec<bf16> = gather_indices
+        .chunks_exact(gathered_rows as usize)
+        .zip(dense_output.chunks_exact(weight_rows as usize))
+        .flat_map(|(indices, output_row)| indices.iter().map(move |&index| output_row[index as usize]))
+        .collect();
 
-    let ids_buffer = crate::tests::helpers::create_buffer_with_data::<Metal, u32>(&context, &ids);
+    let gather_indices_buffer = crate::tests::helpers::create_buffer_with_data::<Metal, u32>(&context, &gather_indices);
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -728,19 +735,19 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         bf16::data_type(),
     )
     .expect("Metal matmul kernel");
-    if bits != 2 {
+    if gemm_b_layout == GemmBLayout::MxuTiled {
         tile_weights(&matmul, &mut buffers, &input, &context);
     }
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let mut arguments = quant_arguments(&mut buffers, &input);
-    arguments.gather_indices = Some(&ids_buffer);
+    arguments.gather_indices = Some(&gather_indices_buffer);
     arguments.n = gathered_rows;
     matmul.encode(arguments, &mut command_buffer).expect("gathered GEMV");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y)[..gathered_rows as usize].to_vec();
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y)[..(m * gathered_rows) as usize].to_vec();
 
     assert_parity::<bf16>(
-        &format!("gathered MxuTiled GEMV bits={bits} gs={group_size} method={method:?}"),
+        &format!("gathered {gemm_b_layout:?} GEMV m={m} k={k} bits={bits} gs={group_size} method={method:?}"),
         &expected,
         &actual,
         0.05,
