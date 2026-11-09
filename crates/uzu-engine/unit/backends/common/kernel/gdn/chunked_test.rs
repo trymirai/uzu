@@ -9,7 +9,7 @@ use crate::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         kernel::{
             DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel,
-            delta_net_chunked_prefill::{CHUNK_SIZE, DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
+            delta_net_chunked_prefill::{DeltaNetChunkedPrefill, DeltaNetChunkedPrefillArgs},
         },
     },
     data_type::DataType,
@@ -190,7 +190,7 @@ fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>() {
     let state0 = buffer_to_vec::<B, f32>(&context, &state);
     assert!(state0.iter().any(|value| *value != 0.0), "initial state is zero");
 
-    for suffix_len in [2 * CHUNK_SIZE as usize + 1, 512, 1024] {
+    for suffix_len in [129, 512, 1024] {
         let label = format!("T={suffix_len}");
         check::<B>(&context, &chunked, &state0, &tokens[..suffix_len * TOTAL_PROJ_DIM], 1, &label);
     }

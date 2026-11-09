@@ -1,6 +1,8 @@
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::KVLayout;
 use crate::{
     backends::{
         common::{
@@ -127,11 +129,13 @@ fn run<B: Backend, T: DataTypeRepr>(
     let mut output = create_buffer::<B, T>(&context, (suffix * config.num_q_heads * dim) as usize);
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
-    // Metal's non-row-major MXU layout also quantizes attention probabilities to u8.
-    let tolerance = if kernel.kv_layout().backend_opaque_layout != 0 {
+    let tolerance = 5e-3;
+    // MXU also quantizes attention probabilities to u8.
+    #[cfg(backend = "metal")]
+    let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
         1.5e-2
     } else {
-        5e-3
+        tolerance
     };
     (buffer_to_vec::<B, T>(&context, &output), tolerance)
 }
