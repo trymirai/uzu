@@ -85,7 +85,12 @@ pub async fn resolve_model_context_length(model_path: &Path) -> Result<Option<u3
     Ok(transformer
         .layer_configs
         .iter()
-        .filter(|layer| matches!(layer.mixer.body_config, AnyTokenMixerConfig::AttentionConfig(_)))
+        .filter(|layer| {
+            matches!(
+                layer.mixer.body_config,
+                AnyTokenMixerConfig::AttentionConfig(_) | AnyTokenMixerConfig::SparseAttentionConfig(_)
+            )
+        })
         .filter_map(|layer| layer.rope_config.as_ref().map(|rope| *rope.max_sequence_length()))
         .min())
 }

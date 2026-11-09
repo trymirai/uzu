@@ -62,6 +62,10 @@ pub enum TransformerLayerError<B: Backend> {
     UnsupportedPrologueOps {
         layer_index: u32,
     },
+    #[error("Layer {layer_index} uses an n-gram injection op, which is not supported")]
+    UnsupportedNGramInjection {
+        layer_index: u32,
+    },
     #[error("Layer {layer_index} has multiple per-layer embedding injection ops, but only one is applied")]
     MultiplePerLayerEmbeddingInjectionOps {
         layer_index: u32,
@@ -225,6 +229,11 @@ impl<B: Backend> TransformerLayer<B> {
         let mut residual_scale_op_index = None;
         for (index, op) in layer_config.epilogue_configs.iter().enumerate() {
             match op {
+                AnyStreamOpConfig::NGramInjectionConfig(_) => {
+                    return Err(TransformerLayerError::UnsupportedNGramInjection {
+                        layer_index,
+                    });
+                },
                 AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(config) => {
                     if ple_op.replace((index, config)).is_some() {
                         return Err(TransformerLayerError::MultiplePerLayerEmbeddingInjectionOps {
