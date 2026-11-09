@@ -14,10 +14,7 @@ use crate::{
         codegen::write_tokens, compiler::Compiler, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes,
         identifiers::KernelPath, kernel::Kernel,
     },
-    slang::{
-        compiler_internal::{BlockingSlangCompiler, SlangCompilerFields, SlangTarget},
-        gpu_types::gpu_type_gen,
-    },
+    slang::{BlockingSlangCompiler, SlangCompilerFields, SlangTarget, gpu_types::gpu_type_gen},
 };
 
 pub struct SlangCompiler<T: SlangTarget> {
