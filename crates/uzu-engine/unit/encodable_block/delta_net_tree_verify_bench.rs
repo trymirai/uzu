@@ -11,6 +11,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, Context, CpuBuffer, Kernels,
+            gpu_types::activation_type::ActivationType,
             kernel::delta_net_tree_verify::DeltaNetTreeVerify,
         },
         metal::Metal,
@@ -31,6 +32,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
         num_v_heads: V_HEADS as u32,
         head_k_dim: HEAD_DIM as u32,
         head_v_dim: HEAD_DIM as u32,
+        custom_activation_alpha: false,
     };
     let context = block_on(<Metal as Backend>::Context::new()).unwrap();
     let started = Instant::now();
@@ -78,6 +80,8 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             conv_dim: CONV_DIM as u32,
                             total_proj_dim: TOTAL_PROJ_DIM as u32,
                             norm_epsilon: 1e-6,
+                            act_type: ActivationType::SILU,
+                            activation_alpha: None,
                             tree_size: tree_size as u32,
                         },
                         command_buffer,

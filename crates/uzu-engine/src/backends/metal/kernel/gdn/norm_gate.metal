@@ -6,10 +6,10 @@
 
 using namespace metal;
 
-// In-place RMSNorm + SiLU gate for DeltaNet prefill output.
+// In-place RMSNorm + output gate for DeltaNet prefill output.
 // One threadgroup per (token, head).
 //
-// in_out[i] = in_out[i] * inv_rms * norm_weight[i] * silu(z[i])
+// in_out[i] = in_out[i] * inv_rms * norm_weight[i] * act(z[i])
 
 // TODO: support different head_v_dim via VARIANTS template when needed
 #define HEAD_V_DIM 128
@@ -26,7 +26,10 @@ PUBLIC KERNEL(DeltaNetNormGate)(
     constant const uint& conv_dim,
     constant const uint& total_proj_dim,
     constant const float& norm_epsilon,
+    constant const ActivationType& act_type,
+    constant const float& activation_alpha OPTIONAL(custom_activation_alpha),
     constant const uint& suffix_len,
+    const bool custom_activation_alpha SPECIALIZE,
     threadgroup float shared_scratch[32],
     const ThreadContext thread_context,
     const uint token_idx GROUPS(suffix_len),
@@ -45,11 +48,14 @@ PUBLIC KERNEL(DeltaNetNormGate)(
       threadgroup_cooperative_reduce<SimdReduceSum<float>, HEAD_V_DIM>(o_sq, shared_scratch, thread_context);
   float inv_rms = rsqrt(o_sumsq / float(head_v_dim) + norm_epsilon);
 
-  // Apply norm + SiLU gate (in-place)
+  // Apply norm + output gate (in-place)
   if (active) {
     float nw = float(norm_weight[tid]);
     uint z_idx = token_idx * total_proj_dim + conv_dim + hv_idx * head_v_dim + tid;
-    float z_silu = activate_silu(float(in_proj[z_idx]));
-    in_out[base + tid] = static_cast<T>(o_i * inv_rms * nw * z_silu);
+    float z_i = float(in_proj[z_idx]);
+    float z_gate = (custom_activation_alpha && act_type == ActivationType::SILU)
+                        ? activate_silu_alpha(z_i, activation_alpha)
+                        : activate(z_i, act_type);
+    in_out[base + tid] = static_cast<T>(o_i * inv_rms * nw * z_gate);
   }
 }
