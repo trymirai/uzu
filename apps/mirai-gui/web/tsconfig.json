@@ -1,5 +1,11 @@
 {
   "extends": "../client/tsconfig.json",
-  "include": ["src/**/*", "vite.config.ts"],
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../client/src/*"],
+      "@uzu/wasm": ["../../../crates/legacy/uzu/bindings/wasm/src/wasm/uzu.d.ts"]
+    }
+  },
+  "include": ["src/**/*", "vite.config.ts", "../client/src/vite-env.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

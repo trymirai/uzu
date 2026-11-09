@@ -13,6 +13,8 @@
     "web:build": "vite build --config web/vite.config.ts --mode web",
     "web:preview": "vite preview --config web/vite.config.ts --mode web",
     "web:typecheck": "tsc -p web/tsconfig.json --noEmit",
+    "web:test": "vitest run --config web/vite.config.ts",
+    "web:wasm": "node web/scripts/build-wasm.mjs",
     "typecheck": "tsc -p client/tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

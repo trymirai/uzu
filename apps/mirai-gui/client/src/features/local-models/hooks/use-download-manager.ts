@@ -4,13 +4,12 @@ import { useCallback } from "react";
 import { useModelsStore } from "@/stores/use-models-store";
 import { modelDownloadPhases } from "@/types/model-manager";
 import { getPlatform } from "@/platform/platform-singleton";
+import { errorText } from "@/utils/error-text";
 
 const failureCopy = {
   start: (name: string) => `Failed to start download for ${name}`,
   resume: (name: string) => `Failed to resume ${name}`,
 } as const;
-
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export const useDownloadManager = () => {
   const toast = useToast();

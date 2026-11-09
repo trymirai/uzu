@@ -10,7 +10,7 @@ export default defineConfig([
   },
   js.configs.recommended,
   {
-    files: ["vite.config.ts", "web/vite.config.ts"],
+    files: ["vite.config.ts", "vite.shared.ts", "web/vite.config.ts"],
     languageOptions: {
       parser: tseslint.parser,
       globals: {

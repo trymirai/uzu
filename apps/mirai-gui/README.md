@@ -24,18 +24,37 @@ pnpm build    # .app and .dmg in ../../target/aarch64-apple-darwin/release/bundl
 
 ## Run web app (uzu.run)
 
-The web app only needs Node.js and pnpm; Rust, Xcode and the desktop build
-are not required. From the repository root:
+The web app uses the repository's Uzu WASM bindings.
+To build them, install the repository Rust toolchain, the `wasm32-unknown-unknown` target, Slang (configured with
+`SLANG_DIR` or `SLANG_LIB_DIR`), and `wasm-bindgen-cli` matching the `wasm-bindgen` version in the root `Cargo.lock`.
+From the repository root:
 
 ```bash
 cd apps/mirai-gui
 pnpm install
+pnpm web:wasm
 pnpm web:dev
 ```
 
 Open [http://127.0.0.1:3001](http://127.0.0.1:3001) in your browser. The app
-currently opens the welcome screen; model selection and inference are not yet
-connected, so **Get started** is disabled. Vite reloads the app when files change.
+opens the welcome screen; **Get started** opens the live model catalog. Search
+families and open a family to see its models, sizes and quantization. Download
+models into OPFS through Uzu's Rust `download-manager`, with progress, pause and
+resume; partial downloads survive a page reload. Cancel a partial download or
+delete a downloaded model to free space. The catalog and download states come
+from the same Uzu engine; the UI does not download or persist model files itself.
+The catalog, model cards, download controls, application layout and route tree
+are reused from `client/`. `web/` connects `ModelsService` to WASM and overrides
+only the welcome entry point in the shared router.
+Inference is not yet connected. Vite reloads the app when files change.
+
+`pnpm web:wasm` runs the existing `cargo tools build wasm` command and uses the
+current branch's WebGPU backend and kernels. Rebuild after changing Rust code.
+Once the bindings are built, running Vite only requires Node.js and pnpm. The
+bindings run on the page because the current OPFS layer uses `window.navigator`.
+
+Models previously saved by the experimental Cache Storage loader are not migrated
+or deleted automatically. Download them again to store them in OPFS.
 
 To build and preview the production version, stop the development server first
 because both servers use port 3001:
@@ -46,6 +65,7 @@ pnpm web:preview  # serve the production build on port 3001
 ```
 
 `pnpm web:typecheck` checks the web app's TypeScript types.
+`pnpm web:test` runs the browser catalog tests.
 
 ## Preview a fresh start
 

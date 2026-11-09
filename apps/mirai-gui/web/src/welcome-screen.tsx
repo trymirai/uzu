@@ -1,25 +1,9 @@
-import { useEffect, useState } from "react";
-import { Logo } from "@/components/icons/logo";
-import { LogoLightMode } from "@/components/icons/logo-light-mode";
+import { AppLogo } from "@/components/app-logo";
 import { Button } from "@/components/ui/button";
 
-export function WelcomeScreen() {
-  const [isDarkMode, setIsDarkMode] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const updateTheme = () => setIsDarkMode(media.matches);
-    updateTheme();
-    media.addEventListener("change", updateTheme);
-    return () => media.removeEventListener("change", updateTheme);
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", isDarkMode);
-  }, [isDarkMode]);
-
+export function WelcomeScreen({ onContinue }: { onContinue: () => void }) {
   const getStarted = (
-    <Button kind="primary" size="lg" fullWidth disabled>
+    <Button kind="primary" size="lg" fullWidth onClick={onContinue}>
       Get started
     </Button>
   );
@@ -29,11 +13,7 @@ export function WelcomeScreen() {
       <div className="relative flex min-h-full justify-center">
         <div className="grid w-full max-w-[500px] grid-rows-[auto_1fr_auto] px-6 pt-10 pb-8 md:flex md:min-h-0 md:flex-col md:justify-center md:px-8 md:pt-12 md:pb-10">
           <div className="flex md:justify-center" aria-hidden="true">
-            {isDarkMode ? (
-              <Logo width={66} height={57} className="text-label-title" />
-            ) : (
-              <LogoLightMode width={48} height={24} />
-            )}
+            <AppLogo />
           </div>
 
           <div className="flex flex-col justify-center md:mt-[162px] md:items-center md:text-center">

@@ -16,7 +16,7 @@ export const Route = createRootRoute({
   notFoundComponent: () => <ErrorPage />,
 });
 
-function RootComponent() {
+export function RootComponent() {
   const isMobile = useIsMobile();
   const setMobile = useSidebarStore((s) => s.setMobile);
 

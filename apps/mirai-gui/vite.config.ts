@@ -1,36 +1,28 @@
-import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import react from "@vitejs/plugin-react";
 import path from "path";
-import { defineConfig } from "vitest/config";
+import { defineConfig, mergeConfig } from "vitest/config";
+import { sharedClientConfig } from "./vite.shared";
 
-// `--mode web` builds the browser variant; vitest runs with mode "test".
+// Desktop (Tauri) frontend; the browser app is built from web/vite.config.ts.
+// Vitest runs with mode "test" against the browser platform services.
 export default defineConfig(({ mode }) => {
-  const platform = mode === "web" || mode === "test" ? "web" : "tauri";
-  return {
-    plugins: [
-      react(),
-      tailwindcss(),
-      ...(mode === "test"
-        ? []
-        : [
-            tanstackRouter({
-              routesDirectory: path.join(__dirname, "client/src/routes"),
-              generatedRouteTree: path.join(__dirname, "client/src/route-tree.gen.ts"),
-              routeFileIgnorePattern: "\\.test\\..*$",
-            }),
-          ]),
-    ],
+  const isTest = mode === "test";
+  return mergeConfig(sharedClientConfig(isTest ? "web" : "tauri"), {
+    plugins: isTest
+      ? []
+      : [
+          tanstackRouter({
+            routesDirectory: path.join(__dirname, "client/src/routes"),
+            generatedRouteTree: path.join(__dirname, "client/src/route-tree.gen.ts"),
+            routeFileIgnorePattern: "\\.test\\..*$",
+          }),
+        ],
     root: path.join(__dirname, "client"),
     build: {
-      outDir: path.join(__dirname, `client/dist-${platform}`),
+      outDir: path.join(__dirname, "client/dist-tauri"),
       emptyOutDir: true,
     },
-    server: { port: platform === "web" ? 3001 : 3002, strictPort: true },
-    resolve: { alias: { "@": path.resolve(__dirname, "client/src") } },
-    define: { __PLATFORM__: JSON.stringify(platform) },
-    optimizeDeps: { include: ["shiki"] },
-    assetsInclude: ["**/*.wasm"],
+    server: { port: 3002, strictPort: true },
     test: {
       environment: "jsdom",
       poolOptions: {
@@ -39,5 +31,5 @@ export default defineConfig(({ mode }) => {
       include: ["src/**/*.test.{ts,tsx}"],
       css: false,
     },
-  };
+  });
 });

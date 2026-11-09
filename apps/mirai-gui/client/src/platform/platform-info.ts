@@ -5,7 +5,7 @@ export const platformInfo = {
     autoUpdate: __PLATFORM__ === "tauri",
     fileSystem: __PLATFORM__ === "tauri",
     logExport: __PLATFORM__ === "tauri",
-    localModelDownloads: __PLATFORM__ === "tauri",
+    localModelDownloads: true,
     autoEject: __PLATFORM__ === "tauri",
     cliInstall: __PLATFORM__ === "tauri",
     // Overlay title bar with in-content macOS traffic lights: UI must reserve
