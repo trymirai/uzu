@@ -13,8 +13,6 @@
 using namespace uzu;
 using namespace uzu::gemm;
 
-// Requires in_vec_size % (BITS == 4 ? moe::GEMV_W4_INPUT_BLOCK : moe::GEMV_W8_INPUT_BLOCK) == 0,
-// out_vec_size % moe::GEMV_OUTPUT_ROW_TILE == 0, and every expert plane's byte and scale offsets within uint.
 template <
     typename T,
     uint GROUP_SIZE,
@@ -60,18 +58,26 @@ PUBLIC KERNEL(MoeGemv)(
   device T* route_d = d + route_idx * out_vec_size;
   const device int32_t* expert_hadamard = hadamard_factors + expert_id * out_vec_size;
 
+  const device T* biases = nullptr;
+  const device T* output_bias = nullptr;
+  const device uint* gather_indices = nullptr;
   using Ops = GemvOperands<T, T, T>;
   const Ops ops = {
       expert_b,
       expert_scales,
       expert_zero_points,
-      /* biases = */ nullptr,
+      biases,
       route_a,
       route_d,
-      /* output_bias = */ nullptr,
+      output_bias,
       expert_hadamard,
-      /* gather_indices = */ nullptr
+      gather_indices
   };
+  constexpr uint batch_size = 1;
+  constexpr float ab_scale = 1.0f;
+  constexpr float soft_cap = 0.0f;
+  constexpr bool gathered = false;
+  constexpr bool signed_codes = false;
   const GemvParams params = {
       in_vec_size,
       out_vec_size,
@@ -79,48 +85,44 @@ PUBLIC KERNEL(MoeGemv)(
       scale_group_stride,
       zero_point_output_stride,
       zero_point_group_stride,
-      /* batch_size = */ 1u,
-      /* ab_scale = */ 1.0f,
-      /* soft_cap = */ 0.0f,
+      batch_size,
+      ab_scale,
+      soft_cap,
       GemmDTransform(GemmDTransform::RHT),
-      /* gathered = */ false,
-      /* signed_codes = */ false,
+      gathered,
+      signed_codes,
       GemmBLayout::RowMajor
   };
 
+  constexpr uint INPUT_ROW_TILE = 1;
+  constexpr uint REDUCTION_LANES = 32;
   // A lane stages 8 bytes of codes: 16 W4 or 8 W8 values.
   constexpr uint GROUP_LANES = GROUP_SIZE * BITS / 64;
+  constexpr uint K_SPLIT = 1;
+  constexpr bool INPUT_ALIGNED = true;
+  constexpr bool FULL_TILE = true;
   using Tile = GemvTile<
-      /* INPUT_ROW_TILE = */ 1,
-      /* OUTPUT_ROW_TILE = */ moe::GEMV_OUTPUT_ROW_TILE,
-      /* REDUCTION_LANES = */ 32,
+      INPUT_ROW_TILE,
+      moe::GEMV_OUTPUT_ROW_TILE,
+      REDUCTION_LANES,
       GROUP_LANES,
-      /* NUM_SIMDGROUPS = */ MOE_GEMV_NUM_SIMDGROUPS,
-      /* K_SPLIT = */ 1>;
+      MOE_GEMV_NUM_SIMDGROUPS,
+      K_SPLIT>;
 
-  const OutputTile<Tile, /* FULL_TILE = */ true> tile = OutputTile<Tile, /* FULL_TILE = */ true>::make(
-      output_tile_idx,
-      /* input_tile_idx = */ 0u,
-      simd_group,
-      simd_lane,
-      out_vec_size
-  );
+  constexpr uint input_tile_idx = 0;
+  const OutputTile<Tile, FULL_TILE> tile =
+      OutputTile<Tile, FULL_TILE>::make(output_tile_idx, input_tile_idx, simd_group, simd_lane, out_vec_size);
   thread float result[Tile::INPUT_ROWS][Tile::ROWS_PER_LANE] = {{0}};
 
-  // 4-bit weights carry zero points, 8-bit weights are symmetric.
   constexpr GemmBPrologueKind B_PROLOGUE =
       BITS == 4 ? GemmBPrologueKind::ScaleZeroPointDequant : GemmBPrologueKind::ScaleSymmetricDequant;
-  QuantBSource<
-      Tile,
-      T,
-      T,
-      T,
-      B_PROLOGUE,
-      GROUP_SIZE,
-      BITS,
-      /* INPUT_ALIGNED = */ true,
-      /* FULL_TILE = */ true>::accumulate(result, ops, params, tile);
+  QuantBSource<Tile, T, T, T, B_PROLOGUE, GROUP_SIZE, BITS, INPUT_ALIGNED, FULL_TILE>::accumulate(
+      result,
+      ops,
+      params,
+      tile
+  );
 
-  Reduce<Tile, /* FULL_TILE = */ true>::run(result, shared_results, tile);
-  Epilogue<Tile, T, T, T, /* FULL_TILE = */ true>::store(result, ops, params, tile, shared_results);
+  Reduce<Tile, FULL_TILE>::run(result, shared_results, tile);
+  Epilogue<Tile, T, T, T, FULL_TILE>::store(result, ops, params, tile, shared_results);
 }

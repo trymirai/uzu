@@ -40,24 +40,24 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     #[specialize] a_per_token: bool,
 ) {
     assert_eq!(zero_points.is_some(), BITS == 4);
-    let block_size = if BITS == 4 {
+    let input_block = if BITS == 4 {
         moe::GEMV_W4_INPUT_BLOCK
     } else {
         moe::GEMV_W8_INPUT_BLOCK
     };
-    assert!(in_vec_size.is_multiple_of(block_size));
+    assert!(in_vec_size.is_multiple_of(input_block));
     assert!(out_vec_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
-    let k_u = in_vec_size as usize;
-    let n_u = out_vec_size as usize;
-    let routes = num_routes as usize;
-    let top_k = active_experts_per_token as usize;
+    let in_vec_size = in_vec_size as usize;
+    let out_vec_size = out_vec_size as usize;
+    let num_routes = num_routes as usize;
+    let active_experts_per_token = active_experts_per_token as usize;
     let bits = BITS as usize;
     let group_size = GROUP_SIZE as usize;
 
-    for route_idx in 0..routes {
+    for route_idx in 0..num_routes {
         let expert_id = unsafe { *expert_ids.add(route_idx) } as usize;
         let a_row_idx = if a_per_token {
-            route_idx / top_k
+            route_idx / active_experts_per_token
         } else {
             route_idx
         };
@@ -66,36 +66,36 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
         let expert_scales = unsafe { scales.add(expert_id * scale_expert_stride as usize) };
         let expert_zero_points =
             zero_points.map(|ptr| unsafe { ptr.add(expert_id * zero_point_expert_stride as usize) });
-        let route_a = unsafe { a.add(a_row_idx * k_u) };
-        let route_d = unsafe { d.add(route_idx * n_u) };
-        let expert_hadamard = unsafe { hadamard_factors.add(expert_id * n_u) };
+        let route_a = unsafe { a.add(a_row_idx * in_vec_size) };
+        let route_d = unsafe { d.add(route_idx * out_vec_size) };
+        let expert_hadamard = unsafe { hadamard_factors.add(expert_id * out_vec_size) };
 
-        let mut row_out = vec![0.0f32; n_u];
+        let mut row_out = vec![0.0f32; out_vec_size];
         for (output_dim_idx, out_slot) in row_out.iter_mut().enumerate() {
             let mut acc = 0.0f32;
-            for input_dim_idx in 0..k_u {
-                let a_val = unsafe { *route_a.add(input_dim_idx) }.to_f32().unwrap();
-                let weight_linear_index = output_dim_idx * k_u + input_dim_idx;
-                let quantized_value = unsafe { unpack_code(expert_b as *const u32, weight_linear_index, bits, false) };
-                let group_index = input_dim_idx / group_size;
-                let metadata_index =
-                    output_dim_idx * scale_output_stride as usize + group_index * scale_group_stride as usize;
-                let scale = unsafe { *expert_scales.add(metadata_index) }.to_f32().unwrap();
+            for input_dim_idx in 0..in_vec_size {
+                let a_value = unsafe { *route_a.add(input_dim_idx) }.to_f32().unwrap();
+                let weight_linear_idx = output_dim_idx * in_vec_size + input_dim_idx;
+                let quantized_value = unsafe { unpack_code(expert_b as *const u32, weight_linear_idx, bits, false) };
+                let group_idx = input_dim_idx / group_size;
+                let metadata_idx =
+                    output_dim_idx * scale_output_stride as usize + group_idx * scale_group_stride as usize;
+                let scale = unsafe { *expert_scales.add(metadata_idx) }.to_f32().unwrap();
                 let midpoint = (1u32 << (bits - 1)) as f32;
                 let zero_point = expert_zero_points.map(|expert_zero_points| {
-                    let zero_point_index = output_dim_idx * zero_point_output_stride as usize
-                        + group_index * zero_point_group_stride as usize;
-                    unsafe { read_zero_point(expert_zero_points, zero_point_index, bits) }
+                    let zero_point_idx = output_dim_idx * zero_point_output_stride as usize
+                        + group_idx * zero_point_group_stride as usize;
+                    unsafe { read_zero_point(expert_zero_points, zero_point_idx, bits) }
                 });
                 let zero_point_offset = -scale * zero_point.unwrap_or(midpoint);
-                let b_val = scale * quantized_value + zero_point_offset;
-                acc += a_val * b_val;
+                let b_value = scale * quantized_value + zero_point_offset;
+                acc += a_value * b_value;
             }
             *out_slot = acc;
         }
 
         let block_size = HADAMARD_TRANSFORM_BLOCK_SIZE as usize;
-        for block_start in (0..n_u).step_by(block_size) {
+        for block_start in (0..out_vec_size).step_by(block_size) {
             let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
             for lane in 0..block_size {
                 stripe[lane] = T::from(row_out[block_start + lane]).unwrap().to_f32().unwrap();
@@ -108,9 +108,9 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
             }
         }
 
-        for (output_dim_idx, &val) in row_out.iter().enumerate() {
+        for (output_dim_idx, &value) in row_out.iter().enumerate() {
             unsafe {
-                *route_d.add(output_dim_idx) = T::from(val).unwrap();
+                *route_d.add(output_dim_idx) = T::from(value).unwrap();
             }
         }
     }

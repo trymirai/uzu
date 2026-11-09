@@ -19,8 +19,6 @@ use crate::{
 
 const NUM_EXPERTS: u32 = 16;
 const ACTIVE_EXPERTS: u32 = 8;
-// Expert projections: up (gate and up together) reads one input row per token and down reads one row per route.
-// Every projection rotates its output.
 const PROJECTIONS: [(&str, u32, u32, bool); 2] = [("up", 2048, 1024, true), ("down", 512, 2048, false)];
 
 struct MoeGemvCase<'a> {
@@ -84,9 +82,8 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     buffer_to_vec::<B, _>(&context, &output)
 }
 
-// Runs each projection at 1, 2 and 16 tokens, with the CPU twin as the reference. The weight scales keep outputs
-// near 1, as in a real model, so 2e-2 is at least two bf16 steps. Every pattern has a prime period, so each expert's
-// weights, zero points and rotation signs differ.
+// The weight scales keep outputs near 1, as in a real model, so 2e-2 is at least two bf16 steps. Every pattern has a
+// prime period, so each expert's weights, zero points and rotation signs differ.
 fn compare_projections(
     bits: u32,
     weights_for: impl Fn(u32, u32) -> (Vec<u8>, Vec<bf16>, Option<Vec<u8>>),

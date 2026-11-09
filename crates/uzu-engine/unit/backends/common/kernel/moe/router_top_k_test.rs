@@ -69,7 +69,6 @@ fn moe_router_top_k_matches_cpu() {
 #[uzu_test]
 fn moe_router_top_k_nan_safety() {
     let batch_dim = 3u32;
-    // Row 0: every third logit is NaN. Row 1: all NaN. Row 2: three finite logits, fewer than k.
     let mut logits = vec![f32::NAN; (batch_dim * NUM_EXPERTS) as usize];
     for i in (0..NUM_EXPERTS as usize).filter(|i| i % 3 != 0) {
         logits[i] = (i as f32) * 0.1;

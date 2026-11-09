@@ -17,24 +17,24 @@ pub fn moe_combine<T: DataTypeRepr + Float, const BD: u32>(
     top_k: u32,
     batch_size: u32,
 ) {
-    let model_dim_u = model_dim as usize;
-    let top_k_u = top_k as usize;
+    let model_dim = model_dim as usize;
+    let top_k = top_k as usize;
     for token_idx in 0..batch_size as usize {
-        let g = unsafe { *shared_gate.add(token_idx) }.to_f32().unwrap();
-        let shared_w = 1.0f32 / (1.0f32 + (-g).exp());
+        let gate_logit = unsafe { *shared_gate.add(token_idx) }.to_f32().unwrap();
+        let shared_weight = 1.0f32 / (1.0f32 + (-gate_logit).exp());
 
-        for dim_idx in 0..model_dim_u {
+        for dim_idx in 0..model_dim {
             let mut acc = 0.0f32;
-            for k in 0..top_k_u {
-                let w = unsafe { *expert_weights.add(token_idx * top_k_u + k) };
-                let val =
-                    unsafe { *expert_outputs.add((token_idx * top_k_u + k) * model_dim_u + dim_idx) }.to_f32().unwrap();
-                acc += w * val;
+            for k in 0..top_k {
+                let expert_weight = unsafe { *expert_weights.add(token_idx * top_k + k) };
+                let expert_value =
+                    unsafe { *expert_outputs.add((token_idx * top_k + k) * model_dim + dim_idx) }.to_f32().unwrap();
+                acc += expert_weight * expert_value;
             }
-            let s_val = unsafe { *shared_output.add(token_idx * model_dim_u + dim_idx) }.to_f32().unwrap();
-            acc += shared_w * s_val;
+            let shared_value = unsafe { *shared_output.add(token_idx * model_dim + dim_idx) }.to_f32().unwrap();
+            acc += shared_weight * shared_value;
             unsafe {
-                *output.add(token_idx * model_dim_u + dim_idx) = T::from(acc).unwrap();
+                *output.add(token_idx * model_dim + dim_idx) = T::from(acc).unwrap();
             }
         }
     }

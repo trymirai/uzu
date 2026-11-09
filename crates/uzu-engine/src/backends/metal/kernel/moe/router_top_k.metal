@@ -7,7 +7,6 @@
 
 static_assert(METAL_SIMD_SIZE * MOE_ROUTER_MAX_PER_LANE == uzu::moe::ROUTER_MAX_EXPERTS);
 
-// Requires num_experts <= METAL_SIMD_SIZE * MOE_ROUTER_MAX_PER_LANE and 1 <= top_k <= min(MAX_TOP_K, num_experts).
 template <typename T, uint MAX_TOP_K>
 VARIANTS(T, float)
 VARIANTS(MAX_TOP_K, 8)
@@ -26,8 +25,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
   for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
     const uint expert_idx = lane + i * METAL_SIMD_SIZE;
     if (expert_idx < num_experts) {
-      const float v = float(row[expert_idx]);
-      keys[i] = top_k_score_key(isnan(v) ? -INFINITY : v);
+      const float logit = float(row[expert_idx]);
+      keys[i] = top_k_score_key(isnan(logit) ? -INFINITY : logit);
     } else {
       keys[i] = 0;
     }
@@ -73,9 +72,9 @@ PUBLIC KERNEL(MoeRouterTopK)(
     const float max_chosen = chosen_vals[0]; // the picks are descending
     float sum_exp = 0.0f;
     for (uint k = 0; k < top_k; ++k) {
-      const float e_val = (max_chosen == -INFINITY) ? (1.0f / float(top_k)) : fast::exp(chosen_vals[k] - max_chosen);
-      chosen_vals[k] = e_val;
-      sum_exp += e_val;
+      const float weight = (max_chosen == -INFINITY) ? (1.0f / float(top_k)) : fast::exp(chosen_vals[k] - max_chosen);
+      chosen_vals[k] = weight;
+      sum_exp += weight;
     }
     const float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
     device uint* out_ids = expert_ids + token_idx * top_k;

@@ -22,9 +22,9 @@ PUBLIC KERNEL(MoeCombine)(
   const device float* weights_row = expert_weights + token_idx * top_k;
   const uint base_route = token_idx * top_k;
   for (uint k = 0; k < top_k; ++k) {
-    const float w = weights_row[k];
-    const float val = float(expert_outputs[(base_route + k) * model_dim + dim_idx]);
-    acc = fma(w, val, acc);
+    const float expert_weight = weights_row[k];
+    const float expert_value = float(expert_outputs[(base_route + k) * model_dim + dim_idx]);
+    acc = fma(expert_weight, expert_value, acc);
   }
   acc += uzu::apply_sigmoid_gate(float(shared_output[token_idx * model_dim + dim_idx]), float(shared_gate[token_idx]));
   output[token_idx * model_dim + dim_idx] = T(acc);
