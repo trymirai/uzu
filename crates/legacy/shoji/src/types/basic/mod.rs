@@ -1,3 +1,4 @@
+mod backend;
 mod cancel_token;
 mod context_length;
 mod feature;
@@ -21,6 +22,7 @@ mod tool_namespace;
 mod translation_payload;
 mod value;
 
+pub use backend::BackendError;
 pub use cancel_token::CancelToken;
 pub use context_length::ContextLength;
 pub use feature::Feature;

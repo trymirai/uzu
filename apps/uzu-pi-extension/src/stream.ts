@@ -385,7 +385,7 @@ export function createStream(
             if (chunk instanceof ChatSessionStreamChunkError) {
               if (
                 chunk.error.type === "Backend" &&
-                chunk.error.message === "Context overflow"
+                chunk.error.error.type === "ContextOverflow"
               )
                 throw new Error(
                   "context_length_exceeded: Uzu input exceeds the context window",

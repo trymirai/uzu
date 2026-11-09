@@ -6,7 +6,7 @@ use rocket::{Config, config::LogLevel, routes};
 use tokio::sync::Mutex;
 use uzu::{
     engine::{Engine, EngineConfig},
-    types::{model::ModelSpecialization, session::chat::ChatConfig},
+    types::{basic::SamplingSeed, model::ModelSpecialization, session::chat::ChatConfig},
 };
 
 use crate::{
@@ -24,6 +24,7 @@ pub async fn run_server(
     port: u16,
     prefix_cache: bool,
     verbose_file_logs: bool,
+    seed: Option<i64>,
 ) -> Result<()> {
     let file_logger = if verbose_file_logs {
         let cache_dir = std::env::var_os("XDG_CACHE_HOME")
@@ -85,7 +86,12 @@ pub async fn run_server(
         (rocket, "System One server", details.to_string())
     } else {
         let thinking_support = ThinkingSupport::for_model(&resolved);
-        let session = engine.chat(resolved, ChatConfig::default()).await.context("Failed to create chat session")?;
+        let chat_config = seed.map_or_else(ChatConfig::default, |seed| {
+            ChatConfig::default().with_sampling_seed(SamplingSeed::Custom {
+                seed,
+            })
+        });
+        let session = engine.chat(resolved, chat_config).await.context("Failed to create chat session")?;
         let state = ChatState {
             session: Arc::new(Mutex::new(session)),
             thinking_support,
