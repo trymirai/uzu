@@ -9,10 +9,7 @@ use crate::{
             gpu_types::trie::TrieNode as GpuTrieNode,
             kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionPrepareKernel},
         },
-        metal::{
-            Metal,
-            kernel::attention::{AttentionMetalKernel, tests::default_attention_config},
-        },
+        metal::{Metal, kernel::attention::AttentionMetalKernel},
     },
     data_type::DataType,
     encodable_block::{
@@ -21,6 +18,7 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
+        attention::default_attention_config,
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
     trie::TrieNode,
