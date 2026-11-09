@@ -6,9 +6,8 @@ use uuid::Uuid;
 use crate::locks::{LockError, LockOwner};
 
 pub struct DestinationLock {
-    #[cfg(not(target_family = "wasm"))]
     path: PathBuf,
-    _lock: FileLock,
+    lock: Option<FileLock>,
 }
 
 impl DestinationLock {
@@ -28,10 +27,27 @@ impl DestinationLock {
         };
         lock.write(&serde_json::to_vec(owner).map_err(std::io::Error::other)?).await?;
         Ok(Self {
-            #[cfg(not(target_family = "wasm"))]
             path,
-            _lock: lock,
+            lock: Some(lock),
         })
+    }
+
+    /// Remove the owner marker before releasing the destination lock.
+    /// Explicit deletion awaits this so its completion includes metadata cleanup.
+    pub async fn release(self) -> Result<(), LockError> {
+        #[cfg(target_family = "wasm")]
+        {
+            let mut owned = self;
+            if let Err(error) = fs::asyn::remove_file(&owned.path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.into());
+            }
+            drop(owned.lock.take());
+        }
+        #[cfg(not(target_family = "wasm"))]
+        drop(self);
+        Ok(())
     }
 
     pub async fn foreign_owner(
@@ -96,5 +112,27 @@ impl DestinationLock {
 impl Drop for DestinationLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
+        // Keep the OS lock held until the marker has been removed.
+        drop(self.lock.take());
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl Drop for DestinationLock {
+    fn drop(&mut self) {
+        let Some(lock) = self.lock.take() else {
+            return;
+        };
+        let path = self.path.clone();
+        // OPFS removal is asynchronous. Retain the Web Lock throughout cleanup
+        // so a new owner cannot write a marker that this task then deletes.
+        kiban::rt::spawn(async move {
+            if let Err(error) = fs::asyn::remove_file(&path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(?error, path = %path.display(), "failed to remove destination lock marker");
+            }
+            drop(lock);
+        });
     }
 }

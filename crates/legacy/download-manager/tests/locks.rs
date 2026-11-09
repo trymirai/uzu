@@ -26,6 +26,10 @@ async fn lock_rules() -> Result<(), Box<dyn std::error::Error>> {
 
     drop(lock);
     assert_eq!(DestinationLock::foreign_owner(&destination, &owner_b).await, None);
-    DestinationLock::acquire(&destination, &owner_b).await?;
+    let lock = DestinationLock::acquire(&destination, &owner_b).await?;
+    lock.release().await?;
+    assert!(!temp.path().join("nested/destination.lock").exists());
+    assert_eq!(DestinationLock::foreign_owner(&destination, &owner_a).await, None);
+    DestinationLock::acquire(&destination, &owner_a).await?.release().await?;
     Ok(())
 }

@@ -81,7 +81,13 @@ pub trait Backend: Send + Sync {
         };
         let state = self.observe(config, None).await;
         let attach = pending_task && state.phase != (DownloadPhase::Downloaded {});
-        Ok((state, attach.then_some(lock)))
+        let lock = if attach {
+            Some(lock)
+        } else {
+            lock.release().await?;
+            None
+        };
+        Ok((state, lock))
     }
 
     async fn observe(

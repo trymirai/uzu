@@ -139,7 +139,7 @@ impl FileDownloadWorker {
 
     async fn pause(&mut self) -> Result<(), FileDownloadError> {
         self.wants_download = false;
-        let Some((task, _lock)) = self.active.take() else {
+        let Some((task, lock)) = self.active.take() else {
             return Ok(());
         };
         if let Err(error) = task.pause(&self.config.resume_artifact_path).await {
@@ -152,12 +152,13 @@ impl FileDownloadWorker {
             let total_bytes = (self.state.total_bytes > 0).then_some(self.state.total_bytes as u64);
             self.set(DownloadPhase::Paused {}, downloaded_bytes, total_bytes);
         }
+        lock.release().await?;
         Ok(())
     }
 
     async fn delete(&mut self) -> Result<(), FileDownloadError> {
         self.wants_download = false;
-        let _lock = match self.active.take() {
+        let lock = match self.active.take() {
             Some((task, lock)) => {
                 task.cancel().await;
                 lock
@@ -166,6 +167,7 @@ impl FileDownloadWorker {
         };
         self.backend.remove_files(&self.config).await?;
         self.set(DownloadPhase::NotDownloaded {}, 0, None);
+        lock.release().await?;
         Ok(())
     }
 
@@ -232,7 +234,7 @@ impl FileDownloadWorker {
         if event.generation() != self.generation {
             return;
         }
-        let Some((task, _lock)) = self.active.take() else {
+        let Some((task, lock)) = self.active.take() else {
             return;
         };
         match event {
@@ -254,6 +256,9 @@ impl FileDownloadWorker {
                     total_bytes,
                 );
             },
+        }
+        if let Err(error) = lock.release().await {
+            tracing::warn!(?error, "failed to clean up completed destination lock");
         }
     }
 
