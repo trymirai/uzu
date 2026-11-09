@@ -130,6 +130,10 @@ pub struct ParameterTree<'a, B: Backend> {
 }
 
 impl<B: Backend> ParameterTree<'_, B> {
+    pub fn is_empty(&self) -> bool {
+        !self.loader.header.tensors.keys().any(|key| key.starts_with(&self.prefix))
+    }
+
     pub fn subtree(
         &self,
         name: &str,

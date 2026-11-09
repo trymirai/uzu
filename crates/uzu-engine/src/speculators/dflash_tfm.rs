@@ -143,18 +143,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         } else {
             None
         };
+        let head_tree = speculator_tree.subtree("confidence_head");
         let confidence_head = match &config.confidence_head_config {
-            Some(head_config) => Some(
+            Some(head_config) if !head_tree.is_empty() => Some(
                 ConfidenceHead::new(
                     head_config,
-                    &speculator_tree.subtree("confidence_head"),
+                    &head_tree,
                     target_embedding,
                     weaver.as_ref().map_or(0, Weaver::max_depth),
                     &*context,
                 )
                 .await?,
             ),
-            None => None,
+            _ => None,
         };
 
         weight_loader.assert_all_tensors_read()?;
