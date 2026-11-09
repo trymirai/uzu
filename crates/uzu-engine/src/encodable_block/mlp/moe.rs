@@ -233,10 +233,11 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         {
             Some(match shared_format {
                 ActivationFormat::PackedHalf {
-                    group_size,
+                    block_k,
+                    bits,
                 } => {
                     let mut values = command_buffer
-                        .allocate_scratch(packed_half_bytes(self.model_dimension, group_size))
+                        .allocate_scratch(packed_half_bytes(self.model_dimension, block_k, bits))
                         .map_err(MlpEncodeError::Backend)?;
                     quantizer.encode_pack_half(
                         &input,
@@ -248,7 +249,8 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
                     );
                     MatmulA::PackedHalf {
                         values,
-                        group_size,
+                        block_k,
+                        bits,
                     }
                 },
                 ActivationFormat::Int8(quantization) => {
