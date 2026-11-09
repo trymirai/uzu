@@ -28,6 +28,7 @@ groupshared float h[256];
     [[Specialize]] bool in_place,
     [[Specialize]] uint32_t activation_scale_group_size,
     [[Specialize]] uint32_t sum_group_size,
+    [[Specialize]] uint32_t weight_bits,
     [[Specialize]] bool has_bias,
     [[Groups("element_count.div_ceil(256)")]] uint32_t activation_tile_index,
     [[Groups("batch_size")]] uint32_t batch_index,

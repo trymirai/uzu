@@ -25,7 +25,7 @@ template <
 struct QuantizedBlockLoaderScaleBias {
   static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
   static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
-  static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
+  static_assert(BITS == 2 || BITS == 4 || BITS == 8, "Only int2, int4 and int8 supported");
 
   UZU_CONST short PACK_FACTOR = get_pack_factor<BITS, 8>();
   UZU_CONST short BYTES_PER_PACK = get_bytes_per_pack<BITS>();

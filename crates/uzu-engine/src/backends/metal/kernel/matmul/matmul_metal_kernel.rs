@@ -97,6 +97,7 @@ impl MatmulMetalKernel {
                 return MatmulDispatch::Gemm(plan);
             }
             let tile = match (supports_mxu, shape.m) {
+                (_, 2..=8) if shape.b_bits == Some(2) => None,
                 (false, 2..=8) => Some(GemvTile::quantized_output_tile(4, 32, shape.m.min(4), 8, 1)),
                 (true, 2..=4) => Some(GemvTile::quantized_output_tile(2, 16, shape.m, 8, 1)),
                 _ => None,

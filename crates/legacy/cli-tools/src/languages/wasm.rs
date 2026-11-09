@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{env, path::Path};
 
 use anyhow::{Result, anyhow};
 
@@ -37,6 +37,26 @@ impl WasmLanguageBackend {
     }
 }
 
+/// uzu-engine's build script loads the Slang library when it runs, but shader-slang-sys links that library from outside
+/// the target directory, so cargo leaves it off the build script's library search path. This returns the loader
+/// variable that adds the directory, found the same way shader-slang-sys finds it.
+fn slang_library_path() -> Option<(&'static str, String)> {
+    let library_directory = env::var("SLANG_LIB_DIR")
+        .ok()
+        .or_else(|| env::var("SLANG_DIR").ok().map(|directory| format!("{directory}/lib")))
+        .or_else(|| env::var("VULKAN_SDK").ok().map(|directory| format!("{directory}/lib")))?;
+    let key = if cfg!(target_os = "macos") {
+        "DYLD_FALLBACK_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+    let value = match env::var(key) {
+        Ok(existing) if !existing.is_empty() => format!("{library_directory}:{existing}"),
+        _ => library_directory,
+    };
+    Some((key, value))
+}
+
 impl LanguageBackend for WasmLanguageBackend {
     fn config(&self) -> PlatformsConfig {
         self.config.clone()
@@ -64,9 +84,17 @@ impl LanguageBackend for WasmLanguageBackend {
         Command::pnpm_install().with_current_path(&bindings_path).run()?;
 
         for target in targets {
-            Command::cargo_build(paths.main_crate.clone(), target.name.clone(), target.features.clone(), configuration)
-                .with_envs(self.config.required_envs_for_target(target.name.clone())?)
-                .run()?;
+            let mut cargo_build = Command::cargo_build(
+                paths.main_crate.clone(),
+                target.name.clone(),
+                target.features.clone(),
+                configuration,
+            )
+            .with_envs(self.config.required_envs_for_target(target.name.clone())?);
+            if let Some((key, value)) = slang_library_path() {
+                cargo_build = cargo_build.with_env(key, &value);
+            }
+            cargo_build.run()?;
             let wasm_path =
                 paths.target_profile_path(&target.name, configuration).join(format!("{}.wasm", paths.main_crate));
             Command::wasm_bindgen(wasm_path, output_path.clone(), paths.main_crate.clone()).run()?;

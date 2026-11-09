@@ -53,8 +53,8 @@ workspace = true
 
 [dev-dependencies]
 bindings.workspace = true
+wasm-bindgen-test.workspace = true
 
-[[example]]
-name = "wasm-regressions"
-crate-type = ["cdylib"]
+[[test]]
+name = "wasm_conversions"
 required-features = ["bindings-wasm"]

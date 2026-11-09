@@ -166,6 +166,11 @@ fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
 ) {
     let context = block_on(MetalContext::new()).expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
+    let input = if bits == 2 {
+        input.with_one_group_per_row()
+    } else {
+        input
+    };
     let unified = run_quant_metal::<T>(&context, &input, GemmBLayout::RowMajor, dispatch);
     let reference = run_quant_cpu::<T>(&input);
 
@@ -191,6 +196,9 @@ fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
 #[case::gs32_narrow_n_tail_zp(64, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_narrow_n_tail_mlx(64, 256, 72, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_narrow_n_tail_sym(64, 256, 40, 32, 8, QuantizationMethod::ScaleSymmetric)]
+#[case::w2_tile8(16, 4096, 160, 128, 2, QuantizationMethod::ScaleBias)]
+#[case::w2_tile32_m_tail(65, 1024, 200, 128, 2, QuantizationMethod::ScaleBias)]
+#[case::w2_prefill(512, 4096, 256, 128, 2, QuantizationMethod::ScaleBias)]
 fn parity_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -229,6 +237,7 @@ fn parity_bf16_8bit_splitk(
 #[case::m8_gs32_4bit_mlx(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::m3_w4_g32_zp_k1024(3, 1024, 72, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::m3_w8_g32_sym_k1024(3, 1024, 72, 32, 8, QuantizationMethod::ScaleSymmetric)]
+#[case::m1_w2(1, 1024, 96, 128, 2, QuantizationMethod::ScaleBias)]
 fn parity_gemv_bf16(
     #[case] m: u32,
     #[case] k: u32,
@@ -699,27 +708,34 @@ fn gemv_reads_mxu_tiled_layout_bf16(
 #[case::w4_zp_gs32(4u32, 32u32, ScaleZeroPoint)]
 #[case::w8_sym_gs64(8u32, 64u32, QuantizationMethod::ScaleSymmetric)]
 #[case::w2_bias_gs128(2u32, 128u32, QuantizationMethod::ScaleBias)]
-fn gathered_gemv_reads_mxu_tiled_layout_bf16(
+fn gathered_gemv_reads_weight_layout_bf16(
     #[case] bits: u32,
     #[case] group_size: u32,
     #[case] method: QuantizationMethod,
+    #[values(GemmBLayout::RowMajor, GemmBLayout::MxuTiled)] gemm_b_layout: GemmBLayout,
+    #[values(1, 3, 8)] m: u32,
+    #[values(256, 4096)] k: u32,
 ) {
     let context = block_on(MetalContext::new()).expect("Metal context");
-    if !context.supports_mxu {
+    if gemm_b_layout == GemmBLayout::MxuTiled && !context.supports_mxu {
         return;
     }
-    let (k, vocab, gathered_rows) = (256u32, 256u32, 10u32);
-    let input = QuantInput::<bf16>::new(1, k, vocab, group_size, bits, method, 0).with_group_output();
+    let (weight_rows, gathered_rows) = (256u32, 10u32);
+    let input = QuantInput::<bf16>::new(m, k, weight_rows, group_size, bits, method, 0).with_group_output();
     let input = match bits {
         2 => input.with_one_group_per_row(),
         8 => input.with_signed_weight_codes(),
         _ => input,
     };
-    let ids: Vec<u32> = (0..gathered_rows).map(|row| (row * 37 + 11) % vocab).collect();
-    let dense = run_quant_cpu::<bf16>(&input);
-    let expected: Vec<bf16> = ids.iter().map(|&id| dense[id as usize]).collect();
+    let gather_indices: Vec<u32> = (0..m * gathered_rows).map(|i| (i * 37 + 11) % weight_rows).collect();
+    let dense_output = run_quant_cpu::<bf16>(&input);
+    let expected: Vec<bf16> = gather_indices
+        .chunks_exact(gathered_rows as usize)
+        .zip(dense_output.chunks_exact(weight_rows as usize))
+        .flat_map(|(indices, output_row)| indices.iter().map(move |&index| output_row[index as usize]))
+        .collect();
 
-    let ids_buffer = crate::tests::helpers::create_buffer_with_data::<Metal, u32>(&context, &ids);
+    let gather_indices_buffer = crate::tests::helpers::create_buffer_with_data::<Metal, u32>(&context, &gather_indices);
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
@@ -728,19 +744,19 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
         bf16::data_type(),
     )
     .expect("Metal matmul kernel");
-    if bits != 2 {
+    if gemm_b_layout == GemmBLayout::MxuTiled {
         tile_weights(&matmul, &mut buffers, &input, &context);
     }
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let mut arguments = quant_arguments(&mut buffers, &input);
-    arguments.gather_indices = Some(&ids_buffer);
+    arguments.gather_indices = Some(&gather_indices_buffer);
     arguments.n = gathered_rows;
     matmul.encode(arguments, &mut command_buffer).expect("gathered GEMV");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y)[..gathered_rows as usize].to_vec();
+    let actual = buffer_to_vec::<Metal, bf16>(&context, &buffers.y)[..(m * gathered_rows) as usize].to_vec();
 
     assert_parity::<bf16>(
-        &format!("gathered MxuTiled GEMV bits={bits} gs={group_size} method={method:?}"),
+        &format!("gathered {gemm_b_layout:?} GEMV m={m} k={k} bits={bits} gs={group_size} method={method:?}"),
         &expected,
         &actual,
         0.05,
@@ -750,6 +766,7 @@ fn gathered_gemv_reads_mxu_tiled_layout_bf16(
 
 fn run_packed_half_pipeline(
     group_size: u32,
+    bits: u32,
     gated: bool,
     (batch, n): (u32, u32),
     with_bias: bool,
@@ -764,9 +781,13 @@ fn run_packed_half_pipeline(
     let signs = |len: u32| (0..len).map(|i| 1 - 2 * (i % 3 == 0) as i32).collect::<Vec<_>>();
     let factors = signs(k);
     let format = ActivationFormat::PackedHalf {
-        group_size,
+        block_k: group_size,
+        bits,
     };
-    let mut input = QuantInput::<bf16>::new(batch, k, n, group_size, 4, method, 19).with_group_output();
+    let mut input = QuantInput::<bf16>::new(batch, k, n, group_size, bits, method, 19).with_group_output();
+    if bits == 2 {
+        input = input.with_one_group_per_row();
+    }
     input.ab_scale = 0.75;
     input.output_bias = with_bias.then(|| (0..n).map(|i| bf16::from_f32(1.0 + 0.5 * (i % 3) as f32)).collect());
     input.output_rht_factors = with_rht.then(|| signs(n));
@@ -778,7 +799,7 @@ fn run_packed_half_pipeline(
     let mut reference_a = create_buffer::<Metal, bf16>(&context, (batch * k) as usize);
     let mut gemm = GemmKernel::new(DataType::BF16, DataType::BF16, DataType::BF16);
     let output_work = MatmulOutputWork::new(&context, DataType::BF16, DataType::BF16).unwrap();
-    let mut packed = create_buffer::<Metal, u32>(&context, packed_half_bytes(k, group_size) / size_of::<u32>());
+    let mut packed = create_buffer::<Metal, u32>(&context, packed_half_bytes(k, group_size, bits) / size_of::<u32>());
     let mut command_buffer = context.create_command_buffer(None, None).expect("Metal command buffer");
     if !gated {
         ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, false).expect("RHT reference").encode_fp(
@@ -823,7 +844,8 @@ fn run_packed_half_pipeline(
     let arguments = MatmulArguments {
         a: MatmulA::PackedHalf {
             values: &packed,
-            group_size,
+            block_k: group_size,
+            bits,
         },
         b: arguments.b,
         b_leading_dimension: arguments.b_leading_dimension,
@@ -836,7 +858,11 @@ fn run_packed_half_pipeline(
     };
     let plan = GemmPlan {
         engine: GemmEngine::Simdgroup,
-        tiling: GemmTiling::Tile8x32x64_Simdgroups1x2x4,
+        tiling: if bits == 2 {
+            GemmTiling::Tile8x32x128_Simdgroups1x2x4
+        } else {
+            GemmTiling::Tile8x32x64_Simdgroups1x2x4
+        },
         split_k,
     };
     gemm.encode_plan(arguments, plan, &output_work, &mut command_buffer).expect("prepared W4 GEMM");
@@ -850,12 +876,14 @@ fn run_packed_half_pipeline(
 #[uzu_test]
 fn packed_half_producers_match_bf16_reference() {
     // Fused RHT rounds directly to half; the standalone reference stores BF16 first.
-    for (group, gated, n, bias, rht, cap, method, splits) in [
-        (32, false, (4, 72), false, false, None, ScaleZeroPoint, 2),
-        (64, false, (5, 64), true, false, None, ScaleBias, 1),
-        (32, true, (8, 64), true, true, None, ScaleZeroPoint, 1),
-        (64, true, (5, 64), true, false, Some(0.5), ScaleBias, 2),
+    for (group, bits, gated, n, bias, rht, cap, method, splits) in [
+        (32, 4, false, (4, 72), false, false, None, ScaleZeroPoint, 2),
+        (64, 4, false, (5, 64), true, false, None, ScaleBias, 1),
+        (32, 4, true, (8, 64), true, true, None, ScaleZeroPoint, 1),
+        (64, 4, true, (5, 64), true, false, Some(0.5), ScaleBias, 2),
+        (128, 2, false, (6, 64), true, true, None, ScaleBias, 1),
+        (128, 2, true, (8, 64), true, false, Some(0.5), ScaleBias, 1),
     ] {
-        run_packed_half_pipeline(group, gated, n, bias, rht, cap, method, splits);
+        run_packed_half_pipeline(group, bits, gated, n, bias, rht, cap, method, splits);
     }
 }

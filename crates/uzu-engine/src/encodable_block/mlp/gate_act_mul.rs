@@ -67,10 +67,11 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         if let Some(kernel) = self.quantized_kernel.as_ref().filter(|kernel| kernel.format() == act_format) {
             let hadamard_factors = self.hadamard_factors.as_ref().expect("quantized input requires RHT factors");
             if let ActivationFormat::PackedHalf {
-                group_size,
+                block_k,
+                bits,
             } = act_format
             {
-                let mut values = command_buffer.allocate_scratch(packed_half_bytes(self.hidden_dim, group_size))?;
+                let mut values = command_buffer.allocate_scratch(packed_half_bytes(self.hidden_dim, block_k, bits))?;
                 kernel.encode_pack_half(
                     fused_up,
                     &mut values,
@@ -82,7 +83,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
                 );
                 return Ok(MatmulA::PackedHalf {
                     values,
-                    group_size,
+                    block_k,
+                    bits,
                 });
             }
             let ActivationFormat::Int8(quantization) = act_format else {
