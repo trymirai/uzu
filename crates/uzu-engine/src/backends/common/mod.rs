@@ -1,6 +1,5 @@
 pub(super) mod allocator;
 mod backend;
-mod backend_kind;
 mod buffer;
 pub mod capture_matcher;
 mod command_buffer;
@@ -11,7 +10,6 @@ pub mod kernel;
 mod timestamp_span;
 
 pub use backend::Backend;
-pub use backend_kind::BackendKind;
 pub use buffer::{
     Buffer, CpuBuffer, GpuBuffer,
     global::{GlobalBufferCpuGpu, GlobalGpuBuffer},

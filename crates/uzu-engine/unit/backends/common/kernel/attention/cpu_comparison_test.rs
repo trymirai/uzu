@@ -4,7 +4,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Backend, BackendKind, BufferRef, CommandBufferEncoding, Context, Kernels,
+            Backend, BufferRef, CommandBufferEncoding, Context, Kernels,
             gpu_types::trie::TrieNode,
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
@@ -128,7 +128,7 @@ fn run<B: Backend, T: DataTypeRepr>(
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
     // Metal's non-row-major MXU layout also quantizes attention probabilities to u8.
-    let tolerance = if B::KIND == BackendKind::Metal && kernel.kv_layout().backend_opaque_layout != 0 {
+    let tolerance = if kernel.kv_layout().backend_opaque_layout != 0 {
         1.5e-2
     } else {
         5e-3

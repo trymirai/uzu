@@ -1,8 +1,7 @@
 use std::{error::Error, ops::DerefMut};
 
 use super::{
-    BackendKind, Buffer, CommandBuffer, Context, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer, GpuBuffer, Kernels,
-    SparseBuffer,
+    Buffer, CommandBuffer, Context, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer, GpuBuffer, Kernels, SparseBuffer,
 };
 
 pub trait Backend: Clone + Send + Sync + 'static {
@@ -19,6 +18,5 @@ pub trait Backend: Clone + Send + Sync + 'static {
     type Kernels: Kernels<Backend = Self>;
     type Error: Error;
 
-    const KIND: BackendKind;
-    const NAME: &'static str = Self::KIND.as_str();
+    const NAME: &'static str;
 }

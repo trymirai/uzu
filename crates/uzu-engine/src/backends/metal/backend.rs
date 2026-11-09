@@ -1,6 +1,6 @@
 use crate::backends::{
     common::{
-        Backend, BackendKind,
+        Backend,
         allocator::{
             block::BlockAllocation,
             bump::BumpAllocation,
@@ -34,5 +34,5 @@ impl Backend for Metal {
     type Kernels = MetalKernels;
     type Error = MetalError;
 
-    const KIND: BackendKind = BackendKind::Metal;
+    const NAME: &'static str = "metal";
 }

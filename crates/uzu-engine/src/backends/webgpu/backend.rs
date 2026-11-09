@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use crate::backends::{
     common::{
-        Backend, BackendKind,
+        Backend,
         allocator::{
             bump::BumpAllocation,
             pool::{PoolAllocation, PoolAllocator},
@@ -37,5 +37,5 @@ impl Backend for WebGPU {
     type Kernels = WebGPUKernels;
     type Error = WebGPUError;
 
-    const KIND: BackendKind = BackendKind::WebGpu;
+    const NAME: &'static str = "webgpu";
 }

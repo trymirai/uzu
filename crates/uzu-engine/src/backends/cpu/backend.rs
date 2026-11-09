@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use crate::backends::{
     common::{
-        Backend, BackendKind,
+        Backend,
         allocator::{
             bump::BumpAllocation,
             pool::{PoolAllocation, PoolAllocator},
@@ -34,5 +34,5 @@ impl Backend for Cpu {
     type Kernels = CpuKernels;
     type Error = CpuError;
 
-    const KIND: BackendKind = BackendKind::Cpu;
+    const NAME: &'static str = "cpu";
 }

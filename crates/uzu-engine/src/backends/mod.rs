@@ -9,7 +9,7 @@ pub(crate) mod webgpu;
 #[cfg(backend = "cpu")]
 pub(crate) mod cpu;
 
-pub use common::{Backend, BackendKind};
+pub use common::Backend;
 
 pub trait BackendSelection {
     type Output;
