@@ -1,3 +1,4 @@
+#![feature(default_field_values)]
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(crate::tests::harness::uzu_harness))]
 
