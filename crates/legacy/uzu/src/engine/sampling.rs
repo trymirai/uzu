@@ -58,44 +58,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_sampling_defaults_without_weights_and_preserves_disabled_filters() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = serde_json::json!({
-            "type": "LanguageModelConfig",
-            "token_codec_config": { "type": "RawTextCodecConfig" },
-            "decoder_config": {
-                "embedding_config": {
-                    "type": "TiedEmbeddingConfig", "input_scale": null,
-                    "logit_soft_cap": null, "logit_scale": null,
-                },
-                "transformer_config": {
-                    "residual_config": { "type": "AdditiveResidualConfig" },
-                    "layer_configs": [], "model_dim": 4, "hidden_dim": 4,
-                    "output_norm_config": {
-                        "epsilon": 0.00001, "scale_offset": null,
-                        "upcast_mode": "only_normalization", "subtract_mean": false,
-                        "has_scale": true, "has_biases": false,
-                    },
-                },
-                "vocab_size": 4, "ple_model_config": null, "embedding_norm_config": null,
-            },
-            "generation_config": {
-                "stop_token_ids": [], "temperature": null, "top_k": 20, "top_p": null, "min_p": null,
-                "banned_tokens": null, "repetition_penalty": null, "presence_penalty": null,
-                "frequency_penalty": null, "suffix_repetition_length": null,
-            },
-        });
-        std::fs::write(directory.path().join("config.json"), serde_json::to_vec(&config).unwrap()).unwrap();
+    fn sampling_method_maps_all_fields() {
+        assert_eq!(sampling_method(UzuSamplingMethod::Greedy), SamplingMethod::Greedy {});
         assert_eq!(
-            futures::executor::block_on(read_sampling_defaults(directory.path())).unwrap(),
-            Some(SamplingMethod::Stochastic {
-                temperature: None,
+            sampling_method(UzuSamplingMethod::Stochastic {
+                temperature: Some(0.6),
                 top_k: Some(20),
+                top_p: Some(0.95),
+                min_p: Some(0.05),
+                repetition_penalty: Some(1.1),
+                suffix_repetition_length: Some(64),
+            }),
+            SamplingMethod::Stochastic {
+                temperature: Some(0.6),
+                top_k: Some(20),
+                top_p: Some(0.95),
+                min_p: Some(0.05),
+                repetition_penalty: Some(1.1),
+                suffix_repetition_length: Some(64),
+            }
+        );
+        assert_eq!(
+            sampling_method(UzuSamplingMethod::Stochastic {
+                temperature: None,
+                top_k: None,
                 top_p: None,
                 min_p: None,
                 repetition_penalty: None,
                 suffix_repetition_length: None,
-            })
+            }),
+            SamplingMethod::Stochastic {
+                temperature: None,
+                top_k: None,
+                top_p: None,
+                min_p: None,
+                repetition_penalty: None,
+                suffix_repetition_length: None,
+            }
         );
     }
 
