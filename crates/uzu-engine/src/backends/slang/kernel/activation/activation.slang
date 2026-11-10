@@ -8,6 +8,7 @@ import generated.activation_type;
   RWStructuredBuffer<T> output,
   uint32_t n,
   ActivationType act_type,
+  float activation_alpha,
   [[Specialize]] bool in_place,
   [[Axis("n", "256")]] uint32_t tid,
 ) {

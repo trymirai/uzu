@@ -11,11 +11,12 @@ PUBLIC KERNEL(Activation) (
     device T* output,
     const constant uint& n,
     const constant ActivationType& act_type,
+    const constant float& activation_alpha,
     const bool in_place SPECIALIZE,
     uint tid AXIS(n, 256)
 ) {
   if (in_place) {
     input = reinterpret_cast<const device T*>(output);
   }
-  output[tid] = activate(input[tid], act_type);
+  output[tid] = activate(input[tid], act_type, activation_alpha);
 }

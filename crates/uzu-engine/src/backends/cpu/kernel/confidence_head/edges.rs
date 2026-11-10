@@ -129,7 +129,7 @@ pub fn confidence_head_edges(
             .collect::<Vec<_>>();
         let raw = dense(&readout.0[width..], &readout.1[1..], &node);
         let [alpha, beta] =
-            [raw[0], raw[1]].map(|value| ActivationType::SOFTPLUS.activate(value).min(params.logit_cap));
+            [raw[0], raw[1]].map(|value| ActivationType::SOFTPLUS.activate(value, 1.0).min(params.logit_cap));
         let mut logits = (0..candidates)
             .map(|index| unsafe {
                 alpha * *scores.add(2 * slot * candidates + index)
@@ -157,7 +157,7 @@ pub fn confidence_head_edges(
             let block = layer_norm(&state, &block_norm.0, &block_norm.1, params.epsilon);
             let raised = dense(&up.0, &up.1, &block)
                 .into_iter()
-                .map(|value| ActivationType::SILU.activate(value))
+                .map(|value| ActivationType::SILU.activate(value, 1.0))
                 .collect::<Vec<_>>();
             let lowered = dense(&down.0, &down.1, &raised);
             let state = state.iter().zip(lowered).map(|(state, lowered)| state + lowered).collect::<Vec<_>>();

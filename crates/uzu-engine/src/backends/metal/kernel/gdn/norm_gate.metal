@@ -52,8 +52,7 @@ PUBLIC KERNEL(DeltaNetNormGate)(
     float nw = float(norm_weight[tid]);
     uint z_idx = token_idx * total_proj_dim + conv_dim + hv_idx * head_v_dim + tid;
     float z_i = float(in_proj[z_idx]);
-    float z_gate =
-        (act_type == ActivationType::SILU) ? activate_silu_alpha(z_i, activation_alpha) : activate(z_i, act_type);
+    float z_gate = activate(z_i, act_type, activation_alpha);
     in_out[base + tid] = static_cast<T>(o_i * inv_rms * nw * z_gate);
   }
 }

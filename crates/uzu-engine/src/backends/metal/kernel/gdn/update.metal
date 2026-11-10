@@ -124,8 +124,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     if (lane == 0) {
       const float nw = float(norm_weight[dv]);
       const float z_i = float(in_proj[conv_dim + hv_idx * head_v_dim + dv]);
-      const float z_gate =
-          (act_type == ActivationType::SILU) ? activate_silu_alpha(z_i, activation_alpha) : activate(z_i, act_type);
+      const float z_gate = activate(z_i, act_type, activation_alpha);
       out[hv_idx * head_v_dim + dv] = static_cast<T>(shared_o[dv] * inv_rms * nw * z_gate);
     }
   }

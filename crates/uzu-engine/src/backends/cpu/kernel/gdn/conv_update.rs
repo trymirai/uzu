@@ -40,7 +40,7 @@ pub fn delta_net_conv_update<T: DataTypeRepr + Float>(
         acc += x * unsafe { *conv_weight.add(weight_offset + tap_count) };
 
         unsafe {
-            *in_out.add(channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
+            *in_out.add(channel) = T::from(ActivationType::SILU.activate(acc, 1.0)).unwrap();
         }
 
         for tap in 1..tap_count {

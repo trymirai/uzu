@@ -287,8 +287,7 @@ PUBLIC KERNEL(TreeVerify)(
     METAL_PRAGMA_UNROLL
     for (uint j = 0; j < 4; ++j) {
       const float z_i = float(z_row[j]);
-      const float z_gate =
-          (act_type == ActivationType::SILU) ? activate_silu_alpha(z_i, activation_alpha) : activate(z_i, act_type);
+      const float z_gate = activate(z_i, act_type, activation_alpha);
       result[j] = static_cast<T>(values[j] * inv_rms * norm_weight[dv + j] * z_gate);
     }
     *reinterpret_cast<device T4*>(o + value_base + token * value_token_stride + dv) = result;

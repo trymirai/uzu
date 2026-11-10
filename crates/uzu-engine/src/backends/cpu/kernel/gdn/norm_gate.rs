@@ -2,10 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{
-    backends::common::gpu_types::activation_type::{ActivationType, activation_silu_alpha},
-    data_type::DataTypeRepr,
-};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 // In-place RMSNorm + output gate for DeltaNet prefill output.
 //
@@ -56,11 +53,7 @@ pub fn delta_net_norm_gate<T: DataTypeRepr + Float>(
                 let norm_w = unsafe { *norm_weight.add(i) };
                 let z_idx = token * total_proj_dim + conv_dim + hv * head_v_dim + i;
                 let z_i = unsafe { (*in_proj.add(z_idx)).to_f32().unwrap() };
-                let z_gate = if act_type == ActivationType::SILU {
-                    activation_silu_alpha(z_i, activation_alpha)
-                } else {
-                    act_type.activate(z_i)
-                };
+                let z_gate = act_type.activate(z_i, activation_alpha);
                 let final_val = o_i * inv_rms * norm_w * z_gate;
                 unsafe {
                     *in_out.add(base + i) = T::from(final_val).unwrap();

@@ -2,10 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{
-    backends::common::gpu_types::activation_type::{ActivationType, activation_silu_alpha},
-    data_type::DataTypeRepr,
-};
+use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
 // Single-token delta net update: decay state, apply delta rule, RMSNorm + output gate.
 // Steps per v-head:
@@ -137,11 +134,7 @@ pub fn delta_net_update<T: DataTypeRepr + Float, const HEAD_K_DIM: u32>(
         for i in 0..head_v_dim {
             let norm_w = unsafe { *norm_weight.add(i) };
             let z_i = unsafe { (*in_proj.add(conv_dim + hv * head_v_dim + i)).to_f32().unwrap() };
-            let z_gate = if act_type == ActivationType::SILU {
-                activation_silu_alpha(z_i, activation_alpha)
-            } else {
-                act_type.activate(z_i)
-            };
+            let z_gate = act_type.activate(z_i, activation_alpha);
             let final_val = o[i] * inv_rms * norm_w * z_gate;
             unsafe {
                 *out.add(hv * head_v_dim + i) = T::from(final_val).unwrap();

@@ -78,16 +78,19 @@ inline T activate_softplus(T x) {
 }
 
 template <typename T>
-inline T activate(T x, ActivationType type) {
 inline T activate_sigmoid(T x) {
   float xf = float(x);
   float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
   float out = (xf < 0.0f) ? 1.0f - y : y;
   return static_cast<T>(out);
 }
+
+// alpha scales the SiLU slope and is ignored by every other activation.
+template <typename T>
+inline T activate(T x, ActivationType type, float alpha) {
   switch (type) {
   case ActivationType::SILU:
-    return activate_silu(x);
+    return activate_silu_alpha(x, alpha);
   case ActivationType::GELUApprox:
     return activate_gelu(x);
   case ActivationType::GELUExact:

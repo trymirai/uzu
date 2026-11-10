@@ -257,6 +257,7 @@ impl<B: Backend> TreeAttention<B> {
                 &mut raised,
                 rows * self.config.hidden_dim,
                 ActivationType::SILU,
+                1.0,
                 command_buffer,
             );
             hidden = layer.down.encode(raised, rows, command_buffer)?;

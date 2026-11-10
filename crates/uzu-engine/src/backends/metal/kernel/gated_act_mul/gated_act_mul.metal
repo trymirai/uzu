@@ -97,13 +97,8 @@ PUBLIC KERNEL(GatedActMul) (
   METAL_PRAGMA_UNROLL
   for (uint index = 0; index < HADAMARD_VECTOR_SIZE; ++index) {
     if (index < valid_count && (!hadamard || block_in_bounds)) {
-      if (custom_activation_alpha && act_type == ActivationType::SILU) {
-        const T activated = activate_silu_alpha(gate[index], activation_alpha);
-        const T gated = value[index] * activated;
-        results[index] = static_cast<float>(gated);
-      } else {
-        results[index] = gated_act_mul(value[index], gate[index], act_type);
-      }
+      const float alpha = custom_activation_alpha ? activation_alpha : 1.0f;
+      results[index] = gated_act_mul(value[index], gate[index], act_type, alpha);
     }
   }
   if (hadamard) {
