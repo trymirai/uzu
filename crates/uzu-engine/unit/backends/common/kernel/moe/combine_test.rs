@@ -58,8 +58,6 @@ fn moe_combine_matches_cpu() {
         let routed_outputs: Vec<bf16> = (0..(batch_dim * ACTIVE_EXPERTS * MODEL_DIM) as usize)
             .map(|i| bf16::from_f32((((i * 29 + 3) % 71) as f32 - 35.0) * 0.05))
             .collect();
-        // Each pick gets a different weight, in a different order for each token, and a token's weights sum to 1
-        // like the router's softmax.
         let expert_weights: Vec<f32> = (0..(batch_dim * ACTIVE_EXPERTS) as usize)
             .map(|i| ((i + i / ACTIVE_EXPERTS as usize) % ACTIVE_EXPERTS as usize + 1) as f32 / 36.0)
             .collect();

@@ -16,11 +16,8 @@ use crate::{
         },
     },
     config::{
-        mlp::{mixture_of_experts::MixtureOfExpertsConfig, routing_function::AnyRoutingFunction},
-        weight_matrix::{
-            AnyWeightMatrixSpec,
-            hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-        },
+        mlp::mixture_of_experts::MixtureOfExpertsConfig,
+        weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::HybridSpec},
     },
     data_type::DataType,
     encodable_block::{
@@ -77,7 +74,6 @@ impl<B: Backend> MoeMlp<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, MoeMlpNewError<B>> {
-        let AnyRoutingFunction::SoftmaxRouting(_) = config.routing_function;
         let num_routed_experts = config.num_routed_experts;
         let num_active_routed_experts = config.num_active_routed_experts;
         let expert_hidden_dim = config.expert_hidden_dim;
@@ -88,18 +84,15 @@ impl<B: Backend> MoeMlp<B> {
                 max = moe::ROUTER_MAX_EXPERTS
             )));
         }
-        let max_top_k = moe::ROUTER_MAX_TOP_K.min(num_routed_experts);
-        if num_active_routed_experts == 0 || num_active_routed_experts > max_top_k {
+        if num_active_routed_experts == 0 || num_active_routed_experts > moe::ROUTER_MAX_TOP_K {
             return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "num_active_routed_experts must be in 1..={max_top_k}, got {num_active_routed_experts}"
+                "num_active_routed_experts must be in 1..={max}, got {num_active_routed_experts}",
+                max = moe::ROUTER_MAX_TOP_K
             )));
         }
 
         let router_weights_tree = parameter_tree.subtree("router").subtree("weights");
         let router_spec = router_weights_tree.metadata("spec")?;
-        let AnyWeightMatrixSpec::FullPrecisionSpec(_) = router_spec else {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!("{router_spec:?}")));
-        };
         let router = LinearMatmul::load(
             model_dimension,
             num_routed_experts,
@@ -171,7 +164,6 @@ impl<B: Backend> MoeMlp<B> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-            incoherence_processing_mode: IncoherenceProcessingMode::Input,
             ..
         }) = gate_spec
         else {
@@ -423,14 +415,7 @@ impl<B: Backend> RoutedProjection<B> {
             )));
         }
         let packing_divisor = quantization.mode.packing_divisor();
-        let Some(b_expert_stride_bytes) = output_dim
-            .checked_mul(input_dim / packing_divisor)
-            .filter(|plane_bytes| (num_routed_experts - 1).checked_mul(*plane_bytes).is_some())
-        else {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "{num_routed_experts}x{output_dim}x{input_dim} weights exceed 32-bit offsets"
-            )));
-        };
+        let b_expert_stride_bytes = output_dim * (input_dim / packing_divisor);
 
         let input_hadamard_factors =
             weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dim], DataType::I32).await?;

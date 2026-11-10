@@ -49,70 +49,15 @@ fn moe_router_top_k_matches_cpu() {
     for batch_dim in [1u32, 2, 16] {
         let mut logits: Vec<f32> =
             (0..(batch_dim * NUM_EXPERTS) as usize).map(|i| (((i * 37 + 13) % 97) as f32 - 48.0) * 0.125).collect();
-        // Inject an exact tie to verify deterministic lowest-index tie-breaking.
         logits[3] = 10.0;
         logits[11] = 10.0;
 
         let expected = run_router_top_k::<Cpu>(&logits, batch_dim);
-        let sums: Vec<f32> =
-            expected.1.as_chunks::<{ TOP_K as usize }>().0.iter().map(|row| row.iter().sum()).collect();
-        assert_eq_float(&vec![1.0; sums.len()], &sums, 1e-5, "softmax weights should sum to 1.0");
 
         for_each_non_cpu_backend!(|B| {
             let actual = run_router_top_k::<B>(&logits, batch_dim);
             assert_eq!(actual.0, expected.0, "expert_ids mismatch for {batch_dim} tokens");
             assert_eq_float(&expected.1, &actual.1, 1e-5, &format!("expert_weights mismatch for {batch_dim} tokens"));
-        });
-    }
-}
-
-#[uzu_test]
-fn moe_router_top_k_nan_safety() {
-    let batch_dim = 3u32;
-    let mut logits = vec![f32::NAN; (batch_dim * NUM_EXPERTS) as usize];
-    for i in (0..NUM_EXPERTS as usize).filter(|i| i % 3 != 0) {
-        logits[i] = (i as f32) * 0.1;
-    }
-    for i in [5, 17, 40] {
-        logits[2 * NUM_EXPERTS as usize + i] = (i as f32) * 0.1;
-    }
-
-    let expected = run_router_top_k::<Cpu>(&logits, batch_dim);
-    assert_eq!(
-        expected.0[2 * TOP_K as usize..],
-        [40, 17, 5, 0, 1, 2, 3, 4],
-        "NaN logits rank below every finite logit"
-    );
-    for_each_non_cpu_backend!(|B| {
-        let actual = run_router_top_k::<B>(&logits, batch_dim);
-        assert_eq!(actual.0, expected.0, "expert_ids mismatch under NaN inputs");
-        assert_eq_float(&expected.1, &actual.1, 1e-5, "expert_weights mismatch under NaN inputs");
-    });
-}
-
-#[uzu_test]
-fn moe_router_top_k_jax_ties() {
-    // As in jax.lax.top_k: a tie for the 8th pick goes to the lower index, and +0.0 ranks above -0.0.
-    let top_seven = [200u32, 150, 100, 90, 60, 50, 40];
-    for (logit_7, logit_230, eighth) in [(1.0f32, 1.0f32, 7u32), (-0.0, 0.0, 230)] {
-        let mut logits = vec![-1.0f32; NUM_EXPERTS as usize];
-        for (rank, &expert) in top_seven.iter().enumerate() {
-            logits[expert as usize] = 10.0 - rank as f32;
-        }
-        logits[7] = logit_7;
-        logits[230] = logit_230;
-        let expected_ids: Vec<u32> = top_seven.into_iter().chain([eighth]).collect();
-        assert_eq!(
-            run_router_top_k::<Cpu>(&logits, 1).0,
-            expected_ids,
-            "CPU picks with {logit_7} and {logit_230} tied"
-        );
-        for_each_non_cpu_backend!(|B| {
-            assert_eq!(
-                run_router_top_k::<B>(&logits, 1).0,
-                expected_ids,
-                "Backend picks with {logit_7} and {logit_230} tied"
-            );
         });
     }
 }

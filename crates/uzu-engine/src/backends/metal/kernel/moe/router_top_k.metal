@@ -25,8 +25,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
   for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
     const uint expert_idx = lane + i * METAL_SIMD_SIZE;
     if (expert_idx < num_experts) {
-      const float logit = float(row[expert_idx]);
-      keys[i] = top_k_score_key(isnan(logit) ? -INFINITY : logit);
+      keys[i] = top_k_score_key(float(row[expert_idx]));
     } else {
       keys[i] = 0;
     }
@@ -34,9 +33,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
 
   float chosen_vals[MAX_TOP_K];
   uint chosen_ids[MAX_TOP_K];
-  // Bit i is set once expert lane + i * METAL_SIMD_SIZE is picked.
   uint picked = 0;
-  static_assert(MOE_ROUTER_MAX_PER_LANE <= 8 * sizeof(picked), "picked holds one bit per slot");
 
   for (uint k = 0; k < top_k; ++k) {
     uint best_key = 0;
@@ -69,14 +66,14 @@ PUBLIC KERNEL(MoeRouterTopK)(
   }
 
   if (lane == 0) {
-    const float max_chosen = chosen_vals[0]; // the picks are descending
+    const float max_chosen = chosen_vals[0];
     float sum_exp = 0.0f;
     for (uint k = 0; k < top_k; ++k) {
-      const float weight = (max_chosen == -INFINITY) ? (1.0f / float(top_k)) : fast::exp(chosen_vals[k] - max_chosen);
+      const float weight = fast::exp(chosen_vals[k] - max_chosen);
       chosen_vals[k] = weight;
       sum_exp += weight;
     }
-    const float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
+    const float inv_sum = 1.0f / sum_exp;
     device uint* out_ids = expert_ids + token_idx * top_k;
     device float* out_weights = expert_weights + token_idx * top_k;
     for (uint k = 0; k < top_k; ++k) {

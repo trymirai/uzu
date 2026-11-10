@@ -96,8 +96,8 @@ PUBLIC KERNEL(MoeGemv)(
 
   constexpr uint INPUT_ROW_TILE = 1;
   constexpr uint REDUCTION_LANES = 32;
-  // A lane stages 8 bytes of codes: 16 W4 or 8 W8 values.
-  constexpr uint GROUP_LANES = GROUP_SIZE * BITS / 64;
+  constexpr uint CODE_BITS_PER_LANE = 64;
+  constexpr uint GROUP_LANES = GROUP_SIZE * BITS / CODE_BITS_PER_LANE;
   constexpr uint K_SPLIT = 1;
   constexpr bool INPUT_ALIGNED = true;
   constexpr bool FULL_TILE = true;

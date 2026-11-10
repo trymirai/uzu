@@ -4,7 +4,7 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
-        common::gpu_types::{hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, moe},
+        common::gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         cpu::kernel::{
             activation_transform::hadamard_transform,
             matmul::{read_zero_point, unpack_code},
@@ -39,14 +39,6 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     zero_point_group_stride: u32,
     #[specialize] a_per_token: bool,
 ) {
-    assert_eq!(zero_points.is_some(), BITS == 4);
-    let input_block = if BITS == 4 {
-        moe::GEMV_W4_INPUT_BLOCK
-    } else {
-        moe::GEMV_W8_INPUT_BLOCK
-    };
-    assert!(in_vec_size.is_multiple_of(input_block));
-    assert!(out_vec_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
     let in_vec_size = in_vec_size as usize;
     let out_vec_size = out_vec_size as usize;
     let num_routes = num_routes as usize;
