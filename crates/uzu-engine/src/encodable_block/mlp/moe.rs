@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::{
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, moe, quantization::QuantizationMode,
             quantization_method::QuantizationMethod,
@@ -33,7 +33,6 @@ use crate::{
         weight_matrix::{ParsedWeightSpec, WeightMatrixError, parse_spec},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
-    utils::size_for_shape::size_for_shape,
 };
 
 #[derive(Debug, Error)]
@@ -433,12 +432,8 @@ impl<B: Backend> RoutedProjection<B> {
             )));
         };
 
-        let input_signs =
-            weights_tree.read_slice::<i32>("incoherence_signs.input_signs", &[num_routed_experts, input_dim]).await?;
-        let mut input_hadamard_factors = context
-            .create_buffer_cpu_gpu(size_for_shape(&[input_dim], DataType::I32))
-            .map_err(MoeMlpNewError::Backend)?;
-        input_hadamard_factors.copyin(&input_signs[..input_dim as usize]);
+        let input_hadamard_factors =
+            weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dim], DataType::I32).await?;
         let output_hadamard_factors = weights_tree
             .read_buffer("incoherence_signs.output_signs", &[num_routed_experts, output_dim], DataType::I32)
             .await?;
@@ -485,7 +480,7 @@ impl<B: Backend> RoutedProjection<B> {
                 scale_strides: params.scale_strides(),
                 zero_point_strides,
             },
-            input_hadamard_factors.handoff(),
+            input_hadamard_factors,
         ))
     }
 
