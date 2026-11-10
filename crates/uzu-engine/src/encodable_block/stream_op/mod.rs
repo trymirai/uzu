@@ -1,32 +1,70 @@
-// XXX: cleanup
-
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, BufferRef, CommandBuffer},
     config::{residual::AnyResidualConfig, stream_op::AnyStreamOpConfig},
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, stream_op::ngram_injection::NGramInjection},
+    encodable_block::{
+        batch_topology::BatchTopology,
+        linear::{LinearBlockError, LinearEncodeError},
+        normalization::NormalizationNewError,
+        stream_op::{
+            ngram_injection::NGramInjection, per_layer_embedding_injection::PerLayerEmbeddingInjection,
+            residual_scale::ResidualScale,
+        },
+    },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 pub mod ngram_injection;
+pub mod per_layer_embedding_injection;
+pub mod residual_scale;
 
 #[derive(Debug, Error)]
 pub enum StreamOpNewError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearBlockError<B>),
+    #[error("Normalization error: {0}")]
+    Normalization(#[from] NormalizationNewError<B>),
     #[error("N-gram injection requires a gated residual")]
     NGramInjectionRequiresGatedResidual,
 }
 
+#[derive(Debug, Error)]
+pub enum StreamOpEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Linear encoding error: {0}")]
+    LinearEncode(#[from] LinearEncodeError<B>),
+    #[error("Per-layer embedding injection requires per-layer inputs")]
+    MissingPerLayerInputs,
+}
+
+/// Inputs to stream ops other than the stream itself.
+// TODO: n-gram injection also needs the token ids and its own state (token history + conv state).
+// lalamo rejects stateful stream ops in layers whose mixer has a KV cache, so the state could live
+// next to the mixer state in the layer state.
+#[derive(Clone, Copy)]
+pub struct StreamOpContext<'a, PerLayerInputs> {
+    pub batch_dim: &'a BatchTopology,
+    pub per_layer_inputs: Option<PerLayerInputs>,
+}
+
 pub enum StreamOp<B: Backend> {
     NGramInjection(NGramInjection<B>),
+    PerLayerEmbeddingInjection(PerLayerEmbeddingInjection<B>),
+    ResidualScale(ResidualScale<B>),
 }
 
 impl<B: Backend> StreamOp<B> {
     pub async fn new(
         model_dim: u32,
+        layer_index: u32,
+        num_layers: u32,
         data_type: DataType,
         config: &AnyStreamOpConfig,
         residual_config: &AnyResidualConfig,
@@ -43,30 +81,40 @@ impl<B: Backend> StreamOp<B> {
                         .await?,
                 ))
             },
-            AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(_) => {
-                todo!("per-layer embedding injection as a standalone stream op")
+            AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(config) => Ok(Self::PerLayerEmbeddingInjection(
+                PerLayerEmbeddingInjection::new(
+                    model_dim,
+                    layer_index,
+                    num_layers,
+                    data_type,
+                    config,
+                    &parameter_tree,
+                    context,
+                )
+                .await?,
+            )),
+            AnyStreamOpConfig::ResidualScaleConfig(_) => {
+                Ok(Self::ResidualScale(ResidualScale::new(model_dim, data_type, &parameter_tree, context).await?))
             },
-            AnyStreamOpConfig::ResidualScaleConfig(_) => todo!("residual scale as a standalone stream op"),
         }
     }
 
-    // TODO: Inputs other than the stream are undecided: n-gram injection needs the token ids and
-    // its own state (token history + conv state), per-layer embedding injection needs the per-layer
-    // inputs. Recommended: a `StreamOpContext` (token ids, per-layer inputs) like lalamo's, plus the
-    // op's state. lalamo rejects stateful stream ops in layers whose mixer has a KV cache, so the
-    // state could live next to the mixer state in the layer state.
-    // TODO: called by the layer once the residual add is no longer fused into the norms.
-    /// Returns the updated stream. The stream has the layout produced by the residual head's
-    /// `expand`.
-    #[allow(dead_code)]
     pub fn encode(
         &self,
         stream: B::ScratchBuffer,
-        batch_dim: &BatchTopology,
+        op_context: StreamOpContext<'_, impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) -> Result<B::ScratchBuffer, StreamOpEncodeError<B>> {
+        let row_count = op_context.batch_dim.size();
         match self {
-            Self::NGramInjection(op) => op.encode(stream, batch_dim, command_buffer),
+            Self::NGramInjection(op) => {
+                op.encode(stream, op_context.batch_dim, command_buffer).map_err(StreamOpEncodeError::Backend)
+            },
+            Self::PerLayerEmbeddingInjection(op) => {
+                let per_layer_inputs = op_context.per_layer_inputs.ok_or(StreamOpEncodeError::MissingPerLayerInputs)?;
+                op.encode(stream, per_layer_inputs, row_count, command_buffer)
+            },
+            Self::ResidualScale(op) => Ok(op.encode(stream, row_count, command_buffer)),
         }
     }
 }

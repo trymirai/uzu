@@ -20,7 +20,7 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::PerLayerEmbeddingError,
         residual::{ResidualConnection, ResidualNewError},
-        stream_op::{StreamOp, StreamOpNewError},
+        stream_op::{StreamOp, StreamOpContext, StreamOpEncodeError, StreamOpNewError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -48,32 +48,12 @@ pub enum TransformerLayerError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("Linear encoding error: {0}")]
     LinearEncode(#[from] LinearEncodeError<B>),
-    #[error("Per-layer embedding error: {0}")]
-    PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Residual error: {0}")]
     Residual(#[from] ResidualNewError<B>),
     #[error("Stream op error: {0}")]
     StreamOp(#[from] StreamOpNewError<B>),
-    #[error("Layer {layer_index} sets a residual scale op but has no mlp post_norm")]
-    ResidualScaleWithoutPostMlpNorm {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} uses prologue stream ops, which are not supported")]
-    UnsupportedPrologueOps {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} uses an n-gram injection op, which is not supported")]
-    UnsupportedNGramInjection {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} has multiple per-layer embedding injection ops, but only one is applied")]
-    MultiplePerLayerEmbeddingInjectionOps {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} has multiple residual scale ops, but only one is applied")]
-    MultipleResidualScaleOps {
-        layer_index: u32,
-    },
+    #[error("Stream op encoding error: {0}")]
+    StreamOpEncode(#[from] StreamOpEncodeError<B>),
     #[error("Layer {layer_index} {sublayer} body expects RHT-rotated input but has no pre_norm or conv to apply it")]
     UnappliedInputRht {
         layer_index: u32,
@@ -338,7 +318,7 @@ impl<B: Backend> TransformerLayer<B> {
     pub async fn new(
         model_dim: u32,
         hidden_dim: u32,
-        _num_layers: u32,
+        num_layers: u32,
         layer_index: u32,
         data_type: DataType,
         layer_config: &TransformerLayerConfig,
@@ -348,14 +328,32 @@ impl<B: Backend> TransformerLayer<B> {
     ) -> Result<Self, TransformerLayerError<B>> {
         let prologue_params = parameter_tree.subtree("prologue");
         let prologue = try_join_all(layer_config.prologue_configs.iter().enumerate().map(|(i, cfg)| {
-            StreamOp::new(model_dim, data_type, cfg, residual_config, prologue_params.subtree(&i.to_string()), context)
+            StreamOp::new(
+                model_dim,
+                layer_index,
+                num_layers,
+                data_type,
+                cfg,
+                residual_config,
+                prologue_params.subtree(&i.to_string()),
+                context,
+            )
         }))
         .await?
         .into_boxed_slice();
 
         let epilogue_params = parameter_tree.subtree("epilogue");
         let epilogue = try_join_all(layer_config.epilogue_configs.iter().enumerate().map(|(i, cfg)| {
-            StreamOp::new(model_dim, data_type, cfg, residual_config, epilogue_params.subtree(&i.to_string()), context)
+            StreamOp::new(
+                model_dim,
+                layer_index,
+                num_layers,
+                data_type,
+                cfg,
+                residual_config,
+                epilogue_params.subtree(&i.to_string()),
+                context,
+            )
         }))
         .await?
         .into_boxed_slice();
@@ -419,7 +417,7 @@ impl<B: Backend> TransformerLayer<B> {
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        _per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
         state: Option<MaybeMut<dyn MixerState<B>>>,
@@ -427,9 +425,13 @@ impl<B: Backend> TransformerLayer<B> {
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
         let row_count = batch_dim.size();
+        let op_context = StreamOpContext {
+            batch_dim,
+            per_layer_inputs,
+        };
 
         for op in &self.prologue {
-            stream = op.encode(stream, batch_dim, command_buffer).map_err(TransformerLayerError::Backend)?;
+            stream = op.encode(stream, op_context, command_buffer)?;
         }
 
         stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
@@ -441,7 +443,7 @@ impl<B: Backend> TransformerLayer<B> {
         })?;
 
         for op in &self.epilogue {
-            stream = op.encode(stream, batch_dim, command_buffer).map_err(TransformerLayerError::Backend)?;
+            stream = op.encode(stream, op_context, command_buffer)?;
         }
 
         Ok(stream)

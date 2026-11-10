@@ -32,7 +32,7 @@ impl<B: Backend> AdditiveResidualConnection<B> {
         data_type: DataType,
     ) -> Result<Self, B::Error> {
         Ok(Self {
-            residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)?,
+            residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false, true)?,
         })
     }
 
@@ -44,7 +44,7 @@ impl<B: Backend> AdditiveResidualConnection<B> {
         elements: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        self.residual_add.encode(Some(stream), update, output, elements, elements, 1.0, command_buffer);
+        self.residual_add.encode(Some(stream), Some(update), output, elements, elements, 1.0, command_buffer);
         Ok(())
     }
 }
@@ -56,16 +56,16 @@ impl<B: Backend> ResidualConnection<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, ResidualNewError<B>> {
-        match config {
+        Ok(match config {
             AnyResidualConfig::AdditiveResidualConfig(_) => {
+                Self::Additive(AdditiveResidualConnection::new(context, data_type).map_err(ResidualNewError::Backend)?)
+            },
+            AnyResidualConfig::GatedResidualConfig(_) => {
                 // TODO: Load weights for gated residuals.
                 let _ = parameter_tree;
-                Ok(Self::Additive(
-                    AdditiveResidualConnection::new(context, data_type).map_err(ResidualNewError::Backend)?,
-                ))
+                todo!("Implement gated residual support.")
             },
-            AnyResidualConfig::GatedResidualConfig(_) => todo!("Implement gated residual support."),
-        }
+        })
     }
 
     pub fn encode_update(
@@ -75,7 +75,6 @@ impl<B: Backend> ResidualConnection<B> {
         elements: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        // XXX: Correct scratch size?
         let mut output = command_buffer.allocate_scratch(stream.size())?;
         match self {
             Self::Additive(connection) => {
@@ -98,13 +97,15 @@ impl<B: Backend> ResidualHead<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, ResidualNewError<B>> {
-        // TODO: Load weights for gated residuals.
-        let _ = (data_type, parameter_tree, context);
         match config {
             AnyResidualConfig::AdditiveResidualConfig(_) => Ok(Self {
                 backend: PhantomData,
             }),
-            AnyResidualConfig::GatedResidualConfig(_) => todo!("Implement gated residual support."),
+            AnyResidualConfig::GatedResidualConfig(_) => {
+                // TODO: Load weights for gated residuals.
+                let _ = (data_type, parameter_tree, context);
+                todo!("Implement gated residual support.")
+            },
         }
     }
 
@@ -117,7 +118,6 @@ impl<B: Backend> ResidualHead<B> {
     }
 
     // TODO: gated mixes the `stream_count` streams down to `model_dim`
-    /// Returns the `model_dim`-wide hidden state carried by `stream`.
     pub fn readout(
         &self,
         stream: B::ScratchBuffer,

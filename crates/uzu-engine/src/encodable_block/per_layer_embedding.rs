@@ -3,13 +3,10 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
-        kernel::{GatedActMul, GatedActMulSettings, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        kernel::{Kernels, TensorAddScaleKernel},
     },
-    config::{
-        activation::AnyActivation, per_layer_embedding::PLEModelConfig,
-        stream_op::per_layer_embedding_injection::PerLayerEmbeddingInjectionConfig,
-    },
+    config::per_layer_embedding::PLEModelConfig,
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError},
@@ -93,7 +90,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         )
         .await?;
 
-        let add_scale = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false)
+        let add_scale = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
 
         Ok(Self {
@@ -149,7 +146,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             .map_err(PerLayerEmbeddingError::BackendError)?;
         self.add_scale.encode(
             Some(&token_ple),
-            &model_normed,
+            Some(&model_normed),
             &mut per_layer_inputs,
             total_elements,
             total_elements,
@@ -158,147 +155,5 @@ impl<B: Backend> PerLayerEmbedding<B> {
         );
 
         Ok(per_layer_inputs)
-    }
-}
-
-pub struct PerLayerEmbeddingProjection<B: Backend> {
-    gate: Box<dyn Linear<B>>,
-    projection: Box<dyn Linear<B>>,
-    norm: Normalization<B>,
-    gate_act_mul: GatedActMul<B>,
-    residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
-    residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
-    model_dim: u32,
-    ple_dim: u32,
-    num_layers: u32,
-    activation: AnyActivation,
-    post_layer_scalar: f32,
-    data_type: DataType,
-}
-
-impl<B: Backend> PerLayerEmbeddingProjection<B> {
-    pub async fn new(
-        model_dim: u32,
-        num_layers: u32,
-        data_type: DataType,
-        post_layer_scalar: f32,
-        config: &PerLayerEmbeddingInjectionConfig,
-        parameter_tree: &ParameterTree<'_, B>,
-        context: &B::Context,
-    ) -> Result<Self, PerLayerEmbeddingError<B>> {
-        let gate =
-            <dyn Linear<B>>::new(model_dim, config.ple_dim, data_type, false, &parameter_tree.subtree("gate"), context)
-                .await?;
-        let projection = <dyn Linear<B>>::new(
-            config.ple_dim,
-            model_dim,
-            data_type,
-            false,
-            &parameter_tree.subtree("projection"),
-            context,
-        )
-        .await?;
-        let norm = Normalization::new(
-            model_dim,
-            data_type,
-            data_type,
-            None,
-            ShortcutMode::None,
-            PostLayerScalar::None,
-            &config.norm_config,
-            &parameter_tree.subtree("norm"),
-            context,
-        )
-        .await?;
-
-        let activation_alpha = config.activation.alpha();
-        let settings = GatedActMulSettings {
-            activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
-            ..Default::default()
-        };
-        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false, settings)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
-        let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
-        let residual_combine = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
-
-        Ok(Self {
-            gate,
-            projection,
-            norm,
-            gate_act_mul,
-            residual_finalize,
-            residual_combine,
-            model_dim,
-            ple_dim: config.ple_dim,
-            num_layers,
-            activation: config.activation.clone(),
-            post_layer_scalar,
-            data_type,
-        })
-    }
-
-    pub fn encode(
-        &self,
-        per_layer_input: impl BufferRef<Backend = B>,
-        mut outputs: impl BufferMut<Backend = B>,
-        hidden: impl BufferRef<Backend = B>,
-        layer_index: u32,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), PerLayerEmbeddingError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("per layer embedding projection");
-
-        let length = batch_dim * self.model_dim;
-
-        self.residual_finalize.encode(
-            None::<&B::ScratchBuffer>,
-            hidden,
-            outputs.reborrow(),
-            length,
-            length,
-            command_buffer,
-        );
-
-        let mut gate_input = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
-        command_buffer.encode_copy(outputs.as_ref(), &mut gate_input);
-        let gate_out = self.gate.encode(gate_input, batch_dim, command_buffer)?;
-
-        let mut activated = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, self.ple_dim], self.data_type)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
-        self.gate_act_mul.encode_fp(
-            &gate_out,
-            Some(per_layer_input),
-            &mut activated,
-            None::<&B::GlobalGpuBuffer>,
-            self.ple_dim,
-            batch_dim,
-            layer_index * self.ple_dim,
-            self.num_layers * self.ple_dim,
-            self.activation.act_type(),
-            command_buffer,
-        );
-
-        let projected = self.projection.encode(activated, batch_dim, command_buffer)?;
-        let normed = self
-            .norm
-            .encode(&projected, 0, batch_dim, None::<&mut B::ScratchBuffer>, command_buffer)
-            .map_err(PerLayerEmbeddingError::BackendError)?;
-
-        self.residual_combine.encode(
-            None::<&B::ScratchBuffer>,
-            &normed,
-            outputs,
-            length,
-            length,
-            self.post_layer_scalar,
-            command_buffer,
-        );
-
-        Ok(())
     }
 }
