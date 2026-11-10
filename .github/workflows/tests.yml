@@ -238,7 +238,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build app bundle
-        run: pnpm build
+        run: pnpm desktop:build
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v7

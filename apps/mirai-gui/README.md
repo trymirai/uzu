@@ -1,9 +1,26 @@
 # Mirai
 
-Desktop chat app for local LLMs on the [uzu](https://github.com/trymirai/uzu) engine.
-Tauri v2, React, Rust.
+Chat app for local LLMs on the [uzu](https://github.com/trymirai/uzu) engine,
+built from one React client as two equal apps: `desktop/` (Tauri v2 and Rust)
+and `web/` (uzu.run, Uzu WASM on WebGPU). Nothing here builds by default: every
+command that runs, builds or tests an app names it with a `desktop:` or `web:`
+prefix.
 
-## Requirements
+## Shared commands
+
+```bash
+pnpm install
+pnpm typecheck     # TypeScript types of the shared client
+pnpm lint          # ESLint
+pnpm test          # shared client tests
+pnpm format        # Prettier
+```
+
+`pnpm desktop:check` and `pnpm web:check` run these checks plus the app's own.
+
+## Run desktop
+
+Requirements:
 
 - macOS 26.4 or newer, Apple silicon
 - Xcode 26 with the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`)
@@ -11,16 +28,14 @@ Tauri v2, React, Rust.
   `rust-toolchain.toml` at the repository root
 - Node.js 26 or newer and pnpm (`corepack enable` picks the version from `package.json`)
 
-## Run desktop
-
 ```bash
-pnpm install
-pnpm dev      # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
-pnpm build    # .app and .dmg in ../../target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
+pnpm desktop:dev    # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
+pnpm desktop:build  # .app and .dmg in ../../target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
 ```
 
-`pnpm check` runs typecheck, ESLint, client tests, clippy and Rust tests;
-`pnpm format` runs Prettier.
+`pnpm desktop:lint` runs clippy and `pnpm desktop:test` runs the Rust tests.
+Tauri serves and builds the frontend through `pnpm desktop:frontend:dev` and
+`pnpm desktop:frontend:build` (`desktop/vite.config.ts`, output in `desktop/dist/`).
 
 ## Run web app (uzu.run)
 
@@ -73,8 +88,9 @@ pnpm web:build    # static files in web/dist/
 pnpm web:preview  # serve the production build on port 3001
 ```
 
-`pnpm web:typecheck` checks the web app's TypeScript types.
-`pnpm web:test` runs the browser catalog and chat tests.
+`pnpm web:typecheck` checks the web app's TypeScript types and
+`pnpm web:test` runs the browser catalog and chat tests; both need the bindings
+built by `pnpm web:wasm`.
 
 The production build reports page views to Google Analytics only when it is served
 from `https://uzu.run`; development and preview builds send nothing.

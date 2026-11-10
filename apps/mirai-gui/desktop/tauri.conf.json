@@ -5,10 +5,10 @@
   "version": "../package.json",
   "identifier": "com.mirai.tech.chat",
   "build": {
-    "beforeDevCommand": "pnpm run client:dev",
+    "beforeDevCommand": "pnpm run desktop:frontend:dev",
     "devUrl": "http://localhost:3002",
-    "beforeBuildCommand": "pnpm run client:build",
-    "frontendDist": "../client/dist-tauri",
+    "beforeBuildCommand": "pnpm run desktop:frontend:build",
+    "frontendDist": "dist",
     "additionalWatchFolders": ["../../../crates"]
   },
   "app": {

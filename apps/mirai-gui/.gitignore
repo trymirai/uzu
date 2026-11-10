@@ -2,7 +2,7 @@
 node_modules/
 
 # Build outputs
-client/dist-tauri/
+desktop/dist/
 desktop/target/
 desktop/gen/
 desktop/resources/cli/

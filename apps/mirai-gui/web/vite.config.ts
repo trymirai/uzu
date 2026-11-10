@@ -8,8 +8,8 @@ const headers = {
   "Cross-Origin-Embedder-Policy": "require-corp",
 };
 
-export default defineConfig(
-  mergeConfig(sharedClientConfig("web"), {
+export default defineConfig(({ mode }) =>
+  mergeConfig(sharedClientConfig("web", mode), {
     root: __dirname,
     publicDir: path.resolve(__dirname, "../client/public"),
     resolve: {
