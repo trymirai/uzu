@@ -33,9 +33,10 @@ static METAL_FUNC auto make_staged_loader(
   const int params_offset =
       int(block_col) * int(params->scale_output_stride) + int(first_group) * int(params->scale_group_stride);
   const device Element* scales = right.scales + params_offset;
+  const bool interleaved_rows = right.gemm_b_layout == GemmBLayout::InterleavedRows;
+  const int k_bytes = int(k_offset) * get_bytes_per_pack<RightOperand::BITS>() / get_pack_factor<RightOperand::BITS>();
   const device uint8_t* values = right.codes + size_t(block_col) * row_stride +
-                                 size_t(k_offset) * size_t(get_bytes_per_pack<RightOperand::BITS>()) /
-                                     size_t(get_pack_factor<RightOperand::BITS>());
+                                 (interleaved_rows ? InterleavedRowsLayout::byte_offset(k_bytes) : k_bytes);
   if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
     const device Element* biases = right.bias() + params_offset;
     using Loader = QuantizedBlockLoaderScaleBias<
@@ -53,6 +54,7 @@ static METAL_FUNC auto make_staged_loader(
         scales,
         biases,
         right.signed_codes,
+        interleaved_rows,
         int(params->K),
         int(params->scale_group_stride),
         int(params->scale_output_stride),
@@ -77,6 +79,7 @@ static METAL_FUNC auto make_staged_loader(
         scales,
         right.zp(),
         right.signed_codes,
+        interleaved_rows,
         int(params->K),
         int(params->scale_group_stride),
         int(params->scale_output_stride),

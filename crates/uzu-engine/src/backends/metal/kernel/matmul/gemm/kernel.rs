@@ -1,12 +1,9 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use futures::executor::block_on;
-
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
-            Context,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding,
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{
                 Int8CodeLayout, MatmulA, MatmulArguments, MatmulB, MatmulOutput, MatmulShape, QuantParamsLayout,
@@ -20,10 +17,10 @@ use crate::{
             error::MetalError,
             gpu_types::{
                 gemm::{GemmAPrologueKind, GemmAlignment, GemmBLayout},
-                matmul::{GemmParams, MXU_TILED_BLOCK_ROWS, MXU_TILED_PREPARE_THREADS, MXU_TILED_W2_BLOCK_ROWS},
+                matmul::GemmParams,
             },
             kernel::{
-                GemmMetalKernel, GemmPrepareBLayoutMetalKernel, GemmSplitKReduceMetalKernel,
+                GemmMetalKernel, GemmSplitKReduceMetalKernel,
                 matmul::{
                     MatmulMetalError, MatmulOutputWork,
                     gemm::{
@@ -100,43 +97,6 @@ impl GemmKernel {
                 Ok(entry.insert(kernel))
             },
         }
-    }
-
-    fn mxu_tiled_block_rows(bits: u32) -> u32 {
-        if bits == 2 {
-            MXU_TILED_W2_BLOCK_ROWS
-        } else {
-            MXU_TILED_BLOCK_ROWS
-        }
-    }
-
-    pub fn mxu_tiled_words_per_thread(
-        k: u32,
-        bits: u32,
-    ) -> Option<u32> {
-        let words_per_thread =
-            (Self::mxu_tiled_block_rows(bits) * (k * bits / u32::BITS)).div_ceil(MXU_TILED_PREPARE_THREADS);
-        [32, 72, 160].into_iter().find(|&variant| variant >= words_per_thread)
-    }
-
-    pub fn prepare_gemm_b_layout(
-        weights: &mut <Metal as Backend>::GlobalGpuBuffer,
-        rows: u32,
-        k: u32,
-        bits: u32,
-        context: &MetalContext,
-    ) -> Result<(), MetalError> {
-        let row_words = k * bits / u32::BITS;
-        let variant = Self::mxu_tiled_words_per_thread(k, bits).expect("int8 eligibility admits only tileable weights");
-        let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
-        GemmPrepareBLayoutMetalKernel::new(context, bits, variant)?.encode(
-            weights,
-            row_words,
-            rows / Self::mxu_tiled_block_rows(bits),
-            &mut command_buffer,
-        );
-        block_on(command_buffer.end_encoding().submit().wait_until_completed())?;
-        Ok(())
     }
 
     fn get_or_create_split_k_reduce(

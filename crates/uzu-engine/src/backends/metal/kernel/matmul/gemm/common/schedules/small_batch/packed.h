@@ -4,6 +4,7 @@
 
 #include "../../../../../generated/gemm.h"
 #include "../../../../common/fragment.h"
+#include "../../../../layout/interleaved_rows_layout.h"
 #include "../../../../common/quant_unpack.h"
 #include "../../../../common/simdgroup_fragment_ops.h"
 #include "../../../../common/packed_half_layout.h"
@@ -55,6 +56,7 @@ struct PackedSchedule {
     const uint lane_row = uint(tile_context.lane_position.y);
     const uint weight_sign_mask = right.sign_mask();
 
+    const bool interleaved_rows = right.gemm_b_layout == GemmBLayout::InterleavedRows;
     const bool row_scaled = right.hoist_row_metadata;
     typename Core::AccumFragment accumulator;
     accumulator.clear();
@@ -65,6 +67,7 @@ struct PackedSchedule {
     for (uint k_block = tile_context.k_block_begin + tile_context.simdgroup_k_slice; k_block < k_block_end;
          k_block += Core::SIMDGROUPS_PER_K) {
       const uint first_weight_group = k_block * GROUPS_PER_K_BLOCK;
+      METAL_PRAGMA_UNROLL
       for (ushort group_in_block = 0; group_in_block < GROUPS_PER_K_BLOCK; ++group_in_block) {
         const uint weight_group_index = first_weight_group + group_in_block;
         const device uint* packed_group = packed_activations + weight_group_index * WORDS_PER_GROUP;
@@ -88,6 +91,19 @@ struct PackedSchedule {
         float weight_scales[Core::TILES_M];
         float weight_offsets[Core::TILES_M]; // zero point, or bias
         uint packed_weight_words[Core::TILES_M * WORDS_PER_LANE];
+        uint4 word_runs[WORDS_PER_LANE];
+        if (interleaved_rows) {
+          METAL_PRAGMA_UNROLL
+          for (ushort word_index = 0; word_index < WORDS_PER_LANE; ++word_index) {
+            word_runs[word_index] = InterleavedRowsLayout::lane_run(
+                right.codes,
+                tile_context.simdgroup_column_base + lane_row,
+                weight_group_index * (WEIGHT_GROUP_SIZE / W4_CODES_PER_WORD) + fragment_column_pair * WORDS_PER_LANE +
+                    word_index,
+                params->K / W4_CODES_PER_WORD
+            );
+          }
+        }
         METAL_PRAGMA_UNROLL
         for (ushort tile_m = 0; tile_m < Core::TILES_M; ++tile_m) {
           weight_rows[tile_m] =
@@ -98,7 +114,8 @@ struct PackedSchedule {
           );
           METAL_PRAGMA_UNROLL
           for (ushort word_index = 0; word_index < WORDS_PER_LANE; ++word_index) {
-            packed_weight_words[tile_m * WORDS_PER_LANE + word_index] = weight_source[word_index] ^ weight_sign_mask;
+            const uint word = interleaved_rows ? word_runs[word_index][tile_m] : weight_source[word_index];
+            packed_weight_words[tile_m * WORDS_PER_LANE + word_index] = word ^ weight_sign_mask;
           }
           if (!row_scaled) {
             weight_scales[tile_m] = float(right.scale(weight_rows[tile_m], weight_group_index, params));

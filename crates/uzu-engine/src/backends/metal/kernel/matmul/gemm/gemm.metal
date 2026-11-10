@@ -13,7 +13,8 @@ using namespace uzu::gemm;
 
 #define A_IS_INT8 (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric)
 #define GEMM_SMALL_BATCH                                                                                               \
-  (GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4 || GEMM_TILING == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
+  (GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4 || GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x1x4 || \
+   GEMM_TILING == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
 #define GEMM_SMALL_BATCH_W8 (GEMM_SMALL_BATCH && A_PROLOGUE != GemmAPrologueKind::PackedHalf)
 #define NEEDS_ASYMMETRIC_WEIGHT_CORRECTION (A_IS_INT8 && B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant)
 #define GEMM_MXU_QUANT (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision && !A_IS_INT8)
@@ -64,7 +65,8 @@ VARIANTS(
     GemmTiling::Tile64x64x256_Simdgroups2x2,
     GemmTiling::Tile128x128x256_Simdgroups4x4,
     GemmTiling::Tile8x32x64_Simdgroups1x2x4,
-    GemmTiling::Tile8x32x128_Simdgroups1x2x4)
+    GemmTiling::Tile8x32x128_Simdgroups1x2x4,
+    GemmTiling::Tile8x32x64_Simdgroups1x1x4)
 VARIANTS(TRANSPOSE_B, false, true)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(
@@ -117,11 +119,14 @@ CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile16x128x256_Simdgroups1x4 ||
     (TRANSPOSE_B && B_PROLOGUE == GemmBPrologueKind::FullPrecision))
 CONSTRAINT(A_PROLOGUE == GemmAPrologueKind::FullPrecision || A_PROLOGUE == GemmAPrologueKind::PackedHalf || USE_MXU)
-CONSTRAINT(GEMM_TILING != GemmTiling::Tile8x32x64_Simdgroups1x2x4 || A_PROLOGUE == GemmAPrologueKind::PackedHalf)
+CONSTRAINT(
+    (GEMM_TILING != GemmTiling::Tile8x32x64_Simdgroups1x2x4 && GEMM_TILING != GemmTiling::Tile8x32x64_Simdgroups1x1x4) ||
+    A_PROLOGUE == GemmAPrologueKind::PackedHalf)
 CONSTRAINT(
     A_PROLOGUE != GemmAPrologueKind::PackedHalf ||
     (GEMM_SMALL_BATCH && !USE_MXU && TRANSPOSE_B &&
-     ((GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4 && BITS == 4) ||
+     (((GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x2x4 || GEMM_TILING == GemmTiling::Tile8x32x64_Simdgroups1x1x4) &&
+       BITS == 4) ||
       (GEMM_TILING == GemmTiling::Tile8x32x128_Simdgroups1x2x4 && BITS == 2))))
 CONSTRAINT(
     !GEMM_SMALL_BATCH_W8 ||

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../../gemm/common/mxu_tiled_layout.h"
+#include "../../layout/interleaved_rows_layout.h"
+#include "../../layout/mxu_tiled_layout.h"
 #include "arguments.h"
 #include "quant_chunk.h"
 #include "quant_metadata.h"
@@ -118,6 +119,23 @@ private:
     });
   }
 
+  METAL_FUNC void load_interleaved_rows_weights(
+      const device uint8_t* weights_base,
+      const thread uint (&weight_row_indices)[Tile::ROWS_PER_LANE],
+      uint row_words,
+      uint first_word
+  ) thread {
+    const device uint* words = reinterpret_cast<const device uint*>(weights_base);
+    Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
+      constexpr uint R = decltype(output_index)::value;
+      METAL_PRAGMA_UNROLL
+      for (uint word = 0; word < SLICE_BYTES / sizeof(uint); ++word) {
+        reinterpret_cast<thread uint*>(weights[R])[word] =
+            words[InterleavedRowsLayout::word_index(weight_row_indices[R], first_word + word, row_words)];
+      }
+    });
+  }
+
 public:
   static METAL_FUNC uint row_stride(const thread GemvParams& params) {
     return params.in_vec_size * BITS / QuantChunk<BITS>::BITS_PER_BYTE;
@@ -140,6 +158,17 @@ public:
         load_mxu_tiled_weights(weights_base, weight_row_indices, row_stride, offset_bytes, params.gathered);
       }
       return;
+    }
+    if constexpr (BITS == 4) {
+      if (params.gemm_b_layout == GemmBLayout::InterleavedRows) {
+        load_interleaved_rows_weights(
+            weights_base,
+            weight_row_indices,
+            params.in_vec_size / W4_CODES_PER_WORD,
+            k / W4_CODES_PER_WORD
+        );
+        return;
+      }
     }
     Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
       constexpr uint R = decltype(output_index)::value;

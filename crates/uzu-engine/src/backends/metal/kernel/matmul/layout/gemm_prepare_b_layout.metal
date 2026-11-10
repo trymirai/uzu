@@ -1,6 +1,6 @@
 #include "../../common/dsl.h"
 #include "../../common/defines.h"
-#include "common/mxu_tiled_layout.h"
+#include "mxu_tiled_layout.h"
 
 using namespace metal;
 

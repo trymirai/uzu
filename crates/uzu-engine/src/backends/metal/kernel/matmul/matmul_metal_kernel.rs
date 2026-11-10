@@ -1,7 +1,7 @@
 use crate::{
     backends::{
         common::{
-            Backend, BufferMut, BufferRef, CommandBufferEncoding, CpuBuffer,
+            Backend, BufferMut, BufferRef, CommandBufferEncoding,
             kernel::{
                 ActivationQuantization,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
@@ -20,6 +20,7 @@ use crate::{
                 GemmKernel, MatmulMetalError,
                 gemm::{self, GemmPlan, GemmProblem, small_batch_format, small_m_weights},
                 gemv::{GemvKernel, GemvSpecialization, GemvTile},
+                layout,
                 matmul_dispatch::MatmulDispatch,
                 matmul_output_work::MatmulOutputWork,
             },
@@ -42,6 +43,10 @@ pub fn supports_integer_right_operand(shape: &MatmulShape) -> bool {
 }
 
 impl MatmulMetalKernel {
+    pub fn is_all_bf16(&self) -> bool {
+        all_bf16(self.weights_data_type, self.input_data_type, self.output_data_type)
+    }
+
     fn prefer_gemm_over_gemv(
         shape: MatmulShape,
         plan: GemmPlan,
@@ -204,7 +209,7 @@ impl MatmulKernel for MatmulMetalKernel {
             || !shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
             || !shape.k.is_multiple_of(weight_group_size)
             || !shape.n.is_multiple_of(32)
-            || shape.b_bits.and_then(|bits| GemmKernel::mxu_tiled_words_per_thread(shape.k, bits)).is_none()
+            || shape.b_bits.and_then(|bits| layout::mxu_tiled_words_per_thread(shape.k, bits)).is_none()
         {
             return None;
         }
@@ -267,32 +272,7 @@ impl MatmulKernel for MatmulMetalKernel {
         weights: &mut <Metal as Backend>::GlobalGpuBuffer,
         context: &MetalContext,
     ) -> Result<(GemmBLayout, bool), MetalError> {
-        let prepared_shape = MatmulShape {
-            signed_codes: a8_shape.signed_codes || a8_shape.b_bits == Some(8),
-            ..*a8_shape
-        };
-        if self.select_activation_quantization(&prepared_shape, context).is_none() {
-            return Ok((GemmBLayout::RowMajor, a8_shape.signed_codes));
-        }
-        if !a8_shape.signed_codes && prepared_shape.signed_codes {
-            let bytes = unsafe {
-                std::slice::from_raw_parts_mut(
-                    weights.cpu_ptr().as_ptr().cast::<u8>(),
-                    crate::backends::common::Buffer::size(weights),
-                )
-            };
-            let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(bytes);
-            words.iter_mut().for_each(|word| *word ^= 0x8080_8080_8080_8080);
-            prefix.iter_mut().chain(suffix.iter_mut()).for_each(|code| *code ^= 0x80);
-        }
-        GemmKernel::prepare_gemm_b_layout(
-            weights,
-            a8_shape.n,
-            a8_shape.k,
-            a8_shape.b_bits.expect("quantized weights"),
-            context,
-        )?;
-        Ok((GemmBLayout::MxuTiled, prepared_shape.signed_codes))
+        layout::prepare(self, a8_shape, weights, context)
     }
 
     fn encode(

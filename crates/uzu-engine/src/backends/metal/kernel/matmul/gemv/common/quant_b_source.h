@@ -42,11 +42,12 @@ struct QuantBSource {
 
     const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(ops.b);
     const uint batch_remaining = params.batch_size - tile.input_row;
-    uint group = group_slot;
+    const uint slice_groups = groups / Tile::K_SPLIT;
+    const uint group_end = (tile.k_slice + 1) * slice_groups;
 
     Slice current;
-    QuantPosition position = {group, 0};
-    while (position.valid(groups)) {
+    QuantPosition position = {group_slot + tile.k_slice * slice_groups, 0};
+    while (position.valid(group_end)) {
       Metadata metadata;
       metadata.load(position.group, weight_row_indices, ops, params);
       for (position.slice = 0; position.slice < Slice::SLICES_PER_LANE; position.slice++) {

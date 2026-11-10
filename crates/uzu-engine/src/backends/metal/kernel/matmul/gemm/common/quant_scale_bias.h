@@ -5,6 +5,7 @@
 
 #include "../../common/defines.h"
 #include "../../common/quant_pack.h"
+#include "../../layout/interleaved_rows_layout.h"
 #include "../../common/quant_unpack.h"
 
 using namespace metal;
@@ -54,12 +55,18 @@ struct QuantizedBlockLoaderScaleBias {
   const device T* scales;
   const device T* biases;
   const bool signed_codes;
+  const bool interleaved_rows;
+
+  static METAL_FUNC int source_offset(bool interleaved_rows, int byte) {
+    return interleaved_rows ? InterleavedRowsLayout::byte_offset(byte) : byte;
+  }
 
   QuantizedBlockLoaderScaleBias(
       const device uint8_t* src_,
       const device T* scales_,
       const device T* biases_,
       const bool signed_codes_,
+      const bool interleaved_rows_,
       const int src_leading_dim_,
       const int params_group_stride_,
       const int params_output_stride_,
@@ -67,15 +74,22 @@ struct QuantizedBlockLoaderScaleBias {
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
   )
-      : src_leading_dim(src_leading_dim_), tile_stride(THREADGROUP_TILE_COLS_PACKED * BYTES_PER_PACK),
+      : src_leading_dim(src_leading_dim_),
+        tile_stride(source_offset(interleaved_rows_, THREADGROUP_TILE_COLS_PACKED * BYTES_PER_PACK)),
         group_step_counter(0), group_stride(params_group_stride_), thread_index(simd_group_id * 32 + simd_lane_id),
         tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
         tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
         dst(reinterpret_cast<threadgroup StageT*>(dst_) + tile_row_index * DESTINATION_LEADING_DIMENSION +
             tile_col_index * PACK_FACTOR),
-        src(src_ + tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR + tile_col_index * BYTES_PER_PACK),
+        src(src_ +
+            (interleaved_rows_
+                 ? sizeof(uint) *
+                       InterleavedRowsLayout::word_index(tile_row_index, 0, src_leading_dim_ / W4_CODES_PER_WORD)
+                 : tile_row_index * src_leading_dim_ * BYTES_PER_PACK / PACK_FACTOR) +
+            source_offset(interleaved_rows_, tile_col_index * BYTES_PER_PACK)),
         scales(scales_ + tile_row_index * params_output_stride_),
-        biases(biases_ + tile_row_index * params_output_stride_), signed_codes(signed_codes_) {}
+        biases(biases_ + tile_row_index * params_output_stride_), signed_codes(signed_codes_),
+        interleaved_rows(interleaved_rows_) {}
 
   void load_unsafe() const {
     if constexpr (TILE_HAS_IDLE_THREADS) {
@@ -89,7 +103,8 @@ struct QuantizedBlockLoaderScaleBias {
         float(*scales),
         float(*biases),
         dst,
-        signed_codes
+        signed_codes,
+        interleaved_rows ? InterleavedRowsLayout::STRIP_ROWS : 1
     );
   }
 
@@ -115,7 +130,7 @@ struct QuantizedBlockLoaderScaleBias {
       const int pack_index = tile_col_index + i;
       if (pack_index < valid_packs) {
         dequantize<StageT, ComputeT, PACK_FACTOR, BITS>(
-            src + i * BYTES_PER_PACK,
+            src + source_offset(interleaved_rows, i * BYTES_PER_PACK),
             scale,
             bias,
             dst + i * PACK_FACTOR,

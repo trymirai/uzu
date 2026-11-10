@@ -45,3 +45,17 @@ pub fn select(
     }
     gathered_tile(bits, group, m, n)
 }
+
+pub fn interleaved_rows_tile(
+    group: u32,
+    k: u32,
+) -> Option<GemvTile> {
+    const VALUES_PER_LANE: u32 = 16;
+    let strip_tile = GemvTile::quantized(8, 32, 1, 4, group / VALUES_PER_LANE);
+    let tile = GemvTile {
+        k_split: 8,
+        ..strip_tile
+    };
+    let k_per_step = tile.k_split * tile.reduction_lanes * VALUES_PER_LANE;
+    (matches!(group, 32 | 64) && k.is_multiple_of(k_per_step)).then_some(tile)
+}
