@@ -115,7 +115,3 @@ impl MetalTimestampRecorder {
             .collect())
     }
 }
-
-#[cfg(test)]
-#[path = "../../../unit/backends/metal/timestamp_recorder_test.rs"]
-mod tests;

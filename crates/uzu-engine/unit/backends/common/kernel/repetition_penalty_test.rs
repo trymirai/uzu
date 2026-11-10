@@ -146,7 +146,7 @@ fn check_sampling<B: Backend, T: DataTypeRepr + Float + Debug>() {
     };
     for flat in [false, true] {
         let nodes = nodes(flat);
-        let topology = BatchTopology::new(&nodes, flat);
+        let topology = BatchTopology::new(nodes.into_boxed_slice(), flat);
         for range in [0..9, 3..5, 7..9] {
             let mut logits = vec![T::from(-16.0).unwrap(); range.len() * VOCAB_SIZE];
             for row in logits.as_chunks_mut::<VOCAB_SIZE>().0 {
