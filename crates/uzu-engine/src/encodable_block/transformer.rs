@@ -4,7 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
@@ -159,7 +159,7 @@ impl<B: Backend> Transformer<B> {
                     input_data_type,
                     output_data_type,
                     hadamard_factors,
-                    ShortcutMode::Add,
+                    ShortcutMode::None,
                     PostLayerScalar::None,
                     output_norm_config,
                     &parameter_tree.subtree("output_norm"),
@@ -180,17 +180,14 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
-    fn capture_residual(
+    fn capture_hidden_feature(
         &self,
-        shortcut: impl BufferRef<Backend = B>,
-        hidden: impl BufferRef<Backend = B>,
-        batch_size: u32,
+        stream: impl BufferRef<Backend = B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
-        let mut output = command_buffer.allocate_scratch(hidden.size())?;
-        let elements = batch_size * self.model_dim;
-        self.residual_head.encode_update(shortcut, hidden, &mut output, elements, command_buffer)?;
-        Ok(output)
+        let mut copy = command_buffer.allocate_scratch(stream.size())?;
+        command_buffer.encode_copy(stream, &mut copy);
+        Ok(self.residual_head.readout(copy))
     }
 
     pub fn model_dim(&self) -> u32 {
@@ -260,15 +257,13 @@ impl<B: Backend> Transformer<B> {
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
-        // TODO: change shortcut for residual
-        let mut hidden = self.residual_head.expand(input);
+        let mut stream = self.residual_head.expand(input);
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
         } else {
             self.layers.len()
         };
 
-        let mut shortcut = command_buffer.allocate_scratch(hidden.size()).map_err(TransformerEncodeError::Backend)?;
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
@@ -301,21 +296,14 @@ impl<B: Backend> Transformer<B> {
                 None
             };
 
-            hidden = layer.encode(
-                hidden,
-                &mut shortcut,
-                per_layer_inputs,
-                precalculated_rope,
-                batch_dim,
-                layer_state,
-                command_buffer,
-            )?;
+            stream =
+                layer.encode(stream, per_layer_inputs, precalculated_rope, batch_dim, layer_state, command_buffer)?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
                         let feature = self
-                            .capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)
+                            .capture_hidden_feature(&stream, command_buffer)
                             .map_err(TransformerEncodeError::Backend)?;
                         hidden_features[feature_index] = Some(feature);
                     }
@@ -345,21 +333,18 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        // TODO: route the final combine through `residual_head.readout` (stream + last update)
-        // instead of the ShortcutMode::Add fused into the output norm.
+        let hidden = self.residual_head.readout(stream);
         let output = match &self.output_norm {
             Some(output_norm) => output_norm
                 .encode(
                     &hidden,
                     output_range.start,
                     output_range.end - output_range.start,
-                    Some(&mut shortcut),
+                    None::<&mut B::ScratchBuffer>,
                     command_buffer,
                 )
                 .map_err(TransformerEncodeError::Backend)?,
-            None => self
-                .capture_residual(&shortcut, &hidden, batch_dim.size(), command_buffer)
-                .map_err(TransformerEncodeError::Backend)?,
+            None => hidden,
         };
 
         Ok(TransformerEncodeOutput {

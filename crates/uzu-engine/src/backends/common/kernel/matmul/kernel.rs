@@ -16,7 +16,7 @@ use crate::{
 
 pub trait MatmulKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<MatmulKernel = Self>>;
-    type Error: Error + 'static;
+    type Error: Error + Send + 'static;
     type WeightsLayout: Copy + Default + PartialEq + Send + Sync;
 
     fn new(

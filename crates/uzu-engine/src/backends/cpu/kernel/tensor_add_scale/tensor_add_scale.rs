@@ -12,6 +12,7 @@ pub fn tensor_add_scale<T: DataTypeRepr + Float>(
     output: *mut T,
     num_cols: u32,
     length: u32,
+    // XXX: Is this always 1.0?
     scale: f32,
     #[allow(unused)]
     #[specialize]

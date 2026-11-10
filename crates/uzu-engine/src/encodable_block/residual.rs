@@ -1,7 +1,11 @@
+use std::marker::PhantomData;
+
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::TensorAddScaleKernel},
+    backends::common::{
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels, kernel::TensorAddScaleKernel,
+    },
     config::residual::AnyResidualConfig,
     data_type::DataType,
     safetensors::ParameterTree,
@@ -11,8 +15,6 @@ use crate::{
 pub enum ResidualNewError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("Gated residual connections are not supported yet")]
-    GatedUnsupported,
 }
 
 pub enum ResidualConnection<B: Backend> {
@@ -62,7 +64,7 @@ impl<B: Backend> ResidualConnection<B> {
                     AdditiveResidualConnection::new(context, data_type).map_err(ResidualNewError::Backend)?,
                 ))
             },
-            AnyResidualConfig::GatedResidualConfig(_) => Err(ResidualNewError::GatedUnsupported),
+            AnyResidualConfig::GatedResidualConfig(_) => todo!("Implement gated residual support."),
         }
     }
 
@@ -70,18 +72,23 @@ impl<B: Backend> ResidualConnection<B> {
         &self,
         stream: impl BufferRef<Backend = B>,
         update: impl BufferRef<Backend = B>,
-        output: &mut B::ScratchBuffer,
         elements: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        // XXX: Correct scratch size?
+        let mut output = command_buffer.allocate_scratch(stream.size())?;
         match self {
-            Self::Additive(connection) => connection.encode_update(stream, update, output, elements, command_buffer),
-        }
+            Self::Additive(connection) => {
+                connection.encode_update(stream, update, &mut output, elements, command_buffer)?
+            },
+        };
+
+        Ok(output)
     }
 }
 
 pub struct ResidualHead<B: Backend> {
-    connection: ResidualConnection<B>,
+    backend: PhantomData<B>,
 }
 
 impl<B: Backend> ResidualHead<B> {
@@ -91,9 +98,14 @@ impl<B: Backend> ResidualHead<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, ResidualNewError<B>> {
-        Ok(Self {
-            connection: ResidualConnection::new(config, data_type, parameter_tree, context)?,
-        })
+        // TODO: Load weights for gated residuals.
+        let _ = (data_type, parameter_tree, context);
+        match config {
+            AnyResidualConfig::AdditiveResidualConfig(_) => Ok(Self {
+                backend: PhantomData,
+            }),
+            AnyResidualConfig::GatedResidualConfig(_) => todo!("Implement gated residual support."),
+        }
     }
 
     // TODO: gated repeats the embeddings `stream_count` times
@@ -104,14 +116,12 @@ impl<B: Backend> ResidualHead<B> {
         embeddings
     }
 
-    pub fn encode_update(
+    // TODO: gated mixes the `stream_count` streams down to `model_dim`
+    /// Returns the `model_dim`-wide hidden state carried by `stream`.
+    pub fn readout(
         &self,
-        stream: impl BufferRef<Backend = B>,
-        update: impl BufferRef<Backend = B>,
-        output: &mut B::ScratchBuffer,
-        elements: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), B::Error> {
-        self.connection.encode_update(stream, update, output, elements, command_buffer)
+        stream: B::ScratchBuffer,
+    ) -> B::ScratchBuffer {
+        stream
     }
 }

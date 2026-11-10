@@ -23,6 +23,7 @@ pub enum PostLayerScalar {
     ScaleOutput(f32),
 }
 
+// This was used a lot previously, but is now only used in weaver and confidence heads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShortcutMode {
     None,
