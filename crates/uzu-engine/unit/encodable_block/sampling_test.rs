@@ -8,10 +8,7 @@ use rand_distr::Normal;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-        gpu_types::trie::TrieNode,
-    },
+    backends::common::{Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context},
     data_type::{DataType, DataTypeRepr},
     encodable_block::{
         batch_topology::BatchTopology,
@@ -51,14 +48,7 @@ fn do_sampling_backend<B: Backend, T: DataTypeRepr + Float>(
     let seeds_buffer = seeds.map(|seeds| command_buffer.allocate_constant_from_slice(seeds).unwrap());
     let bitmask_buffer = bitmask.map(|bitmask| command_buffer.allocate_constant_from_slice(bitmask).unwrap());
 
-    let nodes = (0..batch_size)
-        .map(|index| TrieNode {
-            trie_start: index,
-            trie_end: batch_size - 1,
-            height: index,
-        })
-        .collect::<Box<[_]>>();
-    let batch_topology = BatchTopology::new(&nodes, true);
+    let batch_topology = BatchTopology::flat(batch_size, true);
 
     let sampled_buffer = sampling
         .encode(

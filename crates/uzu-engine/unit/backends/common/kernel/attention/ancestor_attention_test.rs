@@ -1,11 +1,13 @@
-#![cfg(backend = "metal")]
-
+#[cfg(backend = "metal")]
+use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
 
+#[cfg(backend = "metal")]
+use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{
@@ -15,14 +17,13 @@ use crate::{
             kernel::{AncestorAttentionKernel, AttentionPrepareKernel},
         },
         cpu::Cpu,
-        metal::Metal,
     },
     data_type::DataType,
     encodable_block::mixer::attention::KVCache,
     tests::{
         assert::assert_eq_float,
         attention::kv_layout,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context},
+        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
     },
 };
 
@@ -210,17 +211,19 @@ impl<B: Backend> Runner<B> {
 
 #[uzu_test]
 fn ancestor_attention_matches_cpu() {
-    let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
-    cpu.encode(1);
-    let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+    for_each_non_cpu_backend!(|B| {
+        let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
+        cpu.encode(1);
+        let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
 
-    let mut metal = Runner::<Metal>::new(4, 5, 3, 16);
-    metal.encode(1);
-    let actual = buffer_to_vec::<Metal, bf16>(&metal.context, &metal.output);
-
-    assert_eq_float(&expected, &actual, 0.02, "AncestorAttention output");
+        let mut runner = Runner::<B>::new(4, 5, 3, 16);
+        runner.encode(1);
+        let actual = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);
+        assert_eq_float(&expected, &actual, 0.02, "AncestorAttention output");
+    });
 }
 
+#[cfg(backend = "metal")]
 #[uzu_test]
 #[ignore]
 fn benchmark_ancestor_attention() {
@@ -229,8 +232,8 @@ fn benchmark_ancestor_attention() {
 
     let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
     let mut run = || runner.encode(BATCH).div_f64(BATCH as f64);
-    let warmup = std::time::Instant::now();
-    while warmup.elapsed() < std::time::Duration::from_millis(500) {
+    let warmup = Instant::now();
+    while warmup.elapsed() < Duration::from_millis(500) {
         run();
     }
     let mut samples = (0..SAMPLES).map(|_| run()).collect::<Vec<_>>();
