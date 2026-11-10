@@ -10,9 +10,8 @@ const cli = vi.hoisted(() => ({
 }));
 vi.mock("@/platform/platform-singleton", () => ({ getPlatform: () => ({ system: cli }) }));
 
-vi.mock("@/platform/platform-info", () => ({
-  platformInfo: { isTauri: true, features: { logExport: true, cliInstall: true } },
-}));
+const features = vi.hoisted(() => ({ logExport: true, cliInstall: true, analytics: true }));
+vi.mock("@/platform/platform-info", () => ({ platformInfo: { isTauri: true, features } }));
 
 const settings = {
   analyticsEnabled: false,
@@ -43,6 +42,8 @@ vi.mock("@/stores/use-global-instructions-store", () => ({
 const appDefaults = useAppStore.getState();
 
 beforeEach(() => {
+  features.logExport = true;
+  features.analytics = true;
   vi.clearAllMocks();
   cli.getCliStatus.mockResolvedValue("installed");
   cli.installCli.mockResolvedValue("installed");
@@ -165,6 +166,16 @@ it("makes exports and data cleanup available in General settings", async () => {
   expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Clear data" }));
   expect(screen.getByRole("dialog").textContent).toBe("Clear data confirmation");
+});
+
+it("hides analytics and logs when the platform cannot implement them", () => {
+  features.logExport = false;
+  features.analytics = false;
+  render(<GeneralTab />);
+  expect(screen.queryByRole("switch", { name: "Share usage analytics" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Export logs" })).toBeNull();
+  expect(screen.getByText("Delete chats or models")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Export all your chats" })).toBeTruthy();
 });
 
 it("updates and persists chat width from General settings", () => {

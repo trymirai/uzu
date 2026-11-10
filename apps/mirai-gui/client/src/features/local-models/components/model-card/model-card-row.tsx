@@ -24,6 +24,7 @@ export function ModelCardRow({
   onRetry,
   onOpen,
   compact = false,
+  error,
 }: ModelCardProps) {
   const { status, isDownloading, isDownloaded, isPaused, isError, progress } = deriveModelCardState(state);
 
@@ -137,6 +138,11 @@ export function ModelCardRow({
         </div>
       )}
 
+      {isError && error && (
+        <p className="mt-2 px-4 text-xs text-text-muted" role="alert">
+          {error}
+        </p>
+      )}
       {isDownloading && (
         <div className="mt-2.5 pl-4 pr-3">
           <div className="h-0.5 bg-border-default rounded overflow-clip">

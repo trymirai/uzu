@@ -87,7 +87,6 @@ export function ChatPage() {
 
   useChatSwitchEffect({
     chatId,
-    isNewChat: !!search.isNew,
     replayActiveBuffer: applyActiveBufferToMessage,
     resetLocalUi,
   });

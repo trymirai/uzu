@@ -88,7 +88,6 @@ describe("downloadStatePatch", () => {
     expect(downloadStatePatch(state({}), { kind: "deleted", identifier, seq: 0 })).toEqual({
       phase: phases.notDownloaded,
       downloadedKbytes: 0,
-      totalKbytes: 0,
       error: "",
     });
   });

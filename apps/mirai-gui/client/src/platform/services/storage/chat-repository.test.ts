@@ -9,6 +9,10 @@ vi.mock("./chat-files", () => ({
   listChatFiles: files.list,
   deleteChatFile: files.delete,
 }));
+// An empty browser store: the browser provider has no chat with these IDs.
+vi.mock("../shared/browser-db", () => ({
+  browserFiles: { get: async () => undefined, put: vi.fn(), delete: vi.fn(), keys: async () => [] },
+}));
 
 import { chatRepository } from "./chat-repository";
 import { webStorage } from "./web";
@@ -128,7 +132,7 @@ describe("editUserMessage", () => {
     expect((await chatRepository.loadChat("chat"))?.messages).toHaveLength(3);
   });
 
-  it("rejects edits in the browser provider, which has no stored chats", async () => {
+  it("rejects edits for a missing browser chat", async () => {
     await expect(webStorage.editUserMessage("chat", "u2", "Edit")).rejects.toBeInstanceOf(ChatNotFoundError);
   });
 });
@@ -164,7 +168,7 @@ describe("updateChatTitle", () => {
     expect(files.save).toHaveBeenCalledOnce();
   });
 
-  it("reports missing chats and the browser provider as unapplied updates", async () => {
+  it("reports missing desktop and browser chats as unapplied updates", async () => {
     expect(await chatRepository.updateChatTitle("missing-chat", generated)).toBe(false);
     expect(await webStorage.updateChatTitle("chat", generated)).toBe(false);
     expect(files.save).not.toHaveBeenCalled();

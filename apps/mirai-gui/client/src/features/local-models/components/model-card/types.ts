@@ -23,4 +23,5 @@ export type ModelCardProps = {
   onRetry?: () => void;
   onOpen?: () => void;
   compact?: boolean;
+  error?: string;
 };

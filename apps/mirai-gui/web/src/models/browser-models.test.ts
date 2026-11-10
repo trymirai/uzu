@@ -96,6 +96,17 @@ function fixture() {
     downloader: vi.fn(() => downloader),
     modelPath: vi.fn(async () => (phase === "Downloaded" ? "/mirai/models/vendor-family-small" : null)),
     refreshModels: vi.fn(async () => [model]),
+    chatModelInfo: vi.fn(async () => ({
+      capabilities: {
+        supportsReasoning: true,
+        supportsDisableReasoning: true,
+        reasoningEfforts: ["Disabled", "Default"],
+        supportsTools: true,
+        free,
+      },
+      defaultReasoningEffort: "Default",
+      free,
+    })),
   };
   const runtime = {
     engine,
@@ -283,4 +294,21 @@ it("restores a downloaded model without announcing a new download", async () => 
   await manager.getModels();
   expect(events.some((event) => event.kind === "state" && event.phase === "Downloaded")).toBe(true);
   expect(events.some((event) => event.kind === "done")).toBe(false);
+});
+
+it("adds reasoning and tool support from Uzu's chat model info once it is read", async () => {
+  const source = fixture();
+  // Capabilities are cached per catalog identifier for the page's lifetime.
+  source.model.identifier = "vendor:family:capabilities";
+  const manager = createModelManager(async () => source.runtime);
+  const changed = vi.fn();
+  manager.onModelsChanged(changed);
+  await manager.getModels();
+  await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+  expect((await manager.getModels()).models[0]).toMatchObject({
+    reasoning: { kind: "toggle", defaultEffort: "default" },
+    supportsTools: true,
+  });
+  await manager.getModels();
+  expect(source.engine.chatModelInfo).toHaveBeenCalledOnce();
 });

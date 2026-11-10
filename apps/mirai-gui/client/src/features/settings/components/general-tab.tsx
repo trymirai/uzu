@@ -101,8 +101,12 @@ export default function GeneralTab() {
           </>
         )}
 
-        <SettingDivider />
-        <AnalyticsSetting enabled={analyticsEnabled} onChange={setAnalyticsEnabled} />
+        {platformInfo.features.analytics && (
+          <>
+            <SettingDivider />
+            <AnalyticsSetting enabled={analyticsEnabled} onChange={setAnalyticsEnabled} />
+          </>
+        )}
 
         <DataSettings />
       </div>

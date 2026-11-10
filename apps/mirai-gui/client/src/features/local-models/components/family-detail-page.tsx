@@ -61,6 +61,7 @@ export function FamilyDetailPage({
         size={formatModelSize(model.size)}
         parameters={formatQuantization(model)}
         state={cardState}
+        error={state?.error}
         onDownload={() => void onDownload(model)}
         onPause={() => (isPaused ? onResume(model) : onPause(model))}
         onCancel={() => void onCancel(model)}

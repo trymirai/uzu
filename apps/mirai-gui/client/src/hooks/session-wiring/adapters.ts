@@ -22,6 +22,7 @@ const applyChatSessionState = (payload: SessionStatePayload, session: RuntimeSes
 
   const currentResident = useRuntimeSessionStore.getState().residentSession;
   const currentEjecting = useRuntimeSessionStore.getState().ejectingSession;
+  const currentLoading = useRuntimeSessionStore.getState().loadingSession;
   const isCurrentResidentTarget = currentResident?.repoId === target.repoId;
   const isCurrentEjectingTarget = currentEjecting?.repoId === target.repoId;
 
@@ -39,6 +40,11 @@ const applyChatSessionState = (payload: SessionStatePayload, session: RuntimeSes
 
   if (payload.active === false && isCurrentResidentTarget) {
     useRuntimeSessionStore.getState().setResidentSession(null);
+  }
+
+  if (payload.active === false && currentLoading?.repoId === target.repoId) {
+    useChatSessionStore.getState().endModelLoading();
+    useRuntimeSessionStore.getState().endLoadingSession();
   }
 
   if (payload.isEjecting === false && (isCurrentEjectingTarget || isCurrentResidentTarget)) {

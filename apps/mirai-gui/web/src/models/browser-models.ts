@@ -1,10 +1,11 @@
-import type { Model, EngineCallback } from "@uzu/wasm";
+import type { Engine, EngineCallback, Model } from "@uzu/wasm";
 import type { DownloadEvent, ModelsService } from "@/platform/services/models";
 import type { ModelDownloadState } from "@/types/model-manager";
 import { toDownloadProgressKbytes } from "@/utils/download-progress";
 import { errorText } from "@/utils/error-text";
 import { getUzuRuntime, type UzuRuntime } from "../uzu-runtime";
-import { describeModel, describeState, type CatalogModel } from "./model-adapter";
+import { chatSupport, knownChatSupport } from "./chat-support";
+import { describeModel, describeState, type CatalogModel, type ModelDescriptor } from "./model-adapter";
 
 type Snapshot = { models: CatalogModel[]; complete: boolean; refreshing: boolean };
 
@@ -19,6 +20,7 @@ export function createModelManager(loadRuntime: () => Promise<UzuRuntime> = getU
   const models = new Map<string, Model>();
   const active = new Map<string, Promise<void>>();
   const errors = new Map<string, string>();
+  const pendingSupport = new Set<string>();
   let runtime: Promise<UzuRuntime> | undefined;
   let callback: EngineCallback | undefined;
   let refreshing = false;
@@ -57,14 +59,16 @@ export function createModelManager(loadRuntime: () => Promise<UzuRuntime> = getU
     const initialSequence = sequence;
     const { api, engine } = await initialize();
     const nativeModels = await engine.modelsForChat;
-    const descriptors = nativeModels.flatMap((model) => {
-      try {
-        return model.isDownloadable ? [describeModel(model, api)] : [];
-      } finally {
-        if (model.isDownloadable && !models.has(model.identifier)) models.set(model.identifier, model);
-        else model.free();
-      }
-    });
+    const descriptors = nativeModels
+      .flatMap((model) => {
+        try {
+          return model.isDownloadable ? [describeModel(model, api)] : [];
+        } finally {
+          if (model.isDownloadable && !models.has(model.identifier)) models.set(model.identifier, model);
+          else model.free();
+        }
+      })
+      .map((model) => withChatSupport(engine, model));
     const states = await engine.downloadStates;
     const normalized = new Map(Object.entries(states).map(([id, state]) => [id, describeState(state, api)]));
     return {
@@ -125,6 +129,22 @@ export function createModelManager(loadRuntime: () => Promise<UzuRuntime> = getU
         return { ...model, state };
       }),
     };
+  }
+
+  // Capabilities come from the catalog's encoding. Reading them would add awaits
+  // to the snapshot, so they arrive in the background and refresh the catalog.
+  function withChatSupport(engine: Engine, model: ModelDescriptor): ModelDescriptor {
+    const known = knownChatSupport(model.identifier);
+    if (known) return { ...model, ...known };
+    const handle = models.get(model.identifier);
+    if (handle && !pendingSupport.has(model.identifier)) {
+      pendingSupport.add(model.identifier);
+      void chatSupport(engine, handle).finally(() => {
+        pendingSupport.delete(model.identifier);
+        notify();
+      });
+    }
+    return model;
   }
 
   // Each notification must read fresh native state, even if an older read is pending.

@@ -6,11 +6,16 @@ import { formatBytes, formatModelSize } from "@/utils/format";
 import { useCleanupStore } from "@/stores/use-cleanup-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
+import { platformInfo } from "@/platform/platform-info";
 
 type CleanupCategory = "dialogs" | "models" | "logs";
 type Step = "select" | "confirm" | "result";
 
-const ALL_CATEGORIES: CleanupCategory[] = ["dialogs", "models", "logs"];
+const ALL_CATEGORIES: CleanupCategory[] = [
+  "dialogs",
+  "models",
+  ...(platformInfo.features.logExport ? ["logs" as const] : []),
+];
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 

@@ -8,7 +8,7 @@ import type { PlatformClient } from "./platform/platform-client";
 import { initPlatform } from "./platform/platform-singleton";
 import { useAppStore } from "./stores/use-app-store";
 
-export function mountApp(platform: PlatformClient, createRouter: () => AppRouter) {
+export function mountApp(platform: PlatformClient, createRouter: () => AppRouter): AppRouter {
   const root = document.getElementById("root");
   if (!root) throw new Error("Root element is missing");
 
@@ -22,4 +22,5 @@ export function mountApp(platform: PlatformClient, createRouter: () => AppRouter
       <RouterProvider router={router} />
     </StrictMode>,
   );
+  return router;
 }

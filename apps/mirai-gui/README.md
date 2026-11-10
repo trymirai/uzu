@@ -36,17 +36,26 @@ pnpm web:wasm
 pnpm web:dev
 ```
 
-Open [http://127.0.0.1:3001](http://127.0.0.1:3001) in your browser. The app
-opens the welcome screen; **Get started** opens the live model catalog. Search
-families and open a family to see its models, sizes and quantization. Download
-models into OPFS through Uzu's Rust `download-manager`, with progress, pause and
-resume; partial downloads survive a page reload. Cancel a partial download or
-delete a downloaded model to free space. The catalog and download states come
-from the same Uzu engine; the UI does not download or persist model files itself.
-The catalog, model cards, download controls, application layout and route tree
-are reused from `client/`. `web/` connects `ModelsService` to WASM and overrides
-only the welcome entry point in the shared router.
-Inference is not yet connected. Vite reloads the app when files change.
+Open [http://localhost:3001](http://localhost:3001) in a browser with WebGPU
+(recent Chrome, Edge or Safari). The first visit opens the welcome screen;
+**Get started** opens the live model catalog, and later visits open it directly.
+Search families and open a family to see its models, sizes and quantization.
+Download models into OPFS through Uzu's Rust `download-manager`, with progress,
+pause and resume; partial downloads survive a page reload. Cancel a partial
+download or delete a downloaded model to free space.
+
+Chat with a downloaded model as on desktop: replies stream with reasoning,
+reasoning effort, sampling parameters, the date-and-time, chart and chat-naming
+tools, generated titles, stop, eject and auto-eject. Inference runs in the same
+Uzu engine on WebGPU; `web/src/chat` is the browser counterpart of
+`desktop/src/chat`. Conversations and global instructions are saved in this
+browser's IndexedDB as the same Markdown files the desktop app writes, and can be
+exported or cleared from Settings. Settings are kept in `localStorage`.
+
+The catalog, chat, history, settings, application layout and route tree are
+reused from `client/`. `web/` connects the chat, session and models services to
+WASM and overrides only the welcome entry point in the shared router. Vite
+reloads the app when files change.
 
 `pnpm web:wasm` runs the existing `cargo tools build wasm` command and uses the
 current branch's WebGPU backend and kernels. Rebuild after changing Rust code.
@@ -65,7 +74,10 @@ pnpm web:preview  # serve the production build on port 3001
 ```
 
 `pnpm web:typecheck` checks the web app's TypeScript types.
-`pnpm web:test` runs the browser catalog tests.
+`pnpm web:test` runs the browser catalog and chat tests.
+
+The production build reports page views to Google Analytics only when it is served
+from `https://uzu.run`; development and preview builds send nothing.
 
 ## Preview a fresh start
 
@@ -118,7 +130,9 @@ client/src/            React app, shared by desktop and web
   stores/              zustand stores
   styles/              theme.css: the palette, light values in @theme, dark ones in .dark
 desktop/src/           Rust backend: engine, chat, downloads, storage
-web/                   uzu.run entry point, Vite config and browser screens
+web/src/               uzu.run entry point and browser screens
+  chat/                chat sessions over Uzu WASM, the counterpart of desktop/src/chat
+  models/              model catalog and downloads over Uzu WASM
 ```
 
 Inter and Geist Mono are bundled under the SIL Open Font License; license texts

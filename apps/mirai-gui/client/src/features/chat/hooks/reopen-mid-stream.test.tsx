@@ -35,7 +35,7 @@ const chatData = (id: string, messages: ChatData["messages"]): ChatData => ({
 const usePageWiring = (chatId: string) => {
   const stream = useLlmStream(chatId);
   const replay = useActiveAssistantBuffer(chatId);
-  useChatSwitchEffect({ chatId, isNewChat: false, replayActiveBuffer: replay, resetLocalUi: () => {} });
+  useChatSwitchEffect({ chatId, replayActiveBuffer: replay, resetLocalUi: () => {} });
   return stream;
 };
 
@@ -61,6 +61,28 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it("rehydrates a saved conversation when its page is remounted", async () => {
+  const first = renderHook(() => usePageWiring(CHAT_A));
+  await waitFor(() =>
+    expect(useChatStore.getState().messages.map((message) => message.id)).toEqual(["user-1", MESSAGE_ID]),
+  );
+  first.unmount();
+  useChatStore.setState(chatDefaults, true);
+  renderHook(() => usePageWiring(CHAT_A));
+  await waitFor(() =>
+    expect(useChatStore.getState().messages.map((message) => message.id)).toEqual(["user-1", MESSAGE_ID]),
+  );
+});
+
+it("keeps a new unsaved draft empty after leaving a saved conversation", async () => {
+  const page = renderHook(({ chatId }) => usePageWiring(chatId), { initialProps: { chatId: CHAT_A } });
+  await waitFor(() => expect(useChatStore.getState().messages).toHaveLength(2));
+  page.rerender({ chatId: "unsaved" });
+  await waitFor(() => expect(useChatStore.getState().currentChatId).toBe("unsaved"));
+  expect(useChatStore.getState().messages).toEqual([]);
+  expect(mocks.chats.has("unsaved")).toBe(false);
 });
 
 it("keeps streaming into the message after leaving and reopening the chat", async () => {
