@@ -7,10 +7,7 @@ use crate::{
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{ActivationFormat, matmul::MatmulA},
     },
-    config::weight_matrix::{
-        AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-    },
+    config::weight_matrix::{AnyWeightMatrixSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     data_type::DataType,
     encodable_block::linear::{
         Gather, Linear, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, LinearMatmulError,
@@ -40,10 +37,13 @@ fn has_input_output_rht(spec: &AnyWeightMatrixSpec) -> bool {
     matches!(
         spec,
         AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            incoherence_block_size: Some(block_size),
-            incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            incoherence_spec: Some(HadamardSpec {
+                block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                processing_mode: IncoherenceProcessingMode::InputOutput,
+                ..
+            }),
             ..
-        }) if *block_size == HADAMARD_TRANSFORM_BLOCK_SIZE
+        })
     )
 }
 

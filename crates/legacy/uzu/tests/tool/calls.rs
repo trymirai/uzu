@@ -5,6 +5,7 @@ use serde::Serialize;
 use uzu::{
     engine::{Engine, EngineConfig},
     session::tool::{func_def::ToolDescriptor, uzu_tool_function},
+    storage::DownloadPhase,
     types::{
         basic::SamplingSeed,
         session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatRole},
@@ -107,11 +108,14 @@ async fn run_tool_calls_test(
     cases: &[TestCase],
 ) {
     let engine = Engine::new(EngineConfig::default()).await.unwrap();
+    engine.refresh_models().await.unwrap();
     let model =
         engine.model(model_id.to_string()).await.unwrap().unwrap_or_else(|| panic!("Model {model_id} not found"));
     println!("Loading {model_id}...");
     let download = engine.download(&model).await.unwrap();
     while download.next().await.is_some() {}
+    let state = engine.download_state(&model).await.unwrap();
+    assert!(matches!(state.phase, DownloadPhase::Downloaded {}), "Model download failed: {:?}", state.phase);
 
     for case in cases {
         println!("Prompt: {}", case.prompt);

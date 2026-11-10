@@ -6,6 +6,7 @@ from uzu import ChatConfig, ChatMessage, ChatReplyConfig, DownloadPhase, Engine,
 def test_chat_reply_produces_text() -> None:
     async def run() -> None:
         engine = await Engine.create(EngineConfig.create())
+        await engine.refresh_models()
 
         model = await engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4")
         assert model is not None, "Model not found"

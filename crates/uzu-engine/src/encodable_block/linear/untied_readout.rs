@@ -4,10 +4,7 @@ use crate::{
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA},
     },
-    config::weight_matrix::{
-        AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
-    },
+    config::weight_matrix::{AnyWeightMatrixSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     data_type::DataType,
     encodable_block::linear::{
         Gather, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
@@ -31,8 +28,12 @@ impl<B: Backend> UntiedReadout<B> {
     ) -> Result<Self, LinearMatmulError<B>> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
-            incoherence_block_size: Some(HADAMARD_TRANSFORM_BLOCK_SIZE),
-            incoherence_processing_mode: IncoherenceProcessingMode::Input,
+            incoherence_spec:
+                Some(HadamardSpec {
+                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    processing_mode: IncoherenceProcessingMode::Input,
+                    ..
+                }),
             ..
         }) = spec
         else {
