@@ -11,7 +11,7 @@ export type HoverPopoverProviderProps = {
 
 export type HoverPopoverProps = {
   items: ReadonlyArray<HoverPopoverItem>;
-  /** Rows under the list that stay put while it scrolls, e.g. "More models". */
+  /** Rows under the list that stay put while it scrolls, e.g. "Download models". */
   footerItems?: ReadonlyArray<HoverPopoverItem>;
   /** How many rows of `items` show in full before the list scrolls; half of the next one peeks. */
   maxVisibleItems?: number;

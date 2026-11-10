@@ -112,7 +112,7 @@ export function ChatHistoryPage() {
                 />
                 {isSelectionMode ? (
                   <GroupButton>
-                    <GroupButton.Segment ariaLabel="Select all" onClick={() => toggleSelectAll()} className="gap-2">
+                    <GroupButton.Segment ariaLabel="Select all" onClick={() => toggleSelectAll()}>
                       <Checkbox
                         checked={isAllSelected}
                         onChange={() => {}}
@@ -120,46 +120,33 @@ export function ChatHistoryPage() {
                         disabled
                         className="pointer-events-none opacity-100"
                       />
-                      <span className={showActive ? "text-[12px] text-label-title" : "text-[12px] text-label-muted"}>
-                        {labelText}
-                      </span>
+                      <span className={showActive ? "text-text-primary" : undefined}>{labelText}</span>
                     </GroupButton.Segment>
 
                     {!isAllSelected && singleSelectedChat && (
-                      <GroupButton.Segment
-                        leftDivider
-                        ariaLabel="Rename"
-                        onClick={() => setIsRenameOpen(true)}
-                        className={showActive ? "text-label-title" : "text-label-muted"}
-                      >
-                        <RenameIcon className="w-4 h-4" />
+                      <GroupButton.Segment icon ariaLabel="Rename" onClick={() => setIsRenameOpen(true)}>
+                        <RenameIcon className="size-4" />
                       </GroupButton.Segment>
                     )}
 
                     <GroupButton.Segment
-                      leftDivider
+                      icon
                       ariaLabel="Delete"
                       onClick={() => setIsConfirmOpen(true)}
                       disabled={selectedIds.length === 0}
-                      className={showActive ? "text-label-title" : "text-label-muted"}
                     >
-                      <TrashIcon className="w-4 h-4" />
+                      <TrashIcon className="size-4" />
                     </GroupButton.Segment>
 
-                    <GroupButton.Segment
-                      leftDivider
-                      ariaLabel="Exit selection"
-                      onClick={exitSelectionMode}
-                      className={showActive ? "text-label-title" : "text-label-muted"}
-                    >
-                      <X className="w-4 h-4" />
+                    <GroupButton.Segment icon ariaLabel="Exit selection" onClick={exitSelectionMode}>
+                      <X className="size-4" />
                     </GroupButton.Segment>
                   </GroupButton>
                 ) : (
                   <Button
                     kind="secondary"
                     size="sm"
-                    className="h-8 px-3.5 rounded-full bg-surface-tertiary shadow-none text-[13px] font-[450] text-label-muted hover:bg-control-surface-hover hover:text-label-title"
+                    className="h-8 px-3.5 rounded-full bg-control-fill shadow-none text-[13px] font-[450] text-text-muted hover:bg-control-fill-hover hover:text-text-primary"
                     onClick={() => setIsSelectionMode(true)}
                   >
                     Select
@@ -186,8 +173,15 @@ export function ChatHistoryPage() {
               </Button>
             </div>
           ) : filteredChats.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-label-muted">No chats found matching your search.</p>
+            // Laid out like the empty state; the cat is reading, glasses on, scanning for a match.
+            <div className="flex flex-1 flex-col items-center justify-center pb-16 text-center animate-uzu-in">
+              <div className="mb-1">
+                <UzuCat state="reading" size={112} className="text-text-primary" label="uzu, searching" />
+              </div>
+              <div className="flex max-w-[320px] flex-col gap-1">
+                <p className="text-[15px] font-[500] text-label-title">No matching chats</p>
+                <p className="truncate text-[13px] text-label-muted">Nothing found for “{searchQuery.trim()}”</p>
+              </div>
             </div>
           ) : (
             <div className="mt-4 mb-10 w-full flex flex-col gap-2 animate-uzu-in">

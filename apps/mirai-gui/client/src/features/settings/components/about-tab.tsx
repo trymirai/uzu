@@ -8,6 +8,7 @@ const connectLinks = [
   { title: "Website", url: "https://trymirai.com/" },
   { title: "About us", url: "https://trymirai.com/about-us" },
   { title: "GitHub", url: "https://github.com/trymirai" },
+  { title: "Hugging Face", url: "https://huggingface.co/trymirai" },
   { title: "Discord", url: "https://discord.gg/trymirai" },
 ];
 

@@ -171,13 +171,9 @@ export function buildFamilyDetailView(params: {
       const haystack = `${model.name} ${formatQuantization(model)}`.toLowerCase();
       if (!haystack.includes(searchLower)) continue;
     }
-    const phase = modelPhasesById[model.repoId];
-    const isActive =
-      phase === modelDownloadPhases.downloaded ||
-      phase === modelDownloadPhases.downloading ||
-      phase === modelDownloadPhases.paused ||
-      phase === modelDownloadPhases.error;
-    if (isActive) installed.push(model);
+    // Only a finished download is usable, so only it moves up to Downloaded; one still downloading,
+    // paused or failed stays in Available, where its row shows the progress.
+    if (modelPhasesById[model.repoId] === modelDownloadPhases.downloaded) installed.push(model);
     else available.push(model);
   }
 

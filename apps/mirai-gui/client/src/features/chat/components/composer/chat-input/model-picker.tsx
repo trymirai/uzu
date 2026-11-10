@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Menu, MenuButton, MenuItem, MenuItems, Transition } from "@headlessui/react";
 import { forwardRef, Fragment } from "react";
 import { SelectionItem } from "@/components/ui/select/selection-item";
@@ -153,11 +153,13 @@ export function ModelPicker({
                               moreModelsLink.onClick?.();
                               close();
                             }}
-                            className="flex items-center w-full bg-transparent text-text-primary"
+                            className="flex items-center justify-between gap-2.5 w-full bg-transparent text-text-primary"
                           >
+                            {/* Same row as the Regenerate menu's: the label, then a chevron to the Models page. */}
                             <Text as="span" color="primary" opticalSize={14} className={TEXT_13_CLASSNAME}>
                               Download models
                             </Text>
+                            <ChevronRight className="size-4 shrink-0 text-label-muted" aria-hidden />
                           </SelectionItem>
                         )}
                       </MenuItem>

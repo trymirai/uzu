@@ -1,7 +1,7 @@
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { isOtherChatGenerating } from "@/features/runtime/runtime-busy";
 import { writeItemsWithFocus } from "@/utils/clipboard";
-import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useRef } from "react";
 import type { MessageVersion } from "@/types/message";
 import type { TranscriptItem } from "@/types/llm-stream";
 import { useChatStore } from "@/stores/use-chat-store";
@@ -14,11 +14,7 @@ import { PerformanceDropdown } from "./performance-dropdown";
 import { UserMessage, type UserMessageProps } from "./user-message";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { AssistantCat, PendingStatus, type AssistantPhase } from "./assistant-cat";
-import { UzuBirdOffer } from "./uzu-bird";
-
-// How long a think runs before the uzu bird game is offered. Short on purpose in this preview, so
-// the game is easy to find; a shipping build would wait longer (about 8 s).
-const LONG_THINK_MS = 1000;
+import { UzuBirdAnswerSync, useUzuBirdTaps } from "./uzu-bird";
 
 const ChartMessage = lazy(() => import("./chart-message"));
 
@@ -242,17 +238,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
                 ? "writing"
                 : "reading";
 
-  // A long think on the newest answer earns an offer of something to do while waiting.
-  const working = phase === "loadingModel" || phase === "reading" || phase === "thinking" || phase === "tool";
-  const [waitedLong, setWaitedLong] = useState(false);
-  useEffect(() => {
-    if (!isLast || !working) {
-      setWaitedLong(false);
-      return;
-    }
-    const timer = setTimeout(() => setWaitedLong(true), LONG_THINK_MS);
-    return () => clearTimeout(timer);
-  }, [isLast, working]);
+  const birdTaps = useUzuBirdTaps();
 
   const currentVersionModelName = hasVersions
     ? versions?.[currentVersionIndex || 0]?.modelName
@@ -260,12 +246,15 @@ const AssistantMessage: React.FC<MessageProps> = ({
 
   return (
     <div className="relative flex gap-3 in-data-cat-hang:block">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center in-data-cat-hang:absolute in-data-cat-hang:-left-10 in-data-cat-hang:top-0">
+      <div
+        {...birdTaps}
+        className="flex h-7 w-7 shrink-0 select-none items-center justify-center in-data-cat-hang:absolute in-data-cat-hang:-left-10 in-data-cat-hang:top-0"
+      >
         <AssistantCat phase={phase} live={!!isLast} />
       </div>
       <div className="text-label-title relative min-w-0 flex-1 rounded-[5px] text-[15px] leading-[1.6]">
         {pendingPhase ? <PendingStatus phase={pendingPhase} /> : null}
-        {isLast ? <UzuBirdOffer visible={waitedLong && working} answerReady={phase === "done"} /> : null}
+        {isLast ? <UzuBirdAnswerSync answerReady={phase === "done"} /> : null}
         <div
           ref={messageRef}
           className="[&>:last-child]:mb-0 [&>.markdown-body:last-child>div>:last-child]:mb-0 [&>[data-message-reasoning]:has(+.markdown-body>div>*)]:mb-[7px] [&>.markdown-body:first-child]:pt-[3.5px]"

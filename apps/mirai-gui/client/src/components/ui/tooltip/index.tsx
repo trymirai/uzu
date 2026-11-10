@@ -53,7 +53,9 @@ function TooltipShared({
       onFocus={show}
       onBlur={hide}
       onPointerDown={(event) => {
-        if (event.button === 0) hide();
+        // A label tip gets out of the way of a click; a panel (the speed figures) is what the
+        // button is for, so pressing it keeps the panel open.
+        if (event.button === 0 && variant !== "panel") hide();
       }}
     >
       {children}

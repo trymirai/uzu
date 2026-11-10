@@ -31,6 +31,14 @@ export function HoverPopover({
       triggerNodeRef.current = node;
     },
     "aria-haspopup": "menu",
+    // The trigger can do its own thing on click (Regenerate reruns the answer); the menu then
+    // closes, since that choice is made.
+    onClick: (event: MouseEvent<HTMLButtonElement>) => {
+      const own = (trigger.props as { onClick?: (event: MouseEvent<HTMLButtonElement>) => void }).onClick;
+      if (!own) return;
+      own(event);
+      hide(id);
+    },
     onMouseEnter: () => open(),
     onMouseLeave: (event: MouseEvent<HTMLElement>) => {
       if (!contains(event.relatedTarget as Node | null)) hide(id);

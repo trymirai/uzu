@@ -1,7 +1,7 @@
 import { twMerge } from "tailwind-merge";
 import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { UzuCat, UzuCatStill } from "@/components/uzu-cat";
 
 /*
@@ -259,7 +259,7 @@ export function UzuBirdDialog({
   const jumpRef = useRef<(() => void) | null>(null);
   return (
     <Dialog open={open} onClose={onClose} className="relative z-50">
-      <div className="fixed inset-0 bg-black/20" aria-hidden />
+      <div className="fixed inset-0 bg-black/20 backdrop-blur-[6px]" aria-hidden />
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <DialogPanel className="rounded-2xl bg-surface-popover p-3 shadow-popover animate-uzu-in">
           <div className="flex items-center justify-between px-1 pb-3">
@@ -288,16 +288,6 @@ export function UzuBirdDialog({
   );
 }
 
-/** Offered beside a long think: the pill and its game. */
-/** Space only opens the game when it wouldn't be typing: nothing editable focused, or the composer
- *  focused but still empty (a leading space would be dropped anyway). */
-function spaceIsFree(): boolean {
-  const el = document.activeElement;
-  if (!(el instanceof HTMLElement)) return true;
-  if (el.matches("textarea[data-composer-input]")) return (el as HTMLTextAreaElement).value === "";
-  return !el.isContentEditable && !el.matches("input, textarea, select, button, [role='button']");
-}
-
 /*
  * Whether the game is open lives outside the message that offered it. When the answer lands, the
  * in-progress message is replaced by the finished one; the game must outlive that swap, so the
@@ -319,33 +309,37 @@ function subscribeBird(listener: () => void) {
 const getBird = () => birdState;
 const useBird = () => useSyncExternalStore(subscribeBird, getBird, getBird);
 
-export function UzuBirdOffer({ visible, answerReady }: { visible: boolean; answerReady: boolean }) {
-  const { open } = useBird();
-
+/** Tells the game whether the newest answer has landed, so it can offer the way back. */
+export function UzuBirdAnswerSync({ answerReady }: { answerReady: boolean }) {
   useEffect(() => {
     setBird({ answerReady });
   }, [answerReady]);
+  return null;
+}
 
-  useEffect(() => {
-    if (!visible || open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !spaceIsFree()) return;
-      e.preventDefault();
-      setBird({ open: true });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [visible, open]);
+const TAPS = 2;
+const TAP_WINDOW_MS = 500;
 
-  return visible && !open ? (
-    <HintButton
-      keyLabel="Press Space"
-      onClick={() => setBird({ open: true })}
-      className="absolute right-0 top-0 z-10 active:scale-[0.96] transition-[background-color,color,scale] animate-uzu-in"
-    >
-      to play uzu bird
-    </HintButton>
-  ) : null;
+/**
+ * The way in is hidden: a double tap on a cat beside an answer. Returns handlers for the cat's
+ * box. Opening clears "answer ready", so a game started after the answer only offers the way back
+ * once a new answer lands.
+ */
+export function useUzuBirdTaps() {
+  const taps = useRef<number[]>([]);
+  return {
+    // Repeated clicks would otherwise select the text beside the cat.
+    onMouseDown: (e: React.MouseEvent) => {
+      if (e.detail > 1) e.preventDefault();
+    },
+    onClick: () => {
+      const now = performance.now();
+      taps.current = [...taps.current.filter((t) => now - t < TAP_WINDOW_MS), now];
+      if (taps.current.length < TAPS) return;
+      taps.current = [];
+      setBird({ open: true, answerReady: false });
+    },
+  };
 }
 
 /** The game window, mounted once with the message list so it stays open while the answer lands. */

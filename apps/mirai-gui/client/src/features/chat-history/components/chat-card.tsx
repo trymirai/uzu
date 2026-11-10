@@ -46,9 +46,10 @@ const ChatCard: React.FC<ChatCardProps> = ({
             },
           })}
       className={twMerge(
-        "rounded-xl bg-surface-soft cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-tertiary",
+        "rounded-xl bg-surface-soft cursor-pointer transition-colors duration-150 ease-out",
         !selectMode && "outline-hidden data-[focus]:bg-surface-tertiary",
-        selected ? "bg-surface-tertiary" : "",
+        // Two steps, as in the menus: the pointer lifts a card a little, choosing it a step more.
+        selected ? "bg-selection-selected" : "hover:bg-surface-tertiary",
       )}
     >
       {/* The title alone leads; the checkbox takes the leading slot only while selecting. */}
@@ -59,15 +60,9 @@ const ChatCard: React.FC<ChatCardProps> = ({
         )}
       >
         {selectMode ? (
-          <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-            <span onClick={(e) => e.stopPropagation()}>
-              <Checkbox
-                checked={checked}
-                onChange={() => onCheckedChange?.()}
-                size="sm"
-                aria-label={`Select ${title}`}
-              />
-            </span>
+          // A flex box, not an inline span: inline, the box sat on the text baseline, below centre.
+          <div className="flex size-4 shrink-0 items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <Checkbox checked={checked} onChange={() => onCheckedChange?.()} size="sm" aria-label={`Select ${title}`} />
           </div>
         ) : null}
         <div className="min-w-0">

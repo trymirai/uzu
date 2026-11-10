@@ -39,7 +39,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
   };
 
   // Opens on hover, like a tooltip, with the models to regenerate with: names only, three at a time
-  // with the rest scrolling, and "More models" fixed under them. Above the button: the answer's
+  // with the rest scrolling, and "Download models" fixed under them. Above the button: the answer's
   // actions sit near the composer and the window's bottom, where a long list would run off. Keyboard: Enter or ↓ opens
   // it, Esc closes it (handled by HoverPopover).
   const items: PopoverItem[] = loadingModels
@@ -67,7 +67,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
       id: "more",
       label: (
         <span className="flex flex-1 items-center justify-between gap-2.5 text-[13px] font-[450] leading-[1.3] text-label-title">
-          More models
+          Download models
           <ChevronRight className="size-4 text-label-muted" aria-hidden />
         </span>
       ),
@@ -75,8 +75,21 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
     },
   ];
 
+  // Clicking Regenerate itself reruns the answer with the model that has the check (the one that
+  // wrote it); the menu that opens on hover picks a different one.
+  const handleRegenerateClick = () => {
+    const current = installedModelsList.find((model) => model.repoId === selectedModel);
+    if (current) onModelSelect?.(current.repoId, current.name);
+  };
+
   const button = (
-    <button type="button" aria-label="Regenerate with model" disabled={disabled} className={ACTION_CLASSNAME}>
+    <button
+      type="button"
+      aria-label="Regenerate"
+      disabled={disabled}
+      onClick={handleRegenerateClick}
+      className={ACTION_CLASSNAME}
+    >
       <IconArrowRotateClockwise size={16} aria-hidden />
     </button>
   );
