@@ -35,7 +35,7 @@ struct Epilogue {
     }
 
     if constexpr (Tile::OUTPUT_ROWS >= METAL_SIMD_SIZE) {
-      static_assert(Tile::K_SPLIT == 1, "RHT reuses shared results after Reduce");
+      static_assert(Tile::K_SPLIT == 1 || Tile::INPUT_ROWS == 1, "RHT reuses shared results after Reduce");
       threadgroup_barrier(mem_flags::mem_threadgroup);
       constexpr uint OUTPUT_BLOCKS = Tile::OUTPUT_ROWS / METAL_SIMD_SIZE;
       for (uint job = tile.simd_group; job < Tile::INPUT_ROWS * OUTPUT_BLOCKS; job += Tile::NUM_SIMDGROUPS) {

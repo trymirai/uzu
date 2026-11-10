@@ -13,6 +13,12 @@ static constant constexpr uint32_t MXU_TILED_W2_BLOCK_ROWS = 16;
 
 static constant constexpr uint32_t MXU_TILED_PREPARE_THREADS = 1024;
 
+static constant constexpr uint32_t INTERLEAVED_ROWS_STRIP_ROWS = 32;
+
+static constant constexpr uint32_t INTERLEAVED_ROWS_LANE_ROWS = 8;
+
+static constant constexpr uint32_t INTERLEAVED_ROWS_RELAYOUT_THREADS = 1024;
+
 typedef struct {
   uint32_t M;
   uint32_t N;
