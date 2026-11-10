@@ -390,6 +390,38 @@ it("ejects the resident model and loads it again for the next run", async () => 
   expect(source.engine.chatInstance).toHaveBeenCalledTimes(2);
 });
 
+it.each(["chatInstance", "chatWithInstance"] as const)(
+  "publishes eviction before a model switch that fails in %s",
+  async (failurePoint) => {
+    const source = fixture();
+    uniqueModel(source);
+    await source.run({ modelChatNamingEnabled: false });
+    source.engine.modelByRepoId.mockResolvedValueOnce({
+      identifier: `vendor:other:${++modelCounter}`,
+      isDownloadable: true,
+      properties: { size: 4e9, free },
+      free,
+    });
+    source.engine[failurePoint].mockImplementationOnce(async () => {
+      expect(source.states.at(-1)).toEqual({ active: false, repoId: "vendor/model", isEjecting: false });
+      expect(source.session.free).toHaveBeenCalledOnce();
+      expect(source.instance.free).toHaveBeenCalledOnce();
+      throw new Error("Load failed");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await source.run({ repoId: "vendor/other" })).toEqual([{ type: "error", error: "Load failed" }]);
+    expect(source.states).toEqual([
+      { active: true, repoId: "vendor/model", isEjecting: false },
+      { active: false, repoId: "vendor/model", isEjecting: false },
+    ]);
+    expect(source.loading.slice(1)).toEqual([
+      { status: "start", repoId: "vendor/other" },
+      { status: "error", repoId: "vendor/other" },
+    ]);
+  },
+);
+
 it("ejects an idle model after the configured interval", async () => {
   vi.useFakeTimers();
   const source = fixture();

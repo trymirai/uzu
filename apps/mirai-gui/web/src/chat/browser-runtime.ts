@@ -410,13 +410,13 @@ export class BrowserChatRuntime {
     this.history = undefined;
     resident?.session.free();
     resident?.instance.free();
+    if (resident) this.emitState({ active: false, repoId: resident.repoId, isEjecting: false });
   }
 
   private evict(repoId: string): boolean {
     const hadSession = this.resident !== undefined;
     if (hadSession) this.emitState({ active: false, repoId, isEjecting: true });
     this.dropResident();
-    if (hadSession) this.emitState({ active: false, repoId, isEjecting: false });
     return hadSession;
   }
 
