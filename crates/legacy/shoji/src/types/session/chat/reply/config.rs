@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::basic::{Grammar, SamplingMethod, SamplingPolicy};
+use crate::types::basic::{Grammar, SamplingMethod, SamplingPolicy, SamplingSeed};
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -11,6 +11,8 @@ pub struct ChatReplyConfig {
     /// Maximum number of automatic tool-call turns per reply.
     /// `None` allows unlimited turns; `Some(0)` prevents automatic tool execution.
     pub tool_turn_limit: Option<u32>,
+    /// Seed for this reply only. `Default` keeps the session's seed from `ChatConfig`.
+    pub sampling_seed: SamplingSeed,
 }
 
 #[bindings::export(Implementation)]
@@ -76,6 +78,17 @@ impl ChatReplyConfig {
     ) -> Self {
         Self {
             grammar,
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_sampling_seed(
+        &self,
+        sampling_seed: SamplingSeed,
+    ) -> Self {
+        Self {
+            sampling_seed,
             ..self.clone()
         }
     }

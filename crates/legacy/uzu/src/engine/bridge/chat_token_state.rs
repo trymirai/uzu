@@ -4,12 +4,17 @@ use uzu_engine::{backends::Backend, engine::language_model::state::LanguageModel
 
 pub struct UzuChatTokenBackendInstanceState<B: Backend> {
     pub value: Mutex<LanguageModelState<B>>,
+    pub sampling_seed: u64,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstanceState<B> {
-    pub fn new(value: LanguageModelState<B>) -> Self {
+    pub fn new(
+        value: LanguageModelState<B>,
+        sampling_seed: u64,
+    ) -> Self {
         Self {
             value: Mutex::new(value),
+            sampling_seed,
         }
     }
 }

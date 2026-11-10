@@ -1,5 +1,6 @@
 pub mod batch_topology;
 pub mod classifier;
+pub mod confidence_head;
 pub mod convolution;
 pub mod decision;
 pub mod decoder;

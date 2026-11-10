@@ -4,9 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, gpu_types::trie::TrieNode,
-    },
+    backends::common::{Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
     data_type::DataType,
     encodable_block::{
@@ -312,14 +310,7 @@ impl<B: Backend> DFlash<B> {
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
 
-        let nodes = (0..batch_size)
-            .map(|index| TrieNode {
-                trie_start: index,
-                trie_end: batch_size - 1,
-                height: index,
-            })
-            .collect::<Box<[_]>>();
-        let batch_topology = BatchTopology::new(&nodes, true);
+        let batch_topology = BatchTopology::flat(batch_size, true);
         let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;

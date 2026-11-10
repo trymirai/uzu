@@ -75,9 +75,6 @@ impl GemvSpecialization {
         } else if is_quant {
             policy::quantized_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n, bf16_io)
         } else {
-            if shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH {
-                return None;
-            }
             let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
             Some(policy::fp_tile(shape.m, shape.n, shape.k, input_aligned))
         };
@@ -105,7 +102,7 @@ impl GemvSpecialization {
             return None;
         }
         let bits = shape.b_bits.unwrap_or(0);
-        if bits == 2 && gemm_b_layout == GemmBLayout::MxuTiled {
+        if bits == 2 && gemm_b_layout == GemmBLayout::MxuTiled && !shape.gathered {
             return None;
         }
         if !is_quant && (shape.n < DEFAULT_RESULTS_PER_SIMDGROUP || shape.m > GEMV_MAX_BATCH) {

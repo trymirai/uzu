@@ -10,7 +10,8 @@ pub enum ActivationFormat {
     Bf16,
     Int8(ActivationQuantization),
     PackedHalf {
-        group_size: u32,
+        block_k: u32,
+        bits: u32,
     },
     Trellis,
 }
@@ -60,10 +61,12 @@ impl MatmulShape {
                     ..
                 } => ActivationFormat::Bf16,
                 MatmulA::PackedHalf {
-                    group_size,
+                    block_k,
+                    bits,
                     ..
                 } => ActivationFormat::PackedHalf {
-                    group_size: *group_size,
+                    block_k: *block_k,
+                    bits: *bits,
                 },
                 MatmulA::Int8Symmetric {
                     quantization,

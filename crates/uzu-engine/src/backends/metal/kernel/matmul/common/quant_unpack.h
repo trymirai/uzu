@@ -92,8 +92,8 @@ inline void dequantize(
     threadgroup StageT* w_local,
     const bool signed_codes
 ) {
-  static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
-  static_assert(bits == 8 || N % 2 == 0, "int4 values are unpacked in pairs");
+  static_assert(bits == 2 || bits == 4 || bits == 8, "Only int2, int4 and int8 supported");
+  static_assert(bits == 8 || N % 2 == 0, "int2 and int4 values are unpacked in pairs");
   constexpr bool IS_16_BIT_COMPUTE = sizeof(ComputeT) == 2;
   constexpr bool READ_CODE_WORDS = bits == 4 && N % 8 == 0 && IS_16_BIT_COMPUTE;
   threadgroup vec<StageT, 2>* pairs = reinterpret_cast<threadgroup vec<StageT, 2>*>(w_local);
@@ -109,6 +109,11 @@ inline void dequantize(
             vec<ComputeT, 2>(dequantize_code((word >> (8 * j)) & 0x0fu), dequantize_code((word >> (8 * j + 4)) & 0x0fu))
         );
       }
+    }
+  } else if constexpr (bits == 2) {
+    for (int i = 0; i < (N / 2); i++) {
+      const uint code = uint(w[i / 2]) >> (4 * (i % 2));
+      pairs[i] = vec<StageT, 2>(vec<ComputeT, 2>(dequantize_code(code & 0x3u), dequantize_code((code >> 2) & 0x3u)));
     }
   } else if constexpr (bits == 4) {
     const uint sign_flip = signed_codes ? 0x88u : 0u;
@@ -127,6 +132,23 @@ inline void dequantize(
       w_local[N - 1] = StageT(fma(float(uint(w[N - 1]) ^ sign_flip), scale, bias));
     }
   }
+}
+
+UZU_CONST uint HALF_MANTISSA_BITS = 10;
+UZU_CONST uint HALF_EXPONENT_BIAS = 15;
+
+static METAL_FUNC constexpr uint w2_mantissa_bit(uint t) { return t < 5 ? 2 * t : 2 * t - 6; }
+
+static METAL_FUNC half2 w2_pair(uint word, uint t) {
+  const uint mantissa_bit = w2_mantissa_bit(t);
+  const uint code_mask = 3u << mantissa_bit;
+  const uint exponent = (HALF_EXPONENT_BIAS + HALF_MANTISSA_BITS - mantissa_bit) << HALF_MANTISSA_BITS;
+  const uint codes = (word >> (2 * t - mantissa_bit)) & (code_mask | (code_mask << 16));
+  return as_type<half2>(codes | exponent | (exponent << 16));
+}
+
+static METAL_FUNC constexpr float w2_pair_bias_value(uint t) {
+  return float(1u << (HALF_MANTISSA_BITS - w2_mantissa_bit(t)));
 }
 
 // A byte ored with 0x6400 is the half 1024 plus the byte, so the subtraction is exact.

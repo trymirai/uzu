@@ -9,7 +9,6 @@ use crate::{
 
 pub struct LanguageModelState<B: Backend> {
     pub(super) tokens: Vec<u64>,
-    pub(super) last_output_token: Option<u64>, // TODO: this leaks previous LanguageModelStreamOptions
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
     pub(super) speculator_state: Option<DFlashState<B>>,
@@ -19,6 +18,13 @@ pub struct LanguageModelState<B: Backend> {
 impl<B: Backend> LanguageModelState<B> {
     pub fn tokens(&self) -> &[u64] {
         &self.tokens
+    }
+
+    pub fn set_sampling_seed(
+        &mut self,
+        sampling_seed: u64,
+    ) {
+        self.prng = PRng::new(sampling_seed);
     }
 }
 
@@ -35,7 +41,6 @@ impl<B: Backend> LanguageModel<B> {
         sampling_seed: u64,
     ) -> Result<LanguageModelState<B>, LanguageModelCreateEmptyStateError<B>> {
         let tokens = Vec::new();
-        let last_output_token = None;
 
         let prng = PRng::new(sampling_seed);
 
@@ -55,7 +60,6 @@ impl<B: Backend> LanguageModel<B> {
 
         Ok(LanguageModelState {
             tokens,
-            last_output_token,
             prng,
             transformer_state,
             speculator_state,

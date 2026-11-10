@@ -17,9 +17,9 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::Instrument;
 use uzu::{
-    session::chat::{ChatSession, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
+    session::chat::{ChatSession, ChatSessionError, ChatSessionStream, ChatSessionStreamChunk, UNPARSED_ARGUMENTS_KEY},
     types::{
-        basic::{Grammar, ReasoningEffort, SamplingMethod},
+        basic::{BackendError, Grammar, ReasoningEffort, SamplingMethod, SamplingSeed},
         session::chat::{
             ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole,
         },
@@ -104,6 +104,8 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    #[serde(default)]
+    pub seed: Option<i64>,
     // Raw value (not typed) so a bad response_format is our 400, not Rocket's 422.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
@@ -553,6 +555,11 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
             suffix_repetition_length: None,
         });
     }
+    if let Some(seed) = request.seed {
+        config = config.with_sampling_seed(SamplingSeed::Custom {
+            seed,
+        });
+    }
 
     let response_format = match &request.response_format {
         Some(value) => Some(
@@ -622,6 +629,25 @@ fn oai_error_body(
             param: None,
             code: Some(code.to_string()),
         },
+    }
+}
+
+/// OpenAI clients compact the conversation on context_length_exceeded, so an
+/// overflow must not reach them as a generic backend_error.
+fn stream_error_body(error: &ChatSessionError) -> OaiErrorResponse {
+    match error {
+        ChatSessionError::Backend {
+            error: BackendError::ContextOverflow {},
+        } => {
+            let mut body = oai_error_body(
+                Status::BadRequest,
+                "context_length_exceeded",
+                "Input exceeds the context window of this model",
+            );
+            body.error.param = Some("messages".to_string());
+            body
+        },
+        _ => oai_error_body(Status::BadRequest, "backend_error", &error.to_string()),
     }
 }
 
@@ -840,7 +866,7 @@ async fn run_blocking(
                 error,
             } => {
                 log.fail(&error.to_string());
-                send_error_body(&sender, &oai_error_body(Status::BadRequest, "backend_error", &error.to_string()));
+                send_error_body(&sender, &stream_error_body(&error));
                 return;
             },
         }
@@ -1140,7 +1166,7 @@ async fn run_stream(
                 errored = true;
                 log.fail(&error.to_string());
                 // Committed 200 stream: report as an OpenAI-style error event.
-                let body = oai_error_body(Status::BadRequest, "backend_error", &error.to_string());
+                let body = stream_error_body(&error);
                 let _ = sender.send(Event::data(serde_json::to_string(&body).unwrap_or_default()));
                 break;
             },

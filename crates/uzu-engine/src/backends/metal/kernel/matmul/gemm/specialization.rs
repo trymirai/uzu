@@ -54,7 +54,7 @@ impl GemmSpecialization {
             signed_codes: shape.signed_codes,
             gemm_b_layout,
             hoist_row_metadata: row_scaled_weights
-                && a_prologue == GemmAPrologueKind::Int8Symmetric
+                && matches!(a_prologue, GemmAPrologueKind::Int8Symmetric | GemmAPrologueKind::PackedHalf)
                 && shape.b_prologue == GemmBPrologueKind::ScaleBiasDequant,
             a_group_size,
         };

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use shoji::{traits::backend::Error as ShojiBackendError, types::basic::BackendError};
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::util::power::Error as EnergyError;
@@ -7,9 +8,9 @@ use crate::util::power::Error as EnergyError;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
 pub enum ChatSessionError {
-    #[error("Backend error: {message}")]
+    #[error("Backend error: {error}")]
     Backend {
-        message: String,
+        error: BackendError,
     },
     #[error("Unable to load model: {message}")]
     Loading {
@@ -27,11 +28,25 @@ pub enum ChatSessionError {
     },
 }
 
+impl ChatSessionError {
+    pub fn backend(message: impl ToString) -> Self {
+        Self::Backend {
+            error: BackendError::other(message),
+        }
+    }
+}
+
+impl From<ShojiBackendError> for ChatSessionError {
+    fn from(error: ShojiBackendError) -> Self {
+        Self::Backend {
+            error: error.into(),
+        }
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 impl From<EnergyError> for ChatSessionError {
     fn from(error: EnergyError) -> Self {
-        Self::Backend {
-            message: error.to_string(),
-        }
+        Self::backend(error)
     }
 }
