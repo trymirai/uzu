@@ -711,6 +711,7 @@ dependencies = [
 name = "bindings"
 version = "0.6.17"
 dependencies = [
+ "convert_case 0.12.0",
  "heck 0.5.0",
  "proc-macro2",
  "quote",
@@ -721,6 +722,7 @@ dependencies = [
 name = "bindings-types"
 version = "0.6.17"
 dependencies = [
+ "bindings",
  "inventory",
  "js-sys",
  "napi",
@@ -730,11 +732,9 @@ dependencies = [
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "pyo3-stub-gen",
- "serde-wasm-bindgen",
- "tsify",
  "uniffi",
  "wasm-bindgen",
- "wasm-bindgen-futures",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1812,7 +1812,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2234,14 +2234,12 @@ dependencies = [
  "reqwest 0.13.5",
  "rstest",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "tracing",
- "tsify",
  "uniffi",
  "uuid",
  "wasm-bindgen",
@@ -3127,19 +3125,6 @@ dependencies = [
  "log",
  "regex-automata",
  "regex-syntax",
-]
-
-[[package]]
-name = "gloo-utils"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b5555354113b18c547c1d3a98fbf7fb32a9ff4f6fa112ce823a21641a0ba3aa"
-dependencies = [
- "js-sys",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -4699,6 +4684,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "minicov"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4869b6a491569605d66d3952bcdf03df789e5b536e5f0cf7758a7f08a55ae24d"
+dependencies = [
+ "cc",
+ "walkdir",
+]
+
+[[package]]
 name = "minijinja"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4977,7 +4972,6 @@ dependencies = [
  "reqwest 0.13.5",
  "schemars 1.2.3",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "shoji",
  "thiserror 2.0.21",
@@ -4985,7 +4979,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tsify",
  "uniffi",
  "uuid",
  "wasm-bindgen",
@@ -7716,17 +7709,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-wasm-bindgen"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7971,12 +7953,10 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-stub-gen",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "thiserror 2.0.21",
  "tokenizers",
  "tokio-util",
- "tsify",
  "uniffi",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -9555,32 +9535,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tsify"
-version = "0.5.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea3af6b48c5c5624f7eb3c2f578d1335fadac433321980cae0063e8eb0acaa44"
-dependencies = [
- "gloo-utils",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "tsify-macros",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "tsify-macros"
-version = "0.5.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef1e2e93369379d0a527c7d6632b58c55d52db7a106d8afbde3b354f3a57a9f1"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_derive_internals 0.29.1",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10009,7 +9963,6 @@ dependencies = [
  "rstest",
  "schemars 1.2.3",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "shoji",
  "sysinfo",
@@ -10023,7 +9976,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "tsify",
  "uniffi",
  "uuid",
  "uzu-engine",
@@ -10268,6 +10220,45 @@ checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "wasm-bindgen-test"
+version = "0.3.79"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae7499dfd45780a0a91d7ee6bb9ac51970a4479a41a89da443fdda5a39547d42"
+dependencies = [
+ "async-trait",
+ "cast",
+ "js-sys",
+ "libm",
+ "minicov",
+ "nu-ansi-term",
+ "num-traits",
+ "oorandom",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test-macro",
+ "wasm-bindgen-test-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-test-macro"
+version = "0.3.79"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b84b5ac638bfb168196a1a461fcc8f46a294a18b1b6be52133b4e0db122cc9f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "wasm-bindgen-test-shared"
+version = "0.2.129"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f692aa943ccd88363733b77063f32cfed5bc6cbea8e6e8b251b302f881606fe"
 
 [[package]]
 name = "wasm-streams"
@@ -10641,7 +10632,7 @@ dependencies = [
  "objc2-metal",
  "objc2-quartz-core",
  "once_cell",
- "ordered-float 4.6.0",
+ "ordered-float 5.5.0",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",

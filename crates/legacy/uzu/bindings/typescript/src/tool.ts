@@ -90,7 +90,8 @@ export class UzuToolFunction<
             const expiration = setTimeout(() => {
                 cancelledInvocations.delete(invocationId);
             }, CANCELLED_INVOCATION_RETENTION_MS);
-            expiration.unref?.();
+            // Don't keep Node alive for it; browser timers are numbers without `unref`.
+            (expiration as unknown as { unref?: () => void }).unref?.();
             const previousExpiration = cancelledInvocations.get(invocationId);
             if (previousExpiration !== undefined) {
                 clearTimeout(previousExpiration);

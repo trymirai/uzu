@@ -116,7 +116,11 @@ impl PlatformsConfig {
         language: Language,
     ) -> Result<PathBuf> {
         let language_config = self.languages.get(&language).context("Language not found")?;
-        Ok(Paths::new()?.root_path.join(&language_config.examples_path))
+        let examples_path = language_config
+            .examples_path
+            .as_ref()
+            .with_context(|| format!("Missing [languages.{}].examples_path", language.name()))?;
+        Ok(Paths::new()?.root_path.join(examples_path))
     }
 
     pub fn required_envs_for_target(

@@ -361,6 +361,10 @@ impl Command {
         Self::pnpm_run("tsn").with_argument(&path.to_string_lossy())
     }
 
+    pub fn pnpm_examples(name: &str) -> Self {
+        Self::pnpm_run("examples").with_argument("--open").with_argument(&format!("/?example={name}"))
+    }
+
     pub fn napi_build(
         manifest_path: PathBuf,
         target: String,
@@ -383,6 +387,15 @@ impl Command {
             Configuration::Release => command.with_argument("--release"),
         };
         command
+    }
+
+    /// Creates a package per `napi.targets` entry under `npm_dir`, named and constrained (`os`, `cpu`)
+    /// the way the napi loader expects.
+    pub fn napi_create_npm_dirs(npm_dir: &Path) -> Self {
+        Self::pnpm_exec()
+            .with_argument("napi")
+            .with_argument("create-npm-dirs")
+            .with_arguments(vec!["--npm-dir".to_string(), npm_dir.to_string_lossy().to_string()])
     }
 }
 
@@ -464,6 +477,25 @@ impl Command {
             .with_argument("--sign")
             .with_argument("-")
             .with_argument(&path.to_string_lossy())
+    }
+}
+
+impl Command {
+    pub fn wasm_bindgen_version() -> Self {
+        Self::new("wasm-bindgen").with_argument("--version")
+    }
+
+    pub fn wasm_bindgen(
+        input_path: PathBuf,
+        output_path: PathBuf,
+        output_name: String,
+    ) -> Self {
+        Self::new("wasm-bindgen")
+            .with_argument(&input_path.to_string_lossy())
+            .with_arguments(vec!["--target".to_string(), "web".to_string()])
+            .with_arguments(vec!["--out-dir".to_string(), output_path.to_string_lossy().to_string()])
+            .with_arguments(vec!["--out-name".to_string(), output_name])
+            .with_argument("--typescript")
     }
 }
 

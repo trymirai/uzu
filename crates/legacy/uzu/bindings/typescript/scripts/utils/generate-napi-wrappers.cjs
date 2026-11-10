@@ -39,6 +39,17 @@ function generateEsmDeclarations(commonJsDeclarationsPath, outputPath) {
     fs.copyFileSync(commonJsDeclarationsPath, outputPath);
 }
 
+// napi-rs declares string enums as `const enum`, which TypeScript rejects under `isolatedModules`
+// (TS2748) since it can't inline them, even though the binding exports a runtime object for each.
+// Its `constEnum: false` option turns them into string unions, so declare them as plain enums here.
+function declarePlainEnums(declarationsPath) {
+    const content = fs.readFileSync(declarationsPath, 'utf8');
+    const updated = content.replace(/^export declare const enum /gm, 'export declare enum ');
+    if (updated !== content) {
+        fs.writeFileSync(declarationsPath, updated);
+    }
+}
+
 function main() {
     const napiDir = path.join(__dirname, '../../src/napi');
     const commonJsPath = path.join(napiDir, 'index.js');
@@ -62,6 +73,7 @@ function main() {
         process.exit(1);
     }
 
+    declarePlainEnums(commonJsDeclarationsPath);
     generateEsmWrapper(runtimeExports, esmPath);
     generateEsmDeclarations(commonJsDeclarationsPath, esmDeclarationsPath);
 
@@ -74,6 +86,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    declarePlainEnums,
     extractRuntimeExportsFromCommonJs,
     generateEsmDeclarations,
     generateEsmWrapper,

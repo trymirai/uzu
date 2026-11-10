@@ -11,6 +11,7 @@ use crate::{
     configs::{Paths, PlatformsConfig, WorkspaceManifest},
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
+        WasmLanguageBackend,
     },
     sync::run_sync,
     types::{Command, Language},
@@ -41,6 +42,10 @@ pub fn run_release(
     binaries::stage_binaries(&paths, &platforms, release_path)?;
 
     for language in platforms.languages.keys() {
+        // Not released until the WebGPU kernels land: the package would install but couldn't run a model.
+        if *language == Language::Wasm {
+            continue;
+        }
         let backend = backend_for_language(*language, platforms.clone());
         backend.release(version, release_path)?;
     }
@@ -57,5 +62,6 @@ fn backend_for_language(
         Language::Python => Box::new(PythonLanguageBackend::new(config)),
         Language::Swift => Box::new(SwiftLanguageBackend::new(config)),
         Language::TypeScript => Box::new(TypeScriptLanguageBackend::new(config)),
+        Language::Wasm => Box::new(WasmLanguageBackend::new(config)),
     }
 }

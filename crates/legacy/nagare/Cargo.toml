@@ -45,9 +45,7 @@ bindings-wasm = [
     "bindings-types/bindings-wasm",
     "shoji/bindings-wasm",
     "dep:wasm-bindgen",
-    "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen-futures",
-    "dep:tsify",
 ]
 
 [dependencies]
@@ -78,9 +76,7 @@ pyo3-async-runtimes = { workspace = true, optional = true }
 pyo3-stub-gen = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
-serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
-tsify = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["full"] }

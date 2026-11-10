@@ -130,6 +130,13 @@ jobs:
             ${{ matrix.features && format('--features {0}', join(matrix.features, ',')) || '' }} \
             ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }}
 
+      # Test the layer that converts values between JavaScript and Rust in the wasm build
+      - name: Run wasm tests
+        if: ${{ matrix.target == 'wasm32-unknown-unknown' }}
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: cargo +stable test --target wasm32-unknown-unknown -p bindings-types --features bindings-wasm --tests
+
       - name: Check working tree
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: git diff --exit-code

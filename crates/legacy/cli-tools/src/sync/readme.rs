@@ -57,7 +57,8 @@ impl SyncTask for ReadmeSyncTask {
             .get(&primary_language)
             .with_context(|| format!("Missing [languages.{}]", primary_language.name()))?
             .metadata
-            .clone();
+            .clone()
+            .with_context(|| format!("Missing [languages.{}].metadata", primary_language.name()))?;
         let badges = resolve_badges(platforms, &metadata.badges, &workspace.workspace.package.version)?;
 
         let template_body = fs::read_to_string(paths.readme_template_path())?;
@@ -124,13 +125,11 @@ fn language_context(
     workspace: &WorkspaceManifest,
     paths: &Paths,
 ) -> Result<LanguageContext> {
-    let language_config =
-        platforms.languages.get(&language).with_context(|| format!("Missing [languages.{}]", language.name()))?;
     let fragments_root = paths.readme_fragments_path().join(language.name());
 
     let dependency = render_fragment(&fragments_root.join("dependency.md"), &workspace.workspace.package.version)?;
 
-    let examples_root = paths.root_path.join(&language_config.examples_path);
+    let examples_root = platforms.examples_path_for_language(language)?;
     let mut examples = BTreeMap::new();
     for name in platforms.examples.keys() {
         examples.insert(name.clone(), read_example(&examples_root, language, name)?);
@@ -178,7 +177,10 @@ fn read_example(
 fn validate_examples(platforms: &PlatformsConfig) -> Result<()> {
     let paths = Paths::new()?;
     for (language, language_config) in &platforms.languages {
-        let examples_root = paths.root_path.join(&language_config.examples_path);
+        let Some(examples_path) = &language_config.examples_path else {
+            continue;
+        };
+        let examples_root = paths.root_path.join(examples_path);
         for name in platforms.examples.keys() {
             let converted_name = language.convert_file_name(name);
             let path = examples_root.join(format!("{converted_name}.{}", language.file_extension()));
