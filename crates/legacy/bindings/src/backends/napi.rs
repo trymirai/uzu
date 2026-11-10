@@ -3,7 +3,10 @@ use quote::{format_ident, quote};
 use syn::{Ident, Token, Variant, punctuated::Punctuated};
 
 use crate::{
-    backends::Backend,
+    backends::{
+        Backend,
+        typescript::{option_inner, optional_class_field_type},
+    },
     contexts::{
         AliasContext, ClassContext, EnumerationContext, EnumerationShape, ErrorContext, ErrorShape,
         ImplementationContext, MethodMetadata, StructureContext,
@@ -14,6 +17,15 @@ use crate::{
 pub struct Napi;
 
 impl Backend for Napi {
+    fn prepare_structure(
+        item: &mut syn::ItemStruct,
+        flavor: &StructureFlavor,
+    ) {
+        if matches!(flavor, StructureFlavor::Class) {
+            declare_nullable_fields(item);
+        }
+    }
+
     fn structure_attributes(context: &StructureContext) -> TokenStream {
         match context.flavor {
             StructureFlavor::Plain => quote! {
@@ -127,6 +139,21 @@ impl Backend for Napi {
     }
 }
 
+/// napi-rs declares an `Option` field of a class as `name?: T`, but its getter returns `null` for
+/// `None`, so the public `Option` fields declare `T | null` as their type.
+fn declare_nullable_fields(item: &mut syn::ItemStruct) {
+    let type_name = item.ident.to_string();
+    for field in item.fields.iter_mut() {
+        if !matches!(field.vis, syn::Visibility::Public(_)) {
+            continue;
+        }
+        let Some(ts_type) = option_inner(&field.ty).map(|inner| optional_class_field_type(inner, &type_name)) else {
+            continue;
+        };
+        field.attrs.push(syn::parse_quote! { #[cfg_attr(feature = "bindings-napi", napi(ts_type = #ts_type))] });
+    }
+}
+
 fn struct_value_implementations(type_name: &Ident) -> TokenStream {
     quote! {
         #[cfg(feature = "bindings-napi")]
@@ -225,7 +252,12 @@ fn enum_variant_classes(
             .map(|field| {
                 let field_ident = field.ident.as_ref().expect("named field");
                 let field_type = &field.ty;
-                quote! { pub #field_ident: #field_type }
+                // As for class structures, see `declare_nullable_fields`.
+                let ts_type = option_inner(field_type).map(|inner| {
+                    let ts_type = optional_class_field_type(inner, &variant_class_ident.to_string());
+                    quote! { #[napi(ts_type = #ts_type)] }
+                });
+                quote! { #ts_type pub #field_ident: #field_type }
             })
             .collect();
         let field_idents: Vec<&Ident> =

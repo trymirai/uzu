@@ -11,6 +11,7 @@ mod pyproject;
 mod readme;
 mod swift_package;
 mod toolchains;
+mod wasm_tool;
 
 use anyhow::{Ok, Result, anyhow};
 pub use jsr::JsrSyncTask;
@@ -22,6 +23,7 @@ pub use pyproject::PyprojectSyncTask;
 pub use readme::ReadmeSyncTask;
 pub use swift_package::SwiftPackageSyncTask;
 pub use toolchains::ToolchainsSyncTask;
+pub use wasm_tool::WasmToolSyncTask;
 
 use crate::configs::{Paths, PlatformsConfig, WorkspaceManifest};
 
@@ -90,7 +92,12 @@ pub fn run_sync(check: bool) -> Result<()> {
     )?;
 
     let typescript_bindings_path = paths.bindings_for_language_path(Language::TypeScript);
-    PackageJsonSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("package.json"), check)?;
+    PackageJsonSyncTask::new(Language::TypeScript).run(
+        &platforms,
+        &workspace,
+        &typescript_bindings_path.join("package.json"),
+        check,
+    )?;
     JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json"), check)?;
     JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json.orig"), check)?;
     LicenseSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("LICENSE"), check)?;
@@ -98,6 +105,21 @@ pub fn run_sync(check: bool) -> Result<()> {
         &platforms,
         &workspace,
         &typescript_bindings_path.join("README.md"),
+        check,
+    )?;
+
+    let wasm_bindings_path = paths.bindings_for_language_path(Language::Wasm);
+    PackageJsonSyncTask::new(Language::Wasm).run(
+        &platforms,
+        &workspace,
+        &wasm_bindings_path.join("package.json"),
+        check,
+    )?;
+    LicenseSyncTask.run(&platforms, &workspace, &wasm_bindings_path.join("LICENSE"), check)?;
+    WasmToolSyncTask::new(typescript_bindings_path.join("src/tool.ts")).run(
+        &platforms,
+        &workspace,
+        &wasm_bindings_path.join("src/tool.ts"),
         check,
     )?;
 

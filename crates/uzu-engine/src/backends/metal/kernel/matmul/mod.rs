@@ -1,6 +1,7 @@
 mod error;
 pub mod gemm;
 mod gemv;
+mod layout;
 mod matmul_dispatch;
 mod matmul_metal_kernel;
 mod matmul_output_work;

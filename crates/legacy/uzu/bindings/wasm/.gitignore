@@ -1,0 +1,6 @@
+node_modules
+dist
+/*.tgz
+*.wasm
+# wasm-bindgen output: `cargo tools build wasm` generates it, and nothing in CI regenerates it to keep a committed copy current
+src/wasm/

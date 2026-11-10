@@ -9,15 +9,12 @@
     "repository": "https://github.com/trymirai/uzu",
     "license": "MIT",
     "packageManager": "pnpm@12.9.0",
-    "os": [
-        "darwin"
-    ],
-    "cpu": [
-        "arm64",
-        "x64"
-    ],
     "napi": {
-        "binaryName": "uzu"
+        "binaryName": "uzu",
+        "targets": [
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin"
+        ]
     },
     "files": [
         "**/*"
@@ -62,6 +59,10 @@
     },
     "exports": {
         ".": {
+            "browser": {
+                "types": "./dist/browser.d.mts",
+                "default": "./dist/browser.mjs"
+            },
             "import": "./dist/index.mjs",
             "require": "./dist/index.js"
         },

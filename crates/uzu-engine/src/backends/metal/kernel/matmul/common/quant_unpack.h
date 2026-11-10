@@ -28,6 +28,7 @@ METAL_FUNC uint decode_zero_point(const device uint8_t* zero_points_row, uint gr
 }
 
 UZU_CONST ushort W4_BITS = 4;
+UZU_CONST uint W4_CODES_PER_WORD = sizeof(uint) * 8 / W4_BITS;
 UZU_CONST uint W4_SIGN_MASK = symmetric_zero_point<W4_BITS>() * 0x11111111u;
 UZU_CONST uint W8_SIGN_MASK = symmetric_zero_point<8>() * 0x01010101u;
 UZU_CONST uint W4_NIBBLE_MASK = 0x0F0F0F0Fu;
@@ -90,7 +91,8 @@ inline void dequantize(
     float scale,
     float bias,
     threadgroup StageT* w_local,
-    const bool signed_codes
+    const bool signed_codes,
+    const uint word_stride = 1
 ) {
   static_assert(bits == 2 || bits == 4 || bits == 8, "Only int2, int4 and int8 supported");
   static_assert(bits == 8 || N % 2 == 0, "int2 and int4 values are unpacked in pairs");
@@ -103,7 +105,8 @@ inline void dequantize(
   if constexpr (READ_CODE_WORDS) {
     const device uint* words = reinterpret_cast<const device uint*>(w);
     for (int i = 0; i < N / 8; i++) {
-      const uint word = signed_codes ? words[i] ^ W4_SIGN_MASK : words[i];
+      const uint raw_word = words[i * word_stride];
+      const uint word = signed_codes ? raw_word ^ W4_SIGN_MASK : raw_word;
       for (int j = 0; j < 4; j++) {
         pairs[i * 4 + j] = vec<StageT, 2>(
             vec<ComputeT, 2>(dequantize_code((word >> (8 * j)) & 0x0fu), dequantize_code((word >> (8 * j + 4)) & 0x0fu))
@@ -118,7 +121,7 @@ inline void dequantize(
   } else if constexpr (bits == 4) {
     const uint sign_flip = signed_codes ? 0x88u : 0u;
     for (int i = 0; i < (N / 2); i++) {
-      const uint code = uint(w[i]) ^ sign_flip;
+      const uint code = uint(w[i / 4 * 4 * word_stride + i % 4]) ^ sign_flip;
       pairs[i] = vec<StageT, 2>(vec<ComputeT, 2>(dequantize_code(code & 0x0fu), dequantize_code(code >> 4)));
     }
   } else {

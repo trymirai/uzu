@@ -20,6 +20,9 @@ using namespace uzu::gemm;
   (K_SPLIT == 1 && REDUCTION_LANES == 32 && NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE == 1 &&     \
    ((BITS == 2 && GROUP_SIZE == 32 * GROUP_LANES) || (BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES) ||                  \
     (BITS == 8 && GROUP_SIZE == 8 * GROUP_LANES)))
+#define GEMV_INTERLEAVED_ROWS_TILE                                                                                     \
+  (K_SPLIT == 8 && REDUCTION_LANES == 4 && NUM_SIMDGROUPS == 8 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE == 1 &&      \
+   BITS == 4 && GROUP_SIZE == 16 * GROUP_LANES)
 #define GEMV_BATCHED_FMA_32_TILE                                                                                       \
   (K_SPLIT == 1 && REDUCTION_LANES == 8 && NUM_SIMDGROUPS == 4 && OUTPUT_ROW_TILE == 32 && INPUT_ROW_TILE >= 2 &&      \
    INPUT_ROW_TILE <= 4)
@@ -57,7 +60,7 @@ VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(INPUT_ROW_TILE, 1, 2, 3, 4)
 VARIANTS(OUTPUT_ROW_TILE, 1, 2, 4, 8, 16, 32)
-VARIANTS(REDUCTION_LANES, 8, 32)
+VARIANTS(REDUCTION_LANES, 4, 8, 32)
 VARIANTS(GROUP_LANES, 1, 2, 4, 8)
 VARIANTS(NUM_SIMDGROUPS, 2, 4, 8)
 
@@ -72,7 +75,8 @@ CONSTRAINT((BITS == 2) == (GROUP_SIZE == 128))
 CONSTRAINT(INPUT_ROW_TILE == 1 || GEMV_BATCHED_INPUT)
 CONSTRAINT(
     GEMV_FULL_PRECISION_TILE ||
-    (BITS != 0 && (GEMV_QUANTIZED_ROW_TILE || GEMV_BATCHED_FMA_32_TILE || GEMV_BATCHED_FMA_16_TILE)))
+    (BITS != 0 && (GEMV_QUANTIZED_ROW_TILE || GEMV_INTERLEAVED_ROWS_TILE || GEMV_BATCHED_FMA_32_TILE ||
+                    GEMV_BATCHED_FMA_16_TILE)))
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales

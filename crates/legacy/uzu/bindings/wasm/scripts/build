@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -exuo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ ! -e src/wasm/uzu_bg.wasm ]; then
+  echo "Missing src/wasm/uzu_bg.wasm, run 'cargo tools build wasm' from the repository root" >&2
+  exit 1
+fi
+
+# Build into dist and publish the package from there
+rm -rf dist; mkdir dist
+for file in README.md LICENSE; do
+  if [ -e "${file}" ]; then cp "${file}" dist; fi
+done
+# this converts the export map paths for the dist directory
+node scripts/utils/make-dist-package-json.cjs > dist/package.json
+
+# build index.ts to .js/.d.ts files
+./node_modules/.bin/tsc -p tsconfig.build.json
+
+# wasm-bindgen output is already JS with its own .d.ts files, ship it as is
+mkdir -p dist/wasm
+cp src/wasm/* dist/wasm/
+
+# make sure that nothing crashes when we import the output ESM, which loads the wasm module
+(cd dist && node --input-type=module -e "$(cat ../scripts/utils/file-fetch.mjs)
+await import('@trymirai/uzu-wasm');")

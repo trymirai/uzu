@@ -7,7 +7,7 @@
 #include "../../../common/fragment.h"
 #include "../../../common/quant_pack.h"
 #include "../../../common/quant_unpack.h"
-#include "../mxu_tiled_layout.h"
+#include "../../../layout/mxu_tiled_layout.h"
 #include "../schedules/tile_context.h"
 
 using namespace metal;

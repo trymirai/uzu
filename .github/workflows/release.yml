@@ -104,16 +104,30 @@ jobs:
 
           : "${NODE_AUTH_TOKEN:?NPM_TOKEN secret is required}"
 
-          npm_package_name="@trymirai/uzu"
           npm_username=$(npm whoami --registry=https://registry.npmjs.org)
-          npm_package_owners=$(npm owner ls "$npm_package_name" --registry=https://registry.npmjs.org)
-          npm_package_versions_json=$(npm view "$npm_package_name" versions --json --registry=https://registry.npmjs.org)
+          npm_view_stderr="$RUNNER_TEMP/npm-view-stderr"
 
-          NPM_PACKAGE_NAME="$npm_package_name" \
-          NPM_PACKAGE_OWNERS="$npm_package_owners" \
-          NPM_PACKAGE_VERSIONS_JSON="$npm_package_versions_json" \
-          NPM_USERNAME="$npm_username" \
-            node --input-type=module <<'NODE'
+          # The umbrella package and its platform packages (one per [languages.typescript] target in
+          # .config/platforms.toml). @trymirai/uzu-wasm, which the umbrella re-exports for browsers,
+          # joins them once the WebGPU kernels land.
+          for npm_package_name in @trymirai/uzu @trymirai/uzu-darwin-arm64 @trymirai/uzu-darwin-x64; do
+            # With --json npm reports errors on stdout, so stderr is kept out of the JSON.
+            if ! npm_package_versions_json=$(npm view "$npm_package_name" versions --json --registry=https://registry.npmjs.org 2>"$npm_view_stderr"); then
+              if grep -q E404 <<<"$npm_package_versions_json"; then
+                echo "${npm_package_name} is not on npm yet; the first publish creates it in the @trymirai scope."
+                continue
+              fi
+              cat "$npm_view_stderr" >&2
+              echo "$npm_package_versions_json" >&2
+              exit 1
+            fi
+            npm_package_owners=$(npm owner ls "$npm_package_name" --registry=https://registry.npmjs.org)
+
+            NPM_PACKAGE_NAME="$npm_package_name" \
+            NPM_PACKAGE_OWNERS="$npm_package_owners" \
+            NPM_PACKAGE_VERSIONS_JSON="$npm_package_versions_json" \
+            NPM_USERNAME="$npm_username" \
+              node --input-type=module <<'NODE'
           const packageName = process.env.NPM_PACKAGE_NAME;
           const packageOwners = (process.env.NPM_PACKAGE_OWNERS ?? "")
             .split("\n")
@@ -136,6 +150,7 @@ jobs:
 
           console.log(`NPM user ${process.env.NPM_USERNAME} is an owner of ${packageName}.`);
           NODE
+          done
 
       - name: "Binaries: Import developer identity certificate"
         shell: bash
@@ -196,6 +211,22 @@ jobs:
           cargo tools install python
           cargo tools install swift
 
+      # The wasm package needs wasm-bindgen-cli matching the wasm-bindgen crate, and uzu-engine's
+      # webgpu feature compiles shaders with Slang.
+      #      - name: "Release: Install wasm tools"
+      #        run: |
+      #          set -euo pipefail
+      #          wasm_bindgen_version=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/"/, "", $3); print $3; exit }' Cargo.lock)
+      #          cargo install --locked "wasm-bindgen-cli@${wasm_bindgen_version}"
+      #
+      #          slang_version="2026.20"
+      #          slang_dir="$RUNNER_TEMP/slang"
+      #          mkdir -p "$slang_dir"
+      #          curl --fail --location --silent --show-error \
+      #            "https://github.com/shader-slang/slang/releases/download/v${slang_version}/slang-${slang_version}-macos-aarch64.tar.gz" |
+      #            tar -xz -C "$slang_dir"
+      #          echo "SLANG_DIR=$slang_dir" >> "$GITHUB_ENV"
+
       - name: "Release: Sync"
         run: cargo tools sync
 
@@ -207,6 +238,11 @@ jobs:
 
       - name: "Release: Build artifacts"
         run: cargo tools release "${VERSION}" "$UZU_RELEASE_PATH"
+      #        run: |
+      #           The Slang libraries are loaded by uzu-engine's build script.
+      #           Exported here rather than through GITHUB_ENV because macOS drops DYLD_* variables when it starts /bin/bash.
+      #          export DYLD_FALLBACK_LIBRARY_PATH="$SLANG_DIR/lib"
+      #          cargo tools release "${VERSION}" "$UZU_RELEASE_PATH"
 
       - name: "Binaries: Codesign"
         shell: bash
@@ -348,10 +384,16 @@ jobs:
       # Publish TypeScript
       # ---------------------------------------------------------------
       - name: "Publish TypeScript"
-        working-directory: ${{ env.UZU_RELEASE_PATH }}/typescript-npm
+        working-directory: ${{ env.UZU_RELEASE_PATH }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --access public --no-git-checks
+        run: |
+          set -euo pipefail
+          # The umbrella package goes last: it depends on the platform packages. wasm-npm/ goes before it
+          # once the WebGPU kernels land.
+          for package_path in typescript-npm-platforms/*/ typescript-npm/; do
+            (cd "$package_path" && pnpm publish --access public --no-git-checks)
+          done
 
       # ---------------------------------------------------------------
       # Publish Python

@@ -69,7 +69,9 @@ impl GemvSpecialization {
             && weights_data_type == DataType::BF16
             && shape.k >= MXU_TILED_KERNEL_MIN_K
             && shape.n >= 32 * gpu_core_count;
-        let tile = if is_quant && shape.gathered {
+        let tile = if is_quant && !shape.gathered && gemm_b_layout == GemmBLayout::InterleavedRows && shape.m == 1 {
+            policy::interleaved_rows_tile(shape.b_group_size.unwrap_or(0), shape.k)
+        } else if is_quant && shape.gathered {
             policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
         } else if is_quant {
             policy::quantized_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n, bf16_io)
@@ -191,7 +193,7 @@ fn output_transform_for_tile(
     }
 
     let output_rows = tile.output_row_tile();
-    let can_fuse = tile.k_split == 1
+    let can_fuse = (tile.k_split == 1 || (shape.is_quant() && tile.input_row_tile == 1))
         && output_rows >= HADAMARD_TRANSFORM_BLOCK_SIZE
         && output_rows.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE);
     if can_fuse {

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../../../common/defines.h"
-#include "../../../generated/matmul.h"
-#include "../../common/mxu_fragment/ops.h"
+#include "../../common/defines.h"
+#include "../../generated/matmul.h"
+#include "../common/mxu_fragment/ops.h"
 
 namespace uzu {
 namespace gemm {
