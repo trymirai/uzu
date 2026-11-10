@@ -348,8 +348,17 @@ impl CommandBufferPending for MetalCommandBufferPending {
     type CommandBuffer = MetalCommandBuffer;
 
     async fn wait_until_completed(mut self) -> Result<MetalCommandBufferCompleted, MetalError> {
-        let (gpu_execution_time, timestamps) =
-            self.receiver.recv().await.map_err(|_| MetalError::CommandBufferWait)??;
+        let start = std::time::Instant::now();
+        let (gpu_execution_time, timestamps) = loop {
+            if start.elapsed() >= Duration::from_millis(50) {
+                break self.receiver.recv().await.map_err(|_| MetalError::CommandBufferWait)?;
+            }
+            match self.receiver.try_recv() {
+                Ok(message) => break message,
+                Err(mpsc::TryRecvError::Empty) => std::thread::sleep(Duration::from_micros(20)),
+                Err(mpsc::TryRecvError::Closed) => return Err(MetalError::CommandBufferWait),
+            }
+        }?;
         Ok(MetalCommandBufferCompleted {
             gpu_execution_time,
             timestamps,

@@ -12,3 +12,5 @@ mod metal_extensions;
 mod timestamp_recorder;
 
 pub use backend::Metal;
+#[cfg(test)]
+pub use gpu_types::kv_layout::KVLayout;
