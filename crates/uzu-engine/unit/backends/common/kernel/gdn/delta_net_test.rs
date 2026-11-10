@@ -338,6 +338,9 @@ fn test_delta_net_update_qwen35_shapes() {
 #[uzu_test]
 fn test_delta_net_update_qwen35_shapes_bf16() {
     test_delta_net_update_impl::<bf16>(48, 16, 128, 128, 2e-2, 5e-2, "DeltaNetUpdate Qwen3.5 BF16");
+#[uzu_test]
+fn test_delta_net_update_sigmoid_gate() {
+    test_delta_net_update_impl::<f32>(ActivationType::SIGMOID, 48, 16, 128, 128, 1e-3, 1e-2, "DeltaNetUpdate Sigmoid");
 }
 
 // DeltaNetPrefill + NormGate
@@ -530,6 +533,20 @@ fn test_delta_net_prefill_qwen35_shapes() {
 #[uzu_test]
 fn test_delta_net_prefill_qwen35_shapes_bf16() {
     test_prefill_norm_gate_impl::<bf16>(48, 16, 128, 128, 32, 2e-2, 5e-2, "Prefill+NormGate Qwen3.5 BF16");
+
+#[uzu_test]
+fn test_delta_net_prefill_sigmoid_gate() {
+    test_prefill_norm_gate_impl::<f32>(
+        ActivationType::SIGMOID,
+        48,
+        16,
+        128,
+        128,
+        32,
+        1e-3,
+        1e-2,
+        "Prefill+NormGate Sigmoid",
+    );
 }
 
 #[cfg(backend = "metal")]

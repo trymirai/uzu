@@ -79,6 +79,12 @@ inline T activate_softplus(T x) {
 
 template <typename T>
 inline T activate(T x, ActivationType type) {
+inline T activate_sigmoid(T x) {
+  float xf = float(x);
+  float y = 1.0f / (1.0f + fast::exp(-fabs(xf)));
+  float out = (xf < 0.0f) ? 1.0f - y : y;
+  return static_cast<T>(out);
+}
   switch (type) {
   case ActivationType::SILU:
     return activate_silu(x);
@@ -90,5 +96,7 @@ inline T activate(T x, ActivationType type) {
     return x;
   case ActivationType::SOFTPLUS:
     return activate_softplus(x);
+  case ActivationType::SIGMOID:
+    return activate_sigmoid(x);
   }
 }

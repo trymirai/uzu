@@ -207,6 +207,21 @@ fn test_gelu_exact_f16() {
 #[uzu_test]
 fn test_gelu_exact_bf16() {
     test_activation::<bf16>(ActivationType::GELUExact, false);
+
+// Sigmoid out-of-place tests
+#[uzu_test]
+fn test_sigmoid_f32() {
+    test_activation::<f32>(ActivationType::SIGMOID, 1.0, false);
+}
+
+#[uzu_test]
+fn test_sigmoid_f16() {
+    test_activation::<f16>(ActivationType::SIGMOID, 1.0, false);
+}
+
+#[uzu_test]
+fn test_sigmoid_bf16() {
+    test_activation::<bf16>(ActivationType::SIGMOID, 1.0, false);
 }
 
 // GELU in-place tests

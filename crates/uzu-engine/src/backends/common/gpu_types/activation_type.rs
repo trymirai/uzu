@@ -11,6 +11,7 @@ pub enum ActivationType {
     GELUExact,
     IDENTITY,
     SOFTPLUS,
+    SIGMOID,
 }
 
 impl ActivationType {
@@ -24,6 +25,7 @@ impl ActivationType {
             ActivationType::GELUExact => gelu_exact(x),
             ActivationType::IDENTITY => x,
             ActivationType::SOFTPLUS => softplus(x),
+            ActivationType::SIGMOID => sigmoid(x),
         }
     }
 }
@@ -39,6 +41,10 @@ pub fn activation_silu_alpha<T: Float>(
 
 fn silu<T: Float>(x: T) -> T {
     activation_silu_alpha(x, 1.0f32)
+fn sigmoid<T: Float>(x: T) -> T {
+    let x_float = x.to_f32().unwrap();
+    let y_float = 1.0f32 / (1.0f32 + (-x_float).exp());
+    T::from(y_float).unwrap()
 }
 
 fn gelu_approx<T: Float>(x: T) -> T {
