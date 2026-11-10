@@ -25,7 +25,7 @@ export default tseslint.config(
                 {
                     patterns: [
                         {
-                            regex: '^@trymirai/uzu(/.*)?',
+                            regex: '^@trymirai/uzu(/.*)?$',
                             message: 'Use a relative import, not a package import.',
                         },
                     ],

@@ -11,6 +11,7 @@ pub enum Language {
     #[serde(rename = "typescript")]
     #[value(name = "typescript")]
     TypeScript,
+    Wasm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,7 @@ impl Language {
             Language::Python => "python".to_string(),
             Language::Swift => "swift".to_string(),
             Language::TypeScript => "typescript".to_string(),
+            Language::Wasm => "wasm".to_string(),
         }
     }
 
@@ -37,6 +39,7 @@ impl Language {
             Language::Python => "Python".to_string(),
             Language::Swift => "Swift".to_string(),
             Language::TypeScript => "TypeScript".to_string(),
+            Language::Wasm => "WebAssembly".to_string(),
         }
     }
 
@@ -45,14 +48,14 @@ impl Language {
             Language::Rust => "rust",
             Language::Python => "python",
             Language::Swift => "swift",
-            Language::TypeScript => "ts",
+            Language::TypeScript | Language::Wasm => "ts",
         }
     }
 
     pub fn command_argument_case(&self) -> Case {
         match self {
             Language::Rust | Language::Python => Case::Snake,
-            Language::TypeScript => Case::LowerCamel,
+            Language::TypeScript | Language::Wasm => Case::LowerCamel,
             Language::Swift => Case::Kebab,
         }
     }
@@ -69,7 +72,7 @@ impl Language {
             Language::Rust => "rs",
             Language::Python => "py",
             Language::Swift => "swift",
-            Language::TypeScript => "ts",
+            Language::TypeScript | Language::Wasm => "ts",
         }
     }
 

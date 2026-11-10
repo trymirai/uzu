@@ -1,0 +1,10 @@
+<!doctype html>
+<html>
+<body>
+    <pre id="output"></pre>
+    <script type="module">
+        const example = new URLSearchParams(location.search).get('example') ?? 'quickStart';
+        import(/* @vite-ignore */ `./${example}.ts`);
+    </script>
+</body>
+</html>

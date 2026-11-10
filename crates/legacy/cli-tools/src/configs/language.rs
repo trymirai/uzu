@@ -15,6 +15,8 @@ pub struct LanguageConfig {
     pub targets: Vec<String>,
     pub tools: Vec<String>,
     pub bindings: Vec<Bindings>,
-    pub examples_path: String,
-    pub metadata: LanguageMetadata,
+    #[serde(default)]
+    pub examples_path: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<LanguageMetadata>,
 }

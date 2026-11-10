@@ -413,3 +413,76 @@ async fn discovered_downloadable_models_have_storage_entries_when_returned() {
     assert!(engine.download_state(&found).await.is_some(), "lookup returned a model before its storage entry existed");
     assert!(!engine.catalog_is_refreshing());
 }
+
+#[tokio::test]
+async fn incompatible_downloaded_models_are_rejected_by_every_session_loader() {
+    use shoji::types::{basic::File, model::ModelSource};
+
+    let (engine, _directory) = engine().await;
+    engine.add_backend(Arc::new(UzuLlmBackend::new())).await;
+    let current = Engine::toolchain_version();
+    let mut compatible = model("downloaded");
+    compatible.backends[0].identifier = "uzu".into();
+    compatible.backends[0].version = current.clone();
+    compatible.accessibility = ModelAccessibility::OnDevice {
+        source: ModelSource::Registry {
+            toolchain_version: current.clone(),
+            repository: Some(Repository {
+                identifier: "test/downloaded".into(),
+                commit_hash: Some("a".repeat(40)),
+                paths: None,
+            }),
+            source_repository: None,
+            files: vec![File {
+                url: "https://example.invalid/model.bin".into(),
+                name: "model.bin".into(),
+                size: 6,
+                hashes: vec![],
+            }],
+        },
+    };
+    let path = engine.storage.cache_model_path(&compatible).unwrap();
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("model.bin"), b"hello\n").unwrap();
+    engine.storage.refresh(std::slice::from_ref(&compatible), false).await.unwrap();
+    assert_eq!(engine.ready_download_state(&compatible).await.unwrap().phase, DownloadPhase::Downloaded {});
+    assert_eq!(engine.model_path(&compatible).await, Some(path.to_string_lossy().into_owned()));
+
+    // The checkpoint exists and is downloaded. Reject stale descriptors before
+    // any backend or model files are opened, including descriptors held by callers.
+    for (toolchain, backend) in [
+        ("0.0.0", "0.0.0"),
+        ("999.0.0", "999.0.0"),
+        ("0.0.0", current.as_str()),
+        ("999.0.0", current.as_str()),
+        (current.as_str(), "0.0.0"),
+        (current.as_str(), "999.0.0"),
+    ] {
+        let mut incompatible = compatible.clone();
+        incompatible.backends[0].version = backend.into();
+        if let ModelAccessibility::OnDevice {
+            source: ModelSource::Registry {
+                toolchain_version,
+                ..
+            },
+        } = &mut incompatible.accessibility
+        {
+            *toolchain_version = toolchain.into();
+        }
+        assert!(engine.model_path(&incompatible).await.is_none());
+        let expected = EngineError::ModelConfig {
+            message: format!("Model downloaded is incompatible with uzu toolchain {current}"),
+        };
+        assert_eq!(engine.chat(incompatible.clone(), ChatConfig::default()).await.err(), Some(expected.clone()));
+        assert_eq!(
+            engine.chat_instance(incompatible.clone(), ChatConfig::default()).await.err(),
+            Some(expected.clone())
+        );
+        assert_eq!(engine.decision(incompatible.clone()).await.err(), Some(expected.clone()));
+        #[cfg(not(target_family = "wasm"))]
+        {
+            assert_eq!(engine.classification(incompatible.clone()).await.err(), Some(expected.clone()));
+            assert_eq!(engine.text_to_speech(incompatible).await.err(), Some(expected));
+        }
+    }
+}

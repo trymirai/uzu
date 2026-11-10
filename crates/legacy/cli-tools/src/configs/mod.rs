@@ -1,5 +1,6 @@
 mod binary;
 mod language;
+mod lockfile;
 mod paths;
 mod platforms;
 mod target;
@@ -8,6 +9,7 @@ mod workspace;
 
 pub use binary::BinaryConfig;
 pub use language::{LanguageConfig, LanguageMetadata};
+pub use lockfile::{CargoLock, LockedPackage};
 pub use paths::Paths;
 pub use platforms::{ALL_TARGET, ExampleConfig, HOST_TARGET, PlatformsConfig};
 pub use target::TargetConfig;

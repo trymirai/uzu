@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+# Compares this package's TypeScript API with @trymirai/uzu (napi), see scripts/utils/check-api.cjs.
+# Needs `pnpm install` in both bindings/wasm and bindings/typescript, and the wasm bindings built
+# with `cargo tools build wasm`.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+node scripts/utils/check-api.cjs "$@"

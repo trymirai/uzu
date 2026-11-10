@@ -1,10 +1,11 @@
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
-    configs::{HOST_TARGET, PlatformsConfig},
+    configs::PlatformsConfig,
     hanashi::export_tokenizers,
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
+        WasmLanguageBackend,
     },
     release::run_release,
     sync::run_sync,
@@ -37,7 +38,8 @@ enum Commands {
         language: Language,
         #[arg(value_enum, default_value = "release")]
         configuration: Configuration,
-        #[arg(long, value_delimiter = ',', default_value = HOST_TARGET)]
+        /// Defaults to `host` (`all` for wasm, which has no host target)
+        #[arg(long, value_delimiter = ',')]
         targets: Vec<String>,
     },
     /// Run tests for a specific language
@@ -84,9 +86,13 @@ fn run_setup(include_platform_specific: bool) -> Result<()> {
 }
 
 fn run_verify(config: &PlatformsConfig) -> Result<()> {
+    let host_target = config.host_target()?;
     for language in config.languages.keys() {
+        if config.targets_for_language(*language, vec![host_target.clone()])?.is_empty() {
+            continue;
+        }
         let backend = language_backend(*language, config.clone())?;
-        backend.build(Configuration::Release, vec![config.host_target()?])?;
+        backend.build(Configuration::Release, vec![host_target.clone()])?;
     }
     let (output, _) = Command::git_status_porcelain().output()?;
     if !output.is_empty() {
@@ -105,6 +111,7 @@ fn language_backend(
         Language::Python => Ok(Box::new(PythonLanguageBackend::new(config))),
         Language::Swift => Ok(Box::new(SwiftLanguageBackend::new(config))),
         Language::TypeScript => Ok(Box::new(TypeScriptLanguageBackend::new(config))),
+        Language::Wasm => Ok(Box::new(WasmLanguageBackend::new(config))),
     }
 }
 
@@ -125,7 +132,15 @@ async fn main() -> Result<()> {
             language,
             configuration,
             targets,
-        }) => language_backend(language, config)?.build(configuration, targets)?,
+        }) => {
+            let backend = language_backend(language, config)?;
+            let targets = if targets.is_empty() {
+                backend.default_targets()
+            } else {
+                targets
+            };
+            backend.build(configuration, targets)?
+        },
         Some(Commands::Test {
             language,
         }) => {
@@ -142,10 +157,11 @@ async fn main() -> Result<()> {
         }) => {
             let configuration = Configuration::Release;
             let backend = language_backend(language, config.clone())?;
+            let targets = backend.default_targets();
             if backend.expects_prebuild_for_run() {
-                backend.build(configuration, vec![host_target.clone()])?;
+                backend.build(configuration, targets.clone())?;
             }
-            backend.example(&name, configuration, host_target.clone())?
+            backend.example(&name, configuration, targets)?
         },
         Some(Commands::Sync {
             check,

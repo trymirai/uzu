@@ -206,7 +206,10 @@ async fn mirai_publishes_healthy_models_before_a_stalled_resolution() -> Result<
     let registry = Arc::new(CachedRegistry::new(Box::new(
         Registry::builder()
             .device(Device::new()?)
-            .backends(vec![])
+            .backends(vec![Backend {
+                identifier: "uzu".into(),
+                version: "1".into(),
+            }])
             .cache_path(directory.path().to_path_buf())
             .registry_url(mirai.uri())
             .hugging_face_url(hugging_face.uri())
@@ -243,24 +246,28 @@ async fn mirai_publishes_healthy_models_before_a_stalled_resolution() -> Result<
     Ok(())
 }
 
+#[rstest::rstest]
+#[case("1", "1", true)]
+#[case("0", "0", false)]
+#[case("2", "2", false)]
+#[case("0", "1", false)]
+#[case("2", "1", false)]
+#[case("1", "0", false)]
+#[case("1", "2", false)]
 #[tokio::test]
-async fn mirai_serves_disk_cache_and_keeps_it_when_new_metadata_fails() -> Result<(), Box<dyn std::error::Error>> {
+async fn mirai_only_retains_compatible_cache_when_refresh_fails(
+    #[case] toolchain_version: &str,
+    #[case] backend_version: &str,
+    #[case] compatible: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mirai = MockServer::start().await;
     let hugging_face = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/fetch/models"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(registry_response(vec![listed_model("cached", pinned("trymirai/missing", REVISION))])),
-        )
-        .expect(1)
-        .mount(&mirai)
-        .await;
     let directory = tempfile::tempdir()?;
     let mut previous = cached_model("cached");
+    previous.backends[0].version = backend_version.into();
     previous.accessibility = ModelAccessibility::OnDevice {
         source: ModelSource::Registry {
-            toolchain_version: "1".to_string(),
+            toolchain_version: toolchain_version.into(),
             repository: Some(repository(&"e".repeat(40), None)),
             source_repository: None,
             files: vec![File {
@@ -274,18 +281,99 @@ async fn mirai_serves_disk_cache_and_keeps_it_when_new_metadata_fails() -> Resul
     std::fs::write(directory.path().join("registry.json"), serde_json::to_vec(&vec![previous.clone()])?)?;
     let registry = Registry::builder()
         .device(Device::new()?)
-        .backends(vec![])
+        .backends(vec![Backend {
+            identifier: "uzu".into(),
+            version: "1".into(),
+        }])
         .cache_path(directory.path().to_path_buf())
         .registry_url(mirai.uri())
         .hugging_face_url(hugging_face.uri())
         .build()
         .await?;
 
-    assert_eq!(registry.models().await?, vec![previous.clone()]);
+    let expected = if compatible {
+        vec![previous]
+    } else {
+        vec![]
+    };
+    assert_eq!(registry.models().await?, expected);
     assert!(mirai.received_requests().await.unwrap().is_empty());
-    let (models, complete) = registry.refresh_listing(Arc::new(|| {})).await?;
-    assert_eq!(models, vec![previous]);
+
+    {
+        let _offline = Mock::given(method("POST"))
+            .and(path("/fetch/models"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1..)
+            .mount_as_scoped(&mirai)
+            .await;
+        assert!(registry.refresh_listing(Arc::new(|| {})).await.is_err());
+        assert_eq!(registry.models().await?, expected);
+    }
+
+    // A successful catalog response must not revive an incompatible cache entry
+    // when the replacement checkpoint's Hugging Face metadata is unavailable.
+    Mock::given(method("POST"))
+        .and(path("/fetch/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(registry_response(vec![listed_model("cached", pinned("trymirai/missing", REVISION))])),
+        )
+        .expect(1)
+        .mount(&mirai)
+        .await;
+    let snapshots = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let registry = Arc::new(registry);
+    let observed = registry.clone();
+    let updates = snapshots.clone();
+    let (models, complete) = registry
+        .refresh_listing(Arc::new(move || {
+            updates.lock().unwrap().push(observed.cached_listing().unwrap().0);
+        }))
+        .await?;
+    assert_eq!(models, expected);
+    assert!(snapshots.lock().unwrap().iter().all(|models| models == &expected));
     assert!(!complete);
+    let saved: Vec<Model> = serde_json::from_slice(&std::fs::read(directory.path().join("registry.json"))?)?;
+    assert_eq!(saved, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn mirai_filters_incompatible_api_models_before_resolving_files() -> Result<(), Box<dyn std::error::Error>> {
+    let mirai = MockServer::start().await;
+    let hugging_face = MockServer::start().await;
+    mount_hugging_face(&hugging_face, REVISION, 1).await;
+    let mut models = vec![listed_model("compatible", pinned("trymirai/model", REVISION))];
+    for (index, (toolchain, backend)) in
+        [("0", "0"), ("2", "2"), ("0", "1"), ("2", "1"), ("1", "0"), ("1", "2")].into_iter().enumerate()
+    {
+        let mut model = listed_model(&format!("incompatible-{index}"), pinned("trymirai/model", REVISION));
+        model["accessibility"]["reference"]["toolchain_version"] = json!(toolchain);
+        model["backends"][0]["version"] = json!(backend);
+        models.push(model);
+    }
+    Mock::given(method("POST"))
+        .and(path("/fetch/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(registry_response(models)))
+        .expect(1)
+        .mount(&mirai)
+        .await;
+    let directory = tempfile::tempdir()?;
+    let registry = Registry::builder()
+        .device(Device::new()?)
+        .backends(vec![Backend {
+            identifier: "uzu".into(),
+            version: "1".into(),
+        }])
+        .cache_path(directory.path().to_path_buf())
+        .registry_url(mirai.uri())
+        .hugging_face_url(hugging_face.uri())
+        .build()
+        .await?;
+    let (models, complete) = registry.refresh_listing(Arc::new(|| {})).await?;
+    assert!(complete);
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].identifier, "compatible");
     Ok(())
 }
 
