@@ -59,7 +59,12 @@ impl Registry {
         })?;
         let hugging_face =
             HuggingFace::builder().endpoint(hugging_face_url).maybe_token(huggingface_api_key).build()?;
-        let snapshot = Self::load_registry(&cache_path).await.ok().map(|models| (models, false));
+        // The disk cache is shared by different engine versions. Never publish
+        // another toolchain's descriptors, even while the catalog is offline.
+        let snapshot = Self::load_registry(&cache_path).await.ok().map(|mut models| {
+            models.retain(|model| backends.iter().any(|backend| backend.supports_model(model)));
+            (models, false)
+        });
 
         Ok(Self {
             device: (&device).into(),
@@ -106,9 +111,10 @@ impl RegistryTrait for Registry {
             if !cached.is_empty() {
                 self.publish((cached.clone(), false), &on_update);
             }
-            let models = self.fetch_models().await.map_err(|error| RegistryError::UnableToGetModels {
+            let mut models = self.fetch_models().await.map_err(|error| RegistryError::UnableToGetModels {
                 message: error.to_string(),
             })?;
+            models.retain(|model| self.backends.iter().any(|backend| backend.supports_model(model)));
             let listing = self.resolve(models, cached, &on_update).await;
             if let Err(error) = self.save_registry(&listing.0).await {
                 tracing::warn!(?error, "failed to save Mirai registry");

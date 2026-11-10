@@ -576,6 +576,7 @@ impl Engine {
         if let Some(filesystem_path) = model.filesystem_path() {
             return Some(filesystem_path);
         }
+        self.model_backend(model).await.ok()?;
         let state = self.storage.ready_state(&model.identifier).await.ok()?;
         if !matches!(state.phase, DownloadPhase::Downloaded {}) {
             return None;
@@ -637,15 +638,9 @@ impl Engine {
         model: Model,
         config: ChatConfig,
     ) -> Result<ChatInstance, EngineError> {
+        let backend = self.model_backend(&model).await?;
         let path = self.model_path(&model).await;
-        if let Some(backend) = model.backends.first() {
-            let backend =
-                self.backends.lock().await.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?.clone();
-            let instance = ChatInstance::new(backend, config, model, path).await?;
-            Ok(instance)
-        } else {
-            Err(EngineError::BackendNotFound {})
-        }
+        Ok(ChatInstance::new(backend, config, model, path).await?)
     }
 
     #[bindings::export(Method)]
@@ -663,15 +658,9 @@ impl Engine {
         &self,
         model: Model,
     ) -> Result<ClassificationSession, EngineError> {
+        let backend = self.model_backend(&model).await?;
         let path = self.model_path(&model).await;
-        if let Some(backend) = model.backends.first() {
-            let backends = self.backends.lock().await;
-            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ClassificationSession::new(backend.clone(), model, path).await?;
-            Ok(session)
-        } else {
-            Err(EngineError::BackendNotFound {})
-        }
+        Ok(ClassificationSession::new(backend, model, path).await?)
     }
 
     #[bindings::export(Method)]
@@ -679,15 +668,9 @@ impl Engine {
         &self,
         model: Model,
     ) -> Result<DecisionSession, EngineError> {
+        let backend = self.model_backend(&model).await?;
         let path = self.model_path(&model).await;
-        if let Some(backend) = model.backends.first() {
-            let backends = self.backends.lock().await;
-            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = DecisionSession::new(backend.clone(), model, path).await?;
-            Ok(session)
-        } else {
-            Err(EngineError::BackendNotFound {})
-        }
+        Ok(DecisionSession::new(backend, model, path).await?)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -696,19 +679,37 @@ impl Engine {
         &self,
         model: Model,
     ) -> Result<TextToSpeechSession, EngineError> {
+        let backend = self.model_backend(&model).await?;
         let path = self.model_path(&model).await;
-        if let Some(backend) = model.backends.first() {
-            let backends = self.backends.lock().await;
-            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = TextToSpeechSession::new(backend.clone(), model, path).await?;
-            Ok(session)
-        } else {
-            Err(EngineError::BackendNotFound {})
-        }
+        Ok(TextToSpeechSession::new(backend, model, path).await?)
     }
 }
 
 impl Engine {
+    async fn model_backend(
+        &self,
+        model: &Model,
+    ) -> Result<Arc<dyn Backend>, EngineError> {
+        let descriptor = model.backends.first().ok_or(EngineError::BackendNotFound {})?;
+        let backend =
+            self.backends.lock().await.get(&descriptor.identifier).cloned().ok_or(EngineError::BackendNotFound {})?;
+        if model.is_downloadable() {
+            let supported = MiraiBackend {
+                identifier: backend.identifier(),
+                version: backend.version(),
+            };
+            if !supported.supports_model(model) {
+                return Err(EngineError::ModelConfig {
+                    message: format!(
+                        "Model {} is incompatible with {} toolchain {}",
+                        model.identifier, supported.identifier, supported.version,
+                    ),
+                });
+            }
+        }
+        Ok(backend)
+    }
+
     pub fn storage_subscribe(&self) -> BroadcastStream<(ModelIdentifier, DownloadState)> {
         self.storage.subscribe()
     }
