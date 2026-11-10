@@ -1,3 +1,4 @@
+
 use std::{env, path::Path};
 
 use anyhow::{Result, anyhow};
@@ -37,6 +38,7 @@ impl WasmLanguageBackend {
     }
 }
 
+<<<<<<< HEAD
 /// uzu-engine's build script loads the Slang library when it runs, but shader-slang-sys links that library from outside
 /// the target directory, so cargo leaves it off the build script's library search path. This returns the loader
 /// variable that adds the directory, found the same way shader-slang-sys finds it.
@@ -57,6 +59,8 @@ fn slang_library_path() -> Option<(&'static str, String)> {
     Some((key, value))
 }
 
+=======
+>>>>>>> main
 impl LanguageBackend for WasmLanguageBackend {
     fn config(&self) -> PlatformsConfig {
         self.config.clone()
@@ -84,6 +88,7 @@ impl LanguageBackend for WasmLanguageBackend {
         Command::pnpm_install().with_current_path(&bindings_path).run()?;
 
         for target in targets {
+<<<<<<< HEAD
             let mut cargo_build = Command::cargo_build(
                 paths.main_crate.clone(),
                 target.name.clone(),
@@ -95,6 +100,11 @@ impl LanguageBackend for WasmLanguageBackend {
                 cargo_build = cargo_build.with_env(key, &value);
             }
             cargo_build.run()?;
+=======
+            Command::cargo_build(paths.main_crate.clone(), target.name.clone(), target.features.clone(), configuration)
+                .with_envs(self.config.required_envs_for_target(target.name.clone())?)
+                .run()?;
+>>>>>>> main
             let wasm_path =
                 paths.target_profile_path(&target.name, configuration).join(format!("{}.wasm", paths.main_crate));
             Command::wasm_bindgen(wasm_path, output_path.clone(), paths.main_crate.clone()).run()?;
