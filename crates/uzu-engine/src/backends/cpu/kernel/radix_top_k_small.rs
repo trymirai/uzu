@@ -13,21 +13,13 @@ use crate::{
     utils::pointers::{SendPtr, SendPtrMut},
 };
 
-pub struct CpuRadixTopKSmall {
-    columns: usize,
-}
+pub struct CpuRadixTopKSmall;
 
 impl RadixTopKSmall for CpuRadixTopKSmall {
     type Backend = Cpu;
 
-    fn new(
-        _context: &CpuContext,
-        columns: u32,
-    ) -> Result<Self, CpuError> {
-        assert!(columns > 0);
-        Ok(Self {
-            columns: columns as usize,
-        })
+    fn new(_context: &CpuContext) -> Result<Self, CpuError> {
+        Ok(Self)
     }
 
     fn encode(
@@ -36,11 +28,13 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
         output_ids: impl BufferMut<Backend = Cpu>,
         output_scores: impl BufferMut<Backend = Cpu>,
         rows: u32,
+        columns: u32,
         k: u32,
+        sorted: bool,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<(), CpuError> {
         let rows = rows as usize;
-        let columns = self.columns;
+        let columns = columns as usize;
         let k = k as usize;
         assert!(rows > 0 && k > 0 && k <= MAX_K as usize && k <= columns);
         let (input, input_range) = input.parts();
@@ -68,7 +62,11 @@ impl RadixTopKSmall for CpuRadixTopKSmall {
                     indices.select_nth_unstable_by(k, compare);
                     indices.truncate(k);
                 }
-                indices.sort_unstable_by(compare);
+                if sorted {
+                    indices.sort_unstable_by(compare);
+                } else {
+                    indices.sort_unstable();
+                }
                 for (rank, index) in indices.into_iter().enumerate() {
                     output_ids[row * k + rank] = index as u32;
                     output_scores[row * k + rank] = values[index];

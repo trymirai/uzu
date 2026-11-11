@@ -15,8 +15,4 @@ static inline float top_k_score_from_key(uint key) {
   return as_type<float>(bits);
 }
 
-// Larger keys follow the f32 total order; equal scores prefer smaller indices.
-static inline ulong top_k_ordered_key(float score, uint index, uint index_bits) {
-  const ulong index_mask = (1ul << index_bits) - 1ul;
-  return (ulong(top_k_score_key(score)) << index_bits) | (index_mask - ulong(index));
-}
+static inline uint top_k_bf16_key(ushort bits) { return uint(bits ^ ((bits & 0x8000) ? 0xffff : 0x8000)); }

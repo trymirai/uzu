@@ -92,10 +92,7 @@ impl MatmulKernel for Unsupported<WebGPU> {
 impl RadixTopKSmall for Unsupported<WebGPU> {
     type Backend = WebGPU;
 
-    fn new(
-        _context: &WebGPUContext,
-        _columns: u32,
-    ) -> Result<Self, WebGPUError> {
+    fn new(_context: &WebGPUContext) -> Result<Self, WebGPUError> {
         Err(WebGPUError::NotSupported)
     }
 
@@ -105,7 +102,9 @@ impl RadixTopKSmall for Unsupported<WebGPU> {
         _output_ids: impl BufferMut<Backend = WebGPU>,
         _output_scores: impl BufferMut<Backend = WebGPU>,
         _rows: u32,
+        _columns: u32,
         _k: u32,
+        _sorted: bool,
         _command_buffer: &mut WebGPUCommandBufferEncoding,
     ) -> Result<(), WebGPUError> {
         Err(WebGPUError::NotSupported)

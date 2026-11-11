@@ -132,7 +132,6 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let weaver = if let Some(weaver_config) = &config.weaver_config {
             Some(
                 Weaver::new(
-                    config.draft_config.vocab_size,
                     weaver_config,
                     target_embedding.readout_input_hadamard_factors(),
                     &speculator_tree.subtree("weaver"),

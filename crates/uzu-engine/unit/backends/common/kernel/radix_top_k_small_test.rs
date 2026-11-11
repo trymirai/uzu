@@ -33,14 +33,17 @@ fn radix_top_k_small<B: Backend>(
     rows: usize,
     columns: usize,
     k: usize,
+    sorted: bool,
 ) -> (Vec<u32>, Vec<f32>) {
     let context = create_context::<B>();
     let input = create_buffer_with_data::<B, bf16>(&context, input);
     let mut ids = create_buffer::<B, u32>(&context, rows * k);
     let mut scores = create_buffer::<B, f32>(&context, rows * k);
-    let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context, columns as u32).unwrap();
+    let kernel = <B::Kernels as Kernels>::RadixTopKSmall::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
-    kernel.encode(&input, &mut ids, &mut scores, rows as u32, k as u32, &mut command_buffer).unwrap();
+    kernel
+        .encode(&input, &mut ids, &mut scores, rows as u32, columns as u32, k as u32, sorted, &mut command_buffer)
+        .unwrap();
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     (buffer_to_vec(&*context, &ids), buffer_to_vec(&*context, &scores))
 }
@@ -50,13 +53,18 @@ fn reference(
     rows: usize,
     columns: usize,
     k: usize,
+    sorted: bool,
 ) -> (Vec<u32>, Vec<f32>) {
     let mut ids = Vec::with_capacity(rows * k);
     let mut scores = Vec::with_capacity(rows * k);
     for values in input.chunks_exact(columns) {
         let mut row = (0..columns).collect::<Vec<_>>();
         row.sort_unstable_by(|&left, &right| values[right].total_cmp(&values[left]).then_with(|| left.cmp(&right)));
-        for index in row.into_iter().take(k) {
+        row.truncate(k);
+        if !sorted {
+            row.sort_unstable();
+        }
+        for index in row {
             ids.push(index as u32);
             scores.push(values[index]);
         }
@@ -84,6 +92,7 @@ fn radix_top_k_small_matches_cpu() {
         (3, 1025, 1),
         (3, 1025, TARGET_K - 1),
         (3, 1025, TARGET_K),
+        (1, 262_145, TARGET_K),
         (15, TARGET_COLUMNS, TARGET_K),
     ] {
         let mut input = values(rows, columns).into_iter().map(bf16::from_f32).collect::<Vec<_>>();
@@ -99,17 +108,20 @@ fn radix_top_k_small_matches_cpu() {
         ];
         let special_count = special.len().min(input.len());
         input[..special_count].copy_from_slice(&special[..special_count]);
-        let expected = reference(&input.iter().map(|value| value.to_f32()).collect::<Vec<_>>(), rows, columns, k);
-        assert_output(&radix_top_k_small::<Cpu>(&input, rows, columns, k), &expected, shape);
-        for_each_non_cpu_backend!(|B| {
-            let actual = radix_top_k_small::<B>(&input, rows, columns, k);
-            assert_output(&actual, &expected, shape);
-            if columns == TARGET_COLUMNS {
-                for _ in 0..2 {
-                    assert_output(&radix_top_k_small::<B>(&input, rows, columns, k), &expected, shape);
+        for sorted in [true, false] {
+            let expected =
+                reference(&input.iter().map(|value| value.to_f32()).collect::<Vec<_>>(), rows, columns, k, sorted);
+            assert_output(&radix_top_k_small::<Cpu>(&input, rows, columns, k, sorted), &expected, shape);
+            for_each_non_cpu_backend!(|B| {
+                let actual = radix_top_k_small::<B>(&input, rows, columns, k, sorted);
+                assert_output(&actual, &expected, shape);
+                if columns == TARGET_COLUMNS {
+                    for _ in 0..2 {
+                        assert_output(&radix_top_k_small::<B>(&input, rows, columns, k, sorted), &expected, shape);
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 }
 
@@ -128,13 +140,23 @@ fn benchmark_radix_top_k_small() {
     );
     let mut ids = create_buffer::<Metal, u32>(&context, ROWS * TARGET_K);
     let mut scores = create_buffer::<Metal, f32>(&context, ROWS * TARGET_K);
-    let kernel =
-        <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context, TARGET_COLUMNS as u32).unwrap();
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context).unwrap();
     let mut run = || {
         let start = Instant::now();
         let mut command_buffer = context.create_command_buffer(None, None).unwrap();
         for _ in 0..BATCH {
-            kernel.encode(&input, &mut ids, &mut scores, ROWS as u32, TARGET_K as u32, &mut command_buffer).unwrap();
+            kernel
+                .encode(
+                    &input,
+                    &mut ids,
+                    &mut scores,
+                    ROWS as u32,
+                    TARGET_COLUMNS as u32,
+                    TARGET_K as u32,
+                    true,
+                    &mut command_buffer,
+                )
+                .unwrap();
         }
         let completed = block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         (completed.gpu_execution_time().unwrap().div_f64(BATCH as f64), start.elapsed().div_f64(BATCH as f64))
