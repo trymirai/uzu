@@ -80,6 +80,13 @@ pub struct DFlashTfmTreeShape {
     pub construction_method: DFlashTfmTreeConstructionMethod,
 }
 
+pub struct TreeProposal<B: Backend> {
+    pub topology: BatchTopology<B>,
+    pub token_ids: B::GlobalGpuBuffer,
+    /// Present iff sampling is stochastic.
+    pub seeds: Option<B::GlobalGpuBuffer>,
+}
+
 enum ProposalSource<B: Backend> {
     Argmax {
         sampled: B::GlobalGpuBuffer,
@@ -391,7 +398,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         sampling_method: &SamplingMethod,
         prng: &PRng,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<BatchTopology<B>, DFlashTreeError<B>> {
+    ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
         let (source, root_position) = self.encode_proposal(
             state,
             target_output_norm,
@@ -466,7 +473,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let is_flat = matches!(source, ProposalSource::Argmax { .. });
 
-        Ok(BatchTopology::new(Some(nodes), Some(token_ids), seeds, budget, false, is_flat))
+        Ok(TreeProposal {
+            topology: BatchTopology::new(Some(nodes), budget, false, is_flat),
+            token_ids,
+            seeds,
+        })
     }
 }
 

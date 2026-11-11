@@ -4,40 +4,44 @@ use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
 use crate::{
-    backends::{
-        common::{
-            Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::{
-                trie::TrieNode,
-                weaver::{FRONTIER_NO_WINNER, FrontierIdx, TreeIdx},
-            },
-            kernel::{LinearizeChainKernel, LinearizeTreeKernel},
+    backends::common::{
+        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        gpu_types::{
+            trie::TrieNode,
+            weaver::{FRONTIER_NO_WINNER, FrontierIdx, TreeIdx},
         },
-        cpu::Cpu,
+        kernel::{LinearizeChainKernel, LinearizeTreeKernel},
     },
     encodable_block::sampling::PRng,
-    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend},
+    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_backend},
 };
 
 const PRNG_SEED: u64 = 0x1234_5678_9abc_def0;
 const ROOT_POSITION: u32 = 100;
-/// Depth marker for padding rows, whose seeds are zeroed rather than derived.
 const PAD_DEPTH: u32 = u32::MAX;
 
-struct TreeSlot {
+/// A tree or frontier slot; `live` is the tree's `Valid` or the frontier's `Active` flag.
+struct Slot {
     token: u32,
     parent: u32,
     depth: u32,
     logprob: f32,
-    valid: bool,
+    live: bool,
 }
 
-struct FrontierSlot {
+fn slot(
     token: u32,
     parent: u32,
     depth: u32,
     logprob: f32,
-    active: bool,
+) -> Slot {
+    Slot {
+        token,
+        parent,
+        depth,
+        logprob,
+        live: true,
+    }
 }
 
 fn node(
@@ -173,41 +177,52 @@ fn expected_chain(
     (nodes, tokens, seeds)
 }
 
-fn pack(
-    tree: &[TreeSlot],
-    frontier: &[FrontierSlot],
-) -> (Vec<u32>, Vec<u32>, u32, u32) {
-    let tree_slot_count = tree.len();
-    let frontier_capacity = frontier.len();
-    let mut packed_tree = vec![0u32; TreeIdx::COUNT * tree_slot_count];
-    for (slot, s) in tree.iter().enumerate() {
-        packed_tree[TreeIdx::TokenId as usize * tree_slot_count + slot] = s.token;
-        packed_tree[TreeIdx::ParentSlot as usize * tree_slot_count + slot] = s.parent;
-        packed_tree[TreeIdx::Depth as usize * tree_slot_count + slot] = s.depth;
-        packed_tree[TreeIdx::PathLogprobBits as usize * tree_slot_count + slot] = s.logprob.to_bits();
-        packed_tree[TreeIdx::Valid as usize * tree_slot_count + slot] = s.valid as u32;
+fn pack_columns(
+    slots: &[Slot],
+    field_count: usize,
+    [token, parent, depth, logprob, live]: [usize; 5],
+) -> Vec<u32> {
+    let count = slots.len();
+    // Keep the buffer nonzero even for no slots; no slot is read when the count is 0.
+    let mut packed = vec![0u32; field_count * count.max(1)];
+    for (i, s) in slots.iter().enumerate() {
+        packed[token * count + i] = s.token;
+        packed[parent * count + i] = s.parent;
+        packed[depth * count + i] = s.depth;
+        packed[logprob * count + i] = s.logprob.to_bits();
+        packed[live * count + i] = s.live as u32;
     }
-    // Keep the buffer nonzero even for an empty frontier; no slot is read when capacity is 0.
-    let mut packed_frontier = vec![0u32; FrontierIdx::COUNT * frontier_capacity.max(1)];
-    for (slot, s) in frontier.iter().enumerate() {
-        packed_frontier[FrontierIdx::TokenId as usize * frontier_capacity + slot] = s.token;
-        packed_frontier[FrontierIdx::ParentSlot as usize * frontier_capacity + slot] = s.parent;
-        packed_frontier[FrontierIdx::Depth as usize * frontier_capacity + slot] = s.depth;
-        packed_frontier[FrontierIdx::PathLogprobBits as usize * frontier_capacity + slot] = s.logprob.to_bits();
-        packed_frontier[FrontierIdx::Active as usize * frontier_capacity + slot] = s.active as u32;
-    }
-    (packed_tree, packed_frontier, tree_slot_count as u32, frontier_capacity as u32)
+    packed
 }
 
 fn run_tree<B: Backend>(
-    tree: &[TreeSlot],
-    frontier: &[FrontierSlot],
+    tree: &[Slot],
+    frontier: &[Slot],
     budget: u32,
     with_seeds: bool,
 ) -> Linearized {
     let context = create_context::<B>();
     let kernel = <<B as Backend>::Kernels as Kernels>::LinearizeTreeKernel::new(&context, with_seeds).expect("kernel");
-    let (packed_tree, packed_frontier, tree_slot_count, frontier_capacity) = pack(tree, frontier);
+    let packed_tree = pack_columns(
+        tree,
+        TreeIdx::COUNT,
+        [TreeIdx::TokenId, TreeIdx::ParentSlot, TreeIdx::Depth, TreeIdx::PathLogprobBits, TreeIdx::Valid]
+            .map(|i| i as usize),
+    );
+    let packed_frontier = pack_columns(
+        frontier,
+        FrontierIdx::COUNT,
+        [
+            FrontierIdx::TokenId,
+            FrontierIdx::ParentSlot,
+            FrontierIdx::Depth,
+            FrontierIdx::PathLogprobBits,
+            FrontierIdx::Active,
+        ]
+        .map(|i| i as usize),
+    );
+    let tree_slot_count = tree.len() as u32;
+    let frontier_capacity = frontier.len() as u32;
     let packed_tree = create_buffer_with_data::<B, u32>(&context, &packed_tree);
     let frontier_buffer = create_buffer_with_data::<B, u32>(&context, &packed_frontier);
     let total_slots = tree_slot_count as usize + frontier_capacity as usize;
@@ -243,74 +258,19 @@ fn run_tree<B: Backend>(
 /// Tree with an invalid slot that has the best logprob and must be ignored,
 /// plus frontier slots whose parents live in the tree or in the frontier.
 /// Combined slot indices: tree slots 0..6, frontier slots 6..9.
-fn main_tree() -> (Vec<TreeSlot>, Vec<FrontierSlot>) {
+fn main_tree() -> (Vec<Slot>, Vec<Slot>) {
     let tree = vec![
-        TreeSlot {
-            token: 100,
-            parent: FRONTIER_NO_WINNER,
-            depth: 0,
-            logprob: -0.1,
-            valid: true,
-        },
-        TreeSlot {
-            token: 101,
-            parent: 0,
-            depth: 1,
-            logprob: -0.5,
-            valid: true,
-        },
-        TreeSlot {
-            token: 102,
-            parent: 0,
-            depth: 1,
-            logprob: -0.2,
-            valid: true,
-        },
-        TreeSlot {
-            token: 103,
-            parent: 1,
-            depth: 2,
-            logprob: -0.3,
-            valid: true,
-        },
-        TreeSlot {
-            token: 104,
-            parent: 2,
-            depth: 2,
-            logprob: -0.05,
-            valid: true,
-        },
-        TreeSlot {
-            token: 999,
-            parent: 0,
-            depth: 1,
-            logprob: -0.01,
-            valid: false,
+        slot(100, FRONTIER_NO_WINNER, 0, -0.1),
+        slot(101, 0, 1, -0.5),
+        slot(102, 0, 1, -0.2),
+        slot(103, 1, 2, -0.3),
+        slot(104, 2, 2, -0.05),
+        Slot {
+            live: false,
+            ..slot(999, 0, 1, -0.01)
         },
     ];
-    let frontier = vec![
-        FrontierSlot {
-            token: 105,
-            parent: 1,
-            depth: 2,
-            logprob: -0.4,
-            active: true,
-        },
-        FrontierSlot {
-            token: 106,
-            parent: 4,
-            depth: 3,
-            logprob: -0.6,
-            active: true,
-        },
-        FrontierSlot {
-            token: 107,
-            parent: 6,
-            depth: 3,
-            logprob: -0.55,
-            active: true,
-        },
-    ];
+    let frontier = vec![slot(105, 1, 2, -0.4), slot(106, 4, 3, -0.6), slot(107, 6, 3, -0.55)];
     (tree, frontier)
 }
 
@@ -365,6 +325,31 @@ fn expected_main_tree(
     (nodes, tokens, seeds)
 }
 
+fn assert_tree_on_all_backends(
+    tree: &[Slot],
+    frontier: &[Slot],
+    budget: u32,
+    with_seeds: bool,
+    expected: &Linearized,
+) {
+    let label = format!("budget={budget} seeds={with_seeds}");
+    for_each_backend!(|B| {
+        assert_linearized_eq(expected, &run_tree::<B>(tree, frontier, budget, with_seeds), &label);
+    });
+}
+
+fn assert_first_child_kept_alone(
+    first_logprob: f32,
+    second_logprob: f32,
+) {
+    let tree = [slot(200, FRONTIER_NO_WINNER, 0, 0.0), slot(201, 0, 1, first_logprob), slot(202, 0, 1, second_logprob)];
+    let first_only = (vec![node(0, 1, 0, -1), node(1, 1, 1, 0)], vec![200, 201], seeds_for(&[0, 1], true));
+    let both =
+        (vec![node(0, 2, 0, -1), node(1, 1, 1, 0), node(2, 2, 1, 0)], vec![200, 201, 202], seeds_for(&[0, 1, 1], true));
+    assert_tree_on_all_backends(&tree, &[], 2, true, &first_only);
+    assert_tree_on_all_backends(&tree, &[], 3, true, &both);
+}
+
 #[uzu_test]
 fn linearize_chain_linearizes_and_pads() {
     let cases: &[(&[u32], u32, u32, u32, bool)] = &[
@@ -377,8 +362,7 @@ fn linearize_chain_linearizes_and_pads() {
         let label =
             format!("sampled={sampled:?} target={target} chain={chain_length} budget={budget} seeds={with_seeds}");
         let expected = expected_chain(sampled, target, chain_length, budget, with_seeds);
-        assert_linearized_eq(&expected, &run_chain::<Cpu>(sampled, target, chain_length, budget, with_seeds), &label);
-        for_each_non_cpu_backend!(|B| {
+        for_each_backend!(|B| {
             assert_linearized_eq(&expected, &run_chain::<B>(sampled, target, chain_length, budget, with_seeds), &label);
         });
     }
@@ -389,101 +373,17 @@ fn linearize_tree_selects_by_logprob_and_linearizes_preorder() {
     let (tree, frontier) = main_tree();
     for budget in [3u32, 5, 7, 9] {
         for with_seeds in [true, false] {
-            let label = format!("budget={budget} seeds={with_seeds}");
-            let expected = expected_main_tree(budget, with_seeds);
-            assert_linearized_eq(&expected, &run_tree::<Cpu>(&tree, &frontier, budget, with_seeds), &label);
-            for_each_non_cpu_backend!(|B| {
-                assert_linearized_eq(&expected, &run_tree::<B>(&tree, &frontier, budget, with_seeds), &label);
-            });
+            assert_tree_on_all_backends(&tree, &frontier, budget, with_seeds, &expected_main_tree(budget, with_seeds));
         }
     }
 }
 
 #[uzu_test]
 fn linearize_tree_tie_breaks_to_smallest_slot() {
-    let tree = vec![
-        TreeSlot {
-            token: 200,
-            parent: FRONTIER_NO_WINNER,
-            depth: 0,
-            logprob: 0.0,
-            valid: true,
-        },
-        TreeSlot {
-            token: 201,
-            parent: 0,
-            depth: 1,
-            logprob: -0.2,
-            valid: true,
-        },
-        TreeSlot {
-            token: 202,
-            parent: 0,
-            depth: 1,
-            logprob: -0.2,
-            valid: true,
-        },
-    ];
-    let frontier = Vec::new();
-    for (budget, expected) in [(2u32, expected_main_tie(2)), (3, expected_main_tie(3))] {
-        let label = format!("budget={budget}");
-        assert_linearized_eq(&expected, &run_tree::<Cpu>(&tree, &frontier, budget, true), &label);
-        for_each_non_cpu_backend!(|B| {
-            assert_linearized_eq(&expected, &run_tree::<B>(&tree, &frontier, budget, true), &label);
-        });
-    }
-}
-
-fn expected_main_tie(budget: u32) -> Linearized {
-    let (nodes, tokens, depths) = match budget {
-        2 => (vec![node(0, 1, 0, -1), node(1, 1, 1, 0)], vec![200, 201], vec![0, 1]),
-        3 => (vec![node(0, 2, 0, -1), node(1, 1, 1, 0), node(2, 2, 1, 0)], vec![200, 201, 202], vec![0, 1, 1]),
-        _ => unreachable!(),
-    };
-    let seeds = seeds_for(&depths, true);
-    (nodes, tokens, seeds)
+    assert_first_child_kept_alone(-0.2, -0.2);
 }
 
 #[uzu_test]
 fn linearize_tree_keeps_first_open_slot_when_its_logprob_is_nan() {
-    let tree = vec![
-        TreeSlot {
-            token: 300,
-            parent: FRONTIER_NO_WINNER,
-            depth: 0,
-            logprob: 0.0,
-            valid: true,
-        },
-        TreeSlot {
-            token: 301,
-            parent: 0,
-            depth: 1,
-            logprob: f32::NAN,
-            valid: true,
-        },
-        TreeSlot {
-            token: 302,
-            parent: 0,
-            depth: 1,
-            logprob: -0.5,
-            valid: true,
-        },
-    ];
-    let frontier = Vec::new();
-    for budget in [2u32, 3] {
-        let label = format!("budget={budget}");
-        let expected = match budget {
-            2 => (vec![node(0, 1, 0, -1), node(1, 1, 1, 0)], vec![300, 301], seeds_for(&[0, 1], true)),
-            3 => (
-                vec![node(0, 2, 0, -1), node(1, 1, 1, 0), node(2, 2, 1, 0)],
-                vec![300, 301, 302],
-                seeds_for(&[0, 1, 1], true),
-            ),
-            _ => unreachable!(),
-        };
-        assert_linearized_eq(&expected, &run_tree::<Cpu>(&tree, &frontier, budget, true), &label);
-        for_each_non_cpu_backend!(|B| {
-            assert_linearized_eq(&expected, &run_tree::<B>(&tree, &frontier, budget, true), &label);
-        });
-    }
+    assert_first_child_kept_alone(f32::NAN, -0.5);
 }

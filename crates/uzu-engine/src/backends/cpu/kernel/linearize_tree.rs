@@ -18,7 +18,6 @@ fn prng_derive(
     hash
 }
 
-#[allow(clippy::too_many_arguments)]
 unsafe fn emit_node(
     nodes: *mut TrieNode,
     token_ids: *mut u32,
@@ -44,7 +43,6 @@ unsafe fn emit_node(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 unsafe fn pad_node(
     nodes: *mut TrieNode,
     token_ids: *mut u32,
