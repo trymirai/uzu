@@ -9941,6 +9941,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hanashi",
+ "image",
  "indexmap 2.14.2",
  "indicatif",
  "inventory",

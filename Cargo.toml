@@ -194,6 +194,7 @@ async-openai = { version = "0.42.2", features = [
     "responses",
 ] }
 hound = "3.5.1"
+image = "0.25.10"
 ignore = "0.4.33"
 convert_case = "0.12.0"
 heck = "0.5.0"
