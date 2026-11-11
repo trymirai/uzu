@@ -8,27 +8,27 @@ bitflags! {
     pub struct VkDeviceCapabilities: u32 {
         /// Compute pipelines may require full subgroups of 32 invocations, which kernels whose algorithm is 32 lanes
         /// wide pin.
-        const SUBGROUP_SIZE_32 = 1 << 1;
-        const MEMORY_BUDGET = 1 << 2;
+        const SUBGROUP_SIZE_32 = 1 << 0;
+        const MEMORY_BUDGET = 1 << 1;
         /// Subgroup-scope 16 x 16 x 16 BF16 cooperative matrices with FP32 accumulation.
-        const BF16_TENSOR_CORES = 1 << 3;
+        const BF16_TENSOR_CORES = 1 << 2;
         /// Subgroup-scope 16 x 16 x 32 INT8 cooperative matrices with INT32 accumulation.
-        const INT8_TENSOR_CORES_K32 = 1 << 5;
+        const INT8_TENSOR_CORES_K32 = 1 << 3;
         /// Subgroup-scope 16 x 16 x 16 INT8 cooperative matrices with INT32 accumulation, reported independently of the
         /// 16 x 16 x 32 ones; the baseline prefers those where both exist.
-        const INT8_TENSOR_CORES_K16 = 1 << 6;
+        const INT8_TENSOR_CORES_K16 = 1 << 4;
         /// Either INT8 depth, so test it with `intersects`.
         const INT8_TENSOR_CORES = Self::INT8_TENSOR_CORES_K32.bits() | Self::INT8_TENSOR_CORES_K16.bits();
         /// VK_NV_cooperative_matrix2 per-element operations on 16 x 16 x 32 INT8 tensor cores.
-        const INT8_ELEMENT_FOLD = 1 << 7;
+        const INT8_ELEMENT_FOLD = 1 << 5;
         /// Only unsigned packed dot products are accelerated.
-        const UNSIGNED_DOT_PRODUCT = 1 << 8;
+        const UNSIGNED_DOT_PRODUCT = 1 << 6;
         /// VK_KHR_shader_bfloat16's BF16 type, which kernels that store BF16 load, store and convert natively.
-        const BF16_TYPE = 1 << 9;
+        const BF16_TYPE = 1 << 7;
         /// VK_KHR_calibrated_timestamps with the device time domain, which reads the clock of recorded timestamps.
-        const CALIBRATED_TIMESTAMPS = 1 << 10;
+        const CALIBRATED_TIMESTAMPS = 1 << 8;
         /// The same from VK_EXT_calibrated_timestamps, which the KHR promoted, on a device without the KHR: lavapipe.
-        const CALIBRATED_TIMESTAMPS_EXT = 1 << 11;
+        const CALIBRATED_TIMESTAMPS_EXT = 1 << 9;
     }
 }
 
