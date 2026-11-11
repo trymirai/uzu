@@ -134,6 +134,10 @@ impl SlangTarget for VulkanTarget {
         )
     }
 
+    fn gpu_types_directory(fields: &SlangCompilerFields<Self>) -> PathBuf {
+        fields.output_directory.join("generated")
+    }
+
     fn wrapper(
         fields: &SlangCompilerFields<Self>,
         source_path: &Path,
@@ -143,7 +147,7 @@ impl SlangTarget for VulkanTarget {
         kernels.iter().try_for_each(check_bindable)?;
         let wrappers = kernel_wrappers::<Self>(module, kernels)?;
         // The wrapper names the generated types the kernels' signatures use, so it imports what the source does.
-        let generated = fields.output_directory.join("generated");
+        let generated = Self::gpu_types_directory(fields);
         let imports = once("definitions".to_owned())
             .chain(module.dependency_file_paths().filter_map(|path| {
                 let path = Path::new(path);

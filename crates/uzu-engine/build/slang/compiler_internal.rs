@@ -39,6 +39,9 @@ pub trait SlangTarget: Send + Sync + Clone + 'static {
 
     fn create_target_desc<'a>(global_session: &'a GlobalSession) -> TargetDesc<'a>;
 
+    /// The directory of the generated GPU type files, which the kernels import as `generated.<file>`.
+    fn gpu_types_directory(fields: &SlangCompilerFields<Self>) -> PathBuf;
+
     /// The type of the specialization constant of a kernel argument of `slang_type`.
     fn specialization_type(slang_type: &str) -> &str;
 
@@ -139,9 +142,10 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
     pub fn new(fields: SlangCompilerFields<T>) -> anyhow::Result<Self> {
         let global_session = GlobalSession::new().context("cannot create global session")?;
 
-        // The kernel sources, then the output, whose `generated` modules are the GPU types the kernels import.
-        let search_path_strings = [&fields.source_directory, &fields.output_directory]
-            .into_iter()
+        // The kernel sources, and the output when the target generates its GPU types there.
+        let generated_in_output = T::gpu_types_directory(&fields).starts_with(&fields.output_directory);
+        let search_path_strings = once(&fields.source_directory)
+            .chain(generated_in_output.then_some(&fields.output_directory))
             .map(|path| {
                 CString::new(path.to_string_lossy().as_bytes()).context("cannot convert search path to CString")
             })
