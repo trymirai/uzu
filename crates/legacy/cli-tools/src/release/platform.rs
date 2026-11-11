@@ -15,10 +15,14 @@ pub fn stage_platform(
     }
 
     for (language, language_config) in &platforms.languages {
+        let Some(examples_path) = &language_config.examples_path else {
+            continue;
+        };
+
         let language_dir = root.join(language.name());
         fs::create_dir_all(&language_dir)?;
 
-        let examples_root = paths.root_path.join(&language_config.examples_path);
+        let examples_root = paths.root_path.join(examples_path);
         for example_name in platforms.examples.keys() {
             let converted_name = language.convert_file_name(example_name);
             let source_path = examples_root.join(format!("{converted_name}.{}", language.file_extension()));

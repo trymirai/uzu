@@ -64,11 +64,15 @@ pub fn small_batch_format(
     shape: MatmulShape,
     layout: GemmBLayout,
 ) -> Option<(ActivationFormat, GemmTiling)> {
-    let (activation, tiling, k_alignment) = small_m_weights(&shape)?;
+    let (activation, row_major_tiling, k_alignment) = small_m_weights(&shape)?;
+    let tiling = match layout {
+        GemmBLayout::RowMajor => row_major_tiling,
+        GemmBLayout::InterleavedRows if shape.b_bits == Some(4) => GemmTiling::Tile8x32x64_Simdgroups1x1x4,
+        _ => return None,
+    };
     (shape.b_transpose
         && !shape.gathered
         && !shape.b_is_trellis
-        && layout == GemmBLayout::RowMajor
         && shape.b_leading_dimension.is_none()
         && shape.k.is_multiple_of(k_alignment)
         && (!shape.d_transform.contains(GemmDTransform::RHT) || shape.n.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE)))
@@ -170,6 +174,7 @@ impl GemmProblem {
         if !splittable
             || !self.split_k_output_supported()
             || (shape.b_bits == Some(2) && tiling == GemmTiling::Tile8x32x128_Simdgroups1x2x4)
+            || tiling == GemmTiling::Tile8x32x64_Simdgroups1x1x4
         {
             return 1;
         }

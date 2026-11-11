@@ -35,6 +35,7 @@ enum class GemmAPrologueKind : uint32_t {
 enum class GemmBLayout : uint32_t {
   RowMajor = 0,
   MxuTiled = 1,
+  InterleavedRows = 2,
 };
 
 enum class GemmTiling : uint32_t {
@@ -52,6 +53,7 @@ enum class GemmTiling : uint32_t {
   Tile8x32x64_Simdgroups1x2x4 = 11,
   Tile8x32x128_Simdgroups1x2x4 = 12,
   Tile16x32x32_Simdgroups2x1 = 13,
+  Tile8x32x64_Simdgroups1x1x4 = 14,
 };
 
 static constant constexpr uint32_t MXU_SIMDGROUP_BLOCK_K = 32;

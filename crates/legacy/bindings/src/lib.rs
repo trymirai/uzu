@@ -30,6 +30,16 @@ macro_rules! all_backends {
     }};
 }
 
+macro_rules! prepare_all_backends {
+    ($method:ident, $($args:expr),*) => {{
+        $crate::backends::Rust::$method($($args),*);
+        $crate::backends::Napi::$method($($args),*);
+        $crate::backends::Pyo3::$method($($args),*);
+        $crate::backends::Uniffi::$method($($args),*);
+        $crate::backends::Wasm::$method($($args),*);
+    }};
+}
+
 #[proc_macro_attribute]
 pub fn export(
     arguments: TokenStream,
@@ -71,10 +81,11 @@ fn dispatch_structure(
     item: TokenStream,
     flavor: StructureFlavor,
 ) -> TokenStream {
-    let parsed: syn::ItemStruct = match syn::parse(item) {
+    let mut parsed: syn::ItemStruct = match syn::parse(item) {
         Ok(item_struct) => item_struct,
         Err(error) => return error.to_compile_error().into(),
     };
+    prepare_all_backends!(prepare_structure, &mut parsed, &flavor);
     let context = StructureContext {
         flavor,
         item: &parsed,
@@ -93,10 +104,11 @@ fn dispatch_class(
     item: TokenStream,
     flavor: ClassFlavor,
 ) -> TokenStream {
-    let parsed: syn::ItemStruct = match syn::parse(item) {
+    let mut parsed: syn::ItemStruct = match syn::parse(item) {
         Ok(item_struct) => item_struct,
         Err(error) => return error.to_compile_error().into(),
     };
+    prepare_all_backends!(prepare_class, &mut parsed);
     let context = ClassContext {
         flavor,
         item: &parsed,
@@ -116,7 +128,9 @@ fn dispatch_alias(item: TokenStream) -> TokenStream {
         Ok(item_type) => item_type,
         Err(error) => return error.to_compile_error().into(),
     };
-    let context = AliasContext;
+    let context = AliasContext {
+        item: &parsed,
+    };
     let attributes = all_backends!(alias_attributes, &context);
     let companions = all_backends!(alias_companions, &context);
     quote! {

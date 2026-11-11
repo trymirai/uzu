@@ -1,6 +1,7 @@
 mod napi;
 mod pyo3;
 mod rust;
+mod typescript;
 mod uniffi;
 mod wasm;
 
@@ -12,12 +13,24 @@ pub use rust::Rust;
 pub use uniffi::Uniffi;
 pub use wasm::Wasm;
 
-use crate::contexts::{
-    AliasContext, ClassContext, EnumerationContext, ErrorContext, ImplementationContext, MethodMetadata,
-    StructureContext,
+use crate::{
+    contexts::{
+        AliasContext, ClassContext, EnumerationContext, ErrorContext, ImplementationContext, MethodMetadata,
+        StructureContext,
+    },
+    types::StructureFlavor,
 };
 
 pub trait Backend {
+    /// Adjusts an exported structure before any backend sees it, e.g. to annotate its fields.
+    fn prepare_structure(
+        _item: &mut syn::ItemStruct,
+        _flavor: &StructureFlavor,
+    ) {
+    }
+
+    fn prepare_class(_item: &mut syn::ItemStruct) {}
+
     fn structure_attributes(_context: &StructureContext) -> TokenStream {
         quote! {}
     }
