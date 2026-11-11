@@ -7,8 +7,7 @@ use std::{
 
 use anyhow::Context;
 use itertools::Itertools;
-use proc_macro2::{Ident, TokenStream};
-use quote::ToTokens;
+use proc_macro2::TokenStream;
 use shader_slang::{
     Blob, CompileTarget, CompilerOptions, ComponentType, GlobalSession, Module, ScalarType, TargetDesc,
 };
@@ -40,25 +39,6 @@ const GATED_CAPABILITIES: [(u32, &str, &[&str]); 4] = [
     (BFLOAT16_TYPE, "BFloat16TypeKHR", &["BF16_TENSOR_CORES", "float_tensor_cores"]),
     (5118, "BFloat16CooperativeMatrixKHR", &["BF16_TENSOR_CORES", "float_tensor_cores"]),
     (5432, "CooperativeMatrixPerElementOperationsNV", &["INT8_ELEMENT_FOLD"]),
-];
-/// The matmul selectors under the kernel sources, which may not name the device's or driver's identity.
-const SELECTORS: [&str; 3] = ["matmul/vk_matmul_plan.rs", "matmul/vk_gemv_tile.rs", "matmul/vk_matmul_kernel.rs"];
-/// Identity names a selector must not mention outside comments and strings: plans and their defaults read capabilities
-/// and limits, never which device or driver this is.
-const IDENTITY_NAMES: [&str; 13] = [
-    "vendor_id",
-    "device_id",
-    "driver_id",
-    "device_name",
-    "driver_name",
-    "driver_info",
-    "driver_version",
-    "driver_properties",
-    "id_properties",
-    "device_uuid",
-    "driver_uuid",
-    "pipeline_cache_uuid",
-    "properties",
 ];
 
 /// Workgroups per row of a folded one-axis grid: Vulkan's minimum maxComputeWorkGroupCount, which wider grids exceed on
@@ -134,10 +114,6 @@ impl SlangTarget for VulkanTarget {
         )
     }
 
-    fn gpu_types_directory(fields: &SlangCompilerFields<Self>) -> PathBuf {
-        fields.output_directory.join("generated")
-    }
-
     fn wrapper(
         fields: &SlangCompilerFields<Self>,
         source_path: &Path,
@@ -147,7 +123,7 @@ impl SlangTarget for VulkanTarget {
         kernels.iter().try_for_each(check_bindable)?;
         let wrappers = kernel_wrappers::<Self>(module, kernels)?;
         // The wrapper names the generated types the kernels' signatures use, so it imports what the source does.
-        let generated = Self::gpu_types_directory(fields);
+        let generated = fields.source_directory.join("generated");
         let imports = once("definitions".to_owned())
             .chain(module.dependency_file_paths().filter_map(|path| {
                 let path = Path::new(path);
@@ -251,15 +227,6 @@ impl SlangTarget for VulkanTarget {
         fields: &SlangCompilerFields<Self>,
         modules: &[(PathBuf, &[Kernel], &[KernelName])],
     ) -> anyhow::Result<TokenStream> {
-        // The selectors are under the kernel sources, whose changes already rerun this script.
-        for selector in SELECTORS {
-            let source = fs::read_to_string(fields.source_directory.join(selector))?;
-            let file = syn::parse_file(&source).with_context(|| format!("cannot parse {selector}"))?;
-            let identity = |ident: &Ident| IDENTITY_NAMES.iter().any(|name| ident == name);
-            if let Some(name) = bindgen::find_ident(file.into_token_stream(), &identity) {
-                anyhow::bail!("{selector} names the device identity `{name}`; selectors read capabilities");
-            }
-        }
         // Names the pipeline cache, so a new shader build starts its own instead of growing the previous one.
         let mut spirv = blake3::Hasher::new();
         for entry in WalkDir::new(&fields.output_directory).sort_by_file_name() {

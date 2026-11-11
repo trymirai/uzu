@@ -809,7 +809,7 @@ fn canonical_enum_name<'a>(
 }
 
 /// The first identifier among `tokens`, groups included, that satisfies `predicate`.
-pub fn find_ident(
+fn find_ident(
     tokens: TokenStream,
     predicate: &impl Fn(&Ident) -> bool,
 ) -> Option<Ident> {

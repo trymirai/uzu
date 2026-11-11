@@ -72,10 +72,6 @@ impl SlangTarget for WebGPU {
         String::new()
     }
 
-    fn gpu_types_directory(fields: &SlangCompilerFields<Self>) -> PathBuf {
-        fields.source_directory.join("generated")
-    }
-
     fn wrapper(
         _fields: &SlangCompilerFields<Self>,
         source_path: &Path,
