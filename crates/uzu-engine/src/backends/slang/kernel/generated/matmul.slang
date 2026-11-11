@@ -1,1 +1,0 @@
-static const uint QUANT_PARAMS_GROUP_OUTPUT_ALIGNMENT = 4;

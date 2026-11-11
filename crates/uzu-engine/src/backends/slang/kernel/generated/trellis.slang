@@ -1,1 +1,0 @@
-static const uint COLUMN_GROUP_COUNT = 4;

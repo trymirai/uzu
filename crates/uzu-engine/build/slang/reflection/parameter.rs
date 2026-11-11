@@ -122,45 +122,41 @@ impl SlangParameter {
 
         let parameters_generics = generic_decl
             .map(|generic_decl| -> anyhow::Result<_> {
-                let generic = generic_decl.as_generic().unwrap();
+                let generic = generic_decl.as_generic().context("generic declaration has no reflection")?;
 
                 let mut generics_unordered = generic
                     .type_parameters()
                     .map(|type_parameter| {
-                        (
-                            type_parameter.name().unwrap(),
+                        Ok((
+                            type_parameter.name().context("type parameter has no name")?,
                             ParameterGenericType::Type {
                                 constraints: (0..generic.type_parameter_constraint_count(type_parameter))
                                     .map(|i| {
-                                        generic
+                                        Ok(generic
                                             .type_parameter_constraint_by_index(type_parameter, i)
-                                            .unwrap()
-                                            .full_name()
-                                            .unwrap()
-                                            .as_str()
-                                            .unwrap()
-                                            .to_string()
+                                            .context("type parameter constraint has no type")?
+                                            .full_name()?
+                                            .as_str()?
+                                            .to_string())
                                     })
-                                    .collect(),
+                                    .collect::<anyhow::Result<_>>()?,
                             },
-                        )
+                        ))
                     })
                     .chain(generic.value_parameters().map(|value_parameter| {
-                        (
-                            value_parameter.name().unwrap(),
+                        Ok((
+                            value_parameter.name().context("value parameter has no name")?,
                             ParameterGenericType::Value {
                                 value_type: value_parameter
                                     .ty()
-                                    .unwrap()
-                                    .full_name()
-                                    .unwrap()
-                                    .as_str()
-                                    .unwrap()
+                                    .context("value parameter has no type")?
+                                    .full_name()?
+                                    .as_str()?
                                     .to_string(),
                             },
-                        )
+                        ))
                     }))
-                    .collect::<HashMap<&str, ParameterGenericType>>();
+                    .collect::<anyhow::Result<HashMap<&str, ParameterGenericType>>>()?;
 
                 let mut generics = Vec::with_capacity(generics_unordered.len());
 

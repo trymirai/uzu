@@ -39,6 +39,16 @@ webgpu = [
     "dep:wgpu",
 ]
 
+vulkan = [
+    # The kernel traits are generated from the built backends, and Vulkan's kernel set names traits only the CPU defines.
+    "cpu",
+    "dep:shader-slang",
+    "dep:blake3",
+    "dep:serde_json",
+    "dep:regex",
+    "dep:rayon",
+]
+
 cpu = [] # TODO: move libm here
 
 [build-dependencies]

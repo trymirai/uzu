@@ -6,8 +6,11 @@ use quote::{format_ident, quote};
 use syn::Expr;
 
 use crate::{
-    common::{expr_rewrite::rewrite_paths_with, gpu_type_paths::GpuTypePaths},
-    metal::{bindgen::variants::VariantBind, enum_path_rewrite::qualify_enum_path},
+    common::{
+        expr_rewrite::{qualify_enum_path, rewrite_paths_with},
+        gpu_type_paths::GpuTypePaths,
+    },
+    metal::bindgen::variants::VariantBind,
 };
 
 pub struct HostExpressionRewriter<'context> {

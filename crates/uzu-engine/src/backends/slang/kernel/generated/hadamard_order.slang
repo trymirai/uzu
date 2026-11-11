@@ -1,1 +1,0 @@
-static const uint HADAMARD_TRANSFORM_BLOCK_SIZE = 32;
