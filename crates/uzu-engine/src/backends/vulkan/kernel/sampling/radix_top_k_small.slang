@@ -7,7 +7,7 @@ import generated.radix_top_k;
 // row so the reads use the whole GPU. A pass dispatch counts its partition's keys under the radix prefix into the row's
 // histogram of that pass. Workgroups never wait on each other: each replays the earlier passes' digit choices from
 // their histograms, which the dispatch boundaries make visible. Collect then appends the k keys at or above the final
-// prefix, and Sort orders them.
+// prefix, and Sort orders them by key or by column.
 
 static const uint RADIX_TOP_K_THREADS = 256;
 static const uint RADIX_TOP_K_SCORE_PASSES = 2;
@@ -27,6 +27,12 @@ uint2 radix_top_k_key(Ptr<bf16, Access.Read> input, uint row_offset, uint column
 
 bool radix_top_k_above(uint2 a, uint2 b) {
   return a.x > b.x || (a.x == b.x && a.y > b.y);
+}
+
+// Whether `a` precedes `b` in the output: the higher key first, or the lower column when the output is in column order.
+// The padding key uint2(0, 0) follows every key either way.
+bool radix_top_k_precedes(uint2 a, uint2 b, bool sorted) {
+  return sorted ? radix_top_k_above(a, b) : a.y > b.y;
 }
 
 // The bit shift of `pass`'s digit within its half of the key.
@@ -87,16 +93,15 @@ uint2 radix_top_k_partition(uint columns, uint partitions, uint partition) {
 }
 
 [[Kernel]]
-[[Precondition("new", "columns > 0 && partitions > 0")]]
-[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns")]]
+[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns && partitions > 0")]]
 func RadixTopKSmallPass(
   Ptr<bf16, Access.Read> input,
   Ptr<uint, Access.ReadWrite> histograms,
   uint rows,
   uint k,
   uint pass,
-  [[Specialize]] uint columns,
-  [[Specialize]] uint partitions,
+  uint columns,
+  uint partitions,
   [[Groups("partitions")]] uint partition,
   [[Groups("rows")]] uint row,
   [[Threads("256")]] uint tid,
@@ -125,8 +130,7 @@ func RadixTopKSmallPass(
 
 // Appends the row's k keys at or above the final prefix, in any order, each as its x and y words.
 [[Kernel]]
-[[Precondition("new", "columns > 0 && partitions > 0")]]
-[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns")]]
+[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns && partitions > 0")]]
 func RadixTopKSmallCollect(
   Ptr<bf16, Access.Read> input,
   Ptr<uint, Access.ReadWrite> histograms,
@@ -134,8 +138,8 @@ func RadixTopKSmallCollect(
   Ptr<uint, Access.ReadWrite> keys,
   uint rows,
   uint k,
-  [[Specialize]] uint columns,
-  [[Specialize]] uint partitions,
+  uint columns,
+  uint partitions,
   [[Groups("partitions")]] uint partition,
   [[Groups("rows")]] uint row,
   [[Threads("256")]] uint tid,
@@ -158,7 +162,7 @@ func RadixTopKSmallCollect(
   }
 }
 
-// Bitonic-sorts each row's k keys descending in shared memory and writes their columns and scores.
+// Bitonic-sorts each row's k keys in shared memory, by key or by column, and writes their columns and scores.
 [[Kernel]]
 [[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K")]]
 func RadixTopKSmallSort(
@@ -167,6 +171,7 @@ func RadixTopKSmallSort(
   Ptr<float, Access.ReadWrite> output_scores,
   uint rows,
   uint k,
+  [[Specialize]] bool sorted,
   [[Groups("rows")]] uint row,
   [[Threads("256")]] uint tid,
 ) {
@@ -186,7 +191,7 @@ func RadixTopKSmallSort(
       if (higher < span) {
         let a = radix_top_k_keys[lower];
         let b = radix_top_k_keys[higher];
-        let swap = radix_top_k_above(b, a) == ((lower & size) == 0);
+        let swap = radix_top_k_precedes(b, a, sorted) == ((lower & size) == 0);
         radix_top_k_keys[lower] = swap ? b : a;
         radix_top_k_keys[higher] = swap ? a : b;
       }

@@ -18,22 +18,22 @@ const COLUMNS_PER_PARTITION: u32 = 8192;
 pub struct VkRadixTopKSmall {
     pass: RadixTopKSmallPassVulkanKernel,
     collect: RadixTopKSmallCollectVulkanKernel,
-    sort: RadixTopKSmallSortVulkanKernel,
+    /// Orders each row's k keys by score, then column.
+    sort_by_score: RadixTopKSmallSortVulkanKernel,
+    /// Orders each row's k keys by column.
+    sort_by_column: RadixTopKSmallSortVulkanKernel,
 }
 
 impl RadixTopKSmall for VkRadixTopKSmall {
     type Backend = Vulkan;
 
-    fn new(
-        context: &VkContext,
-        columns: u32,
-    ) -> Result<Self, Error> {
-        let partitions = columns.div_ceil(COLUMNS_PER_PARTITION);
+    fn new(context: &VkContext) -> Result<Self, Error> {
         let context = context.arc();
         Ok(Self {
-            pass: RadixTopKSmallPassVulkanKernel::new(&context, columns, partitions)?,
-            collect: RadixTopKSmallCollectVulkanKernel::new(&context, columns, partitions)?,
-            sort: RadixTopKSmallSortVulkanKernel::new(&context)?,
+            pass: RadixTopKSmallPassVulkanKernel::new(&context)?,
+            collect: RadixTopKSmallCollectVulkanKernel::new(&context)?,
+            sort_by_score: RadixTopKSmallSortVulkanKernel::new(&context, true)?,
+            sort_by_column: RadixTopKSmallSortVulkanKernel::new(&context, false)?,
         })
     }
 
@@ -43,9 +43,12 @@ impl RadixTopKSmall for VkRadixTopKSmall {
         output_ids: impl BufferMut<Backend = Vulkan>,
         output_scores: impl BufferMut<Backend = Vulkan>,
         rows: u32,
+        columns: u32,
         k: u32,
+        sorted: bool,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<(), Error> {
+        let partitions = columns.div_ceil(COLUMNS_PER_PARTITION);
         let mut histograms = command_buffer.allocate_scratch(
             rows as usize * RADIX_TOP_K_PASSES as usize * RADIX_TOP_K_BUCKETS as usize * size_of::<u32>(),
         )?;
@@ -66,6 +69,8 @@ impl RadixTopKSmall for VkRadixTopKSmall {
                     rows,
                     k,
                     pass,
+                    columns,
+                    partitions,
                     command_buffer,
                 );
             }
@@ -76,9 +81,16 @@ impl RadixTopKSmall for VkRadixTopKSmall {
                 VkBuffer::resolve_ref(&keys),
                 rows,
                 k,
+                columns,
+                partitions,
                 command_buffer,
             );
-            self.sort.encode(
+            let sort = if sorted {
+                &self.sort_by_score
+            } else {
+                &self.sort_by_column
+            };
+            sort.encode(
                 VkBuffer::resolve_ref(&keys),
                 VkBuffer::resolve(output_ids, output_ids_range),
                 VkBuffer::resolve(output_scores, output_scores_range),
