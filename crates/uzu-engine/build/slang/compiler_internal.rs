@@ -147,10 +147,7 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
         let sessions = T::SESSION_DEFINES
             .iter()
             .map(|defines| {
-                let compiler_options = CompilerOptions::default()
-                    .optimization(fields.optimization_level)
-                    .emit_spirv_directly(true)
-                    .vulkan_use_entry_point_name(true);
+                let compiler_options = CompilerOptions::default().optimization(fields.optimization_level);
                 let compiler_options = defines
                     .iter()
                     .fold(T::compiler_options(&global_session, compiler_options), |compiler_options, (name, value)| {

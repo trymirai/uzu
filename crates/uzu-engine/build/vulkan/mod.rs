@@ -4,6 +4,7 @@ mod slang_entry_point_variant;
 mod slang_field_abi;
 mod slang_pointee_abi;
 mod slang_struct_field_abi;
+mod spirv_hash;
 mod vulkan_target;
 
 pub use slang_entry_point_abi::SlangEntryPointAbi;

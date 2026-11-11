@@ -12,9 +12,8 @@ use shader_slang::{
     Blob, CompileTarget, CompilerOptions, ComponentType, GlobalSession, Module, ScalarType, TargetDesc,
 };
 use syn::{BinOp, Expr};
-use walkdir::WalkDir;
 
-use super::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen};
+use super::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen, spirv_hash::export_spirv_hash};
 use crate::{
     common::{codegen::write_tokens, identifiers::KernelName, kernel::Kernel, mangling::static_mangle},
     slang::{
@@ -60,6 +59,8 @@ impl SlangTarget for VulkanTarget {
         options: CompilerOptions,
     ) -> CompilerOptions {
         options
+            .emit_spirv_directly(true)
+            .vulkan_use_entry_point_name(true)
             // The subgroup operations the device filter requires.
             .capability(global_session.find_capability("spvGroupNonUniform"))
             .capability(global_session.find_capability("spvGroupNonUniformArithmetic"))
@@ -227,15 +228,7 @@ impl SlangTarget for VulkanTarget {
         fields: &SlangCompilerFields<Self>,
         modules: &[(PathBuf, &[Kernel], &[KernelName])],
     ) -> anyhow::Result<TokenStream> {
-        // Names the pipeline cache, so a new shader build starts its own instead of growing the previous one.
-        let mut spirv = blake3::Hasher::new();
-        for entry in WalkDir::new(&fields.output_directory).sort_by_file_name() {
-            let path = entry?.into_path();
-            if path.extension().is_some_and(|extension| extension == "spv") {
-                spirv.update(&fs::read(&path)?);
-            }
-        }
-        println!("cargo::rustc-env=UZU_VULKAN_SPIRV_HASH={}", &spirv.finalize().to_hex()[..16]);
+        export_spirv_hash(&fields.output_directory)?;
         let mut bindings = Vec::new();
         for (output_base, public, private) in modules {
             let names =
