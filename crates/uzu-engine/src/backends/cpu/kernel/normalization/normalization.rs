@@ -31,6 +31,7 @@ pub fn normalization<
     element_count: u32,
     epsilon: f32,
     scale_offset: f32,
+    mixture_size: u32,
     #[specialize] in_place: bool,
     #[specialize] subtract_mean: bool,
     #[specialize] full_layer: bool,
@@ -60,6 +61,7 @@ pub fn normalization<
 
     for batch in 0..(batch_size as usize) {
         let batch_offset = batch * element_count;
+        let affine_offset = (batch % mixture_size as usize) * element_count;
 
         // Compute mean / rms_inv (+ residual add or copy to shortcut)
         let mut sum = AccumT::zero();
@@ -97,7 +99,7 @@ pub fn normalization<
             };
             let normalized: AccumT = (input_val - mean) * rms_inv;
             let mut result: OutputT = if has_scales {
-                let scale_val = unsafe { AccumT::from(*scales.unwrap().add(i)).unwrap() };
+                let scale_val = unsafe { AccumT::from(*scales.unwrap().add(affine_offset + i)).unwrap() };
                 if full_layer {
                     // Full-layer: keep everything in accumulation precision
                     let scale_with_offset: AccumT = scale_val + scale_offset;
@@ -112,7 +114,7 @@ pub fn normalization<
                 OutputT::from(normalized).unwrap()
             };
             if has_biases {
-                let bias = unsafe { AccumT::from(*biases.unwrap().add(i)).unwrap() };
+                let bias = unsafe { AccumT::from(*biases.unwrap().add(affine_offset + i)).unwrap() };
                 result = OutputT::from(AccumT::from(result).unwrap() + bias).unwrap();
             }
             row[i] = result;

@@ -32,6 +32,8 @@ pub enum StreamOpNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("N-gram injection requires a gated residual")]
     NGramInjectionRequiresGatedResidual,
+    #[error("{0} requires an additive residual")]
+    RequiresAdditiveResidual(&'static str),
 }
 
 #[derive(Debug, Error)]
@@ -80,6 +82,14 @@ impl<B: Backend> StreamOp<B> {
                     NGramInjection::new(model_dim, data_type, config, residual_config, &parameter_tree, context)
                         .await?,
                 ))
+            },
+            AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(_) | AnyStreamOpConfig::ResidualScaleConfig(_)
+                if !matches!(residual_config, AnyResidualConfig::AdditiveResidualConfig(_)) =>
+            {
+                Err(StreamOpNewError::RequiresAdditiveResidual(match config {
+                    AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(_) => "Per-layer embedding injection",
+                    _ => "Residual scale",
+                }))
             },
             AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(config) => Ok(Self::PerLayerEmbeddingInjection(
                 PerLayerEmbeddingInjection::new(

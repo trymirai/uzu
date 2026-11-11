@@ -4,14 +4,14 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
-        residual::{ResidualHead, ResidualNewError},
+        residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     safetensors::ParameterTree,
@@ -99,6 +99,10 @@ pub enum TransformerEncodeError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Layer error: {0}")]
     Layer(#[from] TransformerLayerError<B>),
+    #[error("Residual encoding error: {0}")]
+    Residual(#[from] ResidualEncodeError<B>),
+    #[error("Hidden features require an additive residual")]
+    HiddenFeaturesRequireAdditiveResidual,
 }
 
 pub struct Transformer<B: Backend> {
@@ -121,8 +125,14 @@ impl<B: Backend> Transformer<B> {
         let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
 
         let residual_config = transformer_config.residual_config.clone();
-        let residual_head =
-            ResidualHead::new(&residual_config, input_data_type, &parameter_tree.subtree("residual_head"), context)?;
+        let residual_head = ResidualHead::new(
+            &residual_config,
+            transformer_config.model_dim,
+            input_data_type,
+            &parameter_tree.subtree("residual_head"),
+            context,
+        )
+        .await?;
 
         let num_layers = transformer_config.layer_configs.len() as u32;
         let mut layers = Vec::with_capacity(num_layers as usize);
@@ -186,7 +196,7 @@ impl<B: Backend> Transformer<B> {
     ) -> Result<B::ScratchBuffer, B::Error> {
         let mut copy = command_buffer.allocate_scratch(stream.size())?;
         command_buffer.encode_copy(stream, &mut copy);
-        Ok(self.residual_head.readout(copy))
+        Ok(copy)
     }
 
     pub fn model_dim(&self) -> u32 {
@@ -194,7 +204,8 @@ impl<B: Backend> Transformer<B> {
     }
 
     pub fn speculation_supported(&self) -> bool {
-        self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
+        matches!(self.residual_head, ResidualHead::Additive)
+            && self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
     }
 
     pub fn max_context_length(&self) -> Option<u32> {
@@ -256,7 +267,14 @@ impl<B: Backend> Transformer<B> {
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
-        let mut stream = self.residual_head.expand(input);
+        if hidden_feature_layer_indices.is_some() && !matches!(self.residual_head, ResidualHead::Additive) {
+            return Err(TransformerEncodeError::HiddenFeaturesRequireAdditiveResidual);
+        }
+
+        let mut stream = self
+            .residual_head
+            .expand(input, batch_dim.size(), command_buffer)
+            .map_err(TransformerEncodeError::Backend)?;
         let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
             self.prefill_cache_layer_count()
         } else {
@@ -332,18 +350,25 @@ impl<B: Backend> Transformer<B> {
             });
         };
 
-        let hidden = self.residual_head.readout(stream);
+        let output_row_count = output_range.end - output_range.start;
+        let (hidden, row_offset) =
+            match self.residual_head.readout(&stream, output_range.start, output_row_count, command_buffer)? {
+                Some(hidden) => (hidden, 0),
+                None => (stream, output_range.start),
+            };
         let output = match &self.output_norm {
             Some(output_norm) => output_norm
-                .encode(
-                    &hidden,
-                    output_range.start,
-                    output_range.end - output_range.start,
-                    None::<&mut B::ScratchBuffer>,
-                    command_buffer,
-                )
+                .encode(&hidden, row_offset, output_row_count, None::<&mut B::ScratchBuffer>, command_buffer)
                 .map_err(TransformerEncodeError::Backend)?,
-            None => hidden,
+            None if row_offset == 0 => hidden,
+            None => {
+                let row_size = hidden.size() / batch_dim.size() as usize;
+                let rows = row_offset as usize * row_size..(row_offset + output_row_count) as usize * row_size;
+                let mut output =
+                    command_buffer.allocate_scratch(rows.end - rows.start).map_err(TransformerEncodeError::Backend)?;
+                command_buffer.encode_copy((&hidden).subrange(rows), &mut output);
+                output
+            },
         };
 
         Ok(TransformerEncodeOutput {

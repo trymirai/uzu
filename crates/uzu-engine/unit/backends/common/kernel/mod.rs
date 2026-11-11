@@ -4,6 +4,7 @@ mod attention;
 mod confidence_head_test;
 mod embedding;
 mod gated_act_mul_test;
+mod gated_residual_test;
 mod gdn;
 mod logit_transform_test;
 mod matmul;

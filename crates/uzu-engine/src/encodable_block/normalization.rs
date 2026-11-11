@@ -36,6 +36,7 @@ pub struct Normalization<B: Backend> {
     scales: Option<B::GlobalGpuBuffer>,
     biases: Option<B::GlobalGpuBuffer>,
     element_count: u32,
+    mixture_size: u32,
     hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
     input_data_type: DataType,
     output_data_type: DataType,
@@ -53,6 +54,36 @@ impl<B: Backend> Normalization<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
+        Self::new_mixture(
+            None,
+            element_count,
+            input_data_type,
+            output_data_type,
+            hadamard_factors,
+            shortcut_mode,
+            config,
+            parameter_tree,
+            context,
+        )
+        .await
+    }
+
+    pub async fn new_mixture(
+        mixture_size: Option<u32>,
+        element_count: u32,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
+        shortcut_mode: ShortcutMode,
+        config: &NormalizationConfig,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, NormalizationNewError<B>> {
+        let affine_shape: &[u32] = if let Some(mixture_size) = mixture_size {
+            &[mixture_size, element_count]
+        } else {
+            &[element_count]
+        };
         let (copy_to_shortcut, residual_add) = match shortcut_mode {
             ShortcutMode::None => (false, false),
             ShortcutMode::Copy => (true, false),
@@ -60,12 +91,12 @@ impl<B: Backend> Normalization<B> {
         };
 
         let scales = if config.has_scale {
-            Some(parameter_tree.read_buffer("scales", &[element_count], DataType::F32).await?)
+            Some(parameter_tree.read_buffer("scales", affine_shape, DataType::F32).await?)
         } else {
             None
         };
         let biases = if config.has_biases {
-            Some(parameter_tree.read_buffer("biases", &[element_count], DataType::F32).await?)
+            Some(parameter_tree.read_buffer("biases", affine_shape, DataType::F32).await?)
         } else {
             None
         };
@@ -93,6 +124,7 @@ impl<B: Backend> Normalization<B> {
             scales,
             biases,
             element_count,
+            mixture_size: mixture_size.unwrap_or(1),
             hadamard_factors,
             input_data_type,
             output_data_type,
@@ -108,6 +140,7 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        debug_assert!(row_offset.is_multiple_of(self.mixture_size));
         let row_size = size_for_shape(&[self.element_count], self.input_data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
@@ -124,6 +157,7 @@ impl<B: Backend> Normalization<B> {
             self.element_count,
             self.epsilon,
             self.scale_offset.unwrap_or(0.0),
+            self.mixture_size,
             command_buffer,
         );
 
