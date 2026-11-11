@@ -1,3 +1,4 @@
+use super::VkAttentionManyQueries;
 use crate::{
     backends::{
         common::{
@@ -26,11 +27,8 @@ const GEMM_SPLIT_MAX_SUFFIX: u32 = 64;
 /// and gates.
 pub struct VkAttentionKernel {
     config: AttentionKernelConfig,
-    /// Without and with a trie, for more than TWO_PASS_MAX_SUFFIX queries without AttentionGemm.
-    single_pass: Option<[AttentionSinglePassVulkanKernel; 2]>,
-    /// Without and with a trie, for more than TWO_PASS_MAX_SUFFIX queries of 64, 128 or 256 dimensions on devices with
-    /// its workgroup memory.
-    gemm: Option<[AttentionGemmVulkanKernel; 2]>,
+    /// For more than TWO_PASS_MAX_SUFFIX queries.
+    many_queries: VkAttentionManyQueries,
     /// Without and with a trie.
     two_pass: [AttentionTwoPass1VulkanKernel; 2],
     merge: AttentionTwoPass2VulkanKernel,
@@ -81,8 +79,11 @@ impl AttentionKernel for VkAttentionKernel {
                 >= ATTENTION_GEMM_SHARED_BYTES;
         Ok(Self {
             config,
-            single_pass: (!has_gemm).then(|| Ok::<_, Error>([single_pass(false)?, single_pass(true)?])).transpose()?,
-            gemm: has_gemm.then(|| Ok::<_, Error>([gemm(false)?, gemm(true)?])).transpose()?,
+            many_queries: if has_gemm {
+                VkAttentionManyQueries::Gemm([gemm(false)?, gemm(true)?])
+            } else {
+                VkAttentionManyQueries::SinglePass([single_pass(false)?, single_pass(true)?])
+            },
             two_pass: [two_pass(false)?, two_pass(true)?],
             merge: AttentionTwoPass2VulkanKernel::new(
                 &arc,
@@ -125,7 +126,8 @@ impl AttentionKernel for VkAttentionKernel {
             .allocate_scratch_for_shape(&[suffix_length, config.num_q_heads, config.head_dim], config.data_type)?;
         let blocks = if suffix_length <= TWO_PASS_MAX_SUFFIX {
             ATTENTION_TWO_PASS_BLOCKS
-        } else if self.gemm.is_some() && suffix_length <= GEMM_SPLIT_MAX_SUFFIX {
+        } else if matches!(self.many_queries, VkAttentionManyQueries::Gemm(_)) && suffix_length <= GEMM_SPLIT_MAX_SUFFIX
+        {
             // AttentionTwoPass1's split count, but no more splits than blocks of keys.
             sequence_length.div_ceil(ATTENTION_GEMM_BLOCK_KEYS).min(ATTENTION_TWO_PASS_BLOCKS)
         } else {
@@ -182,11 +184,10 @@ impl AttentionKernel for VkAttentionKernel {
         // group, suffix_length trie nodes, num_q_heads sinks and gate rows of gate_row_stride; the partials, statistics
         // and output are fresh scratch of their shapes.
         unsafe {
-            match (&self.gemm, &self.single_pass) {
+            match &self.many_queries {
                 _ if suffix_length <= TWO_PASS_MAX_SUFFIX => partials!(self.two_pass[is_trie]),
-                (Some(gemm), _) => partials!(gemm[is_trie], blocks),
-                (None, Some(single_pass)) => partials!(single_pass[is_trie]),
-                (None, None) => unreachable!("new builds the single-pass kernels without AttentionGemm"),
+                VkAttentionManyQueries::Gemm(gemm) => partials!(gemm[is_trie], blocks),
+                VkAttentionManyQueries::SinglePass(single_pass) => partials!(single_pass[is_trie]),
             }
             self.merge.encode(
                 partials_ref,
