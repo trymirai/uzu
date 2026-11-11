@@ -13,7 +13,7 @@ use tempfile::NamedTempFile;
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
 
 #[derive(Debug)]
-pub enum MetalSdk {
+enum MetalSdk {
     MacOSX,
     MacCatalyst,
     IPhoneOS,
@@ -21,11 +21,11 @@ pub enum MetalSdk {
 }
 
 impl MetalSdk {
-    pub fn from_parts(
-        target: &str,
-        target_os: &str,
-        target_env: &str,
-    ) -> anyhow::Result<Self> {
+    fn from_env() -> anyhow::Result<Self> {
+        let target = env::var("TARGET").context("missing TARGET")?;
+        let target_os = env::var("CARGO_CFG_TARGET_OS").context("missing CARGO_CFG_TARGET_OS")?;
+        let target_env = env::var("CARGO_CFG_TARGET_ENV").context("missing CARGO_CFG_TARGET_ENV")?;
+
         if target_os == "ios" {
             if target.contains("macabi") || target_env == "macabi" {
                 Ok(Self::MacCatalyst)
@@ -41,17 +41,7 @@ impl MetalSdk {
         }
     }
 
-    pub fn from_env() -> anyhow::Result<Self> {
-        let target = env::var("TARGET").context("missing TARGET")?;
-        let target_os = env::var("CARGO_CFG_TARGET_OS").context("missing CARGO_CFG_TARGET_OS")?;
-        let target_env = env::var("CARGO_CFG_TARGET_ENV").context("missing CARGO_CFG_TARGET_ENV")?;
-
-        let sdk = Self::from_parts(&target, &target_os, &target_env)?;
-
-        Ok(sdk)
-    }
-
-    pub fn to_str(&self) -> &'static str {
+    fn to_str(&self) -> &'static str {
         match self {
             Self::MacOSX | Self::MacCatalyst => "macosx",
             Self::IPhoneOS => "iphoneos",
@@ -59,7 +49,7 @@ impl MetalSdk {
         }
     }
 
-    pub fn os(&self) -> &'static str {
+    fn os(&self) -> &'static str {
         match self {
             Self::MacOSX | Self::MacCatalyst => "macosx",
             Self::IPhoneOS | Self::IPhoneSimulator => "ios",

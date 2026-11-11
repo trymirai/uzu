@@ -418,15 +418,9 @@ fn parse_argument_type(
 }
 
 #[derive(Debug)]
-pub enum MetalTemplateParameterType {
-    Type,
-    Value(Box<str>),
-}
-
-#[derive(Debug)]
 pub struct MetalTemplateParameter {
     pub name: Box<str>,
-    pub ty: MetalTemplateParameterType,
+    pub ty: KernelParameterType,
     pub variants: Box<[Box<str>]>,
 }
 
@@ -434,10 +428,7 @@ impl MetalTemplateParameter {
     fn to_parameter(&self) -> KernelParameter {
         KernelParameter {
             name: self.name.clone(),
-            ty: match &self.ty {
-                MetalTemplateParameterType::Type => KernelParameterType::Type,
-                MetalTemplateParameterType::Value(ty) => KernelParameterType::Value(ty.clone()),
-            },
+            ty: self.ty.clone(),
         }
     }
 }
@@ -616,8 +607,8 @@ impl MetalKernelInfo {
                         Ok(MetalTemplateParameter {
                             name,
                             ty: match ty {
-                                None => MetalTemplateParameterType::Type,
-                                Some(ntt) => MetalTemplateParameterType::Value(MetalArgument::scalar_type_to_rust(
+                                None => KernelParameterType::Type,
+                                Some(ntt) => KernelParameterType::Value(MetalArgument::scalar_type_to_rust(
                                     ntt.desugared_qual_type.unwrap_or(ntt.qual_type).as_ref(),
                                 )?),
                             },
