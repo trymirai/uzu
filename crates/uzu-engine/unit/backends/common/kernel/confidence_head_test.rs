@@ -17,9 +17,7 @@ use crate::{
         },
         cpu::Cpu,
     },
-    tests::helpers::{
-        buffer_to_vec, create_buffer_with_data, create_context, for_each_non_cpu_backend, supported_kernel,
-    },
+    tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, for_each_non_cpu_backend},
 };
 
 const NONE: u32 = u32::MAX;
@@ -219,7 +217,7 @@ fn pool_inputs() -> (Vec<u32>, Vec<u32>, Vec<f32>) {
     (metadata, ids, features)
 }
 
-fn run_pools<B: Backend>() -> Option<Vec<f32>> {
+fn run_pools<B: Backend>() -> Vec<f32> {
     let context = create_context::<B>();
     let candidate_logits = create_buffer_with_data::<B, f32>(&context, &values(DEPTHS * CANDIDATES as usize, 0.3, 6.0));
     let candidate_ids = create_buffer_with_data::<B, u32>(
@@ -228,7 +226,7 @@ fn run_pools<B: Backend>() -> Option<Vec<f32>> {
     );
     let depth_seeds = create_buffer_with_data::<B, u64>(&context, &[0x9E3779B97F4A7C15, 0xD1B54A32D192ED03, 7, 9]);
     let mut pool_features = create_buffer_with_data::<B, f32>(&context, &vec![0.0; DEPTHS * 3 * CANDIDATES as usize]);
-    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::ConfidenceHeadPoolsKernel::new(&context))?;
+    let kernel = <B::Kernels as Kernels>::ConfidenceHeadPoolsKernel::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &candidate_logits,
@@ -240,20 +238,16 @@ fn run_pools<B: Backend>() -> Option<Vec<f32>> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    Some(buffer_to_vec::<B, f32>(&context, &pool_features))
+    buffer_to_vec::<B, f32>(&context, &pool_features)
 }
 
 #[uzu_test]
 fn pools_match_cpu() {
-    let expected = run_pools::<Cpu>().unwrap();
-    for_each_non_cpu_backend!(|B| {
-        if let Some(actual) = run_pools::<B>() {
-            assert_close("pool features", &actual, &expected, 1e-4);
-        }
-    });
+    let expected = run_pools::<Cpu>();
+    for_each_non_cpu_backend!(|B| assert_close("pool features", &run_pools::<B>(), &expected, 1e-4));
 }
 
-fn run_nodes<B: Backend>() -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let context = create_context::<B>();
     let (metadata, _, features) = pool_inputs();
     let u32s = |data: &[u32]| create_buffer_with_data::<B, u32>(&context, data);
@@ -276,11 +270,7 @@ fn run_nodes<B: Backend>() -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     let mut scores = f32s(&vec![0.0; SLOTS * 2 * CANDIDATES as usize]);
     let mut nodes = bf16_buffer(&vec![0.0; SLOTS * WIDTH as usize]);
     let mut node_inputs = bf16_buffer(&vec![0.0; SLOTS * WIDTH as usize]);
-    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::ConfidenceHeadNodesKernel::new(
-        &context,
-        WIDTH,
-        POOL_HIDDEN,
-    ))?;
+    let kernel = <B::Kernels as Kernels>::ConfidenceHeadNodesKernel::new(&context, WIDTH, POOL_HIDDEN).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &residual_logits,
@@ -303,22 +293,21 @@ fn run_nodes<B: Backend>() -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    Some((
+    (
         buffer_to_vec::<B, f32>(&context, &scores),
         floats(&buffer_to_vec::<B, bf16>(&context, &nodes)),
         floats(&buffer_to_vec::<B, bf16>(&context, &node_inputs)),
-    ))
+    )
 }
 
 #[uzu_test]
 fn nodes_match_cpu() {
-    let (scores, nodes, _) = run_nodes::<Cpu>().unwrap();
+    let (scores, nodes, _) = run_nodes::<Cpu>();
     for_each_non_cpu_backend!(|B| {
-        if let Some(actual) = run_nodes::<B>() {
-            assert_close("scores", &actual.0, &scores, 1e-4);
-            assert_close("nodes", &actual.1, &nodes, 2e-2);
-            assert_eq!(actual.2, actual.1);
-        }
+        let actual = run_nodes::<B>();
+        assert_close("scores", &actual.0, &scores, 1e-4);
+        assert_close("nodes", &actual.1, &nodes, 2e-2);
+        assert_eq!(actual.2, actual.1);
     });
 }
 
@@ -350,7 +339,7 @@ fn child_pool_indices() -> Vec<u32> {
     (0..CAPACITY).map(|entry| CHILD_INDEX[entry % CHILDREN] + (entry / CHILDREN) as u32).collect()
 }
 
-fn run_edges<B: Backend>(refine: bool) -> Option<EdgesOutput> {
+fn run_edges<B: Backend>(refine: bool) -> EdgesOutput {
     let context = create_context::<B>();
     let tree = tree();
     let (metadata, ids, features) = pool_inputs();
@@ -399,12 +388,7 @@ fn run_edges<B: Backend>(refine: bool) -> Option<EdgesOutput> {
     let mut frontier = u32s(&tree.frontier);
     let mut packed_tree = u32s(&tree.packed_tree);
     let mut child_inputs = bf16_buffer(&vec![0.0; CAPACITY * (WIDTH as usize + 4)]);
-    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::ConfidenceHeadEdgesKernel::new(
-        &context,
-        WIDTH,
-        EDGE_HIDDEN,
-        refine,
-    ))?;
+    let kernel = <B::Kernels as Kernels>::ConfidenceHeadEdgesKernel::new(&context, WIDTH, EDGE_HIDDEN, refine).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         (!refine).then_some(&node_metadata),
@@ -440,7 +424,7 @@ fn run_edges<B: Backend>(refine: bool) -> Option<EdgesOutput> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    Some(EdgesOutput {
+    EdgesOutput {
         frontier: buffer_to_vec::<B, u32>(&context, &frontier),
         packed_tree: buffer_to_vec::<B, u32>(&context, &packed_tree),
         child_inputs: floats(&buffer_to_vec::<B, bf16>(&context, &child_inputs)),
@@ -448,14 +432,14 @@ fn run_edges<B: Backend>(refine: bool) -> Option<EdgesOutput> {
         child_numbers: buffer_to_vec::<B, f32>(&context, &child_numbers),
         slot_rows: buffer_to_vec::<B, u32>(&context, &slot_rows),
         row_slots: buffer_to_vec::<B, u32>(&context, &row_slots),
-    })
+    }
 }
 
 #[uzu_test]
 fn edges_match_cpu() {
     let tree = tree();
     for refine in [false, true] {
-        let expected = run_edges::<Cpu>(refine).unwrap();
+        let expected = run_edges::<Cpu>(refine);
         let edges = frontier_floats(&expected.frontier, FrontierIdx::EdgeLogprobBits);
         assert!(edges[..8].iter().chain(&edges[12..]).all(|edge| *edge < 0.0));
         if refine {
@@ -469,32 +453,26 @@ fn edges_match_cpu() {
             }
         }
         for_each_non_cpu_backend!(|B| {
-            if let Some(actual) = run_edges::<B>(refine) {
-                for field in [FrontierIdx::EdgeLogprobBits, FrontierIdx::PathLogprobBits] {
-                    assert_close(
-                        "frontier",
-                        &frontier_floats(&actual.frontier, field),
-                        &frontier_floats(&expected.frontier, field),
-                        1e-3,
-                    );
-                }
+            let actual = run_edges::<B>(refine);
+            for field in [FrontierIdx::EdgeLogprobBits, FrontierIdx::PathLogprobBits] {
                 assert_close(
-                    "tree edges",
-                    &packed_edges(&actual.packed_tree),
-                    &packed_edges(&expected.packed_tree),
+                    "frontier",
+                    &frontier_floats(&actual.frontier, field),
+                    &frontier_floats(&expected.frontier, field),
                     1e-3,
                 );
-                assert_close("child inputs", &actual.child_inputs, &expected.child_inputs, 2e-2);
-                assert_close("child numbers", &actual.child_numbers, &expected.child_numbers, 1e-4);
-                assert_eq!(actual.child_pools, expected.child_pools);
-                assert_eq!(actual.slot_rows, expected.slot_rows);
-                assert_eq!(actual.row_slots, expected.row_slots);
             }
+            assert_close("tree edges", &packed_edges(&actual.packed_tree), &packed_edges(&expected.packed_tree), 1e-3);
+            assert_close("child inputs", &actual.child_inputs, &expected.child_inputs, 2e-2);
+            assert_close("child numbers", &actual.child_numbers, &expected.child_numbers, 1e-4);
+            assert_eq!(actual.child_pools, expected.child_pools);
+            assert_eq!(actual.slot_rows, expected.slot_rows);
+            assert_eq!(actual.row_slots, expected.row_slots);
         });
     }
 }
 
-fn run_tree_input<B: Backend>() -> Option<Vec<f32>> {
+fn run_tree_input<B: Backend>() -> Vec<f32> {
     let context = create_context::<B>();
     let tree = tree();
     let width = 32u32;
@@ -505,7 +483,7 @@ fn run_tree_input<B: Backend>() -> Option<Vec<f32>> {
     let frontier = create_buffer_with_data::<B, u32>(&context, &tree.frontier);
     let row_slots = create_buffer_with_data::<B, u32>(&context, &tree.row_slots);
     let mut output = bf16_buffer(&vec![0.0; ROWS * width as usize]);
-    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::ConfidenceHeadTreeInputKernel::new(&context))?;
+    let kernel = <B::Kernels as Kernels>::ConfidenceHeadTreeInputKernel::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &depth_embedding,
@@ -519,28 +497,24 @@ fn run_tree_input<B: Backend>() -> Option<Vec<f32>> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    Some(floats(&buffer_to_vec::<B, bf16>(&context, &output)))
+    floats(&buffer_to_vec::<B, bf16>(&context, &output))
 }
 
 #[uzu_test]
 fn tree_input_matches_cpu() {
-    let expected = run_tree_input::<Cpu>().unwrap();
+    let expected = run_tree_input::<Cpu>();
     assert!(expected[9 * 32..13 * 32].iter().all(|value| *value == 0.0));
-    for_each_non_cpu_backend!(|B| {
-        if let Some(actual) = run_tree_input::<B>() {
-            assert_close("tree_input", &actual, &expected, 1e-2);
-        }
-    });
+    for_each_non_cpu_backend!(|B| assert_close("tree_input", &run_tree_input::<B>(), &expected, 1e-2));
 }
 
-fn run_tree_relations<B: Backend>() -> Option<Vec<u32>> {
+fn run_tree_relations<B: Backend>() -> Vec<u32> {
     let context = create_context::<B>();
     let tree = tree();
     let frontier = create_buffer_with_data::<B, u32>(&context, &tree.frontier);
     let slot_ancestors = create_buffer_with_data::<B, u32>(&context, &tree.slot_ancestors);
     let slot_rows = create_buffer_with_data::<B, u32>(&context, &tree.slot_rows);
     let mut relations = create_buffer_with_data::<B, u32>(&context, &[0; ROWS * ROWS]);
-    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::ConfidenceHeadTreeRelationsKernel::new(&context))?;
+    let kernel = <B::Kernels as Kernels>::ConfidenceHeadTreeRelationsKernel::new(&context).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &frontier,
@@ -552,23 +526,19 @@ fn run_tree_relations<B: Backend>() -> Option<Vec<u32>> {
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    Some(buffer_to_vec::<B, u32>(&context, &relations))
+    buffer_to_vec::<B, u32>(&context, &relations)
 }
 
 #[uzu_test]
 fn tree_relations_match_cpu() {
-    let expected = run_tree_relations::<Cpu>().unwrap();
+    let expected = run_tree_relations::<Cpu>();
     let relation = |query: usize, key: usize| expected[query * ROWS + key];
     assert_eq!([relation(6, 6), relation(6, 2), relation(2, 6), relation(6, 0), relation(0, 14)], [1, 2, 3, 4, 5]);
     assert_eq!([relation(6, 7), relation(9, 0), relation(6, 3)], [6, 7, 0]);
-    for_each_non_cpu_backend!(|B| {
-        if let Some(actual) = run_tree_relations::<B>() {
-            assert_eq!(actual, expected);
-        }
-    });
+    for_each_non_cpu_backend!(|B| assert_eq!(run_tree_relations::<B>(), expected));
 }
 
-fn run_tree_attention<B: Backend>() -> Option<Vec<f32>> {
+fn run_tree_attention<B: Backend>() -> Vec<f32> {
     let (heads, head_dim) = (2u32, 32u32);
     let context = create_context::<B>();
     let codes = (0..ROWS * ROWS)
@@ -584,22 +554,16 @@ fn run_tree_attention<B: Backend>() -> Option<Vec<f32>> {
     let relation_bias = create_buffer_with_data::<B, bf16>(&context, &bf16s(&values(12, 2.2, 3.0)));
     let mut output =
         create_buffer_with_data::<B, bf16>(&context, &vec![bf16::ZERO; ROWS * (heads * head_dim) as usize]);
-    let kernel = supported_kernel::<B, _>(<B::Kernels as Kernels>::ConfidenceHeadTreeAttentionKernel::new(
-        &context, heads, head_dim,
-    ))?;
+    let kernel = <B::Kernels as Kernels>::ConfidenceHeadTreeAttentionKernel::new(&context, heads, head_dim).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(&qkv, &relations, &relation_bias, &mut output, ROWS as u32, &mut command_buffer);
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
-    Some(floats(&buffer_to_vec::<B, bf16>(&context, &output)))
+    floats(&buffer_to_vec::<B, bf16>(&context, &output))
 }
 
 #[uzu_test]
 fn tree_attention_matches_cpu() {
-    let expected = run_tree_attention::<Cpu>().unwrap();
+    let expected = run_tree_attention::<Cpu>();
     assert!(expected[9 * 64..13 * 64].iter().all(|value| *value == 0.0));
-    for_each_non_cpu_backend!(|B| {
-        if let Some(actual) = run_tree_attention::<B>() {
-            assert_close("tree_attention", &actual, &expected, 1e-2);
-        }
-    });
+    for_each_non_cpu_backend!(|B| assert_close("tree_attention", &run_tree_attention::<B>(), &expected, 1e-2));
 }
