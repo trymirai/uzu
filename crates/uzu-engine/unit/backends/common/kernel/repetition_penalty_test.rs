@@ -57,8 +57,6 @@ fn batch_topology<B: Backend>(
 ) -> BatchTopology<B> {
     BatchTopology::new(
         (!flat).then(|| create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes))),
-        (!flat).then(|| create_buffer_with_data::<B, u32>(context, &TOKENS)),
-        None,
         TOKENS.len() as u32,
         flat,
         flat,

@@ -51,6 +51,7 @@ enum GenerationJob<B: Backend> {
         output_norm: Option<B::ScratchBuffer>,
         output_tokens: B::GlobalGpuBuffer,
         batch_dim: BatchTopology<B>,
+        input_token_ids: Option<B::GlobalGpuBuffer>,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
         capture_span: Option<CaptureMatcherSpan>,
         pendings: Box<[<<B as Backend>::CommandBuffer as CommandBuffer>::Pending]>,
@@ -172,6 +173,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 output_norm: output_norm_buffer,
                 output_tokens: output_tokens_buffer,
                 batch_dim,
+                input_token_ids,
                 hidden_features,
                 capture_span,
                 pendings,
@@ -201,7 +203,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         .model
                         .engine
                         .context
-                        .copyout::<u32>(batch_dim.token_ids().expect("trie batch carries token ids"))
+                        .copyout::<u32>(input_token_ids.as_ref().expect("trie batch carries token ids"))
                         .await
                         .map_err(LanguageModelStreamError::Backend)?;
 
@@ -428,6 +430,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             output_norm,
             output_tokens: output_token,
             batch_dim,
+            input_token_ids: None,
             hidden_features: decoder_output.hidden_features,
             capture_span: None,
             pendings: Box::new([command_buffer.end_encoding().submit()]),
@@ -454,7 +457,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
-        let (batch_dim, trie_pending, flat_seed) = if self.propose_trie
+        let (batch_dim, token_ids, trie_seeds, mut trie_pending) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -483,7 +486,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
             };
 
-            let batch_dim = speculator.propose_tree(
+            let proposal = speculator.propose_tree(
                 self.model_state.speculator_state.as_mut().unwrap(),
                 target_output_norm,
                 target_output_token,
@@ -507,16 +510,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 self.options.timestamps.as_ref(),
             );
 
-            (batch_dim, Some(trie_pending), None)
+            (proposal.topology, proposal.token_ids, proposal.seeds, Some(trie_pending))
         } else {
-            let mut batch_dim = BatchTopology::flat(1);
+            let batch_dim = BatchTopology::flat(1);
             let context = command_buffer.context();
             let token_word_bytes = DataType::U32.size_in_bytes();
-            *batch_dim.token_ids_mut() = Some(
-                context
-                    .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
-                    .map_err(LanguageModelStreamError::Backend)?,
-            );
+            let mut token_ids = context
+                .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
+                .map_err(LanguageModelStreamError::Backend)?;
 
             let token_range = if last_job.batch_dim().full_accept() {
                 0..token_word_bytes
@@ -529,27 +530,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 row * token_word_bytes..(row + 1) * token_word_bytes
             };
 
-            command_buffer.encode_copy(
-                last_job.output_tokens_buffer().subrange(token_range),
-                batch_dim.token_ids_mut().as_mut().expect("decode batch carries token ids"),
-            );
+            command_buffer.encode_copy(last_job.output_tokens_buffer().subrange(token_range), &mut token_ids);
 
-            let seed = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-                Some(
-                    command_buffer
-                        .allocate_constant_from_slice(&[self.model_state.prng.derive(context_length as u64)])
-                        .map_err(LanguageModelStreamError::Backend)?,
-                )
-            } else {
-                None
-            };
-
-            (batch_dim, None, seed)
+            (batch_dim, token_ids, None, None)
         };
 
         // Main (verifier) forward pass
-        let token_ids = batch_dim.token_ids().expect("decode batch carries token ids");
-
         command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
             self.metrics.num_decode_forward_passes,
@@ -566,7 +552,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
         let decoder_output = self.model.decoder.encode(
-            token_ids,
+            &token_ids,
             &batch_dim,
             Some((0..batch_dim.size()).into()),
             hidden_feature_layer_indices,
@@ -575,6 +561,24 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         )?;
 
         let mut pendings = Vec::new();
+
+        if self.options.grammar.is_some() {
+            pendings.push(command_buffer.end_encoding().submit());
+            command_buffer = record(
+                self.model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?,
+                self.options.timestamps.as_ref(),
+            );
+
+            // Not a CPU-bubble, forward pass is overlapped.
+            self.resolve(&mut last_job).await?;
+        }
 
         let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
             let mut bitmask = command_buffer
@@ -585,8 +589,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let was_filled = if let Some(trie_pending) = trie_pending {
-                // Not a CPU-bubble, forward pass is overlapped.
+            let was_filled = if let Some(trie_pending) = trie_pending.take() {
                 wait(trie_pending, self.options.timestamps.as_ref())
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
@@ -603,7 +606,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     .model
                     .engine
                     .context
-                    .copyout::<u32>(batch_dim.token_ids().expect("trie decode carries token ids"))
+                    .copyout::<u32>(&token_ids)
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
 
@@ -619,8 +622,21 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             None
         };
 
-        let seeds = batch_dim
-            .seeds()
+        pendings.extend(trie_pending);
+
+        let flat_seed =
+            if trie_seeds.is_none() && matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
+                Some(
+                    command_buffer
+                        .allocate_constant_from_slice(&[self.model_state.prng.derive(context_length as u64)])
+                        .map_err(LanguageModelStreamError::Backend)?,
+                )
+            } else {
+                None
+            };
+
+        let seeds = trie_seeds
+            .as_ref()
             .map(|seeds| seeds as &dyn GpuBuffer<Backend = B>)
             .or_else(|| flat_seed.as_ref().map(|seed| seed as &dyn GpuBuffer<Backend = B>));
 
@@ -632,7 +648,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 seeds,
                 bitmask.as_ref(),
                 self.context_ring.as_ref(),
-                Some(token_ids),
+                Some(&token_ids),
                 &batch_dim,
                 (0..batch_dim.size()).into(),
                 &self.options.sampling_method,
@@ -664,7 +680,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
                 self.model.context_ring_update.encode(
-                    token_ids,
+                    &token_ids,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
                     batch_dim.size(),
@@ -685,6 +701,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             output_norm: decoder_output.final_hidden,
             output_tokens,
             batch_dim,
+            input_token_ids: Some(token_ids),
             hidden_features: decoder_output.hidden_features,
             capture_span,
             pendings: pendings.into_boxed_slice(),
@@ -862,16 +879,19 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             // Make sure last token is accepted.
             if emitted_len == output_len && !context_full {
-                let next_job = match self.job.take() {
-                    Some(job) => job,
+                // Important to keep `prev_resolved` alive
+                let (prev_resolved, next_job) = match self.job.take() {
+                    Some(job) => (None, job),
                     None => {
                         self.submitter.propose_trie = false;
                         let queued = self.submitter.get_and_queue_pass(GenerationJob::Resolved(last_resolved)).await;
                         self.submitter.propose_trie = true;
-                        queued?.1
+                        let (prev_resolved, next_job) = queued?;
+                        (Some(prev_resolved), next_job)
                     },
                 };
                 let mut next_resolved = self.submitter.resolve_take(next_job).await?;
+                drop(prev_resolved);
                 let accept_pending = self.submitter.encode_accept(&mut next_resolved, 1)?;
                 if let Some(pending) = accept_pending {
                     wait(pending, self.submitter.options.timestamps.as_ref())
