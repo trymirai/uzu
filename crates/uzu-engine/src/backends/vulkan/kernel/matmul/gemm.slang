@@ -19,12 +19,12 @@ using namespace linalg;
 // own entry point so a module declares only its capabilities: Gemm (simdgroup fragments) on every device, GemmTensor
 // (cooperative matrices) for 16-bit operands on tensor cores. Quantized B needs groups of whole K slices, U4 an even k.
 
-[[SpecializationConstant]] public const uint __dsl_Gemm_shared_a_elements = 1;
-[[SpecializationConstant]] public const uint __dsl_Gemm_shared_b_elements = 1;
+[[SpecializationConstant]] public const uint Gemm_specialize_shared_a_elements = 1;
+[[SpecializationConstant]] public const uint Gemm_specialize_shared_b_elements = 1;
 
 // One typed array per operand, sized by specialization.
 public struct GemmStorage<T, let ROLE : int> : IThreadgroupStorage<T> {
-  static groupshared T data[ROLE == 0 ? __dsl_Gemm_shared_a_elements : __dsl_Gemm_shared_b_elements];
+  static groupshared T data[ROLE == 0 ? Gemm_specialize_shared_a_elements : Gemm_specialize_shared_b_elements];
   public static T read(uint index) { return data[index]; }
   public static void write(uint index, T value) { data[index] = value; }
 }
@@ -97,11 +97,11 @@ public func Gemm<A: IStorageFloat, B: IStorageFloat, D: IStorageFloat>(
   }
 }
 
-[[SpecializationConstant]] public const uint __dsl_GemmTensor_shared_words = 1;
+[[SpecializationConstant]] public const uint GemmTensor_specialize_shared_words = 1;
 
 // GemmTensor's two stages, reused by its epilogue.
 public struct GemmTensorShared : ITensorShared {
-  static groupshared uint4 data[__dsl_GemmTensor_shared_words];
+  static groupshared uint4 data[GemmTensor_specialize_shared_words];
   public static uint4 read(uint word) { return data[word]; }
   public static void write(uint word, uint4 value) { data[word] = value; }
   public static CoopMat<BFloat16, MemoryScope.Subgroup, 16, 16, USE> load<
@@ -204,22 +204,22 @@ public func GemmTensor<B: IStorageFloat, D: IStorageFloat>(
   gemm_tensor_tiling<B, D>(tiling, a, dense, weights, quantized, d, bias, params, tile, tid);
 }
 
-[[SpecializationConstant]] public const uint __dsl_GemmInt8_shared_words = 1;
-[[SpecializationConstant]] public const uint __dsl_GemmInt8K16_shared_words = 1056;
-[[SpecializationConstant]] public const uint __dsl_GemmInt8K16_ROW_BLOCK = 16;
-[[SpecializationConstant]] public const uint __dsl_GemmInt8Nv_shared_words = 1;
-[[SpecializationConstant]] public const uint __dsl_GemmInt8Nv_group_size = 64;
-[[SpecializationConstant]] public const uint __dsl_GemmInt8Nv_stage_depth = 64;
-[[SpecializationConstant]] public const uint __dsl_GemmInt8Nv_k_slices = 1;
+[[SpecializationConstant]] public const uint GemmInt8_specialize_shared_words = 1;
+[[SpecializationConstant]] public const uint GemmInt8K16_specialize_shared_words = 1056;
+[[SpecializationConstant]] public const uint GemmInt8K16_specialize_ROW_BLOCK = 16;
+[[SpecializationConstant]] public const uint GemmInt8Nv_specialize_shared_words = 1;
+[[SpecializationConstant]] public const uint GemmInt8Nv_specialize_group_size = 64;
+[[SpecializationConstant]] public const uint GemmInt8Nv_specialize_stage_depth = 64;
+[[SpecializationConstant]] public const uint GemmInt8Nv_specialize_k_slices = 1;
 
 // GemmInt8's (ROLE 0) or GemmInt8Nv's (ROLE 1) two stages, GemmInt8's per-subgroup fold scratch, and the per-element
 // fold metadata of four slots, eight where GemmInt8Nv folds 128-deep stages by quarters over 32-value groups; its K
 // slices have stages of their own, each with two slots, four over 32-value groups.
 public struct GemmInt8Shared<let ROLE : int> : IInt8Shared<32> {
-  static const uint FOLD_SLOTS = ROLE == 1 && __dsl_GemmInt8Nv_k_slices > 1
-    ? __dsl_GemmInt8Nv_k_slices * (__dsl_GemmInt8Nv_group_size == 32 ? 4 : 2)
-    : ROLE == 1 && __dsl_GemmInt8Nv_stage_depth == 128 && __dsl_GemmInt8Nv_group_size == 32 ? 8 : 4;
-  static groupshared uint4 data[ROLE == 0 ? __dsl_GemmInt8_shared_words : __dsl_GemmInt8Nv_shared_words];
+  static const uint FOLD_SLOTS = ROLE == 1 && GemmInt8Nv_specialize_k_slices > 1
+    ? GemmInt8Nv_specialize_k_slices * (GemmInt8Nv_specialize_group_size == 32 ? 4 : 2)
+    : ROLE == 1 && GemmInt8Nv_specialize_stage_depth == 128 && GemmInt8Nv_specialize_group_size == 32 ? 8 : 4;
+  static groupshared uint4 data[ROLE == 0 ? GemmInt8_specialize_shared_words : GemmInt8Nv_specialize_shared_words];
   static groupshared float fold_rows[FOLD_SLOTS * INT8_FOLD_ENTRIES];
   static groupshared float fold_cols[FOLD_SLOTS * INT8_FOLD_ENTRIES];
   public static uint4 read(uint word) { return data[word]; }
@@ -252,9 +252,9 @@ public struct GemmInt8Shared<let ROLE : int> : IInt8Shared<32> {
 // byte staging after the operands are consumed; matrix products use the following INT32 scratch.
 public struct GemmInt8K16Shared : IInt8Shared<16> {
   // Int8Gemm's two 64-deep stages of ROW_BLOCK + 64 rows, 64 / 16 + 1 words each.
-  static const uint STAGES = 2 * (__dsl_GemmInt8K16_ROW_BLOCK + 64) * (64 / 16 + 1);
+  static const uint STAGES = 2 * (GemmInt8K16_specialize_ROW_BLOCK + 64) * (64 / 16 + 1);
   static groupshared int8_t data[16 * STAGES];
-  static groupshared int scratch[4 * (__dsl_GemmInt8K16_shared_words - STAGES)];
+  static groupshared int scratch[4 * (GemmInt8K16_specialize_shared_words - STAGES)];
   static groupshared float fold_rows[4 * INT8_FOLD_ENTRIES];
   static groupshared float fold_cols[4 * INT8_FOLD_ENTRIES];
   public static uint4 read(uint word) {
