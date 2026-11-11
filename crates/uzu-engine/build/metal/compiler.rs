@@ -9,7 +9,6 @@ use itertools::{Itertools, izip};
 use quote::{format_ident, quote};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use super::{
@@ -20,7 +19,7 @@ use super::{
 use crate::{
     common::{
         caching, codegen::write_tokens, compiler::Compiler, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes,
-        identifiers::KernelPath, kernel::Kernel,
+        identifiers::KernelPath, kernel::Kernel, sources::source_files,
     },
     debug_log,
     metal::{compression, gpu_types::gpu_type_gen},
@@ -322,12 +321,7 @@ impl Compiler for MetalCompiler {
             hasher.finalize().into()
         };
 
-        let metal_sources: Vec<PathBuf> = WalkDir::new(&self.source_directory)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("metal"))
-            .map(|e| e.into_path())
-            .collect();
+        let metal_sources: Vec<PathBuf> = source_files(&self.source_directory, "metal")?;
 
         let compiled: Vec<(KernelPath, Box<[Kernel]>, bool)> = metal_sources
             .into_par_iter()

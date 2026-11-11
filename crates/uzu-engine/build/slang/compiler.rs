@@ -2,7 +2,6 @@ use std::{collections::HashMap, fs, iter::once, path::PathBuf, sync::Mutex};
 
 use anyhow::Context;
 use rayon::prelude::*;
-use walkdir::WalkDir;
 
 use crate::{
     common::{
@@ -12,6 +11,7 @@ use crate::{
         gpu_types::GpuTypes,
         identifiers::{KernelName, KernelPath},
         kernel::Kernel,
+        sources::source_files,
     },
     slang::{
         SlangGpuTypes,
@@ -80,16 +80,13 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
             definitions,
         };
 
-        let slang_sources: Vec<PathBuf> = WalkDir::new(&self.fields.source_directory)
-            .into_iter()
-            .filter_map(|res| res.ok())
-            .filter(|entry| {
-                entry.path().is_file()
-                    && entry.path().extension().and_then(|s| s.to_str()) == Some("slang")
-                    && fs::read(entry.path()).map(|p| !p.starts_with(b"implementing")).unwrap_or(true)
-            })
-            .map(|e| e.into_path())
-            .collect();
+        let mut slang_sources: Vec<PathBuf> = Vec::new();
+        for path in source_files(&self.fields.source_directory, "slang")? {
+            let contents = fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+            if !contents.starts_with(b"implementing") {
+                slang_sources.push(path);
+            }
+        }
 
         let kernels = slang_sources
             .into_par_iter()

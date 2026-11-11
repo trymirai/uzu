@@ -11,4 +11,5 @@ pub mod identifiers;
 pub mod kernel;
 pub mod logging;
 pub mod mangling;
+pub mod sources;
 pub mod traitgen;
