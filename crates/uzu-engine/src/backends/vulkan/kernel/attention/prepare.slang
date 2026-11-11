@@ -45,12 +45,11 @@ float prepare_norm<ElementT : IStorageFloat>(
 }
 
 [[Variants("ElementT", "float, bf16")]]
-[[Variants("RopeT", "float")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("new", "num_kv_heads > 0 && backend_opaque_layout == 0")]]
 [[Precondition("encode", "num_q_heads.is_multiple_of(num_kv_heads)")]]
-func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
+func AttentionPrepare<ElementT : IStorageFloat>(
   Ptr<ElementT, Access.Read> qkvg,
   Ptr<int8_t, Access.ReadWrite> q_codes,
   Ptr<bf16, Access.ReadWrite> q_scales,
@@ -58,8 +57,7 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
   [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> k_scales,
   [[Optional("append_kv")]] Ptr<uint8_t, Access.ReadWrite> v_codes,
   [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> v_scales,
-  [[Optional("has_rope")]] Ptr<RopeT, Access.Read> cosines,
-  [[Optional("has_rope")]] Ptr<RopeT, Access.Read> sines,
+  [[Optional("has_rope")]] Ptr<float, Access.Read> rope_inverse_frequencies,
   [[Optional("has_query_norm_scales")]] Ptr<float, Access.Read> query_norm_scales,
   [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
   [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
@@ -69,11 +67,14 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
   QKVNormParams norm_params,
   uint num_q_heads,
   [[Optional("has_rope")]] uint rope_dim,
+  [[Optional("has_rope")]] float rope_scale,
+  [[Optional("has_rope")]] uint rope_position_offset,
   uint kv_token_offset,
   uint input_row_stride,
   uint suffix_length,
   uint query_rows,
   [[Optional("block_mean")]] uint prefix_tokens,
+  [[Optional("has_trie")]] Ptr<TrieNode, Access.Read> trie,
   [[Groups("suffix_length")]] uint token,
   [[Groups("num_q_heads + num_kv_heads * 2")]] uint head,
   [[Threads("32")]] uint tid,
@@ -87,6 +88,7 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
   [[Specialize]] bool has_value_norm_scales,
   [[Specialize]] bool block_mean,
   [[Specialize]] uint compression_ratio,
+  [[Specialize]] bool has_trie,
 ) {
   static_assert(SIMD_SIZE == 32, "Threads(32)");
   let is_query = head < num_q_heads;
@@ -104,6 +106,8 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
   let has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
   let scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   let row = token * input_row_stride + head * HEAD_DIM;
+  // Trie nodes sit at their depth below the root, not at their row in the suffix.
+  let rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
   if (block_mean) {
     // raw_keys: the open block's cached rows, then one row per suffix node.
     let block_start = prefix_tokens - prefix_tokens % compression_ratio;
@@ -148,8 +152,8 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
       let paired_input = prepare_input(qkvg, row, paired_channel, block_mean);
       let paired =
         prepare_norm(paired_input, paired_channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
-      let table = token * rope_dim + channel;
-      let rotated = rope_rotated(element, paired, channel < half, cosines[table].toFloat(), sines[table].toFloat());
+      let rotated =
+        rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, rope_position, channel, rope_dim);
       element = ElementT.fromFloat(rotated).toFloat();
     }
     values[a] = element;

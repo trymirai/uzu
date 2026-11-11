@@ -21,8 +21,28 @@ public interface IAttentionKeys {
   float value_scale(uint key);
 }
 
-public float rope_rotated(float value, float paired, bool first, float cosine, float sine) {
-  return value * cosine + (first ? -paired : paired) * sine;
+// 2π split into an f32 head and the remainder, for Cody-Waite range reduction.
+static const float ROPE_TWO_PI_HI = 6.28318548202514648;
+static const float ROPE_TWO_PI_LO = -1.7484555314695172e-7;
+
+// Rotates `value` against its RoPE pair `paired` at `position`; `channel` indexes the value within the rotated
+// `rope_dim` channels, whose inverse frequencies repeat across both halves.
+public float rope_rotate(
+  float value,
+  float paired,
+  Ptr<float, Access.Read> inverse_frequencies,
+  float scale,
+  uint position,
+  uint channel,
+  uint rope_dim
+) {
+  let half = rope_dim / 2;
+  let angle = float(position) * inverse_frequencies[channel % half];
+  // SPIR-V `sin`/`cos` only promise accuracy within [-π, π], and angles here reach the context length in radians.
+  let turns = round(angle / ROPE_TWO_PI_HI);
+  let reduced = fma(-turns, ROPE_TWO_PI_LO, fma(-turns, ROPE_TWO_PI_HI, angle));
+  let signed_paired = channel < half ? -paired : paired;
+  return value * (cos(reduced) * scale) + signed_paired * (sin(reduced) * scale);
 }
 
 float rotation_sign(uint channel) {

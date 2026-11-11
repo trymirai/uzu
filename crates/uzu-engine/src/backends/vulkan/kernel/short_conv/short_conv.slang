@@ -1,4 +1,5 @@
 import definitions;
+import generated.trie;
 
 T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : Access>(
   Ptr<T, Access.Read> in_proj,
@@ -132,7 +133,7 @@ T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : A
   Ptr<WeightT, Access.Read> w,
   [[Optional("has_bias")]] Ptr<WeightT, Access.Read> b,
   Ptr<T, Access.Read> base_state,
-  Ptr<int, Access.Read> parents,
+  Ptr<TrieNode, Access.Read> trie,
   Ptr<T, Access.ReadWrite> out,
   Ptr<T, Access.ReadWrite> suffix_state,
   uint suffix_len,
@@ -148,7 +149,7 @@ T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : A
     bias = b[channel_idx].toFloat();
   }
   for (uint node = 0; node < suffix_len; ++node) {
-    let parent = parents[node];
+    let parent = trie[node].parent;
     let in_proj_idx = node * in_proj_stride + channel_idx;
     let node_offset = (node * model_dim + channel_idx) * state_stride;
     T value;
