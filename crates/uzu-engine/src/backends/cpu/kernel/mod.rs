@@ -10,6 +10,7 @@ mod confidence_head;
 mod convolution;
 mod embedding;
 mod gated_act_mul;
+mod gated_residual;
 mod gdn;
 mod logit_transform;
 mod matmul;
