@@ -25,8 +25,7 @@ PUBLIC KERNEL(AncestorAttention)(
     device uchar* node_v_codes,
     device bfloat* node_v_scales,
     const device bfloat* current_qkv,
-    const device float* cosines,
-    const device float* sines,
+    const device float* rope_inverse_frequencies,
     const device uint* node_metadata,
     const device uint* ancestor_indices,
     const device uint* ancestor_counts,
@@ -37,6 +36,7 @@ PUBLIC KERNEL(AncestorAttention)(
     constant uint& ancestor_stride,
     constant uint& node_capacity,
     constant uint& max_depth,
+    constant float& rope_scale,
     constant float& scale,
     const uint num_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -64,8 +64,9 @@ PUBLIC KERNEL(AncestorAttention)(
   for (ushort i = 0; i < N; ++i) {
     const uint channel = i * METAL_SIMD_SIZE + lane;
     const float sign = uzu::kv_layout::rotation_sign(channel);
-    query[i] = float(apply_rope(qkv, cosines, sines, position, channel, HEAD_DIM)) * sign;
-    key[i] = float(apply_rope(qkv + model_dim, cosines, sines, position, channel, HEAD_DIM)) * sign;
+    query[i] = float(apply_rope(qkv, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM)) * sign;
+    key[i] =
+        float(apply_rope(qkv + model_dim, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM)) * sign;
     value[i] = float(qkv[2 * model_dim + channel]) * sign;
   }
   simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, query);

@@ -9,7 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        mixer::{MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{MixerState, attention::rope::RoPE},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         residual::{ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
@@ -102,7 +102,7 @@ pub enum TransformerEncodeError<B: Backend> {
 }
 
 pub struct Transformer<B: Backend> {
-    ropes: Box<[AnyRoPEConfig]>,
+    ropes: Box<[RoPE<B>]>,
     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
     output_norm: Option<Normalization<B>>,
     model_dim: u32,
@@ -171,8 +171,14 @@ impl<B: Backend> Transformer<B> {
             (None, None) => None,
         };
 
+        let ropes = ropes
+            .iter()
+            .map(|rope_config| RoPE::new(rope_config, context))
+            .collect::<Result<Box<[_]>, _>>()
+            .map_err(TransformerNewError::Backend)?;
+
         Ok(Self {
-            ropes: ropes.into_boxed_slice(),
+            ropes,
             layers: layers.into_boxed_slice(),
             output_norm,
             model_dim: transformer_config.model_dim,
@@ -273,17 +279,10 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions = (0..batch_dim.size()).map(|row| context_length + row).collect::<Box<[u32]>>();
-
-        let precalculated_ropes = self
-            .ropes
-            .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
-            .collect::<Result<Box<[_]>, B::Error>>()
-            .map_err(TransformerEncodeError::Backend)?;
+        let positioned_ropes = self.ropes.iter().map(|rope| rope.at(context_length)).collect::<Box<[_]>>();
 
         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
-            let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
+            let rope = layer_rope_index.map(|i| &positioned_ropes[i]);
 
             let layer_state = if let Some(state) = &mut state {
                 Some(match &mut state.layer_states[layer.layer_index as usize] {
@@ -301,15 +300,8 @@ impl<B: Backend> Transformer<B> {
                 None
             };
 
-            hidden = layer.encode(
-                hidden,
-                &mut shortcut,
-                per_layer_inputs,
-                precalculated_rope,
-                batch_dim,
-                layer_state,
-                command_buffer,
-            )?;
+            hidden =
+                layer.encode(hidden, &mut shortcut, per_layer_inputs, rope, batch_dim, layer_state, command_buffer)?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {

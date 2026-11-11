@@ -12,7 +12,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PositionedRoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -163,7 +163,6 @@ impl<B: Backend> Attention<B> {
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
             data_type,
-            DataType::F32,
             head_dim,
             rope_config.is_some(),
             num_groups,
@@ -178,7 +177,6 @@ impl<B: Backend> Attention<B> {
         let prepare_trie = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
             data_type,
-            DataType::F32,
             head_dim,
             rope_config.is_some(),
             num_groups,
@@ -228,7 +226,7 @@ impl<B: Backend> Attention<B> {
     fn attend(
         &self,
         hidden: B::ScratchBuffer,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope: Option<&PositionedRoPE<'_, B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<AttentionState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -264,7 +262,7 @@ impl<B: Backend> Attention<B> {
                     &mut kv,
                     cache.prefix_len(),
                     self.num_q_heads,
-                    precalculated_rope,
+                    rope,
                     batch_dim.size(),
                     trie,
                     command_buffer,
@@ -299,7 +297,7 @@ impl<B: Backend> Attention<B> {
     pub fn append_projected_kv(
         &self,
         key_value: impl BufferRef<Backend = B>,
-        precalculated_rope: &PrecalculatedRoPE<B>,
+        rope: &PositionedRoPE<'_, B>,
         batch_dim: u32,
         state: &mut AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -310,7 +308,7 @@ impl<B: Backend> Attention<B> {
             &mut MaybeMut::Mut(&mut state.kv),
             prefix_len,
             0,
-            Some(precalculated_rope),
+            Some(rope),
             batch_dim,
             None,
             command_buffer,
@@ -325,7 +323,7 @@ impl<B: Backend> Attention<B> {
         kv: &mut MaybeMut<'_, KVCache<B>>,
         kv_token_offset: u32,
         num_q_heads: u32,
-        rope: Option<&PrecalculatedRoPE<B>>,
+        rope: Option<&PositionedRoPE<'_, B>>,
         suffix_length: u32,
         trie: Option<&B::GlobalGpuBuffer>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -362,14 +360,15 @@ impl<B: Backend> Attention<B> {
             k_scales,
             v_codes,
             v_scales,
-            rope.map(|rope| &rope.cosines),
-            rope.map(|rope| &rope.sines),
+            rope.map(|rope| &rope.rope.inverse_frequencies),
             self.qkv_norm_scales[0].as_ref(),
             self.qkv_norm_scales[1].as_ref(),
             self.qkv_norm_scales[2].as_ref(),
             self.qkv_norm_params,
             num_q_heads,
-            rope.map(|rope| rope.dim),
+            rope.map(|rope| rope.rope.dim),
+            rope.map(|rope| rope.rope.scale),
+            rope.map(|rope| rope.position_offset),
             kv_token_offset,
             input_row_stride,
             suffix_length,
@@ -401,18 +400,18 @@ impl<B: Backend> Mixer<B> for Attention<B> {
     fn encode(
         &self,
         hidden: B::ScratchBuffer,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
+        rope: Option<&PositionedRoPE<'_, B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("attention");
 
-        assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
+        assert_eq!(rope.is_some(), self.max_rope_length.is_some(), "rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        let output = self.attend(hidden, rope, batch_dim, state, command_buffer)?;
 
         Ok(output)
     }

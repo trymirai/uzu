@@ -15,9 +15,8 @@ use crate::{
 
 #[kernel(AttentionPrepare)]
 #[variants(ElementT, bf16, f32)]
-#[variants(RopeT, f32)]
 #[variants(HEAD_DIM, 64, 128, 256, 512)]
-pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + Float, const HEAD_DIM: u32>(
+pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     qkvg: *const ElementT,
     q_codes: *mut i8,
     q_scales: *mut bf16,
@@ -25,14 +24,15 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     #[optional(append_kv)] k_scales: Option<*mut bf16>,
     #[optional(append_kv)] v_codes: Option<*mut u8>,
     #[optional(append_kv)] v_scales: Option<*mut bf16>,
-    #[optional(has_rope)] cosines: Option<*const RopeT>,
-    #[optional(has_rope)] sines: Option<*const RopeT>,
+    #[optional(has_rope)] rope_inverse_frequencies: Option<*const f32>,
     #[optional(has_query_norm_scales)] query_norm_scales: Option<*const f32>,
     #[optional(has_key_norm_scales)] key_norm_scales: Option<*const f32>,
     #[optional(has_value_norm_scales)] value_norm_scales: Option<*const f32>,
     norm_params: QKVNormParams,
     num_q_heads: u32,
     #[optional(has_rope)] rope_dim: Option<u32>,
+    #[optional(has_rope)] rope_scale: Option<f32>,
+    #[optional(has_rope)] rope_position_offset: Option<u32>,
     kv_token_offset: u32,
     input_row_stride: u32,
     suffix_length: u32,
@@ -82,9 +82,9 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
         };
         for token in 0..suffix_length {
             let rope_row = if has_trie {
-                unsafe { (*trie.unwrap().add(token as usize)).height as usize }
+                unsafe { (*trie.unwrap().add(token as usize)).height }
             } else {
-                token as usize
+                token
             };
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             if norm_params.enabled[norm] != 0 {
@@ -108,7 +108,14 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    apply_rope(source, cosines.unwrap(), sines.unwrap(), rope_row, channel, rope_dim)
+                    apply_rope(
+                        source,
+                        rope_inverse_frequencies.unwrap(),
+                        rope_scale.unwrap(),
+                        rope_position_offset.unwrap() + rope_row,
+                        channel,
+                        rope_dim,
+                    )
                 } else {
                     unsafe { *source.add(channel) }
                 }

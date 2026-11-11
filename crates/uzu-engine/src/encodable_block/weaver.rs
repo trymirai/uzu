@@ -15,13 +15,13 @@ use crate::{
             WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
-    config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
+    config::weaver::WeaverConfig,
     data_type::DataType,
     encodable_block::{
         confidence_head::{ConfidenceHead, ConfidenceHeadError, ConfidenceHeadStep},
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError, LinearEncodeError, TransformedLinear},
-        mixer::attention::{KVCache, KVCacheView, rope::PrecalculatedRoPE},
+        mixer::attention::{KVCache, KVCacheView, rope::RoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
@@ -31,7 +31,6 @@ use crate::{
 };
 
 pub const DATA_TYPE: DataType = DataType::BF16;
-pub const ROPE_DATA_TYPE: DataType = DataType::F32;
 
 pub struct WeaverTreeShape {
     pub tree_budget: u32,
@@ -73,7 +72,7 @@ pub struct Weaver<B: Backend> {
     readout_norm: Normalization<B>,
     readout_query_projection: Box<dyn Linear<B>>,
     prefix_unrotation: Option<PrefixUnrotation<B>>,
-    rope_config: AnyRoPEConfig,
+    rope: RoPE<B>,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
     top_children: <B::Kernels as Kernels>::WeaverSelectKernel,
     top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverSelectKernel,
@@ -286,7 +285,7 @@ impl<B: Backend> Weaver<B> {
             readout_norm,
             readout_query_projection,
             prefix_unrotation,
-            rope_config: config.rope_config.clone(),
+            rope: RoPE::new(&config.rope_config, context).map_err(WeaverNewError::Backend)?,
             top_k,
             top_children,
             top_children_with_prune_noise,
@@ -308,7 +307,7 @@ impl<B: Backend> Weaver<B> {
         &self,
         target_hidden: impl BufferRef<Backend = B>,
         draft_hidden: impl BufferRef<Backend = B>,
-        rope: &PrecalculatedRoPE<B>,
+        rope: &RoPE<B>,
         depth: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Vec<KVCache<B>>, WeaverEncodeError<B>> {
@@ -388,7 +387,7 @@ impl<B: Backend> Weaver<B> {
         &self,
         target_embedding: &Embedding<B>,
         mut prefix_kv_layers: impl Iterator<Item = &'a KVCache<B>>,
-        rope: &PrecalculatedRoPE<B>,
+        rope: &RoPE<B>,
         mut node_kv_layers: impl Iterator<Item = &'a mut KVCache<B>>,
         mut packed_tree: impl BufferMut<Backend = B>,
         mut frontier: impl BufferMut<Backend = B>,
@@ -488,8 +487,7 @@ impl<B: Backend> Weaver<B> {
                 node_kv.v_codes.as_mut(),
                 node_kv.v_scales.as_mut(),
                 &current_qkv,
-                &rope.cosines,
-                &rope.sines,
+                &rope.inverse_frequencies,
                 node_metadata_ref,
                 node_ancestor_indices.as_ref(),
                 node_metadata_ref.subrange(MetadataIdx::AncestorCount as usize * metadata_field_bytes..),
@@ -500,6 +498,7 @@ impl<B: Backend> Weaver<B> {
                 ancestor_stride,
                 tree_slot_count,
                 layer.max_depth,
+                rope.scale,
                 layer.attention_scale,
                 command_buffer,
             );
@@ -640,12 +639,8 @@ impl<B: Backend> Weaver<B> {
                 )
                 .map_err(WeaverEncodeError::Backend)?;
 
-            let rope_positions = (0..=self.max_depth).collect::<Box<[_]>>();
-            let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?;
-
             let prefix_kv_layers =
-                self.encode_prefix(target_hidden, draft_hidden, &rope, shape.dflash_depth, command_buffer)?;
+                self.encode_prefix(target_hidden, draft_hidden, &self.rope, shape.dflash_depth, command_buffer)?;
 
             // Per-layer KV cache for tree nodes, one slot per packed-tree slot.
             let mut node_kv_layers = prefix_kv_layers
@@ -741,7 +736,7 @@ impl<B: Backend> Weaver<B> {
                 self.encode_step(
                     target_embedding,
                     prefix_kv_layers.iter(),
-                    &rope,
+                    &self.rope,
                     node_kv_layers.iter_mut(),
                     &mut packed_tree,
                     &mut frontier,

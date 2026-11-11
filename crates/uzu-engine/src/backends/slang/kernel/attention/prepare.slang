@@ -4,9 +4,8 @@ import generated.qkv_norm;
 import generated.trie;
 
 [[Variants("ElementT", "BFloat16, float")]]
-[[Variants("RopeT", "float")]]
 [[Variants("HEAD_DIM", "64, 128, 256, 512")]]
-[[Public]] [[Kernel]] func AttentionPrepare<ElementT, RopeT, let HEAD_DIM: uint32_t>(
+[[Public]] [[Kernel]] func AttentionPrepare<ElementT, let HEAD_DIM: uint32_t>(
   StructuredBuffer<ElementT> qkvg,
   RWStructuredBuffer<int8_t> q_codes,
   RWStructuredBuffer<BFloat16> q_scales,
@@ -14,14 +13,15 @@ import generated.trie;
   [[Optional("append_kv")]] RWStructuredBuffer<BFloat16> k_scales,
   [[Optional("append_kv")]] RWStructuredBuffer<uint8_t> v_codes,
   [[Optional("append_kv")]] RWStructuredBuffer<BFloat16> v_scales,
-  [[Optional("has_rope")]] StructuredBuffer<RopeT> cosines,
-  [[Optional("has_rope")]] StructuredBuffer<RopeT> sines,
+  [[Optional("has_rope")]] StructuredBuffer<float> rope_inverse_frequencies,
   [[Optional("has_query_norm_scales")]] StructuredBuffer<float> query_norm_scales,
   [[Optional("has_key_norm_scales")]] StructuredBuffer<float> key_norm_scales,
   [[Optional("has_value_norm_scales")]] StructuredBuffer<float> value_norm_scales,
   QKVNormParams norm_params,
   uint32_t num_q_heads,
   [[Optional("has_rope")]] uint32_t rope_dim,
+  [[Optional("has_rope")]] float rope_scale,
+  [[Optional("has_rope")]] uint32_t rope_position_offset,
   uint32_t kv_token_offset,
   uint32_t input_row_stride,
   uint32_t suffix_length,
