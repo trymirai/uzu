@@ -7,7 +7,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::Linear,
-        normalization::{Normalization, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, ShortcutMode},
         stream_op::{StreamOpEncodeError, StreamOpNewError},
     },
     safetensors::ParameterTree,
@@ -55,7 +55,6 @@ impl<B: Backend> PerLayerEmbeddingInjection<B> {
             data_type,
             None,
             ShortcutMode::None,
-            PostLayerScalar::None,
             &config.norm_config,
             &parameter_tree.subtree("norm"),
             context,
@@ -87,8 +86,6 @@ impl<B: Backend> PerLayerEmbeddingInjection<B> {
         })
     }
 
-    /// Takes and returns an additive stream, `[tokens, model_dim]`. `per_layer_inputs` is
-    /// `[tokens, num_layers, ple_dim]`.
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,

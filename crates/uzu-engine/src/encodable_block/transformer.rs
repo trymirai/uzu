@@ -10,7 +10,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
@@ -160,7 +160,6 @@ impl<B: Backend> Transformer<B> {
                     output_data_type,
                     hadamard_factors,
                     ShortcutMode::None,
-                    PostLayerScalar::None,
                     output_norm_config,
                     &parameter_tree.subtree("output_norm"),
                     context,

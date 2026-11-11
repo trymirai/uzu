@@ -11,7 +11,7 @@ use crate::{
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError},
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
     },
     safetensors::ParameterTree,
 };
@@ -38,7 +38,8 @@ pub struct PerLayerEmbedding<B: Backend> {
     ple_dim: u32,
     num_layers: u32,
     model_dim: u32,
-    fused_token_scale: f32,
+    token_scale: f32,
+    input_scale: f32,
     data_type: DataType,
 }
 
@@ -83,7 +84,6 @@ impl<B: Backend> PerLayerEmbedding<B> {
             data_type,
             None,
             ShortcutMode::None,
-            PostLayerScalar::ScaleOutput(config.input_scale),
             &projection_norm_config,
             &parameter_tree.subtree("projection_norm"),
             context,
@@ -101,7 +101,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
             ple_dim: config.ple_dim,
             num_layers: config.num_layers,
             model_dim,
-            fused_token_scale: config.ple_embed_scale * config.input_scale,
+            token_scale: config.ple_embed_scale,
+            input_scale: config.input_scale,
             data_type,
         })
     }
@@ -122,13 +123,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let mut token_ple = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, total_ple_dim], self.data_type)
             .map_err(PerLayerEmbeddingError::BackendError)?;
-        self.token_embedding.encode_lookup(
-            token_ids,
-            &mut token_ple,
-            batch_dim,
-            self.fused_token_scale,
-            command_buffer,
-        );
+        self.token_embedding.encode_lookup(token_ids, &mut token_ple, batch_dim, self.token_scale, command_buffer);
 
         let mut model_projection_input = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, self.model_dim], self.data_type)
@@ -150,7 +145,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             &mut per_layer_inputs,
             total_elements,
             total_elements,
-            1.0,
+            self.input_scale,
             command_buffer,
         );
 

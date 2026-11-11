@@ -14,15 +14,6 @@ use crate::{
     utils::size_for_shape::size_for_shape,
 };
 
-// TODO: clean up
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PostLayerScalar {
-    None,
-    ScaleResidualSum(f32),
-    ScaleOutput(f32),
-}
-
 // This was used a lot previously, but is now only used in weaver and confidence heads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShortcutMode {
@@ -46,7 +37,6 @@ pub struct Normalization<B: Backend> {
     biases: Option<B::GlobalGpuBuffer>,
     element_count: u32,
     hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
-    post_layer_scalar_value: f32,
     input_data_type: DataType,
     output_data_type: DataType,
     kernel: <B::Kernels as Kernels>::NormalizationKernel,
@@ -59,7 +49,6 @@ impl<B: Backend> Normalization<B> {
         output_data_type: DataType,
         hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         shortcut_mode: ShortcutMode,
-        post_layer_scalar: PostLayerScalar,
         config: &NormalizationConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
@@ -81,12 +70,6 @@ impl<B: Backend> Normalization<B> {
             None
         };
 
-        let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
-            PostLayerScalar::None => (false, false, 1.0),
-            PostLayerScalar::ScaleResidualSum(value) => (true, false, value),
-            PostLayerScalar::ScaleOutput(value) => (false, true, value),
-        };
-
         let kernel = <B::Kernels as Kernels>::NormalizationKernel::new(
             context,
             input_data_type,
@@ -99,8 +82,6 @@ impl<B: Backend> Normalization<B> {
             copy_to_shortcut,
             residual_add,
             hadamard_factors.is_some(),
-            scale_residual_sum,
-            scale_output,
             biases.is_some(),
             scales.is_some(),
         )
@@ -113,7 +94,6 @@ impl<B: Backend> Normalization<B> {
             biases,
             element_count,
             hadamard_factors,
-            post_layer_scalar_value,
             input_data_type,
             output_data_type,
             kernel,
@@ -144,7 +124,6 @@ impl<B: Backend> Normalization<B> {
             self.element_count,
             self.epsilon,
             self.scale_offset.unwrap_or(0.0),
-            self.post_layer_scalar_value,
             command_buffer,
         );
 

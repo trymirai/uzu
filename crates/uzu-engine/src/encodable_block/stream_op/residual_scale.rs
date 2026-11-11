@@ -36,7 +36,6 @@ impl<B: Backend> ResidualScale<B> {
         })
     }
 
-    /// Takes and returns an additive stream, `[tokens, model_dim]`.
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,

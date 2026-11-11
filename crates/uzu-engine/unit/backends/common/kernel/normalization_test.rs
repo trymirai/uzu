@@ -48,8 +48,6 @@ fn get_output<
         false,
         hadamard_factors.is_some(),
         false,
-        false,
-        false,
         scales.is_some(),
     )
     .expect("Failed to create NormalizationKernel");
@@ -72,7 +70,6 @@ fn get_output<
         element_count,
         epsilon,
         0.0,
-        1.0,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");

@@ -31,15 +31,12 @@ pub fn normalization<
     element_count: u32,
     epsilon: f32,
     scale_offset: f32,
-    post_layer_scalar: f32,
     #[specialize] in_place: bool,
     #[specialize] subtract_mean: bool,
     #[specialize] full_layer: bool,
     #[specialize] copy_to_shortcut: bool,
     #[specialize] residual_add: bool,
     #[specialize] use_hadamard: bool,
-    #[specialize] scale_residual_sum: bool,
-    #[specialize] scale_output: bool,
     #[specialize] has_biases: bool,
     #[specialize] has_scales: bool,
 ) {
@@ -74,9 +71,6 @@ pub fn normalization<
                 let skip_ptr = unsafe { shortcut.unwrap().add(batch_offset + i) };
                 if residual_add {
                     val = val + unsafe { *skip_ptr };
-                    if scale_residual_sum {
-                        val = InputT::from(val.to_f32().unwrap() * post_layer_scalar).unwrap();
-                    }
                 }
                 unsafe { *skip_ptr = val };
             }
@@ -124,7 +118,7 @@ pub fn normalization<
             row[i] = result;
         }
 
-        // Input RHT like the Metal kernel: apply the factors, then transform each block, before output scaling
+        // Input RHT like the Metal kernel: apply the factors, then transform each block
         if let Some(factors) = hadamard_factors {
             for block_start in (0..element_count).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
                 let mut block: [f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize] = std::array::from_fn(|lane| {
@@ -139,11 +133,7 @@ pub fn normalization<
         }
 
         for (i, &value) in row.iter().enumerate() {
-            let mut result = value;
-            if scale_output {
-                result = result * OutputT::from(post_layer_scalar).unwrap();
-            }
-            unsafe { *output.add(batch_offset + i) = result };
+            unsafe { *output.add(batch_offset + i) = value };
         }
     }
 }

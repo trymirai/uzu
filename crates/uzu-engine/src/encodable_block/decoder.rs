@@ -10,7 +10,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
         transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
@@ -75,7 +75,6 @@ impl<B: Backend> Decoder<B> {
                     data_type,
                     None,
                     ShortcutMode::None,
-                    PostLayerScalar::None,
                     norm_config,
                     &parameter_tree.subtree("embedding_norm"),
                     context,
