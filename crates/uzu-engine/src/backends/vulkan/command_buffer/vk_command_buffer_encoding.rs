@@ -297,8 +297,8 @@ impl VkCommandBufferEncoding {
             || reads.clone().chain(writes.clone()).any(|range| overlaps(&self.writes, &range))
             || writes.clone().any(|range| overlaps(&self.reads, &range))
         {
-            // A dispatch waits in the compute stage alone, which makes a dependent dispatch about a third cheaper on
-            // NVIDIA than waiting in the transfer stage too; the rare transfers wait in both.
+            // A dispatch waits in the compute stage alone, so dependent dispatches do not also wait for transfers; the
+            // rare transfers wait in both.
             let (stages, accesses) = if transfer {
                 (
                     shader_and_transfer_stages(),

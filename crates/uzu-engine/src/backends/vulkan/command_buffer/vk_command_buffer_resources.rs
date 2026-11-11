@@ -129,8 +129,7 @@ impl VkCommandBufferResources {
 
     /// Returns the command buffer to the initial state, the fence to unsignaled and the timestamps to unavailable. Only
     /// the span pools the last recording wrote need resetting; the rest stayed reset since their creation or last reset.
-    /// The pool releases its memory: NVIDIA's driver does not reuse what a reset pool keeps, so every recording grew
-    /// device memory, by 20 MiB per Qwen3.8-27B reply at a 5K-token prompt.
+    /// The pool releases its memory, which a driver may otherwise keep and grow with every recording.
     pub fn reset(
         &mut self,
         device: &ash::Device,

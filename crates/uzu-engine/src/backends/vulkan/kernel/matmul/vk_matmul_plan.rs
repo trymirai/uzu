@@ -364,8 +364,7 @@ impl VkMatmulPlan {
     }
 
     /// GemvInt8 for m rows: more outputs a workgroup for fewer inputs, one input row a workgroup where `gathered`.
-    /// Subgroups wider than 64 lanes take 8 rows for every input count: their reductions run through shared memory,
-    /// where split rows measured faster.
+    /// Subgroups wider than 64 lanes take 8 rows for every input count: their reductions run through shared memory.
     fn gemv_int8(
         m: u32,
         gathered: bool,
@@ -446,7 +445,6 @@ fn scalar_tiling(
     group: Option<u32>,
 ) -> GemmTiling {
     use GemmTiling::*;
-    // Metal's `simdgroup_quant_tile` thresholds (metal gemm/policy.rs), with its Apple8-and-older partial-M rule.
     const SIMDGROUP_QUANT_SMALL_M_MAX: u32 = 32;
     const SIMDGROUP_QUANT_NARROW_BLOCK_M: u32 = 8;
     const SIMDGROUP_QUANT_LARGE_M_MIN: u32 = 64;

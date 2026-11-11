@@ -531,7 +531,6 @@ impl MatmulKernel for VkMatmulKernel {
                 else {
                     unreachable!("the check gives A8 activations an A8 plan");
                 };
-                // Split K's partial sums, the command buffer's scratch.
                 let partials = (splits > 1)
                     .then(|| command_buffer.allocate_scratch_for_shape(&[splits * m * n], DataType::U32))
                     .transpose()?;
@@ -596,8 +595,7 @@ impl MatmulKernel for VkMatmulKernel {
                         }
                     }};
                 }
-                // 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both. Neither lane-fold core
-                // runs on a tested device: the 4090 takes GemmInt8Nv.
+                // 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both.
                 for phase in phases {
                     if element_fold {
                         gemm_int8!(self.gemm_int8_nv, GemmInt8NvVulkanKernel, phase, stage_depth, prefetch, k_slices);

@@ -120,8 +120,7 @@ impl VkGemvTile {
         } else {
             8
         };
-        // A row from tiled B: 8 outputs a workgroup on 4 simdgroups, faster at every measured decode n (most where 32
-        // leave units idle).
+        // A row from tiled B: 8 outputs a workgroup on 4 simdgroups, so a small n still occupies every unit.
         let narrow =
             bf16_io && m == 1 && b_layout == GemmBLayout::Tiled && !gathered && (group / 2).is_multiple_of(lane_run);
         match general {

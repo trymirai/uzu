@@ -26,7 +26,7 @@ public float subgroup_hadamard_transform(float value) {
 // The normalized Hadamard transform of blocks of HADAMARD_TRANSFORM_BLOCK_SIZE invocations in subgroup_invocation
 // order: shuffle_xor butterflies below the subgroup width, the wider strides in one shared stage. Subgroups wider than
 // HADAMARD_SHUFFLE_LANES take every stride in the shared stage: their shuffles move data across far more lanes than a
-// block, which measured slower than shared memory on 128-lane subgroups.
+// block.
 static const uint HADAMARD_SHUFFLE_LANES = 64;
 public float hadamard_transform<let THREADS : uint>(float value) {
   static_assert(THREADS % HADAMARD_TRANSFORM_BLOCK_SIZE == 0, "Hadamard transform blocks must tile the workgroup");
