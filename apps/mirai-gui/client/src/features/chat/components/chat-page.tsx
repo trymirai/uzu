@@ -24,7 +24,8 @@ import { useModelSwitch } from "../hooks/use-model-switch";
 import { useRegenerateMessage } from "../hooks/use-regenerate-message";
 import { useSendChatMessage } from "../hooks/use-send-chat-message";
 import { useStopChatRun } from "../hooks/use-stop-chat-run";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { useIsMobile, useMediaQuery } from "@/hooks/use-media-query";
+import { useSidebarStore } from "@/stores/use-sidebar-store";
 
 type ChatSearchParams = {
   isNew?: boolean;
@@ -39,6 +40,11 @@ export function ChatPage() {
   const toast = useToast();
 
   const chatWidth = useAppStore((s) => s.chatWidth);
+  // With the sidebar hidden (or floating, in a narrow window), its button and the traffic lights sit
+  // over the conversation's top-left corner, so the top of the list fades under them.
+  const isMobile = useIsMobile();
+  const isSidebarOpen = useSidebarStore((s) => s.isOpen);
+  const chromeOverChat = isMobile || !isSidebarOpen;
   const globalInstructions = useGlobalInstructionsStore((s) => s.instructions);
   const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
   const isModelLoading = useChatSessionStore((s) => s.isModelLoading);
@@ -210,7 +216,14 @@ export function ChatPage() {
   return (
     <div
       className="flex flex-col h-full min-h-0 bg-background px-5 pb-5"
-      style={{ "--chat-width": `${chatWidth}px`, "--composer-h": `${composerHeight}px` } as CSSProperties}
+      style={
+        {
+          "--chat-width": `${chatWidth}px`,
+          "--composer-h": `${composerHeight}px`,
+          // Room for the top fade, so the first message starts below it.
+          "--chat-list-top": chromeOverChat ? "3.5rem" : "2rem",
+        } as CSSProperties
+      }
     >
       <div className="w-full flex flex-col h-full min-h-0">
         {/* A new chat: the cat and its words (about 197px with the air above the ears, plus 32px of
@@ -248,6 +261,20 @@ export function ChatPage() {
               aria-hidden
               className="pointer-events-none absolute inset-x-0 bottom-0 h-[calc(var(--composer-h)+1.25rem)] bg-[linear-gradient(to_top,var(--color-background)_1.25rem,transparent)]"
             />
+          )}
+          {/* The same fade at the top, while the sidebar button sits over it: page colour at the edge,
+              fading to clear over its whole height, with a light blur that clears the same way. */}
+          {!centered && (
+            <>
+              <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-x-0 top-0 h-14 backdrop-blur-[3px] [mask-image:linear-gradient(to_bottom,black,transparent)] transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${chromeOverChat ? "opacity-100" : "opacity-0"}`}
+              />
+              <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-x-0 top-0 h-14 bg-[linear-gradient(to_bottom,var(--color-background),transparent)] transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${chromeOverChat ? "opacity-100" : "opacity-0"}`}
+              />
+            </>
           )}
         </div>
 

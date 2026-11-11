@@ -203,7 +203,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
       <div
         ref={scrollContainerRef}
         data-cat-hang={catHangs || undefined}
-        className="absolute inset-0 flex flex-col overflow-y-auto overscroll-y-contain scrollbar-hide pt-8"
+        className="absolute inset-0 flex flex-col overflow-y-auto overscroll-y-contain scrollbar-hide pt-[var(--chat-list-top,2rem)]"
         style={{ paddingInline: "max(1.25rem, calc((100% - var(--chat-width)) / 2))" }}
       >
         {messages.length > 0 ? (
