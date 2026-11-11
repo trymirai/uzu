@@ -75,7 +75,6 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
         gpu_type_gen(&self.fields.source_directory.join("generated"), &definitions)
             .context("cannot generate shared gpu types")?;
         let gpu_types = SlangGpuTypes {
-            map: paths.entries().map(|(name, path)| (name.to_owned(), path.to_owned())).collect(),
             paths,
             definitions,
         };

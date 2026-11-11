@@ -1,5 +1,3 @@
-// TODO: gigaslop, clean up
-
 mod axis_expression;
 mod compiler;
 mod compiler_internal;

@@ -264,7 +264,8 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
             .context("cannot hash dependencies")?;
         self.rerun_if_changed(dependency_hashes.keys());
 
-        let common_gpu_type_map = gpu_types.map.keys().map(|name| (name.clone(), name.clone())).collect();
+        let common_gpu_type_map =
+            gpu_types.paths.entries().map(|(name, _)| (name.to_owned(), name.to_owned())).collect();
         let kernels = source_module
             .module_reflection()
             .children()

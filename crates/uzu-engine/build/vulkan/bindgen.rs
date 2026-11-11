@@ -507,10 +507,7 @@ pub fn bindgen(
 
     let axis_sizes = axis.then(|| quote! { #(#group_sizes)* });
     let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* #axis_sizes };
-    // Host expressions may read the command buffer's context.
     let references = |name: &Ident| find_ident(host_expressions.clone(), &|ident| ident == name).is_some();
-    let encoding_trait = references(&format_ident!("command_buffer"))
-        .then(|| quote! { use crate::backends::common::CommandBufferEncoding as _; });
     let (referenced, referenced_types): (Vec<_>, Vec<_>) =
         specializations.iter().filter(|(name, ..)| references(name)).map(|(name, ty, ..)| (name, ty)).unzip();
 
@@ -736,7 +733,6 @@ pub fn bindgen(
                 #(#encode_arguments,)*
                 command_buffer: &mut VkCommandBufferEncoding,
             ) {
-                #encoding_trait
                 #(let #referenced = self.#referenced;)*
                 #(#conditions)*
                 #(#encode_preconditions)*

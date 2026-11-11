@@ -107,9 +107,15 @@ impl SlangTarget for WebGPU {
 
         Self::validate_output(&output_file).with_context(|| format!("cannot validate {}", output_file.display()))?;
 
-        let bindgen_tokens =
-            bindgen_file::bindgen_file(linked, kernels, &gpu_types.map, &gpu_types.paths, &constants, &output_file)
-                .context("cannot generate bindings")?;
+        let bindgen_tokens = bindgen_file::bindgen_file(
+            linked,
+            kernels,
+            &gpu_types.paths.entries().map(|(name, path)| (name.to_owned(), path.to_owned())).collect(),
+            &gpu_types.paths,
+            &constants,
+            &output_file,
+        )
+        .context("cannot generate bindings")?;
 
         write_tokens(bindgen_tokens, output_base.with_extension("rs")).context("cannot write bindgen file")
     }

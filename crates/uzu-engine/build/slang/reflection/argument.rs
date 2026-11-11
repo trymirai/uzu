@@ -17,9 +17,6 @@ use crate::{
 #[derive(Debug)]
 pub enum SlangArgumentType {
     Buffer {
-        // Read by the WebGPU binding; the Vulkan binding takes buffer access from `binding_type`.
-        #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
-        access_type: KernelBufferAccess,
         condition: Option<String>,
     },
     Uniform {
@@ -181,7 +178,6 @@ impl SlangArgument {
             no_attributes(&user_attributes, "pointer")?;
 
             SlangArgumentType::Buffer {
-                access_type,
                 condition,
             }
         } else if type_name == "StructuredBuffer" {
@@ -204,7 +200,6 @@ impl SlangArgument {
             no_attributes(&user_attributes, "buffer (read-only)")?;
 
             SlangArgumentType::Buffer {
-                access_type: KernelBufferAccess::Read,
                 condition,
             }
         } else if type_name == "RWStructuredBuffer" {
@@ -214,7 +209,6 @@ impl SlangArgument {
             no_attributes(&user_attributes, "buffer (read-write)")?;
 
             SlangArgumentType::Buffer {
-                access_type: KernelBufferAccess::ReadWrite,
                 condition,
             }
         } else {

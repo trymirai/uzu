@@ -424,7 +424,6 @@ fn bindgen_kernel(
             match parameter_category {
                 ParameterCategory::DescriptorTableSlot => {
                     let SlangArgumentType::Buffer {
-                        access_type,
                         condition,
                     } = &kernel_argument.unwrap().argument_type
                     else {
@@ -439,9 +438,10 @@ fn bindgen_kernel(
 
                     let buffer_name = parameter_name.to_string();
 
-                    let read_only = matches!(access_type, KernelBufferAccess::Read);
+                    let binding_type = kernel_argument.unwrap().binding_type.as_ref().unwrap();
+                    let read_only = !matches!(binding_type, KernelArgumentType::Buffer(KernelBufferAccess::ReadWrite));
 
-                    let source_type = match kernel_argument.unwrap().binding_type.as_ref().unwrap() {
+                    let source_type = match binding_type {
                         KernelArgumentType::Value(_) => {
                             let element_type = parameter.type_layout().unwrap().resource_result_type().unwrap();
                             let element_type_layout =
