@@ -104,6 +104,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         ParameterTree {
             loader: self,
             prefix: String::new(),
+            stack: None,
         }
     }
 
@@ -127,9 +128,21 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
 pub struct ParameterTree<'a, B: Backend> {
     loader: &'a ParameterLoader<'a, B>,
     prefix: String,
+    stack: Option<u32>,
 }
 
 impl<B: Backend> ParameterTree<'_, B> {
+    pub fn stack_of(
+        &self,
+        count: u32,
+    ) -> Self {
+        Self {
+            loader: self.loader,
+            prefix: self.prefix.clone(),
+            stack: Some(count),
+        }
+    }
+
     pub fn subtree(
         &self,
         name: &str,
@@ -137,6 +150,7 @@ impl<B: Backend> ParameterTree<'_, B> {
         Self {
             loader: self.loader,
             prefix: format!("{}{name}.", self.prefix),
+            stack: self.stack,
         }
     }
 
@@ -162,7 +176,11 @@ impl<B: Backend> ParameterTree<'_, B> {
         let key = format!("{}{name}", self.prefix);
         let tensor =
             self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
-        if (tensor.shape.as_ref(), tensor.dtype) != (shape, dtype) {
+        let shape_as_read = match (self.stack, &tensor.shape[..]) {
+            (Some(count), [leading, rest @ ..]) if *leading == count && rest == shape => rest,
+            (_, stored) => stored,
+        };
+        if (shape_as_read, tensor.dtype) != (shape, dtype) {
             return Err(ParameterLoaderError::InvalidTensor {
                 key,
                 shape: tensor.shape.clone(),

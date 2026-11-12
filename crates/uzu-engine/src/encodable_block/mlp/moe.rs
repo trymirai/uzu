@@ -143,7 +143,7 @@ impl<B: Backend> MoeMlp<B> {
             expert_hidden_dim,
             data_type,
             expert_config,
-            &parameter_tree.subtree("shared_experts"),
+            &parameter_tree.subtree("shared_experts").stack_of(config.num_shared_experts),
             context,
         )
         .await?;
