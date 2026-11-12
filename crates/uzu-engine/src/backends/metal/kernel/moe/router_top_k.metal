@@ -5,8 +5,6 @@
 #include "../common/top_k.h"
 #include "common.h"
 
-static_assert(METAL_SIMD_SIZE * MOE_ROUTER_MAX_PER_LANE == uzu::moe::ROUTER_MAX_EXPERTS);
-
 template <typename T, uint MAX_TOP_K>
 VARIANTS(T, float)
 VARIANTS(MAX_TOP_K, 8)

@@ -15,7 +15,7 @@ use crate::{
 
 #[kernel(MoeGemv)]
 #[variants(T, bf16)]
-#[variants(GROUP_SIZE, 64)]
+#[variants(GROUP_SIZE, 32, 64)]
 #[variants(BITS, 4, 8)]
 pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>(
     b: *const u8,
@@ -29,7 +29,6 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     out_vec_size: u32,
     num_routes: u32,
     active_experts_per_token: u32,
-    #[allow(unused)] group_count_x: u32,
     b_expert_stride_bytes: u32,
     scale_expert_stride: u32,
     zero_point_expert_stride: u32,

@@ -9,10 +9,8 @@ use crate::{
             quantization_method::QuantizationMethod,
         },
         kernel::{
-            ActivationTransform, Kernels, MoeCombineKernel, MoeGemvKernel, MoeRouterTopKKernel,
-            matmul::{
-                ActivationFormat, MatmulA, QuantParams, QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
-            },
+            Kernels, MoeCombineKernel, MoeGemvKernel, MoeRouterTopKKernel,
+            matmul::{ActivationFormat, MatmulA, QuantParams, QuantParamsLayout, QuantParamsStrides},
         },
     },
     config::{
@@ -21,7 +19,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        linear::{Gather, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, UntiedReadout},
+        linear::{Gather, InputRht, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, UntiedReadout},
         mlp::{
             Mlp, MlpEncodeError,
             dense::{DenseMlp, DenseMlpNewError},
@@ -51,13 +49,11 @@ pub enum MoeMlpNewError<B: Backend> {
 pub struct MoeMlp<B: Backend> {
     router: LinearMatmul<B>,
     router_top_k: <B::Kernels as Kernels>::MoeRouterTopKKernel,
-    input_rht: ActivationTransform<B>,
-    input_hadamard_factors: B::GlobalGpuBuffer,
+    input_rht: InputRht<B>,
     routed_up: RoutedProjection<B>,
     routed_activation: MlpGateActMulEncodable<B>,
     routed_down: RoutedProjection<B>,
     shared_expert: DenseMlp<B>,
-    shared_input_quantizer: Option<ActivationTransform<B>>,
     shared_gate: UntiedReadout<B>,
     combine: <B::Kernels as Kernels>::MoeCombineKernel,
     model_dimension: u32,
@@ -154,10 +150,6 @@ impl<B: Backend> MoeMlp<B> {
         let Some(shared_preparation) = shared_preparation else {
             return Err(MoeMlpNewError::UnsupportedConfiguration("shared expert requires input rotation".into()));
         };
-        let shared_input_quantizer = (shared_preparation.activation_format != ActivationFormat::Bf16)
-            .then(|| ActivationTransform::quantize(context, data_type, shared_preparation.activation_format))
-            .transpose()
-            .map_err(MoeMlpNewError::Backend)?;
 
         let gate_weights_tree = parameter_tree.subtree("gate").subtree("weights");
         let gate_spec = gate_weights_tree.metadata("spec")?;
@@ -184,7 +176,16 @@ impl<B: Backend> MoeMlp<B> {
         let router_top_k =
             <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, moe::ROUTER_MAX_TOP_K)
                 .map_err(MoeMlpNewError::Backend)?;
-        let input_rht = ActivationTransform::input_rht(context, data_type, false).map_err(MoeMlpNewError::Backend)?;
+        let input_rht = InputRht::new(
+            data_type,
+            LinearInputPreparation {
+                rht_signs: input_hadamard_factors,
+                activation_format: shared_preparation.activation_format,
+            },
+            false,
+            context,
+        )
+        .map_err(MoeMlpNewError::Backend)?;
         let combine = <B::Kernels as Kernels>::MoeCombineKernel::new(context, data_type, moe::COMBINE_BLOCK_DIM)
             .map_err(MoeMlpNewError::Backend)?;
 
@@ -192,12 +193,10 @@ impl<B: Backend> MoeMlp<B> {
             router,
             router_top_k,
             input_rht,
-            input_hadamard_factors,
             routed_up,
             routed_activation,
             routed_down,
             shared_expert,
-            shared_input_quantizer,
             shared_gate,
             combine,
             model_dimension,
@@ -219,85 +218,20 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
         let num_routes = batch_dim * self.num_active_routed_experts;
 
         let shared_format = self.shared_expert.select_activation_format(batch_dim, command_buffer.context());
-        let quantized_shared_input = if let Some(quantizer) =
-            self.shared_input_quantizer.as_ref().filter(|quantizer| quantizer.format() == shared_format)
-        {
-            Some(match shared_format {
-                ActivationFormat::PackedHalf {
-                    block_k,
-                    bits,
-                } => {
-                    let mut values = command_buffer
-                        .allocate_scratch(packed_half_bytes(self.model_dimension, block_k, bits))
-                        .map_err(MlpEncodeError::Backend)?;
-                    quantizer.encode_pack_half(
-                        &input,
-                        &mut values,
-                        &self.input_hadamard_factors,
-                        batch_dim,
-                        self.model_dimension,
-                        command_buffer,
-                    );
-                    MatmulA::PackedHalf {
-                        values,
-                        block_k,
-                        bits,
-                    }
-                },
-                ActivationFormat::Int8(quantization) => {
-                    let mut values = command_buffer
-                        .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], DataType::I8)
-                        .map_err(MlpEncodeError::Backend)?;
-                    let mut scales = command_buffer
-                        .allocate_scratch_for_shape(
-                            &[batch_dim, self.model_dimension.div_ceil(quantization.scale_group_size())],
-                            DataType::F32,
-                        )
-                        .map_err(MlpEncodeError::Backend)?;
-                    let mut group_sums = quantization
-                        .sum_group_size()
-                        .map(|group_size| {
-                            command_buffer.allocate_scratch_for_shape(
-                                &[batch_dim, self.model_dimension.div_ceil(group_size)],
-                                DataType::I32,
-                            )
-                        })
-                        .transpose()
-                        .map_err(MlpEncodeError::Backend)?;
-                    quantizer.encode_quantize(
-                        &input,
-                        &mut values,
-                        &mut scales,
-                        group_sums.as_mut(),
-                        &self.input_hadamard_factors,
-                        batch_dim,
-                        self.model_dimension,
-                        command_buffer,
-                    );
-                    MatmulA::Int8Symmetric {
-                        values,
-                        scales,
-                        group_sums,
-                        quantization,
-                    }
-                },
-                ActivationFormat::Bf16 | ActivationFormat::Trellis => unreachable!(),
-            })
-        } else {
-            None
-        };
-
-        let mut rotated_input = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, self.model_dimension], self.data_type)
+        let quantized_shared_input = (shared_format != ActivationFormat::Bf16)
+            .then(|| self.input_rht.prepare(&input, batch_dim, shared_format, command_buffer))
+            .transpose()
             .map_err(MlpEncodeError::Backend)?;
-        self.input_rht.encode_fp(
-            &input,
-            &mut rotated_input,
-            &self.input_hadamard_factors,
-            batch_dim,
-            self.model_dimension,
-            command_buffer,
-        );
+        let MatmulA::FullPrecision {
+            values: rotated_input,
+            ..
+        } = self
+            .input_rht
+            .prepare(&input, batch_dim, ActivationFormat::Bf16, command_buffer)
+            .map_err(MlpEncodeError::Backend)?
+        else {
+            unreachable!()
+        };
 
         let router_logits = self.router.encode(input, batch_dim, command_buffer)?;
         let mut expert_ids = command_buffer
@@ -402,19 +336,23 @@ impl<B: Backend> RoutedProjection<B> {
         else {
             return Err(MoeMlpNewError::UnsupportedConfiguration(format!("{quantization_spec:?}")));
         };
-        let input_block = match (quantization.mode, quantization.method) {
-            (QuantizationMode::U4, QuantizationMethod::ScaleZeroPoint) => moe::GEMV_W4_INPUT_BLOCK,
-            (QuantizationMode::U8, QuantizationMethod::ScaleSymmetric) => moe::GEMV_W8_INPUT_BLOCK,
-            (mode, method) => {
-                return Err(MoeMlpNewError::UnsupportedConfiguration(format!("{method} {mode}")));
-            },
-        };
+        if !matches!(
+            (quantization.mode, quantization.method),
+            (QuantizationMode::U4, QuantizationMethod::ScaleZeroPoint)
+                | (QuantizationMode::U8, QuantizationMethod::ScaleSymmetric)
+        ) {
+            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
+                "{} {}",
+                quantization.method, quantization.mode
+            )));
+        }
+        let packing_divisor = quantization.mode.packing_divisor();
+        let input_block = moe::GEMV_INPUT_BLOCK_BYTES * packing_divisor;
         if !input_dim.is_multiple_of(input_block) {
             return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
                 "input_dim must be a multiple of {input_block}, got {input_dim}"
             )));
         }
-        let packing_divisor = quantization.mode.packing_divisor();
         let b_expert_stride_bytes = output_dim * (input_dim / packing_divisor);
 
         let input_hadamard_factors =
@@ -425,7 +363,7 @@ impl<B: Backend> RoutedProjection<B> {
 
         let quantized_tree = weights_tree.subtree("quantized");
         let storage_type = quantization.mode.storage_type();
-        let params = QuantParams::new(QuantParamsLayout::GroupOutput, output_dim, input_dim / moe::GEMV_GROUP_SIZE);
+        let params = QuantParams::new(QuantParamsLayout::GroupOutput, output_dim, input_dim / quantization.group_size);
         let weights = quantized_tree
             .read_buffer("weights", &[num_routed_experts, output_dim, input_dim / packing_divisor], storage_type)
             .await?;
@@ -446,7 +384,7 @@ impl<B: Backend> RoutedProjection<B> {
 
         let bits = DataType::from(quantization.mode).size_in_bits() as u32;
         let kernel =
-            <B::Kernels as Kernels>::MoeGemvKernel::new(context, data_type, moe::GEMV_GROUP_SIZE, bits, a_per_token)
+            <B::Kernels as Kernels>::MoeGemvKernel::new(context, data_type, quantization.group_size, bits, a_per_token)
                 .map_err(MoeMlpNewError::Backend)?;
 
         Ok((
@@ -490,7 +428,6 @@ impl<B: Backend> RoutedProjection<B> {
             self.output_dim,
             num_routes,
             num_active_routed_experts,
-            self.output_dim / moe::GEMV_OUTPUT_ROW_TILE,
             self.b_expert_stride_bytes,
             self.scale_expert_stride,
             self.zero_point_expert_stride,

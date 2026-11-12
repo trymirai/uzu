@@ -2,7 +2,7 @@
 import definitions;
 
 [[Variants("T", "BFloat16")]]
-[[Variants("GROUP_SIZE", "64")]]
+[[Variants("GROUP_SIZE", "32, 64")]]
 [[Variants("BITS", "4, 8")]]
 [[Public]] [[Kernel]] func MoeGemv<T, let GROUP_SIZE: uint32_t, let BITS: uint32_t>(
   StructuredBuffer<uint8_t> b,
@@ -16,7 +16,6 @@ import definitions;
   uint32_t out_vec_size,
   uint32_t num_routes,
   uint32_t active_experts_per_token,
-  uint32_t group_count_x,
   uint32_t b_expert_stride_bytes,
   uint32_t scale_expert_stride,
   uint32_t zero_point_expert_stride,
@@ -26,7 +25,7 @@ import definitions;
   uint32_t zero_point_group_stride,
   [[Specialize]] bool a_per_token,
   [[Groups("num_routes")]] uint32_t route_idx,
-  [[Groups("group_count_x")]] uint32_t output_tile_idx,
+  [[Groups("out_vec_size / 32")]] uint32_t output_tile_idx,
   [[Threads("32")]] uint32_t simd_lane,
   [[Threads("8")]] uint32_t simd_group,
 ) {

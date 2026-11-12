@@ -6,6 +6,7 @@ mod matmul;
 mod rht_wrapper;
 mod untied_readout;
 
+pub use input_rht::InputRht;
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 pub use untied_readout::UntiedReadout;

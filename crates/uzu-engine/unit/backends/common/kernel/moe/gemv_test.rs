@@ -6,7 +6,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            gpu_types::moe, kernel::MoeGemvKernel,
+            kernel::MoeGemvKernel,
         },
         cpu::Cpu,
     },
@@ -23,6 +23,7 @@ const PROJECTIONS: [(&str, u32, u32, bool); 2] = [("up", 2048, 1024, true), ("do
 
 struct MoeGemvCase<'a> {
     bits: u32,
+    group_size: u32,
     weights: &'a [u8],
     scales: &'a [bf16],
     zero_points: Option<&'a [u8]>,
@@ -37,7 +38,7 @@ struct MoeGemvCase<'a> {
 fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     let (in_dim, out_dim) = (case.in_dim, case.out_dim);
     let num_routes = case.expert_ids.len() as u32;
-    let num_groups = in_dim / moe::GEMV_GROUP_SIZE;
+    let num_groups = in_dim / case.group_size;
     let context = create_context::<B>();
     let weights = create_buffer_with_data::<B, u8>(&context, case.weights);
     let scales = create_buffer_with_data::<B, bf16>(&context, case.scales);
@@ -50,7 +51,7 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
     let kernel = <B::Kernels as Kernels>::MoeGemvKernel::new(
         &context,
         DataType::BF16,
-        moe::GEMV_GROUP_SIZE,
+        case.group_size,
         case.bits,
         case.a_per_token,
     )
@@ -68,7 +69,6 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
         out_dim,
         num_routes,
         ACTIVE_EXPERTS,
-        out_dim / moe::GEMV_OUTPUT_ROW_TILE,
         out_dim * in_dim * case.bits / 8,
         num_groups * out_dim,
         num_groups * (out_dim / 2),
@@ -86,10 +86,12 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
 // prime period, so each expert's weights, zero points and rotation signs differ.
 fn compare_projections(
     bits: u32,
-    weights_for: impl Fn(u32, u32) -> (Vec<u8>, Vec<bf16>, Option<Vec<u8>>),
+    weights_for: impl Fn(u32, u32, u32) -> (Vec<u8>, Vec<bf16>, Option<Vec<u8>>),
 ) {
-    for (name, in_dim, out_dim, a_per_token) in PROJECTIONS {
-        let (weights, scales, zero_points) = weights_for(in_dim, out_dim);
+    for (group_size, (name, in_dim, out_dim, a_per_token)) in
+        [32u32, 64].into_iter().flat_map(|group_size| PROJECTIONS.map(|projection| (group_size, projection)))
+    {
+        let (weights, scales, zero_points) = weights_for(in_dim, out_dim, group_size);
         let hadamard_factors: Vec<i32> = (0..(NUM_EXPERTS * out_dim) as usize)
             .map(|i| {
                 if (i * 7 + 3) % 17 < 8 {
@@ -114,6 +116,7 @@ fn compare_projections(
                 .collect();
             let case = MoeGemvCase {
                 bits,
+                group_size,
                 weights: &weights,
                 scales: &scales,
                 zero_points: zero_points.as_deref(),
@@ -130,7 +133,7 @@ fn compare_projections(
                     &expected,
                     &run_moe_gemv::<B>(&case),
                     2e-2,
-                    &format!("{bits} bit {name}, {tokens} tokens"),
+                    &format!("{bits} bit {name}, group {group_size}, {tokens} tokens"),
                 );
             });
         }
@@ -139,8 +142,8 @@ fn compare_projections(
 
 #[uzu_test]
 fn moe_gemv_u4_zero_point_matches_cpu() {
-    compare_projections(4, |in_dim, out_dim| {
-        let num_groups = in_dim / moe::GEMV_GROUP_SIZE;
+    compare_projections(4, |in_dim, out_dim, group_size| {
+        let num_groups = in_dim / group_size;
         let weights =
             (0..(NUM_EXPERTS * out_dim * (in_dim / 2)) as usize).map(|i| ((i * 73 + 19) % 251) as u8).collect();
         let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
@@ -155,8 +158,8 @@ fn moe_gemv_u4_zero_point_matches_cpu() {
 
 #[uzu_test]
 fn moe_gemv_u8_symmetric_matches_cpu() {
-    compare_projections(8, |in_dim, out_dim| {
-        let num_groups = in_dim / moe::GEMV_GROUP_SIZE;
+    compare_projections(8, |in_dim, out_dim, group_size| {
+        let num_groups = in_dim / group_size;
         let weights = (0..(NUM_EXPERTS * out_dim * in_dim) as usize).map(|i| ((i * 59 + 11) % 251) as u8).collect();
         let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
             .map(|i| bf16::from_f32((((i * 23 + 7) % 37) as f32 + 1.0) * 0.000012))

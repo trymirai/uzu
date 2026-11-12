@@ -9,13 +9,7 @@ static constant constexpr uint32_t ROUTER_MAX_TOP_K = 8;
 
 static constant constexpr uint32_t ROUTER_MAX_EXPERTS = 256;
 
-static constant constexpr uint32_t GEMV_GROUP_SIZE = 64;
-
-static constant constexpr uint32_t GEMV_W4_INPUT_BLOCK = 512;
-
-static constant constexpr uint32_t GEMV_W8_INPUT_BLOCK = 256;
-
-static constant constexpr uint32_t GEMV_OUTPUT_ROW_TILE = 32;
+static constant constexpr uint32_t GEMV_INPUT_BLOCK_BYTES = 256;
 
 static constant constexpr uint32_t COMBINE_BLOCK_DIM = 256;
 } // namespace uzu::moe
