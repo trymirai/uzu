@@ -11,6 +11,7 @@ use proc_macro2::TokenStream;
 use shader_slang::{
     Blob, CompileTarget, CompilerOptions, ComponentType, GlobalSession, Module, ScalarType, TargetDesc,
 };
+use spirv::{Capability, Op};
 use syn::{BinOp, Expr};
 
 use crate::{
@@ -22,17 +23,31 @@ use crate::{
     vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen, spirv_hash::export_spirv_hash},
 };
 
-const DEVICE_CAPABILITIES: [u32; 15] = [1, 9, 22, 39, 61, 63, 64, 65, 4466, 4467, 5345, 5346, 5347, 6018, 6019];
-const BFLOAT16_TYPE: u32 = 5116;
-const GATED_CAPABILITIES: [(u32, &str, &[&str]); 4] = [
+const DEVICE_CAPABILITIES: [Capability; 15] = [
+    Capability::Shader,
+    Capability::Float16,
+    Capability::Int16,
+    Capability::Int8,
+    Capability::GroupNonUniform,
+    Capability::GroupNonUniformArithmetic,
+    Capability::GroupNonUniformBallot,
+    Capability::GroupNonUniformShuffle,
+    Capability::SignedZeroInfNanPreserve,
+    Capability::RoundingModeRTE,
+    Capability::VulkanMemoryModel,
+    Capability::VulkanMemoryModelDeviceScope,
+    Capability::PhysicalStorageBufferAddresses,
+    Capability::DotProductInput4x8BitPacked,
+    Capability::DotProduct,
+];
+const GATED_CAPABILITIES: [(Capability, &[&str]); 4] = [
     (
-        6022,
-        "CooperativeMatrixKHR",
+        Capability::CooperativeMatrixKHR,
         &["BF16_TENSOR_CORES", "INT8_TENSOR_CORES_K32", "INT8_TENSOR_CORES_K16", "float_tensor_cores"],
     ),
-    (BFLOAT16_TYPE, "BFloat16TypeKHR", &["BF16_TENSOR_CORES", "float_tensor_cores"]),
-    (5118, "BFloat16CooperativeMatrixKHR", &["BF16_TENSOR_CORES", "float_tensor_cores"]),
-    (5432, "CooperativeMatrixPerElementOperationsNV", &["INT8_ELEMENT_FOLD"]),
+    (Capability::BFloat16TypeKHR, &["BF16_TENSOR_CORES", "float_tensor_cores"]),
+    (Capability::BFloat16CooperativeMatrixKHR, &["BF16_TENSOR_CORES", "float_tensor_cores"]),
+    (Capability::CooperativeMatrixPerElementOperationsNV, &["INT8_ELEMENT_FOLD"]),
 ];
 
 pub const AXIS_FOLD_GROUPS: u32 = 65_535;
@@ -233,22 +248,22 @@ fn check_capabilities(
     spirv: &[u8],
     native_bf16: bool,
 ) -> anyhow::Result<()> {
-    const OP_CAPABILITY: u32 = 17;
     let words = spirv.as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect::<Vec<_>>();
     let mut at = 5;
     while at < words.len() {
         let (count, opcode) = ((words[at] >> 16) as usize, words[at] & 0xffff);
         anyhow::ensure!(count > 0 && at + count <= words.len(), "{entry_point}: malformed SPIR-V");
-        if opcode == OP_CAPABILITY {
-            let capability = words[at + 1];
-            let gated = GATED_CAPABILITIES.iter().find(|(value, ..)| *value == capability);
+        if Op::from_u32(opcode) == Some(Op::Capability) {
+            let Some(capability) = Capability::from_u32(words[at + 1]) else {
+                anyhow::bail!("{entry_point}: unknown SPIR-V capability {}", words[at + 1]);
+            };
+            let gated = GATED_CAPABILITIES.iter().find(|(value, _)| *value == capability);
             let allowed = DEVICE_CAPABILITIES.contains(&capability)
-                || (native_bf16 && capability == BFLOAT16_TYPE)
-                || gated.is_some_and(|(_, _, gates)| gates.iter().any(|gate| required.contains(*gate)));
+                || (native_bf16 && capability == Capability::BFloat16TypeKHR)
+                || gated.is_some_and(|(_, gates)| gates.iter().any(|gate| required.contains(*gate)));
             anyhow::ensure!(
                 allowed,
-                "{entry_point}: SPIR-V capability {} is neither enabled on every device nor gated by a precondition",
-                gated.map_or(capability.to_string(), |(_, name, _)| (*name).to_owned())
+                "{entry_point}: SPIR-V capability {capability:?} is neither enabled on every device nor gated by a precondition"
             );
         }
         at += count;
