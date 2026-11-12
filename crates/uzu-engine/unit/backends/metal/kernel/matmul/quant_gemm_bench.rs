@@ -53,7 +53,7 @@ fn bench_unified_quant_typed<T: DataTypeRepr + Float>(
                 path_label,
                 label
             ));
-            group.throughput(Throughput::Elements((m * n * k) as u64));
+            group.throughput(Throughput::Elements(u64::from(m) * u64::from(n) * u64::from(k)));
             group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
                 iter_encode_loop::<Metal, _>(context, b, |command_buffer| {
                     matmul

@@ -89,6 +89,8 @@ pub enum TransformerNewError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Residual error: {0}")]
     Residual(#[from] ResidualNewError<B>),
+    #[error("Readout expects RHT-rotated input but there is no output norm to apply it")]
+    UnappliedReadoutRht,
 }
 
 #[derive(Debug, Error)]
@@ -150,13 +152,13 @@ impl<B: Backend> Transformer<B> {
             layers.push((layer, rope));
         }
 
-        let output_norm = if let Some(output_norm_config) = &transformer_config.output_norm_config {
-            Some(
+        let output_norm = match (&transformer_config.output_norm_config, output_norm_hadamard_factors) {
+            (Some(output_norm_config), hadamard_factors) => Some(
                 Normalization::new(
                     transformer_config.model_dim,
                     input_data_type,
                     output_data_type,
-                    output_norm_hadamard_factors,
+                    hadamard_factors,
                     ShortcutMode::Add,
                     PostLayerScalar::None,
                     output_norm_config,
@@ -164,9 +166,9 @@ impl<B: Backend> Transformer<B> {
                     context,
                 )
                 .await?,
-            )
-        } else {
-            None
+            ),
+            (None, Some(_)) => return Err(TransformerNewError::UnappliedReadoutRht),
+            (None, None) => None,
         };
 
         Ok(Self {
