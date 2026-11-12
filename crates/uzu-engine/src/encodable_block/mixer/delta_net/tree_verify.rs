@@ -1,8 +1,4 @@
-use crate::{
-    backends::common::{Backend, Kernels},
-    data_type::DataType,
-    encodable_block::mixer::delta_net::accepted_path::AcceptedPath,
-};
+use crate::{backends::common::Backend, data_type::DataType};
 
 #[derive(Clone, Copy)]
 pub struct TreeVerifyNewArguments {
@@ -13,6 +9,7 @@ pub struct TreeVerifyNewArguments {
     pub head_v_dim: u32,
 }
 
+#[derive(Clone, Copy)]
 pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub q: &'a B::ScratchBuffer,
     pub k: &'a B::ScratchBuffer,
@@ -20,9 +17,7 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub trie: &'a B::ConstantBuffer,
     pub log_decay: &'a B::ScratchBuffer,
     pub beta: &'a B::ScratchBuffer,
-    /// The state, which first advances in place along `advance`, if any.
-    pub h0: &'a mut B::GlobalGpuBuffer,
-    pub advance: Option<(&'a AcceptedPath<B>, &'a <B::Kernels as Kernels>::StateAdvanceKernel)>,
+    pub h0: &'a B::GlobalGpuBuffer,
     pub in_proj: &'a B::ScratchBuffer,
     pub norm_weight: &'a B::GlobalGpuBuffer,
     pub conv_dim: u32,

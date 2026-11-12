@@ -34,7 +34,6 @@ use crate::backends::{
 const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
 /// The only Vulkan version the backend targets; Ash 0.38 predates it.
 const API_VERSION_1_4: u32 = vk::make_api_version(0, 1, 4, 0);
-const NVIDIA_VENDOR_ID: u32 = 0x10DE;
 /// The file name every pipeline cache starts with, followed by its shader build's SPIR-V hash.
 const PIPELINE_CACHE_PREFIX: &str = "vulkan-pipeline-cache";
 const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
@@ -476,19 +475,9 @@ impl Context for VkContext {
         Err(Error::NotSupported)
     }
 
-    /// Tree shapes are tuned for few Vulkan devices, so the others speculate with a listed one, or on NVIDIA tensor
-    /// cores with the speculator's tensor-core shape.
+    /// Tree shapes are tuned for few Vulkan devices, so the others speculate with a listed one.
     fn device_capabilities(&self) -> DeviceCapabilities {
-        let device = &self.physical_device;
-        let mut capabilities = DeviceCapabilities::UNTUNED_SPECULATION;
-        capabilities.set(
-            DeviceCapabilities::TENSOR_CORE_SPECULATION,
-            device.properties.vendor_id == NVIDIA_VENDOR_ID
-                && device
-                    .capabilities
-                    .intersects(VkDeviceCapabilities::BF16_TENSOR_CORES | VkDeviceCapabilities::INT8_TENSOR_CORES),
-        );
-        capabilities
+        DeviceCapabilities::UNTUNED_SPECULATION
     }
 }
 /// The instance, with VK_EXT_debug_utils for validation messages and debug labels wherever it is available, and whether

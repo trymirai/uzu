@@ -28,7 +28,7 @@ impl TreeVerifyKernel for VkTreeVerify {
         token_blocks: u32,
     ) -> Result<Self, Error> {
         Ok(Self {
-            values: TreeVerifyValuesVulkanKernel::new(&context.arc(), data_type, token_blocks, false)?,
+            values: TreeVerifyValuesVulkanKernel::new(&context.arc(), data_type, token_blocks)?,
             norm_gate: DeltaNetNormGateVulkanKernel::new(context, data_type)?,
         })
     }
@@ -69,13 +69,7 @@ impl TreeVerifyKernel for VkTreeVerify {
                 VkBuffer::resolve_ref(trie),
                 VkBuffer::resolve_ref(log_decay),
                 VkBuffer::resolve_ref(beta),
-                Some(VkBuffer::resolve_ref(h0)),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                VkBuffer::resolve_ref(h0),
                 VkBuffer::resolve(output, output_range),
                 scale,
                 batch_size,
@@ -84,7 +78,6 @@ impl TreeVerifyKernel for VkTreeVerify {
                 num_v_heads,
                 head_k_dim,
                 head_v_dim,
-                None,
                 command_buffer,
             );
         }

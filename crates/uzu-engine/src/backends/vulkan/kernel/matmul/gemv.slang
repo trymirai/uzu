@@ -301,10 +301,9 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
     }
     [ForceUnroll]
     for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
-      // Inputs past m read the tile's first, which is below m, and fold nothing, so no branch orders the inputs' loads.
-      let valid = first_input + I < m;
-      let input = valid ? first_input + I : first_input;
-      if (I < INPUT_ROWS) {
+      let input = first_input + I;
+      // A tile's first input is below m.
+      if (I < INPUT_ROWS && (I == 0 || input < m)) {
         uint activation[8];
         gemv_int8_words(codes, input * k + column, GEMV_INT8_RUN, activation);
         let scale = a_scales[input * (k / ACTIVATION_QUANTIZATION_TILE) + column / ACTIVATION_QUANTIZATION_TILE];
@@ -333,8 +332,7 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
                 }
               }
             }
-            let folded = int8_fold(sums[R][I], scale, metadata[R], dot, head, group_sum);
-            sums[R][I] = valid ? folded : sums[R][I];
+            sums[R][I] = int8_fold(sums[R][I], scale, metadata[R], dot, head, group_sum);
           }
         }
       }

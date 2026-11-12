@@ -79,55 +79,6 @@ fn default_prune_sigma() -> Option<f32> {
     Some(1.5)
 }
 
-/// The tree on tensor cores, where the speculator's draft and weaver can build it: 16 nodes, one GDN tree-verify token
-/// block, 12 deep with 8 candidates per expansion, grown two expansions a round over the DEPTH - 1 rounds that reach
-/// its deepest nodes. On an RTX 4090, qwen3.8-27b decodes eight depth-eval prompts at 203.4 t/s and 4.97 tokens per
-/// pass, against 202.5 t/s and 5.63 with 32 nodes 14 deep, and 155.0 t/s and 4.10 with its default 8 (2026-11-05).
-fn tensor_core_shape(config: &DFlashSpeculatorConfig) -> Option<DFlashTfmTreeShape> {
-    const DEPTH: u32 = 12;
-    const EXPAND_WIDTH: u32 = 8;
-    let weaver = config.weaver_config.as_ref()?;
-    (DEPTH <= config.draft_config.block_size
-        && DEPTH <= weaver.max_depth + 1
-        && EXPAND_WIDTH <= weaver.candidate_pool_size)
-        .then(|| DFlashTfmTreeShape {
-            tree_budget: 16,
-            max_tree_depth: DEPTH,
-            dflash_depth_override: Some(DEPTH),
-            construction_method: DFlashTfmTreeConstructionMethod::Weaver {
-                rounds: DEPTH - 1,
-                expand_per_round: 2,
-                expand_width: EXPAND_WIDTH,
-                prune_sigma: default_prune_sigma(),
-            },
-        })
-}
-
-/// The listed shape of `device_name`, else the tensor-core shape where `capabilities` take it, else the listed
-/// default, else for untuned speculation the listed shape of the smallest tree budget, ties broken by name.
-fn select_shape(
-    device_name: Option<&str>,
-    capabilities: DeviceCapabilities,
-    tensor_core_shape: Option<DFlashTfmTreeShape>,
-    mut shapes: HashMap<String, DFlashTfmTreeShape>,
-) -> Option<DFlashTfmTreeShape> {
-    device_name
-        .and_then(|device_name| shapes.remove(device_name))
-        .or_else(|| tensor_core_shape.filter(|_| capabilities.contains(DeviceCapabilities::TENSOR_CORE_SPECULATION)))
-        .or_else(|| shapes.remove("default"))
-        .or_else(|| {
-            capabilities
-                .contains(DeviceCapabilities::UNTUNED_SPECULATION)
-                .then(|| {
-                    shapes.into_iter().min_by(|(a, a_shape), (b, b_shape)| {
-                        a_shape.tree_budget.cmp(&b_shape.tree_budget).then_with(|| a.cmp(b))
-                    })
-                })
-                .flatten()
-                .map(|(_, shape)| shape)
-        })
-}
-
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct DFlashTfmTreeShape {
     pub tree_budget: u32,
@@ -153,16 +104,32 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_embedding: &Embedding<B>,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
-        let shapes = serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
-        let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
-        let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
-        let Some(shape) =
-            select_shape(context.device_name(), context.device_capabilities(), tensor_core_shape(&config), shapes)
+        let mut shapes: HashMap<String, DFlashTfmTreeShape> =
+            serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
+
+        let Some(shape) = context
+            .device_name()
+            .and_then(|device_name| shapes.remove(device_name))
+            .or_else(|| shapes.remove("default"))
+            .or_else(|| {
+                let untuned = context.device_capabilities().contains(DeviceCapabilities::UNTUNED_SPECULATION);
+                untuned
+                    .then(|| {
+                        shapes.into_iter().min_by(|(a, a_shape), (b, b_shape)| {
+                            a_shape.tree_budget.cmp(&b_shape.tree_budget).then_with(|| a.cmp(b))
+                        })
+                    })
+                    .flatten()
+                    .map(|(_, shape)| shape)
+            })
         else {
             return Ok(None);
         };
 
         let data_type = DataType::BF16;
+
+        let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
+        let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
         let speculator_tree = weight_loader.tree().subtree("speculator");
@@ -338,10 +305,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &mut command_buffer,
                     )
                     .map_err(DFlashTreeError::Backend)?;
-                let pending = command_buffer.end_encoding().submit();
-                let tokens = self.context.copyout::<u32>(&sampled);
-                let completed = wait(pending, timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let tokens = tokens.await.map_err(DFlashTreeError::Backend)?;
+                let completed =
+                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
+                let tokens = self.context.copyout::<u32>(&sampled).await.map_err(DFlashTreeError::Backend)?;
                 drop(completed);
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
                     token_id,
@@ -389,13 +355,13 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
-                let (head, children_noise_scale, prune_sigma) = match sampling_method {
-                    SamplingMethod::Greedy => (None, 0.0, None),
+                let (head, prune_sigma) = match sampling_method {
+                    SamplingMethod::Greedy => (None, None),
                     SamplingMethod::Stochastic {
                         ..
                     } => match &self.confidence_head {
-                        Some(head) => (Some(head), 1.0, None),
-                        None => (None, 1.0, prune_sigma),
+                        Some(head) => (Some(head), None),
+                        None => (None, prune_sigma),
                     },
                 };
                 let tree = weaver.encode_tree(
@@ -412,16 +378,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         rounds,
                         expand_per_round,
                         expand_width,
-                        children_noise_scale,
                         prune_noise_scale: prune_sigma.map(f32::recip),
                     },
                     head,
                     &mut command_buffer,
                 )?;
-                let pending = command_buffer.end_encoding().submit();
-                let nodes = tree.read_nodes(&self.context);
-                let completed = wait(pending, timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let nodes = nodes.await.map_err(DFlashTreeError::Backend)?;
+                let completed =
+                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
+                let nodes = tree.read_nodes(&self.context).await.map_err(DFlashTreeError::Backend)?;
                 drop(completed);
                 nodes
             },
