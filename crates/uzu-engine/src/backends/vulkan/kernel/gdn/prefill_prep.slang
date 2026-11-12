@@ -40,15 +40,13 @@ public func DeltaNetPrefillPrep<T: IStorageFloat, QKT: IStorageFloat>(
   uint key_dim,
   uint value_dim,
   uint suffix_len,
-  [[Groups("num_k_heads")]] uint head_group,
-  [[Groups("suffix_len")]] uint token_group,
+  [[Groups("num_k_heads")]] uint hk,
+  [[Groups("suffix_len")]] uint token,
   [[Threads("128")]] uint tid,
   [[Specialize]] uint HEAD_K_DIM,
   [[Specialize]] bool write_log_decay,
   [[Specialize]] bool write_compact_v,
 ) {
-  let hk = head_group;
-  let token = token_group;
   let conv_dim = 2 * key_dim + value_dim;
   let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
   let heads_per_group = num_v_heads / num_k_heads;

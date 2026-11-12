@@ -9,7 +9,7 @@ static const uint STATE_ADVANCE_ROWS = 4;
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
-[[Precondition("new", "num_k_heads != 0 && (num_v_heads == 0 || num_v_heads >= num_k_heads)")]]
+[[Precondition("new", "num_k_heads != 0 && num_v_heads >= num_k_heads")]]
 func StateAdvance<T: IStorageFloat>(
   Ptr<T, Access.Read> k_norm,
   Ptr<T, Access.Read> v,
@@ -18,7 +18,7 @@ func StateAdvance<T: IStorageFloat>(
   Ptr<uint, Access.Read> accepted_indices,
   Ptr<float, Access.ReadWrite> state,
   uint accepted_len,
-  [[Groups("if accepted_len == 0 { 0 } else { num_v_heads }")]] uint head_group,
+  [[Groups("if accepted_len == 0 { 0 } else { num_v_heads }")]] uint hv,
   [[Groups("8")]] uint row_group,
   [[Threads("128")]] uint thread_idx,
   [[Specialize]] uint HEAD_K_DIM,
@@ -27,7 +27,6 @@ func StateAdvance<T: IStorageFloat>(
 ) {
   let invocation = subgroup_invocation();
   let simdgroups = STATE_ADVANCE_THREADS / SIMD_SIZE;
-  let hv = head_group;
   let hk = hv / (num_v_heads / num_k_heads);
   let dv = (row_group * simdgroups + invocation / SIMD_SIZE) * STATE_ADVANCE_ROWS;
   let dk = invocation % SIMD_SIZE * 4;

@@ -14,7 +14,7 @@ groupshared float chunked_precompute_beta[DELTA_NET_CHUNKED_MAX_GROUPS * DELTA_N
 
 [[Kernel]]
 [[Precondition("encode", "num_k_heads > 0")]]
-[[Precondition("encode", "num_v_heads == 0 || (num_v_heads >= num_k_heads && num_v_heads <= crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_CHUNKED_MAX_GROUPS * num_k_heads)")]]
+[[Precondition("encode", "(num_v_heads >= num_k_heads && num_v_heads <= crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_CHUNKED_MAX_GROUPS * num_k_heads)")]]
 func DeltaNetChunkedPrecompute(
   Ptr<float, Access.Read> q_norm,
   Ptr<float, Access.Read> k_norm,
@@ -27,12 +27,10 @@ func DeltaNetChunkedPrecompute(
   uint num_k_heads,
   uint key_dim,
   uint suffix_len,
-  [[Groups("suffix_len.div_ceil(crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_CHUNKED_CHUNK)")]] uint chunk_group,
-  [[Groups("num_k_heads")]] uint hk_group,
+  [[Groups("suffix_len.div_ceil(crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_CHUNKED_CHUNK)")]] uint chunk,
+  [[Groups("num_k_heads")]] uint hk,
   [[Threads("128")]] uint thread_idx,
 ) {
-  let chunk = chunk_group;
-  let hk = hk_group;
   let token_base = chunk * DELTA_NET_CHUNKED_CHUNK;
   let valid_tokens = min(DELTA_NET_CHUNKED_CHUNK, suffix_len - token_base);
   let groups_per_head = num_v_heads / num_k_heads;

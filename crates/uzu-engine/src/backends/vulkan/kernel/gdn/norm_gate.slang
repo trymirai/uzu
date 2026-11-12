@@ -19,7 +19,7 @@ func DeltaNetNormGate<T: IStorageFloat>(
   uint total_proj_dim,
   float norm_epsilon,
   uint suffix_len,
-  [[Groups("if head_v_dim == 0 { 0 } else { num_v_heads }")]] uint head_group,
+  [[Groups("num_v_heads")]] uint head_group,
   [[Groups("suffix_len")]] uint token_group,
   [[Threads("128")]] uint tid,
 ) {

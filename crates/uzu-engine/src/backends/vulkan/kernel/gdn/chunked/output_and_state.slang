@@ -19,7 +19,7 @@ groupshared float chunked_row_decay[DELTA_NET_CHUNKED_CHUNK];
 [[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("encode", "num_k_heads > 0")]]
-[[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]
+[[Precondition("encode", "num_v_heads >= num_k_heads")]]
 [[Precondition("encode", "head_v_dim.is_multiple_of(16)")]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads * head_v_dim <= value_dim")]]
 func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
@@ -38,14 +38,12 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
   uint key_dim,
   uint value_dim,
   uint suffix_len,
-  [[Groups("num_v_heads")]] uint hv_group,
+  [[Groups("num_v_heads")]] uint hv,
   [[Groups("head_v_dim / 16")]] uint value_tile_group,
   [[Threads("256")]] uint thread_idx,
 ) {
-  let hv = hv_group;
   let chunks = suffix_len / DELTA_NET_CHUNKED_CHUNK + (suffix_len % DELTA_NET_CHUNKED_CHUNK != 0 ? 1u : 0u);
-  let conv_dim = 2 * key_dim + value_dim;
-  let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+  let total_proj_dim = 2 * key_dim + 2 * value_dim + 2 * num_v_heads;
   let k_head = hv / (num_v_heads / num_k_heads) * DELTA_NET_HEAD_K_DIM;
   let g_head = hv * suffix_len;
   let value_base = value_tile_group * CHUNKED_OUTPUT_VT;

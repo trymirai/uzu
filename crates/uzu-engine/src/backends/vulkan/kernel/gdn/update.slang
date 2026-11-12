@@ -12,7 +12,7 @@ static const uint DELTA_NET_UPDATE_ROWS = DELTA_NET_UPDATE_THREADS / DELTA_NET_U
 [[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
-[[Precondition("encode", "num_v_heads == 0 || num_k_heads > 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
+[[Precondition("encode", "num_k_heads > 0 && num_v_heads.is_multiple_of(num_k_heads)")]]
 func DeltaNetUpdate<T: IStorageFloat>(
   Ptr<T, Access.Read> in_proj,
   Ptr<float, Access.Read> a_log,
@@ -24,7 +24,7 @@ func DeltaNetUpdate<T: IStorageFloat>(
   uint head_v_dim,
   uint key_dim,
   uint value_dim,
-  [[Groups("num_v_heads")]] uint head_group,
+  [[Groups("num_v_heads")]] uint hv,
   [[Groups("head_v_dim.div_ceil(16)")]] uint row_group,
   [[Threads("128")]] uint thread_idx,
   [[Specialize]] uint HEAD_K_DIM,
@@ -33,7 +33,6 @@ func DeltaNetUpdate<T: IStorageFloat>(
   let lane = invocation % DELTA_NET_UPDATE_LANES;
   let i = row_group * DELTA_NET_UPDATE_ROWS + invocation / DELTA_NET_UPDATE_LANES;
   let valid = i < head_v_dim;
-  let hv = head_group;
   let conv_dim = 2 * key_dim + value_dim;
   let hk = hv / (num_v_heads / num_k_heads);
   let q_base = hk * DELTA_NET_HEAD_K_DIM;

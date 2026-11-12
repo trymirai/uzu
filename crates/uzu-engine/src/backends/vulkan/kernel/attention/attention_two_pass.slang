@@ -4,8 +4,30 @@ import attention.attention;
 import attention.mask;
 import common.workgroup_reduction;
 import generated.attention_two_pass;
+import generated.kv_layout;
 import generated.ring;
 import generated.trie;
+
+uint4 attention_code_words<T>(Ptr<T, Access.Read> codes, uint element, uint count) {
+  if (count == 16) {
+    return load_aligned<uint4, 16>(codes, element);
+  }
+  if (count == 8) {
+    return uint4(load_aligned<uint2, 8>(codes, element), 0, 0);
+  }
+  if (count == 4) {
+    return uint4(load_aligned<uint, 4>(codes, element), 0, 0, 0);
+  }
+  return uint4(uint(load_aligned<uint16_t, 2>(codes, element)), 0, 0, 0);
+}
+
+float attention_key_code(uint4 words, uint index) {
+  return float(asint(words[index / 4] << (24 - 8 * (index % 4))) >> 24);
+}
+
+float attention_value_code(uint4 words, uint index) {
+  return float(int((words[index / 4] >> (8 * (index % 4))) & 0xffu) - int(V_CODE_BIAS));
+}
 
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]

@@ -10,7 +10,7 @@ static const uint DELTA_NET_PREFILL_SIMDGROUPS = DELTA_NET_PREFILL_THREADS / SIM
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_K_DIM == crate::backends::vulkan::gpu_types::delta_net::DELTA_NET_HEAD_K_DIM")]]
 [[Precondition("encode", "num_k_heads > 0")]]
-[[Precondition("encode", "num_v_heads == 0 || num_v_heads >= num_k_heads")]]
+[[Precondition("encode", "num_v_heads >= num_k_heads")]]
 [[Precondition("encode", "suffix_len <= 1 || num_v_heads * head_v_dim <= value_dim")]]
 [[Precondition("encode", "suffix_len <= 1 || key_dim.is_multiple_of(4)")]]
 func DeltaNetPrefill<T: IStorageFloat>(
@@ -28,8 +28,8 @@ func DeltaNetPrefill<T: IStorageFloat>(
   uint value_dim,
   uint suffix_len,
   uint num_dv_groups,
-  [[Groups("if suffix_len == 0 { 0 } else { num_dv_groups }")]] uint row_group,
-  [[Groups("num_v_heads")]] uint head_group,
+  [[Groups("num_dv_groups")]] uint row_group,
+  [[Groups("num_v_heads")]] uint hv,
   [[Threads("128")]] uint thread_idx,
   [[Specialize]] uint HEAD_K_DIM,
 ) {
@@ -39,13 +39,11 @@ func DeltaNetPrefill<T: IStorageFloat>(
   let invocation = subgroup_invocation();
   let simd = invocation / SIMD_SIZE;
   let lane = invocation % SIMD_SIZE;
-  let hv = head_group;
   let dv_idx = (row_group * DELTA_NET_PREFILL_SIMDGROUPS + simd) * DELTA_NET_PREFILL_DV_PER_SIMDGROUP;
   let rows = dv_idx < head_v_dim ? min(head_v_dim - dv_idx, DELTA_NET_PREFILL_DV_PER_SIMDGROUP) : 0u;
 
   let hk = hv / (num_v_heads / num_k_heads);
-  let conv_dim = 2 * key_dim + value_dim;
-  let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
+  let total_proj_dim = 2 * key_dim + 2 * value_dim + 2 * num_v_heads;
   let dk_base = lane * 4;
 
   var q_offset = hk * DELTA_NET_HEAD_K_DIM + dk_base;

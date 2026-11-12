@@ -11,7 +11,6 @@ use crate::{
                 attention_gemm::{ATTENTION_GEMM_BLOCK_KEYS, ATTENTION_GEMM_SHARED_BYTES},
                 attention_two_pass::ATTENTION_TWO_PASS_BLOCKS,
             },
-            kernel::attention::VkAttentionManyQueries,
         },
     },
     data_type::DataType,
@@ -19,6 +18,11 @@ use crate::{
 
 const TWO_PASS_MAX_SUFFIX: u32 = 8;
 const GEMM_SPLIT_MAX_SUFFIX: u32 = 64;
+
+enum VkAttentionManyQueries {
+    Gemm([AttentionGemmVulkanKernel; 2]),
+    SinglePass([AttentionSinglePassVulkanKernel; 2]),
+}
 
 pub struct VkAttentionKernel {
     config: AttentionKernelConfig,
@@ -126,21 +130,19 @@ impl AttentionKernel for VkAttentionKernel {
         let partials = command_buffer.allocate_scratch_for_shape(&[rows, config.head_dim], DataType::F32)?;
         let sums = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
         let maxs = command_buffer.allocate_scratch_for_shape(&[rows], DataType::F32)?;
-        let (q_codes, q_scales, k_codes, k_scales, v_codes, v_scales) = (
-            VkBuffer::resolve_ref(input.query_codes),
-            VkBuffer::resolve_ref(input.query_scales),
-            VkBuffer::resolve_ref(input.k_codes),
-            VkBuffer::resolve_ref(input.k_scales),
-            VkBuffer::resolve_ref(input.v_codes),
-            VkBuffer::resolve_ref(input.v_scales),
-        );
-        let (partials_ref, sums_ref, maxs_ref) =
-            (VkBuffer::resolve_ref(&partials), VkBuffer::resolve_ref(&sums), VkBuffer::resolve_ref(&maxs));
+        let q_codes = VkBuffer::resolve_ref(input.query_codes);
+        let q_scales = VkBuffer::resolve_ref(input.query_scales);
+        let k_codes = VkBuffer::resolve_ref(input.k_codes);
+        let k_scales = VkBuffer::resolve_ref(input.k_scales);
+        let v_codes = VkBuffer::resolve_ref(input.v_codes);
+        let v_scales = VkBuffer::resolve_ref(input.v_scales);
+        let partials_ref = VkBuffer::resolve_ref(&partials);
+        let sums_ref = VkBuffer::resolve_ref(&sums);
+        let maxs_ref = VkBuffer::resolve_ref(&maxs);
         let is_trie = usize::from(arguments.trie.is_some());
         let trie = arguments.trie.map(VkBuffer::resolve_ref);
         let ring_params = arguments.cache.ring_params();
         let scale = config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt());
-        let gate = arguments.gate.zip(config.gate_row_stride);
         let command_buffer = &mut *command_buffer.debug_group("attention core");
         macro_rules! partials {
             ($kernel:expr $(, $blocks:expr)?) => {
@@ -180,10 +182,10 @@ impl AttentionKernel for VkAttentionKernel {
                 maxs_ref,
                 VkBuffer::resolve_ref(&output),
                 arguments.sinks.map(VkBuffer::resolve_ref),
-                gate.map(|(gate, _)| VkBuffer::resolve_ref(gate)),
+                arguments.gate.map(VkBuffer::resolve_ref),
                 config.num_q_heads,
                 suffix_length,
-                gate.map(|(_, gate_row_stride)| gate_row_stride),
+                config.gate_row_stride,
                 blocks,
                 command_buffer,
             );

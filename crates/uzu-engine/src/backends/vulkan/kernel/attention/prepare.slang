@@ -4,8 +4,6 @@ import common.workgroup_reduction;
 import generated.kv_layout;
 import generated.qkv_norm;
 
-static const uint ATTENTION_PREPARE_THREADS = 32;
-
 float prepare_norm<ElementT : IStorageFloat>(
   ElementT value,
   uint channel,
@@ -68,7 +66,6 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
   [[Specialize]] bool has_key_norm_scales,
   [[Specialize]] bool has_value_norm_scales,
 ) {
-  static_assert(ATTENTION_PREPARE_THREADS == SIMD_SIZE, "one group of Threads(32) per token and head");
   let is_query = head < num_q_heads;
   if (!append_kv && !is_query) {
     return;
@@ -95,7 +92,7 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
         squares += value * value;
       }
     }
-    inverse_rms = rms_inverse<ATTENTION_PREPARE_THREADS>(squares, HEAD_DIM, norm_params.epsilon[norm]);
+    inverse_rms = rms_inverse<SIMD_SIZE>(squares, HEAD_DIM, norm_params.epsilon[norm]);
   }
   float values[ATTENTION_DIMS];
   for (uint a = 0; a < dims; a++) {
@@ -114,9 +111,9 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
     }
     values[a] = element;
   }
-  attention_rotate<ATTENTION_PREPARE_THREADS>(values, dims, lane);
+  attention_rotate<SIMD_SIZE>(values, dims, lane);
   int codes[ATTENTION_DIMS];
-  let scale = attention_quantize<ATTENTION_PREPARE_THREADS>(values, dims, codes);
+  let scale = attention_quantize<SIMD_SIZE>(values, dims, codes);
 
   if (is_query) {
     let gqa_factor = num_q_heads / num_kv_heads;

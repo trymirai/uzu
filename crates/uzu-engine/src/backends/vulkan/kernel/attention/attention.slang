@@ -74,48 +74,6 @@ public bf16 attention_quantize<let THREADS : uint>(float values[ATTENTION_DIMS],
   return scale;
 }
 
-public uint4 attention_code_words<T>(Ptr<T, Access.Read> codes, uint element, uint count) {
-  if (count == 16) {
-    return load_aligned<uint4, 16>(codes, element);
-  }
-  if (count == 8) {
-    return uint4(load_aligned<uint2, 8>(codes, element), 0, 0);
-  }
-  if (count == 4) {
-    return uint4(load_aligned<uint, 4>(codes, element), 0, 0, 0);
-  }
-  return uint4(uint(load_aligned<uint16_t, 2>(codes, element)), 0, 0, 0);
-}
-
-public float attention_key_code(uint4 words, uint index) {
-  return float(asint(words[index / 4] << (24 - 8 * (index % 4))) >> 24);
-}
-
-public float attention_value_code(uint4 words, uint index) {
-  return float(int((words[index / 4] >> (8 * (index % 4))) & 0xffu) - int(V_CODE_BIAS));
-}
-
-float attention_sum(float x) {
-  return segment_reduce<Sum<float>, ATTENTION_THREADS>(x, SIMD_SIZE);
-}
-
-float attention_score<Keys: IAttentionKeys>(
-  Keys source,
-  bool used,
-  uint key,
-  float query[ATTENTION_DIMS],
-  uint first,
-  uint dims
-) {
-  var partial = 0.0;
-  if (used) {
-    for (uint a = 0; a < dims; a++) {
-      partial += query[a] * source.key(key, first + a);
-    }
-  }
-  return attention_sum(partial);
-}
-
 public float2 attention_single_query<Keys: IAttentionKeys>(
   Keys source,
   uint head_dim,
@@ -146,7 +104,13 @@ public float2 attention_single_query<Keys: IAttentionKeys>(
       key = base + group;
       used = source.used(key);
     }
-    let dot = attention_score(source, used, key, query, first, dims);
+    var partial = 0.0;
+    if (used) {
+      for (uint a = 0; a < dims; a++) {
+        partial += query[a] * source.key(key, first + a);
+      }
+    }
+    let dot = segment_reduce<Sum<float>, ATTENTION_THREADS>(partial, SIMD_SIZE);
     if (used) {
       let score = dot * query_scale * source.key_scale(key);
       let next = max(max_score, score);
@@ -169,11 +133,13 @@ public float2 attention_single_query<Keys: IAttentionKeys>(
   let entry = attention_max[lane];
   let largest = segment_reduce<Max<float>, ATTENTION_THREADS>(entry, SIMD_SIZE);
   let factor = entry == NEGATIVE_INFINITY ? 0.0 : exp(entry - largest);
-  let denominator = attention_sum(attention_normalizer[lane] * factor);
+  let denominator = segment_reduce<Sum<float>, ATTENTION_THREADS>(attention_normalizer[lane] * factor, SIMD_SIZE);
   for (uint a = 0; a < dims; a++) {
     attention_outputs[lane * SIMD_SIZE + group] = accumulators[a];
     GroupMemoryBarrierWithGroupSync();
-    let numerator = attention_sum(attention_outputs[group * SIMD_SIZE + lane] * factor);
+    let numerator = segment_reduce<Sum<float>, ATTENTION_THREADS>(
+      attention_outputs[group * SIMD_SIZE + lane] * factor, SIMD_SIZE
+    );
     GroupMemoryBarrierWithGroupSync();
     if (lane == 0) {
       attention_numerators[group * dims + a] = numerator;
