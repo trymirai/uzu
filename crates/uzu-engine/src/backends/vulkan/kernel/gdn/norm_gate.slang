@@ -3,9 +3,6 @@ import common.activation;
 import common.workgroup_reduction;
 import generated.activation_type;
 
-// In place, one workgroup per (token, head): element i becomes T(o_i rms_inverse norm_weight[i] silu(z_i)), rounded only
-// at the end; each invocation rereads only the elements it squared, after the reduction's barriers.
-
 static const uint DELTA_NET_NORM_GATE_THREADS = 128;
 
 [[Variants("T", "float, bf16")]]

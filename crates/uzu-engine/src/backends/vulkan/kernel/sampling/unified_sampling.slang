@@ -6,14 +6,12 @@ import common.workgroup_reduction;
 static const uint UNIFIED_SAMPLING_THREADS = 1024;
 static const uint UNIFIED_SAMPLING_ITERATIONS = 64;
 
-// The numeric order of FP32 values as integer keys, subnormals kept: signed zeros equal, NaN 0, below -infinity's key.
 uint unified_sampling_key(float value) {
   let bits = asuint(value);
   let magnitude = bits & 0x7fffffffu;
   return magnitude > 0x7f800000u ? 0u : float_order_key(magnitude == 0 ? 0u : bits);
 }
 
-// A token's logit masked to -infinity, then scaled by the inverse temperature.
 float unified_sampling_value<T : IStorageFloat>(
   Ptr<T, Access.Read> logits,
   uint logits_offset,
@@ -34,7 +32,6 @@ float unified_sampling_value<T : IStorageFloat>(
   return has_temperature ? value * inverse_temperature : value;
 }
 
-// The (key, index) candidate with the largest key and then the lowest index.
 struct UnifiedSamplingArgmax : IReduction {
   typealias Value = uint2;
   static uint2 combine(uint2 a, uint2 b) {
@@ -46,9 +43,6 @@ struct UnifiedSamplingArgmax : IReduction {
   }
 }
 
-// One sweep over the row by this invocation: tokens outranking `rank` (by value, then lower index; (0, 0) admits every
-// number) compete by Gumbel-perturbed score for `best`. The first sweep gathers the running (maximum, normalizer), later
-// ones count competitors and sum exp(value - maximum). Tokens column + 1024 w share one Philox counter (sampling_index).
 void unified_sampling_sweep<T : IStorageFloat>(
   Ptr<T, Access.Read> logits,
   uint logits_offset,
@@ -133,9 +127,6 @@ void unified_sampling_sweep<T : IStorageFloat>(
   }
 }
 
-// Candidate refinement under independent top-k, top-p and min-p filters: while a filter rejects the Gumbel argmax, the
-// next is the argmax among the tokens outranking it, up to 64 candidates, the last returned unfiltered. Token 0 where no
-// candidate is defined or a filter retains nothing.
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]] [[Precondition("encode", "vocab_size > 0")]]
 func UnifiedSampling<T : IStorageFloat>(

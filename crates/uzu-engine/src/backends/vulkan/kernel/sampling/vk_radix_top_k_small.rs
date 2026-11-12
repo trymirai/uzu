@@ -12,15 +12,12 @@ use crate::backends::{
 
 const _: () = assert!(RADIX_TOP_K_MAX_K == MAX_K);
 
-/// The columns of a row each workgroup scans, so a row spreads over enough workgroups to use the whole GPU.
 const COLUMNS_PER_PARTITION: u32 = 8192;
 
 pub struct VkRadixTopKSmall {
     pass: RadixTopKSmallPassVulkanKernel,
     collect: RadixTopKSmallCollectVulkanKernel,
-    /// Orders each row's k keys by score, then column.
     sort_by_score: RadixTopKSmallSortVulkanKernel,
-    /// Orders each row's k keys by column.
     sort_by_column: RadixTopKSmallSortVulkanKernel,
 }
 
@@ -58,9 +55,6 @@ impl RadixTopKSmall for VkRadixTopKSmall {
         command_buffer.encode_fill(&mut counts, 0);
         let (output_ids, output_ids_range) = output_ids.parts();
         let (output_scores, output_scores_range) = output_scores.parts();
-        // SAFETY: the common contract makes callers pass [rows, columns] input of the kernels' type and u32/f32
-        // [rows, k] outputs that do not alias; the scratch above holds each row's histogram of every pass, its count and
-        // its k keys, which the kernels index alone.
         unsafe {
             for pass in 0..RADIX_TOP_K_PASSES {
                 self.pass.encode(

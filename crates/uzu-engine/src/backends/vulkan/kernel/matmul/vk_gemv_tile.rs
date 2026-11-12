@@ -3,8 +3,6 @@ use crate::backends::{
     vulkan::gpu_types::{gemm::GEMV_INPUT_ROW_TILE, gemm_b_layout::GemmBLayout},
 };
 
-// Full-precision GEMV accumulates four K values per SIMD lane, so one full
-// vectorized K block is 4 * 32 lanes.
 const FP_K_BLOCK: u32 = 128;
 const DEFAULT_RESULTS_PER_SIMDGROUP: u32 = 4;
 const DEFAULT_NUM_SIMDGROUPS: u32 = 8;
@@ -14,13 +12,9 @@ pub struct VkGemvTile {
     pub input_aligned: bool,
     pub full_tile: bool,
     pub lane_layout: bool,
-    /// SIMD groups launched in one threadgroup.
     pub num_simdgroups: u32,
-    /// Output rows computed by each SIMD group.
     pub results_per_simdgroup: u32,
-    /// Input rows processed by one threadgroup.
     pub input_row_tile: u32,
-    /// SIMD lanes cooperating on one quantization group.
     pub group_lanes: u32,
 }
 
@@ -46,8 +40,6 @@ impl VkGemvTile {
     }
 }
 
-/// Lane-sliced tiles split each quantization group across reduction lanes.
-/// A lane stages 8 bytes: 16 W4 values or 8 W8 values.
 const fn lane_default(
     bits: u32,
     group: u32,
@@ -74,7 +66,6 @@ fn gathered_tile(
 }
 
 impl VkGemvTile {
-    /// The reader tile for shapes outside the lane layout: 8 outputs of one row per workgroup of 8 simdgroups.
     pub fn reader() -> Self {
         let mut tile = Self::new(8, 1, 1);
         tile.lane_layout = false;
@@ -91,7 +82,6 @@ impl VkGemvTile {
         selected
     }
 
-    /// The narrow tile for one BF16 row from tiled B in whole lane runs, else the general tile, else the reader.
     pub fn quantized(
         shape: &MatmulShape,
         b_layout: GemmBLayout,
@@ -104,8 +94,6 @@ impl VkGemvTile {
         } else if gathered {
             gathered_tile(bits, group, m, n)
         } else if matches!(group, 16 | 32 | 64 | 128) {
-            // A BF16 tile takes every input row at once, so each weight load serves all of them; fewer output rows per
-            // lane bound the accumulators to 16 per lane.
             let mut tile = lane_default(bits, group);
             if bf16_io && (2..=GEMV_INPUT_ROW_TILE).contains(&m) {
                 tile.input_row_tile = m;
@@ -120,7 +108,6 @@ impl VkGemvTile {
         } else {
             8
         };
-        // A row from tiled B: 8 outputs a workgroup on 4 simdgroups, so a small n still occupies every unit.
         let narrow =
             bf16_io && m == 1 && b_layout == GemmBLayout::Tiled && !gathered && (group / 2).is_multiple_of(lane_run);
         match general {
@@ -131,7 +118,6 @@ impl VkGemvTile {
         .finished(group, m, n, k)
     }
 
-    /// The tile with the K alignment and whole-tile flags the shape allows; neither applies outside the lane layout.
     fn finished(
         mut self,
         group: u32,

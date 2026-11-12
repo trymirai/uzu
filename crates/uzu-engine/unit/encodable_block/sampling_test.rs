@@ -156,7 +156,6 @@ fn sampling_largest_uniform_has_finite_noise() {
     let mut logits = vec![half::bf16::from_f32(-1000.0); vocab_size];
     logits[29708] = half::bf16::from_f32(0.0);
     logits[86947] = half::bf16::from_f32(256.0);
-    // This key gives token 29708 the largest 24-bit uniform, 1-2^-24. Its finite noise cannot bridge this logit gap.
     let seeds = [8854322454206676223];
     let method = SamplingMethod::Stochastic {
         temperature: None,

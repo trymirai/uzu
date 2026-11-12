@@ -3,13 +3,9 @@ import common.activation_quantization;
 import common.hadamard;
 import generated.activation_transform;
 
-// Random Hadamard transform of each row, one workgroup per tile: input transforms apply the factors before the FP32
-// transform, output transforms after it. The result rounds to T, then the bias adds in FP32 and rounds to T again.
-// Tiles past the row hold zeros so every invocation reaches every barrier.
 [[Variants("T", "float, bf16")]]
 [[Variants("BiasT", "float, bf16")]]
 [[Kernel]] [[Public]]
-// Packed-half activations feed Metal's matmuls only; no Vulkan plan reads them.
 [[Precondition("new", "ops != ActivationTransformOp::PackHalf")]]
 [[Precondition("new", "!in_place || ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht")]]
 [[Precondition("new", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
@@ -50,7 +46,6 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   float value = 0.0;
   int factor = 0;
   if (active) {
-    // In place, each invocation reads only the element it writes.
     value = in_place_load(input, fp_out, index, in_place);
     factor = rht_factors[column];
     if (input_rht) {
@@ -85,8 +80,6 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   }
 }
 
-// The Quantize ops without the rotation, for matmuls that quantize their own full-precision A: rows whose producer
-// already applied any transform the weights expect. Group sums are emitted where sum_group_size is nonzero.
 [[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]

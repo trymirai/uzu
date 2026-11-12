@@ -2,11 +2,6 @@ import definitions;
 import common.activation;
 import generated.activation_type;
 
-// In place on in_proj, one invocation per (token tile, channel c < conv_dim): its window starts as the tile's packed rows
-// (see DeltaNetConvPack), so tiles are independent. Each token of the tile accumulates in FP32 from the bias (or +0) over
-// the window taps then the token, stores SiLU as T once and slides the token into the window; the last tile writes the
-// window to state_out[c, :]. Columns past conv_dim are untouched.
-
 static const uint DELTA_NET_CONV_SCAN_TAPS = 3;
 
 [[Variants("T", "float, bf16")]]

@@ -2,8 +2,6 @@ import definitions;
 import matmul.gemv.common.arguments;
 import matmul.gemv.common.tile;
 
-// The 4 values at element `offset` of `source` in FP32, one load where `vector`: rows of a K that is not a multiple of
-// 4 are not 4-value aligned.
 float4 gemv_load4<T : IStorageFloat>(Ptr<T, Access.Read> source, uint offset, bool vector) {
   if (vector) {
     if (__naturalStrideOf<T>() == 4) {

@@ -3,12 +3,6 @@ import common.ranking;
 import common.workgroup_reduction;
 import generated.radix_top_k;
 
-// The k largest of each row by 8-bit radix digits over a unique descending key, spread over `partitions` workgroups per
-// row so the reads use the whole GPU. A pass dispatch counts its partition's keys under the radix prefix into the row's
-// histogram of that pass. Workgroups never wait on each other: each replays the earlier passes' digit choices from
-// their histograms, which the dispatch boundaries make visible. Collect then appends the k keys at or above the final
-// prefix, and Sort orders them by key or by column.
-
 static const uint RADIX_TOP_K_THREADS = 256;
 static const uint RADIX_TOP_K_SCORE_PASSES = 2;
 
@@ -19,8 +13,6 @@ groupshared uint2 radix_top_k_mask;
 groupshared uint radix_top_k_rank;
 groupshared uint radix_top_k_done;
 
-// The unique descending key of a column: x the f32::total_cmp key of its widened BF16, y the inverted column, so a lower
-// column ranks higher on equal scores. Every valid x is nonzero, so uint2(0, 0) is below all keys.
 uint2 radix_top_k_key(Ptr<bf16, Access.Read> input, uint row_offset, uint column) {
   return uint2(float_order_key(input[row_offset + column].storageBits() << 16), ~column);
 }
@@ -29,20 +21,14 @@ bool radix_top_k_above(uint2 a, uint2 b) {
   return a.x > b.x || (a.x == b.x && a.y > b.y);
 }
 
-// Whether `a` precedes `b` in the output: the higher key first, or the lower column when the output is in column order.
-// The padding key uint2(0, 0) follows every key either way.
 bool radix_top_k_precedes(uint2 a, uint2 b, bool sorted) {
   return sorted ? radix_top_k_above(a, b) : a.y > b.y;
 }
 
-// The bit shift of `pass`'s digit within its half of the key.
 uint radix_top_k_shift(uint pass) {
   return 24 - 8 * (pass < RADIX_TOP_K_SCORE_PASSES ? pass : pass - RADIX_TOP_K_SCORE_PASSES);
 }
 
-// The radix prefix, mask and remaining rank of the k-th largest key after `passes` passes, chosen from their histograms;
-// `radix_top_k_done` once a bucket holds exactly the remaining keys. Invocation i in subgroup_invocation order takes
-// bucket 255 - i, so the keys of the higher buckets precede its own.
 void radix_top_k_replay(Ptr<uint, Access.ReadWrite> histograms, uint row, uint k, uint passes) {
   static_assert(RADIX_TOP_K_SCORE_PASSES + 4 == RADIX_TOP_K_PASSES, "two score passes, four column passes");
   static_assert(RADIX_TOP_K_THREADS == RADIX_TOP_K_BUCKETS, "an invocation per bucket");
@@ -87,7 +73,6 @@ void radix_top_k_replay(Ptr<uint, Access.ReadWrite> histograms, uint row, uint k
   }
 }
 
-// This partition's columns of the row: an equal share of `columns`.
 uint2 radix_top_k_partition(uint columns, uint partitions, uint partition) {
   return uint2(columns * partition / partitions, columns * (partition + 1) / partitions);
 }
@@ -128,7 +113,6 @@ func RadixTopKSmallPass(
   }
 }
 
-// Appends the row's k keys at or above the final prefix, in any order, each as its x and y words.
 [[Kernel]]
 [[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns && partitions > 0")]]
 func RadixTopKSmallCollect(
@@ -152,7 +136,6 @@ func RadixTopKSmallCollect(
     if (!radix_top_k_above(threshold, key)) {
       uint slot;
       InterlockedAdd(counts[row], 1u, slot);
-      // The final prefix admits exactly k unique keys.
       if (slot < k) {
         let at = 2 * (row * k + slot);
         keys[at] = key.x;
@@ -162,7 +145,6 @@ func RadixTopKSmallCollect(
   }
 }
 
-// Bitonic-sorts each row's k keys in shared memory, by key or by column, and writes their columns and scores.
 [[Kernel]]
 [[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K")]]
 func RadixTopKSmallSort(

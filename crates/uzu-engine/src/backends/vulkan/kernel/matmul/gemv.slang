@@ -15,12 +15,6 @@ import matmul.gemv.common.quant_b_source;
 import matmul.gemv.common.reduce;
 import matmul.gemv.common.tile;
 
-// Rows of A against n rows of B, full precision or U4/U8 codes (the B prologue), with gathered B rows. LANE_LAYOUT reads
-// contiguous B rows through FullPrecisionBSource or QuantBSource; other shapes use gemv_body, where GEMV_LANES
-// invocations in subgroup_invocation order stride K for each of GEMV_OUTPUTS outputs of one A row.
-
-// Full-precision B element (row, inner) at row row_stride + inner inner_stride, the CPU MatmulKernel's index for
-// transposed B of any leading dimension (stride ld, 1) and for B that is not transposed (1, ld).
 struct StridedOperand<T : IStorageFloat> : IMatmulOperand {
   Ptr<T, Access.Read> values;
   uint row_stride;
@@ -32,7 +26,6 @@ struct StridedOperand<T : IStorageFloat> : IMatmulOperand {
 }
 
 static const uint GEMV_THREADS = 256;
-// Output rows per workgroup, as the binding's group count n.div_ceil(8) assumes.
 static const uint GEMV_OUTPUTS = 8;
 static const uint GEMV_LANES = GEMV_THREADS / GEMV_OUTPUTS;
 
@@ -168,16 +161,11 @@ func Gemv<A: IStorageFloat, B: IStorageFloat, D: IStorageFloat>(
   Epilogue.store(result, ops, params, Tile, tile, FULL_TILE);
 }
 
-// A8 activations (MatmulA::Int8Symmetric) against U4 codes or U8 symmetric codes, its own entry point so the integer
-// dot product capability stays out of the float modules. A workgroup computes 8 ROWS rows for INPUT_ROWS inputs; a lane
-// folds the exact integer dots of its 32-value runs, each in one weight group, as int8_fold does.
 static const uint GEMV_INT8_SIMDGROUPS = 8;
 static const uint GEMV_INT8_RUN = 32;
 
-// Split rows' partials: 256 for each row an invocation holds.
 groupshared float gemv_int8_partials[2 * GEMV_THREADS];
 
-// Eight words of the `count` bytes (16 or 32) at byte `start` of `source`, one 16-byte load per 4, +0 past `count`.
 void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, out uint words[8]) {
   [unroll]
   for (uint half = 0; half < 2; half++) {
@@ -196,14 +184,6 @@ void gemv_int8_words(Ptr<uint8_t, Access.Read> source, uint start, uint count, o
   }
 }
 
-// GemvInt8, invocation `invocation` of 256 in subgroup order: each output row of the workgroup's 8 ROWS lies in a slot
-// of `held` rows taken by `parts` consecutive invocations, which split its runs and fold them for each of the
-// INPUT_ROWS inputs; each invocation reads its rows' codes once for every input and each input's activations once for
-// its rows. Split rows, of one input or 8 or more a simdgroup, hold one row, or two under several inputs, and sum their
-// partials through shared memory an input at a time; consecutive invocations so read consecutive rows' group metadata.
-// Otherwise a simdgroup holds its ROWS rows, its lanes every 32nd run, which segment_reduce sums. `has_rht`, of one
-// input, finishes with ActivationTransform's output transform of the workgroup's whole 32-row blocks, then the bias:
-// the outputs, rounded as stored, pass through shared memory to the transform's invocations.
 [[Variants("B", "float, bf16")]]
 [[Variants("D", "float, bf16")]]
 [[Kernel]]
@@ -257,7 +237,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
   let scale_bias = method == QuantizationMethod.ScaleBias;
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
-  // Under the output transform the bias adds after it.
   GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
   let split = INPUT_ROWS == 1 || ROWS >= 8;
   let held = split ? (INPUT_ROWS > 1 ? 2u : 1u) : ROWS;
@@ -269,7 +248,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
   uint rows[4];
   [ForceUnroll]
   for (uint R = 0; R < 4; R++) {
-    // Gathered outputs of the one input row read the B rows its indices name.
     let clamped_row = min(first_row + R, n - 1);
     rows[R] = gathered && R < held ? gather[first_input * n + clamped_row] : clamped_row;
   }
@@ -286,7 +264,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
   for (uint run = part; run < k / GEMV_INT8_RUN; run += parts) {
     let column = run * GEMV_INT8_RUN;
     let group = column / group_size;
-    // A group's first run adds its ScaleBias correction.
     let head = scale_bias && column % group_size == 0;
     WeightGroup metadata[4];
     uint words[4][8];
@@ -302,7 +279,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
     [ForceUnroll]
     for (uint I = 0; I < GEMV_MAX_INPUT_ROWS; I++) {
       let input = first_input + I;
-      // A tile's first input is below m.
       if (I < INPUT_ROWS && (I == 0 || input < m)) {
         uint activation[8];
         gemv_int8_words(codes, input * k + column, GEMV_INT8_RUN, activation);
@@ -339,7 +315,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
     }
   }
   if (!split) {
-    // Lane I ROWS + R of each simdgroup finishes output row R of input I.
     var value = 0.0;
     [unroll]
     for (uint I = 0; I < INPUT_ROWS; I++) {
@@ -359,7 +334,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
     }
     return;
   }
-  // Invocation `part` < held of a slot finishes the slot's row `part`.
   let row_local = slot * held + part;
   let output_row = first_row + part;
   [ForceUnroll]
@@ -387,7 +361,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
         stored = output.toFloat();
       }
       if (has_rht) {
-        // Every invocation has read its row's partials before the stored outputs overwrite them.
         GroupMemoryBarrierWithGroupSync();
         if (part < held) {
           gemv_int8_partials[row_local] = stored;
@@ -396,7 +369,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
         let rows = GEMV_INT8_SIMDGROUPS * ROWS;
         let column = output_tile * rows + invocation;
         let value = hadamard_transform<GEMV_THREADS>(invocation < rows ? gemv_int8_partials[invocation] : 0.0);
-        // n is whole blocks, so a block lies wholly in or past it.
         if (invocation < rows && column < n) {
           var output = hadamard_factor(value, rht_factors[column]);
           if (has_bias) {
@@ -405,7 +377,6 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
           d[input * n + column] = D.fromFloat(output);
         }
       } else if (I + 1 < INPUT_ROWS) {
-        // Every invocation has read its row's partials before the next input's overwrite them.
         GroupMemoryBarrierWithGroupSync();
       }
     }

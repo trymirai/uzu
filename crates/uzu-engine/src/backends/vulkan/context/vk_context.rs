@@ -32,9 +32,7 @@ use crate::backends::{
 };
 
 const VK_LAYER_KHRONOS_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
-/// The only Vulkan version the backend targets; Ash 0.38 predates it.
 const API_VERSION_1_4: u32 = vk::make_api_version(0, 1, 4, 0);
-/// The file name every pipeline cache starts with, followed by its shader build's SPIR-V hash.
 const PIPELINE_CACHE_PREFIX: &str = "vulkan-pipeline-cache";
 const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
     vk::BufferUsageFlags::STORAGE_BUFFER.as_raw()
@@ -46,44 +44,28 @@ pub struct VkContext {
     weak_self: Weak<VkContext>,
     _entry: ash::Entry,
     instance: ash::Instance,
-    /// The debug messenger's user data, so it outlives the instance.
     debug_messages: Box<VkDebugMessages>,
     physical_device: VkPhysicalDevice,
     command_buffer_resources: Mutex<Vec<VkCommandBufferResources>>,
-    /// Generated pipelines by recipe, held weakly: each lives while an owner or pending command buffer keeps it.
     compute_pipelines: Mutex<HashMap<VkComputePipelineKey, Weak<VkComputePipeline>>>,
-    /// Compiled pipelines, loaded from the file and saved back to it when they differ from the data it held, by hash.
     pipeline_cache: vk::PipelineCache,
     pipeline_cache_file: Option<(PathBuf, u64)>,
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
-    /// Command-buffer labels, where the instance has VK_EXT_debug_utils.
     debug_utils_device: Option<ext::debug_utils::Device>,
     timestamp_valid_bits: u32,
-    /// Reads the device clock, where the device has calibrated timestamps: vkGetCalibratedTimestampsKHR, or the EXT
-    /// function with the same signature.
     calibrated_timestamps: Option<vk::PFN_vkGetCalibratedTimestampsKHR>,
     device: ash::Device,
     memory_allocator: ManuallyDrop<vk_mem::Allocator>,
     peak_buffer_bytes: AtomicUsize,
-    /// The scratch pool every allocation pool shares while one is alive. Each command buffer begins with a barrier
-    /// against all earlier submissions to the queue, so pages released by one serve the next, and steady decoding
-    /// allocates no device memory. Weak, as its pages hold the context.
     allocation_pool: Mutex<Weak<PoolAllocator<Arc<VkBuffer>>>>,
-    /// Command buffers recording or ended but not submitted: an encoding submits segments early only while it is the
-    /// only one, so they never pass a command buffer recorded or ended before them.
     unsubmitted_command_buffers: AtomicUsize,
     queue: Mutex<vk::Queue>,
     queue_family_index: u32,
-    /// Submissions keep the context alive, so its completion thread is idle by the time the context drops this sender.
     completion: mpsc::Sender<VkCommandBufferSubmission>,
-    /// The first error of GPU work nobody awaited, such as uploads (`GlobalBufferCpuGpu::handoff`) and weight repacks:
-    /// every later command buffer and completion fails with it, as the buffers that work wrote may hold wrong data.
     failure: OnceLock<String>,
 }
 impl VkContext {
-    /// `pipeline_cache_path` is where compiled pipelines persist between runs; `None` compiles each one again in every
-    /// process.
     fn with_settings(
         with_validation: bool,
         pipeline_cache_path: Option<PathBuf>,
@@ -121,7 +103,6 @@ impl VkContext {
                 device.destroy_device(None);
                 dispose_instance();
             })?;
-        // The allocator's buffer budgets: the OS's limit on each heap, where the device reports it.
         let memory_budget = physical_device.capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET);
         let memory_allocator = create_memory_allocator(&instance, &device, physical_device.device, memory_budget)
             .inspect_err(|_| unsafe {
@@ -166,7 +147,6 @@ impl VkContext {
         }))
     }
 
-    /// Fails every later command buffer and completion with the first error of GPU work nobody awaited.
     pub fn fail(
         &self,
         error: Error,
@@ -174,7 +154,6 @@ impl VkContext {
         self.failure.get_or_init(|| error.to_string());
     }
 
-    /// Fails with the first error of GPU work nobody awaited.
     pub fn check_failure(&self) -> Result<(), VkContextError> {
         self.failure.get().map_or(Ok(()), |failure| Err(VkContextError::Failed(failure.clone())))
     }
@@ -186,7 +165,6 @@ impl VkContext {
         Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Readback)?))
     }
 
-    /// The `Arc` that `with_settings` created and that owns this context; it is alive while `&self` is.
     pub fn arc(&self) -> Arc<Self> {
         self.weak_self.upgrade().expect("a VkContext is always owned by the Arc that created it")
     }
@@ -195,7 +173,6 @@ impl VkContext {
         self.debug_utils_device.as_ref()
     }
 
-    /// Returns reset command resources: a cached set when one is idle, otherwise a new set.
     pub fn acquire_command_buffer_resources(&self) -> Result<VkCommandBufferResources, Error> {
         let Some(mut resources) = self.command_buffer_resources.lock().pop() else {
             return Ok(VkCommandBufferResources::new(&self.device, self.queue_family_index)?);
@@ -207,8 +184,6 @@ impl VkContext {
         Ok(resources)
     }
 
-    /// # Safety
-    /// The resources must come from this context and must not be pending on the GPU.
     pub unsafe fn recycle_command_buffer_resources(
         &self,
         resources: VkCommandBufferResources,
@@ -216,7 +191,6 @@ impl VkContext {
         self.command_buffer_resources.lock().push(resources);
     }
 
-    /// The live pipeline of this recipe or a new one; concurrent first requests may each compile, the first one wins.
     pub fn compute_pipeline(
         &self,
         key: VkComputePipelineKey,
@@ -226,11 +200,9 @@ impl VkContext {
             return Ok(pipeline);
         }
         let pipeline = Arc::new(VkComputePipeline::new(self.arc(), &key)?);
-        // Validation errors of the module and pipeline are this creation's, not the next completed command buffer's.
         if let Some(message) = self.take_validation_error() {
             return Err(Error::Validation(message));
         }
-        // A losing `pipeline` drops after the guard.
         let published = {
             let mut pipelines = self.compute_pipelines.lock();
             pipelines.retain(|_, cached| cached.strong_count() > 0);
@@ -253,8 +225,6 @@ impl VkContext {
         &self.device
     }
 
-    /// Creates and binds a VMA buffer, then raises the peak to the bytes VMA has committed in device-memory blocks, of
-    /// the device-local heaps only on a discrete GPU.
     pub fn allocate_buffer(
         &self,
         size: vk::DeviceSize,
@@ -284,9 +254,6 @@ impl VkContext {
         Ok((buffer, allocation, allocator.get_allocation_info(&allocation)))
     }
 
-    /// # Safety
-    /// `buffer` and `allocation` must come from one `allocate_buffer` call on this context, must not be freed again,
-    /// and no pending GPU work or host pointer may still use them.
     pub unsafe fn free_buffer(
         &self,
         buffer: vk::Buffer,
@@ -295,7 +262,6 @@ impl VkContext {
         unsafe { self.memory_allocator.destroy_buffer(buffer, allocation) };
     }
 
-    /// Hold the guard only for queue submission: Vulkan requires external queue synchronization.
     pub fn queue(&self) -> MutexGuard<'_, vk::Queue> {
         self.queue.lock()
     }
@@ -304,24 +270,19 @@ impl VkContext {
         &self.completion
     }
 
-    /// Incremented by each encoding and executable for its lifetime.
     pub fn unsubmitted_command_buffers(&self) -> &AtomicUsize {
         &self.unsubmitted_command_buffers
     }
 
-    /// The time `ticks` of the device's timestamps take; tick differences wrap at the queue's valid bits.
     pub fn timestamp_duration(
         &self,
         ticks: u64,
     ) -> Duration {
-        // Vulkan 1.4's timestampComputeAndGraphics gives compute queues 36 to 64 valid bits.
         let ticks = ticks & (u64::MAX >> (64 - self.timestamp_valid_bits));
         let period = f64::from(self.physical_device.properties.limits.timestamp_period);
         Duration::from_nanos((ticks as f64 * period).round() as u64)
     }
 
-    /// One observation of the device clock: its value in timestamp ticks and the host instant halfway through reading
-    /// it. Without calibrated timestamps the clock is unknown.
     pub fn device_clock(&self) -> Result<(u64, Instant), Error> {
         let get_calibrated_timestamps =
             self.calibrated_timestamps.ok_or(VkCommandBufferError::UncalibratedTimestamps)?;
@@ -338,7 +299,6 @@ impl VkContext {
         &self.physical_device
     }
 
-    /// The validation layer's first error since the previous call; always `None` without validation.
     pub fn take_validation_error(&self) -> Option<String> {
         self.debug_messages.take_error()
     }
@@ -366,9 +326,7 @@ impl Context for VkContext {
     type Backend = Vulkan;
 
     async fn new() -> Result<Arc<Self>, Error> {
-        // Android loads layers only from an app's own package or on debuggable builds.
         let with_validation = cfg!(test) && !cfg!(target_os = "android");
-        // Tests leave the user's pipeline cache alone.
         let name = format!("{PIPELINE_CACHE_PREFIX}-{}.bin", env!("UZU_VULKAN_SPIRV_HASH"));
         let pipeline_cache_path = (!cfg!(test)).then(dirs::cache_dir).flatten().map(|dir| dir.join("uzu").join(name));
         Ok(VkContext::with_settings(with_validation, pipeline_cache_path)?)
@@ -409,7 +367,6 @@ impl Context for VkContext {
         Err(Error::NotSupported)
     }
 
-    /// Copies `buffer` into host-visible memory after the work submitted before it, and reads it once the copy completes.
     fn copyout<T: AnyBitPattern>(
         &self,
         buffer: impl BufferRef<Backend = Vulkan, Buffer = Arc<VkBuffer>>,
@@ -440,14 +397,10 @@ impl Context for VkContext {
         })
     }
 
-    /// Peak VMA-committed buffer block bytes, on a discrete GPU of its device-local heaps only; driver-owned memory
-    /// (pipelines, command pools, descriptors) is excluded.
     fn peak_memory_usage(&self) -> Option<usize> {
         Some(self.peak_buffer_bytes.load(Ordering::Relaxed))
     }
 
-    /// The budget VK_EXT_memory_budget reports left over this process's usage, on the heap of the memory type device
-    /// buffers take: other device-local heaps, such as a resizable BAR's, alias the same video memory.
     fn available_memory(&self) -> Option<usize> {
         if !self.physical_device.capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET) {
             return None;
@@ -479,8 +432,6 @@ impl Context for VkContext {
         DeviceCapabilities::empty()
     }
 }
-/// The instance, with VK_EXT_debug_utils for validation messages and debug labels wherever it is available, and whether
-/// it has the extension.
 fn create_instance(
     entry: &ash::Entry,
     validation: Option<&VkDebugMessages>,
@@ -518,8 +469,6 @@ fn create_instance(
     let instance = unsafe { entry.create_instance(&instance_info, None) }.map_err(VkContextError::InstanceCreate)?;
     Ok((instance, debug_utils))
 }
-/// The pipeline cache `path` holds and the hash of its data; empty where the file does not exist, and the driver ignores
-/// another device's data.
 fn create_pipeline_cache(
     device: &ash::Device,
     path: Option<&Path>,
@@ -535,9 +484,6 @@ fn create_pipeline_cache(
     let cache = unsafe { device.create_pipeline_cache(&info, None) }.map_err(VkContextError::PipelineCacheCreate)?;
     Ok((cache, BuildHasherDefault::<DefaultHasher>::default().hash_one(&data)))
 }
-/// Replaces `path` through a temporary file, so no reader sees a partial cache, unless the data hashes as loaded, then
-/// deletes the caches of other shader builds beside it. The cache only spares the next process its compiles, so a
-/// failed save is dropped by design.
 fn save_pipeline_cache(
     device: &ash::Device,
     cache: vk::PipelineCache,
@@ -590,7 +536,6 @@ fn get_physical_device(
 
     let device_opt = devices
         .into_iter()
-        // Older devices must not see the Vulkan 1.4 structures that querying chains.
         .filter(|&device| unsafe { instance.get_physical_device_properties(device) }.api_version >= API_VERSION_1_4)
         .map(|device| VkPhysicalDevice::new(entry, instance, device))
         .collect::<Result<Vec<_>, _>>()?
@@ -640,7 +585,6 @@ fn get_logical_device(
         device_extensions.push(ext::calibrated_timestamps::NAME.as_ptr());
     }
 
-    // Selection checked the optional features; Vulkan 1.4 makes the others mandatory.
     let vk10_features = vk::PhysicalDeviceFeatures::default().shader_int16(true);
     let mut vk11_features =
         vk::PhysicalDeviceVulkan11Features::default().storage_buffer16_bit_access(true).storage_push_constant16(true);

@@ -35,11 +35,8 @@ use crate::{
     data_type::DataType,
 };
 
-/// The K multiple Trellis B takes: Metal's GemmTrellis K step. TrellisGemv itself strides 128 columns and needs k % 4.
 const TRELLIS_K_STEP: u32 = 64;
 
-/// The common MatmulKernel over Gemv, Gemm (scalar and cooperative-matrix cores), their A8 variants and TrellisGemv,
-/// each pipeline compiled on first use for its specializations.
 pub struct VkMatmulKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
@@ -48,13 +45,11 @@ pub struct VkMatmulKernel {
     gemm: HashMap<([bool; 3], GemmBPrologue, GemmTiling, u32), GemmVulkanKernel>,
     gemm_tensor: HashMap<([bool; 3], GemmBPrologue, GemmTiling), GemmTensorVulkanKernel>,
     gemv_int8: HashMap<([bool; 5], GemmBPrologue, u32, u32, GemmBLayout), GemvInt8VulkanKernel>,
-    /// INT8 GEMM pipelines by flags, prologue, plan, split phase and weight layout.
     gemm_int8: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8VulkanKernel>,
     gemm_int8_nv: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8NvVulkanKernel>,
     gemm_int8_k16: HashMap<([bool; 4], GemmBPrologue, VkMatmulPlan, u32, GemmBLayout), GemmInt8K16VulkanKernel>,
     trellis: HashMap<TrellisFormat, TrellisGemvVulkanKernel>,
     output_rht: HashMap<bool, ActivationTransform<Vulkan>>,
-    /// Quantizers of full-precision A for GemvInt8, by code layout and group-sum size.
     quantize_a: HashMap<(bool, u32), ActivationQuantizeVulkanKernel>,
 }
 
@@ -94,7 +89,6 @@ impl MatmulKernel for VkMatmulKernel {
         })
     }
 
-    /// A8 where the integer kernels take the shape.
     fn select_activation_quantization(
         &self,
         shape: &MatmulShape,
@@ -127,8 +121,6 @@ impl MatmulKernel for VkMatmulKernel {
         }
     }
 
-    /// Stores 8-bit codes signed where A8 applies, then packs codes into tiles for integer GEMM in a new buffer that
-    /// replaces `weights`; returns the layout and whether the codes are signed.
     fn optimize_weights_layout(
         &self,
         a8_shape: &MatmulShape,
@@ -143,7 +135,6 @@ impl MatmulKernel for VkMatmulKernel {
             return Ok((GemmBLayout::RowMajor, a8_shape.signed_codes));
         }
         if !a8_shape.signed_codes && prepared_shape.signed_codes {
-            // Device-local codes flip on the host through a copy.
             let mut codes = wait(context.copyout::<u8>(&*weights))?;
             let (prefix, words, suffix) = bytemuck::pod_align_to_mut::<u8, u64>(&mut codes);
             words.iter_mut().for_each(|word| *word ^= 0x8080_8080_8080_8080);
@@ -163,17 +154,12 @@ impl MatmulKernel for VkMatmulKernel {
         let tiles = context.create_buffer_gpu(bytes as usize)?;
         let mut command_buffer = context.create_command_buffer(Some("prepare GEMM B layout"), None)?;
         let kernel = GemmPrepareBLayoutVulkanKernel::new(&context.arc())?;
-        // SAFETY: both ranges hold the n x k codes, row-major in `weights` and tiled in `tiles`, which do not alias.
         unsafe { kernel.encode((&*weights, 0..bytes), (&tiles, 0..bytes), k, n, bits / 2, &mut command_buffer) };
-        // Nothing waits: the command buffer holds the row-major codes until the GPU is done with them, and later ones
-        // run after it. As with `VkBufferInitializer::handoff`, an error it reports fails the context.
         drop(command_buffer.end_encoding().try_submit()?);
         *weights = tiles;
         Ok((GemmBLayout::Tiled, prepared_shape.signed_codes))
     }
 
-    /// Encodes the arguments by the baseline plan, checked against them before any pipeline is created or command
-    /// recorded. Trellis B has a single configuration and takes no plan.
     fn encode(
         &mut self,
         arguments: MatmulArguments<
@@ -248,9 +234,6 @@ impl MatmulKernel for VkMatmulKernel {
             let kernel = cached(&mut self.trellis, format, || {
                 TrellisGemvVulkanKernel::new(&context, format.vector_width, format.transition_bits, restart_columns)
             })?;
-            // SAFETY: the common contract makes callers pass Trellis A of [m, k] codes, [m, 4] column-group sums and m
-            // scales, n checked code rows of code_row_bytes(k), n row scales, the 5-value codebook and BF16 D rows of
-            // `row_stride`, D aliasing nothing.
             unsafe {
                 kernel.encode(
                     values,
@@ -273,8 +256,6 @@ impl MatmulKernel for VkMatmulKernel {
         if row_stride != n {
             return Err(precondition("Matmul", "output row stride == n outside Trellis"));
         }
-        // Full-precision A starts `offset` elements into its range, as the CPU reads it; A8 is its codes, scales, the
-        // group sums ScaleBias needs and the code layout.
         let (a_range, int8) = match a {
             MatmulA::FullPrecision {
                 values,
@@ -327,7 +308,6 @@ impl MatmulKernel for VkMatmulKernel {
         let physical_device = context.physical_device();
         let capabilities = physical_device.capabilities;
 
-        // B's words, prologue, metadata planes with strides and full-precision element strides; quantized B is [n, k].
         let b_layout = b.weights_layout();
         let (b_range, prologue, planes, b_strides) = match b {
             MatmulB::FullPrecision {
@@ -366,7 +346,6 @@ impl MatmulKernel for VkMatmulKernel {
                 ..
             } => unreachable!("Trellis B returned above"),
         };
-        // The kernels' vector loads of A, A8 codes and B assume 16-byte aligned starts, as allocations have.
         let aligned = |(buffer, range): &(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)| {
             (buffer.device_address() + range.start).is_multiple_of(16)
         };
@@ -393,7 +372,6 @@ impl MatmulKernel for VkMatmulKernel {
         let plan = VkMatmulPlan::baseline(&shape, b_layout, self.data_types(), physical_device);
         plan.check(&shape, b_layout, self.data_types(), physical_device)
             .map_err(|reason| precondition("Matmul", reason))?;
-        // GemvInt8 of full-precision A first quantizes it to scratch A8 by the shape's A8 contract.
         let quantized_a = match (plan, &a_range) {
             (
                 VkMatmulPlan::GemvInt8 {
@@ -415,7 +393,6 @@ impl MatmulKernel for VkMatmulKernel {
                 let kernel = cached(&mut self.quantize_a, key, || {
                     ActivationQuantizeVulkanKernel::new(&context, input_type, key.0, ACTIVATION_SCALE_GROUP_SIZE, key.1)
                 })?;
-                // SAFETY: A holds m rows of k values; the scratch holds their codes, scales and group sums.
                 unsafe {
                     kernel.encode(
                         values.clone(),
@@ -442,20 +419,13 @@ impl MatmulKernel for VkMatmulKernel {
                 )
             })
         });
-        // The output transform, and the bias after it, finish in the epilogue where the plan fuses them.
         let rht = rht_factors.filter(|_| plan.fuses_output_rht()).map(VkBuffer::resolve_ref);
         let (has_bias, bias_range) = match rht {
             Some(_) => (bias.is_some(), bias.map(VkBuffer::resolve_ref)),
             None => (has_bias, bias_range),
         };
 
-        // SAFETY (every dispatch below): the common contract makes callers pass A of [m, k] elements from `offset` or
-        // A8 codes of [m, k] with their [m, k / 128] scales and [m, k / group] group sums, B of n rows at the given
-        // strides or n rows of k packed codes with their metadata planes at the given strides, D of [m, n], n bias
-        // values and [m, n] gather indices below B's rows, D aliasing nothing; A8 split K's partials are fresh scratch
-        // of their shape.
         if let Some((codes, a_scales, group_sums, scale_group_size, code_layout)) = int8 {
-            // The plan check took the shape's A8 contract; the activations' own layout is checked here.
             if scale_group_size != ACTIVATION_SCALE_GROUP_SIZE
                 || Some(code_layout) != Int8CodeLayout::for_right_bits(bits)
                 || (scheme == GemmBPrologueKind::ScaleBiasDequant) != group_sums.is_some()
@@ -535,14 +505,12 @@ impl MatmulKernel for VkMatmulKernel {
                     .then(|| command_buffer.allocate_scratch_for_shape(&[splits * m * n], DataType::U32))
                     .transpose()?;
                 let partials_range = partials.as_ref().map(VkBuffer::resolve_ref);
-                // One whole-K phase, or split K's partial phase then its reduction, ordered by the `partials` barrier.
                 let phases = if splits == 1 {
                     0..1
                 } else {
                     1..3
                 };
                 let flags = [has_scale, has_bias, has_soft_cap, rht.is_some()];
-                // The same arguments for every core and phase.
                 macro_rules! gemm_int8 {
                     ($cache:expr, $kernel:ident, $phase:ident $(, $depth:expr, $prefetch:expr, $k_slices:expr)?) => {{
                         let kernel =
@@ -595,7 +563,6 @@ impl MatmulKernel for VkMatmulKernel {
                         }
                     }};
                 }
-                // 16 x 16 x 32 matrices before 16 x 16 x 16 ones where the device reports both.
                 for phase in phases {
                     if element_fold {
                         gemm_int8!(self.gemm_int8_nv, GemmInt8NvVulkanKernel, phase, stage_depth, prefetch, k_slices);
@@ -788,7 +755,6 @@ fn cached<K: Eq + Hash, V>(
     })
 }
 
-/// The GemmAlignment bits of whole M, N and K blocks of the scalar tiling.
 fn alignment(
     tiling: GemmTiling,
     m: u32,
@@ -800,8 +766,6 @@ fn alignment(
         | (u32::from(k.is_multiple_of(tiling.block_k())) * 4)
 }
 
-/// `future`'s output, waited for on a thread of its own: weights load inside the caller's executor, which a nested
-/// `block_on` on the same thread would reject.
 fn wait<T: Send>(future: impl Future<Output = T> + Send) -> T {
     std::thread::scope(|scope| scope.spawn(|| block_on(future)).join().expect("a Vulkan wait panicked"))
 }

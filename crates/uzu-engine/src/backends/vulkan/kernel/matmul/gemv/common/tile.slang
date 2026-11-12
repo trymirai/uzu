@@ -1,8 +1,6 @@
 import definitions;
 import generated.gemm;
 
-// Pipeline specialization supplies the tile extents.
-
 public static const uint GEMV_MAX_INPUT_ROWS = GEMV_INPUT_ROW_TILE;
 public static const uint GEMV_MAX_ROWS_PER_LANE = 8;
 public static const uint GEMV_MAX_SIMDGROUPS = 8;
@@ -39,7 +37,6 @@ public struct OutputTile {
   public uint local_row;
   public uint row0;
 
-  // Simdgroups are runs of 32 invocations in subgroup_invocation order, whose lanes Reduce combines.
   public static OutputTile make(
     GemvTile Tile,
     bool FULL_TILE,

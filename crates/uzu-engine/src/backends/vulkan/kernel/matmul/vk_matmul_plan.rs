@@ -17,19 +17,13 @@ use crate::{
     data_type::DataType,
 };
 
-/// One dispatch family of the matmul kernels with its specialization parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VkMatmulPlan {
-    /// Gemv on full-precision A, with its tile.
     Gemv(VkGemvTile),
-    /// GemvInt8 on A8: `8 * rows` outputs by `input_rows` inputs a workgroup of 256 invocations.
     GemvInt8 {
         rows: u32,
         input_rows: u32,
     },
-    /// An INT8 GEMM core, GemmInt8Nv under `element_fold`: `row_block` rows by 64 columns a workgroup of `simdgroups`,
-    /// staging `stage_depth` K values a step with `prefetch` stages of loads in flight, with K in `splits` partial phases
-    /// then a reduction phase where it splits, or by 32 columns over `k_slices` subgroups that each stage a K slice.
     GemmInt8 {
         element_fold: bool,
         row_block: u32,
@@ -39,14 +33,11 @@ pub enum VkMatmulPlan {
         splits: u32,
         k_slices: u32,
     },
-    /// GemmTensor's cooperative core on BF16 A and B.
     GemmTensor(GemmTiling),
-    /// Gemm's scalar core.
     Gemm(GemmTiling),
 }
 
 impl VkMatmulPlan {
-    /// The plan for `shape` from weights in `b_layout` on `device`, by its capabilities and limits, never its identity.
     pub fn baseline(
         shape: &MatmulShape,
         b_layout: GemmBLayout,
@@ -57,7 +48,6 @@ impl VkMatmulPlan {
         let [weights, input, output] = data_types;
         let (capabilities, units) = (device.capabilities, device.compute_units);
         let max_shared = device.limits().max_compute_shared_memory_size;
-        // Where only unsigned dot products are accelerated, up to 8 rows of full-precision A quantize themselves.
         if shape.a == ActivationFormat::Bf16
             && m <= 8
             && capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
@@ -74,7 +64,6 @@ impl VkMatmulPlan {
                     (true, _) => VkGemvTile::quantized(shape, b_layout, input == DataType::BF16 && output == input),
                 })
             } else if capabilities.float_tensor_cores(input) && input == weights {
-                // The widest tiling whose staging fits the workgroup's shared memory.
                 let tiling = [tensor_tiling(m), tensor_tiling(m.min(64))]
                     .into_iter()
                     .find(|tiling| 16 * tiling.tensor_staging() <= max_shared)
@@ -84,8 +73,6 @@ impl VkMatmulPlan {
                 Self::Gemm(scalar_tiling(m, n, k, shape.b_group_size))
             };
         }
-        // Up to 8 rows, and on devices without INT8 tensor cores or whose unsigned dot products are the fast ones,
-        // GemvInt8.
         if m <= 8 || !capabilities.prefers_int8_gemm() {
             return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
         }
@@ -109,9 +96,6 @@ impl VkMatmulPlan {
             _ if core(64, 64, 1, 1, 1).int8_shared_bytes(shape) <= max_shared => 64,
             _ => 32,
         };
-        // GemmInt8Nv stages 128 deep, 64-row tiles only for 4-bit codes, on grids that fit one round of its resident
-        // workgroups, two 64-row or three narrower ones a unit. Wider grids keep 64-deep stages, five workgroups a unit,
-        // rather than a second round.
         let tiles = u64::from(n.div_ceil(64)) * u64::from(m.div_ceil(row_block));
         let deep_residency = if row_block == 64 {
             2
@@ -127,11 +111,6 @@ impl VkMatmulPlan {
         } else {
             (64, 5)
         };
-        // 4-bit 128-deep stages stream through a 4-slot register ring where its registers keep the residency: 16-row
-        // tiles over groups of 64 or more, and grids of at most a tile a unit up to 32 rows, which then split K in two
-        // rather than across more, shorter workgroups and a wider reduction. 16-row ones split K across four subgroups
-        // of a 32-column workgroup instead, each staging its quarter 64 deep through a ring of its own, where quarters
-        // are whole 128-value runs and their stages fit.
         let ring = deep && shape.b_bits == Some(4) && row_block <= 32;
         if ring && units.is_some_and(|units| tiles <= u64::from(units)) {
             let sliced = core(16, 64, 4, 1, 4);
@@ -150,7 +129,6 @@ impl VkMatmulPlan {
         core(row_block, stage_depth, prefetch, units.map_or(1, |units| int8_splits(tiles, k, residency, units)), 1)
     }
 
-    /// Why this plan cannot run `shape` from weights in `b_layout` on `device`, before any pipeline or command.
     pub fn check(
         &self,
         shape: &MatmulShape,
@@ -170,7 +148,6 @@ impl VkMatmulPlan {
         require(shape.b_bits.is_none_or(|bits| matches!(bits, 4 | 8)), "quantized B has 4- or 8-bit codes")?;
         let gemm = matches!(self, Self::GemmTensor(_) | Self::Gemm(_));
         let a8 = matches!(self, Self::GemvInt8 { .. } | Self::GemmInt8 { .. });
-        // GemvInt8 also takes full-precision A, which the encoder quantizes first.
         let full_precision = shape.a == ActivationFormat::Bf16;
         let quantizes_a = full_precision && matches!(self, Self::GemvInt8 { .. });
         require(
@@ -190,7 +167,6 @@ impl VkMatmulPlan {
             "tiled B is whole 32 x 128 tiles of codes, which only Gemv and the A8 kernels read",
         )?;
         require(!gemm || (!shape.gathered && Self::gemm_rows(shape)), "Gemm stages contiguous B rows, without gather")?;
-        // Gemv and GemvInt8 stage fixed arrays, and the baseline picks GemmTensor's tiling by its staging.
         let shared = match *self {
             Self::GemmInt8 {
                 ..
@@ -205,8 +181,6 @@ impl VkMatmulPlan {
             _ => 0,
         };
         require(shared <= limits.max_compute_shared_memory_size, "the staging exceeds the device's shared memory")?;
-        // The family's dispatches, then the output transform the encoder appends where the epilogue does not fuse it:
-        // ActivationTransform's 128-value tiles by rows.
         let transform = (shape.d_transform.contains(GemmDTransform::RHT) && !self.fuses_output_rht()).then_some([
             n.div_ceil(128),
             m,
@@ -222,8 +196,6 @@ impl VkMatmulPlan {
         )
     }
 
-    /// The largest workgroup grid of the family's dispatches for m x n outputs, as the entry points declare it: split
-    /// K's partial phase spans the splits, its reduction phase one.
     fn groups(
         &self,
         m: u32,
@@ -248,8 +220,6 @@ impl VkMatmulPlan {
         }
     }
 
-    /// Whether the plan's epilogue applies the output transform: every INT8 GEMM core, and GemvInt8 of one input row
-    /// whose workgroups hold whole 32-row blocks.
     pub fn fuses_output_rht(&self) -> bool {
         match *self {
             Self::GemmInt8 {
@@ -264,8 +234,6 @@ impl VkMatmulPlan {
         }
     }
 
-    /// The 16-byte shared words of an INT8 GEMM core's staging: GemmInt8Nv folds weight groups in registers, its K
-    /// slices in stages of their own, the other cores also stage their fold scratch. Zero for the other families.
     pub fn int8_shared_words(&self) -> u32 {
         match *self {
             Self::GemmInt8 {
@@ -282,9 +250,6 @@ impl VkMatmulPlan {
         }
     }
 
-    /// The shared memory of an INT8 GEMM core's workgroup for `shape`: its staging and GemmInt8Nv's fold metadata, a
-    /// slot for each part of its two stages, halves or, 128 deep over 32-value groups, quarters; each K slice's 64-deep
-    /// stages are one part, halves over 32-value groups.
     fn int8_shared_bytes(
         &self,
         shape: &MatmulShape,
@@ -307,9 +272,6 @@ impl VkMatmulPlan {
         16 * self.int8_shared_words() + 4 * 2 * INT8_FOLD_ENTRIES * 2 * parts
     }
 
-    /// The activation quantization the A8 kernels take for `shape`'s B, whatever its A: BF16 activations and
-    /// output, transposed contiguous B within [`Self::a8_shape`], and group-output metadata or output-group metadata
-    /// on unsigned-dot devices.
     pub fn a8_quantization(
         shape: &MatmulShape,
         [_, input, output]: [DataType; 3],
@@ -333,8 +295,6 @@ impl VkMatmulPlan {
         .then_some(quantization)
     }
 
-    /// Whether callers give m rows of A as A8 from weights in `b_layout` that take it: from one row on unsigned-dot
-    /// devices, otherwise from 2 to 8 rows and, where the device prefers INT8 GEMM, beyond; tiled weights from 2 rows.
     pub fn a8_rows(
         m: u32,
         b_layout: GemmBLayout,
@@ -350,8 +310,6 @@ impl VkMatmulPlan {
         }
     }
 
-    /// Whether loaded weights of the A8 `shape` are packed into tiles: whole 32 x 128 tiles of codes within the A8
-    /// contract, on devices that prefer INT8 GEMM; unsigned-dot devices keep rows for GEMV.
     pub fn tiles_weights(
         shape: &MatmulShape,
         data_types: [DataType; 3],
@@ -363,8 +321,6 @@ impl VkMatmulPlan {
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
     }
 
-    /// GemvInt8 for m rows: more outputs a workgroup for fewer inputs, one input row a workgroup where `gathered`.
-    /// Subgroups wider than 64 lanes take 8 rows for every input count: their reductions run through shared memory.
     fn gemv_int8(
         m: u32,
         gathered: bool,
@@ -386,8 +342,6 @@ impl VkMatmulPlan {
         }
     }
 
-    /// Whether the A8 kernels take the shape: B of U4 codes under any scheme or U8 symmetric ones, in groups of 32, 64 or
-    /// 128, over whole 128-value activation scale groups of K. Only GemvInt8 gathers, one input row a workgroup.
     pub fn a8_shape(shape: &MatmulShape) -> bool {
         let scheme = match shape.b_bits {
             Some(4) => shape.b_prologue != GemmBPrologueKind::FullPrecision,
@@ -399,13 +353,10 @@ impl VkMatmulPlan {
             && shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
     }
 
-    /// Whether Gemm's loaders can stage B: contiguous full-precision rows, or quantized rows of whole 16-value runs of a
-    /// group from byte-aligned U4 rows.
     pub fn gemm_rows(shape: &MatmulShape) -> bool {
         let (n, k) = (shape.n, shape.k);
         match shape.b_group_size {
             Some(group) => (shape.b_bits != Some(4) || k.is_multiple_of(2)) && group.is_multiple_of(16),
-            // The row and column strides are (leading, 1) transposed and (1, leading) otherwise.
             None => match shape.b_leading_dimension.unwrap_or(if shape.b_transpose {
                 k
             } else {
@@ -418,7 +369,6 @@ impl VkMatmulPlan {
     }
 }
 
-/// An INT8 GEMM core's columns a workgroup: 32 where K slices share it, otherwise 64.
 fn int8_block_n(k_slices: u32) -> u32 {
     if k_slices > 1 {
         32
@@ -427,7 +377,6 @@ fn int8_block_n(k_slices: u32) -> u32 {
     }
 }
 
-/// The cooperative core's block for m rows: one row block up to 64 rows, so each weight is read once.
 fn tensor_tiling(m: u32) -> GemmTiling {
     match m {
         0..=16 => GemmTiling::Tile16x64x64_Simdgroups1x4x2,
@@ -437,7 +386,6 @@ fn tensor_tiling(m: u32) -> GemmTiling {
     }
 }
 
-/// The scalar core's tiling, `group` the quantization group, which must hold whole K slices of the tiling.
 fn scalar_tiling(
     m: u32,
     n: u32,
@@ -471,10 +419,6 @@ fn scalar_tiling(
     }
 }
 
-/// The baseline's K splits for grids too small to stream from every one of `units` units: the most that keep at most
-/// `residency` workgroups a unit, as many as fit one, and K runs of at least `COLUMNS`, or `SHORT_COLUMNS` where half the
-/// splits would leave units idle. Past that, partials and their reduction cost more than the extra streaming gains, as
-/// decoding runs one product after another.
 fn int8_splits(
     tiles: u64,
     k: u32,

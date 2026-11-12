@@ -17,13 +17,9 @@ use crate::{
 const PROMPT: &str = "The lighthouse keeper climbed the spiral stairs every evening at dusk. He trimmed the wick, \
                       polished the great lens and wrote the weather in a leather logbook: wind from the north-east, \
                       a falling barometer, three fishing boats returning before the storm.";
-/// Mean and largest KL divergence, in nats, of a backend's next-token distributions from the CPU's. Vulkan on an RTX
-/// 4090 measured a 1.8e-3 mean and a 5.8e-3 largest with Qwen3.5 0.8B Mirai-M (2026-11-05).
 const MEAN_KL_BOUND: f64 = 0.005;
 const MAX_KL_BOUND: f64 = 0.025;
 
-/// The next-token log-probabilities after every prompt token, teacher-forced through forward passes of `step` tokens:
-/// one prefill of the whole prompt, or decoding steps of one token.
 fn log_probabilities<B: Backend>(
     model_path: &Path,
     step: usize,
@@ -40,7 +36,6 @@ fn log_probabilities<B: Backend>(
         state.transformer_state.prepare(state.transformer_state.context_length(), length).expect("prepare");
         let mut command_buffer =
             context.create_command_buffer(Some("logits"), Some(context.create_allocation_pool())).expect("buffer");
-        // The token constants and the logits scratch end before the encoding does, as in the stream's passes.
         let readback = {
             let token_ids = command_buffer
                 .allocate_constant_from_slice(&chunk.iter().map(|&token| token as u32).collect::<Box<[u32]>>())
@@ -77,11 +72,8 @@ fn log_probabilities<B: Backend>(
     rows
 }
 
-/// Each backend's teacher-forced next-token distributions over a fixed prompt, from one prefill and from one-token
-/// decoding steps, stay within a small KL divergence of the CPU prefill's: the model-level bound on the kernels'
-/// numerical differences.
 #[uzu_test]
-#[ignore] // Downloads the TEST_MODEL checkpoint.
+#[ignore]
 fn next_token_distributions_match_cpu() {
     let model_path = get_test_model_path();
     let reference = log_probabilities::<Cpu>(&model_path, usize::MAX);

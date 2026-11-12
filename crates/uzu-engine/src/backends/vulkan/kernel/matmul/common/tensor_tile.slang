@@ -10,17 +10,10 @@ import matmul.common.loader;
 
 using namespace linalg;
 
-// The cooperative-matrix Gemm core: SG_M x SG_N x SG_K subgroups compute a BM x BN block from 16-bit A and B staged in
-// two BK-deep stages, rows padded by 8 values; each subgroup owns (BM / SG_M) x (BN / SG_N) as 16 x 16 FP32
-// accumulators over every SG_K-th 16-deep step, and the K slices add in slice order. Quantized B stages rounded to BF16.
-
-// A workgroup's shared memory as 16-byte words.
 public interface ISharedWords {
   static uint4 read(uint word);
 }
 
-// `lane`'s 8 adjacent outputs of one row of a 16 x 16 FP32 tile from its SLICES K slices, stored row major 64 words
-// apart from `word`, added in slice order.
 void add_k_slices<S : ISharedWords, let SLICES : int>(uint word, uint lane, out float values[8]) {
   [unroll]
   for (uint value = 0; value < 8; value++) {
@@ -38,7 +31,6 @@ void add_k_slices<S : ISharedWords, let SLICES : int>(uint word, uint lane, out 
   }
 }
 
-// A workgroup's staging as 16-byte words of 8 16-bit values, which cooperative-matrix loads index and stride in words.
 public interface ITensorShared : ISharedWords {
   static void write(uint word, uint4 value);
   static CoopMat<BFloat16, MemoryScope.Subgroup, 16, 16, USE> load<
@@ -100,7 +92,6 @@ public struct TensorCore<
           base + row_word + uint(16 * i) * STRIDE + depth, STRIDE
         );
       }
-      // B is staged as its columns of K: column major.
       [unroll]
       for (int j = 0; j < TN; j++) {
         b[j] = S.load<CoopMatMatrixUse.MatrixB, CoopMatMatrixLayout.ColumnMajor>(
@@ -117,19 +108,15 @@ public struct TensorCore<
     }
   }
 
-  // Accumulator (i, j) as 16 rows of 16 FP32 values, 4 words a row, from `word`.
   public void store(uint i, uint j, uint word) {
     S.store(accumulators[i][j], word, 4);
   }
 }
 
-// `word` with `bits` or-ed into component `index`, selected per component rather than indexed.
 uint4 or_component(uint4 word, uint index, uint bits) {
   return word | uint4(index == 0 ? bits : 0u, index == 1 ? bits : 0u, index == 2 ? bits : 0u, index == 3 ? bits : 0u);
 }
 
-// One workgroup's staging of A and B. Chunks of a stage are 8 values of A or full-precision B, or 16 quantized values
-// of B in one group, chunk c of a stage belonging to invocation c mod THREADS. Values past M, N or K stage as +0.
 struct TensorStager<B : IStorageFloat, S : ITensorShared, let BM : int, let BN : int, let BK : int, let THREADS : int> {
   static const uint STRIDE = uint(BK + 8) / 8;
   static const uint STAGE = uint(BM + BN) * STRIDE;
@@ -155,7 +142,6 @@ struct TensorStager<B : IStorageFloat, S : ITensorShared, let BM : int, let BN :
 
   uint4 a_words[A_CHUNKS];
   uint4 b_words[B_CHUNKS];
-  // Per quantized chunk: scale, bias and the count of values below K.
   float2 metadata[Q_CHUNKS];
   uint valid[Q_CHUNKS];
 
@@ -218,7 +204,6 @@ struct TensorStager<B : IStorageFloat, S : ITensorShared, let BM : int, let BN :
     }
   }
 
-  // Eight values of `row` from `column`, +0 past `rows` or k, as one 16-byte load where k is a multiple of 8.
   uint4 load_dense(Ptr<B, Access.Read> values, uint row, uint rows, uint column, bool vector) {
     var word = uint4(0);
     if (row < rows && column < k) {
@@ -268,7 +253,6 @@ struct TensorStager<B : IStorageFloat, S : ITensorShared, let BM : int, let BN :
           let bias = metadata[i].y;
           uint bits[16];
           if (weights.u4) {
-            // A high nibble is read in place, 16 times its code, against the scale over 16.
             let sixteenth = round_to<B>(scale / 16.0);
             [unroll]
             for (uint byte = 0; byte < 8; byte++) {
@@ -305,8 +289,6 @@ struct TensorStager<B : IStorageFloat, S : ITensorShared, let BM : int, let BN :
   }
 }
 
-// The block at `tile` (column tile, row tile), staging `dense` or, when `quantized`, `weights`. Every invocation of the
-// workgroup must call it.
 public void gemm_tensor_run<
   B : IStorageFloat,
   D : IStorageFloat,
@@ -363,8 +345,6 @@ public void gemm_tensor_run<
     GroupMemoryBarrierWithGroupSync();
   }
 
-  // Each accumulator through threadgroup memory, which the stages no longer use: the region's K slices summed in slice
-  // order by the first slice's lanes, 8 adjacent outputs of one row each.
   let subgroup = subgroup_id();
   let lane = WaveGetLaneIndex();
   let region = subgroup / uint(SG_K);
@@ -395,11 +375,6 @@ public void gemm_tensor_run<
   }
 }
 
-// The INT8 cooperative-matrix core: SG_M x SG_N subgroups compute a BM x 64 block from 64-deep stages of activation
-// codes and weight codes centered to signed bytes, rows padded by 16 bytes, as 16 x 16 INT32 accumulators exact within a
-// weight group. At each group's end every lane folds its outputs into FP32 as int8_fold does and the accumulators restart.
-// Above SG_K 1, SG_K subgroups each compute a whole BM x 32 block over their K slice from stages of their own, and the
-// slices add in slice order.
 public interface IInt8Shared<let MMA_K : int> : ISharedWords {
   static void write(uint word, uint4 value);
   static CoopMat<int8_t, MemoryScope.Subgroup, 16, MMA_K, CoopMatMatrixUse.MatrixA> load_a(uint word, uint stride);
@@ -409,9 +384,6 @@ public interface IInt8Shared<let MMA_K : int> : ISharedWords {
     uint word,
     uint stride
   );
-  // Per-element fold metadata of the rows or the `columns`, [slot][kind][index] of each stage part ending a weight group,
-  // slot = K slice * 2 * parts + stage parity * parts + part: rows hold the activation scale and its ScaleBias
-  // correction, columns the weight scale and bias.
   static float fold(bool columns, uint index);
   static void stage_fold(bool columns, uint index, float value);
 }
@@ -419,8 +391,6 @@ public interface IInt8Shared<let MMA_K : int> : ISharedWords {
 typealias Int8Dots = CoopMat<int, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator>;
 typealias Int8Sums = CoopMat<float, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator>;
 
-// `sums` plus int8_fold of `dots` per element (VK_NV_cooperative_matrix2), from the metadata staged in `slot` for the
-// accumulator at (`row_base`, `col_base`). The dots convert to FP32 first, exactly below 2^24.
 Int8Sums int8_element_fold<let MMA_K : int, S : IInt8Shared<MMA_K>>(
   Int8Sums sums, Int8Dots dots, uint slot, uint row_base, uint col_base, bool scale_bias
 ) {
@@ -447,27 +417,18 @@ public struct Int8Gemm<
   let SG_K : int
 > {
   static const int BN = SG_K > 1 ? 32 : 64;
-  // A stage's parts of FOLD values, each folding the weight groups that end there, with a fold slot in each stage.
   static const int PARTS = BK / FOLD;
-  // A K slice's invocations, which stage its stages.
   static const int THREADS = SG_M * SG_N * 32;
   static const int TM = BM / (16 * SG_M);
   static const int TN = BN / (16 * SG_N);
-  // Rows of BK bytes padded by one word.
   static const uint STRIDE = uint(BK / 16 + 1);
   static const uint STAGE = uint(BM + BN) * STRIDE;
   static const uint SCRATCH = 2 * STAGE;
   static const int A_CHUNKS = (BM * BK / 16 + THREADS - 1) / THREADS;
   static const int B_RUNS = (BN * BK / 32 + THREADS - 1) / THREADS;
   static const int B_CHUNKS = 2 * B_RUNS;
-  // A stage's fold metadata entries, BM rows then BN columns for each of its parts.
   static const int M_CHUNKS = (PARTS * (BM + BN) + THREADS - 1) / THREADS;
 
-  // `a_codes` holds symmetric INT8 A rows of k codes, `a_scales` an FP32 scale per 128 values.
-  // Split K (split_phase 1 and 2, `splits` of 2 to 8 whole 128-value runs each): phase 1 stores split split_index's FP32
-  // sums as bits in `partials` [splits][m][n]; phase 2 adds them in split order and finishes as phase 0 does.
-  // `has_rht` finishes with ActivationTransform's output transform of each row's 32-column blocks, then `output_bias`
-  // where `rht_bias`: the outputs, rounded as stored, pass through the stages' memory to the subgroups.
   public static void run(
     Ptr<int8_t, Access.Read> a_codes,
     Ptr<float, Access.Read> a_scales,
@@ -494,8 +455,6 @@ public struct Int8Gemm<
     let block_col = tile.x * uint(BN);
     let u4 = weights.u4;
     let scale_bias = weights.method == QuantizationMethod.ScaleBias;
-    // The subgroup's region and K slice, laid out as TensorCore's; above SG_K 1 each slice stages its own stages and
-    // fold slots.
     let subgroup = subgroup_id() / uint(SG_K);
     let slice = subgroup_id() % uint(SG_K);
     let lane = WaveGetLaneIndex();
@@ -505,12 +464,8 @@ public struct Int8Gemm<
     let row_word = (subgroup / uint(SG_N)) * uint(TM * 16) * STRIDE;
     let col_word = uint(BM) * STRIDE + (subgroup % uint(SG_N)) * uint(TN * 16) * STRIDE;
 
-    // A ring of the next PREFETCH stages' chunks of 16 values: activation codes as stored, weight codes centered, or
-    // raw with their zero point's byte above PREFETCH 1.
     uint4 a_chunks[PREFETCH][A_CHUNKS] = {};
     uint4 b_chunks[PREFETCH][B_CHUNKS] = {};
-    // Per-element folds: those stages' metadata entries; above PREFETCH 1 a row's activation scale and group-sum bits,
-    // and every entry's raw weight scale and bias.
     float2 metadata_chunks[PREFETCH][M_CHUNKS] = {};
     B column_scales[PREFETCH][M_CHUNKS] = {};
     B column_biases[PREFETCH][M_CHUNKS] = {};
@@ -518,7 +473,6 @@ public struct Int8Gemm<
     let col_base = (subgroup % uint(SG_N)) * uint(TN * 16);
 
     Int8Dots dots[TM][TN];
-    // Per-element folds accumulate in `folded` across K; lane folds in `sums`, which both finish from.
     Int8Sums folded[TM][TN];
     float sums[TM][TN][8];
     [unroll]
@@ -534,15 +488,8 @@ public struct Int8Gemm<
       }
     }
 
-    // Splits and their K slices start on 128-value boundaries, hence on every supported weight-group boundary.
     let k_first = split_index * (k / splits) + slice * (k / splits / uint(SG_K));
     let stages = split_phase == 2 ? 0 : k / splits / uint(SG_K) / uint(BK);
-    // Step t loads stage t into ring slot t % PREFETCH, multiplies stage t - PREFETCH and stages t + 1 - PREFETCH, in
-    // whole rounds of PREFETCH steps (the last ones only waiting) so every slot is a constant. Above PREFETCH 1 the
-    // loads are unconditional and nothing reads them before they are staged: any read of a loaded value, a select
-    // included, waits for it, so PREFETCH - 1 stages stay in flight. W8 64-row tiles (PREFETCH 1) peel into prologue
-    // (stage 0 loads), steady state and epilogue (the last stage multiplies), each the same sequence with constant
-    // conditions.
     let peeled = ELEMENT_FOLD && !u4 && BM == 64;
     let steps = (stages + uint(2 * PREFETCH - 1)) / uint(PREFETCH) * uint(PREFETCH);
     [unroll]
@@ -558,7 +505,6 @@ public struct Int8Gemm<
               A_CHUNKS * THREADS == BM * BK / 16 && B_RUNS * THREADS == BN * BK / 32, "whole stages a step"
             );
             let k0 = k_first + stage * uint(BK);
-            // Rows and columns past the matrix load clamped: they feed only outputs that are never stored.
             [unroll]
             for (int i = 0; i < A_CHUNKS; i++) {
               let chunk = tid + uint(i * THREADS);
@@ -587,8 +533,6 @@ public struct Int8Gemm<
               let input = min(block_row + min(index, uint(BM) - 1), m - 1);
               let column = min(block_col + (index < uint(BM) ? 0u : index - uint(BM)), n - 1);
               let scale_index = column * weights.scale_output_stride + group * weights.scale_group_stride;
-              // A row's and a column's factors both load, whether or not the step ends a group; the store keeps the
-              // ones the entry stages.
               let scale_group = (end - 1) / ACTIVATION_QUANTIZATION_TILE;
               metadata_chunks[slot][i] = float2(
                 a_scales[input * (k / ACTIVATION_QUANTIZATION_TILE) + scale_group],
@@ -611,8 +555,6 @@ public struct Int8Gemm<
               }
               a_chunks[slot][i] = word;
             }
-            // One run of 32 weights of one row and group per invocation: one 16-byte W4 load or two W8 loads,
-            // contiguous across a subgroup in the Tiled layout, then two staged words.
             [unroll]
             for (int i = 0; i < B_RUNS; i++) {
               let run = tid + uint(i * THREADS);
@@ -648,7 +590,6 @@ public struct Int8Gemm<
               b_chunks[slot][2 * i + 1] = words[1];
             }
             if (ELEMENT_FOLD) {
-              // The metadata the lane fold reads for the steps that end a weight group, rows and columns clamped alike.
               [unroll]
               for (int i = 0; i < M_CHUNKS; i++) {
                 let entry = tid + uint(i * THREADS);
@@ -661,7 +602,6 @@ public struct Int8Gemm<
                   let group = (end - 1) / weights.group_size;
                   if (index < uint(BM)) {
                     let input = min(block_row + index, m - 1);
-                    // An odd stage's 64-value group shares its 128-value scale group with the previous stage's slot 1.
                     float a_scale;
                     if (BM == 64 && BK == 64 && weights.group_size == 64 && (stage & 1u) != 0) {
                       a_scale = S.fold(false, 128 + index);
@@ -694,18 +634,15 @@ public struct Int8Gemm<
               }
               [unroll]
               for (int j = 0; j < TN; j++) {
-                // Weight rows are staged as columns of K: column major.
                 let b = S.load_b(base + col_word + uint(16 * j) * STRIDE + uint(MMA_K / 16 * step), STRIDE);
                 [unroll]
                 for (int i = 0; i < TM; i++) {
                   dots[i][j] = coopMatMulAdd<int, false>(a[i], b, dots[i][j]);
                 }
               }
-              // A weight group ends: fold the accumulators and restart them.
               let offset = multiplied * uint(BK) + uint(MMA_K * (step + 1));
               let end = k_first + offset;
               if (ELEMENT_FOLD && offset % weights.group_size == 0) {
-                // In registers, from the metadata staged with this stage.
                 let fold_slot = slice_slot + (multiplied & 1) * uint(PARTS) + uint(MMA_K * (step + 1) / FOLD - 1);
                 [unroll]
                 for (int i = 0; i < TM; i++) {
@@ -752,13 +689,10 @@ public struct Int8Gemm<
                     }
                   }
                 }
-                // Every lane has read the scratch before the next group's accumulators overwrite it.
                 GroupMemoryBarrierWithGroupSync();
               }
             }
           }
-          // Stage `staged`, loaded PREFETCH - 1 steps ago; below zero, the unsigned stage + 1 - PREFETCH wraps past
-          // stages.
           let staged = stage + 1 - uint(PREFETCH);
           let ring = (slot + 1) % PREFETCH;
           if (peeled ? phase < 2 : staged < stages) {
@@ -776,7 +710,6 @@ public struct Int8Gemm<
               if (run < uint(BN * BK / 32)) {
                 let word = base + uint(BM) * STRIDE + run / uint(BK / 32) * STRIDE + run % uint(BK / 32) * 2;
                 if (PREFETCH > 1) {
-                  // The raw codes, centered on their zero point now.
                   let zero_word = b_chunks[ring][2 * i + 1];
                   let stored = (zero_word.x >> (4 * zero_word.y)) & 15u;
                   let zero = weights.method == QuantizationMethod.ScaleZeroPoint ? stored
@@ -830,8 +763,6 @@ public struct Int8Gemm<
       }
     }
     if (ELEMENT_FOLD && split_phase != 2) {
-      // Each accumulator once through the stages' memory, which no longer holds operands, into the lane's 8 outputs:
-      // its K slices' sums.
       [unroll]
       for (int i = 0; i < TM; i++) {
         [unroll]
@@ -846,7 +777,6 @@ public struct Int8Gemm<
 
     let transform = has_rht && split_phase != 1;
     if (transform) {
-      // Every subgroup has read its folded sums out of the stages' memory.
       GroupMemoryBarrierWithGroupSync();
     }
     [unroll]
@@ -856,7 +786,6 @@ public struct Int8Gemm<
       [unroll]
       for (int j = 0; j < TN; j++) {
         let col_local = (subgroup % uint(SG_N)) * uint(TN * 16) + uint(16 * j) + lane % 2 * 8;
-        // One K slice finishes each accumulator.
         let owned = uint((i * TN + j) % SG_K) == slice;
         uint staged[8];
         [unroll]
@@ -890,8 +819,6 @@ public struct Int8Gemm<
     }
     if (transform) {
       GroupMemoryBarrierWithGroupSync();
-      // A subgroup per row and 32-column block in turn. The subgroups are whole multiples of the blocks, so each keeps
-      // one block, whose factors and bias load once; n is whole blocks, so a block lies wholly in or past it.
       static const int BLOCKS = BN / 32;
       static const int SUBGROUPS = SG_M * SG_N * SG_K;
       static_assert(SUBGROUPS % BLOCKS == 0, "every subgroup keeps one column block");
@@ -900,7 +827,6 @@ public struct Int8Gemm<
       if (col < n) {
         let factor = rht_factors[col];
         let bias = rht_bias ? output_bias[col].toFloat() : 0.0;
-        // Rolled: unrolling it raises every GEMM's registers for a loop that runs once per tile.
         [loop]
         for (int step = 0; step < BM * BLOCKS / SUBGROUPS; step++) {
           let row_local = (uint(step * SUBGROUPS) + subgroup_id()) / uint(BLOCKS);

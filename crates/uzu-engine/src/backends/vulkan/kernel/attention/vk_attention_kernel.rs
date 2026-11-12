@@ -17,19 +17,12 @@ use crate::{
     data_type::DataType,
 };
 
-/// Two-pass kernels for at most TWO_PASS_MAX_SUFFIX queries, which split the keys into blocks whatever their count.
 const TWO_PASS_MAX_SUFFIX: u32 = 8;
-/// AttentionGemm splits the keys of at most GEMM_SPLIT_MAX_SUFFIX queries, as Metal's attention does.
 const GEMM_SPLIT_MAX_SUFFIX: u32 = 64;
 
-/// Attention over AttentionPrepare's INT8 codes in rows [key][kv head], scales [key][kv head]: AttentionTwoPass1,
-/// AttentionGemm or AttentionSinglePass write FP32 partials, which AttentionTwoPass2 merges with the sinks, rotates back
-/// and gates.
 pub struct VkAttentionKernel {
     config: AttentionKernelConfig,
-    /// For more than TWO_PASS_MAX_SUFFIX queries.
     many_queries: VkAttentionManyQueries,
-    /// Without and with a trie.
     two_pass: [AttentionTwoPass1VulkanKernel; 2],
     merge: AttentionTwoPass2VulkanKernel,
 }
@@ -95,8 +88,6 @@ impl AttentionKernel for VkAttentionKernel {
         })
     }
 
-    /// Codes and scales in key order, keys allocated in pairs so the BF16 scale planes are whole words, as Vulkan fills
-    /// take.
     fn kv_layout(&self) -> KVLayout {
         KVLayout::new(self.config.head_dim, self.config.num_groups, 2, 0)
     }
@@ -114,7 +105,6 @@ impl AttentionKernel for VkAttentionKernel {
         let config = self.config;
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.cache.prefix_len() + suffix_length;
-        // Scores and the weighted sum of values, each a multiply-add per query, key and head dimension.
         command_buffer.declare_work(
             4 * u64::from(config.num_q_heads)
                 * u64::from(suffix_length)
@@ -128,7 +118,6 @@ impl AttentionKernel for VkAttentionKernel {
             ATTENTION_TWO_PASS_BLOCKS
         } else if matches!(self.many_queries, VkAttentionManyQueries::Gemm(_)) && suffix_length <= GEMM_SPLIT_MAX_SUFFIX
         {
-            // AttentionTwoPass1's split count, but no more splits than blocks of keys.
             sequence_length.div_ceil(ATTENTION_GEMM_BLOCK_KEYS).min(ATTENTION_TWO_PASS_BLOCKS)
         } else {
             1
@@ -179,10 +168,6 @@ impl AttentionKernel for VkAttentionKernel {
                 )
             };
         }
-        // SAFETY: the common contract makes callers pass query codes [num_q_heads, suffix_length, head_dim] with a scale
-        // per row, key and value codes of prefix + suffix rows [rows, num_groups, head_dim] with a scale per row and
-        // group, suffix_length trie nodes, num_q_heads sinks and gate rows of gate_row_stride; the partials, statistics
-        // and output are fresh scratch of their shapes.
         unsafe {
             match &self.many_queries {
                 _ if suffix_length <= TWO_PASS_MAX_SUFFIX => partials!(self.two_pass[is_trie]),

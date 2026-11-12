@@ -1,9 +1,5 @@
 import definitions;
 
-// input and output [Q, C] of T, weights [C, K] and bias [C] of WeightT. Output (t, c) accumulates in FP32 from the bias
-// (or +0) over taps j < min(K, t + 1) ascending of (weights[c, K - 1 - j] + coefficient_deltas[t R + j (C / G) + c / G])
-// input[t - j, c], then rounds once. One invocation per output.
-
 [[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "group_size > 0")]]

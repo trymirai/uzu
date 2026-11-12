@@ -1,7 +1,6 @@
 import definitions;
 import common.workgroup_reduction;
 
-// Weaver ranks use a descending score followed by ascending tie keys. The last key is the physical index.
 public struct WeaverRank : IReduction {
   public typealias Value = uint4;
   public static uint4 combine(uint4 a, uint4 b) {
@@ -18,7 +17,6 @@ public struct WeaverRank : IReduction {
   }
 }
 
-// The monotone key of f32::total_cmp, including signed zeros and signed NaN payloads.
 public uint float_order_key(uint bits) {
   return (bits & 0x80000000u) != 0 ? ~bits : bits ^ 0x80000000u;
 }

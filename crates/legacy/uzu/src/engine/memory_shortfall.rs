@@ -2,8 +2,6 @@ use std::{fmt, path::Path};
 
 use shoji::types::model::{Model, ModelIdentifier};
 
-/// A model whose weights, with room for activations and pipelines, exceed the memory free on the device, and the
-/// largest variant of it that fits, where the catalog lists one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryShortfall {
     pub model: ModelIdentifier,
@@ -13,8 +11,6 @@ pub struct MemoryShortfall {
 }
 
 impl MemoryShortfall {
-    /// `None` when `model`'s weights and their margin fit in `available_bytes`; `variants` are catalog models with
-    /// their download sizes.
     pub fn new<'a>(
         model: &Model,
         weight_bytes: u64,
@@ -66,12 +62,10 @@ impl fmt::Display for MemoryShortfall {
     }
 }
 
-/// A model's weights and a tenth more for activations and pipelines; the KV cache is not counted.
 fn with_margin(weight_bytes: u64) -> u64 {
     weight_bytes + weight_bytes / 10
 }
 
-/// The bytes of every file under `directory`.
 pub async fn directory_bytes(directory: &Path) -> std::io::Result<u64> {
     let mut bytes = 0;
     let mut pending = vec![directory.to_path_buf()];

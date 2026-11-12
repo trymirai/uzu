@@ -2,12 +2,10 @@ import definitions;
 import common.workgroup_reduction;
 import generated.hadamard_order;
 
-// A random Hadamard factor applied to a value.
 public float hadamard_factor(float value, int factor) {
   return value * float(factor);
 }
 
-// The unnormalized Hadamard butterflies over each aligned run of `lanes` lanes, a power of two no wider than the subgroup.
 public float hadamard_butterflies(float value, uint lanes) {
   var transformed = value;
   for (uint stride = 1; stride < lanes; stride <<= 1) {
@@ -17,16 +15,10 @@ public float hadamard_butterflies(float value, uint lanes) {
   return transformed;
 }
 
-// hadamard_transform where a block is one aligned run of a subgroup's lanes, for subgroups of at least
-// HADAMARD_TRANSFORM_BLOCK_SIZE lanes; equal to it there.
 public float subgroup_hadamard_transform(float value) {
   return hadamard_butterflies(value, HADAMARD_TRANSFORM_BLOCK_SIZE) / sqrt(float(HADAMARD_TRANSFORM_BLOCK_SIZE));
 }
 
-// The normalized Hadamard transform of blocks of HADAMARD_TRANSFORM_BLOCK_SIZE invocations in subgroup_invocation
-// order: shuffle_xor butterflies below the subgroup width, the wider strides in one shared stage. Subgroups wider than
-// HADAMARD_SHUFFLE_LANES take every stride in the shared stage: their shuffles move data across far more lanes than a
-// block.
 static const uint HADAMARD_SHUFFLE_LANES = 64;
 public float hadamard_transform<let THREADS : uint>(float value) {
   static_assert(THREADS % HADAMARD_TRANSFORM_BLOCK_SIZE == 0, "Hadamard transform blocks must tile the workgroup");
@@ -37,7 +29,6 @@ public float hadamard_transform<let THREADS : uint>(float value) {
     let invocation = subgroup_invocation();
     S.data[invocation] = transformed;
     GroupMemoryBarrierWithGroupSync();
-    // Element j of `column` is the value at the block's lane position of this invocation in its j-th subgroup.
     let count = HADAMARD_TRANSFORM_BLOCK_SIZE / lanes;
     let first = invocation & ~(HADAMARD_TRANSFORM_BLOCK_SIZE - lanes);
     float column[HADAMARD_TRANSFORM_BLOCK_SIZE];

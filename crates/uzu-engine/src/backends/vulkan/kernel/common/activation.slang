@@ -1,8 +1,5 @@
 import generated.activation_type;
 
-// The builtin tanh only between 0.1 and log(3) / 2: below, its degree-5 Taylor polynomial (omitted term under 5.5e-8
-// relative; the factored form keeps the sign of zero); above, 1 - 2 / (e^2|x| + 1), which cancels nothing and is
-// exactly ±1 at infinity.
 public float accurate_tanh(float x) {
   let a = abs(x);
   if (a < 0.1) {
@@ -19,7 +16,6 @@ public float apply_soft_cap(float x, float cap) {
   return cap * tanh(x / cap);
 }
 
-// Norbert Juffa's faithfully rounded erff, as MLX and Metal compute it.
 public float erf_precise(float a) {
   let t = abs(a);
   let s = a * a;
@@ -46,7 +42,6 @@ public float sigmoid(float x) {
   return 1.0 / (1.0 + exp(-x));
 }
 
-// SiLU with slope alpha.
 public float activate_silu_alpha(float x, float alpha) {
   let y = 1.0 / (1.0 + exp(-abs(x) * alpha));
   return x < 0.0 ? (1.0 - y) * x : y * x;

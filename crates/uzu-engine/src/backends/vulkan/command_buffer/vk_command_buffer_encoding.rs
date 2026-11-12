@@ -24,55 +24,29 @@ use crate::{
     data_type::DataType,
 };
 
-/// Smallest buffer that holds uploads, so small uploads of one command buffer share it.
 const UPLOAD_PAGE_SIZE: usize = 4096;
-/// Commands of the first segment; each later one holds twice as many as the one before, for up to this many doublings.
 const FIRST_SEGMENT_COMMANDS: usize = 32;
 const SEGMENT_DOUBLINGS: usize = 10;
-/// Multiply-add FLOPs a segment may hold per compute unit. Even at one unit's scalar rate, a few hundred GFLOPS, a
-/// segment then runs for tens of milliseconds, far inside the two-second watchdogs that reset a GPU whose work cannot
-/// be preempted.
 const SEGMENT_WORK_PER_UNIT: u64 = 8_000_000_000;
-/// The units assumed where the device does not report them.
 const UNREPORTED_UNITS: u64 = 8;
 
-/// A recording primary command buffer that retains every buffer and pipeline it references and inserts barriers
-/// where accesses conflict. It records in segments, each submitted once full while recording goes on, so the GPU
-/// starts on a long recording instead of waiting for its end; segments growing twice as long keep the submissions
-/// few, and a work budget the heavy kernels draw on keeps each one short of the GPU watchdog. Segments go early only
-/// while no other command buffer of the context is unsubmitted, so none passes one recorded or ended before it; a
-/// command buffer created after a segment went out runs after that segment, even if it is submitted before this one
-/// ends, and dropping the encoding does not recall it. A device error, a failed upload or a rejected dispatch ends the
-/// recording: later commands are skipped and submission reports the error.
 pub struct VkCommandBufferEncoding {
     context: Arc<VkContext>,
     resources: Option<VkCommandBufferResources>,
     retained: Vec<Arc<dyn Send + Sync>>,
-    /// Device-address ranges read and written since the last barrier: a few at a time, as nearly every dispatch reads
-    /// what the previous one wrote.
     reads: Vec<Range<u64>>,
     writes: Vec<Range<u64>>,
-    /// Whether a barrier of the segment ordered the accesses before it for dispatches only, so a transfer has to
-    /// wait for them.
     compute_only_barrier: bool,
-    /// Uploads and constants: host-written memory of this command buffer, whose pages dispatches retain.
     uploads: BumpAllocator<Arc<VkBuffer>>,
-    /// Scratch pages; a dispatch retains the pages it uses until the command buffer completes.
     allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
-    /// The byte and word copy kernels, each created by the first copy that takes it.
     blit_copy: [Option<BlitCopyVulkanKernel>; 2],
-    /// Completions of the segments submitted so far, and the commands and work recorded into the current one.
     segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     segment_commands: usize,
     segment_work: u64,
-    /// The work the next command starts, declared by its kernel, and the work a segment may hold.
     declared_work: u64,
     work_budget: u64,
-    /// Debug-group spans, when recording timestamps.
     timestamps: Option<VkTimestampRecorder>,
-    /// Whether a debug label named after the command buffer encloses its commands.
     named: bool,
-    /// The error that ended the recording.
     failure: Option<Error>,
 }
 
@@ -111,8 +85,6 @@ impl VkCommandBufferEncoding {
         Ok(encoding)
     }
 
-    /// Copies `data` into this command buffer's host-coherent memory for dispatches to read; empty data is `None`, and
-    /// so is any data once the recording ended, which a failed allocation does.
     pub fn upload<T: NoUninit>(
         &mut self,
         data: &[T],
@@ -134,16 +106,6 @@ impl VkCommandBufferEncoding {
         Some((buffer, range.start as u64..range.end as u64))
     }
 
-    /// Records one compute dispatch of `kernel` after checking the group-count limit and the declared ranges, whose
-    /// failure ends the recording. An empty range is bounds-checked and retained but not hazard-tracked.
-    ///
-    /// # Safety
-    /// - `push_constants` must be the exact argument block `pipeline`'s shader expects: every device
-    ///   address in it points into a buffer listed in `reads` or `writes`, and every scalar is valid.
-    /// - `reads` and `writes` must cover every byte the shader may read or write for these `groups`;
-    ///   undeclared accesses get no hazard barriers and no lifetime retention.
-    /// - `groups` together with the shader's bounds checks must keep every access inside those ranges;
-    ///   the shader never dereferences the address of an empty range.
     pub unsafe fn encode_dispatch<'b>(
         &mut self,
         kernel: &'static str,
@@ -168,7 +130,6 @@ impl VkCommandBufferEncoding {
             self.failure.get_or_insert(VkCommandBufferError::Dispatch(kernel, Box::new(error)).into());
             return;
         }
-        // Checked above.
         let address = |(buffer, range): (&Arc<VkBuffer>, Range<u64>)| device_addresses(buffer, &range).ok().flatten();
         if !self.access(false, reads.filter_map(address), writes.filter_map(address)) {
             return;
@@ -196,7 +157,6 @@ impl VkCommandBufferEncoding {
         self.resources().command_buffer()
     }
 
-    /// Whether commands still record: no error has ended the recording.
     fn is_recording(&self) -> bool {
         self.failure.is_none()
     }
@@ -205,12 +165,10 @@ impl VkCommandBufferEncoding {
         self.resources.as_ref().expect("encoding owns resources until it ends")
     }
 
-    /// The debug-label loader, where the instance has debug labels and commands still record.
     fn debug_utils(&self) -> Option<&ext::debug_utils::Device> {
         self.context.debug_utils().filter(|_| self.is_recording())
     }
 
-    /// Begins a debug label named `name`, which `end_debug_label` ends.
     pub fn begin_debug_label(
         &self,
         name: &str,
@@ -222,15 +180,12 @@ impl VkCommandBufferEncoding {
         }
     }
 
-    /// Ends the innermost debug label.
     pub fn end_debug_label(&self) {
         if let Some(debug_utils) = self.debug_utils() {
             unsafe { debug_utils.cmd_end_debug_utils_label(self.command_buffer()) };
         }
     }
 
-    /// Declares the multiply-add FLOPs of the commands a heavy kernel records next, so a segment closes before they
-    /// would take it past its work budget.
     pub fn declare_work(
         &mut self,
         flops: u64,
@@ -238,7 +193,6 @@ impl VkCommandBufferEncoding {
         self.declared_work = self.declared_work.saturating_add(flops);
     }
 
-    /// Starts a span named `label` when recording timestamps.
     pub fn start_timestamp_span(
         &mut self,
         label: &str,
@@ -248,14 +202,12 @@ impl VkCommandBufferEncoding {
         }
     }
 
-    /// Ends the innermost span when recording timestamps.
     pub fn end_timestamp_span(&mut self) {
         if let Some(timestamp) = self.write_span_timestamp() {
             self.timestamps.as_mut().expect("written while recording timestamps").end(timestamp);
         }
     }
 
-    /// Writes a span timestamp while recording timestamps and commands, and returns its segment and index there.
     fn write_span_timestamp(&mut self) -> Option<(usize, u32)> {
         if self.timestamps.is_none() || self.failure.is_some() {
             return None;
@@ -270,9 +222,6 @@ impl VkCommandBufferEncoding {
         }
     }
 
-    /// Prepares for one more command, a transfer or a dispatch: submits a segment that is full or that the command's
-    /// declared work would take past its budget, which the next begins after, or otherwise orders the command after
-    /// the accesses it conflicts with. False once an error has ended the recording, when the command is skipped.
     fn access(
         &mut self,
         transfer: bool,
@@ -297,8 +246,6 @@ impl VkCommandBufferEncoding {
             || reads.clone().chain(writes.clone()).any(|range| overlaps(&self.writes, &range))
             || writes.clone().any(|range| overlaps(&self.reads, &range))
         {
-            // A dispatch waits in the compute stage alone, so dependent dispatches do not also wait for transfers; the
-            // rare transfers wait in both.
             let (stages, accesses) = if transfer {
                 (
                     shader_and_transfer_stages(),
@@ -330,7 +277,6 @@ impl VkCommandBufferEncoding {
         true
     }
 
-    /// Begins the current segment after all work submitted before it, with its start timestamp.
     fn begin_segment(&self) -> Result<(), VkCommandBufferError> {
         let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { self.context.device().begin_command_buffer(self.command_buffer(), &begin_info)? };
@@ -341,7 +287,6 @@ impl VkCommandBufferEncoding {
             vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
         );
         unsafe { self.resources().write_timestamp(self.context.device(), 0) };
-        // Execution-only dependency so recorded work cannot run before the start timestamp is written.
         self.memory_barrier(
             vk::PipelineStageFlags2::ALL_COMMANDS,
             vk::AccessFlags2::NONE,
@@ -351,7 +296,6 @@ impl VkCommandBufferEncoding {
         Ok(())
     }
 
-    /// Ends the current segment with its writes visible to the host and its end timestamp.
     fn end_segment(&self) -> Result<(), VkCommandBufferError> {
         self.memory_barrier(
             shader_and_transfer_stages(),
@@ -367,7 +311,6 @@ impl VkCommandBufferEncoding {
         Ok(())
     }
 
-    /// Submits the current segment with what it retains and continues in a new one, which tracks hazards afresh.
     fn submit_segment(&mut self) -> Result<(), Error> {
         self.end_segment()?;
         let next = self.context.acquire_command_buffer_resources()?;
@@ -404,7 +347,6 @@ impl VkCommandBufferEncoding {
 impl Drop for VkCommandBufferEncoding {
     fn drop(&mut self) {
         if let Some(resources) = self.resources.take() {
-            // Never submitted, so the GPU cannot be using it; the pool reset on reuse discards the recording.
             unsafe { self.context.recycle_command_buffer_resources(resources) };
         }
         self.context.unsubmitted_command_buffers().fetch_sub(1, Ordering::Relaxed);
@@ -438,7 +380,6 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
             .allocate(size, |size| Ok(Arc::new(VkBuffer::new(context, size as u64, VkBufferMemory::Device)?)))
     }
 
-    /// Copies by a dispatch: a transfer between dispatches waits for them in both stages, which leaves the GPU idle.
     fn encode_copy(
         &mut self,
         src: impl BufferRef<Backend = Vulkan>,
@@ -472,7 +413,6 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
             },
         };
         let length = u32::try_from(size >> (2 * words)).expect("copy of more than u32::MAX elements");
-        // SAFETY: both ranges hold `length` elements, word-aligned for words, and do not overlap.
         unsafe { kernel.encode((source, source_range), (destination, destination_range), length, self) };
         self.blit_copy[words] = Some(kernel);
     }
@@ -524,7 +464,6 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         }
     }
 
-    /// Timing debug groups needs the device clock, so without calibrated timestamps waiting for completion fails.
     fn with_timestamps(mut self) -> Self {
         self.timestamps = Some(VkTimestampRecorder::default());
         self
@@ -553,8 +492,6 @@ fn shader_and_transfer_stages() -> vk::PipelineStageFlags2 {
     vk::PipelineStageFlags2::COMPUTE_SHADER | vk::PipelineStageFlags2::ALL_TRANSFER
 }
 
-/// The device addresses of `range` in `buffer`, `None` for an empty range; a reversed range or one past the buffer's
-/// end is an error.
 fn device_addresses(
     buffer: &VkBuffer,
     range: &Range<u64>,

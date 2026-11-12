@@ -13,23 +13,16 @@ use crate::backends::{
     },
 };
 
-/// An ended command buffer whose last segment has not been submitted yet; dropping it recycles that segment's
-/// resources, while the segments submitted during recording still run.
 pub struct VkCommandBufferExecutable {
     context: Arc<VkContext>,
     resources: Option<VkCommandBufferResources>,
     retained: Vec<Arc<dyn Send + Sync>>,
     segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     timestamps: Option<VkTimestampRecorder>,
-    /// The error that ended the recording, reported instead of submitting the last segment.
     failure: Option<Error>,
 }
 
 impl VkCommandBufferExecutable {
-    /// # Safety
-    /// `resources` must come from `context` and hold an ended command buffer whose recorded
-    /// commands reference only objects kept alive by `retained`, after the submitted `segments`, unless `failure`
-    /// ended the recording.
     pub unsafe fn new(
         context: Arc<VkContext>,
         resources: VkCommandBufferResources,
@@ -49,7 +42,6 @@ impl VkCommandBufferExecutable {
         }
     }
 
-    /// Submits the last segment, or returns the error that ended the recording or failed the submission.
     pub fn try_submit(mut self) -> Result<VkCommandBufferPending, Error> {
         if let Some(failure) = self.failure.take() {
             return Err(failure);
@@ -67,7 +59,6 @@ impl VkCommandBufferExecutable {
 impl CommandBufferExecutable for VkCommandBufferExecutable {
     type CommandBuffer = VkCommandBuffer;
 
-    /// Submission errors are reported by `VkCommandBufferPending::wait_until_completed`.
     fn submit(self) -> VkCommandBufferPending {
         self.try_submit().unwrap_or_else(|error| {
             let (sender, receiver) = oneshot::channel();

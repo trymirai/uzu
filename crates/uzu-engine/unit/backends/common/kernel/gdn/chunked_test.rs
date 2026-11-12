@@ -28,7 +28,6 @@ const HEAD_V_DIM: usize = 128;
 const KEY_DIM: usize = NUM_K_HEADS * HEAD_K_DIM;
 const WARMUP_TOKENS: usize = 1024;
 
-/// The in_proj columns of `num_v_heads` value heads: q, k and v, then z, then b and a.
 fn total_proj_dim(num_v_heads: usize) -> usize {
     2 * KEY_DIM + 2 * num_v_heads * HEAD_V_DIM + 2 * num_v_heads
 }
@@ -185,7 +184,6 @@ fn check<B: Backend>(
 
 fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>(v_per_k: usize) {
     let context = create_context::<B>();
-    // Metal builds chunked prefill on MXU only.
     #[cfg(backend = "metal")]
     if downcast_ref::<<Metal as Backend>::Context>(&*context).is_some_and(|context| !context.supports_mxu) {
         return;
@@ -209,7 +207,6 @@ fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>(v_per_k: usize) {
     check::<B>(&context, num_v_heads, &chunked, &state0, tokens, 4, "carried 4x1024");
 }
 
-/// Value heads per key head: 1 as in Qwen3.5 0.8B, up to the 4 the chunked kernels share a workgroup among.
 #[rstest]
 #[test_attr(uzu_test)]
 fn chunked_prefill_matches_recurrent_prefill(#[values(1, 3, 4)] v_per_k: usize) {

@@ -190,7 +190,6 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
         }
     }
 
-    /// Output RHT over n's 32-column blocks with sign factors, and with `bias` an output bias after it.
     pub fn with_output_rht(
         mut self,
         bias: bool,
@@ -396,7 +395,6 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
         }
     }
 
-    /// Replaces the activations, A8 included, with `input`'s, keeping the weights and their layout.
     pub fn upload_activations(
         &mut self,
         context: &B::Context,
@@ -422,7 +420,6 @@ impl<B: Backend, T: DataTypeRepr + Float> QuantBuffers<B, T> {
     }
 }
 
-/// `input`'s activations: full precision, then its prepared A8 codes, scales and group sums where it has them.
 fn activations<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     input: &QuantInput<T>,
@@ -524,9 +521,6 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
 
 type BackendMatmul<B> = <<B as Backend>::Kernels as Kernels>::MatmulKernel;
 
-/// `input` as a linear loaded with A8 storage runs it: U8 codes signed, weights laid out by `optimize_weights_layout`,
-/// and the activations `select_activation_format` picks for that layout, A8 prepared as the backend quantizes. `None`
-/// where the backend gives the weights no A8 storage, so they stay row-major with BF16 activations.
 pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     matmul: &BackendMatmul<B>,
@@ -549,9 +543,6 @@ pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
     Some((input, format, buffers))
 }
 
-/// A quantized product's (relative, absolute) tolerance against the CPU's product of `k` codes each. GEMM stages
-/// dequantized B as BF16, as Metal does: over 256 U8 levels it errs with the outputs' size, and its independent
-/// roundings add up with the square root of K, past the 6144 the absolute tolerance was set for.
 pub fn quant_tolerance(
     format: ActivationFormat,
     bits: u32,
@@ -575,7 +566,6 @@ pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {
     run_quant_with(&*context, &mut buffers, input)
 }
 
-/// Runs `input` on `buffers`, whose weights a test may have laid out for the backend first.
 pub fn run_quant_with<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     buffers: &mut QuantBuffers<B, T>,

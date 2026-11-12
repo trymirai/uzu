@@ -9,10 +9,6 @@ import generated.quantization_method;
 
 static const uint INPUT_EMBEDDING_LOOKUP_TILE = 256;
 
-// One workgroup per tile of a token's row; ScaleT floats are read as stored, outputs are T. Dense values times the input
-// scale, and quantized codes dequantized then scaled, each round to T; D4S4 multiplies in FP32. The output Hadamard
-// transform runs in FP32 before the factors and the final rounding. A token outside the vocabulary, uniform over the
-// workgroup, gives +0 without reading any table and returns before the transform's barriers.
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "group_size.unwrap_or(1) > 0")]]

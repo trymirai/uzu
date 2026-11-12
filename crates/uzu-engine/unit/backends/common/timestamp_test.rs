@@ -12,7 +12,6 @@ use crate::{
 };
 
 const GROUPS: [&str; 3] = ["decoder", "decoder/layer 0", "decoder/layer 1"];
-/// Copies after the fill: enough commands for Vulkan to submit the recording in three segments.
 const LONG_COPIES: usize = 99;
 
 fn record<B: Backend>(mut command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding) -> Box<[TimestampSpan]> {
@@ -49,8 +48,6 @@ fn debug_groups_time_their_full_path_down_to_kernels() {
     );
 }
 
-/// A fill, then copies back and forth in a debug group each: a recording long enough to be submitted in parts keeps
-/// its commands in order and every span within its parent.
 #[uzu_test]
 fn long_recordings_keep_order_and_spans() {
     for_each_non_cpu_backend!(|B| {

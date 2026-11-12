@@ -46,23 +46,16 @@ fn quant_matmul_bf16(
     });
 }
 
-/// What a linear loaded with A8 storage runs: weights laid out by `optimize_weights_layout`, then the activation format
-/// `select_activation_format` picks for the batch, against the CPU's product of the same codes. Weights the backend
-/// gives no A8 storage stay row-major with BF16 activations, which `quant_matmul_bf16` covers. Where n allows, the
-/// output also takes RHT-wrapped linears' output transform and bias.
 #[rstest]
 #[test_attr(uzu_test)]
 fn quant_matmul_a8_bf16(
     #[values(1, 3, 5, 8, 16, 24, 40, 64, 128)] m: u32,
-    // (6144, 64): the 27B o projection's K, long enough for Vulkan's INT8 GEMM plans to split it (see `VkMatmulPlan`).
     #[values((256, 64), (256, 72), (1024, 200), (6144, 64))] k_n: (u32, u32),
 ) {
     let (k, n) = k_n;
     for_each_non_cpu_backend!(|B| quant_matmul_a8_bf16_impl::<B>(m, k, n));
 }
 
-/// The 27B draft model's o, qkvg and down projections at verification-batch rows, which Vulkan runs on its narrow-grid
-/// INT8 GEMM plans (see `VkMatmulPlan`).
 #[rstest]
 #[test_attr(uzu_test)]
 fn quant_matmul_a8_narrow_bf16(
@@ -89,7 +82,6 @@ fn quant_matmul_a8_bf16_impl<B: Backend>(
     for group_size in [32, 64] {
         for (bits, method) in SCHEMES {
             let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_group_output();
-            // Symmetric weights keep the plain epilogue covered.
             let input = match n.is_multiple_of(32) && method != QuantizationMethod::ScaleSymmetric {
                 true => input.with_output_rht(method == QuantizationMethod::ScaleZeroPoint),
                 false => input,

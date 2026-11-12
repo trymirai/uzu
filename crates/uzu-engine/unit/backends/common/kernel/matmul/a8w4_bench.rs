@@ -21,7 +21,6 @@ use crate::{
     },
 };
 
-/// The 27B layers' A8W4 products as a loaded linear runs them, from cold weights, in weight bytes per second.
 #[uzu_bench]
 fn bench_a8w4(c: &mut Criterion) {
     for_each_non_cpu_backend!(|B| {
@@ -38,7 +37,6 @@ fn bench_a8w4(c: &mut Criterion) {
         let (layout, mut matmul) = (new_matmul(), new_matmul());
         let group_path = format!("{}/Kernel/A8W4", type_short_name::<B>());
         let mut group = c.benchmark_group(group_path.clone());
-        // The 27B model's layers over weight groups of 64, and its draft model's 12-row products over groups of 32.
         let target = [
             ("27b_qkvg", 5120, 14336),
             ("27b_o", 6144, 5120),

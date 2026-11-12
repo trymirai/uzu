@@ -5,12 +5,8 @@ import common.hadamard;
 import generated.activation_type;
 import generated.gated_act_mul;
 
-// One workgroup per tile of a row. The clipped gate, its activation, the clipped value and their product are each
-// rounded to T; the Hadamard transform and quantization run in FP32. Tiles past the row hold zeros so every invocation
-// reaches every barrier.
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
-// Packed-half activations feed Metal's matmuls only; no Vulkan plan reads them.
 [[Precondition("new", "ops != GatedActMulOp::PackHalf")]]
 [[Precondition("new", "ops == GatedActMulOp::FullPrecision || use_hadamard")]]
 [[Precondition("new", "ops == GatedActMulOp::FullPrecision || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
@@ -73,7 +69,6 @@ func GatedActMul<T: IStorageFloat>(
     if (clip_gate) {
       gate = T.fromFloat(clamp(gate.toFloat(), gate_clip_min, gate_clip_max));
     }
-    // A custom alpha applies only to SiLU.
     T activated;
     if (custom_activation_alpha && act_type == ActivationType.SILU) {
       activated = T.fromFloat(activate_silu_alpha(gate.toFloat(), activation_alpha));

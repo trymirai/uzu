@@ -3,7 +3,6 @@ use uzu_engine::{
     engine::Engine,
 };
 
-/// The memory free on the selected backend's device, where the backend reports it.
 pub struct AvailableMemorySelection;
 
 impl BackendSelection for AvailableMemorySelection {

@@ -2,35 +2,19 @@ import definitions;
 import generated.delta_net;
 import generated.trie;
 
-// A tree of up to 16 NB nodes per (batch, value head) and 32-value tile, key head hk = hv / (num_v_heads / num_k_heads),
-// over 128-value heads, before DeltaNetNormGate. The columns holding a row in their trie interval are its ancestors and
-// itself:
-//   prefix[row] = sum of their log decays, decay(row, col) = e^(prefix[row] - prefix[col]);
-//   A[row, col] = beta[row] decay (k[row] . k[col]) off the diagonal, qkd[row, col] = scale decay (q[row] . k[col]);
-//   per value column, u = (I + A)^-1 rhs by forward substitution, rhs[row] = beta[row] (v[row] - e^prefix[row] k[row] . h0);
-//   o[row] = T(e^prefix[row] scale q[row] . h0 + qkd[row] . u).
-// Every tile of a head builds the grams itself. Invocation i, in subgroup_invocation order, accumulates k h0 and q h0
-// for value i % 32 of the tile over the R rows from R (i / 32): keys, queries and the tile's h0 rows stream through
-// shared memory TREE_VERIFY_DEPTH values at a time, with the next TREE_VERIFY_PREFETCH - 1 slices in flight. Then the
-// first 32 invocations solve a value column each.
-
 static const uint TREE_VERIFY_THREADS = 256;
-// The state is square, which the precondition checks.
 static const uint TREE_VERIFY_HEAD_V_DIM = DELTA_NET_HEAD_K_DIM;
 static const uint TREE_VERIFY_TILE = 32;
 static const uint TREE_VERIFY_TOKENS = 2 * TREE_VERIFY_TOKEN_BLOCK;
 static const uint TREE_VERIFY_DEPTH = 32;
 static const uint TREE_VERIFY_PREFETCH = 4;
-// A staged token or h0 row: its slice of depths as float4s, padded to an odd count against bank conflicts.
 static const uint TREE_VERIFY_QUADS = TREE_VERIFY_DEPTH / 4;
 static const uint TREE_VERIFY_STRIDE = TREE_VERIFY_QUADS + 1;
 static const uint TREE_VERIFY_GRAM_STRIDE = TREE_VERIFY_TOKENS + 1;
 
-// The staged slice: keys, then queries, then the tile's h0 rows.
 groupshared float4 tree_verify_stage[(2 * TREE_VERIFY_TOKENS + TREE_VERIFY_TILE) * TREE_VERIFY_STRIDE];
 static const uint TREE_VERIFY_Q = TREE_VERIFY_TOKENS * TREE_VERIFY_STRIDE;
 static const uint TREE_VERIFY_H0 = 2 * TREE_VERIFY_Q;
-// rhs and then u, [token][value of the tile].
 groupshared float tree_verify_u[TREE_VERIFY_TOKENS * TREE_VERIFY_TILE];
 groupshared float tree_verify_a[TREE_VERIFY_TOKENS * TREE_VERIFY_GRAM_STRIDE];
 groupshared float tree_verify_qkd[TREE_VERIFY_TOKENS * TREE_VERIFY_GRAM_STRIDE];
@@ -42,13 +26,10 @@ groupshared uint tree_verify_end[TREE_VERIFY_TOKENS];
 
 struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
   static const uint TOKENS = TREE_VERIFY_TOKEN_BLOCK * NB;
-  // Rows per invocation: eight groups of 32 cover the tokens.
   static const uint R = TOKENS / 8;
-  // Gram entries per invocation, row i / GRAM_SPAN and columns i % GRAM_SPAN + GRAM_SPAN j.
   static const uint GRAM_COLUMNS = TOKENS * TOKENS / TREE_VERIFY_THREADS;
   static const uint GRAM_SPAN = TOKENS / GRAM_COLUMNS;
   static const uint SLICES = DELTA_NET_HEAD_K_DIM / TREE_VERIFY_DEPTH;
-  // The float4s of a slice: keys and queries loaded by invocations below TOKEN_QUADS, h0 by those below H0_QUADS.
   static const uint TOKEN_QUADS = TOKENS * TREE_VERIFY_QUADS;
   static const uint H0_QUADS = TREE_VERIFY_TILE * TREE_VERIFY_QUADS;
 
@@ -83,7 +64,6 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
     let h0_base =
       ((batch * num_v_heads + hv) * TREE_VERIFY_HEAD_V_DIM + tile * TREE_VERIFY_TILE) * DELTA_NET_HEAD_K_DIM / 4;
 
-    // The slices, each invocation's share TREE_VERIFY_PREFETCH slices ahead of the one it stages.
     float4 next_k[TREE_VERIFY_PREFETCH];
     float4 next_q[TREE_VERIFY_PREFETCH];
     float4 next_h0[TREE_VERIFY_PREFETCH];
@@ -92,7 +72,6 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
       load(q, k, h0_quads, tree_size, qk_base, qk_stride, h0_base, slice, i, next_k[slice], next_q[slice], next_h0[slice]);
     }
 
-    // The interval, log decay and beta of node i, in flight during the accumulation.
     TrieNode node = { 1, 0, 0 };
     var node_log_decay = 0.0;
     var node_beta = 0.0;
@@ -163,7 +142,6 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
     }
     GroupMemoryBarrierWithGroupSync();
     if (i < TOKENS) {
-      // Rows past the tree lie in no interval, as do the empty ones of columns past it.
       var prefix = 0.0;
       for (uint col = 0; col < TOKENS; col++) {
         if (i >= tree_verify_start[col] && i <= tree_verify_end[col]) {
@@ -195,7 +173,6 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // Forward substitution down value column i of the tile, in place over rhs.
     if (i < TREE_VERIFY_TILE) {
       float u[TOKENS] = {};
       [unroll]
@@ -225,8 +202,6 @@ struct TreeVerifyTile<T : IStorageFloat, let NB : uint> {
     }
   }
 
-  // This invocation's share of slice `slice`: below TOKEN_QUADS, four consecutive depths of a key and a query; below
-  // H0_QUADS, four of an h0 row of the tile.
   static void load(
     Ptr<T, Access.Read> q,
     Ptr<T, Access.Read> k,

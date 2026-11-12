@@ -2,9 +2,6 @@ import definitions;
 import common.activation;
 import generated.activation_type;
 
-// One token in place: channel c accumulates in FP32 from the bias (or +0) over its state taps then the input, stores
-// SiLU as T once, then shifts its state row down one tap and appends the input.
-
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("encode", "kernel_size >= 2")]]

@@ -4,12 +4,10 @@ import common.quantized_value;
 import generated.gemm_b_layout;
 import generated.quantization_method;
 
-// The FP32 value of an A or B element `inner` of row `row`.
 public interface IMatmulOperand {
   public float value(uint row, uint inner);
 }
 
-// Full-precision rows of k elements.
 public struct DenseOperand<T : IStorageFloat> : IMatmulOperand {
   public Ptr<T, Access.Read> values;
   public uint k;
@@ -19,9 +17,6 @@ public struct DenseOperand<T : IStorageFloat> : IMatmulOperand {
   }
 }
 
-// The byte holding B code (row, inner) of rows of k codes stored in `layout`: row k + inner for RowMajor; for Tiled,
-// ((row / 8 k / 64 + inner / 64) 8 + row % 8) 64 + inner % 64, the same bytes as 8 x 64 tiles. A U4 byte holds
-// codes 2 i and 2 i + 1, the low nibble first, in both; any 32-code run a reader loads lies in one 64-code tile row.
 public uint gemm_b_code_byte(GemmBLayout layout, uint row, uint inner, uint k, bool u4) {
   let shift = u4 ? 1u : 0u;
   if (layout == GemmBLayout.Tiled) {
@@ -31,17 +26,12 @@ public uint gemm_b_code_byte(GemmBLayout layout, uint row, uint inner, uint k, b
   return (row * k + inner) >> shift;
 }
 
-// A weight row's metadata in one group: its scale, the ScaleBias bias and the zero point the codes are centered on (a
-// stored one, the midpoint, or 0 for ScaleBias).
 public struct WeightGroup {
   public float scale;
   public float bias;
   public uint zero_point;
 }
 
-// Packed U4 or U8 codes of B rows of k elements in `layout`, stored signed codes with their top bit flipped. Scales,
-// biases and zero points (nibbles for U4) of group inner / group_size sit at row output_stride + group group_stride;
-// without zero points the offset is the midpoint, 8 or 128.
 public struct QuantizedWeights<B : IStorageFloat> : IMatmulOperand {
   public Ptr<uint8_t, Access.Read> codes;
   public Ptr<B, Access.Read> scales;
@@ -91,7 +81,6 @@ public struct QuantizedWeights<B : IStorageFloat> : IMatmulOperand {
   }
 }
 
-// The epilogue on a dot: scale, bias, then the soft cap.
 public float matmul_epilogue(
   float dot,
   bool has_scale,
@@ -111,7 +100,6 @@ public float matmul_epilogue(
   return value;
 }
 
-// alignment holds GEMM_ALIGNMENT_* bits.
 public struct GemmParams {
   public uint M;
   public uint N;
@@ -124,13 +112,11 @@ public struct GemmParams {
   public uint alignment;
 }
 
-// D's FP32 value of an output from its dot and bias, through the epilogue.
 public float gemm_output(float dot, float bias, GemmParams params) {
   return matmul_epilogue(
     dot, params.has_scale, params.ab_scale, params.has_bias, bias, params.has_soft_cap, params.soft_cap);
 }
 
-// A threadgroup array of T, element `index` from its start.
 public interface IThreadgroupStorage<T> {
   public static T read(uint index);
   public static void write(uint index, T value);

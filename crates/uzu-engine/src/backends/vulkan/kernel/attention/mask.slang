@@ -2,9 +2,6 @@ import definitions;
 import generated.ring;
 import generated.trie;
 
-// The keys the queries of a suffix use, Metal's should_use_key in its unsigned arithmetic: suffix keys at their trie
-// height or suffix index, by ancestry or index order under causality; ring prefix keys at their ring position, filled
-// entries only; then the sliding window.
 public struct AttentionMask {
   RingParams ring_params;
   Ptr<TrieNode, Access.Read> trie;
@@ -38,12 +35,10 @@ public struct AttentionMask {
     this.is_sliding_window = is_sliding_window;
   }
 
-  // The position of suffix query `query`: its trie height or its index, past the prefix.
   public uint query_position(uint query) {
     return suffix_position + (is_trie ? trie[query].height : query);
   }
 
-  // Whether suffix query `query`, at `query_position`, uses `key`.
   public bool admits(uint key, uint query, uint query_position) {
     if (!is_trie && !is_kv_cache_ring && !is_sliding_window) {
       return !is_causal || key <= prefix_length + query;

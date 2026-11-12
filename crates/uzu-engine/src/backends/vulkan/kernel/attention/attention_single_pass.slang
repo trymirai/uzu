@@ -5,7 +5,6 @@ import generated.kv_layout;
 import generated.ring;
 import generated.trie;
 
-// One query of one head over the INT8 keys and values of its key-value head, the keys its mask admits.
 struct CodeKeys : IAttentionKeys {
   Ptr<int8_t, Access.Read> q_codes;
   Ptr<bf16, Access.Read> q_scales;
@@ -50,8 +49,6 @@ struct CodeKeys : IAttentionKeys {
   }
 }
 
-// One workgroup per query and head, writing AttentionTwoPass1's partial of a single block; keys the mask rejects are
-// never read.
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]

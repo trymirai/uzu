@@ -1,7 +1,6 @@
 import definitions;
 import generated.trie;
 
-// One hash owner and chunk slot per invocation.
 static const uint REPETITION_PENALTY_HASH_BITS = 8;
 static const uint REPETITION_PENALTY_THREADS = 1u << REPETITION_PENALTY_HASH_BITS;
 static const uint REPETITION_PENALTY_EMPTY = 0xffffffffu;
@@ -9,10 +8,6 @@ groupshared uint repetition_penalty_heads[REPETITION_PENALTY_THREADS];
 groupshared uint repetition_penalty_next[REPETITION_PENALTY_THREADS];
 groupshared uint repetition_penalty_tokens[REPETITION_PENALTY_THREADS];
 
-// One workgroup per sample; duplicates read original_logits, never a penalized output. In a trie a sample's window ends
-// with its ancestors, the nearest earlier node at each height. Each token's hash owner writes it throughout a row; a
-// bounded shared list deduplicates each chunk without racing device stores. Unchecked: output does not alias inputs,
-// tokens are below vocab_size, the ring is valid and its offsets do not overflow.
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 func RepetitionPenalty<T: IStorageFloat>(
@@ -67,7 +62,6 @@ func RepetitionPenalty<T: IStorageFloat>(
       InterlockedExchange(repetition_penalty_heads[bucket], tid, previous);
       repetition_penalty_next[tid] = previous;
     }
-    // Every producer inserted once: predecessor links form a finite list. Publish tokens and links before traversal.
     GroupMemoryBarrierWithGroupSync();
     var node = repetition_penalty_heads[tid];
     while (node != REPETITION_PENALTY_EMPTY) {

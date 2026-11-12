@@ -1,11 +1,8 @@
 implementing definitions;
 
-// Element type of a device buffer. Kernels compute in FP32 and convert only at loads and stores.
 public interface IStorageFloat {
     public float toFloat();
     public static This fromFloat(float value);
-    // The stored bits, zero-extended, and their inverse, which ignores the bits above them: exact, for moving typed
-    // values between lanes and for values loaded as packed words.
     public uint storageBits();
     public static This fromStorageBits(uint bits);
 }

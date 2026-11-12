@@ -12,8 +12,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// DeltaNetUpdate over (head, 16-row) workgroups for parallelism at one token, then DeltaNetNormGate in place for the
-/// head-wide RMS and the gate, as the prefill path applies them.
 pub struct VkDeltaNetUpdateKernel {
     update: DeltaNetUpdateVulkanKernel,
     norm_gate: DeltaNetNormGateVulkanKernel,
@@ -51,8 +49,6 @@ impl DeltaNetUpdateKernel for VkDeltaNetUpdateKernel {
     ) {
         let (state, state_range) = state.parts();
         let (output, output_range) = out.reborrow().parts();
-        // SAFETY: as for the CPU kernel, the common contract makes callers pass ranges that cover every element the
-        // kernel indexes, the state and out aliasing no other argument.
         unsafe {
             self.update.encode(
                 VkBuffer::resolve_ref(in_proj),

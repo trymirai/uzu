@@ -1,27 +1,14 @@
 import definitions;
 import generated.delta_net;
 
-// Per (v head, 16-value slice), with the state held as S^T[key, value], per 64-token chunk (padded tokens +0, unstored):
-// R = beta (V - e^g (K S^T)); Vnew = T R over each token's causal 16-block; out = T(e^g (Q S^T) + qk_scaled Vnew);
-// S^T = e^g_last S^T + (K e^(g_last - g))^T Vnew.
-//
-// The first 128 invocations work on the K side (K S^T, R, Vnew), the others on the Q side (Q S^T, out), each owning a
-// 2-token x 4-value tile of its matrix; the state update has an invocation per key and half of the values. Keys and queries
-// stage through shared memory CHUNKED_OUTPUT_DEPTH keys at a time, then T and qk_scaled, in float4s, rows padded against
-// bank conflicts.
-
 static const uint CHUNKED_OUTPUT_THREADS = 256;
-// Values of a workgroup, as four float4 groups; tokens per invocation.
 static const uint CHUNKED_OUTPUT_VT = 16;
 static const uint CHUNKED_OUTPUT_TM = 2;
 static const uint CHUNKED_OUTPUT_DEPTH = 32;
 static const uint CHUNKED_OUTPUT_UPDATE_BATCH = 16;
-// float4s per staged row of a key slice, and of T or qk_scaled.
 static const uint CHUNKED_OUTPUT_SLICE_STRIDE = CHUNKED_OUTPUT_DEPTH / 4 + 1;
 static const uint CHUNKED_OUTPUT_MATRIX_STRIDE = DELTA_NET_CHUNKED_CHUNK / 4 + 1;
 
-// S^T[key][value group]; R, then Vnew, [token][value group]; the staged keys then queries [token][depth group], then
-// T, then qk_scaled [token][column group]; each token's beta, e^g and e^(g_last - g).
 groupshared float4 chunked_state_tile[DELTA_NET_HEAD_K_DIM * 4];
 groupshared float4 chunked_new_value[DELTA_NET_CHUNKED_CHUNK * 4];
 groupshared float4 chunked_stage[2 * DELTA_NET_CHUNKED_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE];
@@ -62,11 +49,9 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
   let k_head = hv / (num_v_heads / num_k_heads) * DELTA_NET_HEAD_K_DIM;
   let g_head = hv * suffix_len;
   let value_base = value_tile_group * CHUNKED_OUTPUT_VT;
-  // The tile of this invocation's side (0: K, 1: Q): tokens row0 and row0 + 1, value group `value_group` of the slice.
   let side = thread_idx / 128;
   let row0 = (thread_idx % 128) / 4 * CHUNKED_OUTPUT_TM;
   let value_group = thread_idx % 4;
-  // The state update's key and half (two value groups) of the slice.
   let key = thread_idx % DELTA_NET_HEAD_K_DIM;
   let half_groups = thread_idx / DELTA_NET_HEAD_K_DIM * 2;
 
@@ -84,7 +69,6 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
     let valid_tokens = min(DELTA_NET_CHUNKED_CHUNK, suffix_len - token_base);
     let chunk_head = (chunk * num_v_heads + hv) * DELTA_NET_CHUNKED_CHUNK * DELTA_NET_CHUNKED_CHUNK;
     let g_last = g[g_head + token_base + valid_tokens - 1];
-    // The tokens a 16-token block's rows read from T and qk_scaled.
     let block_end = row0 / DELTA_NET_CHUNKED_BLOCK * DELTA_NET_CHUNKED_BLOCK + DELTA_NET_CHUNKED_BLOCK;
 
     if (thread_idx < DELTA_NET_CHUNKED_CHUNK) {
@@ -103,7 +87,6 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
       chunked_row_decay[thread_idx] = row_decay;
     }
 
-    // K S^T on the K side, Q S^T on the Q side, over the keys a slice at a time.
     float4 projection[CHUNKED_OUTPUT_TM] = { float4(0.0), float4(0.0) };
     let operand = side * DELTA_NET_CHUNKED_CHUNK * CHUNKED_OUTPUT_SLICE_STRIDE;
     for (uint depth_base = 0; depth_base < DELTA_NET_HEAD_K_DIM; depth_base += CHUNKED_OUTPUT_DEPTH) {
@@ -134,7 +117,6 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
       }
     }
 
-    // R = beta (V - e^g K S^T).
     if (side == 0) {
       [unroll]
       for (uint i = 0; i < CHUNKED_OUTPUT_TM; i++) {
@@ -150,7 +132,6 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // Vnew = T R over each token's causal blocks; rows past the suffix are +0.
     for (uint entry = thread_idx; entry < DELTA_NET_CHUNKED_CHUNK * (DELTA_NET_CHUNKED_CHUNK / 4); entry += CHUNKED_OUTPUT_THREADS) {
       let t = entry / (DELTA_NET_CHUNKED_CHUNK / 4);
       let q = entry % (DELTA_NET_CHUNKED_CHUNK / 4);
@@ -190,7 +171,6 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // out = e^g Q S^T + qk_scaled Vnew.
     if (side == 1) {
       float4 output[CHUNKED_OUTPUT_TM];
       [unroll]
@@ -220,8 +200,6 @@ func DeltaNetChunkedOutputAndState<T: IStorageFloat>(
       }
     }
 
-    // S^T = e^g_last S^T + (K e^(g_last - g))^T Vnew. The keys load a batch at a time, so their latencies overlap; tokens
-    // past the suffix scale to +0 against Vnew +0.
     float4 update[2] = { float4(0.0), float4(0.0) };
     for (uint batch = 0; batch < valid_tokens; batch += CHUNKED_OUTPUT_UPDATE_BATCH) {
       float scaled_keys[CHUNKED_OUTPUT_UPDATE_BATCH];

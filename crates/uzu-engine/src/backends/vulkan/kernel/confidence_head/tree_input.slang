@@ -2,8 +2,6 @@ import definitions;
 import confidence_head.head;
 import generated.weaver;
 
-// Each tree attention input row: its depth embedding, plus a child's token input, plus the node input of the slot the
-// row holds; zero for an absent child. Row 0 is the root, row 1 + entry the frontier entry's child.
 [[Kernel]] [[Public]]
 func ConfidenceHeadTreeInput(
   Ptr<bf16, Access.Read> depth_embedding,

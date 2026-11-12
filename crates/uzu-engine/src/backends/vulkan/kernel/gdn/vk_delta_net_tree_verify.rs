@@ -14,7 +14,6 @@ use crate::{
 
 pub struct VkDeltaNetTreeVerify {
     arguments: TreeVerifyNewArguments,
-    /// For trees of up to one and two token blocks.
     kernels: [<VulkanKernels as Kernels>::TreeVerifyKernel; 2],
 }
 

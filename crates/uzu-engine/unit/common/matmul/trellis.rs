@@ -1,6 +1,3 @@
-//! Trellis projections checked against the levels their stored codes decode to, shared by the common test and the
-//! backends that force their own plans.
-
 use std::sync::Arc;
 
 use half::bf16;
@@ -31,7 +28,6 @@ pub fn format(
     }
 }
 
-/// Whether `k` is a whole number of the format's restart blocks, as a projection's K is.
 pub fn whole_blocks(
     format: TrellisFormat,
     k: usize,
@@ -68,7 +64,6 @@ fn decode_level(
     (8 * field_sum + ((3 * (hash_byte & 15)) & 15)) as i32 - 54
 }
 
-/// Encodes one projection of random codes with `encode` and checks every output, and that padding is untouched.
 pub fn check_projection<B: Backend>(
     context: &Arc<B::Context>,
     format: TrellisFormat,
@@ -160,8 +155,6 @@ pub fn check_projection<B: Backend>(
             ];
             let scale = f64::from(row_scales[row]) * f64::from(activation_scales_host[token]);
             let want = bf16::from_f32((terms.iter().sum::<f64>() * scale) as f32).to_f32();
-            // Five FP32 terms and two scales may round in a different order or contract. Bound that roundoff
-            // before BF16 rounding, including near cancellation; zero input still has an exact zero bound.
             let roundoff =
                 8.0 * f64::from(f32::EPSILON) * terms.iter().map(|term| term.abs()).sum::<f64>() * scale.abs();
             let got = bf16::from_bits(got).to_f32();

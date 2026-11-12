@@ -130,8 +130,6 @@ fn run<B: Backend, T: DataTypeRepr>(
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
     let tolerance = 5e-3;
-    // MXU also quantizes attention probabilities to u8: queries that see few keys have large probabilities, and 64 tree
-    // queries over a 16-key ring with a 17-key window land four BF16 steps (1.6e-2 near 0.63) from the CPU.
     #[cfg(backend = "metal")]
     let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
         2e-2
@@ -241,7 +239,6 @@ fn attention_large_tree_and_f32() {
         let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
         assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
     });
-    // A 1024-key cache splits the keys of 16 queries; 16 keys before 64 causal queries leave a split without keys.
     for (suffix, dim, prefix) in [(80, 64, 37), (80, 256, 37), (80, 512, 37), (16, 256, 1024), (64, 256, 16)] {
         let words = tree(suffix);
         let nodes: &[TrieNode] = bytemuck::cast_slice(&words);
@@ -269,7 +266,6 @@ fn attention_large_tree_and_f32() {
                 for_each_non_cpu_backend!(|B| {
                     let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
                     let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
-                    // Metal's D512 path lands up to two BF16 steps (7.8e-3 near 0.76) from the CPU.
                     let tolerance = if dim == 512 {
                         tolerance.max(1e-2)
                     } else {

@@ -1,7 +1,5 @@
 use crate::backends::vulkan::{VkKernelError, VkPhysicalDevice};
 
-/// Fails unless a workgroup of `size` is within the device's limits and, with a required subgroup size, made of whole
-/// subgroups of it within maxComputeWorkgroupSubgroups; the generated kernels check theirs before creating a pipeline.
 pub fn check_work_group(
     physical_device: &VkPhysicalDevice,
     kernel: &'static str,

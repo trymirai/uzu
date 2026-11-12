@@ -5,10 +5,6 @@ import matmul.common.simdgroup_multiply_accumulate;
 import matmul.common.threadgroup_tile;
 import matmul.gemm.common.operands;
 
-// One workgroup computes a THREADGROUP_BLOCK_M x THREADGROUP_BLOCK_N tile of D = epilogue(A B), staging each
-// THREADGROUP_BLOCK_K slice and accumulating it in FP32 8 x 8 fragments; loads and stores skip bounds checks where the
-// alignment allows.
-
 public static const uint GEMM_ALIGNMENT_M = 1;
 public static const uint GEMM_ALIGNMENT_N = 2;
 public static const uint GEMM_ALIGNMENT_K = 4;
@@ -124,7 +120,6 @@ void simdgroup_mma_finalize<
   }
 }
 
-// The tile at threadgroup_position (column tile, row tile). Every invocation of the workgroup must call it.
 public void simdgroup_mma_core_run<
   A : IStorageFloat,
   B : IStorageFloat,
@@ -151,7 +146,6 @@ public void simdgroup_mma_core_run<
   let shared_stride_a = THREADGROUP_BLOCK_K + padding_a;
   let shared_stride_b = THREADGROUP_BLOCK_K + padding_b;
   let threadgroup_threads = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * int(SIMD_SIZE);
-  // QuantizedBlockLoader gives every invocation an equal run of a B tile's packs, one U8 code or two U4 codes each.
   static_assert(THREADGROUP_BLOCK_K % 2 == 0, "whole U4 packs");
   static_assert(THREADGROUP_BLOCK_K / 2 * THREADGROUP_BLOCK_N % threadgroup_threads == 0,
                 "U4 packs split evenly over the invocations");

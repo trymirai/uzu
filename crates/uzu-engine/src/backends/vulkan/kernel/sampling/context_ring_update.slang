@@ -2,9 +2,6 @@ import definitions;
 
 static const uint CONTEXT_RING_UPDATE_THREADS = 256;
 
-// Stores only the last min(input_length, capacity) tokens, each to a distinct slot; invocation 0 publishes the next
-// header after the barrier, which every invocation reaches after reading the header. The header must be valid and
-// input must not alias the ring.
 [[Kernel]] [[Public]]
 [[Precondition("encode", "input_length == 0 || suffix_repetition_length != 0")]]
 func ContextRingUpdate(

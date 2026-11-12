@@ -5,8 +5,6 @@ import generated.gemm_b_layout;
 import generated.quantization;
 import generated.quantization_method;
 
-// b is a word pointer the full-precision B source reads as B; quantized B is read through QuantizedWeights.
-
 public struct GemvOperands<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat> {
   public Ptr<uint, Access.Read> b;
   public Ptr<A, Access.Read> a;
@@ -27,7 +25,6 @@ public struct GemvParams {
   public bool gathered;
 }
 
-// The quantization method of a B prologue; full precision has none and reads as symmetric.
 public QuantizationMethod gemm_quantization_method(GemmBPrologueKind prologue) {
   switch (prologue) {
   case GemmBPrologueKind.ScaleBiasDequant:

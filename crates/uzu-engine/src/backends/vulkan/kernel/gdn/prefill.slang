@@ -2,10 +2,6 @@ import definitions;
 import common.workgroup_reduction;
 import generated.delta_net;
 
-// Each simdgroup owns four value rows of v head hv (k head hv / floor(H / G)), lane l keys 4l..4l + 3, held in FP32
-// across all tokens: per token s decays, kv = s . k, s += k beta (v - kv), o = s . q, both summed over the simdgroup.
-// Rows from head_v_dim on stay zero and touch no memory but join every reduction.
-
 static const uint DELTA_NET_PREFILL_THREADS = 128;
 static const uint DELTA_NET_PREFILL_DV_PER_SIMDGROUP = 4;
 static const uint DELTA_NET_PREFILL_SIMDGROUPS = DELTA_NET_PREFILL_THREADS / SIMD_SIZE;
@@ -45,7 +41,6 @@ func DeltaNetPrefill<T: IStorageFloat>(
   let lane = invocation % SIMD_SIZE;
   let hv = head_group;
   let dv_idx = (row_group * DELTA_NET_PREFILL_SIMDGROUPS + simd) * DELTA_NET_PREFILL_DV_PER_SIMDGROUP;
-  // The simdgroup's rows below head_v_dim.
   let rows = dv_idx < head_v_dim ? min(head_v_dim - dv_idx, DELTA_NET_PREFILL_DV_PER_SIMDGROUP) : 0u;
 
   let hk = hv / (num_v_heads / num_k_heads);
@@ -60,7 +55,6 @@ func DeltaNetPrefill<T: IStorageFloat>(
   var v_row = 2 * key_dim + hv * head_v_dim + dv_idx;
   var out_row = hv * head_v_dim + dv_idx;
 
-  // State layout: [Hv, Dv, Dk], contiguous along Dk (DELTA_NET_HEAD_K_DIM floats per row).
   let s_in = (hv * head_v_dim + dv_idx) * DELTA_NET_HEAD_K_DIM + dk_base;
   var s0 = float4(0.0);
   var s1 = float4(0.0);

@@ -3,19 +3,11 @@ import common.workgroup_reduction;
 import generated.trellis;
 import matmul.common.int8_operands;
 
-// D[token, r] = bf16(((Σ a b - 54 Σ G_g) s + Σ_g G_g o_g) row_scales[r] activation_scales[token]) over TrellisTransform
-// codes a, their column-group sums G and the codebook [s, o_0..o_3]. Row r of B is TrellisFormat::code_row_bytes(K)
-// bytes of tape-2 blocks of block_columns columns (restart_columns, or K without restarts), packed bit after bit: each
-// block holds a 16-bit state per VECTOR_WIDTH columns with transition_bits between states, its bits reversed. A state
-// hashes to VECTOR_WIDTH bytes of biased weights b = 8 (sum of 2-bit fields) + (3 (byte & 15) & 15).
-
 static const uint TRELLIS_THREADS = 256;
-// Rows of B per workgroup, as the binding's group count n.div_ceil(8) assumes.
 static const uint TRELLIS_OUTPUTS = 8;
 static const uint TRELLIS_LANES = TRELLIS_THREADS / TRELLIS_OUTPUTS;
 static const uint TRELLIS_WEIGHT_BIAS = 54;
 static const uint TRELLIS_STATE_BITS = 16;
-// Restart rows pad to this many bytes, rows without restarts to a byte.
 static const uint TRELLIS_ROW_ALIGNMENT = 16;
 
 uint trellis_block_bits(uint vector_width, uint transition_bits, uint block_columns) {
@@ -30,8 +22,6 @@ uint trellis_row_bytes(uint vector_width, uint transition_bits, uint restart_col
   return ((bits + 7) / 8 + TRELLIS_ROW_ALIGNMENT - 1) / TRELLIS_ROW_ALIGNMENT * TRELLIS_ROW_ALIGNMENT;
 }
 
-// The state of `column` in the code row at byte `row`: state i of a block of B bits is the little-endian 16-bit field at
-// bit B - 16 - i transition_bits of the block, bit j of a row being bit j % 8 of its byte j / 8.
 uint trellis_state(
   Ptr<uint8_t, Access.Read> codes,
   uint row,
@@ -45,7 +35,6 @@ uint trellis_state(
           - column % block_columns / vector_width * transition_bits;
   let byte = row + bit / 8;
   let shift = bit % 8;
-  // A field starting mid-byte ends in the third byte; one starting on a byte boundary must not read past the row.
   var third = 0u;
   if (shift != 0) {
     third = uint(codes[byte + 2]);
@@ -66,8 +55,6 @@ uint trellis_biased_weights(uint hash) {
   return (byte_sums << 3) + dither;
 }
 
-// The biased weights of columns column to column + 3 of the code row at byte `row` of `codes`, one per byte from the
-// lowest, each below 128; column is a multiple of 4 and the four columns lie in one block.
 uint trellis_decode(
   Ptr<uint8_t, Access.Read> codes,
   uint row,

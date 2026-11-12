@@ -5,7 +5,6 @@ use crate::backends::{
     vulkan::VkCommandBuffer,
 };
 
-/// A finished submission; its command resources were already recycled.
 pub struct VkCommandBufferCompleted {
     gpu_execution_time: Duration,
     timestamps: Box<[TimestampSpan]>,

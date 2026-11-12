@@ -105,8 +105,6 @@ fn get_test_data_large<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
     (input, expected)
 }
 
-/// More than 65,535 workgroups, Vulkan's minimum maxComputeWorkGroupCount, which its bindings fold into rows on every
-/// device.
 fn get_test_data_wide() -> (Input<f32>, Vec<f32>) {
     let (num_rows, num_cols) = (1024usize, 5120usize);
     let input = Input {

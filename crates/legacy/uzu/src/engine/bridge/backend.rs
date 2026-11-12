@@ -72,7 +72,6 @@ impl BackendSelection for DecisionInstanceSelection {
     }
 }
 
-/// The Uzu backend; for a chat, with the memory check its model must pass before its weights load.
 pub struct UzuLlmBackend {
     memory_check: Option<MemoryCheck>,
 }

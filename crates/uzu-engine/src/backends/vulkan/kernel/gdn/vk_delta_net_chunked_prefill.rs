@@ -16,12 +16,10 @@ use crate::{
     data_type::DataType,
 };
 
-/// The shortest suffix worth the chunked kernels' extra dispatches, as Metal's.
 const MIN_SUFFIX_LEN: u32 = 256;
 const INNER_DATA_TYPE: DataType = DataType::F32;
 const _: () = assert!(DELTA_NET_CHUNKED_CHUNK == CHUNK_SIZE, "the chunked kernels split the suffix as the host");
 
-/// The chunked gated delta rule in two stages after DeltaNetPrefillPrep.
 pub struct VkDeltaNetChunkedPrefill {
     prep: <VulkanKernels as Kernels>::DeltaNetPrefillPrepKernel,
     precompute: DeltaNetChunkedPrecomputeVulkanKernel,
@@ -94,10 +92,6 @@ impl DeltaNetChunkedPrefill for VkDeltaNetChunkedPrefill {
             suffix_len,
             command_buffer,
         );
-        // SAFETY (every stage): the scratch ranges above have the shapes of these sizes, `in_projected` holds
-        // [suffix_len, 2 key_dim + 2 value_dim + 2 num_heads] rows, `ssm_state` [num_heads, value_head_dim, 128] and
-        // `delta_output` [suffix_len, value_dim]; each stage writes only ranges no other argument of it aliases, and a
-        // stage reads only entries an earlier stage wrote.
         unsafe {
             self.precompute.encode(
                 VkBuffer::resolve_ref(&q_norm),

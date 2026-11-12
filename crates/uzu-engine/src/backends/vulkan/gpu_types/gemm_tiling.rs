@@ -1,6 +1,5 @@
 use derive_more::Display;
 
-/// A Gemm workgroup block, M x N x K, and its subgroups along M, N and K; tensor tilings run the cooperative core.
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(non_camel_case_types)]
@@ -58,7 +57,6 @@ impl GemmTiling {
         )
     }
 
-    /// Threadgroup elements of the scalar core's A (`left`) or B staging, rows padded by 16 bytes of `element_bytes`.
     pub const fn scalar_staging(
         self,
         left: bool,
@@ -72,7 +70,6 @@ impl GemmTiling {
         rows * (self.block_k() + 16 / element_bytes)
     }
 
-    /// 16-byte words of the cooperative core's two stages of BF16 A and B, rows padded by 8 values.
     pub const fn tensor_staging(self) -> u32 {
         2 * (self.block_m() + self.block_n()) * (self.block_k() + 8) / 8
     }

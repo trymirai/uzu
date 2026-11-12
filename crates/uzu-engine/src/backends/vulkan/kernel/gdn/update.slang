@@ -4,11 +4,6 @@ import common.workgroup_reduction;
 import gdn.prefill_prep;
 import generated.delta_net;
 
-// State [Hv, Dv, Dk]: one workgroup per (v head, 16 rows), 8 invocations in subgroup_invocation order owning each row,
-// lane l the 16 keys of float4s l + 8 c. Each row normalizes q and k itself, so its loads issue together and no sum
-// crosses rows. Each row stores its updated state and its raw output o_i, and DeltaNetNormGate then applies the
-// head-wide RMS and the gate.
-
 static const uint DELTA_NET_UPDATE_THREADS = 128;
 static const uint DELTA_NET_UPDATE_LANES = 8;
 static const uint DELTA_NET_UPDATE_CHUNKS = DELTA_NET_HEAD_K_DIM / (4 * DELTA_NET_UPDATE_LANES);
@@ -44,7 +39,6 @@ func DeltaNetUpdate<T: IStorageFloat>(
   let q_base = hk * DELTA_NET_HEAD_K_DIM;
   let k_base = key_dim + hk * DELTA_NET_HEAD_K_DIM;
   let row = (hv * head_v_dim + i) * DELTA_NET_HEAD_K_DIM;
-  // The lane's keys of q, k and the state row; a masked row reads no state and adds zeros.
   float4 q[DELTA_NET_UPDATE_CHUNKS];
   float4 k[DELTA_NET_UPDATE_CHUNKS];
   float4 s[DELTA_NET_UPDATE_CHUNKS];
@@ -62,7 +56,6 @@ func DeltaNetUpdate<T: IStorageFloat>(
   let squares = segment_reduce<VectorSum<3>, DELTA_NET_UPDATE_THREADS>(
     float3(q_squares, k_squares, 0.0), DELTA_NET_UPDATE_LANES
   );
-  // As delta_net_inverse: 1 / sqrt(sum of squares + 1e-6).
   let q_inv = rsqrt(squares.x + 1e-6);
   let k_inv = rsqrt(squares.y + 1e-6);
   var partial_dots = float3(0.0);
@@ -73,7 +66,6 @@ func DeltaNetUpdate<T: IStorageFloat>(
     k[c] *= k_inv;
     partial_dots += float3(dot(s[c], q[c]), dot(s[c], k[c]), dot(k[c], q[c]));
   }
-  // s . q, s . k and k . q.
   let dots = segment_reduce<VectorSum<3>, DELTA_NET_UPDATE_THREADS>(partial_dots, DELTA_NET_UPDATE_LANES);
   let beta = sigmoid(in_proj[conv_dim + value_dim + hv].toFloat());
   let a_raw = in_proj[conv_dim + value_dim + num_v_heads + hv].toFloat();

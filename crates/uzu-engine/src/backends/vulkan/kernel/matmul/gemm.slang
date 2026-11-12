@@ -15,14 +15,9 @@ import matmul.gemv.common.arguments;
 
 using namespace linalg;
 
-// D = epilogue(A B) over A [m, k] and B of n rows of k, full precision or U4/U8 codes (the B prologue). Each core is its
-// own entry point so a module declares only its capabilities: Gemm (simdgroup fragments) on every device, GemmTensor
-// (cooperative matrices) for 16-bit operands on tensor cores. Quantized B needs groups of whole K slices, U4 an even k.
-
 [[SpecializationConstant]] public const uint Gemm_specialize_shared_a_elements = 1;
 [[SpecializationConstant]] public const uint Gemm_specialize_shared_b_elements = 1;
 
-// One typed array per operand, sized by specialization.
 public struct GemmStorage<T, let ROLE : int> : IThreadgroupStorage<T> {
   static groupshared T data[ROLE == 0 ? Gemm_specialize_shared_a_elements : Gemm_specialize_shared_b_elements];
   public static T read(uint index) { return data[index]; }
@@ -99,7 +94,6 @@ public func Gemm<A: IStorageFloat, B: IStorageFloat, D: IStorageFloat>(
 
 [[SpecializationConstant]] public const uint GemmTensor_specialize_shared_words = 1;
 
-// GemmTensor's two stages, reused by its epilogue.
 public struct GemmTensorShared : ITensorShared {
   static groupshared uint4 data[GemmTensor_specialize_shared_words];
   public static uint4 read(uint word) { return data[word]; }
@@ -119,7 +113,6 @@ public struct GemmTensorShared : ITensorShared {
   }
 }
 
-// The cooperative tilings' instantiations; tiling is a specialization constant, so each pipeline keeps one branch.
 void gemm_tensor_tiling<B : IStorageFloat, D : IStorageFloat>(
   GemmTiling tiling,
   Ptr<B, Access.Read> a,
@@ -212,9 +205,6 @@ public func GemmTensor<B: IStorageFloat, D: IStorageFloat>(
 [[SpecializationConstant]] public const uint GemmInt8Nv_specialize_stage_depth = 64;
 [[SpecializationConstant]] public const uint GemmInt8Nv_specialize_k_slices = 1;
 
-// GemmInt8's (ROLE 0) or GemmInt8Nv's (ROLE 1) two stages, GemmInt8's per-subgroup fold scratch, and the per-element
-// fold metadata of four slots, eight where GemmInt8Nv folds 128-deep stages by quarters over 32-value groups; its K
-// slices have stages of their own, each with two slots, four over 32-value groups.
 public struct GemmInt8Shared<let ROLE : int> : IInt8Shared<32> {
   static const uint FOLD_SLOTS = ROLE == 1 && GemmInt8Nv_specialize_k_slices > 1
     ? GemmInt8Nv_specialize_k_slices * (GemmInt8Nv_specialize_group_size == 32 ? 4 : 2)
@@ -248,10 +238,7 @@ public struct GemmInt8Shared<let ROLE : int> : IInt8Shared<32> {
   }
 }
 
-// Byte operands and INT32 results keep matrix accesses in their native component types. Output transforms reuse the
-// byte staging after the operands are consumed; matrix products use the following INT32 scratch.
 public struct GemmInt8K16Shared : IInt8Shared<16> {
-  // Int8Gemm's two 64-deep stages of ROW_BLOCK + 64 rows, 64 / 16 + 1 words each.
   static const uint STAGES = 2 * (GemmInt8K16_specialize_ROW_BLOCK + 64) * (64 / 16 + 1);
   static groupshared int8_t data[16 * STAGES];
   static groupshared int scratch[4 * (GemmInt8K16_specialize_shared_words - STAGES)];
@@ -288,9 +275,6 @@ public struct GemmInt8K16Shared : IInt8Shared<16> {
   }
 }
 
-// The A8 body of the GemmInt8 entry points: ROW_BLOCK rows by 64 columns per workgroup, folding weight groups in
-// registers where ELEMENT_FOLD, 128-deep stages in parts of FOLD values; `k_slices` 4 subgroups each take a quarter of
-// K for 16 rows by 32 columns, 64 deep.
 void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IStorageFloat, D : IStorageFloat, let ELEMENT_FOLD : bool, let FOLD : int>(
   Ptr<uint, Access.Read> b,
   Ptr<B, Access.Read> scales,
@@ -335,7 +319,6 @@ void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IStorageFloat, D : I
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout
   );
-  // Under the output transform the bias adds after it.
   GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };
   if (ELEMENT_FOLD && k_slices == 4) {
     Int8Gemm<MMA_K, S, B, D, 16, 1, 1, ELEMENT_FOLD, 64, FOLD, 4, 4>.run(
@@ -390,8 +373,6 @@ void gemm_int8<let MMA_K : int, S : IInt8Shared<MMA_K>, B : IStorageFloat, D : I
   }
 }
 
-// A8 activations (MatmulA::Int8Symmetric) on INT8 tensor cores against U4 codes or U8 symmetric codes. ROW_BLOCK is 16
-// or 32 for verification batches, 64 beyond; a grid too narrow for the device splits K in two phases through `partials`.
 [[Variants("B", "float, bf16")]]
 [[Variants("D", "float, bf16")]]
 [[Kernel]]
@@ -516,11 +497,6 @@ public func GemmInt8K16<B: IStorageFloat, D: IStorageFloat>(
   );
 }
 
-// GemmInt8 folding each weight group in registers by VK_NV_cooperative_matrix2 per-element operations; the tiles stage
-// `stage_depth` 64 or 128 values deep, 128 needing eight subgroups at 32 rows and 4-bit codes at 64 rows, and fold
-// stages by halves, 128-deep ones by quarters over 32-value groups. 128-deep 4-bit tiles of 16 and 32 rows keep
-// `prefetch` 1 or 4 stages of loads in flight, as do the 64-deep 4-bit tiles of 16 rows by 32 columns that split K
-// across `k_slices` 4 subgroups in one phase.
 [[Variants("B", "float, bf16")]]
 [[Variants("D", "float, bf16")]]
 [[Kernel]]
@@ -581,8 +557,6 @@ public func GemmInt8Nv<B: IStorageFloat, D: IStorageFloat>(
   [[Specialize]] uint prefetch,
   [[Specialize]] uint k_slices,
 ) {
-  // Consecutive workgroups take consecutive row tiles of one column tile, so those in flight share its weight rows in
-  // cache.
   let column_tiles = (n - 1) / (k_slices > 1 ? 32 : 64) + 1;
   let row_tiles = (m - 1) / ROW_BLOCK + 1;
   let linear_tile = column_tile + row_tile * column_tiles;
@@ -606,8 +580,6 @@ public func GemmInt8Nv<B: IStorageFloat, D: IStorageFloat>(
   }
 }
 
-// RowMajor B codes `rows` copied in GemmBLayout.Tiled order to `tiles`. A workgroup moves the 8 x 64-code tile at
-// (`block`, `tile`), 16 bytes per invocation; a 64-code row run is `run_words` 16-byte words, 2 for W4 and 4 for W8.
 [[Kernel]]
 [[Precondition("encode", "n.is_multiple_of(32) && k.is_multiple_of(64) && [2, 4].contains(&run_words)")]]
 public func GemmPrepareBLayout(

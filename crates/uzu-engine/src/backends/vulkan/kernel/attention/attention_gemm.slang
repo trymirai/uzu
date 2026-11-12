@@ -6,30 +6,18 @@ import generated.kv_layout;
 import generated.ring;
 import generated.trie;
 
-// Metal's AttentionGemm on scalar tiles of INT8 codes: a workgroup takes ATTENTION_GEMM_QUERIES of a key-value head's
-// gqa_factor * suffix_length query rows, which AttentionPrepare stores in turn, and walks their keys in blocks of
-// ATTENTION_GEMM_BLOCK_KEYS, each staged once for the group's query heads: key codes, then value codes as FP32 in
-// halves of GEMM_VALUE_KEYS, with their scales. The run of GEMM_ROW_LANES (L) invocations at (subgroup order) L r holds
-// row r: key column `lane` + L j of a block's scores, as integer dots, output dimensions 4 (lane + L m) to
-// 4 (lane + L m) + 3, and the row's base-2 online softmax. Split s of `blocks` takes key blocks s, s + blocks, ... and
-// writes AttentionTwoPass1's partial (head * suffix_length + query) * blocks + s, -inf without an admitted key.
-
 static const uint GEMM_THREADS = 256;
 static const uint GEMM_ROW_LANES = 8;
 static const uint GEMM_MAX_HEAD_DIM = 256;
 static const uint GEMM_VALUE_KEYS = ATTENTION_GEMM_BLOCK_KEYS / 2;
-// Rows of codes in 16-byte quads, padded by one.
 static const uint GEMM_MAX_ROW_QUADS = GEMM_MAX_HEAD_DIM / 16 + 1;
 static const float GEMM_LOG2E = 1.4426950408889634;
 
 groupshared uint4 attention_gemm_queries[ATTENTION_GEMM_QUERIES * GEMM_MAX_ROW_QUADS];
-// Key code rows of head_dim / 16 + 1 quads, or value rows of head_dim / 4.
 groupshared uint4 attention_gemm_block[GEMM_VALUE_KEYS * GEMM_MAX_HEAD_DIM / 4];
 groupshared float attention_gemm_weights[ATTENTION_GEMM_QUERIES * ATTENTION_GEMM_BLOCK_KEYS];
 groupshared float attention_gemm_scales[ATTENTION_GEMM_BLOCK_KEYS];
 
-// Rows [first_row, first_row + rows) of head `head` of a buffer of `num_kv_heads` heads into the block tile, key codes
-// as they are and value codes less V_CODE_BIAS as FP32, and their scales; rows at or past `valid_rows` are zero.
 void attention_gemm_stage<T>(
   Ptr<T, Access.Read> codes,
   Ptr<bf16, Access.Read> scales,
@@ -126,7 +114,6 @@ func AttentionGemm(
     is_sliding_window
   );
   let query_position = mask.query_position(query);
-  // Row group_row of the group is query row kv_head * grouped_rows + group_row, head * suffix_length + query.
   let query_rows = kv_head * grouped_rows;
 
   for (uint chunk = invocation; chunk < ATTENTION_GEMM_QUERIES * quads; chunk += GEMM_THREADS) {
@@ -138,7 +125,6 @@ func AttentionGemm(
     }
     attention_gemm_queries[chunk_row * row_quads + column] = words;
   }
-  // The query's scale with the softmax's, in base 2.
   var query_scale = 0.0;
   if (valid_query) {
     query_scale = scale * GEMM_LOG2E * q_scales[query_rows + group_row].toFloat();
@@ -152,7 +138,6 @@ func AttentionGemm(
     output[i] = 0.0;
   }
 
-  // Under causality no row of the tile sees a key past its latest query's position.
   var key_blocks = (sequence_length + ATTENTION_GEMM_BLOCK_KEYS - 1) / ATTENTION_GEMM_BLOCK_KEYS;
   if (is_causal) {
     let last_row = min(first_row + ATTENTION_GEMM_QUERIES, grouped_rows) - 1;
@@ -204,7 +189,6 @@ func AttentionGemm(
     var block_sum = 0.0;
     [unroll]
     for (uint j = 0; j < ATTENTION_GEMM_BLOCK_KEYS / GEMM_ROW_LANES; j++) {
-      // Rejected keys weigh nothing, so a row without an admitted key sums to 0.
       let weight = used[j] ? exp2(scores[j] - new_max) : 0.0;
       attention_gemm_weights[row * ATTENTION_GEMM_BLOCK_KEYS + lane + GEMM_ROW_LANES * j] = weight;
       block_sum += weight;
@@ -244,7 +228,6 @@ func AttentionGemm(
     let partial = (query_rows + group_row) * blocks + split;
     if (lane == 0) {
       sums[partial] = row_sum;
-      // The maximum in the merge's base.
       maxs[partial] = row_max / GEMM_LOG2E;
     }
     [unroll]

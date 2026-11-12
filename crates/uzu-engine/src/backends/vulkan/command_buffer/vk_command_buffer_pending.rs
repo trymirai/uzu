@@ -10,7 +10,6 @@ use crate::backends::{
     },
 };
 
-/// A submitted command buffer; the context's completion thread reports when the GPU finishes each of its segments.
 pub struct VkCommandBufferPending {
     segments: Vec<oneshot::Receiver<VkSegmentResult>>,
     timestamps: Option<(Arc<VkContext>, VkTimestampRecorder)>,
@@ -31,8 +30,6 @@ impl VkCommandBufferPending {
 impl CommandBufferPending for VkCommandBufferPending {
     type CommandBuffer = VkCommandBuffer;
 
-    /// The GPU time is the sum of the segments'; spans resolve once every segment completed. Span timestamps are kept
-    /// only when recording them, so the default path allocates nothing for them.
     async fn wait_until_completed(self) -> Result<VkCommandBufferCompleted, Error> {
         let mut gpu_execution_time = Duration::ZERO;
         let mut segment_timestamps = Vec::new();

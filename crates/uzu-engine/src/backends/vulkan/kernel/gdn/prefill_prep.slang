@@ -4,24 +4,16 @@ import common.workgroup_reduction;
 import generated.activation_type;
 import generated.delta_net;
 
-// One workgroup per (token, k head): the head's q and k rows are L2-normalized (delta_net_inverse) and stored scaled by
-// 1 / sqrt(DELTA_NET_HEAD_K_DIM) and unscaled; its v heads get beta = sigmoid(beta_raw) and the log decay, or its
-// exponential. With write_compact_v the token's raw values are copied in 128-element blocks hk, hk + G, and so on.
-
 static const uint DELTA_NET_PREP_THREADS = 128;
 
-// The log decay -(e^a_log) softplus(a_raw + dt_bias).
 public float delta_net_log_decay(float a_log, float a_raw, float dt_bias) {
   return -exp(a_log) * activate(a_raw + dt_bias, ActivationType.SOFTPLUS);
 }
 
-// The normalized query v inv qs, qs = 1 / sqrt(DELTA_NET_HEAD_K_DIM).
 public float delta_net_query(float v, float inv) {
   return v * inv * rsqrt(float(DELTA_NET_HEAD_K_DIM));
 }
 
-// 1 / sqrt(sum + 1e-6) for the sum of squares of the head's values at source[offset], one per invocation of the
-// workgroup. Every invocation must call it.
 float delta_net_inverse<T: IStorageFloat>(Ptr<T, Access.Read> source, uint offset, uint tid) {
   static_assert(DELTA_NET_PREP_THREADS == DELTA_NET_HEAD_K_DIM, "one key per invocation");
   let x = source[offset + tid].toFloat();

@@ -1,9 +1,5 @@
 import definitions;
 
-// The KERNEL_SIZE - 1 rows before each token tile, which the in-place DeltaNetConvScan overwrites: packed[tile, tap, c]
-// is row tile tile_tokens - (KERNEL_SIZE - 1) + tap of [conv state ++ x], so tile 0 copies the state row of channel c
-// and later tiles convert x through FP32. The precondition keeps row tile tile_tokens - (KERNEL_SIZE - 1) in bounds.
-
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "KERNEL_SIZE == 4")]]

@@ -5,7 +5,6 @@ use crate::backends::{
     vulkan::{Error, VkBuffer, VkBufferMemory, VkContext, Vulkan},
 };
 
-/// A staging buffer the host fills, which `handoff` copies into its device-local buffer.
 pub struct VkBufferInitializer {
     staging: Arc<VkBuffer>,
     buffer: Arc<VkBuffer>,
@@ -45,8 +44,6 @@ impl CpuBuffer for VkBufferInitializer {
 }
 
 impl GlobalBufferCpuGpu for VkBufferInitializer {
-    /// Submits the copy without waiting: later command buffers on the queue see it, and the completion thread frees
-    /// the staging buffer once it is done. A failed submission or copy fails the context.
     fn handoff(mut self) -> Arc<VkBuffer> {
         if let Err(error) = self.submit_copy() {
             self.buffer.context().fail(error);

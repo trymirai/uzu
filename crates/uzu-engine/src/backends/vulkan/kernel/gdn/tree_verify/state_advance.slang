@@ -2,12 +2,7 @@ import definitions;
 import common.workgroup_reduction;
 import generated.delta_net;
 
-// Advances the [num_v_heads, 128, 128] FP32 state along the accepted path, k head hv / floor(num_v_heads / num_k_heads)
-// as Metal maps it, also for nondivisible ratios. Each simdgroup holds STATE_ADVANCE_ROWS rows privately, lane l keys
-// 4l..4l + 3; per accepted token s <- s e^log_decay, then s += k beta (v - s . k).
-
 static const uint STATE_ADVANCE_THREADS = 128;
-// The state is square, as Metal's StateAdvance.
 static const uint STATE_ADVANCE_HEAD_V_DIM = DELTA_NET_HEAD_K_DIM;
 static const uint STATE_ADVANCE_ROWS = 4;
 
@@ -43,8 +38,6 @@ func StateAdvance<T: IStorageFloat>(
   for (uint r = 0; r < STATE_ADVANCE_ROWS; r++) {
     rows[r] = load_aligned<float4, 16>(state, tile + r * DELTA_NET_HEAD_K_DIM);
   }
-  // The exit test follows the body, as the empty grid for accepted_len 0 allows: lavapipe runs a body whose head test
-  // failed with its uniform loads unmasked, which would index the tree through a token past accepted_indices.
   uint i = 0;
   do {
     let t = accepted_indices[i];

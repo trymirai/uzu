@@ -17,7 +17,6 @@ use crate::{
     },
 };
 
-// Ordered as (m, n, k, tiling, split_k); every K is whole 64-column blocks.
 const FORCED_PLANS: [(usize, usize, usize, GemmTiling, u32); 12] = [
     (1, 1, 512, GemmTiling::Tile16x32x32_Simdgroups2x1, 1),
     (1, 1, 512, GemmTiling::Tile16x32x256_Simdgroups1x1, 1),

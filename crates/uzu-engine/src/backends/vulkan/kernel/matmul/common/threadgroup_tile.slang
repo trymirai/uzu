@@ -5,9 +5,6 @@ import matmul.common.loader;
 import matmul.common.simdgroup_fragment_ops;
 import matmul.common.simdgroup_multiply_accumulate;
 
-// A BLOCK_ROWS x BLOCK_COLS FP32 tile of 8 x 8 fragments, A not transposed and B transposed: simdgroup s owns fragment
-// row s / SIMDGROUPS_PER_COLUMN + i SIMDGROUPS_PER_ROW and column s % SIMDGROUPS_PER_COLUMN + j SIMDGROUPS_PER_COLUMN.
-// A and B are staged as rows of BLOCK_DEPTH padded by 16 bytes.
 public struct ThreadgroupTile<
   A : IStorageFloat,
   B : IStorageFloat,
@@ -29,7 +26,6 @@ public struct ThreadgroupTile<
   public int simdgroup_row_offset;
   public int simdgroup_col_offset;
 
-  // This lane's first A row and first B column of the staged tiles, at depth 0.
   uint a_row_offset;
   uint b_col_offset;
 
@@ -50,8 +46,6 @@ public struct ThreadgroupTile<
     c_fragment.clear();
   }
 
-  // c += A B over the depth staged in SA and SB: each lane folds c = fma(A[row][k], B[k][col], c) for its elements, k
-  // ascending.
   [mutating]
   public void matmul<SA : IThreadgroupStorage<A>, SB : IThreadgroupStorage<B>>() {
     [unroll]
@@ -94,7 +88,6 @@ public struct ThreadgroupTile<
     }
   }
 
-  // The tile from element `d_offset` of `d`.
   public void store_result<D : IStorageFloat>(Ptr<D, Access.ReadWrite> d, uint d_offset, uint leading_dimension_d) {
     let destination = d_offset + uint(simdgroup_row_offset) * leading_dimension_d + uint(simdgroup_col_offset);
 

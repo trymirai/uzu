@@ -7,18 +7,9 @@ import generated.activation_type;
 import generated.confidence_head;
 import generated.weaver;
 
-// One tree node's children, a workgroup per node. Each child's edge MLP reads the node, the child's token, their
-// product and the child's slot numbers: input norm, entry layer, block norm, SiLU up and down layers onto the entry
-// state, final norm and the readout's first output. Its other two outputs, of the node, weight the node's two pool
-// scores; the children's readouts add to their pool candidates' scores, whose log-softmax gives the edges. A first pass
-// also matches each child to its pool candidate and normalizes its slot numbers, records the node's tree row, and
-// fills the frontier's paths and the children's inputs. Refinement shifts the node and tokens by their tree attention
-// and updates the tree's edges.
-
 static const uint EDGES_THREADS = CANDIDATES_MAX;
 static const uint EDGES_INPUT_MAX = 3 * MODEL_MAX + SLOT_NUMBERS;
 
-// edges_memory rows: CHILDREN_MAX of each layer, then the node and its two pool score coefficients.
 static const uint EDGES_INPUT = 0;
 static const uint EDGES_STATE = EDGES_INPUT + CHILDREN_MAX * EDGES_INPUT_MAX;
 static const uint EDGES_BLOCK = EDGES_STATE + CHILDREN_MAX * MODEL_MAX;
@@ -33,9 +24,6 @@ static const uint EDGES_COEFFICIENTS = EDGES_NODE + MODEL_MAX;
 groupshared float edges_memory[EDGES_COEFFICIENTS + 2];
 groupshared uint edges_pools[CHILDREN_MAX];
 
-// output[row * output_stride + unit] = bias + weights[unit] . input[row], through SiLU under `silu`, added to the
-// output under `accumulate`, for each unit < outputs and row < rows. Runs of `lanes` invocations in subgroup_invocation
-// order split a unit's dot.
 void edges_dense(
   Ptr<bf16, Access.Read> weights,
   Ptr<bf16, Access.Read> biases,
@@ -86,7 +74,6 @@ void edges_dense(
   GroupMemoryBarrierWithGroupSync();
 }
 
-// The layer norm of each of `rows` rows of `count` values, a run of SIMD_SIZE invocations a row; in place or not.
 void edges_layer_norm(
   uint input,
   uint output,
@@ -177,7 +164,6 @@ func ConfidenceHeadEdges(
   let first_entry = slot * children;
   let invocation = subgroup_invocation();
 
-  // The children's pools and slot numbers: refinement keeps them, a first pass replaces those it matches.
   if (invocation < children) {
     edges_pools[invocation] = child_pools[first_entry + invocation];
   }
@@ -209,7 +195,6 @@ func ConfidenceHeadEdges(
         }
       }
     }
-    // The node's tree row: its entry among its parent's children, the last that holds its token; the root's is 0.
     if (invocation == 0) {
       var own_row = 0u;
       if (slot != 0) {
@@ -227,7 +212,6 @@ func ConfidenceHeadEdges(
     GroupMemoryBarrierWithGroupSync();
   }
 
-  // Each child's input row, a run of SIMD_SIZE invocations a child: node, token, their product, slot numbers.
   let row = refine ? slot_rows[slot] : 0u;
   let inputs = 3 * model_dim + SLOT_NUMBERS;
   let own_child = invocation / SIMD_SIZE;

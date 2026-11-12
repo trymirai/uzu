@@ -13,7 +13,6 @@ use crate::{
     utils::downcast::downcast_ref,
 };
 
-/// Storage buffer in `VkBufferMemory`; host-accessed memory is permanently mapped and host-coherent.
 pub struct VkBuffer {
     context: Arc<VkContext>,
     allocation: vk_mem::Allocation,
@@ -23,8 +22,6 @@ pub struct VkBuffer {
     size: vk::DeviceSize,
 }
 
-// SAFETY: the mapped address is the only field that is not Send and Sync, and the buffer never dereferences it:
-// `cpu_ptr` leaves synchronizing host access to its callers. VMA frees the allocation from any thread.
 unsafe impl Send for VkBuffer {}
 unsafe impl Sync for VkBuffer {}
 
@@ -62,11 +59,6 @@ impl VkBuffer {
         self.device_address
     }
 
-    /// Host-coherent mapping of the whole buffer. Dereferencing it must not overlap GPU work that
-    /// accesses the same bytes: read or write only before submission or after completion.
-    ///
-    /// # Panics
-    /// If the buffer is in device memory, which `Context::copyout` reads.
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
         self.cpu_ptr.expect("device-local Vulkan buffers are not CPU-accessible")
     }
@@ -75,7 +67,6 @@ impl VkBuffer {
         self.size
     }
 
-    /// The `VkBuffer` behind any buffer of the Vulkan backend, with `range` of it in that buffer's bytes.
     pub fn resolve(
         buffer: &(impl Buffer<Backend = Vulkan> + ?Sized),
         range: std::range::Range<usize>,
@@ -100,7 +91,6 @@ impl VkBuffer {
 
 impl Drop for VkBuffer {
     fn drop(&mut self) {
-        // SAFETY: allocated by `new` on this context; command buffers retain the `Arc` until their GPU work completes.
         unsafe { self.context.free_buffer(self.buffer, &mut self.allocation) };
     }
 }
@@ -115,7 +105,6 @@ impl Buffer for Arc<VkBuffer> {
 
 impl GpuBuffer for Arc<VkBuffer> {}
 
-/// Constant pages are host-visible; device-local buffers panic in `cpu_ptr`.
 impl CpuBuffer for Arc<VkBuffer> {
     fn cpu_ptr(&self) -> NonNull<c_void> {
         VkBuffer::cpu_ptr(self)

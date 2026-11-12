@@ -1,9 +1,6 @@
 import definitions;
 import common.activation;
 
-// Each token's routed expert outputs weighted by their router weights, plus its shared expert's output times the
-// sigmoid of its gate: expert_outputs is [batch * top_k, model_dim], shared_gate one value a token.
-
 [[Variants("T", "bf16")]]
 [[Kernel]] [[Public]]
 func MoeCombine<T: IStorageFloat>(

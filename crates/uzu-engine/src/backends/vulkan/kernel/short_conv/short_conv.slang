@@ -1,14 +1,8 @@
 import definitions;
 
-// An in_proj row holds each channel's pre-gate, post-gate and input at offsets 0, model_dim and 2 model_dim; a state row
-// holds one channel's samples, oldest first, moved bit for bit. Convolutions accumulate in FP32; Decode and Trie round
-// the current gated input to T only to store it.
-
 static const uint SHORT_CONV_PREFILL_THREADS = 64;
 static const uint SHORT_CONV_PREFILL_ROWS = 4;
 
-// One token of one channel for Decode and Trie: convolves the tap_count samples at `source` and the current gated input,
-// then stores the shifted samples and T(x) at `destination`, which may be the same samples. Returns the gated output.
 T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : Access>(
   Ptr<T, Access.Read> in_proj,
   Ptr<WeightT, Access.Read> w,
@@ -61,8 +55,6 @@ T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : A
   }
 }
 
-// Rows below suffix_len are outputs, convolving padded rows row..row + kernel_size - 1; the kernel_size - 1 rows after
-// them copy padded rows suffix_len.. into each channel's first state elements, also for an empty suffix.
 [[Variants("T", "float, half, bf16")]]
 [[Variants("WeightT", "float")]]
 [[Kernel]] [[Public]] func ShortConvPrefill<T: IStorageFloat, WeightT: IStorageFloat>(
@@ -103,7 +95,6 @@ T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : A
   out[row_idx * model_dim + channel_idx] = T.fromFloat(acc * post_gate);
 }
 
-// Tokens run in order; each one after the first continues the state the previous one stored.
 [[Variants("T", "float, half, bf16")]]
 [[Variants("WeightT", "float")]]
 [[Kernel]] [[Public]] func ShortConvDecode<T: IStorageFloat, WeightT: IStorageFloat>(
@@ -144,7 +135,6 @@ T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : A
   }
 }
 
-// Nodes run in order; a negative parent continues base_state, any other an earlier node's suffix_state.
 [[Variants("T", "float, half, bf16")]]
 [[Variants("WeightT", "float")]]
 [[Kernel]] [[Public]] func ShortConvTrie<T: IStorageFloat, WeightT: IStorageFloat>(

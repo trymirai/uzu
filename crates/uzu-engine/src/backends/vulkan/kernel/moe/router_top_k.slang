@@ -2,15 +2,10 @@ import definitions;
 import common.ranking;
 import common.workgroup_reduction;
 
-// Each token's top_k experts by logit, descending, a tie to the lower expert and NaN below every logit, with the
-// softmax of their logits. A workgroup ranks one token: each invocation holds every MOE_ROUTER_THREADS-th expert's key,
-// and each pick is the workgroup's best key not yet picked.
-
 static const uint MOE_ROUTER_THREADS = 32;
 static const uint MOE_ROUTER_KEYS = 8;
 static const uint MOE_ROUTER_MAX_TOP_K = 8;
 
-// The f32::total_cmp key of a logit, NaN as negative infinity; every key is above 0.
 uint moe_router_key(float logit) {
   let bits = asuint(logit);
   return float_order_key((bits & 0x7fffffffu) > 0x7f800000u ? asuint(NEGATIVE_INFINITY) : bits);
@@ -40,7 +35,6 @@ func MoeRouterTopK<T: IStorageFloat>(
 
   float picked[MOE_ROUTER_MAX_TOP_K];
   for (uint pick = 0; pick < top_k; pick++) {
-    // WeaverRank orders by descending key, then ascending expert.
     var best = uint4(0, 0xffffffffu, 0, 0);
     for (uint slot = 0; slot < MOE_ROUTER_KEYS; slot++) {
       let candidate = uint4(keys[slot], invocation + slot * MOE_ROUTER_THREADS, 0, 0);

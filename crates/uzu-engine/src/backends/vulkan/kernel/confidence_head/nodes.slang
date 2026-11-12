@@ -6,19 +6,12 @@ import generated.activation_type;
 import generated.confidence_head;
 import generated.weaver;
 
-// Each valid round row's node scores and node. The scores are its pool's log probabilities (the depth's candidate
-// logits plus the row's residual logits) and noise. The node is the draft plus a dense layer of the pool summary: the
-// probability-weighted mean and the maximum over the pool of each candidate's two SiLU-layer encoding of (log draft,
-// floored log probability - log draft, noise). A workgroup holds a row, two invocations a candidate, each with half
-// the pool units.
-
 static const uint NODES_THREADS = 2 * CANDIDATES_MAX;
 static const uint NODES_UNITS = POOL_HIDDEN_MAX / 2;
 
 groupshared float4 nodes_pool_entry[POOL_HIDDEN_MAX];
 groupshared float nodes_pool_hidden[POOL_HIDDEN_MAX * POOL_HIDDEN_MAX];
 groupshared float nodes_pool_hidden_biases[POOL_HIDDEN_MAX];
-// The pool's means, then its maxima.
 groupshared float nodes_summary[2 * POOL_HIDDEN_MAX];
 
 [[Kernel]] [[Public]]
@@ -78,7 +71,6 @@ func ConfidenceHeadNodes(
       unit < pool_hidden && inner < pool_hidden ? pool_hidden_weights[unit * pool_hidden + inner].toFloat() : 0.0;
   }
 
-  // Each part sums the pool once: the second counts no logit.
   let log_logit = logit - head_log_sum_exp<NODES_THREADS>(part == 0 ? logit : NEGATIVE_INFINITY);
   if (valid) {
     scores[(2 * slot + part) * candidates + candidate] = part == 0 ? log_logit : noise;
@@ -95,7 +87,6 @@ func ConfidenceHeadNodes(
     for (uint inner = 0; inner < POOL_HIDDEN_MAX; inner++) {
       value += nodes_pool_hidden[unit * POOL_HIDDEN_MAX + inner] * hidden[inner];
     }
-    // Every invocation reduces every unit; a part's run of CANDIDATES_MAX invocations is the pool.
     let mean = segment_reduce<Sum<float>, NODES_THREADS>(weight * value, CANDIDATES_MAX);
     let peak = segment_reduce<Max<float>, NODES_THREADS>(valid ? value : NEGATIVE_INFINITY, CANDIDATES_MAX);
     if (candidate == 0 && unit < pool_hidden) {

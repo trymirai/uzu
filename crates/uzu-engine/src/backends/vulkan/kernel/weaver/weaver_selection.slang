@@ -6,7 +6,6 @@ import generated.weaver;
 
 groupshared uint weaver_select_winners[FRONTIER_MAX_WIDTH];
 
-// A candidate's logit, its Gumbel selection score and its pruning noise.
 float3 weaver_top_values(float candidate, bf16 residual, uint2 key, uint token, uint vocab_size) {
   let index = sampling_index(token, vocab_size);
   let word = sampling_words(key, index.x)[index.y];
@@ -14,9 +13,6 @@ float3 weaver_top_values(float candidate, bf16 residual, uint2 key, uint token, 
   return float3(logit, logit + sampling_noise(float(word) * (1.0 / 4294967296.0)), sampling_noise(sampling_uniform(word)));
 }
 
-// Children: the top `expand_width` children of row `row` into its frontier slots, by the 256 invocations (`lid` of them)
-// holding two candidates each, one workgroup argmax per child in (score, token, index) order; the winner's owner writes
-// the whole frontier slot. Candidates come from the pool where `from_pool`, else from the nodes'.
 void weaver_children(
   Ptr<bf16, Access.Read> residual_logits,
   Ptr<uint, Access.Read> depth_seeds,
@@ -43,7 +39,6 @@ void weaver_children(
   let frontier_base = tree_slot * expand_width;
   let base = row * candidates;
   let depth = node_metadata[uint(MetadataIdx.Depth) * rows + row];
-  // Each U64 seed is its low/high U32 words, so no Int64 is required.
   let key = uint2(depth_seeds[depth * 2], depth_seeds[depth * 2 + 1]);
   let neutral = uint4(0, 0xffffffffu, 0xffffffffu, 0xffffffffu);
   float logits[2];
@@ -109,9 +104,6 @@ void weaver_children(
   }
 }
 
-// Frontier: the best `node_count` active frontier slots by the workgroup (`tid` of FRONTIER_SELECT_THREADS, each caching
-// FRONTIER_ENTRIES_PER_THREAD slots) into tree slots from `batch_start_slot`, the nodes' metadata and ancestors, and
-// the pool candidates of each node's depth. F32 candidate logits are copied as words, preserving every payload bit.
 void weaver_frontier(
   Ptr<uint, Access.ReadWrite> frontier,
   Ptr<uint, Access.ReadWrite> packed_tree,
@@ -148,7 +140,6 @@ void weaver_frontier(
     let parent = frontier[uint(FrontierIdx.ParentSlot) * frontier_capacity + slot];
     let token = frontier[uint(FrontierIdx.TokenId) * frontier_capacity + slot];
     let next = uint4(((depth < lookahead_count ? 1u : 0u) << 31) | (score >> 1), parent, token, slot);
-    // Only the first three keys are compared against neutral; an exact neutral triple never wins.
     if (any(next.xyz != neutral.xyz)) { entries[entry] = next; }
   }
   for (uint node = 0; node < node_count; node++) {
@@ -212,10 +203,6 @@ void weaver_frontier(
   }
 }
 
-// Weaver's selection steps in `mode`, by 256 invocations whatever BLOCK_THREADS, the block other backends size Fused by:
-// Children of `children_rows` rows, one workgroup each, from the candidate pool where `children_from_pool`, else from
-// the nodes' candidates; Frontier in one workgroup; Fused, one workgroup expanding each row in turn before selecting the
-// frontier they wrote.
 [[Kernel]] [[Public]]
 func WeaverSelect(
   [[Optional("mode != WeaverSelectionMode::Frontier")]] Ptr<bf16, Access.Read> residual_logits,
@@ -259,7 +246,6 @@ func WeaverSelect(
       let row = mode == WeaverSelectionMode.Fused ? step : group;
       let active = row < children_rows && node_valid[row] != 0 &&
                    node_metadata[uint(MetadataIdx.TreeSlot) * children_rows + row] < tree_slot_count;
-      // A Children workgroup is one row, so it leaves as a whole; a Fused one skips the row.
       if (!active) {
         if (mode == WeaverSelectionMode.Children) { return; }
         continue;
@@ -271,7 +257,6 @@ func WeaverSelect(
     }
   }
   if (mode == WeaverSelectionMode.Children) { return; }
-  // The expanded rows' frontier writes, visible to the whole workgroup.
   AllMemoryBarrierWithGroupSync();
   if (frontier_capacity == 0 || frontier_capacity > FRONTIER_MAX_SLOTS || node_count == 0 ||
       node_count > FRONTIER_MAX_WIDTH || ancestor_stride == 0 || tree_slot_count == 0 ||

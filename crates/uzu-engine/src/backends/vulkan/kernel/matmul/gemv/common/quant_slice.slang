@@ -125,7 +125,6 @@ public struct QuantSlice {
     metadata.fold(result, partial, input_sum, Tile);
   }
 
-  // The slice's bytes from byte `start` of `source`.
   void load_words(
     bool BOUNDED,
     out uint4 words[GEMV_MAX_SLICE_WORDS],

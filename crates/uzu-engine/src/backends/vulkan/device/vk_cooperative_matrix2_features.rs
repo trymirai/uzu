@@ -6,7 +6,6 @@ use std::{
 
 use ash::vk;
 
-/// VK_NV_cooperative_matrix2's feature structure, absent from Ash 0.38's registry.
 #[repr(C)]
 pub struct VkCooperativeMatrix2Features {
     s_type: vk::StructureType,
@@ -53,11 +52,9 @@ impl Default for VkCooperativeMatrix2Features {
     }
 }
 
-// SAFETY: repr(C) with the guarded chain header, fields in vulkan_core.h's order, and the registered structure tag.
 unsafe impl vk::TaggedStructure for VkCooperativeMatrix2Features {
     const STRUCTURE_TYPE: vk::StructureType = vk::StructureType::from_raw(1_000_593_000);
 }
 
-// SAFETY: VK_NV_cooperative_matrix2 permits this structure in both chains.
 unsafe impl vk::ExtendsPhysicalDeviceFeatures2 for VkCooperativeMatrix2Features {}
 unsafe impl vk::ExtendsDeviceCreateInfo for VkCooperativeMatrix2Features {}

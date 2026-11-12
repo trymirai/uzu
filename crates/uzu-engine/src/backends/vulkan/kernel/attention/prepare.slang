@@ -6,8 +6,6 @@ import generated.qkv_norm;
 
 static const uint ATTENTION_PREPARE_THREADS = 32;
 
-// Element `channel` of a head under its RMS norm: ElementT-rounded, with scales multiplied in FP32 for full_layer and
-// otherwise as ElementT, as Metal's prepare_norm.
 float prepare_norm<ElementT : IStorageFloat>(
   ElementT value,
   uint channel,
@@ -32,10 +30,6 @@ float prepare_norm<ElementT : IStorageFloat>(
   return ElementT.fromFloat(ElementT.fromFloat(normalized).toFloat() * ElementT.fromFloat(scale).toFloat()).toFloat();
 }
 
-// Packed qkvg rows to INT8 codes, one workgroup of 32 invocations per token and head, lane l holding dimensions
-// [l HEAD_DIM / 32, (l + 1) HEAD_DIM / 32): the head's norm, RoPE of the first rope_dim dimensions of queries and keys,
-// attention_rotate, then attention_quantize. Query rows are [kv head][query head in its group][token]; key and value rows
-// [kv_token_offset + token][kv head], with the value codes biased by V_CODE_BIAS. Any trailing gate is unread.
 [[Variants("ElementT", "float, bf16")]]
 [[Variants("RopeT", "float")]]
 [[Kernel]] [[Public]]
@@ -76,7 +70,6 @@ func AttentionPrepare<ElementT : IStorageFloat, RopeT : IStorageFloat>(
 ) {
   static_assert(ATTENTION_PREPARE_THREADS == SIMD_SIZE, "one group of Threads(32) per token and head");
   let is_query = head < num_q_heads;
-  // Uniform across the workgroup, which the rotation's and quantization's reductions need.
   if (!append_kv && !is_query) {
     return;
   }

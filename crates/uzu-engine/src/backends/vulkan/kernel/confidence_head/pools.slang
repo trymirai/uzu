@@ -4,9 +4,6 @@ import confidence_head.head;
 import generated.confidence_head;
 import generated.weaver;
 
-// Each depth's pool features of every candidate: its log probability in the pool, floored; the target sampler's Gumbel
-// noise for its token; and log(1 + its rank). A workgroup holds a depth, an invocation a candidate.
-
 static const uint POOLS_THREADS = CANDIDATES_MAX;
 
 groupshared float pools_logits[POOLS_THREADS];

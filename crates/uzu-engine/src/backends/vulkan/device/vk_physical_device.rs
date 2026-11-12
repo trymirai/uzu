@@ -13,16 +13,13 @@ pub struct VkPhysicalDevice {
     pub queue_families: Vec<vk::QueueFamilyProperties>,
     pub subgroup_properties: VkPhysicalDeviceSubgroupProperties,
     pub capabilities: VkDeviceCapabilities,
-    /// Streaming multiprocessors or compute units, where the device reports them.
     pub compute_units: Option<u32>,
 }
 impl VkPhysicalDevice {
-    /// The resource limits, which the identity-free matmul selectors read without naming `properties`.
     pub fn limits(&self) -> &vk::PhysicalDeviceLimits {
         &self.properties.limits
     }
 
-    /// The first compute queue family; Vulkan 1.4's timestampComputeAndGraphics gives each one timestamps.
     pub fn compute_queue_family(&self) -> Option<u32> {
         self.queue_families
             .iter()
@@ -30,7 +27,6 @@ impl VkPhysicalDevice {
             .map(|index| index as u32)
     }
 
-    /// The device's properties and capabilities, or `None` where it lacks a feature the backend requires.
     pub fn new(
         entry: &ash::Entry,
         instance: &ash::Instance,
@@ -104,7 +100,6 @@ impl VkPhysicalDevice {
         let subgroup_properties = VkPhysicalDeviceSubgroupProperties {
             size: device_subgroup_properties.subgroup_size,
             max_compute_workgroup_subgroups: vk13properties.max_compute_workgroup_subgroups,
-            // Vulkan 1.3 makes subgroup size control and full subgroups mandatory, but not for compute pipelines.
             requirable_sizes: vk13properties
                 .required_subgroup_size_stages
                 .contains(vk::ShaderStageFlags::COMPUTE)
@@ -169,8 +164,6 @@ impl VkPhysicalDevice {
         .into_iter()
         .filter_map(|(capability, supported)| supported.then_some(capability))
         .collect();
-        // What Vulkan 1.4 leaves optional and the kernels need: Slang declares StoragePushConstant8 and 16 for modules
-        // with byte and 16-bit pointers, and every generated kernel declares these float controls.
         let meets_requirements = [
             vk12features.storage_push_constant8,
             vk11features.storage_push_constant16,

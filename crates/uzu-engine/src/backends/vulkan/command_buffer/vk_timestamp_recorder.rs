@@ -3,8 +3,6 @@ use crate::backends::{
     vulkan::{Error, VkCommandBufferError, VkContext},
 };
 
-/// The debug-group spans of a command buffer that records timestamps: `parent/child` names and, for each end, the
-/// segment that wrote its span timestamp and the timestamp's index there.
 #[derive(Default)]
 pub struct VkTimestampRecorder {
     spans: Vec<(String, [(usize, u32); 2])>,
@@ -33,9 +31,6 @@ impl VkTimestampRecorder {
         self.spans[span].1[1] = timestamp;
     }
 
-    /// The spans in host time, from the span timestamps of each completed segment. A timestamp is one device clock
-    /// reading after completion, less the device time since the timestamp, so their differences are exact to a device
-    /// tick.
     pub fn resolve(
         &self,
         context: &VkContext,

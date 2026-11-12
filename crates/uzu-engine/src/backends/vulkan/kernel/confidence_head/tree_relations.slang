@@ -2,16 +2,12 @@ import definitions;
 import confidence_head.head;
 import generated.weaver;
 
-// The relation code of each (query, key) pair of tree rows: 1 itself, 2 its parent, 4 another ancestor, 3 its child,
-// 5 another descendant, 6 a sibling, 0 unrelated, HEAD_RELATION_ABSENT where either row is absent.
-
 struct TreeRow {
   uint depth;
   uint parent;
   bool present;
 }
 
-// Row 0 is the root; row 1 + entry the child of frontier entry `entry`, present where its depth is set.
 TreeRow tree_row(Ptr<uint, Access.Read> frontier, uint capacity, uint row) {
   TreeRow result = { 0, HEAD_NONE, true };
   if (row != 0) {
@@ -22,7 +18,6 @@ TreeRow tree_row(Ptr<uint, Access.Read> frontier, uint capacity, uint row) {
   return result;
 }
 
-// The tree row of `row`'s ancestor at `depth`.
 uint tree_ancestor_row(
   Ptr<uint, Access.Read> slot_ancestors,
   Ptr<uint, Access.Read> slot_rows,

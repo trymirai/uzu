@@ -69,7 +69,6 @@ use crate::{
     registry::openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
 };
 
-/// Refuses, with the shortfall, a model too large for the memory a device has free.
 pub type MemoryCheck = Arc<dyn Fn(u64) -> Option<MemoryShortfall> + Send + Sync>;
 
 #[bindings::export(Class)]
@@ -760,7 +759,6 @@ impl Engine {
         Ok((models, complete && self.catalog_refreshes.load(Ordering::SeqCst) == 0))
     }
 
-    /// The bytes free on the selected backend's device, where the backend reports them.
     pub async fn available_memory(&self) -> Result<Option<u64>, EngineError> {
         let available = select_backend(AvailableMemorySelection, "Unable to open any backend".to_string())
             .await
@@ -768,8 +766,6 @@ impl Engine {
         Ok(available.map(|bytes| bytes as u64))
     }
 
-    /// The memory check of a downloaded model the Uzu backend runs, which sizes it like its catalog variants by its
-    /// download, or by its files without one; `None` where its size is unknown.
     pub async fn memory_check(
         &self,
         model: &Model,

@@ -21,7 +21,6 @@ public struct QuantBSource {
     let row_stride = current.row_stride(params);
     let group_slot = tile.reduction_lane / Tile.GROUP_LANES;
     let group_offset = (tile.reduction_lane % Tile.GROUP_LANES) * current.VALUES_PER_LANE;
-    // Rows past the last read the last row, so no load leaves B or the gather indices.
     let last_row = params.out_vec_size > 0 ? params.out_vec_size - 1 : 0;
     uint weight_row_indices[GEMV_MAX_ROWS_PER_LANE];
     [unroll]

@@ -7,12 +7,9 @@ static const uint ANCESTOR_ATTENTION_QUERY = 0;
 static const uint ANCESTOR_ATTENTION_KEY = 1;
 static const uint ANCESTOR_ATTENTION_VALUE = 2;
 
-// The row's own query, key and value codes, the value's centered, and their scales.
 groupshared float ancestor_codes[3 * ATTENTION_DIMS * SIMD_SIZE];
 groupshared float ancestor_scales[3];
 
-// One row of one head: the prefix keys, the row's ancestor slots, then its own key, each [.., num_heads, HEAD_DIM] of
-// INT8 codes with a scale per row and head.
 struct AncestorKeys : IAttentionKeys {
   Ptr<int8_t, Access.Read> prefix_k_codes;
   Ptr<bf16, Access.Read> prefix_k_scales;
@@ -30,7 +27,6 @@ struct AncestorKeys : IAttentionKeys {
   uint head;
   uint head_dim;
 
-  // The head's row of key `key` in its codes: a prefix row below prefix_length, then the listed ancestors' slots.
   uint row(uint key) {
     if (key < prefix_length) {
       return key * num_heads + head;
@@ -97,11 +93,6 @@ struct AncestorKeys : IAttentionKeys {
   }
 }
 
-// Each row of `current_qkv` [rows, 3, num_heads, HEAD_DIM] attends the prefix, its first ancestor_counts[row] slots of
-// ancestor_indices [rows, ancestor_stride] in the node codes, and itself: its query and key rotated by RoPE at depth + 1
-// and rounded to BF16, then, with its value, quantized as AttentionPrepare does. With node_capacity > 0 its key and value
-// codes then enter slot node_indices[row]. Unchecked: depths below max_depth, counts and slots in range, destinations
-// distinct and disjoint from every listed slot.
 [[Kernel]] [[Public]]
 [[Precondition("new", "HEAD_DIM == 128 && backend_opaque_layout == 0")]]
 func AncestorAttention(
@@ -145,7 +136,6 @@ func AncestorAttention(
   let table = (node_metadata[uint(MetadataIdx.Depth) * rows + row] + 1) * HEAD_DIM;
   let half_dim = HEAD_DIM / 2;
 
-  // Every group quantizes the row's own query, key and value alike; group 0 shares them.
   for (uint component = 0; component < 3; component++) {
     let base = qkv + component * model_dim;
     float values[ATTENTION_DIMS];
@@ -203,7 +193,6 @@ func AncestorAttention(
       output[(row * num_heads + head) * HEAD_DIM + first + a] = bf16.fromFloat(values[a]);
     }
   }
-  // The row's key and value enter its slot, which no row of this dispatch reads.
   if (node_capacity > 0 && invocation < HEAD_DIM) {
     let node_row = node_indices[row] * num_heads + head;
     let element = node_row * HEAD_DIM + invocation;

@@ -1,5 +1,3 @@
-/// The backend `select_backend` opens: `UZU_BACKEND`, lowercased, else the first built of Metal, Vulkan, WebGPU and the
-/// CPU.
 pub fn selected_backend() -> String {
     let default = if cfg!(backend = "metal") {
         "metal"

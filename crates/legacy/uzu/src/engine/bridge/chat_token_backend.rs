@@ -54,7 +54,6 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
-    /// Refuses a model that fails `memory_check` against the memory free on the device before loading its weights.
     pub async fn new(
         model_path: String,
         config: ChatConfig,

@@ -9,10 +9,6 @@ import matmul.gemv.common.quant_b_source;
 import matmul.gemv.common.reduce;
 import matmul.gemv.common.tile;
 
-// Each route's expert GEMV on its token's activations, or its own under !a_per_token, then the expert's output rotation:
-// a workgroup computes one Hadamard block of a route's outputs through the GEMV's quantized lanes, rounds them as
-// stored, rotates them and multiplies each by the expert's sign. U4 weights carry zero points, U8 weights are symmetric.
-
 static const uint MOE_GEMV_SIMDGROUPS = 8;
 static const uint MOE_GEMV_THREADS = MOE_GEMV_SIMDGROUPS * SIMD_SIZE;
 
@@ -53,7 +49,6 @@ func MoeGemv<T: IStorageFloat>(
   let expert = expert_ids[route];
   let a_row = a_per_token ? route / active_experts_per_token : route;
   let u4 = BITS == 4;
-  // Fields the method and flags leave unread take the scales: a null constant lowers through a 64-bit integer.
   QuantizedWeights<T> weights = {
     b + expert * b_expert_stride_bytes, scales + expert * scale_expert_stride, scales,
     zero_points + expert * zero_point_expert_stride, GROUP_SIZE, scale_output_stride, scale_group_stride,
@@ -65,7 +60,6 @@ func MoeGemv<T: IStorageFloat>(
     Ptr<uint, Access.Read>(scales)
   };
   GemvParams params = { in_vec_size, out_vec_size, 1, 1.0, 0.0, false, false, false, false };
-  // A lane stages 8 bytes of codes: 16 U4 or 8 U8 values.
   let Tile = GemvTile(1, HADAMARD_TRANSFORM_BLOCK_SIZE, GROUP_SIZE * BITS / 64, MOE_GEMV_SIMDGROUPS);
   let tile = OutputTile.make(Tile, true, output_tile, 0, out_vec_size);
   float result[GEMV_MAX_INPUT_ROWS][GEMV_MAX_ROWS_PER_LANE];

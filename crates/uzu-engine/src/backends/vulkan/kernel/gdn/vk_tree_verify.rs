@@ -12,8 +12,6 @@ use crate::{
     data_type::DataType,
 };
 
-/// GDN tree verification as TreeVerifyValues, a workgroup per 32-value tile of each head, then DeltaNetNormGate on its
-/// output: the norm spans a head's 128 values, which one workgroup per head would leave most SMs idle to reach.
 pub struct VkTreeVerify {
     values: TreeVerifyValuesVulkanKernel,
     norm_gate: DeltaNetNormGateVulkanKernel,
@@ -58,9 +56,6 @@ impl TreeVerifyKernel for VkTreeVerify {
         command_buffer: &mut VkCommandBufferEncoding,
     ) {
         let (output, output_range) = o.reborrow().parts();
-        // SAFETY: the common contract passes [batch, tree, heads, 128] keys, queries, values and output, [batch, tree]
-        // nodes, [batch, tree, value heads] decays and betas and [batch, value heads, 128, 128] states, which the kernel
-        // indexes only within those shapes.
         unsafe {
             self.values.encode(
                 VkBuffer::resolve_ref(q),

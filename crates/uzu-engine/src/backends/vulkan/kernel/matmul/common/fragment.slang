@@ -1,6 +1,3 @@
-// ROW_FRAGMENTS x COL_FRAGMENTS 8 x 8 FP32 fragments, each lane's two adjacent row elements of fragment (row, col) at
-// row * COL_FRAGMENTS + col.
-
 public struct Fragment<let ROW_FRAGMENTS : int, let COL_FRAGMENTS : int> {
   public float fragment_data[ROW_FRAGMENTS * COL_FRAGMENTS][2];
 

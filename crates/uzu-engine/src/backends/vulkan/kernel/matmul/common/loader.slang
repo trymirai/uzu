@@ -3,8 +3,6 @@ import matmul.common.matmul;
 import generated.quantization_method;
 import matmul.common.simdgroup_multiply_accumulate;
 
-// A tile's device-to-threadgroup staging into S: load_unsafe for a whole tile, load_safe zeroing outside
-// source_tile_dimensions (columns, rows), next for the following tile.
 public interface IThreadgroupLoader<T> {
   [mutating]
   public void load_unsafe<S : IThreadgroupStorage<T>>();
@@ -14,7 +12,6 @@ public interface IThreadgroupLoader<T> {
   public void next();
 }
 
-// Its shape is constructor arguments, constants at every call site.
 public struct ThreadgroupLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
   int threadgroup_tile_rows;
   int destination_leading_dimension;
@@ -28,7 +25,6 @@ public struct ThreadgroupLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
   Ptr<T, Access.Read> source;
   uint offset;
 
-  // The tile from element `source_offset` of `source_ptr`; tiles advance along columns (K).
   public __init(
     Ptr<T, Access.Read> source_ptr,
     uint source_offset,
@@ -54,7 +50,6 @@ public struct ThreadgroupLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
     offset = source_offset + uint(tile_row_index) * uint(source_leading_dim) + uint(tile_col_index);
   }
 
-  // Each invocation copies reads_per_thread contiguous elements of every thread_rows-th row.
   [mutating]
   public void load_unsafe<S : IThreadgroupStorage<T>>() {
     [unroll]
@@ -100,14 +95,10 @@ public struct ThreadgroupLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
   }
 }
 
-// value rounded to U, as every 16-bit operation of the staged loaders rounds its result.
 public float round_to<U : IStorageFloat>(float value) {
   return U.fromFloat(value).toFloat();
 }
 
-// The codes of code byte `byte` times scale plus bias in U arithmetic: two U4 values, the low nibble first and the high
-// one read in place, 16 times its code, against the scale over 16; or one U8 value. Signed codes are stored with the top
-// bit flipped.
 public void dequantize_code<U : IStorageFloat>(
   uint byte,
   float scale,
@@ -128,12 +119,10 @@ public void dequantize_code<U : IStorageFloat>(
   }
 }
 
-// The staged weight of a product and bias, each rounded to U.
 public U staged_weight<U : IStorageFloat>(float product, float bias) {
   return U.fromFloat(round_to<U>(product) + bias);
 }
 
-// The bias a weight group's codes stage with in U: the ScaleBias bias, otherwise -scale zero_point rounded to U.
 public float staged_bias<U : IStorageFloat>(WeightGroup group, QuantizationMethod method) {
   return method == QuantizationMethod.ScaleBias ? group.bias : round_to<U>(-group.scale * float(group.zero_point));
 }

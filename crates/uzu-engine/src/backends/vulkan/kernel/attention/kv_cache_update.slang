@@ -1,10 +1,6 @@
 import definitions;
 import generated.kv_cache_update;
 
-// Applies the first copy_count row copies, in order, to the key and value codes and their scales, bit for bit: rows of
-// num_kv_heads heads of head_dim codes, read as words, and of num_kv_heads scales. One invocation per word column, the
-// first num_kv_heads of them also per scale column, applies every copy, so chained copies, swaps and repeated
-// destinations see the copies before them.
 [[Kernel]] [[Public]]
 [[Precondition("new", "head_dim.is_multiple_of(4) && backend_opaque_layout == 0")]]
 [[Precondition("encode", "copy_count as usize <= copies.len()")]]

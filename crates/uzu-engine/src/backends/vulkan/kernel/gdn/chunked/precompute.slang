@@ -1,25 +1,13 @@
 import definitions;
 import generated.delta_net;
 
-// One workgroup per (64-token chunk, k head), over the v heads that share that head's keys, one hv = hk G + group each:
-//   g[hv, t]  the inclusive prefix of log_decay within the chunk;
-//   qk_scaled  (q_r . k_c) e^(g_r - g_c) for c <= r;
-//   T          (I + A)^-1 for A[r, c] = beta_r e^(g_r - g_c) (k_r . k_c), c < r.
-// qk_scaled and T are [chunk, hv, 64, 64], written where DeltaNetChunkedOutputAndState reads them: the columns up to the
-// end of each row's 16-token block, +0 above the diagonal. Rows and columns past the suffix count as +0.
-
 static const uint CHUNKED_PRECOMPUTE_THREADS = 128;
-// Keys and queries are staged for the Gram matrices this deep, rows padded by one.
 static const uint CHUNKED_PRECOMPUTE_DEPTH = 16;
 static const uint CHUNKED_PRECOMPUTE_STAGE_STRIDE = CHUNKED_PRECOMPUTE_DEPTH + 1;
-// Each invocation owns a 4 x 8 tile of the Gram matrices; 8 divides DELTA_NET_CHUNKED_BLOCK.
 static const uint CHUNKED_PRECOMPUTE_TILE_ROWS = 4;
 static const uint CHUNKED_PRECOMPUTE_TILE_COLS = 8;
-// A's strictly lower triangle, row r from r (r - 1) / 2.
 static const uint CHUNKED_PRECOMPUTE_TRIANGLE = DELTA_NET_CHUNKED_CHUNK * (DELTA_NET_CHUNKED_CHUNK - 1) / 2;
 
-// The staged keys, then queries, [token, depth] during the Gram matrices; then the triangles of A for the pair of v heads
-// being solved, one per half of the workgroup.
 groupshared float chunked_precompute_shared[2 * CHUNKED_PRECOMPUTE_TRIANGLE];
 groupshared float chunked_precompute_g[DELTA_NET_CHUNKED_MAX_GROUPS * DELTA_NET_CHUNKED_CHUNK];
 groupshared float chunked_precompute_beta[DELTA_NET_CHUNKED_MAX_GROUPS * DELTA_NET_CHUNKED_CHUNK];
@@ -49,7 +37,6 @@ func DeltaNetChunkedPrecompute(
   let valid_tokens = min(DELTA_NET_CHUNKED_CHUNK, suffix_len - token_base);
   let groups_per_head = num_v_heads / num_k_heads;
 
-  // One invocation per v head scans its chunk's decay.
   if (thread_idx < groups_per_head) {
     let hv = hk * groups_per_head + thread_idx;
     var prefix = 0.0;
@@ -70,7 +57,6 @@ func DeltaNetChunkedPrecompute(
     }
   }
 
-  // K K^T and Q K^T over the head dim, a 4 x 8 tile each; tiles wholly above the diagonal or past the suffix stay +0.
   let tile_cols_per_row = DELTA_NET_CHUNKED_CHUNK / CHUNKED_PRECOMPUTE_TILE_COLS;
   let row_base = thread_idx / tile_cols_per_row * CHUNKED_PRECOMPUTE_TILE_ROWS;
   let col_base = thread_idx % tile_cols_per_row * CHUNKED_PRECOMPUTE_TILE_COLS;
@@ -131,7 +117,6 @@ func DeltaNetChunkedPrecompute(
   }
   GroupMemoryBarrierWithGroupSync();
 
-  // The v heads two at a time, each half of the workgroup solving one.
   let block_limit = (row_base / DELTA_NET_CHUNKED_BLOCK + 1) * DELTA_NET_CHUNKED_BLOCK;
   for (uint pair = 0; pair < groups_per_head; pair += 2) {
     for (uint slot = 0; slot < 2; slot++) {
@@ -166,14 +151,11 @@ func DeltaNetChunkedPrecompute(
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // T[:, column] by forward substitution of (I + A) x = e_column, x = +0 above column.
     let group = pair + thread_idx / DELTA_NET_CHUNKED_CHUNK;
     let column = thread_idx % DELTA_NET_CHUNKED_CHUNK;
     if (group < groups_per_head) {
       let head = (chunk * num_v_heads + hk * groups_per_head + group) * DELTA_NET_CHUNKED_CHUNK * DELTA_NET_CHUNKED_CHUNK;
       let triangle = thread_idx / DELTA_NET_CHUNKED_CHUNK * CHUNKED_PRECOMPUTE_TRIANGLE;
-      // A block's rows read the earlier rows of the column back from t_out, which this invocation stored: T is lower
-      // triangular, so each is either +0 above the column or stored. Rows past the suffix have no A and stay unstored.
       let first_block = column / DELTA_NET_CHUNKED_BLOCK;
       let blocks = (valid_tokens + DELTA_NET_CHUNKED_BLOCK - 1) / DELTA_NET_CHUNKED_BLOCK;
       for (uint block = first_block; block < blocks; block++) {

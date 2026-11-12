@@ -7,11 +7,6 @@ import generated.attention_two_pass;
 import generated.ring;
 import generated.trie;
 
-// Pass 1: block b of ATTENTION_TWO_PASS_BLOCKS takes keys b, b + ATTENTION_TWO_PASS_BLOCKS, ...; each simdgroup holds one
-// query head, lane l owning HEAD_DIM / 32 consecutive dimensions of the INT8 codes, and writes its block's FP32 partial
-// output, sum and maximum, -inf without an admitted key, to partial (head * suffix_length + query) * blocks + block.
-// Pass 2: per head and query, the merge of the blocks' partials with any sink, then the inverse rotation and the gate.
-
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("encode", "gqa_factor > 0")]]
@@ -51,7 +46,6 @@ func AttentionTwoPass1(
   let lane = invocation % SIMD_SIZE;
   let elements = HEAD_DIM / SIMD_SIZE;
   let head = head_group * ATTENTION_TWO_PASS_SIMDGROUPS + simdgroup;
-  // Simdgroups past the last head take every barrier the reductions need.
   let active = head < num_heads;
   let kv_head = (active ? head : 0) / gqa_factor;
   let q_offset = head * suffix_length + query;
@@ -78,7 +72,6 @@ func AttentionTwoPass1(
   var sum_exp_score = 0.0;
 
   for (uint key = block; key < sequence_length; key += ATTENTION_TWO_PASS_BLOCKS) {
-    // The mask depends only on the query and the key, so it is uniform across the workgroup.
     if (mask.admits(key, query, query_position)) {
       let row = key * num_kv_heads + kv_head;
       let key_words = attention_code_words(k_codes, row * HEAD_DIM + first, elements);
@@ -115,9 +108,6 @@ func AttentionTwoPass1(
   }
 }
 
-// Merges a head and query's `blocks` partials with its sink, a key of value zero, into the attention output, 0 without
-// any admitted key or sink, rotates it back, and multiplies the T-rounded result by the sigmoid of its gate. One group
-// of 32 invocations, lane l holding dimensions [l HEAD_DIM / 32, (l + 1) HEAD_DIM / 32).
 [[Variants("T", "float, bf16")]]
 [[Kernel]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
@@ -159,7 +149,6 @@ func AttentionTwoPass2<T: IStorageFloat>(
   }
   for (uint block = 0; block < blocks; block++) {
     let block_max = maxs[base + block];
-    // A block without an admitted key adds nothing, even when no block or sink has one.
     let factor = block_max == NEGATIVE_INFINITY ? 0.0 : exp(block_max - new_max);
     sum_exp_score = fma(sums[base + block], factor, sum_exp_score);
     for (uint a = 0; a < dims; a++) {
@@ -175,7 +164,6 @@ func AttentionTwoPass2<T: IStorageFloat>(
     let channel = first + a;
     var result = T.fromFloat(values[a]);
     if (has_gate) {
-      // The gate applies to the T-rounded result.
       let gate_value = gate[query * gate_row_stride + head * HEAD_DIM + channel].toFloat();
       result = T.fromFloat(result.toFloat() * sigmoid(gate_value));
     }

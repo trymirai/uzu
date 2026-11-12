@@ -1,4 +1,3 @@
-// The 64-bit product of two 32-bit integers as (low, high), without Int64; plain Slang has no umulExtended.
 uint2 multiply_extended(uint a, uint b) {
   return spirv_asm {
     %pair_type = OpTypeStruct $$uint $$uint;
@@ -9,7 +8,6 @@ uint2 multiply_extended(uint a, uint b) {
   };
 }
 
-// Philox4x32-10, in the CPU sampler's counter layout: offset in word 0, seed low/high as the key.
 public uint4 sampling_words(uint2 key, uint offset) {
   var counter = uint4(offset, 0, 0, 0);
   for (uint round = 0; round < 10; round++) {
@@ -21,19 +19,16 @@ public uint4 sampling_words(uint2 key, uint offset) {
   return counter;
 }
 
-// Same token-to-counter mapping as sampling::revidx. The quotient/remainder form of ceil avoids uint overflow.
 public uint2 sampling_index(uint token, uint vocab_size) {
   let stride = vocab_size / 4096 + (vocab_size % 4096 != 0 ? 1u : 0u);
   return uint2(stride * (token % 1024) + token / 4096, (token / 1024) % 4);
 }
 
-// Exact uniform in [2^-24, 1 - 2^-24]. Converting the full 32-bit word instead can round to 1 and yield infinite noise.
 public float sampling_uniform(uint word) {
   return float(max(word >> 8, 1u)) * (1.0 / 16777216.0);
 }
 
 public float sampling_noise(float uniform) {
-  // Near one, native log may round to zero. For x <= 2^-10, the omitted series terms are below FP32 rounding.
   let x = 1.0 - uniform;
   let inner = x <= (1.0 / 1024.0) ? x * (1.0 + x * (0.5 + x / 3.0)) : -log(uniform);
   return -log(inner);

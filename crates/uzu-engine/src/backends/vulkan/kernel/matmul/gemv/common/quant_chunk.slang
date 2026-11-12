@@ -30,7 +30,6 @@ public struct QuantChunk {
     decode_words(word0, word1, values, origin, signed_codes, BITS);
   }
 
-  // Values `offset` to offset + 7 of row `row` of `extent` values of `source`.
   public static void load<A : IStorageFloat>(
     bool ALIGNED,
     Ptr<A, Access.Read> source,

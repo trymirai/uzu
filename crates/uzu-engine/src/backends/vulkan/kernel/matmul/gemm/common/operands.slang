@@ -4,8 +4,6 @@ import generated.gemm;
 import matmul.common.loader;
 import matmul.common.simdgroup_multiply_accumulate;
 
-// The right operand B as stored, N rows of K, full precision or U4/U8 codes, and the loader that stages a
-// block_n x block_k tile of it, rows shared_stride_b apart.
 public interface IRightOperand<B> {
   associatedtype Loader : IThreadgroupLoader<B>;
 
@@ -19,7 +17,6 @@ public interface IRightOperand<B> {
   );
 }
 
-// Full-precision B.
 public struct FullPrecisionRight<B : IStorageFloat> : IRightOperand<B> {
   public DenseOperand<B> dense;
 
@@ -46,7 +43,6 @@ public struct FullPrecisionRight<B : IStorageFloat> : IRightOperand<B> {
   }
 }
 
-// U4/U8 B of K-element rows under any scheme.
 public struct QuantizedRight<B : IStorageFloat> : IRightOperand<B> {
   public QuantizedWeights<B> weights;
 
@@ -66,8 +62,6 @@ public struct QuantizedRight<B : IStorageFloat> : IRightOperand<B> {
   }
 }
 
-// Stages a block_n x block_k tile of quantized B, each invocation dequantizing reads_per_thread consecutive packs of one
-// row with its group's scale and staged bias in T arithmetic.
 public struct QuantizedBlockLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
   QuantizedWeights<T> weights;
   int pack_factor;
@@ -111,7 +105,6 @@ public struct QuantizedBlockLoader<T : IStorageFloat> : IThreadgroupLoader<T> {
     group = 0;
   }
 
-  // Code byte i of this invocation's run into S.
   void stage<S : IThreadgroupStorage<T>>(int i, float scale, float bias) {
     T values[2];
     dequantize_code<T>(uint(weights.codes[src_index + uint(i)]), scale, bias, weights.u4, weights.signed_codes, values);

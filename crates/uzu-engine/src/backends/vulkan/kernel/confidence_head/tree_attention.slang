@@ -3,9 +3,6 @@ import common.workgroup_reduction;
 import confidence_head.head;
 import generated.confidence_head;
 
-// Attention of each present tree row over the present rows, a workgroup per (row, head): a score is the scaled
-// query-key dot plus the head's bias for the pair's relation, none for a row with itself. Absent rows output zero.
-
 static const uint TREE_ATTENTION_THREADS = 32;
 
 groupshared float tree_attention_weights[TREE_ROWS_MAX];
@@ -59,7 +56,6 @@ func ConfidenceHeadTreeAttention(
     tree_attention_weights[key] = weight;
     local_total += weight;
   }
-  // The reduction's barriers also publish every key's weight.
   let total = workgroup_reduce<Sum<float>, TREE_ATTENTION_THREADS>(local_total);
   let v = qkv + 2 * width + head * head_dim;
   for (uint unit = invocation; unit < head_dim; unit += TREE_ATTENTION_THREADS) {

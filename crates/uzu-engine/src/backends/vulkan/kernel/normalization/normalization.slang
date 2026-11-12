@@ -2,10 +2,6 @@ import definitions;
 import common.hadamard;
 import common.workgroup_reduction;
 
-// One workgroup per row. The residual sum, its scaling and the shortcut store round to InputT; normalization is FP32
-// from one pass of sums and sums of squares (variance E[x²] - mean²); scale products, bias sums and the Hadamard scalings
-// round to OutputT. Loops containing barriers run the same trip count in every invocation.
-
 static const uint NORMALIZATION_THREADS = 1024;
 
 [[Variants("InputT", "float, half, bf16")]]
@@ -47,7 +43,6 @@ func Normalization<
   let row = batch_idx * element_count;
   let invocation = subgroup_invocation();
 
-  // Step 1: residual add / shortcut copy, and this invocation's sum and sum of squares.
   float sum = 0.0;
   float squares = 0.0;
   for (uint i = invocation; i < element_count; i += NORMALIZATION_THREADS) {
@@ -73,8 +68,6 @@ func Normalization<
     squares += x * x;
   }
 
-  // Step 2: mean, variance and inverse RMS over the row. Each invocation reads back only the elements it stored in step
-  // 1, so no memory barrier is needed.
   float mean = 0.0;
   if (subtract_mean) {
     mean = workgroup_reduce<Sum<float>, NORMALIZATION_THREADS>(sum) / float(element_count);
@@ -82,7 +75,6 @@ func Normalization<
   let variance = workgroup_reduce<Sum<float>, NORMALIZATION_THREADS>(squares) / float(element_count) - mean * mean;
   let rms_inv = rsqrt(variance + epsilon);
 
-  // Step 3: elementwise normalization.
   for (uint base = 0; base < element_count; base += NORMALIZATION_THREADS) {
     let i = base + invocation;
     let active = i < element_count;
@@ -104,13 +96,11 @@ func Normalization<
         value = OutputT.fromFloat(value.toFloat() + biases[i].toFloat());
       }
     }
-    // element_count is a multiple of the block size, so every block is entirely active or entirely inactive.
     if (use_hadamard) {
       float factored = 0.0;
       if (active) {
         factored = hadamard_factor(value.toFloat(), hadamard_factors[i]);
       }
-      // The input random Hadamard transform: the factors, then the transform.
       value = OutputT.fromFloat(hadamard_transform<NORMALIZATION_THREADS>(factored));
     }
     if (active) {

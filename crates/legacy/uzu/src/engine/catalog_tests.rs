@@ -509,8 +509,6 @@ fn variant(
     }
 }
 
-/// A model that needs more memory than is free names the largest variant of the same model that fits, and none when
-/// no variant does.
 #[test]
 fn memory_shortfall_names_the_largest_variant_that_fits() {
     const GB: u64 = 1_000_000_000;

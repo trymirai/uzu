@@ -9,8 +9,6 @@ use crate::{
     tests::helpers::{buffer_to_vec, create_buffer_with_data, create_context, for_each_backend},
 };
 
-/// The CPU's rule on a `[offset, length, tokens..]` ring: each token takes the next free slot, or once the ring is
-/// full the oldest one.
 fn update(
     ring: &mut [u32],
     input: &[u32],
@@ -34,7 +32,6 @@ fn check<B: Backend>() {
     let context = create_context::<B>();
     let kernel = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&context).unwrap();
     for capacity in [1, 3, 16, 300] {
-        // (1, 2) is no header of a one-token ring.
         for (offset, length) in
             [(0, 0), (1, 2), (capacity - 1, capacity)].into_iter().filter(|&(_, length)| length <= capacity)
         {
@@ -59,7 +56,6 @@ fn check<B: Backend>() {
     }
 }
 
-/// Two updates back to back store the last `capacity` tokens and advance the header as the CPU does.
 #[uzu_test]
 fn context_ring_update_keeps_the_latest_tokens() {
     for_each_backend!(|B| check::<B>());
