@@ -9984,6 +9984,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "wiremock",
+ "zune-heic",
 ]
 
 [[package]]
@@ -11548,12 +11549,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d56377fd46368984a170bc5aac5567e52ca5da874caa60bea39fcbca78fb658b"
 
 [[package]]
+name = "zune-heic"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "506a37d813547dfb1f4528f5d6ce1e266a421957d2d408fdc6b9d642f01a0d0f"
+dependencies = [
+ "zune-core",
+ "zune-isobmff",
+]
+
+[[package]]
 name = "zune-inflate"
 version = "0.2.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73ab332fe2f6680068f3582b16a24f90ad7096d5d39b974d1c0aff0125116f02"
 dependencies = [
  "simd-adler32",
+]
+
+[[package]]
+name = "zune-isobmff"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e66e17f976deba786f15863bc7431554bf6239f2166d43123df0e063a2500f2"
+dependencies = [
+ "zune-core",
 ]
 
 [[package]]

@@ -91,6 +91,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 image.workspace = true
+zune-heic.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 parking_lot = { workspace = true, features = ["send_guard"] }

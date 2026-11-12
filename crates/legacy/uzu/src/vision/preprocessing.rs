@@ -1,6 +1,13 @@
 use std::io::Cursor;
 
-use image::{DynamicImage, ImageDecoder, ImageError, ImageReader, RgbImage, imageops, imageops::FilterType};
+use image::{
+    DynamicImage, GrayAlphaImage, GrayImage, ImageDecoder, ImageError, ImageReader, RgbImage, RgbaImage, imageops,
+    imageops::FilterType,
+};
+use zune_heic::{
+    HeicErrors, HeifDecoder,
+    zune_core::{bytestream::ZCursor, colorspace::ColorSpace},
+};
 
 const MAX_ASPECT_RATIO: f64 = 200.0;
 
@@ -14,6 +21,10 @@ pub enum VisionPreprocessingError {
     },
     #[error(transparent)]
     Image(#[from] ImageError),
+    #[error(transparent)]
+    Heic(#[from] HeicErrors),
+    #[error("Unsupported HEIC pixel format: {0:?}")]
+    HeicPixelFormat(Option<ColorSpace>),
 }
 
 pub struct VisionPreprocessingConfig {
@@ -52,14 +63,36 @@ pub fn preprocess(
     })
 }
 
-fn get_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, ImageError> {
+fn get_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionPreprocessingError> {
     let cursor = Cursor::new(image_bytes);
     let reader = ImageReader::new(cursor).with_guessed_format().map_err(ImageError::from)?;
+    if reader.format().is_none() && image_bytes.get(4..8) == Some(b"ftyp".as_slice()) {
+        return get_heic_rgb_image(image_bytes);
+    }
+
     let mut decoder = reader.into_decoder()?;
     let orientation = decoder.orientation()?;
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
     Ok(image.into_rgb8())
+}
+
+fn get_heic_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionPreprocessingError> {
+    let mut decoder = HeifDecoder::new(ZCursor::new(image_bytes));
+    let pixels = decoder.decode()?;
+    let colorspace = decoder.colorspace();
+    let (Some(width), Some(height)) = (decoder.width(), decoder.height()) else {
+        return Err(VisionPreprocessingError::HeicPixelFormat(colorspace));
+    };
+    let (width, height) = (width as u32, height as u32);
+    let image = match colorspace {
+        Some(ColorSpace::RGB) => RgbImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgb8),
+        Some(ColorSpace::RGBA) => RgbaImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgba8),
+        Some(ColorSpace::Luma) => GrayImage::from_raw(width, height, pixels).map(DynamicImage::ImageLuma8),
+        Some(ColorSpace::LumaA) => GrayAlphaImage::from_raw(width, height, pixels).map(DynamicImage::ImageLumaA8),
+        _ => None,
+    };
+    image.map(DynamicImage::into_rgb8).ok_or(VisionPreprocessingError::HeicPixelFormat(colorspace))
 }
 
 fn get_new_size(
