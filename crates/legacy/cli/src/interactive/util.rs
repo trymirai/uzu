@@ -11,6 +11,11 @@ pub fn cycle<T: Copy + PartialEq>(
     values[next]
 }
 
+pub fn use_terminal_width(hooks: &mut Hooks) -> u16 {
+    let (width, _) = hooks.use_terminal_size();
+    crossterm::terminal::size().map_or(width, |(width, _)| width)
+}
+
 pub fn types_text(modifiers: KeyModifiers) -> bool {
     !modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT)
 }

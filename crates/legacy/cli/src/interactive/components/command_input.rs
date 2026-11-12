@@ -12,6 +12,7 @@ use crate::interactive::{
         HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, HintExample, SYMBOL_COMMAND, SYMBOL_INPUT,
     },
     sessions::decision::is_question_mode,
+    util::use_terminal_width,
 };
 
 const SAFE_PADDING: u16 = 1;
@@ -32,7 +33,7 @@ pub fn CommandInput(
 
     let state = *hooks.use_context::<State<ApplicationState>>();
     let mut input = hooks.use_state(String::new);
-    let (width, _) = hooks.use_terminal_size();
+    let width = use_terminal_width(&mut hooks);
 
     let input_text = input.read().clone();
     let valid = valid_commands(&input_text, state);

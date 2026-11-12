@@ -19,7 +19,7 @@ use crate::{
         helpers::SYMBOL_COMMAND,
         keyboard_enhancement::KeyboardEnhancement,
         sessions::{self, SessionState},
-        util::types_text,
+        util::{types_text, use_terminal_width},
     },
 };
 
@@ -138,7 +138,7 @@ pub fn Application(
             .register("quit", "Exit the CLI", false, || Box::new(ExitFlow)),
         model_state: None,
     });
-    let (width, _) = hooks.use_terminal_size();
+    let width = use_terminal_width(&mut hooks);
     let requested_model = props.model.clone().or_else(|| state.read().preferences().selected_model_id.clone());
 
     hooks.use_future({

@@ -2,17 +2,19 @@ use std::time::{Duration, Instant};
 
 use iocraft::prelude::*;
 use tokio_stream::StreamExt;
+use unicode_width::UnicodeWidthStr;
 use uzu::storage::DownloadPhase;
 
 use crate::{
     common::thinking::ThinkingSupport,
     interactive::{
         components::{ApplicationState, ProgressBar, ThinkingSupportExt},
-        util::types_text,
+        util::{types_text, use_terminal_width},
     },
 };
 
 const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
+const PROGRESS_BAR_MINIMAL_WIDTH: usize = 10;
 
 #[derive(Clone, Copy)]
 enum StorageAction {
@@ -29,6 +31,7 @@ pub fn SelectedModel(
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
     let state = *hooks.use_context::<State<ApplicationState>>();
+    let width = use_terminal_width(&mut hooks) as usize;
 
     hooks.use_future({
         let engine = state.read().engine.clone();
@@ -220,6 +223,20 @@ pub fn SelectedModel(
                     None => format!("sampling {}", preferences.sampling.mode.label()),
                 }
             });
+            let name = model.name();
+            let mut remaining = width.saturating_sub(name.width() + padding_wide as usize);
+            let mut fits = |part_width: usize| {
+                part_width <= remaining && {
+                    remaining -= part_width;
+                    true
+                }
+            };
+            let session_status = session_status.filter(|status| fits(status.width()));
+            let status =
+                model.is_downloadable().then_some(status).filter(|status| fits(padding as usize + status.width()));
+            let is_downloading =
+                is_downloading && fits(PROGRESS_BAR_MINIMAL_WIDTH + padding as usize + progress_size.width());
+            let chat_indicator = chat_indicator.filter(|indicator| fits(indicator.width() + padding_wide as usize));
 
             element! {
                 View(
@@ -227,8 +244,8 @@ pub fn SelectedModel(
                     align_items: AlignItems::Center,
                     width: 100pct,
                 ) {
-                    Text(content: model.name(), color: theme.accent_color)
-                    #(model.is_downloadable().then(|| element! {
+                    Text(content: name, color: theme.accent_color)
+                    #(status.map(|status| element! {
                         View(flex_direction: FlexDirection::Row) {
                             View(width: padding as u32)
                             Text(content: status, color: theme.subtitle_color)
