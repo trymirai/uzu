@@ -2,20 +2,21 @@ use std::time::{Duration, Instant};
 
 use iocraft::prelude::*;
 use tokio_stream::StreamExt;
+use unicode_width::UnicodeWidthStr;
 use uzu::storage::DownloadPhase;
 
 use crate::{
     common::thinking::ThinkingSupport,
-    interactive::components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+    interactive::{
+        components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+        flows::DeleteModelFlow,
+        util::{types_text, use_terminal_width},
+    },
 };
 
 const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
-
-#[derive(Clone, Copy)]
-enum StorageAction {
-    Toggle,
-    Delete,
-}
+/// The narrowest download progress bar worth drawing.
+const PROGRESS_BAR_MINIMAL_WIDTH: usize = 10;
 
 #[derive(Default, Props)]
 pub struct SelectedModelProps {}
@@ -26,6 +27,7 @@ pub fn SelectedModel(
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
     let state = *hooks.use_context::<State<ApplicationState>>();
+    let width = use_terminal_width(&mut hooks) as usize;
 
     hooks.use_future({
         let engine = state.read().engine.clone();
@@ -91,12 +93,12 @@ pub fn SelectedModel(
         }
     });
 
-    let on_action = hooks.use_async_handler({
+    let on_toggle = hooks.use_async_handler({
         let engine = state.read().engine.clone();
         let model = state.read().model_state.as_ref().map(|model_state| model_state.model.clone());
         let has_session =
             state.read().model_state.as_ref().map(|model_state| model_state.session_state.is_some()).unwrap_or(false);
-        move |action: StorageAction| {
+        move |()| {
             let engine = engine.clone();
             let model = model.clone();
             async move {
@@ -110,31 +112,24 @@ pub fn SelectedModel(
                     return;
                 }
                 let downloader = engine.downloader(&model);
-                match action {
-                    StorageAction::Toggle => {
-                        let Some(current) = downloader.state().await else {
-                            return;
-                        };
-                        match current.phase {
-                            DownloadPhase::Downloading {} => {
-                                let _ = downloader.pause().await;
-                            },
-                            DownloadPhase::Paused {}
-                            | DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Locked {
-                                ..
-                            }
-                            | DownloadPhase::Error {
-                                ..
-                            } => {
-                                let _ = downloader.resume().await;
-                            },
-                            DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
-                        }
+                let Some(current) = downloader.state().await else {
+                    return;
+                };
+                match current.phase {
+                    DownloadPhase::Downloading {} => {
+                        let _ = downloader.pause().await;
                     },
-                    StorageAction::Delete => {
-                        let _ = downloader.delete().await;
+                    DownloadPhase::Paused {}
+                    | DownloadPhase::NotDownloaded {}
+                    | DownloadPhase::Locked {
+                        ..
+                    }
+                    | DownloadPhase::Error {
+                        ..
+                    } => {
+                        let _ = downloader.resume().await;
                     },
+                    DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
                 }
             }
         }
@@ -159,12 +154,15 @@ pub fn SelectedModel(
         if kind == KeyEventKind::Release {
             return;
         }
-        if !modifiers.contains(KeyModifiers::CONTROL) {
+        if types_text(modifiers) {
             return;
         }
         match code {
-            KeyCode::Char('p') => on_action(StorageAction::Toggle),
-            KeyCode::Char('d') => on_action(StorageAction::Delete),
+            KeyCode::Char('p') => on_toggle(()),
+            KeyCode::Char('d') if state.read().can_delete_model() => {
+                let mut state = state;
+                state.write().flow = Some(Box::new(DeleteModelFlow));
+            },
             _ => {},
         }
     });
@@ -217,6 +215,21 @@ pub fn SelectedModel(
                     None => format!("sampling {}", preferences.sampling.mode.label()),
                 }
             });
+            // Narrow terminals drop the parts that do not fit whole, in order of priority, instead of wrapping them.
+            let name = model.name();
+            let mut remaining = width.saturating_sub(name.width() + padding_wide as usize);
+            let mut fits = |part_width: usize| {
+                part_width <= remaining && {
+                    remaining -= part_width;
+                    true
+                }
+            };
+            let session_status = session_status.filter(|status| fits(status.width()));
+            let status =
+                model.is_downloadable().then_some(status).filter(|status| fits(padding as usize + status.width()));
+            let is_downloading =
+                is_downloading && fits(PROGRESS_BAR_MINIMAL_WIDTH + padding as usize + progress_size.width());
+            let chat_indicator = chat_indicator.filter(|indicator| fits(indicator.width() + padding_wide as usize));
 
             element! {
                 View(
@@ -224,8 +237,8 @@ pub fn SelectedModel(
                     align_items: AlignItems::Center,
                     width: 100pct,
                 ) {
-                    Text(content: model.name(), color: theme.accent_color)
-                    #(model.is_downloadable().then(|| element! {
+                    Text(content: name, color: theme.accent_color)
+                    #(status.map(|status| element! {
                         View(flex_direction: FlexDirection::Row) {
                             View(width: padding as u32)
                             Text(content: status, color: theme.subtitle_color)

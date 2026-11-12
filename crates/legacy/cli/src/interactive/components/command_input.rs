@@ -12,6 +12,7 @@ use crate::interactive::{
         HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, HintExample, SYMBOL_COMMAND, SYMBOL_INPUT,
     },
     sessions::decision::is_question_mode,
+    util::use_terminal_width,
 };
 
 const SAFE_PADDING: u16 = 1;
@@ -32,7 +33,7 @@ pub fn CommandInput(
 
     let state = *hooks.use_context::<State<ApplicationState>>();
     let mut input = hooks.use_state(String::new);
-    let (width, _) = hooks.use_terminal_size();
+    let width = use_terminal_width(&mut hooks);
 
     let input_text = input.read().clone();
     let valid = valid_commands(&input_text, state);
@@ -105,6 +106,7 @@ fn hint_component(
     on_submit: Handler<String>,
 ) -> AnyElement<'static> {
     let mut hints = Vec::new();
+    let can_delete_model = state.read().can_delete_model();
     match state.read().model_state.as_ref() {
         Some(model_state) if model_state.model.is_downloadable() => {
             if !matches!(model_state.download_state.phase, DownloadPhase::Downloaded {}) {
@@ -112,7 +114,9 @@ fn hint_component(
             } else {
                 hints.push(HINT_SEND.to_string());
             }
-            hints.push(HINT_STORAGE_DELETE.to_string());
+            if can_delete_model {
+                hints.push(HINT_STORAGE_DELETE.to_string());
+            }
         },
         _ => {
             hints.push(HINT_SEND.to_string());

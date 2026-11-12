@@ -78,10 +78,15 @@ impl SessionState for ChatSessionState {
         true
     }
 
+    /// Prefill runs as one submission, so an interrupt takes effect at the first output.
     fn status_text(&self) -> Option<String> {
         let status = match self.status {
             ChatSessionStatus::Idle => "loaded".to_string(),
             ChatSessionStatus::Loading => "loading".to_string(),
+            ChatSessionStatus::Generating if self.cancel_token.as_ref().is_some_and(CancelToken::is_cancelled) => {
+                "stopping".to_string()
+            },
+            ChatSessionStatus::Generating if self.pending_items.is_empty() => "processing prompt".to_string(),
             ChatSessionStatus::Generating => format!("generating ({})", HINT_SESSION_INTERRUPT),
         };
         Some(status)
