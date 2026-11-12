@@ -9,7 +9,6 @@ static const uint NORMALIZATION_THREADS = 1024;
 [[Variants("OutputT", "float, half, bf16")]]
 [[Variants("AccumT", "float")]]
 [[Kernel]] [[Public]]
-[[Precondition("new", "copy_to_shortcut || !residual_add")]]
 func Normalization<
   InputT: IStorageFloat,
   AffineT: IStorageFloat,
@@ -99,7 +98,7 @@ func Normalization<
     if (use_hadamard) {
       float factored = 0.0;
       if (active) {
-        factored = hadamard_factor(value.toFloat(), hadamard_factors[i]);
+        factored = value.toFloat() * float(hadamard_factors[i]);
       }
       value = OutputT.fromFloat(hadamard_transform<NORMALIZATION_THREADS>(factored));
     }

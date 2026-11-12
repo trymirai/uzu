@@ -8,12 +8,8 @@ import generated.gated_act_mul;
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "ops != GatedActMulOp::PackHalf")]]
-[[Precondition("new", "ops == GatedActMulOp::FullPrecision || use_hadamard")]]
 [[Precondition("new", "ops == GatedActMulOp::FullPrecision || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "ops != GatedActMulOp::QuantizeWithGroupSums || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
-[[Precondition("encode", "!use_hadamard || gated_dim.is_multiple_of(32)")]]
-[[Precondition("encode", "ops == GatedActMulOp::FullPrecision || gated_dim.is_multiple_of(activation_scale_group_size)")]]
-[[Precondition("encode", "ops != GatedActMulOp::QuantizeWithGroupSums || gated_dim.is_multiple_of(sum_group_size)")]]
 [[Precondition("encode", "!clip_gate || gate_clip_min <= gate_clip_max")]]
 [[Precondition("encode", "!clip_value || value_clip_min <= value_clip_max")]]
 func GatedActMul<T: IStorageFloat>(
@@ -80,7 +76,7 @@ func GatedActMul<T: IStorageFloat>(
     }
     result = T.fromFloat(value.toFloat() * activated.toFloat()).toFloat();
     if (use_hadamard) {
-      result = hadamard_factor(result, hadamard_factors[column]);
+      result = result * float(hadamard_factors[column]);
     }
   }
   if (use_hadamard) {

@@ -1,4 +1,3 @@
-import definitions;
 import common.workgroup_reduction;
 
 public struct WeaverRank : IReduction {

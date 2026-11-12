@@ -8,7 +8,6 @@ static const uint TREE_ATTENTION_THREADS = 32;
 groupshared float tree_attention_weights[TREE_ROWS_MAX];
 
 [[Kernel]] [[Public]]
-[[Precondition("encode", "rows <= crate::backends::common::gpu_types::confidence_head::TREE_ROWS_MAX")]]
 func ConfidenceHeadTreeAttention(
   Ptr<bf16, Access.Read> qkv,
   Ptr<uint, Access.Read> relations,

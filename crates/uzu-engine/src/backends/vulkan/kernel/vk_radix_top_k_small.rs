@@ -1,13 +1,16 @@
-use crate::backends::{
-    common::{
-        BufferMut, BufferRef, CommandBufferEncoding,
-        kernel::radix_top_k_small::{MAX_K, RadixTopKSmall},
+use crate::{
+    backends::{
+        common::{
+            BufferMut, BufferRef, CommandBufferEncoding,
+            kernel::radix_top_k_small::{MAX_K, RadixTopKSmall},
+        },
+        vulkan::{
+            Error, RadixTopKSmallCollectVulkanKernel, RadixTopKSmallPassVulkanKernel, RadixTopKSmallSortVulkanKernel,
+            VkBuffer, VkCommandBufferEncoding, VkContext, Vulkan,
+            gpu_types::radix_top_k::{RADIX_TOP_K_BUCKETS, RADIX_TOP_K_MAX_K, RADIX_TOP_K_PASSES},
+        },
     },
-    vulkan::{
-        Error, RadixTopKSmallCollectVulkanKernel, RadixTopKSmallPassVulkanKernel, RadixTopKSmallSortVulkanKernel,
-        VkBuffer, VkCommandBufferEncoding, VkContext, Vulkan,
-        gpu_types::radix_top_k::{RADIX_TOP_K_BUCKETS, RADIX_TOP_K_MAX_K, RADIX_TOP_K_PASSES},
-    },
+    data_type::DataType,
 };
 
 const _: () = assert!(RADIX_TOP_K_MAX_K == MAX_K);
@@ -45,12 +48,12 @@ impl RadixTopKSmall for VkRadixTopKSmall {
         sorted: bool,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<(), Error> {
+        assert!(rows > 0 && columns > 0 && k > 0 && k <= MAX_K && k <= columns);
         let partitions = columns.div_ceil(COLUMNS_PER_PARTITION);
-        let mut histograms = command_buffer.allocate_scratch(
-            rows as usize * RADIX_TOP_K_PASSES as usize * RADIX_TOP_K_BUCKETS as usize * size_of::<u32>(),
-        )?;
-        let mut counts = command_buffer.allocate_scratch(rows as usize * size_of::<u32>())?;
-        let keys = command_buffer.allocate_scratch(rows as usize * k as usize * 2 * size_of::<u32>())?;
+        let mut histograms = command_buffer
+            .allocate_scratch_for_shape(&[rows, RADIX_TOP_K_PASSES, RADIX_TOP_K_BUCKETS], DataType::U32)?;
+        let mut counts = command_buffer.allocate_scratch_for_shape(&[rows], DataType::U32)?;
+        let keys = command_buffer.allocate_scratch_for_shape(&[rows, k, 2], DataType::U32)?;
         command_buffer.encode_fill(&mut histograms, 0);
         command_buffer.encode_fill(&mut counts, 0);
         let (output_ids, output_ids_range) = output_ids.parts();

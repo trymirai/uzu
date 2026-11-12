@@ -2,10 +2,6 @@ import definitions;
 import common.workgroup_reduction;
 import generated.hadamard_order;
 
-public float hadamard_factor(float value, int factor) {
-  return value * float(factor);
-}
-
 public float hadamard_butterflies(float value, uint lanes) {
   var transformed = value;
   for (uint stride = 1; stride < lanes; stride <<= 1) {
@@ -13,10 +9,6 @@ public float hadamard_butterflies(float value, uint lanes) {
     transformed = (WaveGetLaneIndex() & stride) != 0 ? partner - transformed : partner + transformed;
   }
   return transformed;
-}
-
-public float subgroup_hadamard_transform(float value) {
-  return hadamard_butterflies(value, HADAMARD_TRANSFORM_BLOCK_SIZE) / sqrt(float(HADAMARD_TRANSFORM_BLOCK_SIZE));
 }
 
 static const uint HADAMARD_SHUFFLE_LANES = 64;

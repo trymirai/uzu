@@ -6,13 +6,6 @@ import generated.weaver;
 
 groupshared uint weaver_select_winners[FRONTIER_MAX_WIDTH];
 
-float3 weaver_top_values(float candidate, bf16 residual, uint2 key, uint token, uint vocab_size) {
-  let index = sampling_index(token, vocab_size);
-  let word = sampling_words(key, index.x)[index.y];
-  let logit = candidate + residual.toFloat();
-  return float3(logit, logit + sampling_noise(float(word) * (1.0 / 4294967296.0)), sampling_noise(sampling_uniform(word)));
-}
-
 void weaver_children(
   Ptr<bf16, Access.Read> residual_logits,
   Ptr<uint, Access.Read> depth_seeds,
@@ -52,11 +45,15 @@ void weaver_children(
     if (index >= candidates) { continue; }
     let token = from_pool ? candidate_pool_ids[base + index] : node_candidate_ids[base + index];
     let logit = from_pool ? candidate_pool_logits[base + index] : node_candidate_logits[base + index];
-    let values = weaver_top_values(asfloat(logit), residual_logits[base + index], key, token, vocab_size);
-    logits[cache] = values.x;
-    entries[cache] = uint4(float_order_key(asuint(values.y)), token, index, index);
+    let sample_slot = sampling_index(token, vocab_size);
+    let word = sampling_words(key, sample_slot.x)[sample_slot.y];
+    let residual_logit = asfloat(logit) + residual_logits[base + index].toFloat();
+    logits[cache] = residual_logit;
+    entries[cache] = uint4(
+      float_order_key(asuint(residual_logit + sampling_noise(float(word) * (1.0 / 4294967296.0)))), token, index, index
+    );
     if (has_prune_noise) {
-      prune_logits[cache] = values.x + prune_noise_scale * values.z;
+      prune_logits[cache] = residual_logit + prune_noise_scale * sampling_noise(sampling_uniform(word));
     }
   }
   let maximum = workgroup_reduce<Max<float>, TOP_CHILDREN_THREADS>(max(logits[0], logits[1]));

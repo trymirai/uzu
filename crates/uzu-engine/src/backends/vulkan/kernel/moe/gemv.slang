@@ -85,6 +85,6 @@ func MoeGemv<T: IStorageFloat>(
   if (block) {
     let column = output_tile * HADAMARD_TRANSFORM_BLOCK_SIZE + invocation;
     let factor = hadamard_factors[expert * out_vec_size + column];
-    d[route * out_vec_size + column] = T.fromFloat(hadamard_factor(value, factor));
+    d[route * out_vec_size + column] = T.fromFloat(value * float(factor));
   }
 }

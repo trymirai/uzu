@@ -5,14 +5,13 @@ import common.workgroup_reduction;
 import generated.trellis;
 
 static const uint TRELLIS_THREADS = 128;
-static const uint TRELLIS_CAPACITY = 2048;
+static const uint TRELLIS_CAPACITY = TRELLIS_THREADS * 16;
 
 groupshared float trellis_hadamard[TRELLIS_CAPACITY];
 
 void trellis_hadamard_transform<let H : uint, let VALUES : uint>(inout float values[VALUES], uint tid) {
   static_assert(H == 512 || H == 1024 || H == 2048 || H == 4096, "a normalized block");
   static_assert(VALUES == (H == 4096 ? 32u : 16u), "16 values per invocation, 32 for H 4096");
-  static_assert(TRELLIS_THREADS * 16 == TRELLIS_CAPACITY, "one pass fills the scratch");
   for (uint stride = 1; stride < VALUES; stride <<= 1) {
     for (uint pair = 0; pair < VALUES / 2; pair++) {
       let lo = ((pair & ~(stride - 1)) << 1) | (pair & (stride - 1));

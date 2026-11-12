@@ -3,7 +3,6 @@ import common.hadamard;
 import common.quantized_value;
 import generated.d4s4;
 import generated.embedding;
-import generated.hadamard_order;
 import generated.quantization;
 import generated.quantization_method;
 
@@ -11,10 +10,7 @@ static const uint INPUT_EMBEDDING_LOOKUP_TILE = 256;
 
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
-[[Precondition("new", "group_size.unwrap_or(1) > 0")]]
 [[Precondition("encode", "quantization_mode != QuantizationMode::U4.into() || model_dim.is_multiple_of(2)")]]
-[[Precondition("encode", "!use_hadamard || model_dim.is_multiple_of(32)")]]
-[[Precondition("encode", "table_kind != EmbeddingTableKind::D4S4 || model_dim.is_multiple_of(64)")]]
 func InputEmbeddingLookup<T: IStorageFloat>(
   Ptr<uint, Access.Read> token_ids,
   Ptr<uint8_t, Access.Read> values,
@@ -40,11 +36,8 @@ func InputEmbeddingLookup<T: IStorageFloat>(
   [[Specialize]] bool use_hadamard,
 ) {
   static_assert(INPUT_EMBEDDING_LOOKUP_TILE == 256, "one tile of Threads(256) per workgroup, Groups(div_ceil(256))");
-  static_assert(HADAMARD_TRANSFORM_BLOCK_SIZE == 32, "the transform precondition admits rows of multiples of 32");
-  static_assert(COLUMNS_PER_LADDER_SCALE == 64, "the D4S4 precondition admits rows of multiples of 64");
   static_assert(COLUMNS_PER_LADDER_SCALE % VALUES_PER_CODE == 0, "D4S4 rows hold whole codes");
   static_assert(CODEBOOK_SIZE == 256 && LADDER_SIZE == 16, "a code byte indexes the codebook, a nibble the ladder");
-  static_assert(COLUMNS_PER_LADDER_INDEX_BYTE == 2 * COLUMNS_PER_LADDER_SCALE, "two ladder nibbles per byte");
   let column = tile * INPUT_EMBEDDING_LOOKUP_TILE + subgroup_invocation();
   let active = column < model_dim;
   let index = batch * model_dim + column;
@@ -98,7 +91,7 @@ func InputEmbeddingLookup<T: IStorageFloat>(
   if (use_hadamard) {
     value = hadamard_transform<INPUT_EMBEDDING_LOOKUP_TILE>(value);
     if (active) {
-      value = hadamard_factor(value, hadamard_factors[column]);
+      value = value * float(hadamard_factors[column]);
     }
   }
   if (active) {

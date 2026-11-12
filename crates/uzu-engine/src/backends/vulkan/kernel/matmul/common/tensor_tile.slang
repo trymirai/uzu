@@ -4,6 +4,7 @@ import common.hadamard;
 import matmul.common.matmul;
 import common.quantized_value;
 import generated.gemm;
+import generated.hadamard_order;
 import generated.quantization_method;
 import matmul.common.int8_operands;
 import matmul.common.loader;
@@ -833,7 +834,7 @@ public struct Int8Gemm<
           let row = block_row + row_local;
           if (row < m) {
             let value = asfloat(S.read(row_local * uint(BN / 4) + col_local / 4)[col_local % 4]);
-            var output = hadamard_factor(subgroup_hadamard_transform(value), factor);
+            var output = hadamard_butterflies(value, HADAMARD_TRANSFORM_BLOCK_SIZE) / sqrt(float(HADAMARD_TRANSFORM_BLOCK_SIZE)) * float(factor);
             if (rht_bias) {
               output = D.fromFloat(output).toFloat() + bias;
             }

@@ -1,8 +1,5 @@
 import definitions;
 
-static const uint SHORT_CONV_PREFILL_THREADS = 64;
-static const uint SHORT_CONV_PREFILL_ROWS = 4;
-
 T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : Access>(
   Ptr<T, Access.Read> in_proj,
   Ptr<WeightT, Access.Read> w,
@@ -69,17 +66,10 @@ T short_conv_step<T: IStorageFloat, WeightT: IStorageFloat, let SourceAccess : A
   uint in_proj_stride,
   uint state_stride,
   uint model_dim,
-  [[Groups("model_dim.div_ceil(64)")]] uint channel_group,
-  [[Groups("(suffix_len + kernel_size.saturating_sub(1)).div_ceil(4)")]] uint row_group,
-  [[Threads("64")]] uint thread_idx,
-  [[Threads("4")]] uint row_thread,
+  [[Axis("model_dim", "64")]] uint channel_idx,
+  [[Axis("suffix_len + kernel_size.saturating_sub(1)", "4")]] uint row_idx,
   [[Specialize]] bool has_bias,
 ) {
-  let channel_idx = channel_group * SHORT_CONV_PREFILL_THREADS + thread_idx;
-  let row_idx = row_group * SHORT_CONV_PREFILL_ROWS + row_thread;
-  if (channel_idx >= model_dim || row_idx >= suffix_len + (kernel_size > 0 ? kernel_size - 1 : 0)) {
-    return;
-  }
   if (row_idx >= suffix_len) {
     state_out[channel_idx * state_stride + row_idx - suffix_len] = padded[row_idx * model_dim + channel_idx];
     return;

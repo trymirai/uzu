@@ -2,6 +2,13 @@ import definitions;
 import matmul.gemv.common.arguments;
 import matmul.gemv.common.tile;
 
+float4 unpack4<T : IStorageFloat>(uint2 words) {
+  return float4(
+    T.fromStorageBits(words.x).toFloat(), T.fromStorageBits(words.x >> 16).toFloat(),
+    T.fromStorageBits(words.y).toFloat(), T.fromStorageBits(words.y >> 16).toFloat()
+  );
+}
+
 float4 gemv_load4<T : IStorageFloat>(Ptr<T, Access.Read> source, uint offset, bool vector) {
   if (vector) {
     if (__naturalStrideOf<T>() == 4) {

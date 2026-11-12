@@ -7,12 +7,8 @@ import generated.activation_transform;
 [[Variants("BiasT", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "ops != ActivationTransformOp::PackHalf")]]
-[[Precondition("new", "!in_place || ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht")]]
 [[Precondition("new", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "ops != ActivationTransformOp::QuantizeWithGroupSums || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
-[[Precondition("encode", "element_count.is_multiple_of(32)")]]
-[[Precondition("encode", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || element_count.is_multiple_of(activation_scale_group_size)")]]
-[[Precondition("encode", "ops != ActivationTransformOp::QuantizeWithGroupSums || element_count.is_multiple_of(sum_group_size)")]]
 func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   [[Optional("!in_place")]] Ptr<T, Access.Read> input,
   [[Optional("ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht")]]
@@ -49,12 +45,12 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
     value = in_place_load(input, fp_out, index, in_place);
     factor = rht_factors[column];
     if (input_rht) {
-      value = hadamard_factor(value, factor);
+      value = value * float(factor);
     }
   }
   value = hadamard_transform<ACTIVATION_QUANTIZATION_TILE>(value);
   if (active && !input_rht) {
-    value = hadamard_factor(value, factor);
+    value = value * float(factor);
   }
   if (ops == ActivationTransformOp.InputRht || ops == ActivationTransformOp.OutputRht) {
     if (active) {

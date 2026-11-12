@@ -119,7 +119,7 @@ public R.Value segment_reduce<R : IReduction, let THREADS : uint>(R.Value value,
   return total;
 }
 
-public T workgroup_prefix_sum<T : __BuiltinArithmeticType, let THREADS : uint>(T value, out T total) {
+public T workgroup_prefix_sum<T : __BuiltinArithmeticType, let THREADS : uint>(T value) {
   static_assert(THREADS <= 1024, "a workgroup bound");
   typealias S = WorkgroupScratch<T, THREADS>;
   let prefix = WavePrefixSum(value);
@@ -131,10 +131,6 @@ public T workgroup_prefix_sum<T : __BuiltinArithmeticType, let THREADS : uint>(T
   var below = T(0);
   for (uint subgroup = 0; subgroup < subgroup_id(); subgroup++) {
     below += S.data[subgroup];
-  }
-  total = below;
-  for (uint subgroup = subgroup_id(); subgroup < WaveGetNumWaves(); subgroup++) {
-    total += S.data[subgroup];
   }
   GroupMemoryBarrierWithGroupSync();
   return below + prefix;

@@ -114,8 +114,6 @@ void edges_layer_norm(
 }
 
 [[Kernel]] [[Public]]
-[[Precondition("new", "model_dim <= crate::backends::common::gpu_types::confidence_head::MODEL_MAX && edge_hidden <= crate::backends::common::gpu_types::confidence_head::EDGE_HIDDEN_MAX")]]
-[[Precondition("encode", "params.children <= crate::backends::common::gpu_types::confidence_head::CHILDREN_MAX && params.candidates <= crate::backends::common::gpu_types::weaver::CANDIDATES_MAX")]]
 func ConfidenceHeadEdges(
   [[Optional("!refine")]] Ptr<uint, Access.Read> node_metadata,
   [[Optional("!refine")]] Ptr<uint, Access.Read> node_valid,

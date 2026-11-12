@@ -370,7 +370,7 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
         let column = output_tile * rows + invocation;
         let value = hadamard_transform<GEMV_THREADS>(invocation < rows ? gemv_int8_partials[invocation] : 0.0);
         if (invocation < rows && column < n) {
-          var output = hadamard_factor(value, rht_factors[column]);
+          var output = value * float(rht_factors[column]);
           if (has_bias) {
             output = D.fromFloat(output).toFloat() + bias[column].toFloat();
           }

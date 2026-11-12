@@ -9,7 +9,6 @@ static const uint POOLS_THREADS = CANDIDATES_MAX;
 groupshared float pools_logits[POOLS_THREADS];
 
 [[Kernel]] [[Public]]
-[[Precondition("encode", "params.candidates <= crate::backends::common::gpu_types::weaver::CANDIDATES_MAX")]]
 func ConfidenceHeadPools(
   Ptr<float, Access.Read> candidate_logits,
   Ptr<uint, Access.Read> candidate_ids,

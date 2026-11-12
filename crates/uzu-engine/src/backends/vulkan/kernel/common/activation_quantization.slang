@@ -1,10 +1,5 @@
 import common.workgroup_reduction;
 
-public uint int8_code_index(uint index, bool grouped_by_weight_nibble) {
-  let offset = index % 8;
-  return grouped_by_weight_nibble ? index - offset + offset % 2 * 4 + offset / 2 : index;
-}
-
 public static const uint ACTIVATION_QUANTIZATION_TILE = 128;
 
 public float activation_quantization_scale(uint bits) {
@@ -35,7 +30,9 @@ public void quantize_activation(
   let scale = activation_quantization_scale(largest);
   let code = activation_quantization_code(value, scale);
   if (active) {
-    codes[row * count + int8_code_index(column, grouped_by_weight_nibble)] = int8_t(code);
+    let offset = column % 8;
+    let code_index = grouped_by_weight_nibble ? column - offset + offset % 2 * 4 + offset / 2 : column;
+    codes[row * count + code_index] = int8_t(code);
     if (column % scale_group == 0) {
       scales[(row * count + column) / scale_group] = scale;
     }

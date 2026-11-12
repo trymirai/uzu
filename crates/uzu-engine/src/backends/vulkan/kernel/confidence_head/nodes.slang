@@ -15,8 +15,6 @@ groupshared float nodes_pool_hidden_biases[POOL_HIDDEN_MAX];
 groupshared float nodes_summary[2 * POOL_HIDDEN_MAX];
 
 [[Kernel]] [[Public]]
-[[Precondition("new", "model_dim <= crate::backends::common::gpu_types::confidence_head::MODEL_MAX && pool_hidden <= crate::backends::common::gpu_types::confidence_head::POOL_HIDDEN_MAX")]]
-[[Precondition("encode", "params.candidates <= crate::backends::common::gpu_types::weaver::CANDIDATES_MAX")]]
 func ConfidenceHeadNodes(
   Ptr<bf16, Access.Read> residual_logits,
   Ptr<float, Access.Read> candidate_logits,

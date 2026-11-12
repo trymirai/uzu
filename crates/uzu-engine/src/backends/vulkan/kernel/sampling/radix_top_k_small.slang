@@ -48,8 +48,7 @@ void radix_top_k_replay(Ptr<uint, Access.ReadWrite> histograms, uint row, uint k
     let mask = radix_top_k_mask;
     let remaining = radix_top_k_rank;
     let shift = radix_top_k_shift(pass);
-    uint keys;
-    let higher = workgroup_prefix_sum<uint, RADIX_TOP_K_THREADS>(count, keys);
+    let higher = workgroup_prefix_sum<uint, RADIX_TOP_K_THREADS>(count);
     if (higher <= remaining && remaining < higher + count) {
       var next_prefix = prefix;
       var next_mask = mask;
@@ -78,7 +77,6 @@ uint2 radix_top_k_partition(uint columns, uint partitions, uint partition) {
 }
 
 [[Kernel]]
-[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns && partitions > 0")]]
 func RadixTopKSmallPass(
   Ptr<bf16, Access.Read> input,
   Ptr<uint, Access.ReadWrite> histograms,
@@ -114,7 +112,6 @@ func RadixTopKSmallPass(
 }
 
 [[Kernel]]
-[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K && k <= columns && partitions > 0")]]
 func RadixTopKSmallCollect(
   Ptr<bf16, Access.Read> input,
   Ptr<uint, Access.ReadWrite> histograms,
@@ -146,7 +143,6 @@ func RadixTopKSmallCollect(
 }
 
 [[Kernel]]
-[[Precondition("encode", "rows > 0 && k > 0 && k <= crate::backends::vulkan::gpu_types::radix_top_k::RADIX_TOP_K_MAX_K")]]
 func RadixTopKSmallSort(
   Ptr<uint, Access.Read> keys,
   Ptr<uint, Access.ReadWrite> output_ids,
