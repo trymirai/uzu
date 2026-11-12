@@ -1,32 +1,85 @@
-use std::{borrow::Cow, iter::repeat_n};
+use std::{borrow::Cow, collections::HashSet, iter::repeat_n};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use itertools::Itertools;
+use regex::Regex;
+use shader_slang::{DeclKind, Module};
 
 use crate::{
     common::mangling,
     slang::{
+        SlangTarget, Specializer,
         reflection::{SlangArgumentType, SlangKernel, SlangParameterType},
-        types::Specializer,
+        slang_axis_expr,
     },
 };
 
-pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
+pub fn specialization_name(
+    kernel: &str,
+    argument: &str,
+) -> String {
+    format!("{kernel}_specialize_{argument}")
+}
+
+pub fn kernel_wrappers<T: SlangTarget>(
+    module: &Module,
+    kernels: &[SlangKernel],
+) -> anyhow::Result<Vec<String>> {
+    let module_globals = module
+        .module_reflection()
+        .children()
+        .filter(|decl| matches!(decl.kind(), DeclKind::Variable))
+        .filter_map(|decl| decl.as_variable()?.name())
+        .collect::<HashSet<_>>();
+    let wrappers = kernels
+        .iter()
+        .map(|kernel| {
+            kernel_wrapper::<T>(kernel, &module_globals)
+                .with_context(|| format!("cannot generate wrappers for kernel '{}'", kernel.name))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(wrappers.into_iter().flatten().collect())
+}
+
+fn kernel_wrapper<T: SlangTarget>(
+    kernel: &SlangKernel,
+    module_globals: &HashSet<&str>,
+) -> anyhow::Result<Vec<String>> {
     let inner_function_name = kernel.name.as_str();
+    let specialized = |argument_type: &SlangArgumentType, pipeline_variants: bool| {
+        matches!(argument_type, SlangArgumentType::Specialize { .. }) || pipeline_variants
+    };
+    let sizes = kernel
+        .arguments
+        .iter()
+        .filter_map(|argument| match &argument.argument_type {
+            SlangArgumentType::Axis {
+                threads_in_group: size,
+                ..
+            }
+            | SlangArgumentType::Threads {
+                threads: size,
+            } => Some(size.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
 
     let mut wrappers = Vec::new();
 
     let mut wrapper = Vec::new();
-    for specialize in &kernel.arguments {
-        let SlangArgumentType::Specialize {
-            ..
-        } = &specialize.argument_type
-        else {
+    for argument in &kernel.arguments {
+        let name = specialization_name(&kernel.name, &argument.name);
+        if !specialized(&argument.argument_type, argument.pipeline_variants) || module_globals.contains(name.as_str()) {
             continue;
+        }
+        let mentioned = Regex::new(&format!(r"\b{}\b", regex::escape(&argument.name)))?;
+        let default = if sizes.iter().any(|size| mentioned.is_match(size)) {
+            " = 1"
+        } else {
+            ""
         };
-
         wrapper.push("[SpecializationConstant]".to_string());
-        wrapper.push(format!("const {} {}_specialize_{};", specialize.slang_type, kernel.name, specialize.name));
+        wrapper.push(format!("const {} {name}{default};", T::specialization_type(&argument.slang_type)));
         wrapper.push(String::new());
     }
     wrappers.push(wrapper.into_iter().join("\n"));
@@ -38,7 +91,7 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
             .arguments
             .iter()
             .filter(|argument| matches!(argument.argument_type, SlangArgumentType::Specialize { .. }))
-            .map(|argument| (argument.name.as_str(), format!("{}_specialize_{}", kernel.name, argument.name)))
+            .map(|argument| (argument.name.as_str(), specialization_name(&kernel.name, &argument.name)))
             .collect::<Vec<_>>();
         let substitutions = variant
             .iter()
@@ -113,7 +166,7 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
                 },
                 SlangArgumentType::Uniform {
                     ..
-                } => {
+                } if !argument.pipeline_variants => {
                     wrapper.push(format!(
                         "  uniform {} {},",
                         specializer.specialize(&argument.slang_type),
@@ -147,21 +200,29 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
         }
 
         wrapper.push(") {".to_string());
+        let prologue = T::entry_point_prologue(&outer_function_name);
+        if !prologue.is_empty() {
+            wrapper.push(prologue);
+        }
+        let axes = kernel
+            .arguments
+            .iter()
+            .filter_map(|argument| match &argument.argument_type {
+                SlangArgumentType::Axis {
+                    threads,
+                    threads_in_group,
+                } => Some((
+                    specializer.specialize(&slang_axis_expr(threads, kernel)).into_owned(),
+                    specializer.specialize(threads_in_group).into_owned(),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut axis_indices = Vec::new().into_iter();
         if has_axis {
-            let axis_guards = kernel
-                .arguments
-                .iter()
-                .filter_map(|argument| match &argument.argument_type {
-                    SlangArgumentType::Axis {
-                        threads,
-                        threads_in_group: _,
-                    } => Some(specializer.specialize(&slang_axis_expr(threads, kernel)).into_owned()),
-                    _ => None,
-                })
-                .zip(["x", "y", "z"])
-                .map(|(threads, axis)| format!("__dsl_axis_idx.{axis} >= uint({threads})"))
-                .join(" || ");
-            wrapper.push(format!("  if ({axis_guards}) {{ return; }}"));
+            let (guard, indices) = T::axis_guard(&axes);
+            wrapper.push(guard);
+            axis_indices = indices.into_iter();
         }
 
         let inner_function_parameters = kernel
@@ -180,35 +241,46 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
             })
             .collect::<Vec<_>>();
 
-        let mut group_axis_letters = ["x", "y", "z"].iter();
-        let mut thread_axis_letters = ["x", "y", "z"].iter();
+        let mut group_letters = ["x", "y", "z"].iter();
+        let mut thread_letters = ["x", "y", "z"].iter();
         let inner_function_arguments = kernel
             .arguments
             .iter()
-            .map(|argument| match &argument.argument_type {
-                SlangArgumentType::Buffer {
-                    ..
-                }
-                | SlangArgumentType::Uniform {
-                    ..
-                } => argument.name.to_string(),
-                SlangArgumentType::Specialize {
-                    ..
-                } => {
-                    format!("{}_specialize_{}", kernel.name, argument.name)
-                },
-                SlangArgumentType::Axis {
-                    ..
-                } => format!("__dsl_axis_idx.{}", group_axis_letters.next().unwrap()),
-                SlangArgumentType::Groups {
-                    ..
-                } => format!("__dsl_groups_idx.{}", group_axis_letters.next().unwrap()),
-                SlangArgumentType::Threads {
-                    ..
-                } => format!("__dsl_threads_idx.{}", thread_axis_letters.next().unwrap()),
-                SlangArgumentType::ThreadContext => "ThreadContext()".to_string(),
+            .map(|argument| {
+                Ok(match &argument.argument_type {
+                    SlangArgumentType::Buffer {
+                        ..
+                    } => argument.name.to_string(),
+                    SlangArgumentType::Uniform {
+                        ..
+                    } if !argument.pipeline_variants => argument.name.to_string(),
+                    SlangArgumentType::Specialize {
+                        ..
+                    }
+                    | SlangArgumentType::Uniform {
+                        ..
+                    } => {
+                        let constant = specialization_name(&kernel.name, &argument.name);
+                        let slang_type = specializer.specialize(&argument.slang_type);
+                        if T::specialization_type(&slang_type) == slang_type {
+                            constant
+                        } else {
+                            format!("{slang_type}({constant})")
+                        }
+                    },
+                    SlangArgumentType::Axis {
+                        ..
+                    } => axis_indices.next().context("more Axis arguments than guarded axes")?,
+                    SlangArgumentType::Groups {
+                        ..
+                    } => format!("__dsl_groups_idx.{}", group_letters.next().context("more than three Groups")?),
+                    SlangArgumentType::Threads {
+                        ..
+                    } => format!("__dsl_threads_idx.{}", thread_letters.next().context("more than three Threads")?),
+                    SlangArgumentType::ThreadContext => "ThreadContext()".to_string(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         if inner_function_parameters.is_empty() {
             wrapper.push(format!("  {inner_function_name}({});", inner_function_arguments.into_iter().join(", ")));
@@ -226,71 +298,4 @@ pub fn kernel_wrappers(kernel: &SlangKernel) -> anyhow::Result<Vec<String>> {
     }
 
     Ok(wrappers)
-}
-
-fn slang_axis_expr(
-    expr: &str,
-    kernel: &SlangKernel,
-) -> String {
-    let expr = rewrite_slang_method(expr, "unwrap_or", |receiver, fallback| {
-        let condition = kernel
-            .arguments
-            .iter()
-            .find_map(|argument| {
-                if argument.name != receiver {
-                    return None;
-                }
-                match &argument.argument_type {
-                    SlangArgumentType::Uniform {
-                        condition,
-                    } => condition.as_deref(),
-                    _ => None,
-                }
-            })
-            .expect("unwrap_or receiver must be an optional constant");
-        format!("(({condition}) ? ({receiver}) : ({fallback}))")
-    });
-    let expr = rewrite_slang_method(&expr, "div_ceil", |receiver, argument| {
-        format!("(({receiver}) / ({argument}) + uint(({receiver}) % ({argument}) != 0))")
-    });
-    let expr =
-        rewrite_slang_method(&expr, "saturating_mul", |receiver, argument| format!("(({receiver}) * ({argument}))"));
-
-    rewrite_slang_method(&expr, "saturating_sub", |receiver, argument| {
-        format!("(({receiver}) > ({argument}) ? ({receiver}) - ({argument}) : 0)")
-    })
-}
-
-fn rewrite_slang_method(
-    expr: &str,
-    method: &str,
-    rewrite: impl Fn(&str, &str) -> String,
-) -> String {
-    let pattern = format!(".{method}(");
-    let Some(dot) = expr.find(&pattern) else {
-        return expr.to_string();
-    };
-
-    let receiver_start = expr[..dot].rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map_or(0, |idx| idx + 1);
-    let argument_start = dot + pattern.len();
-    let mut depth = 1;
-    let mut argument_end = argument_start;
-    for (offset, ch) in expr[argument_start..].char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    argument_end = argument_start + offset;
-                    break;
-                }
-            },
-            _ => (),
-        }
-    }
-
-    let receiver = &expr[receiver_start..dot];
-    let argument = &expr[argument_start..argument_end];
-    let rewritten = rewrite(receiver, argument);
-    format!("{}{}{}", &expr[..receiver_start], rewritten, &expr[argument_end + 1..])
 }

@@ -25,6 +25,17 @@ struct PublicAttribute;
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct KernelAttribute;
 
+[[__AttributeUsage(_AttributeTargets.Function)]]
+struct RequiredSubgroupSizeAttribute {
+    string size;
+};
+
+[[__AttributeUsage(_AttributeTargets.Function)]]
+struct PreconditionAttribute {
+    string phase;
+    string condition;
+};
+
 // Kernel argument annotation
 
 [[__AttributeUsage(_AttributeTargets.Param)]]
@@ -53,3 +64,6 @@ struct GroupsAttribute {
 struct ThreadsAttribute {
     string threads;
 };
+
+[[__AttributeUsage(_AttributeTargets.Param)]]
+struct PipelineVariantsAttribute;

@@ -10031,6 +10031,7 @@ dependencies = [
  "shader-slang",
  "shader-slang-sys",
  "shoji",
+ "spirv",
  "syn 3.0.9",
  "tempfile",
  "test-tag",

@@ -39,6 +39,16 @@ webgpu = [
     "dep:wgpu",
 ]
 
+vulkan = [
+    "cpu",
+    "dep:shader-slang",
+    "dep:blake3",
+    "dep:serde_json",
+    "dep:regex",
+    "dep:rayon",
+    "dep:spirv",
+]
+
 cpu = [] # TODO: move libm here
 
 [build-dependencies]
@@ -56,6 +66,7 @@ shader-slang = { workspace = true, optional = true }
 shader-slang-sys = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 naga = { workspace = true, optional = true, features = ["wgsl-in"] }
+spirv = { workspace = true, optional = true }
 blake3 = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
 rayon = { workspace = true, optional = true }
