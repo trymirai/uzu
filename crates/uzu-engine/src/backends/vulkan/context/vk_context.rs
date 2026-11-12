@@ -475,9 +475,8 @@ impl Context for VkContext {
         Err(Error::NotSupported)
     }
 
-    /// Tree shapes are tuned for few Vulkan devices, so the others speculate with a listed one.
     fn device_capabilities(&self) -> DeviceCapabilities {
-        DeviceCapabilities::UNTUNED_SPECULATION
+        DeviceCapabilities::empty()
     }
 }
 /// The instance, with VK_EXT_debug_utils for validation messages and debug labels wherever it is available, and whether
