@@ -252,12 +252,6 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
     fn sampling_defaults(&self) -> SamplingParameters {
         self.sampling_defaults
     }
-
-    fn speculation_notice(&self) -> Option<String> {
-        self.model
-            .speculator_unavailable()
-            .then(|| format!("Speculation is off: the {} backend cannot run this model's speculator", B::NAME))
-    }
 }
 
 struct UzuChatTokenStream<S> {

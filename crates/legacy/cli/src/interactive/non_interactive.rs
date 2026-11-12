@@ -61,10 +61,7 @@ pub async fn run_non_interactive(
             .map_err(|error| anyhow::anyhow!("Invalid --reasoning-effort: {error}"))?,
         None => support.with_preference(&preferences.thinking).reasoning_effort(),
     };
-    let (session, notice) = create_session(&engine, &model, seed, true).await?;
-    if let Some(notice) = notice {
-        eprintln!("{notice}");
-    }
+    let session = create_session(&engine, &model, seed, true).await?;
     let mut messages = Vec::new();
     if let Some(effort) = effort {
         messages.push(ChatMessage::system().with_reasoning_effort(effort));

@@ -120,12 +120,6 @@ pub(super) async fn ensure_session(
     let config = ChatConfig::create();
     let loaded = async {
         let instance = engine.chat_instance(model.clone(), config).await.map_err(load_error)?;
-        if let Some(notice) = instance.speculation_notice() {
-            crate::logger::info(
-                "session:speculation-off",
-                Some(serde_json::json!({ "repoId": repo_id, "notice": notice })),
-            );
-        }
         let (session, naming) =
             create_session(&engine, &instance, model_chat_naming_enabled, date_time_tool_enabled, chart_tool_enabled)
                 .await?;

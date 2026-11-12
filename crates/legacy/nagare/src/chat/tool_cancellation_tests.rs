@@ -105,10 +105,6 @@ impl TokenInstance for FunctionGemma {
     fn sampling_defaults(&self) -> SamplingParameters {
         SamplingParameters::default()
     }
-
-    fn speculation_notice(&self) -> Option<String> {
-        None
-    }
 }
 
 async fn session() -> (ChatSession, Arc<FunctionGemma>) {
