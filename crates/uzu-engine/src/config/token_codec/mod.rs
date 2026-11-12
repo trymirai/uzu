@@ -21,7 +21,6 @@ impl From<&AnyTokenCodecConfig> for ShojiTokenCodecConfig {
                 assistant_role_name: config.assistant_role_name.clone(),
                 eos_token: config.eos_token.clone(),
                 bos_token: config.bos_token.clone(),
-                end_of_thinking_tag: config.end_of_thinking_tag().map(str::to_owned),
                 default_system_prompt: config.default_system_prompt.clone(),
             }),
             AnyTokenCodecConfig::RawTextCodecConfig(_) => ShojiTokenCodecConfig::RawText,
