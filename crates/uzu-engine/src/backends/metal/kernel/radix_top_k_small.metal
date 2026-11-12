@@ -24,15 +24,15 @@ constant uint HALF_MASK = (1 << HALF_BITS) - 1;
 
 METAL_FUNC void load_row_keys(
     const device ushort* row_scores,
-    uint columns,
+    uint leading_pad,
+    uint padded_columns,
     uint first_column,
     thread uint (&keys)[SCORES_PER_THREAD]
 ) {
-  const bool vector_aligned = (reinterpret_cast<ulong>(row_scores) & 15) == 0;
   METAL_PRAGMA_UNROLL
   for (uint vector = 0; vector < VECTORS_PER_THREAD; ++vector) {
     const uint vector_column = first_column + vector * VECTOR_WIDTH;
-    if (vector_aligned && vector_column + VECTOR_WIDTH <= columns) {
+    if ((vector_column > 0 || leading_pad == 0) && vector_column + VECTOR_WIDTH <= padded_columns) {
       const uint4 packed_scores = *reinterpret_cast<const device uint4*>(row_scores + vector_column);
       METAL_PRAGMA_UNROLL
       for (uint lane = 0; lane < VECTOR_WIDTH; ++lane) {
@@ -40,8 +40,9 @@ METAL_FUNC void load_row_keys(
       }
     } else {
       for (uint lane = 0; lane < VECTOR_WIDTH; ++lane) {
-        const uint column = vector_column + lane;
-        keys[vector * VECTOR_WIDTH + lane] = column < columns ? top_k_bf16_key(row_scores[column]) : 0;
+        const uint position = vector_column + lane;
+        keys[vector * VECTOR_WIDTH + lane] =
+            position - leading_pad < padded_columns - leading_pad ? top_k_bf16_key(row_scores[position]) : 0;
       }
     }
   }
@@ -83,7 +84,9 @@ KERNEL(RadixTopKSmall)(
     const uint lid THREADS(THREADS_PER_TG)
 ) {
   const device bfloat* row_input = input + ulong(row) * columns;
-  const device ushort* row_scores = reinterpret_cast<const device ushort*>(row_input);
+  const uint leading_pad = (reinterpret_cast<ulong>(row_input) / sizeof(bfloat)) % VECTOR_WIDTH;
+  const device ushort* row_scores = reinterpret_cast<const device ushort*>(row_input) - leading_pad;
+  const uint padded_columns = leading_pad + columns;
   device uint* row_ids = output_ids + row * k;
   device float* row_output_scores = output_scores + row * k;
 
@@ -98,9 +101,9 @@ KERNEL(RadixTopKSmall)(
   for (uint pass = 0; pass < 2; ++pass) {
     const uint shift = RADIX_BITS * (1 - pass);
     threadgroup atomic_uint* histogram = histograms + pass * HISTOGRAM_SIZE;
-    for (uint first_column = lid * SCORES_PER_THREAD; first_column < columns; first_column += SCORES_PER_BLOCK) {
+    for (uint first_column = lid * SCORES_PER_THREAD; first_column < padded_columns; first_column += SCORES_PER_BLOCK) {
       uint keys[SCORES_PER_THREAD];
-      load_row_keys(row_scores, columns, first_column, keys);
+      load_row_keys(row_scores, leading_pad, padded_columns, first_column, keys);
       METAL_PRAGMA_UNROLL
       for (uint index = 0; index < SCORES_PER_THREAD; ++index) {
         if ((keys[index] >> (shift + RADIX_BITS)) == threshold_key) {
@@ -133,16 +136,16 @@ KERNEL(RadixTopKSmall)(
   const uint above_threshold_count = k - tie_winner_count;
   uint above_threshold_before = 0;
   uint ties_before = 0;
-  for (uint block = 0; block * SCORES_PER_BLOCK < columns; ++block) {
+  for (uint block = 0; block * SCORES_PER_BLOCK < padded_columns; ++block) {
     const uint first_column = block * SCORES_PER_BLOCK + lid * SCORES_PER_THREAD;
     uint keys[SCORES_PER_THREAD];
-    load_row_keys(row_scores, columns, first_column, keys);
+    load_row_keys(row_scores, leading_pad, padded_columns, first_column, keys);
     uint thread_above_threshold = 0;
     uint thread_ties = 0;
     METAL_PRAGMA_UNROLL
     for (uint index = 0; index < SCORES_PER_THREAD; ++index) {
       thread_above_threshold += keys[index] > threshold_key;
-      thread_ties += keys[index] == threshold_key && first_column + index < columns;
+      thread_ties += keys[index] == threshold_key && first_column + index - leading_pad < columns;
     }
     const uint2 prefix_and_total = threadgroup_prefix_sum(
         thread_above_threshold | thread_ties << HALF_BITS,
@@ -153,7 +156,7 @@ KERNEL(RadixTopKSmall)(
     uint tie_rank = ties_before + (prefix_and_total.x >> HALF_BITS);
     METAL_PRAGMA_UNROLL
     for (uint index = 0; index < SCORES_PER_THREAD; ++index) {
-      const uint column = first_column + index;
+      const uint column = first_column + index - leading_pad;
       const bool above_threshold = keys[index] > threshold_key;
       const bool tie = keys[index] == threshold_key && column < columns;
       const uint slot = above_threshold_slot + min(tie_rank, tie_winner_count);
