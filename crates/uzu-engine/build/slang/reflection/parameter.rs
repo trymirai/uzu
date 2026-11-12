@@ -5,7 +5,7 @@ use shader_slang::reflection::{Decl, UserAttribute};
 
 use crate::{
     common::kernel::{KernelParameter, KernelParameterType},
-    slang::types::slang2rust,
+    slang::{reflection::attribute_arguments::string_arguments, types::slang2rust},
 };
 
 #[derive(Debug)]
@@ -29,42 +29,48 @@ pub struct SlangParameter {
     pub ty: SlangParameterType,
 }
 
+enum ParameterAttributeType<'a> {
+    Variants {
+        variants: Vec<&'a str>,
+    },
+    GroupShared {
+        length: &'a str,
+    },
+}
+
+struct ParameterAttribute<'a> {
+    name: &'a str,
+    ty: ParameterAttributeType<'a>,
+}
+
+enum ParameterGenericType {
+    Type {
+        constraints: Vec<String>,
+    },
+    Value {
+        value_type: String,
+    },
+}
+
+struct ParameterGeneric<'a> {
+    name: &'a str,
+    ty: ParameterGenericType,
+}
+
 impl SlangParameter {
     pub fn from_reflection(
         function_attributes: &[&UserAttribute],
         generic_decl: Option<&Decl>,
     ) -> anyhow::Result<Vec<Self>> {
-        enum ParameterAttributeType<'a> {
-            Variants {
-                variants: Vec<&'a str>,
-            },
-            GroupShared {
-                length: &'a str,
-            },
-        }
-
-        struct ParameterAttribute<'a> {
-            name: &'a str,
-            ty: ParameterAttributeType<'a>,
-        }
-
         let parameters_attributes = function_attributes
             .iter()
             .map(|user_attribute| {
                 Ok(match user_attribute.name() {
                     Some("Variants") => {
-                        if user_attribute.argument_count() != 2 {
-                            bail!("expected 2 arguments, found {}", user_attribute.argument_count());
-                        }
+                        let [name, variants] = string_arguments::<2>(user_attribute)?;
+                        let name = name.trim();
 
-                        let name = user_attribute
-                            .argument_value_string(0)
-                            .context("cannot get name argument string value")?
-                            .trim();
-
-                        let variants = user_attribute
-                            .argument_value_string(1)
-                            .context("cannot get variants argument string value")?
+                        let variants = variants
                             .split(',')
                             .map(|variant| variant.trim())
                             .filter(|variant| !variant.is_empty())
@@ -78,19 +84,9 @@ impl SlangParameter {
                         })
                     },
                     Some("GroupShared") => {
-                        if user_attribute.argument_count() != 2 {
-                            bail!("expected 2 arguments, found {}", user_attribute.argument_count());
-                        }
-
-                        let name = user_attribute
-                            .argument_value_string(0)
-                            .context("cannot get name argument string value")?
-                            .trim();
-
-                        let length = user_attribute
-                            .argument_value_string(1)
-                            .context("cannot get length argument string value")?
-                            .trim();
+                        let [name, length] = string_arguments::<2>(user_attribute)?;
+                        let name = name.trim();
+                        let length = length.trim();
 
                         Some(ParameterAttribute {
                             name,
@@ -106,61 +102,43 @@ impl SlangParameter {
             .collect::<anyhow::Result<Vec<_>>>()
             .context("failed to collect parameter attributes")?;
 
-        enum ParameterGenericType {
-            Type {
-                constraints: Vec<String>,
-            },
-            Value {
-                value_type: String,
-            },
-        }
-
-        struct ParameterGeneric<'a> {
-            name: &'a str,
-            ty: ParameterGenericType,
-        }
-
         let parameters_generics = generic_decl
             .map(|generic_decl| -> anyhow::Result<_> {
-                let generic = generic_decl.as_generic().unwrap();
+                let generic = generic_decl.as_generic().context("generic declaration has no reflection")?;
 
                 let mut generics_unordered = generic
                     .type_parameters()
                     .map(|type_parameter| {
-                        (
-                            type_parameter.name().unwrap(),
+                        Ok((
+                            type_parameter.name().context("type parameter has no name")?,
                             ParameterGenericType::Type {
                                 constraints: (0..generic.type_parameter_constraint_count(type_parameter))
                                     .map(|i| {
-                                        generic
+                                        Ok(generic
                                             .type_parameter_constraint_by_index(type_parameter, i)
-                                            .unwrap()
-                                            .full_name()
-                                            .unwrap()
-                                            .as_str()
-                                            .unwrap()
-                                            .to_string()
+                                            .context("type parameter constraint has no type")?
+                                            .full_name()?
+                                            .as_str()?
+                                            .to_string())
                                     })
-                                    .collect(),
+                                    .collect::<anyhow::Result<_>>()?,
                             },
-                        )
+                        ))
                     })
                     .chain(generic.value_parameters().map(|value_parameter| {
-                        (
-                            value_parameter.name().unwrap(),
+                        Ok((
+                            value_parameter.name().context("value parameter has no name")?,
                             ParameterGenericType::Value {
                                 value_type: value_parameter
                                     .ty()
-                                    .unwrap()
-                                    .full_name()
-                                    .unwrap()
-                                    .as_str()
-                                    .unwrap()
+                                    .context("value parameter has no type")?
+                                    .full_name()?
+                                    .as_str()?
                                     .to_string(),
                             },
-                        )
+                        ))
                     }))
-                    .collect::<HashMap<&str, ParameterGenericType>>();
+                    .collect::<anyhow::Result<HashMap<&str, ParameterGenericType>>>()?;
 
                 let mut generics = Vec::with_capacity(generics_unordered.len());
 

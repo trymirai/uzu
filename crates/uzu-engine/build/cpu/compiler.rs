@@ -8,7 +8,6 @@ use syn::{
     Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, PathArguments, Type, punctuated::Punctuated,
     token::Comma, visit_mut::VisitMut,
 };
-use walkdir::WalkDir;
 
 use crate::common::{
     codegen::write_tokens,
@@ -18,6 +17,7 @@ use crate::common::{
     gpu_types::GpuTypes,
     identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
+    sources::source_files,
 };
 
 #[derive(PartialEq, Debug)]
@@ -668,13 +668,9 @@ impl Compiler for CpuCompiler {
         _gpu_types: &GpuTypes,
         gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
-        let objects = WalkDir::new(&self.src_dir)
+        let objects = source_files(&self.src_dir, "rs")?
             .into_iter()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
-            })
-            .map(|entry| self.compile(entry.into_path(), gpu_type_paths))
+            .map(|path| self.compile(path, gpu_type_paths))
             .collect::<anyhow::Result<Vec<(KernelPath, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
 
