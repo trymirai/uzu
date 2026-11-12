@@ -5,7 +5,6 @@ use std::{
 
 use futures::executor::block_on;
 
-use super::{GemmBPrologue, VkGemvTile, VkMatmulPlan};
 use crate::{
     backends::{
         common::{
@@ -30,6 +29,7 @@ use crate::{
             GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer, VkCommandBufferEncoding,
             VkContext, VkDeviceCapabilities, VkKernelError, Vulkan,
             gpu_types::{gemm_b_layout::GemmBLayout, gemm_tiling::GemmTiling},
+            kernel::matmul::{GemmBPrologue, VkGemvTile, VkMatmulPlan},
         },
     },
     data_type::DataType,

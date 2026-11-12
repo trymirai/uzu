@@ -28,23 +28,24 @@ unsafe impl Sync for VkBuffer {}
 impl VkBuffer {
     pub fn new(
         context: Arc<VkContext>,
-        size: vk::DeviceSize,
+        size: usize,
         memory: VkBufferMemory,
-    ) -> Result<Self, Error> {
+    ) -> Result<Arc<Self>, Error> {
+        let size = size as u64;
         let (buffer, allocation, info) = context.allocate_buffer(size, memory)?;
         let cpu_ptr = (memory != VkBufferMemory::Device)
             .then(|| NonNull::new(info.mapped_data).expect("VMA maps host-visible MAPPED allocations"));
         let device_address = unsafe {
             context.device().get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
         };
-        Ok(Self {
+        Ok(Arc::new(Self {
             context,
             allocation,
             buffer,
             device_address,
             cpu_ptr,
             size,
-        })
+        }))
     }
 
     pub fn context(&self) -> &Arc<VkContext> {
@@ -57,10 +58,6 @@ impl VkBuffer {
 
     pub fn device_address(&self) -> vk::DeviceAddress {
         self.device_address
-    }
-
-    pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        self.cpu_ptr.expect("device-local Vulkan buffers are not CPU-accessible")
     }
 
     pub fn size(&self) -> vk::DeviceSize {
@@ -107,7 +104,7 @@ impl GpuBuffer for Arc<VkBuffer> {}
 
 impl CpuBuffer for Arc<VkBuffer> {
     fn cpu_ptr(&self) -> NonNull<c_void> {
-        VkBuffer::cpu_ptr(self)
+        self.cpu_ptr.expect("device-local Vulkan buffers are not CPU-accessible")
     }
 }
 

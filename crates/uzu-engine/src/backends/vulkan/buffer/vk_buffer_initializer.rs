@@ -12,12 +12,12 @@ pub struct VkBufferInitializer {
 
 impl VkBufferInitializer {
     pub fn new(
-        context: &Arc<VkContext>,
-        size: u64,
+        context: Arc<VkContext>,
+        size: usize,
     ) -> Result<Self, Error> {
         Ok(Self {
-            staging: Arc::new(VkBuffer::new(context.clone(), size, VkBufferMemory::Staging)?),
-            buffer: Arc::new(VkBuffer::new(context.clone(), size, VkBufferMemory::Device)?),
+            staging: VkBuffer::new(context.clone(), size, VkBufferMemory::Staging)?,
+            buffer: VkBuffer::new(context, size, VkBufferMemory::Device)?,
         })
     }
 

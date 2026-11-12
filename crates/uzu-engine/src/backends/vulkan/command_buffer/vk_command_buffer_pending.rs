@@ -3,12 +3,38 @@ use std::{sync::Arc, time::Duration};
 use futures::channel::oneshot;
 
 use crate::backends::{
-    common::CommandBufferPending,
-    vulkan::{
-        Error, VkCommandBuffer, VkCommandBufferCompleted, VkCommandBufferError, VkContext, VkSegmentResult,
-        VkTimestampRecorder,
-    },
+    common::{CommandBufferCompleted, CommandBufferPending, TimestampSpan},
+    vulkan::{Error, VkCommandBuffer, VkCommandBufferError, VkContext, VkSegmentResult, VkTimestampRecorder},
 };
+
+pub struct VkCommandBufferCompleted {
+    gpu_execution_time: Duration,
+    timestamps: Box<[TimestampSpan]>,
+}
+
+impl VkCommandBufferCompleted {
+    pub fn new(
+        gpu_execution_time: Duration,
+        timestamps: Box<[TimestampSpan]>,
+    ) -> Self {
+        Self {
+            gpu_execution_time,
+            timestamps,
+        }
+    }
+}
+
+impl CommandBufferCompleted for VkCommandBufferCompleted {
+    type CommandBuffer = VkCommandBuffer;
+
+    fn gpu_execution_time(&self) -> Option<Duration> {
+        Some(self.gpu_execution_time)
+    }
+
+    fn timestamps(&self) -> &[TimestampSpan] {
+        &self.timestamps
+    }
+}
 
 pub struct VkCommandBufferPending {
     segments: Vec<oneshot::Receiver<VkSegmentResult>>,

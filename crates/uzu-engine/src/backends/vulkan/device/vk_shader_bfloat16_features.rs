@@ -11,7 +11,7 @@ pub struct VkShaderBfloat16Features {
     s_type: vk::StructureType,
     p_next: *mut c_void,
     pub shader_bfloat16_type: vk::Bool32,
-    pub shader_bfloat16_dot_product: vk::Bool32,
+    shader_bfloat16_dot_product: vk::Bool32,
     pub shader_bfloat16_cooperative_matrix: vk::Bool32,
 }
 

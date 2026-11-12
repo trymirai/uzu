@@ -10,13 +10,13 @@ use ash::vk;
 pub struct VkCooperativeMatrix2Features {
     s_type: vk::StructureType,
     p_next: *mut c_void,
-    pub cooperative_matrix_workgroup_scope: vk::Bool32,
-    pub cooperative_matrix_flexible_dimensions: vk::Bool32,
-    pub cooperative_matrix_reductions: vk::Bool32,
-    pub cooperative_matrix_conversions: vk::Bool32,
+    cooperative_matrix_workgroup_scope: vk::Bool32,
+    cooperative_matrix_flexible_dimensions: vk::Bool32,
+    cooperative_matrix_reductions: vk::Bool32,
+    cooperative_matrix_conversions: vk::Bool32,
     pub cooperative_matrix_per_element_operations: vk::Bool32,
-    pub cooperative_matrix_tensor_addressing: vk::Bool32,
-    pub cooperative_matrix_block_loads: vk::Bool32,
+    cooperative_matrix_tensor_addressing: vk::Bool32,
+    cooperative_matrix_block_loads: vk::Bool32,
 }
 
 const _: () = {

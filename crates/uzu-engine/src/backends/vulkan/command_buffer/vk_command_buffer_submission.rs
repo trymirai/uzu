@@ -68,9 +68,12 @@ impl VkCommandBufferSubmission {
                     .and_then(|gpu_execution_time| Ok((gpu_execution_time, resources.span_timestamps(&context)?)));
                 unsafe { context.recycle_command_buffer_resources(resources) };
                 drop(retained);
-                match (!sender.is_canceled()).then(|| context.take_validation_error()).flatten() {
-                    Some(message) => Err(Error::Validation(message)),
-                    None => context.check_failure().map_err(Error::from).and(completion.map_err(Error::from)),
+                if !sender.is_canceled()
+                    && let Some(message) = context.take_validation_error()
+                {
+                    Err(Error::Validation(message))
+                } else {
+                    context.check_failure().map_err(Error::from).and(completion.map_err(Error::from))
                 }
             },
             Err(error) => {

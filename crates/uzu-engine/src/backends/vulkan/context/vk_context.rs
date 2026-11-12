@@ -26,8 +26,8 @@ use crate::backends::{
     vulkan::{
         Error, VkBuffer, VkBufferError, VkBufferInitializer, VkBufferMemory, VkCommandBufferEncoding,
         VkCommandBufferError, VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline,
-        VkComputePipelineKey, VkContextError, VkCooperativeMatrix2Features, VkDebugMessages, VkDeviceCapabilities,
-        VkPhysicalDevice, VkShaderBfloat16Features, VkSparseBuffer, Vulkan,
+        VkComputePipelineKey, VkContextError, VkCooperativeMatrix2Features, VkDeviceCapabilities, VkPhysicalDevice,
+        VkShaderBfloat16Features, VkSparseBuffer, Vulkan,
     },
 };
 
@@ -40,6 +40,7 @@ const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
         | vk::BufferUsageFlags::TRANSFER_DST.as_raw()
         | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS.as_raw(),
 );
+
 pub struct VkContext {
     weak_self: Weak<VkContext>,
     _entry: ash::Entry,
@@ -53,7 +54,6 @@ pub struct VkContext {
     debug_utils: ext::debug_utils::Instance,
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     debug_utils_device: Option<ext::debug_utils::Device>,
-    timestamp_valid_bits: u32,
     calibrated_timestamps: Option<vk::PFN_vkGetCalibratedTimestampsKHR>,
     device: ash::Device,
     memory_allocator: ManuallyDrop<vk_mem::Allocator>,
@@ -61,108 +61,20 @@ pub struct VkContext {
     allocation_pool: Mutex<Weak<PoolAllocator<Arc<VkBuffer>>>>,
     unsubmitted_command_buffers: AtomicUsize,
     queue: Mutex<vk::Queue>,
-    queue_family_index: u32,
     completion: mpsc::Sender<VkCommandBufferSubmission>,
-    failure: OnceLock<String>,
+    failure: OnceLock<Arc<Error>>,
 }
+
 impl VkContext {
-    fn with_settings(
-        with_validation: bool,
-        pipeline_cache_path: Option<PathBuf>,
-    ) -> Result<Arc<Self>, VkContextError> {
-        let completion =
-            VkCommandBufferSubmission::spawn_completion_thread().map_err(VkContextError::CompletionThreadSpawn)?;
-        let debug_messages = Box::new(VkDebugMessages::default());
-
-        let entry = unsafe { ash::Entry::load() }.map_err(VkContextError::EntryLoad)?;
-        let (instance, debug_labels) = create_instance(&entry, with_validation.then_some(&*debug_messages))?;
-        let debug_utils = ext::debug_utils::Instance::new(&entry, &instance);
-        let debug_messenger = if with_validation {
-            Some(
-                unsafe { debug_utils.create_debug_utils_messenger(&debug_messenger_info(&debug_messages), None) }
-                    .map_err(VkContextError::DebugMessengerCreate)
-                    .inspect_err(|_| unsafe { instance.destroy_instance(None) })?,
-            )
-        } else {
-            None
-        };
-        let dispose_instance = || unsafe {
-            if let Some(messenger) = debug_messenger {
-                debug_utils.destroy_debug_utils_messenger(messenger, None);
-            }
-            instance.destroy_instance(None);
-        };
-        let (physical_device, queue_family_index) =
-            get_physical_device(&entry, &instance).inspect_err(|_| dispose_instance())?;
-        let timestamp_valid_bits = physical_device.queue_families[queue_family_index as usize].timestamp_valid_bits;
-        let device =
-            get_logical_device(&instance, &physical_device, queue_family_index).inspect_err(|_| dispose_instance())?;
-        let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-        let (pipeline_cache, loaded_hash) = create_pipeline_cache(&device, pipeline_cache_path.as_deref())
-            .inspect_err(|_| unsafe {
-                device.destroy_device(None);
-                dispose_instance();
-            })?;
-        let memory_budget = physical_device.capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET);
-        let memory_allocator = create_memory_allocator(&instance, &device, physical_device.device, memory_budget)
-            .inspect_err(|_| unsafe {
-                device.destroy_pipeline_cache(pipeline_cache, None);
-                device.destroy_device(None);
-                dispose_instance();
-            })?;
-        let debug_utils_device = debug_labels.then(|| ext::debug_utils::Device::new(&instance, &device));
-        let calibrated_timestamps =
-            if physical_device.capabilities.contains(VkDeviceCapabilities::CALIBRATED_TIMESTAMPS) {
-                Some(khr::calibrated_timestamps::Device::new(&instance, &device).fp().get_calibrated_timestamps_khr)
-            } else if physical_device.capabilities.contains(VkDeviceCapabilities::CALIBRATED_TIMESTAMPS_EXT) {
-                Some(ext::calibrated_timestamps::Device::new(&instance, &device).fp().get_calibrated_timestamps_ext)
-            } else {
-                None
-            };
-
-        Ok(Arc::new_cyclic(|weak_self| Self {
-            weak_self: weak_self.clone(),
-            _entry: entry,
-            instance,
-            debug_messages,
-            physical_device,
-            command_buffer_resources: Mutex::new(Vec::new()),
-            compute_pipelines: Mutex::new(HashMap::new()),
-            pipeline_cache,
-            pipeline_cache_file: pipeline_cache_path.map(|path| (path, loaded_hash)),
-            debug_utils,
-            debug_messenger,
-            debug_utils_device,
-            timestamp_valid_bits,
-            calibrated_timestamps,
-            device,
-            memory_allocator: ManuallyDrop::new(memory_allocator),
-            peak_buffer_bytes: AtomicUsize::new(0),
-            allocation_pool: Mutex::new(Weak::new()),
-            unsubmitted_command_buffers: AtomicUsize::new(0),
-            queue: Mutex::new(queue),
-            queue_family_index,
-            completion,
-            failure: OnceLock::new(),
-        }))
-    }
-
     pub fn fail(
         &self,
         error: Error,
     ) {
-        self.failure.get_or_init(|| error.to_string());
+        self.failure.get_or_init(|| Arc::new(error));
     }
 
     pub fn check_failure(&self) -> Result<(), VkContextError> {
         self.failure.get().map_or(Ok(()), |failure| Err(VkContextError::Failed(failure.clone())))
-    }
-
-    fn create_readback_buffer(
-        &self,
-        size: usize,
-    ) -> Result<Arc<VkBuffer>, Error> {
-        Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Readback)?))
     }
 
     pub fn arc(&self) -> Arc<Self> {
@@ -175,7 +87,7 @@ impl VkContext {
 
     pub fn acquire_command_buffer_resources(&self) -> Result<VkCommandBufferResources, Error> {
         let Some(mut resources) = self.command_buffer_resources.lock().pop() else {
-            return Ok(VkCommandBufferResources::new(&self.device, self.queue_family_index)?);
+            return Ok(VkCommandBufferResources::new(&self.device, self.physical_device.queue_family_index)?);
         };
         if let Err(error) = resources.reset(&self.device) {
             unsafe { resources.destroy(&self.device) };
@@ -203,18 +115,15 @@ impl VkContext {
         if let Some(message) = self.take_validation_error() {
             return Err(Error::Validation(message));
         }
-        let published = {
-            let mut pipelines = self.compute_pipelines.lock();
-            pipelines.retain(|_, cached| cached.strong_count() > 0);
-            match pipelines.get(&key).and_then(Weak::upgrade) {
-                Some(winner) => winner,
-                None => {
-                    pipelines.insert(key, Arc::downgrade(&pipeline));
-                    pipeline.clone()
-                },
-            }
-        };
-        Ok(published)
+        let mut pipelines = self.compute_pipelines.lock();
+        pipelines.retain(|_, cached| cached.strong_count() > 0);
+        Ok(match pipelines.get(&key).and_then(Weak::upgrade) {
+            Some(winner) => winner,
+            None => {
+                pipelines.insert(key, Arc::downgrade(&pipeline));
+                pipeline.clone()
+            },
+        })
     }
 
     pub fn pipeline_cache(&self) -> vk::PipelineCache {
@@ -278,7 +187,7 @@ impl VkContext {
         &self,
         ticks: u64,
     ) -> Duration {
-        let ticks = ticks & (u64::MAX >> (64 - self.timestamp_valid_bits));
+        let ticks = ticks & (u64::MAX >> (64 - self.physical_device.timestamp_valid_bits));
         let period = f64::from(self.physical_device.properties.limits.timestamp_period);
         Duration::from_nanos((ticks as f64 * period).round() as u64)
     }
@@ -287,7 +196,8 @@ impl VkContext {
         let get_calibrated_timestamps =
             self.calibrated_timestamps.ok_or(VkCommandBufferError::UncalibratedTimestamps)?;
         let info = vk::CalibratedTimestampInfoKHR::default().time_domain(vk::TimeDomainKHR::DEVICE);
-        let (mut ticks, mut max_deviation) = (0, 0);
+        let mut ticks = 0;
+        let mut max_deviation = 0;
         let before = Instant::now();
         unsafe { get_calibrated_timestamps(self.device.handle(), 1, &info, &mut ticks, &mut max_deviation) }
             .result()
@@ -303,6 +213,7 @@ impl VkContext {
         self.debug_messages.take_error()
     }
 }
+
 impl Drop for VkContext {
     fn drop(&mut self) {
         unsafe {
@@ -322,14 +233,90 @@ impl Drop for VkContext {
         }
     }
 }
+
 impl Context for VkContext {
     type Backend = Vulkan;
 
     async fn new() -> Result<Arc<Self>, Error> {
         let with_validation = cfg!(test) && !cfg!(target_os = "android");
-        let name = format!("{PIPELINE_CACHE_PREFIX}-{}.bin", env!("UZU_VULKAN_SPIRV_HASH"));
-        let pipeline_cache_path = (!cfg!(test)).then(dirs::cache_dir).flatten().map(|dir| dir.join("uzu").join(name));
-        Ok(VkContext::with_settings(with_validation, pipeline_cache_path)?)
+        let pipeline_cache_path = (!cfg!(test))
+            .then(dirs::cache_dir)
+            .flatten()
+            .map(|dir| dir.join("uzu").join(format!("{PIPELINE_CACHE_PREFIX}-{}.bin", env!("UZU_VULKAN_SPIRV_HASH"))));
+        let completion =
+            VkCommandBufferSubmission::spawn_completion_thread().map_err(VkContextError::CompletionThreadSpawn)?;
+        let debug_messages = Box::new(VkDebugMessages::default());
+
+        let entry = unsafe { ash::Entry::load() }.map_err(VkContextError::EntryLoad)?;
+        let (instance, debug_labels) = create_instance(&entry, with_validation.then_some(&*debug_messages))?;
+        let debug_utils = ext::debug_utils::Instance::new(&entry, &instance);
+        let debug_messenger = if with_validation {
+            Some(
+                unsafe { debug_utils.create_debug_utils_messenger(&debug_messenger_info(&debug_messages), None) }
+                    .map_err(VkContextError::DebugMessengerCreate)
+                    .inspect_err(|_| unsafe { instance.destroy_instance(None) })?,
+            )
+        } else {
+            None
+        };
+        let dispose_instance = || unsafe {
+            if let Some(messenger) = debug_messenger {
+                debug_utils.destroy_debug_utils_messenger(messenger, None);
+            }
+            instance.destroy_instance(None);
+        };
+        let physical_device = get_physical_device(&entry, &instance).inspect_err(|_| dispose_instance())?;
+        let device = get_logical_device(&instance, &physical_device).inspect_err(|_| dispose_instance())?;
+        let queue = unsafe { device.get_device_queue(physical_device.queue_family_index, 0) };
+        let (pipeline_cache, loaded_hash) = create_pipeline_cache(&device, pipeline_cache_path.as_deref())
+            .inspect_err(|_| unsafe {
+                device.destroy_device(None);
+                dispose_instance();
+            })?;
+        let memory_allocator = create_memory_allocator(
+            &instance,
+            &device,
+            physical_device.device,
+            physical_device.capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET),
+        )
+        .inspect_err(|_| unsafe {
+            device.destroy_pipeline_cache(pipeline_cache, None);
+            device.destroy_device(None);
+            dispose_instance();
+        })?;
+        let debug_utils_device = debug_labels.then(|| ext::debug_utils::Device::new(&instance, &device));
+        let calibrated_timestamps =
+            if physical_device.capabilities.contains(VkDeviceCapabilities::CALIBRATED_TIMESTAMPS) {
+                Some(khr::calibrated_timestamps::Device::new(&instance, &device).fp().get_calibrated_timestamps_khr)
+            } else if physical_device.capabilities.contains(VkDeviceCapabilities::CALIBRATED_TIMESTAMPS_EXT) {
+                Some(ext::calibrated_timestamps::Device::new(&instance, &device).fp().get_calibrated_timestamps_ext)
+            } else {
+                None
+            };
+
+        Ok(Arc::new_cyclic(|weak_self| Self {
+            weak_self: weak_self.clone(),
+            _entry: entry,
+            instance,
+            debug_messages,
+            physical_device,
+            command_buffer_resources: Mutex::new(Vec::new()),
+            compute_pipelines: Mutex::new(HashMap::new()),
+            pipeline_cache,
+            pipeline_cache_file: pipeline_cache_path.map(|path| (path, loaded_hash)),
+            debug_utils,
+            debug_messenger,
+            debug_utils_device,
+            calibrated_timestamps,
+            device,
+            memory_allocator: ManuallyDrop::new(memory_allocator),
+            peak_buffer_bytes: AtomicUsize::new(0),
+            allocation_pool: Mutex::new(Weak::new()),
+            unsubmitted_command_buffers: AtomicUsize::new(0),
+            queue: Mutex::new(queue),
+            completion,
+            failure: OnceLock::new(),
+        }))
     }
 
     fn device_name(&self) -> Option<&str> {
@@ -350,14 +337,14 @@ impl Context for VkContext {
         &self,
         size: usize,
     ) -> Result<Arc<VkBuffer>, Error> {
-        Ok(Arc::new(VkBuffer::new(self.arc(), size as u64, VkBufferMemory::Device)?))
+        VkBuffer::new(self.arc(), size, VkBufferMemory::Device)
     }
 
     fn create_buffer_cpu_gpu(
         &self,
         size: usize,
     ) -> Result<VkBufferInitializer, Error> {
-        VkBufferInitializer::new(&self.arc(), size as u64)
+        VkBufferInitializer::new(self.arc(), size)
     }
 
     fn create_sparse_buffer(
@@ -373,7 +360,7 @@ impl Context for VkContext {
     ) -> impl Future<Output = Result<Vec<T>, Error>> + Send {
         let submitted = (buffer.size() > 0)
             .then(|| {
-                let mut readback = self.create_readback_buffer(buffer.size())?;
+                let mut readback = VkBuffer::new(self.arc(), buffer.size(), VkBufferMemory::Readback)?;
                 let mut encoding = self.create_command_buffer(None, None)?;
                 encoding.encode_copy(buffer, &mut readback);
                 Ok::<_, Error>((encoding.end_encoding().try_submit()?, readback))
@@ -416,8 +403,7 @@ impl Context for VkContext {
         }
         .ok()?;
         let heap = unsafe { allocator.get_memory_properties() }.memory_types[memory_type as usize].heap_index;
-        let budgets = allocator.get_heap_budgets().ok()?;
-        let budget = budgets.get(heap as usize)?;
+        let budget = &allocator.get_heap_budgets().ok()?[heap as usize];
         Some(budget.budget.saturating_sub(budget.usage) as usize)
     }
 
@@ -432,6 +418,33 @@ impl Context for VkContext {
         DeviceCapabilities::empty()
     }
 }
+
+#[derive(Default)]
+struct VkDebugMessages {
+    first_error: Mutex<Option<String>>,
+}
+
+impl VkDebugMessages {
+    pub fn receive(
+        &self,
+        severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+        message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+        message: &CStr,
+    ) {
+        let message = format!("{message_type:?}: {}", message.to_string_lossy());
+        if severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+            eprintln!("[Error]: {message}");
+            self.first_error.lock().get_or_insert(message);
+        } else {
+            eprintln!("[Warning]: {message}");
+        }
+    }
+
+    pub fn take_error(&self) -> Option<String> {
+        self.first_error.lock().take()
+    }
+}
+
 fn create_instance(
     entry: &ash::Entry,
     validation: Option<&VkDebugMessages>,
@@ -442,7 +455,12 @@ fn create_instance(
     let mut messenger_info = None;
 
     if let Some(messages) = validation {
-        if !is_layer_supported(entry, VK_LAYER_KHRONOS_VALIDATION)? {
+        let layers =
+            unsafe { entry.enumerate_instance_layer_properties() }.map_err(VkContextError::InstanceEnumeration)?;
+        if !layers
+            .iter()
+            .any(|properties| properties.layer_name_as_c_str().is_ok_and(|name| name == VK_LAYER_KHRONOS_VALIDATION))
+        {
             return Err(VkContextError::ValidationNotSupported);
         }
         instance_layers.push(VK_LAYER_KHRONOS_VALIDATION.as_ptr());
@@ -469,6 +487,7 @@ fn create_instance(
     let instance = unsafe { entry.create_instance(&instance_info, None) }.map_err(VkContextError::InstanceCreate)?;
     Ok((instance, debug_utils))
 }
+
 fn create_pipeline_cache(
     device: &ash::Device,
     path: Option<&Path>,
@@ -484,6 +503,7 @@ fn create_pipeline_cache(
     let cache = unsafe { device.create_pipeline_cache(&info, None) }.map_err(VkContextError::PipelineCacheCreate)?;
     Ok((cache, BuildHasherDefault::<DefaultHasher>::default().hash_one(&data)))
 }
+
 fn save_pipeline_cache(
     device: &ash::Device,
     cache: vk::PipelineCache,
@@ -499,21 +519,24 @@ fn save_pipeline_cache(
     }
     let save = SAVES.fetch_add(1, Ordering::Relaxed);
     let temporary = path.with_extension(format!("{}-{save}.tmp", std::process::id()));
-    let saved = std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))
+    let directory = path.parent().expect("pipeline cache paths have a parent directory");
+    let saved = std::fs::create_dir_all(directory)
         .and_then(|()| std::fs::write(&temporary, &data))
         .and_then(|()| std::fs::rename(&temporary, path));
     if saved.is_err() {
         let _ = std::fs::remove_file(&temporary);
         return;
     }
-    let directory = path.parent().and_then(|directory| std::fs::read_dir(directory).ok());
-    for other in directory.into_iter().flatten().flatten().map(|entry| entry.path()) {
-        let name = other.file_name().unwrap_or_default().to_string_lossy();
+    for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+        let other = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
         if other != path && name.starts_with(PIPELINE_CACHE_PREFIX) && name.ends_with(".bin") {
             let _ = std::fs::remove_file(&other);
         }
     }
 }
+
 fn create_memory_allocator(
     instance: &ash::Instance,
     device: &ash::Device,
@@ -528,38 +551,39 @@ fn create_memory_allocator(
     info.vulkan_api_version = API_VERSION_1_4;
     unsafe { vk_mem::Allocator::new(info) }.map_err(VkContextError::MemoryAllocatorCreate)
 }
+
 fn get_physical_device(
     entry: &ash::Entry,
     instance: &ash::Instance,
-) -> Result<(VkPhysicalDevice, u32), VkContextError> {
+) -> Result<VkPhysicalDevice, VkContextError> {
     let devices = unsafe { instance.enumerate_physical_devices() }.map_err(VkContextError::DeviceEnumeration)?;
 
-    let device_opt = devices
+    devices
         .into_iter()
         .filter(|&device| unsafe { instance.get_physical_device_properties(device) }.api_version >= API_VERSION_1_4)
         .map(|device| VkPhysicalDevice::new(entry, instance, device))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
-        .filter_map(|physical_device| physical_device.compute_queue_family().map(|queue| (physical_device, queue)))
-        .min_by_key(|(physical_device, _)| match physical_device.properties.device_type {
+        .min_by_key(|physical_device| match physical_device.properties.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => 0,
             vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
             vk::PhysicalDeviceType::VIRTUAL_GPU => 2,
             vk::PhysicalDeviceType::CPU => 3,
             vk::PhysicalDeviceType::OTHER => 4,
             _ => 5,
-        });
-    device_opt.ok_or(VkContextError::NoSuitableDevice)
+        })
+        .ok_or(VkContextError::NoSuitableDevice)
 }
+
 fn get_logical_device(
     instance: &ash::Instance,
     physical_device: &VkPhysicalDevice,
-    queue_family_index: u32,
 ) -> Result<ash::Device, VkContextError> {
     let queue_priorities = [1.0_f32];
-    let queue_create_info =
-        vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family_index).queue_priorities(&queue_priorities);
+    let queue_create_info = vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(physical_device.queue_family_index)
+        .queue_priorities(&queue_priorities);
 
     let capabilities = physical_device.capabilities;
     let bf16_type = capabilities.contains(VkDeviceCapabilities::BF16_TYPE);
@@ -630,14 +654,6 @@ fn get_logical_device(
     }
     unsafe { instance.create_device(physical_device.device, &device_create_info, None) }
         .map_err(VkContextError::DeviceCreate)
-}
-fn is_layer_supported(
-    entry: &ash::Entry,
-    layer: &CStr,
-) -> Result<bool, VkContextError> {
-    let layer_properties =
-        unsafe { entry.enumerate_instance_layer_properties() }.map_err(VkContextError::InstanceEnumeration)?;
-    Ok(layer_properties.iter().any(|properties| properties.layer_name_as_c_str().is_ok_and(|name| name == layer)))
 }
 
 fn debug_messenger_info(messages: &VkDebugMessages) -> vk::DebugUtilsMessengerCreateInfoEXT<'_> {

@@ -90,14 +90,15 @@ impl VkCommandBufferEncoding {
         data: &[T],
     ) -> Option<(Arc<VkBuffer>, Range<u64>)> {
         let size = size_of_val(data);
-        if size == 0 || !self.is_recording() {
+        if size == 0 || self.failure.is_some() {
             return None;
         }
         let allocation = self
             .allocate_constant_from_slice(bytemuck::cast_slice::<T, u8>(data))
             .map_err(|error| self.failure = Some(error))
             .ok()?;
-        let (buffer, range) = (allocation.page().clone(), allocation.range());
+        let buffer = allocation.page().clone();
+        let range = allocation.range();
         assert!(
             (buffer.device_address() + range.start as u64).is_multiple_of(align_of::<T>() as u64),
             "upload of {size} bytes is not aligned to {}",
@@ -115,7 +116,8 @@ impl VkCommandBufferEncoding {
         reads: impl IntoIterator<Item = (&'b Arc<VkBuffer>, Range<u64>), IntoIter: Clone>,
         writes: impl IntoIterator<Item = (&'b Arc<VkBuffer>, Range<u64>), IntoIter: Clone>,
     ) {
-        let (reads, writes) = (reads.into_iter(), writes.into_iter());
+        let reads = reads.into_iter();
+        let writes = writes.into_iter();
         let buffers = reads.clone().chain(writes.clone());
         let limits = &self.context.physical_device().properties.limits;
         let checked = if groups.iter().zip(limits.max_compute_work_group_count).any(|(&count, limit)| count > limit) {
@@ -157,16 +159,12 @@ impl VkCommandBufferEncoding {
         self.resources().command_buffer()
     }
 
-    fn is_recording(&self) -> bool {
-        self.failure.is_none()
-    }
-
     fn resources(&self) -> &VkCommandBufferResources {
         self.resources.as_ref().expect("encoding owns resources until it ends")
     }
 
     fn debug_utils(&self) -> Option<&ext::debug_utils::Device> {
-        self.context.debug_utils().filter(|_| self.is_recording())
+        self.context.debug_utils().filter(|_| self.failure.is_none())
     }
 
     pub fn begin_debug_label(
@@ -190,7 +188,7 @@ impl VkCommandBufferEncoding {
         &mut self,
         flops: u64,
     ) {
-        self.declared_work = self.declared_work.saturating_add(flops);
+        self.declared_work += flops;
     }
 
     pub fn start_timestamp_span(
@@ -236,7 +234,7 @@ impl VkCommandBufferEncoding {
         };
         let work = take(&mut self.declared_work);
         let full = self.segment_commands >= FIRST_SEGMENT_COMMANDS << self.segments.len().min(SEGMENT_DOUBLINGS)
-            || (self.segment_work > 0 && self.segment_work.saturating_add(work) > self.work_budget);
+            || (self.segment_work > 0 && self.segment_work + work > self.work_budget);
         if full && self.context.unsubmitted_command_buffers().load(Ordering::Relaxed) == 1 {
             if let Err(error) = self.submit_segment() {
                 self.failure = Some(error);
@@ -273,7 +271,7 @@ impl VkCommandBufferEncoding {
         self.reads.extend(reads);
         self.writes.extend(writes);
         self.segment_commands += 1;
-        self.segment_work = self.segment_work.saturating_add(work);
+        self.segment_work += work;
         true
     }
 
@@ -366,9 +364,7 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
     ) -> Result<<Vulkan as Backend>::ConstantBuffer, Error> {
         let context = self.context.clone();
         let alignment = usize::min(size, 64).next_power_of_two();
-        self.uploads.allocate(size, alignment, |size| {
-            Ok(Arc::new(VkBuffer::new(context, size as u64, VkBufferMemory::Constants)?))
-        })
+        self.uploads.allocate(size, alignment, |size| VkBuffer::new(context, size, VkBufferMemory::Constants))
     }
 
     fn allocate_scratch(
@@ -376,8 +372,7 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
         size: usize,
     ) -> Result<<Vulkan as Backend>::ScratchBuffer, Error> {
         let context = self.context.clone();
-        self.allocation_pool
-            .allocate(size, |size| Ok(Arc::new(VkBuffer::new(context, size as u64, VkBufferMemory::Device)?)))
+        self.allocation_pool.allocate(size, |size| VkBuffer::new(context, size, VkBufferMemory::Device))
     }
 
     fn encode_copy(
@@ -397,7 +392,7 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
             return;
         };
         assert!(from.end <= to.start || to.end <= from.start, "copy ranges overlap within the same buffer");
-        if !self.is_recording() {
+        if self.failure.is_some() {
             return;
         }
         let size = from.end - from.start;

@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use ash::vk;
+
+use crate::backends::vulkan::Error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VkContextError {
@@ -23,11 +27,11 @@ pub enum VkContextError {
     #[error("cannot read the pipeline cache {0}: {1}")]
     PipelineCacheRead(std::path::PathBuf, #[source] std::io::Error),
 
-    #[error(transparent)]
-    Device(#[from] crate::backends::vulkan::VkDeviceError),
-
     #[error("cannot enumerate Vulkan devices: {0}")]
     DeviceEnumeration(#[source] vk::Result),
+
+    #[error("cannot query device capabilities: {0}")]
+    CapabilityQuery(#[source] vk::Result),
 
     #[error("cannot enumerate Vulkan layers or instance extensions: {0}")]
     InstanceEnumeration(#[source] vk::Result),
@@ -42,5 +46,5 @@ pub enum VkContextError {
     ValidationNotSupported,
 
     #[error("GPU work that nobody awaited failed, so buffers may hold wrong data: {0}")]
-    Failed(String),
+    Failed(#[source] Arc<Error>),
 }

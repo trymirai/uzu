@@ -3,15 +3,15 @@ pub enum Error {
     #[error("operation is not supported")]
     NotSupported,
     #[error(transparent)]
-    Context(#[from] super::VkContextError),
+    Context(#[from] crate::backends::vulkan::VkContextError),
     #[error(transparent)]
-    Buffer(#[from] super::VkBufferError),
+    Buffer(#[from] crate::backends::vulkan::VkBufferError),
     #[error(transparent)]
-    Pipeline(#[from] super::VkPipelineError),
+    Pipeline(#[from] crate::backends::vulkan::VkPipelineError),
     #[error(transparent)]
-    CommandBuffer(#[from] super::VkCommandBufferError),
+    CommandBuffer(#[from] crate::backends::vulkan::VkCommandBufferError),
     #[error(transparent)]
-    Kernel(#[from] super::VkKernelError),
+    Kernel(#[from] crate::backends::vulkan::VkKernelError),
     #[error("Vulkan validation failed: {0}")]
     Validation(String),
 }

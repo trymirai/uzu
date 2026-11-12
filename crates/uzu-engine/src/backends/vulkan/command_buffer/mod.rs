@@ -1,6 +1,5 @@
 mod error;
 mod vk_command_buffer;
-mod vk_command_buffer_completed;
 mod vk_command_buffer_encoding;
 mod vk_command_buffer_executable;
 mod vk_command_buffer_pending;
@@ -11,10 +10,9 @@ mod vk_timestamp_recorder;
 
 pub use error::VkCommandBufferError;
 pub use vk_command_buffer::VkCommandBuffer;
-pub use vk_command_buffer_completed::VkCommandBufferCompleted;
 pub use vk_command_buffer_encoding::VkCommandBufferEncoding;
 pub use vk_command_buffer_executable::VkCommandBufferExecutable;
-pub use vk_command_buffer_pending::VkCommandBufferPending;
+pub use vk_command_buffer_pending::{VkCommandBufferCompleted, VkCommandBufferPending};
 pub use vk_command_buffer_resources::VkCommandBufferResources;
 pub use vk_command_buffer_submission::VkCommandBufferSubmission;
 pub use vk_debug_group_span::VkDebugGroupSpan;

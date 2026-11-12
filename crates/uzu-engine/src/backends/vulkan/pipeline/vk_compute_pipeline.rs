@@ -2,13 +2,23 @@ use std::{ffi::CString, io::Cursor, sync::Arc};
 
 use ash::vk;
 
-use crate::backends::vulkan::{VkComputePipelineKey, VkContext, VkPipelineError};
+use crate::backends::vulkan::{VkContext, VkPipelineError};
+
+#[derive(PartialEq, Eq, Hash)]
+pub struct VkComputePipelineKey {
+    pub spirv: &'static [u8],
+    pub entry_point: &'static str,
+    pub specialization: Vec<(u32, u32)>,
+    pub push_constant_size: u32,
+    pub required_subgroup_size: Option<u32>,
+}
 
 pub struct VkComputePipeline {
     context: Arc<VkContext>,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
 }
+
 impl VkComputePipeline {
     pub fn new(
         context: Arc<VkContext>,
@@ -20,15 +30,12 @@ impl VkComputePipeline {
             return Err(VkPipelineError::SubgroupSize(size));
         }
         let device = context.device();
-        let entry_point = CString::new(key.entry_point)?;
+        let entry_point = CString::new(key.entry_point).expect("entry points have no NUL");
         let words = ash::util::read_spv(&mut Cursor::new(key.spirv)).map_err(VkPipelineError::Spirv)?;
-        let ranges = (key.push_constant_size != 0)
-            .then(|| {
-                vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).size(key.push_constant_size)
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-        let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&ranges);
+        let range = (key.push_constant_size != 0).then(|| {
+            vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).size(key.push_constant_size)
+        });
+        let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(range.as_slice());
         let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
         let module_info = vk::ShaderModuleCreateInfo::default().code(&words);
         let module = unsafe { device.create_shader_module(&module_info, None) }
@@ -74,6 +81,7 @@ impl VkComputePipeline {
         self.pipeline_layout
     }
 }
+
 impl Drop for VkComputePipeline {
     fn drop(&mut self) {
         unsafe {

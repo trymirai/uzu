@@ -1,4 +1,3 @@
-use super::VkAttentionManyQueries;
 use crate::{
     backends::{
         common::{
@@ -12,6 +11,7 @@ use crate::{
                 attention_gemm::{ATTENTION_GEMM_BLOCK_KEYS, ATTENTION_GEMM_SHARED_BYTES},
                 attention_two_pass::ATTENTION_TWO_PASS_BLOCKS,
             },
+            kernel::attention::VkAttentionManyQueries,
         },
     },
     data_type::DataType,

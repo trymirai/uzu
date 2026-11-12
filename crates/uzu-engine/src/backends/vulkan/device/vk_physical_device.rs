@@ -3,37 +3,28 @@ use std::ffi::CStr;
 use ash::{amd, arm, ext, khr, nv, vk};
 
 use crate::backends::vulkan::{
-    VkCooperativeMatrix2Features, VkDeviceCapabilities, VkDeviceError, VkPhysicalDeviceSubgroupProperties,
+    VkContextError, VkCooperativeMatrix2Features, VkDeviceCapabilities, VkPhysicalDeviceSubgroupProperties,
     VkShaderBfloat16Features,
 };
 
 pub struct VkPhysicalDevice {
     pub device: vk::PhysicalDevice,
     pub properties: vk::PhysicalDeviceProperties,
-    pub queue_families: Vec<vk::QueueFamilyProperties>,
+    pub queue_family_index: u32,
+    pub timestamp_valid_bits: u32,
     pub subgroup_properties: VkPhysicalDeviceSubgroupProperties,
     pub capabilities: VkDeviceCapabilities,
     pub compute_units: Option<u32>,
 }
+
 impl VkPhysicalDevice {
-    pub fn limits(&self) -> &vk::PhysicalDeviceLimits {
-        &self.properties.limits
-    }
-
-    pub fn compute_queue_family(&self) -> Option<u32> {
-        self.queue_families
-            .iter()
-            .position(|properties| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
-            .map(|index| index as u32)
-    }
-
     pub fn new(
         entry: &ash::Entry,
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Option<Self>, VkDeviceError> {
+    ) -> Result<Option<Self>, VkContextError> {
         let extensions = unsafe { instance.enumerate_device_extension_properties(physical_device) }
-            .map_err(VkDeviceError::CapabilityQuery)?;
+            .map_err(VkContextError::CapabilityQuery)?;
         let has_extension = |name: &CStr| {
             extensions
                 .iter()
@@ -107,10 +98,11 @@ impl VkPhysicalDevice {
         };
         let matrices = matrix_extension && matrix_features.cooperative_matrix == vk::TRUE;
         let matrix_instance = khr::cooperative_matrix::Instance::new(entry, instance);
-        let shapes = match matrices {
-            true => unsafe { matrix_instance.get_physical_device_cooperative_matrix_properties(physical_device) }
-                .map_err(VkDeviceError::CapabilityQuery)?,
-            false => Vec::new(),
+        let shapes = if matrices {
+            unsafe { matrix_instance.get_physical_device_cooperative_matrix_properties(physical_device) }
+                .map_err(VkContextError::CapabilityQuery)?
+        } else {
+            Vec::new()
         };
         let supports = |depth: u32, input: vk::ComponentTypeKHR, accumulator: vk::ComponentTypeKHR| {
             shapes.iter().any(|matrix| {
@@ -136,7 +128,7 @@ impl VkPhysicalDevice {
             },
             _ => Ok(Vec::new()),
         }
-        .map_err(VkDeviceError::CapabilityQuery)?;
+        .map_err(VkContextError::CapabilityQuery)?;
         let device_clock = time_domains.contains(&vk::TimeDomainKHR::DEVICE);
         let bf16_type = bfloat16_extension && bfloat16_features.shader_bfloat16_type == vk::TRUE;
         let unsigned_dot_product = vk13properties.integer_dot_product4x8_bit_packed_unsigned_accelerated == vk::TRUE
@@ -181,11 +173,19 @@ impl VkPhysicalDevice {
                     | vk::SubgroupFeatureFlags::SHUFFLE,
             );
 
-        Ok(meets_requirements.then_some(Self {
+        let Some(queue_family_index) = queue_families
+            .iter()
+            .position(|properties| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
+            .filter(|_| meets_requirements)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
             device: physical_device,
             properties,
+            queue_family_index: queue_family_index as u32,
+            timestamp_valid_bits: queue_families[queue_family_index].timestamp_valid_bits,
             subgroup_properties,
-            queue_families,
             capabilities,
             compute_units,
         }))

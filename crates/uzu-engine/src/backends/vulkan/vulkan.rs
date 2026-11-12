@@ -1,13 +1,16 @@
 use std::{convert::Infallible, sync::Arc};
 
-use super::{
-    Error, VkBuffer, VkBufferInitializer, VkCommandBuffer, VkContext, VkDebugGroupSpan, VkSparseBuffer, VulkanKernels,
-};
-use crate::backends::common::{
-    Backend,
-    allocator::{
-        bump::BumpAllocation,
-        pool::{PoolAllocation, PoolAllocator},
+use crate::backends::{
+    common::{
+        Backend,
+        allocator::{
+            bump::BumpAllocation,
+            pool::{PoolAllocation, PoolAllocator},
+        },
+    },
+    vulkan::{
+        Error, VkBuffer, VkBufferInitializer, VkCommandBuffer, VkContext, VkDebugGroupSpan, VkSparseBuffer,
+        VulkanKernels,
     },
 };
 

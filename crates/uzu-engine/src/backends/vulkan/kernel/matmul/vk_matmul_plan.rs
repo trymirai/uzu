@@ -1,4 +1,3 @@
-use super::VkGemvTile;
 use crate::{
     backends::{
         common::{
@@ -12,6 +11,7 @@ use crate::{
         vulkan::{
             VkDeviceCapabilities as Capability, VkPhysicalDevice,
             gpu_types::{gemm::INT8_FOLD_ENTRIES, gemm_b_layout::GemmBLayout, gemm_tiling::GemmTiling},
+            kernel::matmul::VkGemvTile,
         },
     },
     data_type::DataType,
@@ -47,7 +47,7 @@ impl VkMatmulPlan {
         let (m, n, k) = (shape.m, shape.n, shape.k);
         let [weights, input, output] = data_types;
         let (capabilities, units) = (device.capabilities, device.compute_units);
-        let max_shared = device.limits().max_compute_shared_memory_size;
+        let max_shared = device.properties.limits.max_compute_shared_memory_size;
         if shape.a == ActivationFormat::Bf16
             && m <= 8
             && capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
@@ -138,7 +138,7 @@ impl VkMatmulPlan {
     ) -> Result<(), &'static str> {
         let [weights, input, _] = data_types;
         let (m, n, k) = (shape.m, shape.n, shape.k);
-        let (capabilities, limits) = (device.capabilities, device.limits());
+        let (capabilities, limits) = (device.capabilities, &device.properties.limits);
         let require = |met: bool, reason: &'static str| met.then_some(()).ok_or(reason);
         require(m > 0 && n > 0 && k > 0, "matmul dimensions must be positive")?;
         require(
