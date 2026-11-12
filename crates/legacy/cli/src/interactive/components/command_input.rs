@@ -106,6 +106,7 @@ fn hint_component(
     on_submit: Handler<String>,
 ) -> AnyElement<'static> {
     let mut hints = Vec::new();
+    let can_delete_model = state.read().can_delete_model();
     match state.read().model_state.as_ref() {
         Some(model_state) if model_state.model.is_downloadable() => {
             if !matches!(model_state.download_state.phase, DownloadPhase::Downloaded {}) {
@@ -113,7 +114,9 @@ fn hint_component(
             } else {
                 hints.push(HINT_SEND.to_string());
             }
-            hints.push(HINT_STORAGE_DELETE.to_string());
+            if can_delete_model {
+                hints.push(HINT_STORAGE_DELETE.to_string());
+            }
         },
         _ => {
             hints.push(HINT_SEND.to_string());

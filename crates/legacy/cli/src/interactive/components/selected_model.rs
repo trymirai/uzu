@@ -9,18 +9,13 @@ use crate::{
     common::thinking::ThinkingSupport,
     interactive::{
         components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+        flows::DeleteModelFlow,
         util::{types_text, use_terminal_width},
     },
 };
 
 const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
 const PROGRESS_BAR_MINIMAL_WIDTH: usize = 10;
-
-#[derive(Clone, Copy)]
-enum StorageAction {
-    Toggle,
-    Delete,
-}
 
 #[derive(Default, Props)]
 pub struct SelectedModelProps {}
@@ -97,12 +92,12 @@ pub fn SelectedModel(
         }
     });
 
-    let on_action = hooks.use_async_handler({
+    let on_toggle = hooks.use_async_handler({
         let engine = state.read().engine.clone();
         let model = state.read().model_state.as_ref().map(|model_state| model_state.model.clone());
         let has_session =
             state.read().model_state.as_ref().map(|model_state| model_state.session_state.is_some()).unwrap_or(false);
-        move |action: StorageAction| {
+        move |()| {
             let engine = engine.clone();
             let model = model.clone();
             async move {
@@ -116,31 +111,24 @@ pub fn SelectedModel(
                     return;
                 }
                 let downloader = engine.downloader(&model);
-                match action {
-                    StorageAction::Toggle => {
-                        let Some(current) = downloader.state().await else {
-                            return;
-                        };
-                        match current.phase {
-                            DownloadPhase::Downloading {} => {
-                                let _ = downloader.pause().await;
-                            },
-                            DownloadPhase::Paused {}
-                            | DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Locked {
-                                ..
-                            }
-                            | DownloadPhase::Error {
-                                ..
-                            } => {
-                                let _ = downloader.resume().await;
-                            },
-                            DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
-                        }
+                let Some(current) = downloader.state().await else {
+                    return;
+                };
+                match current.phase {
+                    DownloadPhase::Downloading {} => {
+                        let _ = downloader.pause().await;
                     },
-                    StorageAction::Delete => {
-                        let _ = downloader.delete().await;
+                    DownloadPhase::Paused {}
+                    | DownloadPhase::NotDownloaded {}
+                    | DownloadPhase::Locked {
+                        ..
+                    }
+                    | DownloadPhase::Error {
+                        ..
+                    } => {
+                        let _ = downloader.resume().await;
                     },
+                    DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
                 }
             }
         }
@@ -169,8 +157,11 @@ pub fn SelectedModel(
             return;
         }
         match code {
-            KeyCode::Char('p') => on_action(StorageAction::Toggle),
-            KeyCode::Char('d') => on_action(StorageAction::Delete),
+            KeyCode::Char('p') => on_toggle(()),
+            KeyCode::Char('d') if state.read().can_delete_model() => {
+                let mut state = state;
+                state.write().flow = Some(Box::new(DeleteModelFlow));
+            },
             _ => {},
         }
     });

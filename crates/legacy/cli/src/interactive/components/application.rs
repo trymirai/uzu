@@ -83,6 +83,15 @@ impl ApplicationState {
         &self.preferences.theme
     }
 
+    pub fn can_delete_model(&self) -> bool {
+        self.flow.is_none()
+            && self.model_state.as_ref().is_some_and(|model_state| {
+                model_state.model.is_downloadable()
+                    && model_state.session_state.is_none()
+                    && model_state.download_state.can_delete()
+            })
+    }
+
     pub fn set_preferences(
         &mut self,
         prefs: &Preferences,
