@@ -41,6 +41,10 @@ pub trait Context: Sized + Send + Sync {
 
     fn peak_memory_usage(&self) -> Option<usize>;
 
+    fn available_memory(&self) -> Option<u64> {
+        None
+    }
+
     fn start_capture(
         &self,
         output_path: &Path,

@@ -6,6 +6,7 @@ pub mod config;
 mod downloader;
 mod downloader_stream;
 mod error;
+mod memory_shortfall;
 mod model_info;
 mod sampling;
 mod shorthand;
@@ -29,6 +30,8 @@ pub use error::EngineError;
 use futures_util::stream::FuturesUnordered;
 use indexmap::IndexSet;
 use kiban::rt::RuntimeHandle;
+pub use memory_shortfall::MemoryShortfall;
+use memory_shortfall::directory_bytes;
 pub use model_info::ChatModelInfo;
 use nagare::{
     chat::{ChatInstance, ChatSession},
@@ -63,6 +66,8 @@ use crate::{
     logs,
     registry::openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
 };
+
+pub type MemoryCheck = Arc<dyn Fn(u64) -> Option<MemoryShortfall> + Send + Sync>;
 
 #[bindings::export(Class)]
 #[derive(Clone)]
@@ -638,8 +643,11 @@ impl Engine {
         model: Model,
         config: ChatConfig,
     ) -> Result<ChatInstance, EngineError> {
-        let backend = self.model_backend(&model).await?;
+        let mut backend = self.model_backend(&model).await?;
         let path = self.model_path(&model).await;
+        if let Some(memory_check) = self.memory_check(&model).await? {
+            backend = Arc::new(UzuLlmBackend::with_memory_check(memory_check));
+        }
         Ok(ChatInstance::new(backend, config, model, path).await?)
     }
 
@@ -747,6 +755,44 @@ impl Engine {
     pub async fn catalog_snapshot(&self) -> Result<(Vec<Model>, bool), EngineError> {
         let (models, complete) = self.published_catalog.lock().await.clone();
         Ok((models, complete && self.catalog_refreshes.load(Ordering::SeqCst) == 0))
+    }
+
+    async fn memory_check(
+        &self,
+        model: &Model,
+    ) -> Result<Option<MemoryCheck>, EngineError> {
+        if model.backends.first().is_none_or(|backend| backend.identifier != "uzu") {
+            return Ok(None);
+        }
+        let Some(path) = self.model_path(model).await else {
+            return Ok(None);
+        };
+        let sizes = self.download_states().await;
+        let download_bytes = |model: &Model| {
+            sizes.get(&model.identifier).map(|state| state.total_bytes as u64).filter(|bytes| *bytes > 0)
+        };
+        let weight_bytes = match download_bytes(model) {
+            Some(bytes) => bytes,
+            None => match directory_bytes(Path::new(&path)).await {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(None),
+            },
+        };
+        let variants: Vec<(Model, u64)> = self
+            .models()
+            .await?
+            .into_iter()
+            .filter_map(|variant| download_bytes(&variant).map(|bytes| (variant, bytes)))
+            .collect();
+        let model = model.clone();
+        Ok(Some(Arc::new(move |available_bytes| {
+            MemoryShortfall::new(
+                &model,
+                weight_bytes,
+                available_bytes,
+                variants.iter().map(|(variant, bytes)| (variant, *bytes)),
+            )
+        })))
     }
 
     async fn handle_registry_refresh(

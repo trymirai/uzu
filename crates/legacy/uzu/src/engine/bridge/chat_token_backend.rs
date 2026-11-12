@@ -31,11 +31,14 @@ use uzu_engine::{
     engine::{Engine, language_model::LanguageModel},
 };
 
-use crate::engine::bridge::{
-    chat_token_state::UzuChatTokenBackendInstanceState,
-    helpers::{
-        error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
-        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
+use crate::engine::{
+    MemoryCheck,
+    bridge::{
+        chat_token_state::UzuChatTokenBackendInstanceState,
+        helpers::{
+            error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
+            grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
+        },
     },
 };
 
@@ -54,8 +57,14 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     pub async fn new(
         model_path: String,
         config: ChatConfig,
+        memory_check: Option<MemoryCheck>,
     ) -> Result<Self, ShojiBackendError> {
         let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
+        if let Some(shortfall) =
+            memory_check.zip(engine.available_memory()).and_then(|(check, available)| check(available))
+        {
+            return Err(shortfall.to_string().into());
+        }
         let model_path = PathBuf::from(model_path);
         let model = engine.load_language_model(&model_path).await.map_err(|err| err.to_string())?;
 

@@ -486,3 +486,51 @@ async fn incompatible_downloaded_models_are_rejected_by_every_session_loader() {
         }
     }
 }
+
+fn variant(
+    identifier: &str,
+    size: &str,
+) -> Model {
+    let metadata = |identifier: &str| serde_json::json!({ "id": identifier, "name": identifier, "description": null, "icons": [] });
+    Model {
+        family: Some(
+            serde_json::from_value(serde_json::json!({
+                "id": "qwen3.6", "vendor": { "id": "alibaba", "metadata": metadata("alibaba") }, "metadata": metadata("qwen3.6"),
+            }))
+            .unwrap(),
+        ),
+        properties: Some(
+            serde_json::from_value(
+                serde_json::json!({ "id": size, "size": 0, "version": null, "metadata": metadata(size) }),
+            )
+            .unwrap(),
+        ),
+        ..model(identifier)
+    }
+}
+
+#[test]
+fn memory_shortfall_names_the_largest_variant_that_fits() {
+    const GB: u64 = 1_000_000_000;
+    let large = variant("qwen3.6:27b:l-8", "27b");
+    let medium = variant("qwen3.6:27b:m-4", "27b");
+    let small = variant("qwen3.6:27b:s-2", "27b");
+    let other_size = variant("qwen3.6:9b:l-8", "9b");
+    let catalog = [(&large, 29 * GB), (&medium, 16 * GB), (&small, 8 * GB), (&other_size, 10 * GB)];
+
+    assert_eq!(MemoryShortfall::new(&large, 29 * GB, 40 * GB, catalog), None);
+    let shortfall = MemoryShortfall::new(&large, 29 * GB, 24 * GB, catalog).unwrap();
+    assert_eq!(shortfall.smaller_model.as_deref(), Some("qwen3.6:27b:m-4"));
+    assert_eq!(shortfall.required_bytes, 29 * GB + 29 * GB / 10);
+    assert_eq!(
+        shortfall.to_string(),
+        "qwen3.6:27b:l-8 needs about 31.9 GB of device memory and 24.0 GB is free; use qwen3.6:27b:m-4 instead"
+    );
+    assert_eq!(
+        MemoryShortfall::new(&large, 29 * GB, 12 * GB, catalog).unwrap().smaller_model.as_deref(),
+        Some("qwen3.6:27b:s-2")
+    );
+    let none_fits = MemoryShortfall::new(&large, 29 * GB, 4 * GB, catalog).unwrap();
+    assert_eq!(none_fits.smaller_model, None);
+    assert!(none_fits.to_string().ends_with("no smaller variant of it fits"), "{none_fits}");
+}
