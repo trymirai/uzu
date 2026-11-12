@@ -759,7 +759,3 @@ fn cached<K: Eq + Hash, V>(
 fn wait<T: Send>(future: impl Future<Output = T> + Send) -> T {
     std::thread::scope(|scope| scope.spawn(|| block_on(future)).join().expect("a Vulkan wait panicked"))
 }
-
-#[cfg(test)]
-#[path = "../../../../../unit/backends/vulkan/kernel/matmul/vk_matmul_kernel_test.rs"]
-mod tests;

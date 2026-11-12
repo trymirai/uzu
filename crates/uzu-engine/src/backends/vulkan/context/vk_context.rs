@@ -388,7 +388,7 @@ impl Context for VkContext {
         Some(self.peak_buffer_bytes.load(Ordering::Relaxed))
     }
 
-    fn available_memory(&self) -> Option<usize> {
+    fn available_memory(&self) -> Option<u64> {
         if !self.physical_device.capabilities.contains(VkDeviceCapabilities::MEMORY_BUDGET) {
             return None;
         }
@@ -404,7 +404,7 @@ impl Context for VkContext {
         .ok()?;
         let heap = unsafe { allocator.get_memory_properties() }.memory_types[memory_type as usize].heap_index;
         let budget = &allocator.get_heap_budgets().ok()?[heap as usize];
-        Some(budget.budget.saturating_sub(budget.usage) as usize)
+        Some(budget.budget.saturating_sub(budget.usage))
     }
 
     fn start_capture(

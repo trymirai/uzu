@@ -61,7 +61,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
     ) -> Result<Self, ShojiBackendError> {
         let engine = Engine::<B>::new().await.map_err(|err| err.to_string())?;
         if let Some(shortfall) =
-            memory_check.zip(engine.available_memory()).and_then(|(check, available)| check(available as u64))
+            memory_check.zip(engine.available_memory()).and_then(|(check, available)| check(available))
         {
             return Err(shortfall.to_string().into());
         }

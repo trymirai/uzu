@@ -6,7 +6,7 @@ use uzu_engine::{
 pub struct AvailableMemorySelection;
 
 impl BackendSelection for AvailableMemorySelection {
-    type Output = Option<usize>;
+    type Output = Option<u64>;
     type Error = String;
 
     async fn select<B: Backend>(self) -> Result<Self::Output, Self::Error> {

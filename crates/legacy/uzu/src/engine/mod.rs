@@ -760,10 +760,9 @@ impl Engine {
     }
 
     pub async fn available_memory(&self) -> Result<Option<u64>, EngineError> {
-        let available = select_backend(AvailableMemorySelection, "Unable to open any backend".to_string())
+        Ok(select_backend(AvailableMemorySelection, "Unable to open any backend".to_string())
             .await
-            .map_err(ChatSessionError::backend)?;
-        Ok(available.map(|bytes| bytes as u64))
+            .map_err(ChatSessionError::backend)?)
     }
 
     pub async fn memory_check(
