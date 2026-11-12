@@ -43,7 +43,7 @@ fn bench_gemv_typed<B: Backend, T: DataTypeRepr + Float>(
         )
         .unwrap();
 
-        group.throughput(Throughput::Elements((m * n * k) as u64));
+        group.throughput(Throughput::Elements(u64::from(m) * u64::from(n) * u64::from(k)));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
             let benchmark_path = format!("{group_path}/{shape}");
             iter_encode_loop_named::<B, _>(context, b, &benchmark_path, |command_buffer| {
