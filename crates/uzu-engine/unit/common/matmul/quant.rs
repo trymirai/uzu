@@ -519,11 +519,9 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
     }
 }
 
-type BackendMatmul<B> = <<B as Backend>::Kernels as Kernels>::MatmulKernel;
-
 pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
-    matmul: &BackendMatmul<B>,
+    matmul: &<B::Kernels as Kernels>::MatmulKernel,
     input: QuantInput<T>,
 ) -> Option<(QuantInput<T>, ActivationFormat, QuantBuffers<B, T>)> {
     let mut input = match input.mode {

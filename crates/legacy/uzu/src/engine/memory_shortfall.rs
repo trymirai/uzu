@@ -2,7 +2,7 @@ use std::{fmt, path::Path};
 
 use shoji::types::model::{Model, ModelIdentifier};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MemoryShortfall {
     pub model: ModelIdentifier,
     pub required_bytes: u64,
@@ -28,7 +28,6 @@ impl MemoryShortfall {
                     && variant.identifier != model.identifier
                     && variant.family == model.family
                     && variant.properties == model.properties
-                    && *bytes > 0
                     && with_margin(*bytes) <= available_bytes
             })
             .max_by_key(|(_, bytes)| *bytes)

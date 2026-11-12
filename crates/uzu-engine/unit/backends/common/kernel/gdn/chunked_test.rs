@@ -19,9 +19,6 @@ use crate::{
 #[cfg(backend = "metal")]
 use crate::{backends::metal::Metal, utils::downcast::downcast_ref};
 
-type BackendKernels<B> = <B as Backend>::Kernels;
-type ChunkedPrefill<B> = <BackendKernels<B> as Kernels>::DeltaNetChunkedPrefill;
-
 const NUM_K_HEADS: usize = 2;
 const HEAD_K_DIM: usize = 128;
 const HEAD_V_DIM: usize = 128;
@@ -59,7 +56,7 @@ fn run_prefill<B: Backend>(
     context: &B::Context,
     num_v_heads: usize,
     in_proj_data: &[bf16],
-    chunked: Option<&ChunkedPrefill<B>>,
+    chunked: Option<&<B::Kernels as Kernels>::DeltaNetChunkedPrefill>,
     state: &mut B::GlobalGpuBuffer,
 ) -> Vec<f32> {
     let suffix_len = in_proj_data.len() / total_proj_dim(num_v_heads);
@@ -102,7 +99,7 @@ fn run_prefill<B: Backend>(
         let mut k = create_buffer::<B, f32>(context, suffix_len * KEY_DIM);
         let mut beta = create_buffer::<B, f32>(context, suffix_len * num_v_heads);
         let mut decay = create_buffer::<B, f32>(context, suffix_len * num_v_heads);
-        <BackendKernels<B> as Kernels>::DeltaNetPrefillPrepKernel::new(
+        <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
             context,
             DataType::BF16,
             DataType::F32,
@@ -127,7 +124,7 @@ fn run_prefill<B: Backend>(
             suffix_len as u32,
             &mut command_buffer,
         );
-        <BackendKernels<B> as Kernels>::DeltaNetPrefillKernel::new(context, DataType::BF16, HEAD_K_DIM as u32)
+        <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, DataType::BF16, HEAD_K_DIM as u32)
             .expect("prefill")
             .encode(
                 &q,
@@ -156,7 +153,7 @@ fn run_prefill<B: Backend>(
 fn check<B: Backend>(
     context: &B::Context,
     num_v_heads: usize,
-    chunked: &ChunkedPrefill<B>,
+    chunked: &<B::Kernels as Kernels>::DeltaNetChunkedPrefill,
     state0: &[f32],
     in_proj: &[bf16],
     calls: usize,
@@ -190,9 +187,14 @@ fn chunked_prefill_matches_recurrent_prefill_impl<B: Backend>(v_per_k: usize) {
     }
     let num_v_heads = v_per_k * NUM_K_HEADS;
     let total_proj_dim = total_proj_dim(num_v_heads);
-    let chunked = ChunkedPrefill::<B>::new(&context, DataType::BF16, HEAD_K_DIM as u32, v_per_k as u32)
-        .unwrap()
-        .expect("chunked prefill");
+    let chunked = <B::Kernels as Kernels>::DeltaNetChunkedPrefill::new(
+        &context,
+        DataType::BF16,
+        HEAD_K_DIM as u32,
+        v_per_k as u32,
+    )
+    .unwrap()
+    .expect("chunked prefill");
     let in_proj = random_in_proj(WARMUP_TOKENS + 4096, num_v_heads);
     let (warmup, tokens) = in_proj.split_at(WARMUP_TOKENS * total_proj_dim);
     let mut state = create_buffer_with_data::<B, f32>(&context, &vec![0.0; num_v_heads * HEAD_V_DIM * HEAD_K_DIM]);

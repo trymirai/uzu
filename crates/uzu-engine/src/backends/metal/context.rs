@@ -231,10 +231,6 @@ impl Context for MetalContext {
         Some(self.peak_memory_usage.load(Ordering::Relaxed))
     }
 
-    fn available_memory(&self) -> Option<usize> {
-        None
-    }
-
     fn start_capture(
         &self,
         output_path: &Path,

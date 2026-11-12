@@ -45,17 +45,11 @@ pub fn assert_parity<T: DataTypeRepr + Float>(
     abs_tol: f64,
 ) {
     assert_eq!(reference.len(), actual.len(), "{label}: length mismatch");
-    let mut errors = 0usize;
-    for (i, (&exp, &got)) in reference.iter().zip(actual.iter()).enumerate() {
-        let exp_f32 = exp.to_f32().unwrap();
-        let got_f32 = got.to_f32().unwrap();
-        let within_tolerance = (exp_f32 - got_f32).abs() as f64 <= abs_tol.max(exp_f32.abs() as f64 * rel_tol);
-        if !within_tolerance {
-            if errors < 5 {
-                eprintln!("  {label} idx={i} expected={exp_f32} got={got_f32} diff={}", (exp_f32 - got_f32).abs());
-            }
-            errors += 1;
-        }
+    for (i, (&expected, &actual)) in reference.iter().zip(actual).enumerate() {
+        let expected = expected.to_f32().unwrap();
+        let actual = actual.to_f32().unwrap();
+        let diff = f64::from((expected - actual).abs());
+        let tolerance = abs_tol.max(f64::from(expected.abs()) * rel_tol);
+        assert!(diff <= tolerance, "{label}[{i}]: expected {expected}, got {actual}, diff {diff} > {tolerance}");
     }
-    assert_eq!(errors, 0, "{label}: {errors} mismatches");
 }

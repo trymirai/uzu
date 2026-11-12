@@ -82,9 +82,10 @@ fn quant_matmul_a8_bf16_impl<B: Backend>(
     for group_size in [32, 64] {
         for (bits, method) in SCHEMES {
             let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0).with_group_output();
-            let input = match n.is_multiple_of(32) && method != QuantizationMethod::ScaleSymmetric {
-                true => input.with_output_rht(method == QuantizationMethod::ScaleZeroPoint),
-                false => input,
+            let input = if n.is_multiple_of(32) && method != QuantizationMethod::ScaleSymmetric {
+                input.with_output_rht(method == QuantizationMethod::ScaleZeroPoint)
+            } else {
+                input
             };
             let Some((input, format, mut buffers)) = production_quant_input::<B, bf16>(&context, &matmul, input) else {
                 continue;
