@@ -13,7 +13,7 @@ use tempfile::NamedTempFile;
 use super::ast::{MetalAstKind, MetalAstNode, MetalKernelInfo};
 
 #[derive(Debug)]
-pub enum MetalSdk {
+enum MetalSdk {
     MacOSX,
     MacCatalyst,
     IPhoneOS,
@@ -21,11 +21,11 @@ pub enum MetalSdk {
 }
 
 impl MetalSdk {
-    pub fn from_parts(
-        target: &str,
-        target_os: &str,
-        target_env: &str,
-    ) -> anyhow::Result<Self> {
+    fn from_env() -> anyhow::Result<Self> {
+        let target = env::var("TARGET").context("missing TARGET")?;
+        let target_os = env::var("CARGO_CFG_TARGET_OS").context("missing CARGO_CFG_TARGET_OS")?;
+        let target_env = env::var("CARGO_CFG_TARGET_ENV").context("missing CARGO_CFG_TARGET_ENV")?;
+
         if target_os == "ios" {
             if target.contains("macabi") || target_env == "macabi" {
                 Ok(Self::MacCatalyst)
@@ -41,17 +41,7 @@ impl MetalSdk {
         }
     }
 
-    pub fn from_env() -> anyhow::Result<Self> {
-        let target = env::var("TARGET").context("missing TARGET")?;
-        let target_os = env::var("CARGO_CFG_TARGET_OS").context("missing CARGO_CFG_TARGET_OS")?;
-        let target_env = env::var("CARGO_CFG_TARGET_ENV").context("missing CARGO_CFG_TARGET_ENV")?;
-
-        let sdk = Self::from_parts(&target, &target_os, &target_env)?;
-
-        Ok(sdk)
-    }
-
-    pub fn to_str(&self) -> &'static str {
+    fn to_str(&self) -> &'static str {
         match self {
             Self::MacOSX | Self::MacCatalyst => "macosx",
             Self::IPhoneOS => "iphoneos",
@@ -59,7 +49,7 @@ impl MetalSdk {
         }
     }
 
-    pub fn os(&self) -> &'static str {
+    fn os(&self) -> &'static str {
         match self {
             Self::MacOSX | Self::MacCatalyst => "macosx",
             Self::IPhoneOS | Self::IPhoneSimulator => "ios",
@@ -67,29 +57,12 @@ impl MetalSdk {
     }
 }
 
-#[derive(Debug)]
-pub enum MetalStd {
-    Metal4_0,
-}
-
-impl MetalStd {
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Self::Metal4_0 => "metal4.0",
-        }
-    }
-
-    pub fn min_os(&self) -> &'static str {
-        match self {
-            Self::Metal4_0 => "26.4",
-        }
-    }
-}
+const METAL_STD: &str = "metal4.0";
+const METAL_MIN_OS: &str = "26.4";
 
 #[derive(Debug)]
 pub struct MetalToolchain {
     sdk: MetalSdk,
-    std: MetalStd,
     opt_flags: Box<[OsString]>,
     extra_options: Box<[OsString]>,
     modules_cache_path: PathBuf,
@@ -103,7 +76,6 @@ impl MetalToolchain {
         include_dir: PathBuf,
     ) -> anyhow::Result<Self> {
         let sdk = MetalSdk::from_env().context("cannot get sdk")?;
-        let std = MetalStd::Metal4_0;
 
         let opt_level_flags = match env::var("OPT_LEVEL").context("missing OPT_LEVEL")?.as_str() {
             "0" => vec![OsString::from("-O1")], // matmul kernels compiled with -O0 are broken and require a reboot to unfreeze the os
@@ -122,14 +94,14 @@ impl MetalToolchain {
         let opt_flags = [opt_level_flags, debug_flags].concat().into_boxed_slice();
 
         let extra_options: Box<[OsString]> =
-            Box::new([OsString::from(format!("-m{}-version-min={}", sdk.os(), std.min_os()))]);
+            Box::new([OsString::from(format!("-m{}-version-min={METAL_MIN_OS}", sdk.os()))]);
 
         let cache_key = {
             let mut hasher = blake3::Hasher::new();
 
             hasher.update(sdk.to_str().as_bytes());
             hasher.update(b"\0");
-            hasher.update(std.to_str().as_bytes());
+            hasher.update(METAL_STD.as_bytes());
             hasher.update(b"\0");
             for flag in opt_flags.iter().chain(extra_options.iter()) {
                 hasher.update(flag.as_encoded_bytes());
@@ -156,7 +128,6 @@ impl MetalToolchain {
 
         Ok(Self {
             sdk,
-            std,
             opt_flags,
             extra_options,
             modules_cache_path,
@@ -188,16 +159,13 @@ impl MetalToolchain {
     pub fn analyze(
         &self,
         path: impl AsRef<Path>,
-    ) -> anyhow::Result<(impl Iterator<Item = MetalKernelInfo>, impl Iterator<Item = Box<str>>)> {
+    ) -> anyhow::Result<(Vec<MetalKernelInfo>, Vec<Box<str>>)> {
         let path = path.as_ref();
 
         let depfile_path = NamedTempFile::new().context("cannot create temporary file")?;
 
         let mut cmd = self.xcrun();
-        cmd.arg("metal")
-            .args(["-x", "metal"])
-            .arg(format!("-std={}", self.std.to_str()))
-            .args(self.extra_options.as_ref());
+        cmd.arg("metal").args(["-x", "metal"]).arg(format!("-std={METAL_STD}")).args(self.extra_options.as_ref());
 
         self.add_common_args(&mut cmd);
 
@@ -243,10 +211,9 @@ impl MetalToolchain {
             .iter()
             .flat_map(|(_, d)| d)
             .map(|f| f.as_ref().into())
-            .collect::<Vec<_>>()
-            .into_iter();
+            .collect::<Vec<_>>();
 
-        Ok((kernel_infos.into_iter(), dependencies))
+        Ok((kernel_infos, dependencies))
     }
 
     pub fn compile(
@@ -258,7 +225,7 @@ impl MetalToolchain {
         let mut cmd = self.xcrun();
         cmd.arg("metal")
             .args(["-x", "metal"])
-            .arg(format!("-std={}", self.std.to_str()))
+            .arg(format!("-std={METAL_STD}"))
             .args(self.extra_options.as_ref())
             .args(self.opt_flags.as_ref());
 
