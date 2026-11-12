@@ -1,3 +1,5 @@
+use iocraft::prelude::*;
+
 pub fn cycle<T: Copy + PartialEq>(
     values: &[T],
     current: T,
@@ -8,3 +10,11 @@ pub fn cycle<T: Copy + PartialEq>(
     let next = (index + delta).rem_euclid(length) as usize;
     values[next]
 }
+
+pub fn types_text(modifiers: KeyModifiers) -> bool {
+    !modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT)
+}
+
+#[cfg(test)]
+#[path = "../../unit/interactive/util_test.rs"]
+mod tests;

@@ -144,6 +144,13 @@ impl RenderedText {
         self.position -= previous_length.saturating_sub(next_length);
     }
 
+    pub fn remove_next_character(&mut self) {
+        if self.position < graphemes_length(&self.original_text) {
+            self.position += 1;
+            self.remove_character();
+        }
+    }
+
     pub fn move_position_left(&mut self) {
         if self.position > 0 {
             self.position -= 1;

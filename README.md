@@ -1451,7 +1451,7 @@ You can run `uzu` in CLI mode:
 cargo run --release -p cli
 ```
 
-This launches an interactive app where you can browse, download, and interact with models.
+This launches an interactive app where you can browse, download, and interact with models. On Windows it drops emoji typed or pasted into it: crossterm 0.29 does not pair the UTF-16 halves the console sends with a key release between them.
 
 You can also preselect a model with `--model`, passing its identifier or repository id:
 

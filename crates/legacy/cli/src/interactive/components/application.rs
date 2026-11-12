@@ -19,6 +19,7 @@ use crate::{
         helpers::SYMBOL_COMMAND,
         keyboard_enhancement::KeyboardEnhancement,
         sessions::{self, SessionState},
+        util::types_text,
     },
 };
 
@@ -295,19 +296,20 @@ pub fn Application(
         }
 
         let is_escape = matches!(code, KeyCode::Esc);
-        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL);
+        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && !types_text(modifiers);
         if !is_escape && !is_ctrl_c {
             return;
         }
 
         let mut state = state;
         let mut state = state.write();
+        let state = &mut *state;
 
         let consumed_by_session = if let Some(session_state) = state.session_state() {
             if is_escape {
                 session_state.interrupt() || session_state.is_busy()
             } else {
-                session_state.is_busy()
+                session_state.interrupt()
             }
         } else {
             false
@@ -316,23 +318,22 @@ pub fn Application(
             return;
         }
 
+        if is_ctrl_c {
+            state.flow = Some(Box::new(ExitFlow));
+            return;
+        }
+
         if state.flow.is_some() {
-            if is_escape {
-                if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
-                    state.history.push(HistoryCellType::CommandResult {
-                        result: "Cancelled".to_string(),
-                    });
-                }
-                state.flow = None;
+            if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
+                state.history.push(HistoryCellType::CommandResult {
+                    result: "Cancelled".to_string(),
+                });
             }
+            state.flow = None;
             return;
         }
 
-        if is_escape && sessions::decision::leave_question_mode(&mut state) {
-            return;
-        }
-
-        state.flow = Some(Box::new(ExitFlow));
+        sessions::decision::leave_question_mode(state);
     });
 
     let on_flow_event: Handler<FlowEvent> = Handler::from(move |event: FlowEvent| {

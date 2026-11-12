@@ -6,7 +6,10 @@ use uzu::storage::DownloadPhase;
 
 use crate::{
     common::thinking::ThinkingSupport,
-    interactive::components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+    interactive::{
+        components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+        util::types_text,
+    },
 };
 
 const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
@@ -159,7 +162,7 @@ pub fn SelectedModel(
         if kind == KeyEventKind::Release {
             return;
         }
-        if !modifiers.contains(KeyModifiers::CONTROL) {
+        if types_text(modifiers) {
             return;
         }
         match code {
