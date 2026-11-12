@@ -168,16 +168,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 capture_span,
                 pendings,
             } => {
+                let gpu_tokens = self.model.engine.context.copyout::<u32>(&output_tokens_buffer);
                 for pending in pendings {
                     wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
                 }
-                let gpu_tokens = self
-                    .model
-                    .engine
-                    .context
-                    .copyout::<u32>(&output_tokens_buffer)
-                    .await
-                    .map_err(LanguageModelStreamError::Backend)?;
+                let gpu_tokens = gpu_tokens.await.map_err(LanguageModelStreamError::Backend)?;
 
                 let mut output_tokens = gpu_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
 

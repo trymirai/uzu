@@ -37,7 +37,7 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
     let tree_verify =
         <<Metal as Backend>::Kernels as Kernels>::DeltaNetTreeVerify::new(context.as_ref(), &arguments).unwrap();
     eprintln!("GDN tree verification PSO construction: {:.2} ms", started.elapsed().as_secs_f64() * 1e3);
-    let h0 = create_buffer_with_data::<Metal, f32>(&context, &vec![0.001; V_HEADS * HEAD_DIM * HEAD_DIM]);
+    let mut h0 = create_buffer_with_data::<Metal, f32>(&context, &vec![0.001; V_HEADS * HEAD_DIM * HEAD_DIM]);
     let norm_weight = create_buffer_with_data::<Metal, f32>(&context, &vec![1.0; HEAD_DIM]);
     const CONV_DIM: usize = 2 * K_HEADS * HEAD_DIM + V_HEADS * HEAD_DIM;
     const TOTAL_PROJ_DIM: usize = CONV_DIM + V_HEADS * HEAD_DIM + 2 * V_HEADS;
@@ -72,7 +72,8 @@ fn bench_delta_net_tree_verify(c: &mut Criterion) {
                             trie: &trie,
                             log_decay: &log_decay,
                             beta: &beta,
-                            h0: &h0,
+                            h0: &mut h0,
+                            advance: None,
                             in_proj: &in_proj,
                             norm_weight: &norm_weight,
                             conv_dim: CONV_DIM as u32,

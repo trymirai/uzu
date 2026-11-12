@@ -291,9 +291,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         &mut command_buffer,
                     )
                     .map_err(DFlashTreeError::Backend)?;
-                let completed =
-                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let tokens = self.context.copyout::<u32>(&sampled).await.map_err(DFlashTreeError::Backend)?;
+                let pending = command_buffer.end_encoding().submit();
+                let tokens = self.context.copyout::<u32>(&sampled);
+                let completed = wait(pending, timestamps).await.map_err(DFlashTreeError::Backend)?;
+                let tokens = tokens.await.map_err(DFlashTreeError::Backend)?;
                 drop(completed);
                 nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
                     token_id,
@@ -341,13 +342,13 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 let depth_seeds = (0..weaver.max_depth())
                     .map(|depth| prng.derive(root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
-                let (head, prune_sigma) = match sampling_method {
-                    SamplingMethod::Greedy => (None, None),
+                let (head, children_noise_scale, prune_sigma) = match sampling_method {
+                    SamplingMethod::Greedy => (None, 0.0, None),
                     SamplingMethod::Stochastic {
                         ..
                     } => match &self.confidence_head {
-                        Some(head) => (Some(head), None),
-                        None => (None, prune_sigma),
+                        Some(head) => (Some(head), 1.0, None),
+                        None => (None, 1.0, prune_sigma),
                     },
                 };
                 let tree = weaver.encode_tree(
@@ -364,14 +365,16 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         rounds,
                         expand_per_round,
                         expand_width,
+                        children_noise_scale,
                         prune_noise_scale: prune_sigma.map(f32::recip),
                     },
                     head,
                     &mut command_buffer,
                 )?;
-                let completed =
-                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let nodes = tree.read_nodes(&self.context).await.map_err(DFlashTreeError::Backend)?;
+                let pending = command_buffer.end_encoding().submit();
+                let nodes = tree.read_nodes(&self.context);
+                let completed = wait(pending, timestamps).await.map_err(DFlashTreeError::Backend)?;
+                let nodes = nodes.await.map_err(DFlashTreeError::Backend)?;
                 drop(completed);
                 nodes
             },

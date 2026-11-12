@@ -42,6 +42,7 @@ PUBLIC KERNEL(WeaverSelect)(
     constant uint& ancestor_stride,
     constant uint& lookahead_count,
     constant uint& candidate_depth_count,
+    constant float& children_noise_scale OPTIONAL(mode != WeaverSelectionMode::Frontier),
     constant float& prune_noise_scale OPTIONAL(has_prune_noise),
     const WeaverSelectionMode mode SPECIALIZE,
     const bool has_prune_noise SPECIALIZE,
@@ -95,10 +96,11 @@ PUBLIC KERNEL(WeaverSelect)(
         second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
     const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
     const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
-    const uint first_score =
-        first_valid ? top_k_score_key(first_logit + gumbel_noise(seed, first_token, vocab_size)) : 0u;
-    const uint second_score =
-        second_valid ? top_k_score_key(second_logit + gumbel_noise(seed, second_token, vocab_size)) : 0u;
+    // Children rank by logits plus the target's noise scaled by `children_noise_scale`, 0 for greedy decoding.
+    const float first_noise = first_valid ? target_gumbel_noise(seed, first_token, vocab_size) : 0.0f;
+    const float second_noise = second_valid ? target_gumbel_noise(seed, second_token, vocab_size) : 0.0f;
+    const uint first_score = first_valid ? top_k_score_key(first_logit + children_noise_scale * first_noise) : 0u;
+    const uint second_score = second_valid ? top_k_score_key(second_logit + children_noise_scale * second_noise) : 0u;
     bool first_active = first_valid;
     bool second_active = second_valid;
 
@@ -141,10 +143,10 @@ PUBLIC KERNEL(WeaverSelect)(
     float prune_log_sum = 0.0f;
     if (has_prune_noise) {
       if (first_valid) {
-        first_prune_logit = first_logit + prune_noise_scale * target_gumbel_noise(seed, first_token, vocab_size);
+        first_prune_logit = first_logit + prune_noise_scale * first_noise;
       }
       if (second_valid) {
-        second_prune_logit = second_logit + prune_noise_scale * target_gumbel_noise(seed, second_token, vocab_size);
+        second_prune_logit = second_logit + prune_noise_scale * second_noise;
       }
       const float prune_max = threadgroup_cooperative_reduce<SimdReduceMax<float>, TOP_CHILDREN_THREADS>(
           fmax(first_prune_logit, second_prune_logit),
