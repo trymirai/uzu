@@ -53,4 +53,19 @@ impl Section {
     pub fn all() -> [Section; 3] {
         [Section::Installed, Section::Downloading, Section::Available]
     }
+
+    pub fn first_with_models(
+        self,
+        step: fn(&Self) -> Self,
+        count: impl Fn(Self) -> usize,
+    ) -> Self {
+        std::iter::successors(Some(self), |section| Some(step(section)))
+            .take(Self::all().len())
+            .find(|section| count(*section) > 0)
+            .unwrap_or(self)
+    }
 }
+
+#[cfg(test)]
+#[path = "../../unit/storage/sections_test.rs"]
+mod tests;
