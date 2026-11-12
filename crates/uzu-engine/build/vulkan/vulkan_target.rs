@@ -13,13 +13,13 @@ use shader_slang::{
 };
 use syn::{BinOp, Expr};
 
-use super::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen, spirv_hash::export_spirv_hash};
 use crate::{
     common::{codegen::write_tokens, identifiers::KernelName, kernel::Kernel, mangling::static_mangle},
     slang::{
         BlockingSlangCompiler, SlangArgumentType, SlangCompilerFields, SlangGpuTypes, SlangKernel, SlangParameterType,
         SlangTarget, kernel_wrappers, specialization_name,
     },
+    vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen, spirv_hash::export_spirv_hash},
 };
 
 /// SPIR-V capabilities that device selection guarantees: Shader, Float16, Int16, Int8, GroupNonUniform and its
@@ -192,7 +192,6 @@ impl SlangTarget for VulkanTarget {
                             .fields
                             .iter()
                             .any(|field| field.layout.as_ref().is_some_and(|layout| layout.name == "bf16"));
-                    // Kept where it differs.
                     let native_file = object_file.with_extension("bf16.spv");
                     let native = match stores_bf16.then(native_spirv).transpose()? {
                         Some(native) if native.as_slice() != spirv.as_slice() => {

@@ -11,15 +11,15 @@ use quote::{ToTokens, format_ident, quote};
 use shader_slang::ScalarType;
 use syn::{Expr, GenericArgument, Ident, PathArguments, Type, parse_quote};
 
-use super::{SlangEntryPointAbi, SlangEntryPointVariant, SlangFieldAbi, vulkan_target::AXIS_FOLD_GROUPS};
 use crate::{
     common::{
         expr_rewrite::{qualify_enum_path, rewrite_paths_with},
         gpu_type_paths::{GpuTypeKind, GpuTypePaths},
-        gpu_types::{GpuType, GpuTypeStructFieldType, GpuTypes},
+        gpu_types::{GpuType, GpuTypeEnum, GpuTypeStructFieldType, GpuTypes},
         kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
     },
     slang::{SlangArgumentType, SlangKernel, slang2rust, specialization_name},
+    vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, SlangFieldAbi, vulkan_target::AXIS_FOLD_GROUPS},
 };
 
 /// Generated file holding a kernel's binding type, next to its SPIR-V.
@@ -71,29 +71,16 @@ pub fn bindgen(
     let struct_name = format_ident!("{kernel_name}VulkanKernel");
     let first = variants.first().context("kernel has no entry points")?;
     let abi = &first.abi;
-    let abis =
-        || variants.iter().flat_map(|variant| once(&variant.abi).chain(variant.native_bf16.iter().map(|(abi, _)| abi)));
     let layout = |abi: &SlangEntryPointAbi| {
         let fields = abi.fields.iter().map(|field| (field.name.clone(), field.offset, field.size)).collect::<Vec<_>>();
         (abi.block_size, abi.group_size, abi.specialization_ids.clone(), fields)
     };
-    ensure!(abis().all(|other| layout(other) == layout(abi)), "{kernel_name}: variants differ in layout");
+    ensure!(
+        variant_abis(variants).all(|other| layout(other) == layout(abi)),
+        "{kernel_name}: variants differ in layout"
+    );
     // Vulkan 1.4 guarantees every device 256 bytes of push constants.
     ensure!(abi.block_size <= 256, "{kernel_name}: push-constant block of {} bytes exceeds 256", abi.block_size);
-    let canonical_types = || gpu_types.iter().flat_map(|types| types.files.iter()).flat_map(|file| &file.types);
-    let canonical_enum = |short: &str| {
-        canonical_types().find_map(|candidate| match candidate {
-            GpuType::Enum(candidate) if candidate.name.as_ref() == short => Some(candidate),
-            _ => None,
-        })
-    };
-    let specialization_id = |argument: &str| {
-        let constant = specialization_name(kernel_name, argument);
-        abi.specialization_ids
-            .iter()
-            .find_map(|(name, id)| (*name == constant).then_some(*id))
-            .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))
-    };
 
     let type_parameters = kernel
         .parameters
@@ -101,16 +88,225 @@ pub fn bindgen(
         .filter(|parameter| matches!(parameter.ty, KernelParameterType::Type))
         .map(|parameter| format_ident!("{}", parameter.name.as_ref()))
         .collect::<Vec<_>>();
-    // A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
-    let word = |name: &Ident, ty: &Type, scalars: &[&str]| -> anyhow::Result<TokenStream> {
-        let text = ty.to_token_stream().to_string().replace(" :: ", "::");
-        match text.as_str() {
-            _ if canonical_enum_name(gpu_type_paths, &text).is_some() => Ok(quote! { (#name as u32) }),
-            "bool" if scalars.contains(&"bool") => Ok(quote! { u32::from(#name) }),
-            scalar if scalars.contains(&scalar) => Ok(quote! { #name }),
-            other => bail!("{kernel_name}: unsupported type '{other}' for '{name}'"),
-        }
+    let specializations = specialization_constants(kernel_name, kernel, abi, gpu_type_paths)?;
+    let pipeline_variants = pipeline_variant_argument(kernel_name, info, kernel, abi, gpu_types, gpu_type_paths)?;
+    let mut layout_checks = stride_checks(kernel, variants, gpu_type_paths)?;
+    ensure!(
+        kernel.arguments.len() == abi.fields.len() + usize::from(pipeline_variants.is_some()),
+        "{kernel_name}: arguments and reflected fields differ"
+    );
+    let ArgumentEncoding {
+        parameters,
+        packing,
+        reads,
+        writes,
+    } = encode_arguments(
+        kernel_name,
+        kernel,
+        variants,
+        abi,
+        pipeline_variants.as_ref(),
+        gpu_types,
+        gpu_type_paths,
+        &mut layout_checks,
+    )?;
+    let (conditions, specialization_conditions) = presence_checks(kernel_name, info, gpu_type_paths)?;
+    let (new_preconditions, encode_preconditions) =
+        preconditions(kernel_name, kernel, info, gpu_types, gpu_type_paths)?;
+    let Dispatch {
+        grid,
+        group_sizes,
+        axis_sizes,
+        dimensions,
+    } = dispatch_plan(kernel_name, info, abi, gpu_type_paths)?;
+    let grid_count = grid.len();
+
+    let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* #axis_sizes };
+    let references = |name: &Ident| find_ident(host_expressions.clone(), &|ident| ident == name).is_some();
+    let (referenced, referenced_types): (Vec<_>, Vec<_>) = specializations
+        .iter()
+        .filter(|specialization| references(&specialization.name))
+        .map(|specialization| (&specialization.name, &specialization.ty))
+        .unzip();
+    let (specialization_names, specialization_types): (Vec<_>, Vec<_>) =
+        specializations.iter().map(|specialization| (&specialization.name, &specialization.ty)).unzip();
+
+    // A pinned subgroup size, which the workgroup must fill with whole subgroups within the device's subgroup limit.
+    let required_subgroup_size = match info
+        .required_subgroup_size
+        .as_deref()
+        .map(|text| host_expression(kernel_name, gpu_type_paths, text))
+        .transpose()?
+    {
+        Some(size) => quote! { Some(#size) },
+        None => quote! { None },
     };
+    let PipelineCode {
+        field: pipeline_field,
+        construction,
+        lookup: pipeline,
+    } = pipeline_code(
+        pipeline_variants.as_ref(),
+        &specializations,
+        &referenced,
+        abi.block_size,
+        &required_subgroup_size,
+    )?;
+    let block_size = abi.block_size;
+    let read_count = reads.len();
+    let write_count = writes.len();
+
+    // A public kernel's common trait owns `new` and `encode`, so its raw binding takes other names that never shadow the
+    // trait methods on the concrete type.
+    let new_fn = if info.public {
+        format_ident!("create")
+    } else {
+        format_ident!("new")
+    };
+    let encode_fn = if info.public {
+        format_ident!("encode_ranges")
+    } else {
+        format_ident!("encode")
+    };
+    let entry_selection = select_entry(kernel_name, &type_parameters, first, variants)?;
+    let trait_impl = if info.public {
+        public_trait_impl(
+            kernel_name,
+            kernel,
+            gpu_type_paths,
+            &struct_name,
+            &type_parameters,
+            &specializations,
+            &new_fn,
+            &encode_fn,
+        )?
+    } else {
+        quote! {}
+    };
+
+    Ok(quote! {
+        use crate::backends::vulkan::{
+            Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkComputePipelineKey, VkContext,
+            check_work_group,
+        };
+
+
+        #(#layout_checks)*
+
+        #[allow(non_snake_case)]
+        pub struct #struct_name {
+            #pipeline_field,
+            #(#referenced: #referenced_types,)*
+        }
+
+        impl #struct_name {
+            #[allow(non_snake_case, clippy::too_many_arguments)]
+            pub fn #new_fn(
+                context: &std::sync::Arc<VkContext>
+                #(, #type_parameters: crate::data_type::DataType)*
+                #(, #specialization_names: #specialization_types)*
+            ) -> Result<Self, Error> {
+                let (entry_point, spirv) = #entry_selection;
+                #(#specialization_conditions)*
+                #(#new_preconditions)*
+                check_work_group(
+                    context.physical_device(),
+                    #kernel_name,
+                    [#(#group_sizes),*],
+                    #required_subgroup_size,
+                )?;
+                #construction
+            }
+
+            /// Records one dispatch. Optional-argument presence is asserted before anything is recorded,
+            /// and an empty dispatch records nothing. Violated preconditions panic; a failed upload, an
+            /// out-of-bounds range or a grid past the device limit ends the recording, as a device error does.
+            ///
+            /// # Safety
+            /// Every range must start at an element of the constructed data type, aligned to it, and
+            /// cover every element the kernel indexes for these scalar arguments. Ranges written by the
+            /// kernel must not alias other arguments unless the kernel defines that aliasing. Range
+            /// bounds are checked; shader indexing within them is not.
+            #[allow(non_snake_case, clippy::too_many_arguments)]
+            pub unsafe fn #encode_fn(
+                &self,
+                #(#parameters,)*
+                command_buffer: &mut VkCommandBufferEncoding,
+            ) {
+                #(let #referenced = self.#referenced;)*
+                #(#conditions)*
+                #(#encode_preconditions)*
+                let __dsl_grid: [u32; #grid_count] = [#(#grid),*];
+                if __dsl_grid.contains(&0) {
+                    return;
+                }
+                let mut __dsl_block = [0u8; #block_size];
+                #(#packing)*
+                let __dsl_reads: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #read_count] = [#(#reads),*];
+                let __dsl_writes: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #write_count] = [#(#writes),*];
+                unsafe {
+                    command_buffer.encode_dispatch(
+                        #kernel_name,
+                        #pipeline,
+                        &__dsl_block,
+                        #dimensions,
+                        __dsl_reads.into_iter().flatten(),
+                        __dsl_writes.into_iter().flatten(),
+                    )
+                }
+            }
+        }
+
+        #trait_impl
+    })
+}
+
+/// A specialization constant: the parameter's name and Rust type, the value it writes and its constant id.
+struct Specialization {
+    name: Ident,
+    ty: Type,
+    value: TokenStream,
+    id: u32,
+}
+
+/// The `[[PipelineVariants]]` argument: its name, one path per variant of its canonical enum, and its constant id.
+struct PipelineVariants {
+    selector: Ident,
+    paths: Vec<TokenStream>,
+    id: u32,
+}
+
+/// The parameters, push-constant packing and buffer ranges of `encode`, one per kernel argument in declaration order.
+struct ArgumentEncoding {
+    parameters: Vec<TokenStream>,
+    packing: Vec<TokenStream>,
+    reads: Vec<TokenStream>,
+    writes: Vec<TokenStream>,
+}
+
+/// The dispatch of a kernel: its grid, the workgroup size, the grid's `Axis` sizes if it has any, and the dispatch
+/// dimensions as an expression.
+struct Dispatch {
+    grid: Vec<Expr>,
+    group_sizes: Vec<Expr>,
+    axis_sizes: Option<TokenStream>,
+    dimensions: TokenStream,
+}
+
+/// The pipeline field of the kernel, its construction in `new`, and the pipeline `encode` dispatches with.
+struct PipelineCode {
+    field: TokenStream,
+    construction: TokenStream,
+    lookup: TokenStream,
+}
+
+/// The specialization constants of the kernel, each written from its parameter's value.
+fn specialization_constants(
+    kernel_name: &str,
+    kernel: &Kernel,
+    abi: &SlangEntryPointAbi,
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<Vec<Specialization>> {
     // Specializations are `bool`, `u32` or a canonical enum (`uint` in Slang); an absent optional one writes 0.
     let mut specializations = Vec::new();
     for parameter in &kernel.parameters {
@@ -120,19 +316,35 @@ pub fn bindgen(
         let name = format_ident!("{}", parameter.name.as_ref());
         let ty: Type = gpu_type_paths.resolve_type(text)?;
         let value = match option_inner(&ty) {
-            Some(inner) => match syn::parse2(word(&name, inner, &["u32"])?)? {
+            Some(inner) => match syn::parse2(word(kernel_name, gpu_type_paths, &name, inner, &["u32"])?)? {
                 Expr::Paren(inner) => {
                     let inner = inner.expr;
                     quote! { #name.map_or(0, |#name| #inner) }
                 },
                 _ => quote! { #name.unwrap_or(0) },
             },
-            None => word(&name, &ty, &["u32", "bool"])?,
+            None => word(kernel_name, gpu_type_paths, &name, &ty, &["u32", "bool"])?,
         };
-        specializations.push((name, ty, value, specialization_id(&parameter.name)?));
+        let id = specialization_id(kernel_name, abi, &parameter.name)?;
+        specializations.push(Specialization {
+            name,
+            ty,
+            value,
+            id,
+        });
     }
+    Ok(specializations)
+}
 
-    // `(argument, variant paths, specialization constant id)` of the `[[PipelineVariants]]` argument.
+/// The `[[PipelineVariants]]` argument, if the kernel has one.
+fn pipeline_variant_argument(
+    kernel_name: &str,
+    info: &SlangKernel,
+    kernel: &Kernel,
+    abi: &SlangEntryPointAbi,
+    gpu_types: &[&GpuTypes],
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<Option<PipelineVariants>> {
     let mut pipeline_variants = None;
     for argument in info.arguments.iter().filter(|argument| argument.pipeline_variants) {
         let name = argument.name.as_str();
@@ -146,7 +358,8 @@ pub fn bindgen(
             (gpu_type_paths.kind_for(text) == Some(GpuTypeKind::Enum)).then_some(&**text).with_context(|| {
                 format!("{kernel_name}: PipelineVariants argument '{name}' has type '{text}', not a canonical GPU enum")
             })?;
-        let canonical = canonical_enum(short).with_context(|| format!("{kernel_name}: no canonical enum '{short}'"))?;
+        let canonical =
+            canonical_enum(gpu_types, short).with_context(|| format!("{kernel_name}: no canonical enum '{short}'"))?;
         let paths = canonical
             .variants
             .iter()
@@ -155,116 +368,156 @@ pub fn bindgen(
                 quote! { #ty::#variant }
             })
             .collect::<Vec<_>>();
-        pipeline_variants = Some((format_ident!("{name}"), paths, specialization_id(name)?));
+        pipeline_variants = Some(PipelineVariants {
+            selector: format_ident!("{name}"),
+            paths,
+            id: specialization_id(kernel_name, abi, name)?,
+        });
     }
+    Ok(pipeline_variants)
+}
 
-    // Buffers of canonical structs are checked by `canonical_struct`, those of primitives by their data type's size.
+/// The asserts that every buffer of a primitive type has the stride of its data type. Buffers of canonical structs
+/// are checked by `canonical_struct`.
+fn stride_checks(
+    kernel: &Kernel,
+    variants: &[SlangEntryPointVariant],
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<Vec<TokenStream>> {
     let mut strides = BTreeSet::new();
-    for abi in abis() {
+    for abi in variant_abis(variants) {
         for field in &abi.fields {
             let buffer = kernel.arguments.iter().any(|argument| {
                 argument.name.as_ref() == field.name && matches!(argument.ty, KernelArgumentType::Buffer(_))
             });
-            if let (true, Some(pointee)) = (buffer, &field.layout)
+            if buffer
+                && let Some(pointee) = &field.layout
                 && gpu_type_paths.kind_for(&pointee.name) != Some(GpuTypeKind::Struct)
             {
                 strides.insert((data_type(&pointee.name)?.to_string(), pointee.stride));
             }
         }
     }
-    let stride_checks = strides.iter().map(|(data_type, stride)| {
-        let data_type = format_ident!("{data_type}");
-        quote! { const _: () = assert!(crate::data_type::DataType::#data_type.size_in_bytes() == #stride); }
-    });
+    Ok(strides
+        .iter()
+        .map(|(data_type, stride)| {
+            let data_type = format_ident!("{data_type}");
+            quote! { const _: () = assert!(crate::data_type::DataType::#data_type.size_in_bytes() == #stride); }
+        })
+        .collect())
+}
 
-    ensure!(
-        kernel.arguments.len() == abi.fields.len() + usize::from(pipeline_variants.is_some()),
-        "{kernel_name}: arguments and reflected fields differ"
-    );
-    // The canonical struct `field` holds or points to, checked field by field against Slang's reflected layout.
-    let mut layout_checks = Vec::new();
-    let mut canonical_struct = |field: &SlangFieldAbi| -> anyhow::Result<Option<(&str, Type, usize, usize)>> {
-        let Some(layout) = &field.layout else {
-            return Ok(None);
-        };
-        let (pointee, stride, alignment, fields) = (&layout.name, layout.stride, layout.alignment, &layout.fields);
-        let Some(path) = gpu_type_paths
-            .full_path_for(pointee)
-            .filter(|_| gpu_type_paths.kind_for(pointee) == Some(GpuTypeKind::Struct))
-        else {
-            return Ok(None);
-        };
-        let name = &field.name;
-        ensure!(
-            abis().all(|other| other.fields.iter().any(|other| other == field)),
-            "{kernel_name}: variants differ in the layout of '{name}'"
-        );
-        let canonical = canonical_types()
-            .find_map(|candidate| match candidate {
-                GpuType::Struct(candidate) if candidate.name.as_ref() == pointee => Some(candidate),
-                _ => None,
-            })
-            .with_context(|| format!("{kernel_name}: no canonical struct '{pointee}'"))?;
-        ensure!(
-            canonical.fields.iter().map(|canonical| canonical.name.as_ref()).eq(fields.iter().map(|field| &field.name)),
-            "{kernel_name}: '{pointee}' fields differ from the canonical struct"
-        );
-        let scalar = |text: &str| match text {
-            "u32" => Some(ScalarType::Uint32),
-            "f32" => Some(ScalarType::Float32),
-            _ => None,
-        };
-        for (canonical, reflected) in canonical.fields.iter().zip(fields) {
-            let (element, length) = match &canonical.ty {
-                GpuTypeStructFieldType::Scalar(element) => (element, None),
-                GpuTypeStructFieldType::Array {
-                    element,
-                    length,
-                } => (element, Some((*length, 4))),
-            };
-            ensure!(
-                scalar(element) == Some(reflected.scalar) && reflected.array == length,
-                "{kernel_name}: field {pointee}.{} is {element} {length:?} in Rust but {:?} {:?} in Slang",
-                reflected.name,
-                reflected.scalar,
-                reflected.array
-            );
-        }
-        let ty: Type = syn::parse_str(path)?;
-        let message = format!("{kernel_name}: {path} does not have the layout Slang reflects");
-        layout_checks.push(quote! {
-            const _: () = assert!(size_of::<#ty>() == #stride && align_of::<#ty>() == #alignment, #message);
-        });
-        for (canonical, reflected) in canonical.fields.iter().zip(fields) {
-            let field_type: Type = match &canonical.ty {
-                GpuTypeStructFieldType::Scalar(element) => syn::parse_str(element)?,
-                GpuTypeStructFieldType::Array {
-                    element,
-                    length,
-                } => syn::parse_str(&format!("[{element}; {length}]"))?,
-            };
-            let (field_name, offset, size) = (format_ident!("{}", reflected.name), reflected.offset, reflected.size);
-            layout_checks.push(quote! {
-                const _: () = assert!(
-                    std::mem::offset_of!(#ty, #field_name) == #offset && size_of::<#field_type>() == #size,
-                    #message
-                );
-            });
-        }
-        Ok(Some((path, ty, stride, alignment)))
+/// The canonical struct `field` holds or points to. Its fields and layout are checked against Slang's reflection, and
+/// the asserts are appended to `layout_checks`.
+fn canonical_struct<'a>(
+    kernel_name: &str,
+    variants: &[SlangEntryPointVariant],
+    gpu_types: &[&GpuTypes],
+    gpu_type_paths: &'a GpuTypePaths,
+    field: &SlangFieldAbi,
+    layout_checks: &mut Vec<TokenStream>,
+) -> anyhow::Result<Option<(&'a str, Type, usize, usize)>> {
+    let Some(layout) = &field.layout else {
+        return Ok(None);
     };
-    let mut encode_arguments = Vec::new();
+    let pointee = &layout.name;
+    let Some(path) =
+        gpu_type_paths.full_path_for(pointee).filter(|_| gpu_type_paths.kind_for(pointee) == Some(GpuTypeKind::Struct))
+    else {
+        return Ok(None);
+    };
+    let name = &field.name;
+    ensure!(
+        variant_abis(variants).all(|other| other.fields.iter().any(|other| other == field)),
+        "{kernel_name}: variants differ in the layout of '{name}'"
+    );
+    let canonical = canonical_types(gpu_types)
+        .find_map(|candidate| match candidate {
+            GpuType::Struct(candidate) if candidate.name.as_ref() == pointee => Some(candidate),
+            _ => None,
+        })
+        .with_context(|| format!("{kernel_name}: no canonical struct '{pointee}'"))?;
+    let fields = &layout.fields;
+    ensure!(
+        canonical.fields.iter().map(|canonical| canonical.name.as_ref()).eq(fields.iter().map(|field| &field.name)),
+        "{kernel_name}: '{pointee}' fields differ from the canonical struct"
+    );
+    let scalar = |text: &str| match text {
+        "u32" => Some(ScalarType::Uint32),
+        "f32" => Some(ScalarType::Float32),
+        _ => None,
+    };
+    for (canonical, reflected) in canonical.fields.iter().zip(fields) {
+        let (element, length) = match &canonical.ty {
+            GpuTypeStructFieldType::Scalar(element) => (element, None),
+            GpuTypeStructFieldType::Array {
+                element,
+                length,
+            } => (element, Some((*length, 4))),
+        };
+        ensure!(
+            scalar(element) == Some(reflected.scalar) && reflected.array == length,
+            "{kernel_name}: field {pointee}.{} is {element} {length:?} in Rust but {:?} {:?} in Slang",
+            reflected.name,
+            reflected.scalar,
+            reflected.array
+        );
+    }
+    let ty: Type = syn::parse_str(path)?;
+    let message = format!("{kernel_name}: {path} does not have the layout Slang reflects");
+    let stride = layout.stride;
+    let alignment = layout.alignment;
+    layout_checks.push(quote! {
+        const _: () = assert!(size_of::<#ty>() == #stride && align_of::<#ty>() == #alignment, #message);
+    });
+    for (canonical, reflected) in canonical.fields.iter().zip(fields) {
+        let field_type: Type = match &canonical.ty {
+            GpuTypeStructFieldType::Scalar(element) => syn::parse_str(element)?,
+            GpuTypeStructFieldType::Array {
+                element,
+                length,
+            } => syn::parse_str(&format!("[{element}; {length}]"))?,
+        };
+        let field_name = format_ident!("{}", reflected.name);
+        let offset = reflected.offset;
+        let size = reflected.size;
+        layout_checks.push(quote! {
+            const _: () = assert!(
+                std::mem::offset_of!(#ty, #field_name) == #offset && size_of::<#field_type>() == #size,
+                #message
+            );
+        });
+    }
+    Ok(Some((path, ty, stride, alignment)))
+}
+
+/// Encodes every kernel argument: its `encode` parameter, its push-constant bytes, and its buffer ranges.
+fn encode_arguments(
+    kernel_name: &str,
+    kernel: &Kernel,
+    variants: &[SlangEntryPointVariant],
+    abi: &SlangEntryPointAbi,
+    pipeline_variants: Option<&PipelineVariants>,
+    gpu_types: &[&GpuTypes],
+    gpu_type_paths: &GpuTypePaths,
+    layout_checks: &mut Vec<TokenStream>,
+) -> anyhow::Result<ArgumentEncoding> {
+    let mut parameters = Vec::new();
     let mut packing = Vec::new();
     let mut reads = Vec::new();
     let mut writes = Vec::new();
     for argument in &kernel.arguments {
         let name = format_ident!("{}", argument.name.as_ref());
         // The pipeline-selecting argument has no push-constant field.
-        if let (Some((selector, ..)), KernelArgumentType::Value(text)) = (&pipeline_variants, &argument.ty)
+        if let Some(PipelineVariants {
+            selector,
+            ..
+        }) = pipeline_variants
+            && let KernelArgumentType::Value(text) = &argument.ty
             && *selector == name
         {
             let ty: Type = gpu_type_paths.resolve_type(text)?;
-            encode_arguments.push(quote! { #name: #ty });
+            parameters.push(quote! { #name: #ty });
             continue;
         }
         let field = abi
@@ -272,8 +525,10 @@ pub fn bindgen(
             .iter()
             .find(|field| field.name == argument.name.as_ref())
             .with_context(|| format!("{kernel_name}: no reflected field for '{name}'"))?;
-        let (start, end) = (field.offset, field.offset + field.size);
-        let (argument_type, bytes) = match (&argument.ty, canonical_struct(field)?) {
+        let start = field.offset;
+        let end = start + field.size;
+        let canonical = canonical_struct(kernel_name, variants, gpu_types, gpu_type_paths, field, layout_checks)?;
+        let (argument_type, bytes) = match (&argument.ty, canonical) {
             (KernelArgumentType::Buffer(access), _) => {
                 ensure!(field.size == 8 && field.layout.is_some(), "{kernel_name}: '{name}' is not a device address");
                 let declared = if argument.conditional {
@@ -324,7 +579,7 @@ pub fn bindgen(
             (KernelArgumentType::Value(text), _) => {
                 ensure!(field.size == 4 && field.layout.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = gpu_type_paths.resolve_type(text)?;
-                let value = word(&name, &ty, &["u32", "i32", "f32", "bool"])?;
+                let value = word(kernel_name, gpu_type_paths, &name, &ty, &["u32", "i32", "f32", "bool"])?;
                 // An absent optional constant leaves its bytes zero.
                 let bytes = if argument.conditional {
                     quote! { #name.map_or([0; 4], |#name| #value.to_ne_bytes()) }
@@ -334,72 +589,71 @@ pub fn bindgen(
                 (quote! { #ty }, bytes)
             },
         };
-        encode_arguments.push(if argument.conditional {
+        parameters.push(if argument.conditional {
             quote! { #name: Option<#argument_type> }
         } else {
             quote! { #name: #argument_type }
         });
         packing.push(quote! { __dsl_block[#start..#end].copy_from_slice(&#bytes); });
     }
+    Ok(ArgumentEncoding {
+        parameters,
+        packing,
+        reads,
+        writes,
+    })
+}
 
-    // Optional specializations are checked by the constructor, other optional arguments by `encode`.
-    let (mut conditions, mut specialization_conditions) = (Vec::new(), Vec::new());
-    let (mut axes, mut groups, mut group_sizes) = (Vec::new(), Vec::new(), Vec::new());
-    let host_expression = |text: &str| {
-        let mut expression = syn::parse_str::<Expr>(text)
-            .with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))?;
-        rewrite_paths_with(&mut expression, |path| qualify_enum_path(path, gpu_type_paths));
-        Ok::<_, anyhow::Error>(expression)
-    };
+/// Optional specializations are checked by the constructor, other optional arguments by `encode`. Returns the
+/// constructor's checks, then `encode`'s.
+fn presence_checks(
+    kernel_name: &str,
+    info: &SlangKernel,
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)> {
+    let mut conditions = Vec::new();
+    let mut specialization_conditions = Vec::new();
     for argument in &info.arguments {
-        let condition = match &argument.argument_type {
-            SlangArgumentType::Axis {
-                threads: total,
-                threads_in_group: size,
-            } => {
-                axes.push(host_expression(total)?);
-                group_sizes.push(host_expression(size)?);
-                &None
-            },
-            SlangArgumentType::Groups {
-                groups: count,
-            } => {
-                groups.push(host_expression(count)?);
-                &None
-            },
-            SlangArgumentType::Threads {
-                threads: size,
-            } => {
-                group_sizes.push(host_expression(size)?);
-                &None
-            },
-            SlangArgumentType::Buffer {
-                condition,
-                ..
-            }
-            | SlangArgumentType::Uniform {
-                condition,
-            }
-            | SlangArgumentType::Specialize {
-                condition,
-            } => condition,
-            SlangArgumentType::ThreadContext => &None,
+        let (SlangArgumentType::Buffer {
+            condition,
+            ..
+        }
+        | SlangArgumentType::Uniform {
+            condition,
+        }
+        | SlangArgumentType::Specialize {
+            condition,
+        }) = &argument.argument_type
+        else {
+            continue;
         };
-        if let Some(condition) = condition {
-            let name = format_ident!("{}", argument.name);
-            let condition = host_expression(condition)?;
-            let message =
-                format!("{kernel_name}: argument '{name}' must be present exactly when {}", quote! { #condition });
-            let check = quote! { assert_eq!(#name.is_some(), #condition, "{}", #message); };
-            match argument.argument_type {
-                SlangArgumentType::Specialize {
-                    ..
-                } => specialization_conditions.push(check),
-                _ => conditions.push(check),
-            }
+        let Some(condition) = condition else {
+            continue;
+        };
+        let name = format_ident!("{}", argument.name);
+        let condition = host_expression(kernel_name, gpu_type_paths, condition)?;
+        let message =
+            format!("{kernel_name}: argument '{name}' must be present exactly when {}", quote! { #condition });
+        let check = quote! { assert_eq!(#name.is_some(), #condition, "{}", #message); };
+        match argument.argument_type {
+            SlangArgumentType::Specialize {
+                ..
+            } => specialization_conditions.push(check),
+            _ => conditions.push(check),
         }
     }
-    // `new` preconditions return an error before anything is created, `encode` ones assert before recording.
+    Ok((conditions, specialization_conditions))
+}
+
+/// The host preconditions as `(new, encode)` checks. `new` returns an error before anything is created, `encode`
+/// asserts before recording.
+fn preconditions(
+    kernel_name: &str,
+    kernel: &Kernel,
+    info: &SlangKernel,
+    gpu_types: &[&GpuTypes],
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)> {
     let names = |constants: bool| {
         let parameters = kernel.parameters.iter().filter(|parameter| match parameter.ty {
             KernelParameterType::Value(_) => true,
@@ -413,7 +667,7 @@ pub fn bindgen(
     let is_variant = |path: &syn::Path| {
         let segments = path.segments.iter().map(|segment| segment.ident.to_string());
         segments.collect_tuple().is_some_and(|(head, variant): (String, String)| {
-            canonical_enum(&head)
+            canonical_enum(gpu_types, &head)
                 .is_some_and(|candidate| candidate.variants.iter().any(|known| *known.name == *variant))
         })
     };
@@ -429,9 +683,11 @@ pub fn bindgen(
             })
         })
     };
-    let (mut new_preconditions, mut encode_preconditions) = (Vec::new(), Vec::new());
+    let mut new_preconditions = Vec::new();
+    let mut encode_preconditions = Vec::new();
     for (phase, text) in &info.preconditions {
-        let (phase, text) = (phase.as_str(), text.as_str());
+        let phase = phase.as_str();
+        let text = text.as_str();
         let construction = phase == "new";
         let mut known = names(!construction);
         if construction {
@@ -448,7 +704,7 @@ pub fn bindgen(
             None
         });
         ensure!(unknown.is_empty(), "{kernel_name}: {phase} Precondition '{text}' names unknown {unknown:?}");
-        let mut condition = host_expression(text)?;
+        let mut condition = host_expression(kernel_name, gpu_type_paths, text)?;
         rewrite_paths_with(&mut condition, |path| {
             capability(path).then(|| parse_quote! { crate::backends::vulkan::#path })
         });
@@ -467,8 +723,47 @@ pub fn bindgen(
             },
         }
     }
+    Ok((new_preconditions, encode_preconditions))
+}
 
-    // Axis totals count threads and divide by the group size; Groups counts are workgroups.
+/// The grid, workgroup size and dispatch dimensions. Axis totals count threads and divide by the group size; Groups
+/// counts are workgroups.
+fn dispatch_plan(
+    kernel_name: &str,
+    info: &SlangKernel,
+    abi: &SlangEntryPointAbi,
+    gpu_type_paths: &GpuTypePaths,
+) -> anyhow::Result<Dispatch> {
+    let mut axes = Vec::new();
+    let mut groups = Vec::new();
+    let mut group_sizes = Vec::new();
+    for argument in &info.arguments {
+        match &argument.argument_type {
+            SlangArgumentType::Axis {
+                threads: total,
+                threads_in_group: size,
+            } => {
+                axes.push(host_expression(kernel_name, gpu_type_paths, total)?);
+                group_sizes.push(host_expression(kernel_name, gpu_type_paths, size)?);
+            },
+            SlangArgumentType::Groups {
+                groups: count,
+            } => groups.push(host_expression(kernel_name, gpu_type_paths, count)?),
+            SlangArgumentType::Threads {
+                threads: size,
+            } => group_sizes.push(host_expression(kernel_name, gpu_type_paths, size)?),
+            SlangArgumentType::Buffer {
+                ..
+            }
+            | SlangArgumentType::Uniform {
+                ..
+            }
+            | SlangArgumentType::Specialize {
+                ..
+            }
+            | SlangArgumentType::ThreadContext => {},
+        }
+    }
     let axis = !axes.is_empty();
     let grid = if axis {
         axes
@@ -478,10 +773,8 @@ pub fn bindgen(
     while group_sizes.len() < 3 {
         group_sizes.push(parse_quote! { 1u32 });
     }
-    let [group_x, group_y, group_z] = group_sizes.as_slice() else {
-        bail!("{kernel_name}: workgroup has more than three dimensions");
-    };
-    let dispatch = (0..3)
+    ensure!(group_sizes.len() == 3, "{kernel_name}: workgroup has more than three dimensions");
+    let counts = (0..3)
         .map(|index| match (index < grid.len(), abi.group_size[index]) {
             (true, _) if axis => {
                 let size = &group_sizes[index];
@@ -493,26 +786,277 @@ pub fn bindgen(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     // A single axis wider than AXIS_FOLD_GROUPS workgroups folds into rows of them, which the wrapper unfolds.
-    let dispatch = if axis && grid.len() == 1 {
-        let groups = &dispatch[0];
+    let dimensions = if axis && grid.len() == 1 {
+        let groups = &counts[0];
         let fold = AXIS_FOLD_GROUPS;
         quote! {{
             let __dsl_groups: u32 = #groups;
             if __dsl_groups > #fold { [#fold, __dsl_groups.div_ceil(#fold), 1] } else { [__dsl_groups, 1, 1] }
         }}
     } else {
-        quote! { [#(#dispatch),*] }
+        quote! { [#(#counts),*] }
     };
-    let grid_count = grid.len();
-
     let axis_sizes = axis.then(|| quote! { #(#group_sizes)* });
-    let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* #axis_sizes };
-    let references = |name: &Ident| find_ident(host_expressions.clone(), &|ident| ident == name).is_some();
-    let (referenced, referenced_types): (Vec<_>, Vec<_>) =
-        specializations.iter().filter(|(name, ..)| references(name)).map(|(name, ty, ..)| (name, ty)).unzip();
+    Ok(Dispatch {
+        grid,
+        group_sizes,
+        axis_sizes,
+        dimensions,
+    })
+}
 
-    // The native-BF16 SPIR-V on devices with the BF16 type.
-    let spirv = |object: &String, native: &Option<(SlangEntryPointAbi, String)>| match native {
+/// The pipeline field, its construction in `new` and its lookup in `encode`: one pipeline, or one per
+/// `[[PipelineVariants]]` value with its constant in the last specialization slot.
+fn pipeline_code(
+    pipeline_variants: Option<&PipelineVariants>,
+    specializations: &[Specialization],
+    referenced: &[&Ident],
+    block_size: usize,
+    required_subgroup_size: &TokenStream,
+) -> anyhow::Result<PipelineCode> {
+    let block_size = u32::try_from(block_size)?;
+    let specialization = specializations
+        .iter()
+        .map(|specialization| {
+            let id = specialization.id;
+            let value = &specialization.value;
+            quote! { (#id, #value) }
+        })
+        .collect::<Vec<_>>();
+    let key = |variant: Option<TokenStream>| {
+        quote! {
+            VkComputePipelineKey {
+                spirv,
+                entry_point,
+                specialization: vec![#(#specialization,)* #variant],
+                push_constant_size: #block_size,
+                required_subgroup_size: #required_subgroup_size,
+            }
+        }
+    };
+    Ok(match pipeline_variants {
+        None => {
+            let key = key(None);
+            PipelineCode {
+                field: quote! { pipeline: std::sync::Arc<VkComputePipeline> },
+                construction: quote! {
+                    let pipeline = context.compute_pipeline(#key)?;
+                    Ok(Self {
+                        pipeline,
+                        #(#referenced,)*
+                    })
+                },
+                lookup: quote! { &self.pipeline },
+            }
+        },
+        Some(PipelineVariants {
+            selector,
+            paths,
+            id,
+        }) => {
+            let count = paths.len();
+            let indices = 0..count;
+            let keys = paths.iter().map(|path| key(Some(quote! { (#id, #path as u32) })));
+            PipelineCode {
+                field: quote! { pipelines: [std::sync::Arc<VkComputePipeline>; #count] },
+                construction: quote! {
+                    let pipelines = [#(context.compute_pipeline(#keys)?),*];
+                    Ok(Self {
+                        pipelines,
+                        #(#referenced,)*
+                    })
+                },
+                lookup: quote! { match #selector { #(#paths => &self.pipelines[#indices],)* } },
+            }
+        },
+    })
+}
+
+/// The `(entry point name, SPIR-V bytes)` pair `new` builds from: the single entry point of a kernel without type
+/// parameters, or the entry point the data types select.
+fn select_entry(
+    kernel_name: &str,
+    type_parameters: &[Ident],
+    first: &SlangEntryPointVariant,
+    variants: &[SlangEntryPointVariant],
+) -> anyhow::Result<TokenStream> {
+    // A kernel without type parameters has its single entry point; the others select one by data types.
+    if type_parameters.is_empty() {
+        let entry_point = &first.abi.name;
+        let spirv = entry_spirv(&first.spirv, &first.native_bf16);
+        return Ok(quote! { (#entry_point, #spirv) });
+    }
+    let entry_arms = variants
+        .iter()
+        .map(|variant| {
+            let data_types = variant.types.iter().map(|ty| data_type(ty)).collect::<Result<Vec<_>, _>>()?;
+            let entry_point = &variant.abi.name;
+            let spirv = entry_spirv(&variant.spirv, &variant.native_bf16);
+            Ok(quote! { (#(crate::data_type::DataType::#data_types,)*) => (#entry_point, #spirv) })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(quote! {
+        match (#(#type_parameters,)*) {
+            #(#entry_arms,)*
+            _ => return Err(crate::backends::vulkan::VkKernelError::KernelVariant {
+                kernel: #kernel_name,
+                data_types: Box::new([#(#type_parameters),*]),
+            }.into()),
+        }
+    })
+}
+
+/// The kernel's common trait, implemented through the raw binding: `new` and `encode` forward to `new_fn` and
+/// `encode_fn` with the specialization constants and the buffers resolved from the trait's arguments.
+fn public_trait_impl(
+    kernel_name: &str,
+    kernel: &Kernel,
+    gpu_type_paths: &GpuTypePaths,
+    struct_name: &Ident,
+    type_parameters: &[Ident],
+    specializations: &[Specialization],
+    new_fn: &Ident,
+    encode_fn: &Ident,
+) -> anyhow::Result<TokenStream> {
+    let kernel_trait = format_ident!("{kernel_name}Kernel");
+    let new_parameters = kernel
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let name = format_ident!("{}", parameter.name.as_ref());
+            Ok(match &parameter.ty {
+                KernelParameterType::Type => quote! { #name: crate::data_type::DataType },
+                KernelParameterType::Value(text) => {
+                    let ty: Type = gpu_type_paths.resolve_type(text)?;
+                    quote! { #name: #ty }
+                },
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut trait_arguments = Vec::new();
+    let mut conversions = Vec::new();
+    let mut call_arguments = Vec::new();
+    for argument in &kernel.arguments {
+        let name = format_ident!("{}", argument.name.as_ref());
+        let ty = match &argument.ty {
+            KernelArgumentType::Buffer(access) => {
+                let reference = match access {
+                    KernelBufferAccess::Read => quote! { crate::backends::common::BufferRef },
+                    KernelBufferAccess::ReadWrite => quote! { crate::backends::common::BufferMut },
+                };
+                let resolve = quote! {{
+                    let (buffer, range) = #reference::parts(#name);
+                    VkBuffer::resolve(buffer, range)
+                }};
+                conversions.push(if argument.conditional {
+                    quote! { let #name = #name.map(|#name| #resolve); }
+                } else {
+                    quote! { let #name = #resolve; }
+                });
+                quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
+            },
+            KernelArgumentType::Value(text) => {
+                let ty: Type = gpu_type_paths.resolve_type(text)?;
+                quote! { #ty }
+            },
+        };
+        trait_arguments.push(if argument.conditional {
+            quote! { #name: Option<#ty> }
+        } else {
+            quote! { #name: #ty }
+        });
+        call_arguments.push(name);
+    }
+    let specialization_names = specializations.iter().map(|specialization| &specialization.name);
+    Ok(quote! {
+        #[allow(clippy::style, clippy::complexity, clippy::perf)]
+        impl crate::backends::common::kernel::#kernel_trait for #struct_name {
+            type Backend = crate::backends::vulkan::Vulkan;
+
+            #[allow(non_snake_case)]
+            fn new(context: &VkContext #(, #new_parameters)*) -> Result<Self, Error> {
+                #struct_name::#new_fn(&context.arc() #(, #type_parameters)* #(, #specialization_names)*)
+            }
+
+            fn encode(&self, #(#trait_arguments,)* command_buffer: &mut VkCommandBufferEncoding) {
+                #(#conversions)*
+                // SAFETY: as for the CPU kernels, the common contract makes callers pass ranges that cover every
+                // element the kernel indexes, aliasing only where the kernel defines it.
+                unsafe { #struct_name::#encode_fn(self, #(#call_arguments,)* command_buffer) }
+            }
+        }
+    })
+}
+
+/// Every type of the canonical GPU type files, across the modules that declare them.
+fn canonical_types<'a>(gpu_types: &[&'a GpuTypes]) -> impl Iterator<Item = &'a GpuType> {
+    gpu_types.iter().flat_map(|types| types.files.iter()).flat_map(|file| &file.types)
+}
+
+/// The canonical enum named `short`.
+fn canonical_enum<'a>(
+    gpu_types: &[&'a GpuTypes],
+    short: &str,
+) -> Option<&'a GpuTypeEnum> {
+    canonical_types(gpu_types).find_map(|candidate| match candidate {
+        GpuType::Enum(candidate) if candidate.name.as_ref() == short => Some(candidate),
+        _ => None,
+    })
+}
+
+/// Every entry point's ABI, each variant's native-BF16 ABI included.
+fn variant_abis(variants: &[SlangEntryPointVariant]) -> impl Iterator<Item = &SlangEntryPointAbi> {
+    variants.iter().flat_map(|variant| once(&variant.abi).chain(variant.native_bf16.iter().map(|(abi, _)| abi)))
+}
+
+/// The specialization id of `argument`, the constant named for it in the kernel's wrapper.
+fn specialization_id(
+    kernel_name: &str,
+    abi: &SlangEntryPointAbi,
+    argument: &str,
+) -> anyhow::Result<u32> {
+    let constant = specialization_name(kernel_name, argument);
+    abi.specialization_ids
+        .iter()
+        .find_map(|(name, id)| (*name == constant).then_some(*id))
+        .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))
+}
+
+/// A host expression from its reflected text, with enum paths qualified.
+fn host_expression(
+    kernel_name: &str,
+    gpu_type_paths: &GpuTypePaths,
+    text: &str,
+) -> anyhow::Result<Expr> {
+    let mut expression =
+        syn::parse_str::<Expr>(text).with_context(|| format!("{kernel_name}: malformed host expression '{text}'"))?;
+    rewrite_paths_with(&mut expression, |path| qualify_enum_path(path, gpu_type_paths));
+    Ok(expression)
+}
+
+// A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
+fn word(
+    kernel_name: &str,
+    gpu_type_paths: &GpuTypePaths,
+    name: &Ident,
+    ty: &Type,
+    scalars: &[&str],
+) -> anyhow::Result<TokenStream> {
+    let text = ty.to_token_stream().to_string().replace(" :: ", "::");
+    match text.as_str() {
+        _ if canonical_enum_name(gpu_type_paths, &text).is_some() => Ok(quote! { (#name as u32) }),
+        "bool" if scalars.contains(&"bool") => Ok(quote! { u32::from(#name) }),
+        scalar if scalars.contains(&scalar) => Ok(quote! { #name }),
+        other => bail!("{kernel_name}: unsupported type '{other}' for '{name}'"),
+    }
+}
+
+// The native-BF16 SPIR-V on devices with the BF16 type.
+fn entry_spirv(
+    object: &str,
+    native: &Option<(SlangEntryPointAbi, String)>,
+) -> TokenStream {
+    match native {
         Some((_, native)) => quote! {
             if context.physical_device().capabilities.contains(crate::backends::vulkan::VkDeviceCapabilities::BF16_TYPE) {
                 include_bytes!(#native) as &[u8]
@@ -521,244 +1065,7 @@ pub fn bindgen(
             }
         },
         None => quote! { include_bytes!(#object) as &[u8] },
-    };
-    let entry_arms = variants
-        .iter()
-        .map(|variant| {
-            let data_types = variant.types.iter().map(|ty| data_type(ty)).collect::<Result<Vec<_>, _>>()?;
-            let entry_point = &variant.abi.name;
-            let spirv = spirv(&variant.spirv, &variant.native_bf16);
-            Ok(quote! { (#(crate::data_type::DataType::#data_types,)*) => (#entry_point, #spirv) })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    // A kernel without type parameters has its single entry point; the others select one by data types.
-    let entry_selection = match type_parameters.is_empty() {
-        true => {
-            let entry_point = &abi.name;
-            let spirv = spirv(&first.spirv, &first.native_bf16);
-            quote! { (#entry_point, #spirv) }
-        },
-        false => quote! {
-            match (#(#type_parameters,)*) {
-                #(#entry_arms,)*
-                _ => return Err(crate::backends::vulkan::VkKernelError::KernelVariant {
-                    kernel: #kernel_name,
-                    data_types: Box::new([#(#type_parameters),*]),
-                }.into()),
-            }
-        },
-    };
-
-    let (specialization_names, specialization_types, specialization) = specializations
-        .iter()
-        .map(|(name, ty, value, id)| (name, ty, quote! { (#id, #value) }))
-        .multiunzip::<(Vec<_>, Vec<_>, Vec<_>)>();
-    let block_size = abi.block_size;
-    let block_size_u32 = u32::try_from(block_size)?;
-    // A pinned subgroup size, which the workgroup must fill with whole subgroups within the device's subgroup limit.
-    let required_subgroup_size = match info.required_subgroup_size.as_deref().map(host_expression).transpose()? {
-        Some(size) => quote! { Some(#size) },
-        None => quote! { None },
-    };
-    let key = |variant: Option<TokenStream>| {
-        quote! {
-            VkComputePipelineKey {
-                spirv,
-                entry_point,
-                specialization: vec![#(#specialization,)* #variant],
-                push_constant_size: #block_size_u32,
-                required_subgroup_size: #required_subgroup_size,
-            }
-        }
-    };
-    // One pipeline, or one per `[[PipelineVariants]]` value with its constant in the last specialization slot.
-    let (pipeline_field, pipelines, pipeline) = match &pipeline_variants {
-        None => {
-            let key = key(None);
-            (
-                quote! { pipeline: std::sync::Arc<VkComputePipeline> },
-                quote! {
-                    let pipeline = context.compute_pipeline(#key)?;
-                    Ok(Self {
-                        pipeline,
-                        #(#referenced,)*
-                    })
-                },
-                quote! { &self.pipeline },
-            )
-        },
-        Some((selector, paths, id)) => {
-            let (count, indices) = (paths.len(), 0..paths.len());
-            let keys = paths.iter().map(|path| key(Some(quote! { (#id, #path as u32) })));
-            (
-                quote! { pipelines: [std::sync::Arc<VkComputePipeline>; #count] },
-                quote! {
-                    let pipelines = [#(context.compute_pipeline(#keys)?),*];
-                    Ok(Self {
-                        pipelines,
-                        #(#referenced,)*
-                    })
-                },
-                quote! { match #selector { #(#paths => &self.pipelines[#indices],)* } },
-            )
-        },
-    };
-    let (read_count, write_count) = (reads.len(), writes.len());
-
-    // A public kernel's common trait owns `new` and `encode`, so its raw binding takes other names that never shadow the
-    // trait methods on the concrete type.
-    let (new_fn, encode_fn) = if info.public {
-        (format_ident!("create"), format_ident!("encode_ranges"))
-    } else {
-        (format_ident!("new"), format_ident!("encode"))
-    };
-    // A public kernel implements its common trait through the raw binding.
-    let trait_impl = if info.public {
-        let kernel_trait = format_ident!("{kernel_name}Kernel");
-        let new_parameters = kernel
-            .parameters
-            .iter()
-            .map(|parameter| {
-                let name = format_ident!("{}", parameter.name.as_ref());
-                Ok(match &parameter.ty {
-                    KernelParameterType::Type => quote! { #name: crate::data_type::DataType },
-                    KernelParameterType::Value(text) => {
-                        let ty: Type = gpu_type_paths.resolve_type(text)?;
-                        quote! { #name: #ty }
-                    },
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let (mut trait_arguments, mut conversions, mut call_arguments) = (Vec::new(), Vec::new(), Vec::new());
-        for argument in &kernel.arguments {
-            let name = format_ident!("{}", argument.name.as_ref());
-            let ty = match &argument.ty {
-                KernelArgumentType::Buffer(access) => {
-                    let reference = match access {
-                        KernelBufferAccess::Read => quote! { crate::backends::common::BufferRef },
-                        KernelBufferAccess::ReadWrite => quote! { crate::backends::common::BufferMut },
-                    };
-                    let resolve = quote! {{
-                        let (buffer, range) = #reference::parts(#name);
-                        VkBuffer::resolve(buffer, range)
-                    }};
-                    conversions.push(if argument.conditional {
-                        quote! { let #name = #name.map(|#name| #resolve); }
-                    } else {
-                        quote! { let #name = #resolve; }
-                    });
-                    quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
-                },
-                KernelArgumentType::Value(text) => {
-                    let ty: Type = gpu_type_paths.resolve_type(text)?;
-                    quote! { #ty }
-                },
-            };
-            trait_arguments.push(if argument.conditional {
-                quote! { #name: Option<#ty> }
-            } else {
-                quote! { #name: #ty }
-            });
-            call_arguments.push(name);
-        }
-        quote! {
-            #[allow(clippy::style, clippy::complexity, clippy::perf)]
-            impl crate::backends::common::kernel::#kernel_trait for #struct_name {
-                type Backend = crate::backends::vulkan::Vulkan;
-
-                #[allow(non_snake_case)]
-                fn new(context: &VkContext #(, #new_parameters)*) -> Result<Self, Error> {
-                    #struct_name::#new_fn(&context.arc() #(, #type_parameters)* #(, #specialization_names)*)
-                }
-
-                fn encode(&self, #(#trait_arguments,)* command_buffer: &mut VkCommandBufferEncoding) {
-                    #(#conversions)*
-                    // SAFETY: as for the CPU kernels, the common contract makes callers pass ranges that cover every
-                    // element the kernel indexes, aliasing only where the kernel defines it.
-                    unsafe { #struct_name::#encode_fn(self, #(#call_arguments,)* command_buffer) }
-                }
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    Ok(quote! {
-        use crate::backends::vulkan::{
-            Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkComputePipelineKey, VkContext,
-            check_work_group,
-        };
-
-
-        #(#stride_checks)*
-        #(#layout_checks)*
-
-        #[allow(non_snake_case)]
-        pub struct #struct_name {
-            #pipeline_field,
-            #(#referenced: #referenced_types,)*
-        }
-
-        impl #struct_name {
-            #[allow(non_snake_case, clippy::too_many_arguments)]
-            pub fn #new_fn(
-                context: &std::sync::Arc<VkContext>
-                #(, #type_parameters: crate::data_type::DataType)*
-                #(, #specialization_names: #specialization_types)*
-            ) -> Result<Self, Error> {
-                let (entry_point, spirv) = #entry_selection;
-                #(#specialization_conditions)*
-                #(#new_preconditions)*
-                check_work_group(
-                    context.physical_device(),
-                    #kernel_name,
-                    [#group_x, #group_y, #group_z],
-                    #required_subgroup_size,
-                )?;
-                #pipelines
-            }
-
-            /// Records one dispatch. Optional-argument presence is asserted before anything is recorded,
-            /// and an empty dispatch records nothing. Violated preconditions panic; a failed upload, an
-            /// out-of-bounds range or a grid past the device limit ends the recording, as a device error does.
-            ///
-            /// # Safety
-            /// Every range must start at an element of the constructed data type, aligned to it, and
-            /// cover every element the kernel indexes for these scalar arguments. Ranges written by the
-            /// kernel must not alias other arguments unless the kernel defines that aliasing. Range
-            /// bounds are checked; shader indexing within them is not.
-            #[allow(non_snake_case, clippy::too_many_arguments)]
-            pub unsafe fn #encode_fn(
-                &self,
-                #(#encode_arguments,)*
-                command_buffer: &mut VkCommandBufferEncoding,
-            ) {
-                #(let #referenced = self.#referenced;)*
-                #(#conditions)*
-                #(#encode_preconditions)*
-                let __dsl_grid: [u32; #grid_count] = [#(#grid),*];
-                if __dsl_grid.contains(&0) {
-                    return;
-                }
-                let mut __dsl_block = [0u8; #block_size];
-                #(#packing)*
-                let __dsl_reads: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #read_count] = [#(#reads),*];
-                let __dsl_writes: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #write_count] = [#(#writes),*];
-                unsafe {
-                    command_buffer.encode_dispatch(
-                        #kernel_name,
-                        #pipeline,
-                        &__dsl_block,
-                        #dispatch,
-                        __dsl_reads.into_iter().flatten(),
-                        __dsl_writes.into_iter().flatten(),
-                    )
-                }
-            }
-        }
-
-        #trait_impl
-    })
+    }
 }
 
 /// The `DataType` of a Slang scalar type.
