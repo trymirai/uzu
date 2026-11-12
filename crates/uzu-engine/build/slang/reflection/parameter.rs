@@ -5,7 +5,7 @@ use shader_slang::reflection::{Decl, UserAttribute};
 
 use crate::{
     common::kernel::{KernelParameter, KernelParameterType},
-    slang::types::slang2rust,
+    slang::{reflection::attribute_arguments::string_arguments, types::slang2rust},
 };
 
 #[derive(Debug)]
@@ -29,42 +29,48 @@ pub struct SlangParameter {
     pub ty: SlangParameterType,
 }
 
+enum ParameterAttributeType<'a> {
+    Variants {
+        variants: Vec<&'a str>,
+    },
+    GroupShared {
+        length: &'a str,
+    },
+}
+
+struct ParameterAttribute<'a> {
+    name: &'a str,
+    ty: ParameterAttributeType<'a>,
+}
+
+enum ParameterGenericType {
+    Type {
+        constraints: Vec<String>,
+    },
+    Value {
+        value_type: String,
+    },
+}
+
+struct ParameterGeneric<'a> {
+    name: &'a str,
+    ty: ParameterGenericType,
+}
+
 impl SlangParameter {
     pub fn from_reflection(
         function_attributes: &[&UserAttribute],
         generic_decl: Option<&Decl>,
     ) -> anyhow::Result<Vec<Self>> {
-        enum ParameterAttributeType<'a> {
-            Variants {
-                variants: Vec<&'a str>,
-            },
-            GroupShared {
-                length: &'a str,
-            },
-        }
-
-        struct ParameterAttribute<'a> {
-            name: &'a str,
-            ty: ParameterAttributeType<'a>,
-        }
-
         let parameters_attributes = function_attributes
             .iter()
             .map(|user_attribute| {
                 Ok(match user_attribute.name() {
                     Some("Variants") => {
-                        if user_attribute.argument_count() != 2 {
-                            bail!("expected 2 arguments, found {}", user_attribute.argument_count());
-                        }
+                        let [name, variants] = string_arguments::<2>(user_attribute)?;
+                        let name = name.trim();
 
-                        let name = user_attribute
-                            .argument_value_string(0)
-                            .context("cannot get name argument string value")?
-                            .trim();
-
-                        let variants = user_attribute
-                            .argument_value_string(1)
-                            .context("cannot get variants argument string value")?
+                        let variants = variants
                             .split(',')
                             .map(|variant| variant.trim())
                             .filter(|variant| !variant.is_empty())
@@ -78,19 +84,9 @@ impl SlangParameter {
                         })
                     },
                     Some("GroupShared") => {
-                        if user_attribute.argument_count() != 2 {
-                            bail!("expected 2 arguments, found {}", user_attribute.argument_count());
-                        }
-
-                        let name = user_attribute
-                            .argument_value_string(0)
-                            .context("cannot get name argument string value")?
-                            .trim();
-
-                        let length = user_attribute
-                            .argument_value_string(1)
-                            .context("cannot get length argument string value")?
-                            .trim();
+                        let [name, length] = string_arguments::<2>(user_attribute)?;
+                        let name = name.trim();
+                        let length = length.trim();
 
                         Some(ParameterAttribute {
                             name,
@@ -105,20 +101,6 @@ impl SlangParameter {
             .filter_map(|attr| attr.transpose())
             .collect::<anyhow::Result<Vec<_>>>()
             .context("failed to collect parameter attributes")?;
-
-        enum ParameterGenericType {
-            Type {
-                constraints: Vec<String>,
-            },
-            Value {
-                value_type: String,
-            },
-        }
-
-        struct ParameterGeneric<'a> {
-            name: &'a str,
-            ty: ParameterGenericType,
-        }
 
         let parameters_generics = generic_decl
             .map(|generic_decl| -> anyhow::Result<_> {

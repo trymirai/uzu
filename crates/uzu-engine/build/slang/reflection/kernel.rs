@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 use itertools::Itertools;
 use shader_slang::{
     DeclKind,
@@ -14,7 +14,7 @@ use crate::{
     },
     slang::{
         SlangParameterType,
-        reflection::{SlangArgument, SlangParameter},
+        reflection::{SlangArgument, SlangParameter, attribute_arguments::string_arguments},
     },
 };
 
@@ -60,17 +60,8 @@ impl SlangKernel {
             .iter()
             .map(|user_attribute| {
                 if user_attribute.name() == Some("Constraint") {
-                    if user_attribute.argument_count() != 1 {
-                        bail!("expected 1 argument, found {}", user_attribute.argument_count());
-                    }
-
-                    Ok(Some(
-                        user_attribute
-                            .argument_value_string(0)
-                            .context("cannot get name argument string value")?
-                            .trim()
-                            .to_string(),
-                    ))
+                    let [constraint] = string_arguments::<1>(user_attribute)?;
+                    Ok(Some(constraint.trim().to_string()))
                 } else {
                     Ok(None)
                 }

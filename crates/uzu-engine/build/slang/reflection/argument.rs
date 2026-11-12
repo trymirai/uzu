@@ -11,7 +11,7 @@ use crate::{
         identifiers::ArgumentName,
         kernel::{KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
     },
-    slang::types::slang2rust,
+    slang::{reflection::attribute_arguments::string_arguments, types::slang2rust},
 };
 
 #[derive(Debug)]
@@ -70,16 +70,13 @@ impl SlangArgument {
             }
         })?;
 
-        let get_condition = |user_attributes: &mut HashMap<&str, &UserAttribute>| {
+        let get_condition = |user_attributes: &mut HashMap<&str, &UserAttribute>| -> anyhow::Result<Option<String>> {
             let Some(optional_attribute) = user_attributes.remove("Optional") else {
                 return Ok(None);
             };
 
-            if optional_attribute.argument_count() != 1 {
-                bail!("optional expected 1 argument, found {}", optional_attribute.argument_count());
-            }
-
-            Ok(Some(optional_attribute.argument_value_string(0).context("optional has no condition")?.to_string()))
+            let [condition] = string_arguments::<1>(optional_attribute)?;
+            Ok(Some(condition.to_string()))
         };
 
         let no_attributes = |user_attributes: &HashMap<&str, &UserAttribute>, name: &str| {
@@ -93,9 +90,7 @@ impl SlangArgument {
         let mut binding_type = None;
         let mut pipeline_variants = false;
         let argument_type = if let Some(specialize_attribute) = user_attributes.remove("Specialize") {
-            if specialize_attribute.argument_count() != 0 {
-                bail!("specialize expected no argument, found {}", specialize_attribute.argument_count());
-            }
+            string_arguments::<0>(specialize_attribute)?;
 
             let condition = get_condition(&mut user_attributes)?;
             no_attributes(&user_attributes, "specialize")?;
@@ -104,13 +99,7 @@ impl SlangArgument {
                 condition,
             }
         } else if let Some(axis_attribute) = user_attributes.remove("Axis") {
-            if axis_attribute.argument_count() != 2 {
-                bail!("axis expected 2 argument, found {}", axis_attribute.argument_count());
-            }
-
-            let threads = axis_attribute.argument_value_string(0).context("axis has no threads")?.to_string();
-            let threads_in_group =
-                axis_attribute.argument_value_string(1).context("axis has no threads in group")?.to_string();
+            let [threads, threads_in_group] = string_arguments::<2>(axis_attribute)?.map(str::to_string);
 
             no_attributes(&user_attributes, "axis")?;
 
@@ -119,11 +108,7 @@ impl SlangArgument {
                 threads_in_group,
             }
         } else if let Some(groups_attribute) = user_attributes.remove("Groups") {
-            if groups_attribute.argument_count() != 1 {
-                bail!("groups expected 1 argument, found {}", groups_attribute.argument_count());
-            }
-
-            let groups = groups_attribute.argument_value_string(0).context("groups has no count")?.to_string();
+            let [groups] = string_arguments::<1>(groups_attribute)?.map(str::to_string);
 
             no_attributes(&user_attributes, "groups")?;
 
@@ -131,11 +116,7 @@ impl SlangArgument {
                 groups,
             }
         } else if let Some(threads_attribute) = user_attributes.remove("Threads") {
-            if threads_attribute.argument_count() != 1 {
-                bail!("threads expected 1 argument, found {}", threads_attribute.argument_count());
-            }
-
-            let threads = threads_attribute.argument_value_string(0).context("threads has no count")?.to_string();
+            let [threads] = string_arguments::<1>(threads_attribute)?.map(str::to_string);
 
             no_attributes(&user_attributes, "threads")?;
 
