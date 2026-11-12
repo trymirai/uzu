@@ -72,6 +72,10 @@ pub struct HarmonyEncodingImpl {
 }
 
 impl HarmonyEncodingImpl {
+    pub fn grammar_trigger(&self) -> Option<&str> {
+        Some("<|channel|>final<|message|>")
+    }
+
     pub fn new(
         config: HarmonyConfig,
         tokenizer_location: TokenizerLocation,

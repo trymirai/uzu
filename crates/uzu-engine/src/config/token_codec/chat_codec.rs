@@ -31,9 +31,3 @@ pub struct ChatCodecConfig {
     #[serde(default)] // TODO: ??? inconsistency in converted models in registry workaround, remove when resolved
     pub reasoning_config: Option<ReasoningConfig>,
 }
-
-impl ChatCodecConfig {
-    pub fn end_of_thinking_tag(&self) -> Option<&str> {
-        self.response_format.as_ref()?.prefixes.last().map(String::as_str)
-    }
-}

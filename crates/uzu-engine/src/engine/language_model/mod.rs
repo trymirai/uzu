@@ -6,7 +6,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::{model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig},
+    config::model::language_model::LanguageModelConfig,
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
@@ -31,7 +31,6 @@ pub struct LanguageModel<B: Backend> {
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
-    end_of_thinking_tag: Option<String>,
     tokenizer: Arc<Tokenizer>,
     vocab_size: usize,
 }
@@ -98,13 +97,6 @@ impl<B: Backend> Engine<B> {
         weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
-        let end_of_thinking_tag = match &config.token_codec_config {
-            AnyTokenCodecConfig::ChatCodecConfig(token_codec_config) => {
-                token_codec_config.end_of_thinking_tag().map(str::to_owned)
-            },
-            AnyTokenCodecConfig::RawTextCodecConfig(_) => None,
-        };
-
         let vocab_size = config.decoder_config.vocab_size as usize;
 
         Ok(LanguageModel {
@@ -114,7 +106,6 @@ impl<B: Backend> Engine<B> {
             sampling,
             context_ring_update,
             generation_config,
-            end_of_thinking_tag,
             tokenizer,
             vocab_size,
         })
@@ -163,10 +154,6 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn generation_config(&self) -> &GenerationConfig {
         &self.generation_config
-    }
-
-    pub fn end_of_thinking_tag(&self) -> Option<&str> {
-        self.end_of_thinking_tag.as_deref()
     }
 
     pub fn tokenizer(&self) -> &Arc<Tokenizer> {
