@@ -130,10 +130,11 @@ fn run<B: Backend, T: DataTypeRepr>(
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
     let tolerance = 5e-3;
-    // MXU also quantizes attention probabilities to u8.
+    // MXU also quantizes attention probabilities to u8: queries that see few keys have large probabilities, and 64 tree
+    // queries over a 16-key ring with a 17-key window land four BF16 steps (1.6e-2 near 0.63) from the CPU.
     #[cfg(backend = "metal")]
     let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
-        1.5e-2
+        2e-2
     } else {
         tolerance
     };
