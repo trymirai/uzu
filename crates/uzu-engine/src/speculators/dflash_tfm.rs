@@ -26,6 +26,7 @@ use crate::{
     },
     engine::language_model::grammar::Grammar,
     safetensors::{ParameterLoader, ParameterLoaderError},
+    speculators::tree_budget::{BudgetLatencies, LatenciesFile, TreeBudget},
     trie::TrieNode,
     utils::{
         file,
@@ -59,6 +60,8 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     Weaver(#[from] WeaverNewError<B>),
     #[error("confidence head error: {0}")]
     ConfidenceHead(#[from] ConfidenceHeadError<B>),
+    #[error("tree budget: {0}")]
+    TreeBudget(String),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -80,7 +83,7 @@ fn default_prune_sigma() -> Option<f32> {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct DFlashTfmTreeShape {
-    pub tree_budget: u32,
+    pub tree_budget: TreeBudget,
     pub max_tree_depth: u32,
     pub dflash_depth_override: Option<u32>,
     pub construction_method: DFlashTfmTreeConstructionMethod,
@@ -94,6 +97,15 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     sampling: Sampling<B>,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
+    budget_latencies: Option<BudgetLatencies>,
+}
+
+/// This device's entry of a per-device file (`shapes.json`, `latencies.json`), else its `"default"` entry.
+fn for_device<T>(
+    mut entries: HashMap<String, T>,
+    device_name: Option<&str>,
+) -> Option<T> {
+    device_name.and_then(|device_name| entries.remove(device_name)).or_else(|| entries.remove("default"))
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
@@ -102,15 +114,30 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_embedding: &Embedding<B>,
         context: Arc<B::Context>,
     ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
-        let mut shapes: HashMap<String, DFlashTfmTreeShape> =
+        let shapes: HashMap<String, DFlashTfmTreeShape> =
             serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
 
-        let Some(shape) = context
-            .device_name()
-            .and_then(|device_name| shapes.remove(device_name))
-            .or_else(|| shapes.remove("default"))
-        else {
+        let Some(shape) = for_device(shapes, context.device_name()) else {
             return Ok(None);
+        };
+
+        let budget_latencies = match shape.tree_budget {
+            TreeBudget::Fixed(_) => None,
+            TreeBudget::Dynamic => {
+                if !matches!(shape.construction_method, DFlashTfmTreeConstructionMethod::Weaver { .. }) {
+                    return Err(DFlashSpeculatorLoadError::TreeBudget(
+                        "a dynamic tree budget needs Weaver tree construction".to_string(),
+                    ));
+                }
+                let latencies: LatenciesFile =
+                    serde_json::from_slice(&file::read(model_path.join("latencies.json")).await?)?;
+                let step_ms = for_device(latencies, context.device_name()).ok_or_else(|| {
+                    DFlashSpeculatorLoadError::TreeBudget(
+                        "latencies.json has no entry for this device and no \"default\" one".to_string(),
+                    )
+                })?;
+                Some(BudgetLatencies::new(&step_ms).map_err(DFlashSpeculatorLoadError::TreeBudget)?)
+            },
         };
 
         let data_type = DataType::BF16;
@@ -168,6 +195,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             sampling,
             config,
             shape,
+            budget_latencies,
         }))
     }
 
@@ -192,6 +220,20 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         self.dflash
             .encode_accept(target_features, accepted_indices, state, command_buffer)
             .map_err(DFlashTreeError::DFlash)
+    }
+
+    /// The fixed budget, or the largest a dynamic one may choose.
+    fn largest_budget(
+        &self,
+        budget: TreeBudget,
+    ) -> Result<u32, DFlashTreeError<B>> {
+        match (budget, &self.budget_latencies) {
+            (TreeBudget::Fixed(budget), _) => Ok(budget),
+            (TreeBudget::Dynamic, Some(latencies)) => Ok(latencies.largest()),
+            (TreeBudget::Dynamic, None) => Err(DFlashTreeError::InvalidTreeShape(
+                "a dynamic tree budget needs the latencies.json of a speculator loaded with it".to_string(),
+            )),
+        }
     }
 
     pub fn make_shape(
@@ -226,6 +268,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         target_output_token: u32,
         target_embedding: &Embedding<B>,
         shape: DFlashTfmTreeShape,
+        tokens_per_pass: Option<f32>,
         sampling_method: &SamplingMethod,
         grammar: Option<&mut Grammar>,
         prng: &PRng,
@@ -233,7 +276,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         command_buffer_name: Option<&str>,
         timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
     ) -> Result<TrieNode, DFlashTreeError<B>> {
-        assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
+        let largest_budget = self.largest_budget(shape.tree_budget)?;
+        assert!(largest_budget >= 2, "tree budget needs at least a root and one draft token");
 
         let block_size = self.dflash.block_size();
         let dflash_depth = shape.dflash_depth_override.unwrap_or(block_size);
@@ -253,16 +297,16 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let nodes = match shape.construction_method {
             DFlashTfmTreeConstructionMethod::Argmax => {
-                if shape.tree_budget > dflash_depth {
+                if largest_budget > dflash_depth {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
                         "argmax chain of {} nodes needs {} draft rows, dflash depth is {}",
-                        shape.tree_budget,
-                        shape.tree_budget - 1,
+                        largest_budget,
+                        largest_budget - 1,
                         dflash_depth
                     )));
                 }
-                let chain_length = shape.tree_budget - 1;
-                let mut nodes = Vec::with_capacity(shape.tree_budget as usize);
+                let chain_length = largest_budget - 1;
+                let mut nodes = Vec::with_capacity(largest_budget as usize);
                 nodes.push(ProposalNode {
                     token_id: target_output_token,
                     depth: 0,
@@ -358,7 +402,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &depth_seeds,
                     target_output_token,
                     WeaverTreeShape {
-                        tree_budget: shape.tree_budget,
+                        tree_budget: largest_budget,
                         max_depth: shape.max_tree_depth,
                         dflash_depth,
                         rounds,
@@ -409,7 +453,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         }
 
         let mut trie = recursive_build(&nodes, 0, root_position, grammar, prng);
-        trie.prune_to_budget(shape.tree_budget as usize);
+        let budget = match &self.budget_latencies {
+            Some(latencies) if shape.tree_budget == TreeBudget::Dynamic => latencies.choose(&trie, tokens_per_pass),
+            _ => largest_budget,
+        };
+        trie.prune_to_budget(budget as usize);
         Ok(trie)
     }
 }

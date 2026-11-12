@@ -445,6 +445,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     final_hidden.subrange(..)
                 };
 
+            // The tokens a decode pass of this request has yielded so far: a dynamic tree budget prices step time
+            // at this rate.
+            let tokens_per_pass = (self.metrics.num_decode_forward_passes > 0)
+                .then(|| self.metrics.num_tokens_accepted as f32 / self.metrics.num_decode_forward_passes as f32);
+
             // TODO: CPU-bubble: for next `batch_dim`. To remove we need to
             // contruct the trie nodes GPU-side and have `batch_dim` carry a
             // GPU representation.
@@ -455,6 +460,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     tokens[tokens.len() - 1] as u32,
                     self.model.decoder.embedding(),
                     shape,
+                    tokens_per_pass,
                     &self.options.sampling_method,
                     self.options.grammar.as_mut(),
                     &self.model_state.prng,

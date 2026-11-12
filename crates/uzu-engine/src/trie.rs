@@ -87,12 +87,8 @@ impl TrieNode {
         1 + self.next.iter().map(TrieNode::node_count).sum::<usize>()
     }
 
-    pub fn prune_to_budget(
-        &mut self,
-        budget: usize,
-    ) {
-        assert!(budget > 0, "budget must keep at least the root");
-
+    /// The log-probability of the path from the root to every node (the sum of `logprob` along it), in pre-order.
+    fn path_logprobs(&self) -> Vec<f32> {
         fn collect_logprobs(
             node: &TrieNode,
             parent_logprob: f32,
@@ -106,6 +102,42 @@ impl TrieNode {
         }
         let mut logprobs = Vec::new();
         collect_logprobs(self, 0.0, &mut logprobs);
+        logprobs
+    }
+
+    /// For every budget, the expected number of accepted draft tokens among the nodes `prune_to_budget(budget)`
+    /// keeps: the sum of the path probabilities of the budget - 1 most likely nodes besides the root. Exact when a
+    /// path probability is the probability that the target's path passes through the node, as the confidence head's
+    /// calibrated scores are.
+    pub fn expected_accepted_tokens(
+        &self,
+        budgets: &[u32],
+    ) -> Box<[f32]> {
+        let mut probabilities = self.path_logprobs()[1..].iter().map(|logprob| logprob.exp()).collect::<Vec<_>>();
+        probabilities.sort_by(|a, b| b.total_cmp(a));
+        let cumulative = probabilities
+            .iter()
+            .scan(0.0f32, |sum, probability| {
+                *sum += probability;
+                Some(*sum)
+            })
+            .collect::<Vec<_>>();
+        budgets
+            .iter()
+            .map(|&budget| match (budget as usize).saturating_sub(1).min(cumulative.len()) {
+                0 => 0.0,
+                draft => cumulative[draft - 1],
+            })
+            .collect()
+    }
+
+    pub fn prune_to_budget(
+        &mut self,
+        budget: usize,
+    ) {
+        assert!(budget > 0, "budget must keep at least the root");
+
+        let logprobs = self.path_logprobs();
         if budget >= logprobs.len() {
             return;
         }

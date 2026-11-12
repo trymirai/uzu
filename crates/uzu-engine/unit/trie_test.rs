@@ -231,3 +231,20 @@ fn test_trie_prune_to_budget_tie_keeps_parent() {
     root.prune_to_budget(2);
     verify_pruned(&root, &[0, 1]);
 }
+
+/// The expected accepted draft tokens of a budget are the sum of the path probabilities of the budget - 1 most likely
+/// nodes besides the root; the sample tree's paths are -0.1, -0.2, -0.3 (children of the root), -0.5 and -3.0
+/// (grandchildren), summed by hand here.
+#[uzu_test]
+fn test_trie_expected_accepted_tokens() {
+    let sorted = [-0.1f32, -0.2, -0.3, -0.5, -3.0].map(f32::exp);
+    let expected = |draft: usize| sorted[..draft].iter().sum::<f32>();
+    let got = sample_tree().expected_accepted_tokens(&[1, 2, 4, 6, 100]);
+    for (value, want) in got.iter().zip([0.0, expected(1), expected(3), expected(5), expected(5)]) {
+        assert!((value - want).abs() <= 1e-6 * (1.0 + want), "{got:?}");
+    }
+    // The budget-4 sum covers exactly the nodes prune_to_budget(4) keeps.
+    let mut pruned = sample_tree();
+    pruned.prune_to_budget(4);
+    verify_pruned(&pruned, &[0, 1, 2, 3]);
+}
