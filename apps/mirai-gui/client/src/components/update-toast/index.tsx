@@ -1,6 +1,6 @@
 import React from "react";
 import { twMerge } from "tailwind-merge";
-import { IconArrowDownCircle, IconCrossSmall } from "@/components/icons/app-icons";
+import { CircleArrowDownIcon, XIcon } from "@/components/icons/app-icons";
 import { Button } from "@/components/ui/button";
 import {
   SURFACE_BUTTON_SMALL_CLASSNAME,
@@ -37,7 +37,7 @@ export const UpdateToast: React.FC<UpdateToastProps> = ({
         visible ? "animate-uzu-toast-in" : "animate-uzu-toast-out",
       )}
     >
-      <IconArrowDownCircle size={18} aria-hidden className="mt-px shrink-0 text-text-secondary" />
+      <CircleArrowDownIcon size={18} aria-hidden className="mt-px shrink-0 text-text-secondary" />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <p className="text-[14px] font-[500] leading-[1.35] text-text-primary tabular-nums">
@@ -71,7 +71,7 @@ export const UpdateToast: React.FC<UpdateToastProps> = ({
         aria-label="Dismiss"
         className={twMerge(SURFACE_CLOSE_CLASSNAME, "-mt-1 size-6")}
       >
-        <IconCrossSmall size={16} aria-hidden />
+        <XIcon size={16} aria-hidden />
       </button>
     </div>
   );

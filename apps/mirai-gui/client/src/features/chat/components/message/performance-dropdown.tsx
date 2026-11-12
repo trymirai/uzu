@@ -1,4 +1,4 @@
-import { IconGauge } from "@/components/icons/app-icons";
+import { ZapIcon } from "@/components/icons/app-icons";
 import { Fragment } from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { PerfStats } from "@/types/message";
@@ -40,7 +40,7 @@ export function PerformanceDropdown({ perf, disabled = false }: PerformanceDropd
       aria-label="Performance"
       className="flex size-8 items-center justify-center rounded-lg text-label-muted transition-colors duration-150 ease-out enabled:hover:bg-bg-hover enabled:hover:text-label-title outline-hidden focus-visible:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
     >
-      <IconGauge size={16} aria-hidden />
+      <ZapIcon size={16} aria-hidden />
     </button>
   );
   if (disabled) return button;

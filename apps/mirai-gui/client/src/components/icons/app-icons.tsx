@@ -24,7 +24,7 @@ function Svg({ size = 24, children, ...rest }: IconProps & { children: React.Rea
   );
 }
 
-export function IconArrowDownCircle(props: IconProps) {
+export function CircleArrowDownIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
@@ -45,36 +45,23 @@ export function IconArrowDownCircle(props: IconProps) {
   );
 }
 
-export function IconArrowRotateClockwise(props: IconProps) {
+/** Regenerate: a clockwise arrow round a circle (the Figma regenerate icon, scaled from its 32px grid). */
+export function RotateCwIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
-        d="M19.5165 14.6667C18.4182 17.7738 15.4549 20 11.9717 20C7.5534 20 3.97168 16.4183 3.97168 12C3.97168 7.58172 7.5534 4 11.9717 4C15.0676 4 17 5.5 19 8"
+        d="M21 12C21 13.78 20.4721 15.5201 19.4832 17.0001C18.4943 18.4802 17.0887 19.6337 15.4441 20.3149C13.7996 20.9961 11.99 21.1743 10.2442 20.827C8.4984 20.4798 6.8947 19.6226 5.636 18.364C4.3774 17.1053 3.5202 15.5017 3.1729 13.7558C2.8257 12.01 3.0039 10.2004 3.6851 8.5558C4.3663 6.9113 5.5198 5.5057 6.9999 4.5168C8.4799 3.5278 10.22 3 12 3C14.52 3 16.93 4 18.74 5.74L21 8"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d="M19 4V8H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 3V8H16.0001" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
 
-/** Success: a filled disc with the check cut out of it. */
-export function IconCircleCheck(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path
-        d="M12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2ZM15.5586 8.1709C15.1005 7.8626 14.4794 7.98355 14.1709 8.44141L10.4727 13.9336L8.70703 12.168C8.31651 11.7774 7.68349 11.7774 7.29297 12.168C6.90244 12.5585 6.90244 13.1915 7.29297 13.582L9.91797 16.207C10.1293 16.4183 10.4243 16.5239 10.7217 16.4951C11.0188 16.4662 11.2873 16.3062 11.4541 16.0586L15.8291 9.55859C16.1374 9.10055 16.0165 8.47937 15.5586 8.1709Z"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        fill="currentColor"
-      />
-    </Svg>
-  );
-}
-
-export function IconCircleInfo(props: IconProps) {
+export function InfoIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
@@ -94,7 +81,7 @@ export function IconCircleInfo(props: IconProps) {
   );
 }
 
-export function IconCrossSmall(props: IconProps) {
+export function XIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path d="M8 8L16 16M16 8L8 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -102,7 +89,7 @@ export function IconCrossSmall(props: IconProps) {
   );
 }
 
-export function IconDotGrid1x3Horizontal(props: IconProps) {
+export function EllipsisIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
@@ -130,34 +117,30 @@ export function IconDotGrid1x3Horizontal(props: IconProps) {
   );
 }
 
-export function IconExclamationCircle(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
-      <path d="M12 8V12.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="12" cy="15.7996" r="1.2" fill="currentColor" />
-    </Svg>
-  );
-}
-
-export function IconExclamationTriangle(props: IconProps) {
+/** Alert: an exclamation mark in a circle (the Figma alert icon, scaled from its 32px grid). Used
+ * for every alert, warnings and errors alike; the colour tells them apart. */
+export function CircleAlertIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
-        d="M12 8.8846V11.9192M12 15H12.01M9.48223 4.43254L3.45153 14.3633C2.22395 16.3848 3.64405 19 5.9693 19H18.0307C20.3559 19 21.7761 16.3848 20.5485 14.3633L14.5178 4.43254C13.3578 2.52249 10.6422 2.52249 9.48223 4.43254ZM12.25 15C12.25 15.1381 12.1381 15.25 12 15.25C11.8619 15.25 11.75 15.1381 11.75 15C11.75 14.8619 11.8619 14.75 12 14.75C12.1381 14.75 12.25 14.8619 12.25 15Z"
+        d="M12 22C17.5229 22 22.0001 17.5229 22.0001 12C22.0001 6.4771 17.5229 2 12 2C6.4772 2 2 6.4771 2 12C2 17.5229 6.4772 22 12 22Z"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
+        strokeLinejoin="round"
       />
+      <path d="M12 8V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
 
-export function IconGauge(props: IconProps) {
+/** A lightning bolt, for speed (the Figma speed icon). */
+export function ZapIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
-        d="M10 10L5.75 5.75M12 5V3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 10.9481 3.18046 9.93834 3.51212 9M14.5 12C14.5 13.3807 13.3807 14.5 12 14.5C10.6193 14.5 9.5 13.3807 9.5 12C9.5 10.6193 10.6193 9.5 12 9.5C13.3807 9.5 14.5 10.6193 14.5 12Z"
+        d="M15.914 4C16.0271 3.67936 16.028 3.3298 15.9164 3.00861C15.8049 2.68743 15.5875 2.41367 15.2999 2.23224C15.0124 2.0508 14.6717 1.97244 14.3338 2.01001C13.9958 2.04757 13.6807 2.19884 13.44 2.439L4.43999 11.439C4.23013 11.6487 4.08718 11.916 4.02921 12.2069C3.97125 12.4979 4.00087 12.7995 4.11433 13.0737C4.2278 13.3478 4.42001 13.5821 4.66665 13.747C4.9133 13.9119 5.2033 13.9999 5.49999 14H9.50199C9.58186 14.0001 9.66055 14.0193 9.73147 14.0561C9.80238 14.0929 9.86345 14.1461 9.90958 14.2113C9.9557 14.2765 9.98552 14.3518 9.99655 14.4309C10.0076 14.5101 9.9995 14.5907 9.97299 14.666L8.08599 20C7.97279 20.3207 7.97198 20.6704 8.08366 20.9917C8.19535 21.313 8.41291 21.5868 8.70066 21.7681C8.9884 21.9495 9.32925 22.0277 9.66727 21.9899C10.0053 21.9521 10.3204 21.8005 10.561 21.56L19.561 12.56C19.7706 12.3502 19.9132 12.0829 19.971 11.792C20.0287 11.5011 19.9989 11.1997 19.8854 10.9257C19.7718 10.6517 19.5796 10.4176 19.333 10.2528C19.0864 10.088 18.7966 10.0001 18.5 10H14.503C14.4229 10.0001 14.344 9.98099 14.2728 9.94424C14.2017 9.90749 14.1404 9.85419 14.0941 9.78882C14.0479 9.72345 14.018 9.64793 14.007 9.56861C13.996 9.48928 14.0042 9.40848 14.031 9.333L15.914 4Z"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
@@ -167,7 +150,7 @@ export function IconGauge(props: IconProps) {
   );
 }
 
-export function IconPageText(props: IconProps) {
+export function FileTextIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
@@ -184,22 +167,23 @@ export function IconPageText(props: IconProps) {
   );
 }
 
-export function IconPencil(props: IconProps) {
+/** Rename: a rounded pencil (the Figma rename icon, scaled from its 20px grid), the same pencil as
+ * the sidebar's New chat without the line under it. */
+export function PencilIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
-        d="M13.5 5.99997L15.25 4.24997C16.4926 3.00733 18.5074 3.00733 19.75 4.24997C20.9926 5.49261 20.9926 7.50733 19.75 8.74997L18 10.5L7.79289 20.7071C7.60536 20.8946 7.351 21 7.08579 21H3V16.9142C3 16.649 3.10536 16.3946 3.29289 16.2071L13.5 5.99997Z"
+        d="M20.2213 4.1213L20.4787 4.3787C21.6503 5.5503 21.6503 7.4498 20.4787 8.6214L8.9787 20.1214C8.4161 20.684 7.653 21 6.8574 21H3.6V17.7427C3.6 16.947 3.9161 16.184 4.4787 15.6214L15.9787 4.1214C17.1503 2.9498 19.0496 2.9498 20.2213 4.1213Z"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d="M13.5 6L18 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
 
-export function IconPlusMedium(props: IconProps) {
+export function PlusIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
@@ -212,54 +196,19 @@ export function IconPlusMedium(props: IconProps) {
   );
 }
 
-export function IconSettingsGear2(props: IconProps) {
+/** Copy: a square over the corner of the one behind it (the Figma copy icon, scaled from its 32px grid). */
+export function CopyIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
-        d="M7.67668 5.32539L7.30515 5.23965C6.72652 5.10612 6.11991 5.28009 5.7 5.7C5.28009 6.11991 5.10612 6.72651 5.23965 7.30515L5.32539 7.67668C5.55082 8.65357 5.148 9.668 4.31382 10.2241L3.74885 10.6008C3.28101 10.9127 3 11.4377 3 12C3 12.5623 3.28101 13.0873 3.74885 13.3992L4.31382 13.7759C5.148 14.332 5.55082 15.3464 5.32539 16.3233L5.23965 16.6949C5.10612 17.2735 5.28009 17.8801 5.7 18.3C6.11991 18.7199 6.72651 18.8939 7.30515 18.7604L7.67668 18.6746C8.65357 18.4492 9.668 18.852 10.2241 19.6862L10.6008 20.2512C10.9127 20.719 11.4377 21 12 21C12.5623 21 13.0873 20.719 13.3992 20.2512L13.7759 19.6862C14.332 18.852 15.3464 18.4492 16.3233 18.6746L16.6949 18.7604C17.2735 18.8939 17.8801 18.7199 18.3 18.3C18.7199 17.8801 18.8939 17.2735 18.7604 16.6949L18.6746 16.3233C18.4492 15.3464 18.852 14.332 19.6862 13.7759L20.2512 13.3992C20.719 13.0873 21 12.5623 21 12C21 11.4377 20.719 10.9127 20.2512 10.6008L19.6862 10.2241C18.852 9.668 18.4492 8.65357 18.6746 7.67668L18.7604 7.30515C18.8939 6.72652 18.7199 6.11991 18.3 5.7C17.8801 5.28009 17.2735 5.10612 16.6949 5.23965L16.3233 5.32539C15.3464 5.55082 14.332 5.148 13.7759 4.31382L13.3992 3.74884C13.0873 3.28101 12.5623 3 12 3C11.4377 3 10.9127 3.28101 10.6008 3.74885L10.2241 4.31382C9.668 5.148 8.65357 5.55082 7.67668 5.32539Z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M15 12C15 13.6569 13.6569 15 12 15C10.3431 15 9 13.6569 9 12C9 10.3431 10.3431 9 12 9C13.6569 9 15 10.3431 15 12Z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
-export function IconSquareBehindSquare1(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path
-        d="M15 9V5.25C15 4.00736 13.9926 3 12.75 3H5.25C4.00736 3 3 4.00736 3 5.25V12.75C3 13.9926 4.00736 15 5.25 15H9M11.25 9H18.75C19.9926 9 21 10.0074 21 11.25V18.75C21 19.9926 19.9926 21 18.75 21H11.25C10.0074 21 9 19.9926 9 18.75V11.25C9 10.0074 10.0074 9 11.25 9Z"
+        d="M20 8H10C8.8955 8 8 8.8955 8 10V20C8 21.1045 8.8955 22 10 22H20C21.1045 22 22.0001 21.1045 22.0001 20V10C22.0001 8.8955 21.1045 8 20 8Z"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-    </Svg>
-  );
-}
-
-export function IconTrashCan(props: IconProps) {
-  return (
-    <Svg {...props}>
       <path
-        d="M5 6.5L5.80734 18.2064C5.91582 19.7794 7.22348 21 8.80023 21H15.1998C16.7765 21 18.0842 19.7794 18.1927 18.2064L19 6.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M10 11V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M14 11V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M3.5 6H20.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path
-        d="M8.07092 5.74621C8.42348 3.89745 10.0485 2.5 12 2.5C13.9515 2.5 15.5765 3.89745 15.9291 5.74621"
+        d="M4 16C2.9 16 2 15.1 2 14V4C2 2.9 2.9 2 4 2H14C15.1001 2 16.0001 2.9 16.0001 4"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
@@ -270,7 +219,7 @@ export function IconTrashCan(props: IconProps) {
 }
 
 /** Download: an arrow dropping into a tray. */
-export function IconArrowInbox(props: IconProps) {
+export function DownloadIcon(props: IconProps) {
   return (
     <Svg {...props}>
       <path
@@ -290,7 +239,7 @@ export function IconArrowInbox(props: IconProps) {
 }
 
 /** The circle-check, filled: a solid disc with the check cut out of it. Shown after a copy. */
-export function IconCircleCheckFilled({ size = 16, ...rest }: IconProps) {
+export function CircleCheckIcon({ size = 16, ...rest }: IconProps) {
   const maskId = useId();
   return (
     <Svg size={size} {...rest}>

@@ -1,8 +1,8 @@
-import { IconArrowInbox } from "@/components/icons/app-icons";
+import { DownloadIcon } from "@/components/icons/app-icons";
 import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import { IconAction } from "@/components/ui/icon-action";
-import { IconPauseFilled } from "@/components/icons/pause-filled-icon";
-import { IconPlayFilled } from "@/components/icons/play-filled-icon";
+import { PauseIcon } from "@/components/icons/pause-icon";
+import { PlayIcon } from "@/components/icons/play-icon";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { ModelCardStatus } from "./types";
 
@@ -60,7 +60,7 @@ export function DownloadActions({
           <span>
             <IconAction
               label="Download model"
-              icon={<IconArrowInbox size={16} />}
+              icon={<DownloadIcon size={16} />}
               onClick={onDownload}
               className={ACTION_BUTTON_CLASS}
             />
@@ -73,7 +73,7 @@ export function DownloadActions({
             <span>
               <IconAction
                 label={isPaused ? "Resume download" : "Pause download"}
-                icon={isPaused ? <IconPlayFilled /> : <IconPauseFilled />}
+                icon={isPaused ? <PlayIcon /> : <PauseIcon />}
                 onClick={onPause}
                 className={ACTION_BUTTON_CLASS}
               />

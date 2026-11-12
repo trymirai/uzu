@@ -2,7 +2,7 @@ import type { KeyboardEvent } from "react";
 import { Button, DataInteractive } from "@headlessui/react";
 import { Trash2 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
-import { IconCheckStroke } from "@/components/icons/check-stroke-icon";
+import { CheckIcon } from "@/components/icons/check-icon";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Text } from "@/components/ui/typography";
 import type { ModelCardProps } from "./types";
@@ -111,7 +111,7 @@ export function ModelCardRow({
             <>
               <Tooltip content="Downloaded" side="top">
                 <div className="flex items-center justify-center size-7 rounded-full text-success-strong bg-surface-popover shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_2px_rgb(0_0_0/0.06)] dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)]">
-                  <IconCheckStroke />
+                  <CheckIcon />
                 </div>
               </Tooltip>
               <Button

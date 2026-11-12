@@ -1,6 +1,6 @@
 import { IconButton } from "./icon-button";
 import { useToast } from "./toast/use-toast";
-import { IconCircleCheckFilled, IconSquareBehindSquare1 } from "@/components/icons/app-icons";
+import { CircleCheckIcon, CopyIcon } from "@/components/icons/app-icons";
 import { useEffect, useRef, useState } from "react";
 import { twMerge } from "tailwind-merge";
 
@@ -51,12 +51,12 @@ export function CopyButton({ onCopy, className }: CopyButtonProps) {
     >
       <span className="relative block size-4">
         <span aria-hidden className={twMerge(LAYER, copied ? HIDDEN : SHOWN)}>
-          <IconSquareBehindSquare1 size={16} />
+          <CopyIcon size={16} />
         </span>
         {/* The check keeps the bright, hovered colour while it shows, whether or not the pointer
             is still on the button. */}
         <span aria-hidden className={twMerge(LAYER, "text-label-title", copied ? SHOWN : HIDDEN)}>
-          <IconCircleCheckFilled size={16} />
+          <CircleCheckIcon size={16} />
         </span>
       </span>
     </IconButton>

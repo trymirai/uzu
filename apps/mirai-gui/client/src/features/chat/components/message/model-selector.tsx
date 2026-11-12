@@ -1,5 +1,5 @@
 import { Check, ChevronRight } from "lucide-react";
-import { IconArrowRotateClockwise } from "@/components/icons/app-icons";
+import { RotateCwIcon } from "@/components/icons/app-icons";
 import { useNavigate } from "@tanstack/react-router";
 import React from "react";
 import { HoverPopover } from "@/components/ui/popover/hover-popover";
@@ -90,7 +90,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
       onClick={handleRegenerateClick}
       className={ACTION_CLASSNAME}
     >
-      <IconArrowRotateClockwise size={16} aria-hidden />
+      <RotateCwIcon size={16} aria-hidden />
     </button>
   );
 

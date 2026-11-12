@@ -1,11 +1,10 @@
-import RenameIcon from "@/components/icons/rename-icon";
-import TrashIcon from "@/components/icons/trash-icon";
+import { PencilIcon } from "@/components/icons/app-icons";
 import ChatCard from "./chat-card";
 import { ChatDeleteModal } from "./chat-delete-modal";
 import { ChatRenameModal } from "./chat-rename-modal";
 import { GroupButton } from "@/components/ui/group-button";
 import { useNavigate } from "@tanstack/react-router";
-import { Plus, X } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { UzuCat } from "@/components/uzu-cat";
 import { PageScroller, PageTitleBar } from "@/components/page-title-bar";
@@ -125,7 +124,7 @@ export function ChatHistoryPage() {
 
                     {!isAllSelected && singleSelectedChat && (
                       <GroupButton.Segment icon ariaLabel="Rename" onClick={() => setIsRenameOpen(true)}>
-                        <RenameIcon className="size-4" />
+                        <PencilIcon size={16} />
                       </GroupButton.Segment>
                     )}
 
@@ -135,7 +134,7 @@ export function ChatHistoryPage() {
                       onClick={() => setIsConfirmOpen(true)}
                       disabled={selectedIds.length === 0}
                     >
-                      <TrashIcon className="size-4" />
+                      <Trash2 className="size-4" aria-hidden />
                     </GroupButton.Segment>
 
                     <GroupButton.Segment icon ariaLabel="Exit selection" onClick={exitSelectionMode}>

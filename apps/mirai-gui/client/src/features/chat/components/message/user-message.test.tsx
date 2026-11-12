@@ -107,7 +107,7 @@ it("prevents duplicate submissions and closes after storage succeeds while gener
   render(<UserMessage {...props} />);
   edit();
   save();
-  expect((screen.getByRole("button", { name: "Saving..." }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Saving…" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.keyDown(draft(), { key: "Enter", metaKey: true });
   expect(onEdit).toHaveBeenCalledOnce();

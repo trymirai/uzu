@@ -1,7 +1,7 @@
 import { twMerge } from "tailwind-merge";
 import { Button } from "@/components/ui/button";
-import { IconPlayerStopFilled } from "@/components/icons/player-stop-filled-icon";
-import { IconSend } from "@/components/icons/send-icon";
+import { SquareIcon } from "@/components/icons/square-icon";
+import { ArrowUpIcon } from "@/components/icons/arrow-up-icon";
 
 export type SendButtonProps = {
   disabled: boolean;
@@ -21,7 +21,7 @@ export function SendButton({ disabled, hasContent, onClick, streaming = false, o
         ariaLabel="Stop generating"
         icon={
           <span key="stop" className="flex animate-uzu-swap">
-            <IconPlayerStopFilled size={14} />
+            <SquareIcon size={14} />
           </span>
         }
         onClick={onStop}
@@ -38,7 +38,7 @@ export function SendButton({ disabled, hasContent, onClick, streaming = false, o
       ariaLabel="Send message"
       icon={
         <span key="send" className="flex animate-uzu-swap">
-          <IconSend />
+          <ArrowUpIcon />
         </span>
       }
       disabled={disabled}

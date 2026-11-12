@@ -1,4 +1,4 @@
-import { IconCrossSmall } from "@/components/icons/app-icons";
+import { XIcon } from "@/components/icons/app-icons";
 import {
   Button as HeadlessButton,
   Dialog,
@@ -84,7 +84,7 @@ export function Modal(props: ModalProps) {
                   onClick={onClose}
                   className={twMerge(SURFACE_CLOSE_CLASSNAME, "-mr-1 -mt-0.5")}
                 >
-                  <IconCrossSmall size={18} aria-hidden />
+                  <XIcon size={18} aria-hidden />
                 </HeadlessButton>
               </div>
               {description && (

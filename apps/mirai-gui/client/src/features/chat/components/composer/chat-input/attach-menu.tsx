@@ -1,4 +1,4 @@
-import { IconPageText, IconPlusMedium } from "@/components/icons/app-icons";
+import { FileTextIcon, PlusIcon } from "@/components/icons/app-icons";
 import { Button } from "@/components/ui/button";
 import { PopoverMenu } from "@/components/ui/popover/popover-menu";
 import { Text } from "@/components/ui/typography";
@@ -21,14 +21,14 @@ export function AttachMenu({ onSelectFile }: AttachMenuProps) {
           kind="ghost"
           iconOnly
           ariaLabel="Attach file"
-          icon={<IconPlusMedium size={18} aria-hidden />}
+          icon={<PlusIcon size={18} aria-hidden />}
           className="rounded-full bg-control-fill text-text-secondary hover:bg-control-fill-hover hover:text-text-primary"
         />
       }
       items={[
         {
           id: "upload",
-          icon: <IconPageText size={18} className="text-text-muted shrink-0" aria-hidden />,
+          icon: <FileTextIcon size={18} className="text-text-muted shrink-0" aria-hidden />,
           label: (
             <span>
               <Text as="span" color="primary" className="block text-[13px] font-[500] leading-[1.3]">

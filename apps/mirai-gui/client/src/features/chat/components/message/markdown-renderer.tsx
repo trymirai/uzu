@@ -1,4 +1,4 @@
-import { IconArrowInbox, IconCircleCheckFilled, IconSquareBehindSquare1 } from "@/components/icons/app-icons";
+import { DownloadIcon, CircleCheckIcon, CopyIcon } from "@/components/icons/app-icons";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAppStore } from "@/stores/use-app-store";
@@ -31,9 +31,9 @@ const REMEND = { linkMode: "text-only" } as const;
 // copy icon and filled check from under messages, and the tray for download. Streamdown asks for
 // 14px; ours are drawn for 16.
 const CODE_BLOCK_ICONS = {
-  CopyIcon: () => <IconSquareBehindSquare1 size={16} />,
-  CheckIcon: () => <IconCircleCheckFilled size={16} className="text-label-title" />,
-  DownloadIcon: () => <IconArrowInbox size={16} />,
+  CopyIcon: () => <CopyIcon size={16} />,
+  CheckIcon: () => <CircleCheckIcon size={16} className="text-label-title" />,
+  DownloadIcon: () => <DownloadIcon size={16} />,
 };
 
 type MarkdownComponentProps<K extends keyof JSX.IntrinsicElements> = JSX.IntrinsicElements[K] & { node?: Element };

@@ -1,4 +1,4 @@
-import { IconSettingsGear2 } from "@/components/icons/app-icons";
+import { SettingsIcon } from "@/components/left-bar/nav-icons";
 import { Button } from "@headlessui/react";
 import { useCallback, useRef } from "react";
 import { twMerge } from "tailwind-merge";
@@ -110,7 +110,7 @@ export function ChatInput({
                 className="flex size-7 shrink-0 items-center justify-center rounded-full bg-control-fill text-text-secondary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill-hover hover:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
                 {/* Lands half a point low on Retina screens; lifted back to the circle's centre. */}
-                <IconSettingsGear2 size={16} aria-hidden className="-translate-y-[0.5px]" />
+                <SettingsIcon size={16} aria-hidden />
               </Button>
               {settingsModified && (
                 <span className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-danger ring-1 ring-surface-elevated" />

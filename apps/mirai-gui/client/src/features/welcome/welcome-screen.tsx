@@ -1,5 +1,5 @@
 import { Field, Label } from "@headlessui/react";
-import { IconCircleInfo } from "@/components/icons/app-icons";
+import { InfoIcon } from "@/components/icons/app-icons";
 import { useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useState } from "react";
 import { twMerge } from "tailwind-merge";
@@ -106,7 +106,7 @@ export function WelcomeScreen() {
               aria-label="What is shared"
               className="flex size-5 cursor-help items-center justify-center rounded-full text-text-muted outline-hidden transition-colors duration-150 ease-out hover:text-text-primary focus-visible:shadow-focus"
             >
-              <IconCircleInfo size={16} aria-hidden />
+              <InfoIcon size={16} aria-hidden />
             </span>
           </Tooltip>
         </Field>

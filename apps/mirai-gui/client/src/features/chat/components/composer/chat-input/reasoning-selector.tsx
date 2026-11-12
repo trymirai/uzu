@@ -1,5 +1,5 @@
 import { Menu, MenuButton, MenuItem, MenuItems, Transition } from "@headlessui/react";
-import { Brain, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Fragment } from "react";
 import { SelectionItem } from "@/components/ui/select/selection-item";
 import { SelectionPanel } from "@/components/ui/select/selection-panel";
@@ -65,9 +65,8 @@ export const ReasoningSelector = ({ repoId, disabled = false }: ReasoningSelecto
         disabled={disabled}
         aria-label={selected ? `Reasoning: ${label}${isDefault ? ", model default" : ""}` : "Reasoning"}
         title={selected ? `Reasoning: ${label}` : "Reasoning"}
-        className="flex h-7 items-center gap-1.5 rounded-full bg-control-fill px-2.5 text-text-secondary text-[13px] font-[450] leading-[1.3] outline-hidden hover:bg-control-fill-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-fill-hover data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-fill-hover data-[focus]:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
+        className="flex h-7 items-center gap-1.5 rounded-full bg-control-fill pl-3 pr-2 text-text-secondary text-[13px] font-[450] leading-[1.3] outline-hidden hover:bg-control-fill-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-fill-hover data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-fill-hover data-[focus]:text-text-primary data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-40"
       >
-        <Brain size={14} aria-hidden="true" />
         <span>{label}</span>
         <ChevronDown size={16} aria-hidden="true" />
       </MenuButton>

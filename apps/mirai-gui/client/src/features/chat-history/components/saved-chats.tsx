@@ -1,6 +1,7 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { IconDotGrid1x3Horizontal, IconPencil, IconTrashCan } from "@/components/icons/app-icons";
+import { Trash2 } from "lucide-react";
+import { EllipsisIcon, PencilIcon } from "@/components/icons/app-icons";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
@@ -224,7 +225,7 @@ export default function SavedChats() {
                         onDoubleClick={(e) => e.stopPropagation()}
                         className={`${ROW_BUTTON_CLASSNAME} opacity-0 group-hover:opacity-100 text-danger hover:text-danger`}
                       >
-                        <IconTrashCan aria-hidden size={16} />
+                        <Trash2 aria-hidden size={16} />
                       </button>
                     ) : (
                       <>
@@ -234,7 +235,7 @@ export default function SavedChats() {
                           onDoubleClick={(e) => e.stopPropagation()}
                           className={`${ROW_BUTTON_CLASSNAME} ${open ? "opacity-100 bg-black/[0.07] text-label-title dark:bg-white/[0.08]" : "opacity-0 group-hover:opacity-100 data-[focus]:opacity-100"}`}
                         >
-                          <IconDotGrid1x3Horizontal aria-hidden size={16} />
+                          <EllipsisIcon aria-hidden size={16} />
                         </MenuButton>
                         <MenuItems
                           transition
@@ -250,7 +251,7 @@ export default function SavedChats() {
                               }}
                               className={`${MENU_ROW_CLASSNAME} text-text-primary data-[focus]:bg-selection-hover`}
                             >
-                              <IconPencil aria-hidden size={18} className="shrink-0 text-text-secondary" />
+                              <PencilIcon aria-hidden size={18} className="shrink-0 text-text-secondary" />
                               Rename
                             </button>
                           </MenuItem>
@@ -263,7 +264,7 @@ export default function SavedChats() {
                               }}
                               className={`${MENU_ROW_CLASSNAME} text-danger data-[focus]:bg-danger-bg`}
                             >
-                              <IconTrashCan aria-hidden size={18} className="shrink-0" />
+                              <Trash2 aria-hidden size={18} className="shrink-0" />
                               Delete
                             </button>
                           </MenuItem>

@@ -1,10 +1,4 @@
-import {
-  IconCircleCheck,
-  IconCircleInfo,
-  IconCrossSmall,
-  IconExclamationCircle,
-  IconExclamationTriangle,
-} from "@/components/icons/app-icons";
+import { CircleCheckIcon, InfoIcon, XIcon, CircleAlertIcon } from "@/components/icons/app-icons";
 import type { ComponentType, ReactNode } from "react";
 import type { Toast } from "react-hot-toast";
 import toast from "react-hot-toast";
@@ -23,10 +17,10 @@ const TOAST_ICON_BY_TYPE: Record<
   ToastType,
   { Icon: ComponentType<{ size?: number; className?: string }>; tone: string }
 > = {
-  success: { Icon: IconCircleCheck, tone: "text-success" },
-  info: { Icon: IconCircleInfo, tone: "text-text-muted" },
-  warning: { Icon: IconExclamationTriangle, tone: "text-amber-500" },
-  error: { Icon: IconExclamationCircle, tone: "text-danger" },
+  success: { Icon: CircleCheckIcon, tone: "text-success" },
+  info: { Icon: InfoIcon, tone: "text-text-muted" },
+  warning: { Icon: CircleAlertIcon, tone: "text-amber-500" },
+  error: { Icon: CircleAlertIcon, tone: "text-danger" },
 };
 
 /**
@@ -82,7 +76,7 @@ export function CustomToast({ t, message, description, type, onClick }: CustomTo
         aria-label="Dismiss"
         className="relative mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-text-muted outline-hidden transition-colors duration-150 ease-out hover:bg-selection-hover hover:text-text-primary focus-visible:shadow-focus before:absolute before:-inset-2"
       >
-        <IconCrossSmall size={16} aria-hidden />
+        <XIcon size={16} aria-hidden />
       </button>
     </div>
   );
