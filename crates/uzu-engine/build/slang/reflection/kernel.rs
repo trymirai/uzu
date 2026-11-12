@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, bail};
+use anyhow::{Context, ensure};
 use itertools::Itertools;
 use shader_slang::{
     DeclKind,
@@ -14,7 +14,7 @@ use crate::{
     },
     slang::{
         SlangParameterType,
-        reflection::{SlangArgument, SlangParameter},
+        reflection::{SlangArgument, SlangParameter, attribute_arguments::string_arguments},
     },
 };
 
@@ -24,6 +24,8 @@ pub struct SlangKernel {
     pub public: bool,
     pub name: String,
     pub arguments: Vec<SlangArgument>,
+    pub preconditions: Vec<(String, String)>,
+    pub required_subgroup_size: Option<String>,
 }
 
 impl SlangKernel {
@@ -32,7 +34,8 @@ impl SlangKernel {
         gpu_type_map: &HashMap<String, String>,
     ) -> anyhow::Result<Option<Self>> {
         let (generic_decl, function_decl) = if toplevel_decl.kind() == DeclKind::Generic {
-            (Some(toplevel_decl), toplevel_decl.as_generic().unwrap().inner_decl().unwrap())
+            let generic = toplevel_decl.as_generic().context("generic declaration has no reflection")?;
+            (Some(toplevel_decl), generic.inner_decl().context("generic declaration has no inner declaration")?)
         } else {
             (None, toplevel_decl)
         };
@@ -41,7 +44,7 @@ impl SlangKernel {
             return Ok(None);
         }
 
-        let function = function_decl.as_function().unwrap();
+        let function = function_decl.as_function().context("function declaration has no reflection")?;
         let function_attributes = function.user_attributes().collect::<Vec<&UserAttribute>>();
 
         if !function_attributes.iter().any(|user_attribute| user_attribute.name() == Some("Kernel")) {
@@ -55,17 +58,8 @@ impl SlangKernel {
             .iter()
             .map(|user_attribute| {
                 if user_attribute.name() == Some("Constraint") {
-                    if user_attribute.argument_count() != 1 {
-                        bail!("expected 1 argument, found {}", user_attribute.argument_count());
-                    }
-
-                    Ok(Some(
-                        user_attribute
-                            .argument_value_string(0)
-                            .context("cannot get name argument string value")?
-                            .trim()
-                            .to_string(),
-                    ))
+                    let [constraint] = string_arguments::<1>(user_attribute)?;
+                    Ok(Some(constraint.trim().to_string()))
                 } else {
                     Ok(None)
                 }
@@ -76,7 +70,30 @@ impl SlangKernel {
 
         let public = function_attributes.iter().any(|user_attribute| user_attribute.name() == Some("Public"));
 
-        let name = function.name().unwrap().to_string();
+        let name = function.name().context("kernel has no name")?.to_string();
+
+        let preconditions = function_attributes
+            .iter()
+            .filter(|user_attribute| user_attribute.name() == Some("Precondition"))
+            .map(|user_attribute| {
+                let phase = user_attribute.argument_value_string(0).context("precondition has no phase")?;
+                let condition = user_attribute.argument_value_string(1).context("precondition has no condition")?;
+                ensure!(matches!(phase, "new" | "encode"), "precondition phase {phase} is neither new nor encode");
+                ensure!(!condition.trim().is_empty(), "empty {phase} precondition");
+                Ok((phase.to_string(), condition.to_string()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("cannot collect preconditions")?;
+
+        let required_subgroup_size = function_attributes
+            .iter()
+            .find(|user_attribute| user_attribute.name() == Some("RequiredSubgroupSize"))
+            .map(|user_attribute| {
+                anyhow::Ok(
+                    user_attribute.argument_value_string(0).context("required subgroup size has no size")?.to_string(),
+                )
+            })
+            .transpose()?;
 
         let arguments = function
             .parameters()
@@ -90,6 +107,8 @@ impl SlangKernel {
             public,
             name,
             arguments,
+            preconditions,
+            required_subgroup_size,
         }))
     }
 
@@ -135,12 +154,8 @@ impl SlangKernel {
     pub fn to_common(
         &self,
         gpu_type_map: &HashMap<String, String>,
-    ) -> anyhow::Result<Option<Kernel>> {
-        if !self.public {
-            return Ok(None);
-        }
-
-        Ok(Some(Kernel {
+    ) -> anyhow::Result<Kernel> {
+        Ok(Kernel {
             name: self.name.clone().into(),
             parameters: self
                 .parameters
@@ -164,6 +179,6 @@ impl SlangKernel {
                     .filter_map(|argument| argument.to_common_argument(&mut indirect_used))
                     .collect::<Box<[KernelArgument]>>()
             },
-        }))
+        })
     }
 }

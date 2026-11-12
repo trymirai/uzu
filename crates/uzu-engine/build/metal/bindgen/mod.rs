@@ -5,7 +5,7 @@ mod specialize;
 mod trait_wiring;
 mod variants;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -23,7 +23,7 @@ pub fn bindgen(
     library_const: &proc_macro2::Ident,
     num_shards: usize,
     library_compressed: bool,
-) -> Result<(TokenStream, Option<TokenStream>)> {
+) -> Result<TokenStream> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{}Kernel", kernel_name);
     let struct_name = format_ident!("{}MetalKernel", kernel_name);
@@ -34,7 +34,7 @@ pub fn bindgen(
     let mut host_expression_rewriter =
         HostExpressionRewriter::new(&variant_binds, gpu_type_paths, specialize_emission.argument_names(), kernel_name);
     let argument_emissions = arguments::parse(kernel, gpu_type_paths, &mut host_expression_rewriter)?;
-    let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
+    let trait_wiring = trait_wiring::build(kernel, &trait_name);
 
     let dispatch_emission = dispatch::parse(kernel, &mut host_expression_rewriter)?;
     let referenced_parameter_names = host_expression_rewriter.finish();
@@ -132,17 +132,20 @@ pub fn bindgen(
         }
     };
 
-    Ok((kernel_tokens, trait_wiring.associated_type))
+    Ok(kernel_tokens)
 }
 
 pub fn bindgen_global(kernels: &[(impl AsRef<std::path::Path>, &[Kernel])]) -> Result<TokenStream> {
-    let includes = kernels.iter().map(|(path, _kernels)| {
-        let path = path.as_ref().to_str().expect("bindings path is not utf-8");
+    let includes = kernels
+        .iter()
+        .map(|(path, _kernels)| {
+            let path = path.as_ref().to_str().context("bindings path is not UTF-8")?;
 
-        quote! {
-            include!(#path);
-        }
-    });
+            anyhow::Ok(quote! {
+                include!(#path);
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let associated_types = kernels.iter().flat_map(|(_path, kernels)| kernels.iter()).map(|kernel| {
         let trait_name = format_ident!("{}Kernel", kernel.name.as_ref());

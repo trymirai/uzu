@@ -8,7 +8,6 @@ use syn::{
     Expr, FnArg, GenericArgument, GenericParam, Ident, Item, ItemFn, PathArguments, Type, punctuated::Punctuated,
     token::Comma, visit_mut::VisitMut,
 };
-use walkdir::WalkDir;
 
 use crate::common::{
     codegen::write_tokens,
@@ -18,20 +17,21 @@ use crate::common::{
     gpu_types::GpuTypes,
     identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
+    sources::source_files,
 };
 
 #[derive(PartialEq, Debug)]
-pub enum FunctionArgumentType {
+enum FunctionArgumentType {
     Pointer(KernelBufferAccess),
     Value(Type),
     Specialization(Type),
 }
 
 #[derive(PartialEq, Debug)]
-pub struct FunctionArgument {
-    pub name: Ident,
-    pub conditional: Option<Expr>,
-    pub ty: FunctionArgumentType,
+struct FunctionArgument {
+    name: Ident,
+    conditional: Option<Expr>,
+    ty: FunctionArgumentType,
 }
 
 impl FunctionArgument {
@@ -70,17 +70,16 @@ impl FunctionArgument {
         &self,
         gpu_type_paths: &GpuTypePaths,
     ) -> Option<KernelParameter> {
-        Some(KernelParameter {
-            name: self.name.to_string().into_boxed_str(),
-            ty: match &self.ty {
-                FunctionArgumentType::Specialization(ty) => {
-                    KernelParameterType::Value(canonicalize_type_text(ty, gpu_type_paths).into_boxed_str())
-                },
-                _ => {
-                    return None;
-                },
-            },
-        })
+        let FunctionArgumentType::Specialization(ty) = &self.ty else {
+            return None;
+        };
+        Some(
+            FunctionParameter {
+                name: self.name.clone(),
+                ty: FunctionParameterType::Value(ty.clone()),
+            }
+            .to_kernel_parameter(gpu_type_paths),
+        )
     }
 }
 
@@ -113,15 +112,15 @@ fn canonicalize_type_text(
 }
 
 #[derive(PartialEq, Debug)]
-pub enum FunctionParameterType {
+enum FunctionParameterType {
     Type,
     Value(Type),
 }
 
 #[derive(PartialEq, Debug)]
-pub struct FunctionParameter {
-    pub name: Ident,
-    pub ty: FunctionParameterType,
+struct FunctionParameter {
+    name: Ident,
+    ty: FunctionParameterType,
 }
 
 impl FunctionParameter {
@@ -465,49 +464,39 @@ impl CpuCompiler {
                 quote! { self::#function_ident }
             };
 
-            let function_call_args = function_arguments.iter().map(|argument| {
-                let argument_ident = &argument.name;
+            let function_call_args = function_arguments
+                .iter()
+                .map(|argument| {
+                    let argument_ident = &argument.name;
 
-                match &argument.ty {
-                    FunctionArgumentType::Pointer(_) => {
-                        if argument.conditional.is_some() {
-                            quote! { #argument_ident.map(|p| p.as_ptr() as _) }
-                        } else {
-                            quote! { #argument_ident.as_ptr() as _ }
-                        }
-                    },
-                    FunctionArgumentType::Value(Type::Reference(_)) => quote! { &*#argument_ident },
-                    FunctionArgumentType::Value(_) | FunctionArgumentType::Specialization(_) => {
-                        quote! { #argument_ident }
-                    },
-                }
-            });
-
-            let function_call_args_joined = function_call_args.fold(quote! {}, |a, b| {
-                if !a.is_empty() && !b.is_empty() {
-                    quote! {#a , #b}
-                } else {
-                    quote! {#a #b}
-                }
-            });
+                    match &argument.ty {
+                        FunctionArgumentType::Pointer(_) => {
+                            if argument.conditional.is_some() {
+                                quote! { #argument_ident.map(|p| p.as_ptr() as _) }
+                            } else {
+                                quote! { #argument_ident.as_ptr() as _ }
+                            }
+                        },
+                        FunctionArgumentType::Value(Type::Reference(_)) => quote! { &*#argument_ident },
+                        FunctionArgumentType::Value(_) | FunctionArgumentType::Specialization(_) => {
+                            quote! { #argument_ident }
+                        },
+                    }
+                })
+                .collect::<Vec<_>>();
 
             quote! {
-                command_buffer.push_command(move || #monomorphized_function(#function_call_args_joined));
+                command_buffer.push_command(move || #monomorphized_function(#(#function_call_args),*));
             }
         };
 
         let encode_body = if !function_parameters.is_empty() {
-            let mut parameter_idents = function_parameters.iter().map(|p| p.name.clone()).fold(quote! {}, |a, b| {
-                if !a.is_empty() {
-                    quote! {#a , self.#b}
-                } else {
-                    quote! {self.#b}
-                }
-            });
-
-            if function_parameters.len() > 1 {
-                parameter_idents = quote! { (#parameter_idents) };
-            }
+            let parameter_fields = function_parameters.iter().map(|p| &p.name).collect::<Vec<_>>();
+            let parameter_idents = if function_parameters.len() > 1 {
+                quote! { (#(self.#parameter_fields),*) }
+            } else {
+                quote! { #(self.#parameter_fields),* }
+            };
 
             let variant_value_strs: Vec<String> = function_variants
                 .iter()
@@ -554,27 +543,13 @@ impl CpuCompiler {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
                         variants.into_iter().unzip();
 
-                    let mut match_variant = match_variants.iter().fold(quote! {}, |a, b| {
-                        if !a.is_empty() && !b.is_empty() {
-                            quote! {#a , #b}
-                        } else {
-                            quote! {#a #b}
-                        }
-                    });
+                    let match_variant = if match_variants.len() > 1 {
+                        quote! { (#(#match_variants),*) }
+                    } else {
+                        quote! { #(#match_variants),* }
+                    };
 
-                    if match_variants.len() > 1 {
-                        match_variant = quote! { (#match_variant) };
-                    }
-
-                    let generic_variant = generic_variants.iter().fold(quote! {}, |a, b| {
-                        if !a.is_empty() && !b.is_empty() {
-                            quote! {#a , #b}
-                        } else {
-                            quote! {#a #b}
-                        }
-                    });
-
-                    let encode = make_encode(generic_variant);
+                    let encode = make_encode(quote! { #(#generic_variants),* });
 
                     quote! { #match_variant => { #encode } }
                 })
@@ -693,13 +668,9 @@ impl Compiler for CpuCompiler {
         _gpu_types: &GpuTypes,
         gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
-        let objects = WalkDir::new(&self.src_dir)
+        let objects = source_files(&self.src_dir, "rs")?
             .into_iter()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
-            })
-            .map(|entry| self.compile(entry.into_path(), gpu_type_paths))
+            .map(|path| self.compile(path, gpu_type_paths))
             .collect::<anyhow::Result<Vec<(KernelPath, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
 

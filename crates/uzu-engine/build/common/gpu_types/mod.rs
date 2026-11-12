@@ -8,7 +8,8 @@ use std::{
 use anyhow::Context;
 use derive_more::{AsRef, Deref, Display, From};
 use syn::{Attribute, Ident, Item};
-use walkdir::WalkDir;
+
+use crate::common::sources::source_files;
 
 mod item_constant;
 mod item_enum;
@@ -101,14 +102,8 @@ impl GpuTypes {
             .join(format!("src/backends/{backend}/gpu_types"));
         println!("cargo::rerun-if-changed={}", src_dir.display());
 
-        let mut sources: Vec<PathBuf> = WalkDir::new(&src_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_type().is_file().then(|| e.into_path()))
-            .filter(|e| e.extension().and_then(|s| s.to_str()) == Some("rs") && e.file_stem() != Some("mod".as_ref()))
-            .collect();
-
-        sources.sort();
+        let sources: Vec<PathBuf> =
+            source_files(&src_dir, "rs")?.into_iter().filter(|e| e.file_stem() != Some("mod".as_ref())).collect();
 
         Ok(Self {
             module_path: format!("crate::backends::{backend}::gpu_types").into(),

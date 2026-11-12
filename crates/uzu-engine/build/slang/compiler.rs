@@ -1,22 +1,22 @@
-use std::{
-    collections::HashMap,
-    fs,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, fs, iter::once, path::PathBuf, sync::Mutex};
 
 use anyhow::Context;
 use rayon::prelude::*;
-use walkdir::WalkDir;
 
 use crate::{
     common::{
-        codegen::write_tokens, compiler::Compiler, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes,
-        identifiers::KernelPath, kernel::Kernel,
+        codegen::write_tokens,
+        compiler::Compiler,
+        gpu_type_paths::GpuTypePaths,
+        gpu_types::GpuTypes,
+        identifiers::{KernelName, KernelPath},
+        kernel::Kernel,
+        sources::source_files,
     },
     slang::{
+        SlangGpuTypes,
         compiler_internal::{BlockingSlangCompiler, SlangCompilerFields, SlangTarget},
-        gpu_types::gpu_type_gen,
+        gpu_type_gen,
     },
 };
 
@@ -64,50 +64,54 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
         gpu_types: &GpuTypes,
         gpu_type_paths: &GpuTypePaths,
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
-        let gpu_type_map = Arc::new(
-            gpu_type_gen(&self.fields.source_directory.join("generated"), gpu_types)
-                .context("cannot generate shared gpu types")?,
-        );
+        let private_gpu_types =
+            T::PRIVATE_GPU_TYPES.map(GpuTypes::scan).transpose().context("cannot scan private gpu types")?;
+        let mut paths = gpu_type_paths.clone();
+        if let Some(private_gpu_types) = &private_gpu_types {
+            paths.extend(private_gpu_types).context("cannot extend gpu type paths")?;
+        }
+        let definitions = once(gpu_types).chain(&private_gpu_types).collect::<Vec<_>>();
+        gpu_type_gen(&self.fields.source_directory.join("generated"), &definitions)
+            .context("cannot generate shared gpu types")?;
+        let gpu_types = SlangGpuTypes {
+            paths,
+            definitions,
+        };
 
-        let slang_sources: Vec<PathBuf> = WalkDir::new(&self.fields.source_directory)
-            .into_iter()
-            .filter_map(|res| res.ok())
-            .filter(|entry| {
-                entry.path().is_file()
-                    && entry.path().extension().and_then(|s| s.to_str()) == Some("slang")
-                    && fs::read(entry.path()).map(|p| !p.starts_with(b"implementing")).unwrap_or(true)
-            })
-            .map(|e| e.into_path())
-            .collect();
+        let mut slang_sources: Vec<PathBuf> = Vec::new();
+        for path in source_files(&self.fields.source_directory, "slang")? {
+            let contents = fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+            if !contents.starts_with(b"implementing") {
+                slang_sources.push(path);
+            }
+        }
 
         let kernels = slang_sources
             .into_par_iter()
             .map(|path| {
-                self.with_blocking_compiler(|compiler| {
-                    compiler.compile(path.clone(), gpu_type_map.clone(), gpu_type_paths)
-                })
-                .with_context(|| format!("cannot compile {}", path.display()))
+                self.with_blocking_compiler(|compiler| compiler.compile(path.clone(), &gpu_types))
+                    .with_context(|| format!("cannot compile {}", path.display()))
             })
-            .collect::<anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>>()?;
+            .collect::<anyhow::Result<Vec<(Box<[Box<str>]>, Box<[Kernel]>, Box<[KernelName]>)>>>()?;
 
         let mut kernels_bindgen = kernels
             .iter()
-            .filter(|(_segments, kernels)| !kernels.is_empty())
-            .map(|(segments, kernels)| {
-                (self.fields.output_directory.join(segments.join("/")).with_extension("rs"), kernels.as_ref())
+            .filter(|(_segments, public, private)| !public.is_empty() || !private.is_empty())
+            .map(|(segments, public, private)| {
+                (self.fields.output_directory.join(segments.join("/")), public.as_ref(), private.as_ref())
             })
-            .collect::<Vec<(PathBuf, &[Kernel])>>();
+            .collect::<Vec<(PathBuf, &[Kernel], &[KernelName])>>();
 
-        kernels_bindgen.sort_by(|(a_path, _a_kernels), (b_path, _b_kernels)| a_path.cmp(b_path));
+        kernels_bindgen.sort_by(|(a_path, ..), (b_path, ..)| a_path.cmp(b_path));
 
-        let bindgen_tokens = T::bindgen_global(&kernels_bindgen).context("cannot bindgen global")?;
+        let bindgen_tokens = T::bindgen_global(&self.fields, &kernels_bindgen).context("cannot bindgen global")?;
         write_tokens(bindgen_tokens, self.fields.output_directory.with_extension("rs"))
             .context("cannot write global bindgen file")?;
 
         Ok(kernels
             .into_iter()
-            .filter(|(_, kernels)| !kernels.is_empty())
-            .map(|(segments, kernels)| (segments.iter().map(|segment| segment.to_string()).collect(), kernels))
+            .filter(|(_, kernels, _)| !kernels.is_empty())
+            .map(|(segments, kernels, _)| (segments.iter().map(|segment| segment.to_string()).collect(), kernels))
             .collect())
     }
 }

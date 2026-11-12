@@ -2,218 +2,192 @@
 #include <metal_atomic>
 #include "common/defines.h"
 #include "common/dsl.h"
+#include "common/thread_context.h"
 #include "common/top_k.h"
 
 using namespace metal;
 
-#define THREADS_PER_TG 256
+#define THREADS_PER_TG 512
+#define SIMDGROUPS_PER_TG (THREADS_PER_TG / METAL_SIMD_SIZE)
+
 constant uint MAX_K = 512;
-constant uint RADIX_BITS = 10;
+constant uint RADIX_BITS = 8;
 constant uint BUCKETS = 1 << RADIX_BITS;
-constant uint BUCKETS_PER_THREAD = BUCKETS / THREADS_PER_TG;
-constant uint VECTOR_WIDTH = 4;
+constant uint HISTOGRAM_REPLICAS = 8;
+constant uint HISTOGRAM_SIZE = BUCKETS * HISTOGRAM_REPLICAS;
+constant uint VECTOR_WIDTH = 8;
+constant uint VECTORS_PER_THREAD = 2;
+constant uint SCORES_PER_THREAD = VECTOR_WIDTH * VECTORS_PER_THREAD;
+constant uint SCORES_PER_BLOCK = SCORES_PER_THREAD * THREADS_PER_TG;
+constant uint HALF_BITS = 16;
+constant uint HALF_MASK = (1 << HALF_BITS) - 1;
 
-METAL_FUNC bool arrive_last(device atomic_uint* count, uint expected) {
-  atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-  const bool last = atomic_fetch_add_explicit(count, 1u, memory_order_relaxed) == expected - 1;
-  if (last)
-    atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-  return last;
-}
-
-METAL_FUNC void reset_arrival(device atomic_uint* count) {
-  atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-  atomic_store_explicit(count, 0u, memory_order_relaxed);
-}
-
-template <typename Visitor>
-METAL_FUNC void visit_partition_keys(
-    const device bfloat* input,
-    uint columns,
-    uint index_bits,
-    uint partition,
-    uint partitions,
-    uint lid,
-    Visitor visit
+METAL_FUNC void load_row_keys(
+    const device ushort* row_scores,
+    uint leading_pad,
+    uint padded_columns,
+    uint first_column,
+    thread uint (&keys)[SCORES_PER_THREAD]
 ) {
-  if (columns % VECTOR_WIDTH != 0) {
-    const uint begin = columns * partition / partitions;
-    const uint end = columns * (partition + 1u) / partitions;
-    for (uint column = begin + lid; column < end; column += THREADS_PER_TG)
-      visit(top_k_ordered_key(float(input[column]), column, index_bits));
-    return;
-  }
-  const device vec<bfloat, VECTOR_WIDTH>* input4 = reinterpret_cast<const device vec<bfloat, VECTOR_WIDTH>*>(input);
-  const uint vector_columns = columns / VECTOR_WIDTH;
-  const uint vector_begin = vector_columns * partition / partitions;
-  const uint vector_end = vector_columns * (partition + 1u) / partitions;
-  for (uint vector = vector_begin + lid; vector < vector_end; vector += THREADS_PER_TG) {
-    const vec<bfloat, VECTOR_WIDTH> values = input4[vector];
-    for (uint lane = 0; lane < VECTOR_WIDTH; ++lane)
-      visit(top_k_ordered_key(float(values[lane]), vector * VECTOR_WIDTH + lane, index_bits));
-  }
-  if (partition + 1 == partitions) {
-    for (uint column = vector_columns * VECTOR_WIDTH + lid; column < columns; column += THREADS_PER_TG)
-      visit(top_k_ordered_key(float(input[column]), column, index_bits));
-  }
-}
-
-KERNEL(RadixTopKSmallPass)(
-    const device bfloat* input,
-    device atomic_uint* partial_histograms,
-    device ulong* prefixes,
-    device ulong* prefix_masks,
-    device uint* ranks,
-    device atomic_uint* done_counts,
-    constant uint& rows,
-    constant uint& k,
-    constant uint& pass,
-    const uint columns SPECIALIZE,
-    const uint partitions SPECIALIZE,
-    threadgroup uint histogram[BUCKETS],
-    threadgroup uint simd_prefixes[THREADS_PER_TG / METAL_SIMD_SIZE],
-    threadgroup uint& is_last,
-    const uint group GROUPS(rows* partitions),
-    const uint lid THREADS(THREADS_PER_TG)
-) {
-  const uint row = group / partitions;
-  const uint partition = group % partitions;
-  const uint index_bits = columns <= 1 ? 1u : 32u - clz(columns - 1u);
-  const uint passes = (32u + index_bits + RADIX_BITS - 1u) / RADIX_BITS;
-  const uint shift = (passes - pass - 1u) * RADIX_BITS;
-  const device bfloat* row_input = input + ulong(row) * columns;
-  const ulong prefix = prefixes[row];
-  const ulong mask = prefix_masks[row];
-
-  // Build this partition's histogram.
-  device atomic_uint* partition_histogram = partial_histograms + (row * partitions + partition) * BUCKETS;
-  for (uint bucket = lid; bucket < BUCKETS; bucket += THREADS_PER_TG)
-    atomic_store_explicit(&partition_histogram[bucket], 0u, memory_order_relaxed);
-  // Order this partition's clears before its histogram updates.
-  threadgroup_barrier(mem_flags::mem_device);
-  visit_partition_keys(row_input, columns, index_bits, partition, partitions, lid, [&](ulong key) {
-    if ((key & mask) == prefix)
-      atomic_fetch_add_explicit(&partition_histogram[(key >> shift) & (BUCKETS - 1)], 1u, memory_order_relaxed);
-  });
-  threadgroup_barrier(mem_flags::mem_device);
-
-  // The last partition merges the row.
-  if (lid == 0)
-    is_last = arrive_last(&done_counts[row], partitions);
-  threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
-  if (!is_last)
-    return;
-
-  for (uint bucket = lid; bucket < BUCKETS; bucket += THREADS_PER_TG) {
-    uint count = 0;
-    for (uint p = 0; p < partitions; ++p)
-      count +=
-          atomic_load_explicit(&partial_histograms[(row * partitions + p) * BUCKETS + bucket], memory_order_relaxed);
-    histogram[bucket] = count;
-  }
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  uint sum = 0;
-  const uint begin = BUCKETS - (lid + 1) * BUCKETS_PER_THREAD;
-  for (uint offset = 0; offset < BUCKETS_PER_THREAD; ++offset)
-    sum += histogram[begin + offset];
-  uint higher = simd_prefix_exclusive_sum(sum);
-  if ((lid + 1) % METAL_SIMD_SIZE == 0)
-    simd_prefixes[lid / METAL_SIMD_SIZE] = higher + sum;
-  threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (lid < METAL_SIMD_SIZE) {
-    const uint simdgroups = THREADS_PER_TG / METAL_SIMD_SIZE;
-    const uint simd_sum = lid < simdgroups ? simd_prefixes[lid] : 0;
-    const uint simd_prefix = simd_prefix_exclusive_sum(simd_sum);
-    if (lid < simdgroups)
-      simd_prefixes[lid] = simd_prefix;
-  }
-
-  uint rank = pass == 0 ? k - 1 : ranks[row];
-
-  threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
-
-  higher += simd_prefixes[lid / METAL_SIMD_SIZE];
-
-  if (higher <= rank && rank < higher + sum) {
-    rank -= higher;
-    const uint group_begin = BUCKETS - (lid + 1) * BUCKETS_PER_THREAD;
-    for (uint offset = 0; offset < BUCKETS_PER_THREAD; ++offset) {
-      const uint bucket = group_begin + BUCKETS_PER_THREAD - offset - 1;
-      const uint count = histogram[bucket];
-      if (rank < count) {
-        prefixes[row] |= ulong(bucket) << shift;
-        prefix_masks[row] |= ulong(BUCKETS - 1) << shift;
-        break;
+  METAL_PRAGMA_UNROLL
+  for (uint vector = 0; vector < VECTORS_PER_THREAD; ++vector) {
+    const uint vector_column = first_column + vector * VECTOR_WIDTH;
+    if ((vector_column > 0 || leading_pad == 0) && vector_column + VECTOR_WIDTH <= padded_columns) {
+      const uint4 packed_scores = *reinterpret_cast<const device uint4*>(row_scores + vector_column);
+      METAL_PRAGMA_UNROLL
+      for (uint lane = 0; lane < VECTOR_WIDTH; ++lane) {
+        keys[vector * VECTOR_WIDTH + lane] = top_k_bf16_key(ushort(packed_scores[lane / 2] >> (16 * (lane % 2))));
       }
-      rank -= count;
+    } else {
+      for (uint lane = 0; lane < VECTOR_WIDTH; ++lane) {
+        const uint position = vector_column + lane;
+        keys[vector * VECTOR_WIDTH + lane] =
+            position - leading_pad < padded_columns - leading_pad ? top_k_bf16_key(row_scores[position]) : 0;
+      }
     }
-    ranks[row] = rank;
   }
-  threadgroup_barrier(mem_flags::mem_device);
-  if (lid == 0)
-    reset_arrival(&done_counts[row]);
 }
 
-KERNEL(RadixTopKSmallCollect)(
+METAL_FUNC uint2
+threadgroup_prefix_sum(uint value, threadgroup uint* simdgroup_totals, const ThreadContext thread_context) {
+  const uint simd_prefix = simd_prefix_exclusive_sum(value);
+  if (thread_context.simd_lane_id == METAL_SIMD_SIZE - 1) {
+    simdgroup_totals[thread_context.simdgroup_index] = simd_prefix + value;
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  uint previous_simdgroups_total = 0;
+  uint total = 0;
+  for (uint simdgroup = 0; simdgroup < SIMDGROUPS_PER_TG; ++simdgroup) {
+    const uint simdgroup_total = simdgroup_totals[simdgroup];
+    previous_simdgroups_total += simdgroup < thread_context.simdgroup_index ? simdgroup_total : 0;
+    total += simdgroup_total;
+  }
+  return uint2(simd_prefix + previous_simdgroups_total, total);
+}
+
+KERNEL(RadixTopKSmall)(
     const device bfloat* input,
     device uint* output_ids,
     device float* output_scores,
-    const device ulong* prefixes,
-    device atomic_uint* selected_counts,
-    device atomic_uint* done_counts,
-    device coherent(device) ulong* selected_keys,
     constant uint& rows,
+    constant uint& columns,
     constant uint& k,
-    const uint columns SPECIALIZE,
-    const uint partitions SPECIALIZE,
-    threadgroup ulong sorted_keys[MAX_K],
-    threadgroup uint& is_last,
-    const uint group GROUPS(rows* partitions),
+    const bool sorted SPECIALIZE,
+    threadgroup atomic_uint histograms[2 * HISTOGRAM_SIZE],
+    threadgroup uint simdgroup_totals[2 * SIMDGROUPS_PER_TG],
+    threadgroup uint& chosen_bucket,
+    threadgroup uint& chosen_rank,
+    threadgroup uint winner_orders[MAX_K],
+    threadgroup uint winner_columns[MAX_K],
+    const ThreadContext thread_context,
+    const uint row GROUPS(rows),
     const uint lid THREADS(THREADS_PER_TG)
 ) {
-  const uint row = group / partitions;
-  const uint partition = group % partitions;
-  const uint index_bits = columns <= 1 ? 1u : 32u - clz(columns - 1u);
   const device bfloat* row_input = input + ulong(row) * columns;
-  const ulong prefix = prefixes[row];
+  const uint leading_pad = (reinterpret_cast<ulong>(row_input) / sizeof(bfloat)) % VECTOR_WIDTH;
+  const device ushort* row_scores = reinterpret_cast<const device ushort*>(row_input) - leading_pad;
+  const uint padded_columns = leading_pad + columns;
+  device uint* row_ids = output_ids + row * k;
+  device float* row_output_scores = output_scores + row * k;
 
-  visit_partition_keys(row_input, columns, index_bits, partition, partitions, lid, [&](ulong key) {
-    if (key >= prefix) {
-      const uint index = atomic_fetch_add_explicit(&selected_counts[row], 1u, memory_order_relaxed);
-      // The final radix prefix selects exactly k unique keys.
-      selected_keys[row * k + index] = key;
-    }
-  });
-  threadgroup_barrier(mem_flags::mem_device);
-  if (lid == 0)
-    is_last = arrive_last(&done_counts[row], partitions);
-  threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
-  if (!is_last)
-    return;
-
-  for (uint index = lid; index < MAX_K; index += THREADS_PER_TG)
-    sorted_keys[index] = index < k ? selected_keys[row * k + index] : 0;
+  for (uint index = lid; index < 2 * HISTOGRAM_SIZE; index += THREADS_PER_TG) {
+    atomic_store_explicit(&histograms[index], 0u, memory_order_relaxed);
+  }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  for (uint size = 2; size <= MAX_K; size <<= 1) {
-    for (uint stride = size >> 1; stride; stride >>= 1) {
-      for (uint index = lid; index < MAX_K; index += THREADS_PER_TG) {
-        const uint other = index ^ stride;
-        if (other > index) {
-          const bool descending = (index & size) == 0;
-          if (descending ? sorted_keys[index] < sorted_keys[other] : sorted_keys[index] > sorted_keys[other]) {
-            const ulong key = sorted_keys[index];
-            sorted_keys[index] = sorted_keys[other];
-            sorted_keys[other] = key;
-          }
+
+  uint threshold_key = 0;
+  uint rank = k - 1;
+  METAL_PRAGMA_UNROLL
+  for (uint pass = 0; pass < 2; ++pass) {
+    const uint shift = RADIX_BITS * (1 - pass);
+    threadgroup atomic_uint* histogram = histograms + pass * HISTOGRAM_SIZE;
+    for (uint first_column = lid * SCORES_PER_THREAD; first_column < padded_columns; first_column += SCORES_PER_BLOCK) {
+      uint keys[SCORES_PER_THREAD];
+      load_row_keys(row_scores, leading_pad, padded_columns, first_column, keys);
+      METAL_PRAGMA_UNROLL
+      for (uint index = 0; index < SCORES_PER_THREAD; ++index) {
+        if ((keys[index] >> (shift + RADIX_BITS)) == threshold_key) {
+          const uint replica = thread_context.simd_lane_id % HISTOGRAM_REPLICAS;
+          const uint bucket = (keys[index] >> shift) & (BUCKETS - 1);
+          atomic_fetch_add_explicit(&histogram[bucket * HISTOGRAM_REPLICAS + replica], 1u, memory_order_relaxed);
         }
       }
-      threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint bucket = BUCKETS - 1 - lid;
+    uint count = 0;
+    if (lid < BUCKETS) {
+      for (uint replica = 0; replica < HISTOGRAM_REPLICAS; ++replica) {
+        count += atomic_load_explicit(&histogram[bucket * HISTOGRAM_REPLICAS + replica], memory_order_relaxed);
+      }
+    }
+    const uint larger_keys = threadgroup_prefix_sum(count, simdgroup_totals, thread_context).x;
+    if (larger_keys <= rank && rank < larger_keys + count) {
+      chosen_bucket = bucket;
+      chosen_rank = rank - larger_keys;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    threshold_key = threshold_key << RADIX_BITS | chosen_bucket;
+    rank = chosen_rank;
+  }
+
+  const uint tie_winner_count = rank + 1;
+  const uint above_threshold_count = k - tie_winner_count;
+  uint above_threshold_before = 0;
+  uint ties_before = 0;
+  for (uint block = 0; block * SCORES_PER_BLOCK < padded_columns; ++block) {
+    const uint first_column = block * SCORES_PER_BLOCK + lid * SCORES_PER_THREAD;
+    uint keys[SCORES_PER_THREAD];
+    load_row_keys(row_scores, leading_pad, padded_columns, first_column, keys);
+    uint thread_above_threshold = 0;
+    uint thread_ties = 0;
+    METAL_PRAGMA_UNROLL
+    for (uint index = 0; index < SCORES_PER_THREAD; ++index) {
+      thread_above_threshold += keys[index] > threshold_key;
+      thread_ties += keys[index] == threshold_key && first_column + index - leading_pad < columns;
+    }
+    const uint2 prefix_and_total = threadgroup_prefix_sum(
+        thread_above_threshold | thread_ties << HALF_BITS,
+        simdgroup_totals + (block % 2) * SIMDGROUPS_PER_TG,
+        thread_context
+    );
+    uint above_threshold_slot = above_threshold_before + (prefix_and_total.x & HALF_MASK);
+    uint tie_rank = ties_before + (prefix_and_total.x >> HALF_BITS);
+    METAL_PRAGMA_UNROLL
+    for (uint index = 0; index < SCORES_PER_THREAD; ++index) {
+      const uint column = first_column + index - leading_pad;
+      const bool above_threshold = keys[index] > threshold_key;
+      const bool tie = keys[index] == threshold_key && column < columns;
+      const uint slot = above_threshold_slot + min(tie_rank, tie_winner_count);
+      if (above_threshold || (tie && tie_rank < tie_winner_count)) {
+        if (sorted) {
+          winner_orders[slot] = keys[index] << HALF_BITS | (HALF_MASK - slot);
+          winner_columns[slot] = column;
+        } else {
+          row_ids[slot] = column;
+          row_output_scores[slot] = float(row_input[column]);
+        }
+      }
+      above_threshold_slot += above_threshold;
+      tie_rank += tie;
+    }
+    above_threshold_before += prefix_and_total.y & HALF_MASK;
+    ties_before += prefix_and_total.y >> HALF_BITS;
+    if (above_threshold_before == above_threshold_count && ties_before >= tie_winner_count) {
+      break;
     }
   }
-  for (uint index = lid; index < k; index += THREADS_PER_TG) {
-    const ulong key = sorted_keys[index];
-    const ulong mask = (1ul << index_bits) - 1;
-    output_ids[row * k + index] = uint(mask - (key & mask));
-    output_scores[row * k + index] = top_k_score_from_key(uint(key >> index_bits));
+
+  if (sorted) {
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint slot = lid; slot < k; slot += THREADS_PER_TG) {
+      uint winners_ahead = 0;
+      for (uint other_slot = 0; other_slot < k; ++other_slot) {
+        winners_ahead += winner_orders[other_slot] > winner_orders[slot];
+      }
+      row_ids[winners_ahead] = winner_columns[slot];
+      row_output_scores[winners_ahead] = float(row_input[winner_columns[slot]]);
+    }
   }
 }

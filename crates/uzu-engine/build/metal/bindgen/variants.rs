@@ -5,8 +5,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
-use super::super::ast::{MetalKernelInfo, MetalTemplateParameterType};
-use crate::common::gpu_type_paths::GpuTypePaths;
+use super::super::ast::MetalKernelInfo;
+use crate::common::{gpu_type_paths::GpuTypePaths, kernel::KernelParameterType};
 
 pub struct VariantBind {
     pub parameter_name: Ident,
@@ -27,8 +27,8 @@ pub fn parse(
             let parameter_name = Ident::new(variant.name.as_ref(), Span::call_site());
             let field_name = format_ident!("{}", variant.name.as_ref().to_ascii_lowercase());
             let parsed_type = match &variant.ty {
-                MetalTemplateParameterType::Type => None,
-                MetalTemplateParameterType::Value(type_text) => Some(gpu_type_paths.resolve_type(type_text)?),
+                KernelParameterType::Type => None,
+                KernelParameterType::Value(type_text) => Some(gpu_type_paths.resolve_type(type_text)?),
             };
             Ok(VariantBind {
                 parameter_name,

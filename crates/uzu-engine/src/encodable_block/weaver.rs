@@ -197,7 +197,6 @@ pub enum WeaverEncodeError<B: Backend> {
 
 impl<B: Backend> Weaver<B> {
     pub async fn new(
-        vocab_size: u32,
         config: &WeaverConfig,
         readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         parameter_tree: &ParameterTree<'_, B>,
@@ -321,8 +320,7 @@ impl<B: Backend> Weaver<B> {
             })
             .transpose()
             .map_err(WeaverNewError::Backend)?;
-        let top_k =
-            <B::Kernels as Kernels>::RadixTopKSmall::new(context, vocab_size).map_err(WeaverNewError::Backend)?;
+        let top_k = <B::Kernels as Kernels>::RadixTopKSmall::new(context).map_err(WeaverNewError::Backend)?;
         let top_children = <B::Kernels as Kernels>::WeaverSelectKernel::new(context, 256, Children, false)
             .map_err(WeaverNewError::Backend)?;
         let top_children_with_prune_noise =
@@ -687,7 +685,9 @@ impl<B: Backend> Weaver<B> {
                     &mut candidate_ids,
                     &mut candidate_logits,
                     pool_depth_count,
+                    vocab_size,
                     self.candidate_pool_size,
+                    true,
                     command_buffer,
                 )
                 .map_err(WeaverEncodeError::Backend)?;
