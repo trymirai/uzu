@@ -17,15 +17,6 @@ public struct DenseOperand<T : IStorageFloat> : IMatmulOperand {
   }
 }
 
-public uint gemm_b_code_byte(GemmBLayout layout, uint row, uint inner, uint k, bool u4) {
-  let shift = u4 ? 1u : 0u;
-  if (layout == GemmBLayout.Tiled) {
-    let tile = row / 8 * (k / 64) + inner / 64;
-    return tile * (512u >> shift) + (((row % 8) * 64 + inner % 64) >> shift);
-  }
-  return (row * k + inner) >> shift;
-}
-
 public struct WeightGroup {
   public float scale;
   public float bias;
@@ -49,7 +40,12 @@ public struct QuantizedWeights<B : IStorageFloat> : IMatmulOperand {
   public GemmBLayout layout;
 
   public uint code_byte(uint row, uint inner) {
-    return gemm_b_code_byte(layout, row, inner, k, u4);
+    let shift = u4 ? 1u : 0u;
+    if (layout == GemmBLayout.Tiled) {
+      let tile = row / 8 * (k / 64) + inner / 64;
+      return tile * (512u >> shift) + (((row % 8) * 64 + inner % 64) >> shift);
+    }
+    return (row * k + inner) >> shift;
   }
 
   public WeightGroup metadata(uint row, uint group) {

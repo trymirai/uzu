@@ -1,7 +1,5 @@
 import definitions;
-import matmul.common.matmul;
 import matmul.common.fragment;
-import matmul.common.loader;
 
 public void fragment_store<U : IStorageFloat, let SIMDGROUP_STRIDE_X : int, let SIMDGROUP_STRIDE_Y : int, let ROWS : int, let COLS : int>(
   Fragment<ROWS, COLS> frag,

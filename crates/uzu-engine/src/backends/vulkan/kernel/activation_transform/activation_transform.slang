@@ -78,9 +78,8 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
 
 [[Variants("T", "float, bf16")]]
 [[Kernel]]
-[[Precondition("new", "activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "sum_group_size == 0 || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
-[[Precondition("encode", "element_count.is_multiple_of(activation_scale_group_size) && element_count.is_multiple_of(sum_group_size.max(1))")]]
+[[Precondition("encode", "element_count.is_multiple_of(sum_group_size.max(1))")]]
 func ActivationQuantize<T: IStorageFloat>(
   Ptr<T, Access.Read> input,
   Ptr<int8_t, Access.ReadWrite> q_out,
@@ -92,7 +91,6 @@ func ActivationQuantize<T: IStorageFloat>(
   [[Groups("batch_size")]] uint batch,
   [[Threads("128")]] uint tid,
   [[Specialize]] bool grouped_by_weight_nibble,
-  [[Specialize]] uint activation_scale_group_size,
   [[Specialize]] uint sum_group_size,
 ) {
   let column = tile * ACTIVATION_QUANTIZATION_TILE + subgroup_invocation();
@@ -108,7 +106,7 @@ func ActivationQuantize<T: IStorageFloat>(
     q_out,
     scales_out,
     group_sums_out,
-    activation_scale_group_size,
+    ACTIVATION_QUANTIZATION_TILE,
     sum_group_size,
     sum_group_size > 0,
     grouped_by_weight_nibble

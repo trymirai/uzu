@@ -6,7 +6,6 @@ import common.workgroup_reduction;
 import generated.gemm;
 import generated.gemm_b_layout;
 import generated.quantization;
-import generated.quantization_method;
 import matmul.common.int8_operands;
 import matmul.gemv.common.arguments;
 import matmul.gemv.common.epilogue;
@@ -233,8 +232,7 @@ func GemvInt8<B: IStorageFloat, D: IStorageFloat>(
 ) {
   let invocation = subgroup_invocation();
   let u4 = quantization_mode == QuantizationMode.U4;
-  let method = gemm_quantization_method(b_prologue);
-  let scale_bias = method == QuantizationMethod.ScaleBias;
+  let scale_bias = b_prologue == GemmBPrologueKind.ScaleBiasDequant;
   let weights = gemm_weights<B>(b, scales, biases, zero_points, group_size, scale_output_stride, scale_group_stride,
     zero_point_output_stride, zero_point_group_stride, quantization_mode, signed_codes, b_prologue, k, b_layout);
   GemmParams params = { m, n, k, ab_scale, soft_cap, has_scale, has_bias && !has_rht, has_soft_cap, 0 };

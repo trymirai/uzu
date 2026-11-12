@@ -31,9 +31,8 @@ public struct QuantBSource {
     }
 
     let batch_remaining = params.batch_size - tile.input_row;
-    let group = group_slot;
 
-    QuantPosition position = { group, 0 };
+    QuantPosition position = { group_slot, 0 };
     while (position.valid(groups)) {
       QuantMetadata metadata;
       metadata.load(position.group, weight_row_indices, weights, Tile);

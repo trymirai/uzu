@@ -1,7 +1,6 @@
 import definitions;
 import common.workgroup_reduction;
 import generated.trellis;
-import matmul.common.int8_operands;
 
 static const uint TRELLIS_THREADS = 256;
 static const uint TRELLIS_OUTPUTS = 8;

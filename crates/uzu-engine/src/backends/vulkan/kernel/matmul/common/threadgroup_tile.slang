@@ -1,7 +1,6 @@
 import definitions;
 import matmul.common.matmul;
 import matmul.common.fragment;
-import matmul.common.loader;
 import matmul.common.simdgroup_fragment_ops;
 import matmul.common.simdgroup_multiply_accumulate;
 

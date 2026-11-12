@@ -29,7 +29,7 @@ use crate::{
             GemvInt8VulkanKernel, GemvVulkanKernel, TrellisGemvVulkanKernel, VkBuffer, VkCommandBufferEncoding,
             VkContext, VkDeviceCapabilities, VkKernelError, Vulkan,
             gpu_types::{gemm_b_layout::GemmBLayout, gemm_tiling::GemmTiling},
-            kernel::matmul::{GemmBPrologue, VkGemvTile, VkMatmulPlan},
+            kernel::matmul::{VkGemvTile, VkMatmulPlan},
         },
     },
     data_type::DataType,
@@ -37,10 +37,10 @@ use crate::{
 
 const TRELLIS_K_STEP: u32 = 64;
 
+type GemmBPrologue = (GemmBPrologueKind, QuantizationMode, bool, u32);
+
 pub struct VkMatmulKernel {
-    weights_data_type: DataType,
-    input_data_type: DataType,
-    output_data_type: DataType,
+    data_types: [DataType; 3],
     gemv: HashMap<([bool; 4], GemmBPrologue, VkGemvTile, GemmBLayout), GemvVulkanKernel>,
     gemm: HashMap<([bool; 3], GemmBPrologue, GemmTiling, u32), GemmVulkanKernel>,
     gemm_tensor: HashMap<([bool; 3], GemmBPrologue, GemmTiling), GemmTensorVulkanKernel>,
@@ -73,9 +73,7 @@ impl MatmulKernel for VkMatmulKernel {
             .into());
         }
         Ok(Self {
-            weights_data_type,
-            input_data_type,
-            output_data_type,
+            data_types,
             gemv: HashMap::new(),
             gemm: HashMap::new(),
             gemm_tensor: HashMap::new(),
@@ -95,7 +93,7 @@ impl MatmulKernel for VkMatmulKernel {
         context: &VkContext,
     ) -> Option<ActivationQuantization> {
         let capabilities = context.physical_device().capabilities;
-        VkMatmulPlan::a8_quantization(shape, self.data_types(), capabilities)
+        VkMatmulPlan::a8_quantization(shape, self.data_types, capabilities)
     }
 
     fn activation_preparation(
@@ -146,7 +144,7 @@ impl MatmulKernel for VkMatmulKernel {
         let (n, k) = (a8_shape.n, a8_shape.k);
         let capabilities = context.physical_device().capabilities;
         let Some(bits) =
-            a8_shape.b_bits.filter(|_| VkMatmulPlan::tiles_weights(a8_shape, self.data_types(), capabilities))
+            a8_shape.b_bits.filter(|_| VkMatmulPlan::tiles_weights(a8_shape, self.data_types, capabilities))
         else {
             return Ok((GemmBLayout::RowMajor, prepared_shape.signed_codes));
         };
@@ -187,8 +185,7 @@ impl MatmulKernel for VkMatmulKernel {
         let context = command_buffer.context().arc();
         command_buffer.declare_work(2 * u64::from(m) * u64::from(n) * u64::from(k));
         let (d, ops, row_stride) = (output.values, output.ops, output.row_stride.unwrap_or(n));
-        let (weights_type, input_type, output_type) =
-            (self.weights_data_type, self.input_data_type, self.output_data_type);
+        let [weights_type, input_type, output_type] = self.data_types;
 
         if let MatmulB::Trellis {
             codes,
@@ -260,7 +257,7 @@ impl MatmulKernel for VkMatmulKernel {
             MatmulA::FullPrecision {
                 values,
                 offset,
-            } => (Some(VkBuffer::resolve_ref(values.subrange(offset * self.input_data_type.size_in_bytes()..))), None),
+            } => (Some(VkBuffer::resolve_ref(values.subrange(offset * input_type.size_in_bytes()..))), None),
             MatmulA::Int8Symmetric {
                 values,
                 scales,
@@ -302,7 +299,6 @@ impl MatmulKernel for VkMatmulKernel {
         let [has_scale, has_bias, has_soft_cap] = flags;
         let (ab_scale, soft_cap) = (has_scale.then_some(ops.ab_scale), ops.soft_cap);
         let bias_range = ops.bias.map(VkBuffer::resolve_ref);
-        let gathered = gather_indices.is_some();
         let gather = gather_indices.map(VkBuffer::resolve_ref);
         let d_range = VkBuffer::resolve_ref(d.as_ref());
         let physical_device = context.physical_device();
@@ -369,8 +365,8 @@ impl MatmulKernel for VkMatmulKernel {
         };
         let (scale_output, scale_group) = scale_strides.unzip();
         let (zero_point_output, zero_point_group) = zero_point_strides.unzip();
-        let plan = VkMatmulPlan::baseline(&shape, b_layout, self.data_types(), physical_device);
-        plan.check(&shape, b_layout, self.data_types(), physical_device)
+        let plan = VkMatmulPlan::baseline(&shape, b_layout, self.data_types, physical_device);
+        plan.check(&shape, b_layout, self.data_types, physical_device)
             .map_err(|reason| precondition("Matmul", reason))?;
         let quantized_a = match (plan, &a_range) {
             (
@@ -379,7 +375,7 @@ impl MatmulKernel for VkMatmulKernel {
                 },
                 Some(values),
             ) => {
-                let quantization = VkMatmulPlan::a8_quantization(&shape, self.data_types(), capabilities)
+                let quantization = VkMatmulPlan::a8_quantization(&shape, self.data_types, capabilities)
                     .expect("the plan check took the A8 contract");
                 let code_layout = quantization.code_layout();
                 let sums = quantization.sum_group_size();
@@ -391,7 +387,7 @@ impl MatmulKernel for VkMatmulKernel {
                     .transpose()?;
                 let key = (code_layout.is_grouped_by_nibble(), sums.unwrap_or(0));
                 let kernel = cached(&mut self.quantize_a, key, || {
-                    ActivationQuantizeVulkanKernel::new(&context, input_type, key.0, ACTIVATION_SCALE_GROUP_SIZE, key.1)
+                    ActivationQuantizeVulkanKernel::new(&context, input_type, key.0, key.1)
                 })?;
                 unsafe {
                     kernel.encode(
@@ -435,61 +431,62 @@ impl MatmulKernel for VkMatmulKernel {
                     "A8 of 128-value activation scales, the weights' code layout and group sums exactly for ScaleBias",
                 ));
             }
-            let (scales, (scale_output, scale_group)) =
-                (scales.expect("quantized B has scales"), scale_strides.expect("quantized B has scale strides"));
-            if let VkMatmulPlan::GemvInt8 {
-                rows,
-                input_rows,
-            } = plan
-            {
-                let gemv_flags = [has_scale, has_bias, has_soft_cap, gathered, rht.is_some()];
-                let kernel = cached(&mut self.gemv_int8, (gemv_flags, prologue, rows, input_rows, b_layout), || {
-                    GemvInt8VulkanKernel::new(
-                        &context,
-                        weights_type,
-                        output_type,
-                        has_scale,
-                        has_bias,
-                        has_soft_cap,
-                        scheme,
-                        mode,
-                        signed_codes,
-                        group_size,
-                        rows,
-                        input_rows,
-                        b_layout,
-                        capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT),
-                        gathered,
-                        rht.is_some(),
-                    )
-                })?;
-                unsafe {
-                    kernel.encode(
-                        b_range,
-                        scales,
-                        biases,
-                        zero_points,
-                        codes,
-                        a_scales,
-                        group_sums,
-                        d_range,
-                        bias_range,
-                        gather,
-                        rht.clone(),
-                        k,
-                        n,
-                        m,
-                        scale_output,
-                        scale_group,
-                        zero_point_output,
-                        zero_point_group,
-                        ab_scale,
-                        soft_cap,
-                        command_buffer,
-                    )
-                };
-            } else {
-                let VkMatmulPlan::GemmInt8 {
+            let scales = scales.expect("quantized B has scales");
+            let (scale_output, scale_group) = scale_strides.expect("quantized B has scale strides");
+            match plan {
+                VkMatmulPlan::GemvInt8 {
+                    rows,
+                    input_rows,
+                } => {
+                    let gemv_flags = [has_scale, has_bias, has_soft_cap, shape.gathered, rht.is_some()];
+                    let kernel =
+                        cached(&mut self.gemv_int8, (gemv_flags, prologue, rows, input_rows, b_layout), || {
+                            GemvInt8VulkanKernel::new(
+                                &context,
+                                weights_type,
+                                output_type,
+                                has_scale,
+                                has_bias,
+                                has_soft_cap,
+                                scheme,
+                                mode,
+                                signed_codes,
+                                group_size,
+                                rows,
+                                input_rows,
+                                b_layout,
+                                capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT),
+                                shape.gathered,
+                                rht.is_some(),
+                            )
+                        })?;
+                    unsafe {
+                        kernel.encode(
+                            b_range,
+                            scales,
+                            biases,
+                            zero_points,
+                            codes,
+                            a_scales,
+                            group_sums,
+                            d_range,
+                            bias_range,
+                            gather,
+                            rht.clone(),
+                            k,
+                            n,
+                            m,
+                            scale_output,
+                            scale_group,
+                            zero_point_output,
+                            zero_point_group,
+                            ab_scale,
+                            soft_cap,
+                            command_buffer,
+                        )
+                    };
+                },
+                VkMatmulPlan::GemmInt8 {
                     element_fold,
                     row_block,
                     simdgroups,
@@ -497,21 +494,18 @@ impl MatmulKernel for VkMatmulKernel {
                     prefetch,
                     splits,
                     k_slices,
-                } = plan
-                else {
-                    unreachable!("the check gives A8 activations an A8 plan");
-                };
-                let partials = (splits > 1)
-                    .then(|| command_buffer.allocate_scratch_for_shape(&[splits * m * n], DataType::U32))
-                    .transpose()?;
-                let partials_range = partials.as_ref().map(VkBuffer::resolve_ref);
-                let phases = if splits == 1 {
-                    0..1
-                } else {
-                    1..3
-                };
-                let flags = [has_scale, has_bias, has_soft_cap, rht.is_some()];
-                macro_rules! gemm_int8 {
+                } => {
+                    let partials = (splits > 1)
+                        .then(|| command_buffer.allocate_scratch_for_shape(&[splits * m * n], DataType::U32))
+                        .transpose()?;
+                    let partials_range = partials.as_ref().map(VkBuffer::resolve_ref);
+                    let phases = if splits == 1 {
+                        0..1
+                    } else {
+                        1..3
+                    };
+                    let flags = [has_scale, has_bias, has_soft_cap, rht.is_some()];
+                    macro_rules! gemm_int8 {
                     ($cache:expr, $kernel:ident, $phase:ident $(, $depth:expr, $prefetch:expr, $k_slices:expr)?) => {{
                         let kernel =
                             cached(&mut $cache, (flags, prologue, plan, $phase, b_layout), || {
@@ -563,24 +557,129 @@ impl MatmulKernel for VkMatmulKernel {
                         }
                     }};
                 }
-                for phase in phases {
-                    if element_fold {
-                        gemm_int8!(self.gemm_int8_nv, GemmInt8NvVulkanKernel, phase, stage_depth, prefetch, k_slices);
-                    } else if capabilities.contains(VkDeviceCapabilities::INT8_TENSOR_CORES_K32) {
-                        gemm_int8!(self.gemm_int8, GemmInt8VulkanKernel, phase);
-                    } else {
-                        gemm_int8!(self.gemm_int8_k16, GemmInt8K16VulkanKernel, phase);
+                    for phase in phases {
+                        if element_fold {
+                            gemm_int8!(
+                                self.gemm_int8_nv,
+                                GemmInt8NvVulkanKernel,
+                                phase,
+                                stage_depth,
+                                prefetch,
+                                k_slices
+                            );
+                        } else if capabilities.contains(VkDeviceCapabilities::INT8_TENSOR_CORES_K32) {
+                            gemm_int8!(self.gemm_int8, GemmInt8VulkanKernel, phase);
+                        } else {
+                            gemm_int8!(self.gemm_int8_k16, GemmInt8K16VulkanKernel, phase);
+                        }
                     }
-                }
+                },
+                _ => unreachable!("the check gives A8 activations an A8 plan"),
             }
         } else {
             let a_range = a_range.expect("full-precision A outside A8");
-            if let VkMatmulPlan::Gemv(tile) = plan {
-                let kernel = cached(
-                    &mut self.gemv,
-                    ([has_scale, has_bias, has_soft_cap, gathered], prologue, tile, b_layout),
-                    || {
-                        GemvVulkanKernel::new(
+            match plan {
+                VkMatmulPlan::Gemv(tile) => {
+                    let kernel = cached(
+                        &mut self.gemv,
+                        ([has_scale, has_bias, has_soft_cap, shape.gathered], prologue, tile, b_layout),
+                        || {
+                            GemvVulkanKernel::new(
+                                &context,
+                                input_type,
+                                weights_type,
+                                output_type,
+                                has_scale,
+                                has_bias,
+                                has_soft_cap,
+                                shape.gathered,
+                                scheme,
+                                mode,
+                                signed_codes,
+                                group_size,
+                                tile.output_row_tile(),
+                                tile.num_simdgroups,
+                                tile.input_row_tile,
+                                tile.group_lanes,
+                                tile.input_aligned,
+                                tile.full_tile,
+                                tile.lane_layout,
+                                b_layout,
+                            )
+                        },
+                    )?;
+                    let (b_row_stride, b_column_stride) = b_strides.unzip();
+                    unsafe {
+                        kernel.encode(
+                            b_range,
+                            scales,
+                            biases,
+                            zero_points,
+                            a_range,
+                            d_range,
+                            bias_range,
+                            gather,
+                            k,
+                            n,
+                            m,
+                            b_row_stride,
+                            b_column_stride,
+                            scale_output,
+                            scale_group,
+                            zero_point_output,
+                            zero_point_group,
+                            ab_scale,
+                            soft_cap,
+                            command_buffer,
+                        )
+                    };
+                },
+                VkMatmulPlan::GemmTensor(tiling) => {
+                    let kernel = cached(&mut self.gemm_tensor, (flags, prologue, tiling), || {
+                        GemmTensorVulkanKernel::new(
+                            &context,
+                            weights_type,
+                            output_type,
+                            has_scale,
+                            has_bias,
+                            has_soft_cap,
+                            scheme,
+                            mode,
+                            signed_codes,
+                            group_size,
+                            tiling,
+                            tiling.simdgroups(),
+                            tiling.tensor_staging(),
+                        )
+                    })?;
+                    unsafe {
+                        kernel.encode(
+                            b_range,
+                            scales,
+                            biases,
+                            zero_points,
+                            a_range,
+                            d_range,
+                            bias_range,
+                            k,
+                            n,
+                            m,
+                            scale_output,
+                            scale_group,
+                            zero_point_output,
+                            zero_point_group,
+                            ab_scale,
+                            soft_cap,
+                            command_buffer,
+                        )
+                    };
+                },
+                VkMatmulPlan::Gemm(tiling) => {
+                    let alignment = u32::from(m.is_multiple_of(tiling.block_m()))
+                        | (u32::from(n.is_multiple_of(tiling.block_n())) * 2)
+                        | (u32::from(k.is_multiple_of(tiling.block_k())) * 4);
+                    let kernel = cached(&mut self.gemm, (flags, prologue, tiling, alignment), || {
+                        GemmVulkanKernel::new(
                             &context,
                             input_type,
                             weights_type,
@@ -588,132 +687,40 @@ impl MatmulKernel for VkMatmulKernel {
                             has_scale,
                             has_bias,
                             has_soft_cap,
-                            gathered,
                             scheme,
                             mode,
                             signed_codes,
                             group_size,
-                            tile.output_row_tile(),
-                            tile.num_simdgroups,
-                            tile.input_row_tile,
-                            tile.group_lanes,
-                            tile.input_aligned,
-                            tile.full_tile,
-                            tile.lane_layout,
-                            b_layout,
+                            tiling,
+                            alignment,
+                            tiling.simdgroups(),
+                            tiling.scalar_staging(true, input_type.size_in_bytes() as u32),
+                            tiling.scalar_staging(false, weights_type.size_in_bytes() as u32),
                         )
-                    },
-                )?;
-                let (b_row_stride, b_column_stride) = b_strides.unzip();
-                unsafe {
-                    kernel.encode(
-                        b_range,
-                        scales,
-                        biases,
-                        zero_points,
-                        a_range,
-                        d_range,
-                        bias_range,
-                        gather,
-                        k,
-                        n,
-                        m,
-                        b_row_stride,
-                        b_column_stride,
-                        scale_output,
-                        scale_group,
-                        zero_point_output,
-                        zero_point_group,
-                        ab_scale,
-                        soft_cap,
-                        command_buffer,
-                    )
-                };
-            } else if let VkMatmulPlan::GemmTensor(tiling) = plan {
-                let kernel = cached(&mut self.gemm_tensor, (flags, prologue, tiling), || {
-                    GemmTensorVulkanKernel::new(
-                        &context,
-                        weights_type,
-                        output_type,
-                        has_scale,
-                        has_bias,
-                        has_soft_cap,
-                        scheme,
-                        mode,
-                        signed_codes,
-                        group_size,
-                        tiling,
-                        tiling.simdgroups(),
-                        tiling.tensor_staging(),
-                    )
-                })?;
-                unsafe {
-                    kernel.encode(
-                        b_range,
-                        scales,
-                        biases,
-                        zero_points,
-                        a_range,
-                        d_range,
-                        bias_range,
-                        k,
-                        n,
-                        m,
-                        scale_output,
-                        scale_group,
-                        zero_point_output,
-                        zero_point_group,
-                        ab_scale,
-                        soft_cap,
-                        command_buffer,
-                    )
-                };
-            } else {
-                let VkMatmulPlan::Gemm(tiling) = plan else {
-                    unreachable!("the check gives full-precision activations a full-precision plan");
-                };
-                let alignment = alignment(tiling, m, n, k);
-                let kernel = cached(&mut self.gemm, (flags, prologue, tiling, alignment), || {
-                    GemmVulkanKernel::new(
-                        &context,
-                        input_type,
-                        weights_type,
-                        output_type,
-                        has_scale,
-                        has_bias,
-                        has_soft_cap,
-                        scheme,
-                        mode,
-                        signed_codes,
-                        group_size,
-                        tiling,
-                        alignment,
-                        tiling.simdgroups(),
-                        tiling.scalar_staging(true, input_type.size_in_bytes() as u32),
-                        tiling.scalar_staging(false, weights_type.size_in_bytes() as u32),
-                    )
-                })?;
-                unsafe {
-                    kernel.encode(
-                        b_range,
-                        scales,
-                        biases,
-                        zero_points,
-                        a_range,
-                        d_range,
-                        bias_range,
-                        k,
-                        n,
-                        m,
-                        scale_output,
-                        scale_group,
-                        zero_point_output,
-                        zero_point_group,
-                        ab_scale,
-                        soft_cap,
-                        command_buffer,
-                    )
-                };
+                    })?;
+                    unsafe {
+                        kernel.encode(
+                            b_range,
+                            scales,
+                            biases,
+                            zero_points,
+                            a_range,
+                            d_range,
+                            bias_range,
+                            k,
+                            n,
+                            m,
+                            scale_output,
+                            scale_group,
+                            zero_point_output,
+                            zero_point_group,
+                            ab_scale,
+                            soft_cap,
+                            command_buffer,
+                        )
+                    };
+                },
+                _ => unreachable!("the check gives full-precision activations a full-precision plan"),
             }
         }
 
@@ -724,12 +731,6 @@ impl MatmulKernel for VkMatmulKernel {
             transform.encode_fp_in_place(d, factors, bias, m, n, command_buffer);
         }
         Ok(())
-    }
-}
-
-impl VkMatmulKernel {
-    fn data_types(&self) -> [DataType; 3] {
-        [self.weights_data_type, self.input_data_type, self.output_data_type]
     }
 }
 
@@ -753,17 +754,6 @@ fn cached<K: Eq + Hash, V>(
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => entry.insert(create()?),
     })
-}
-
-fn alignment(
-    tiling: GemmTiling,
-    m: u32,
-    n: u32,
-    k: u32,
-) -> u32 {
-    u32::from(m.is_multiple_of(tiling.block_m()))
-        | (u32::from(n.is_multiple_of(tiling.block_n())) * 2)
-        | (u32::from(k.is_multiple_of(tiling.block_k())) * 4)
 }
 
 fn wait<T: Send>(future: impl Future<Output = T> + Send) -> T {

@@ -2,8 +2,6 @@ import definitions;
 import common.activation_quantization;
 import common.hadamard;
 import matmul.common.matmul;
-import common.quantized_value;
-import generated.gemm;
 import generated.hadamard_order;
 import generated.quantization_method;
 import matmul.common.int8_operands;
@@ -392,17 +390,6 @@ public interface IInt8Shared<let MMA_K : int> : ISharedWords {
 typealias Int8Dots = CoopMat<int, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator>;
 typealias Int8Sums = CoopMat<float, MemoryScope.Subgroup, 16, 16, CoopMatMatrixUse.MatrixAccumulator>;
 
-Int8Sums int8_element_fold<let MMA_K : int, S : IInt8Shared<MMA_K>>(
-  Int8Sums sums, Int8Dots dots, uint slot, uint row_base, uint col_base, bool scale_bias
-) {
-  let rows = slot * 128 + row_base;
-  let cols = slot * 128 + col_base;
-  return makeTuple(sums, Int8Sums(dots)).MapElement((uint32_t row, uint32_t column, float sum, float dot) => {
-    let value = fma(S.fold(false, rows + row) * S.fold(true, cols + column), dot, sum);
-    return scale_bias ? fma(S.fold(true, cols + 64 + column), S.fold(false, rows + 64 + row), value) : value;
-  });
-}
-
 public struct Int8Gemm<
   let MMA_K : int,
   S : IInt8Shared<MMA_K>,
@@ -649,9 +636,13 @@ public struct Int8Gemm<
                 for (int i = 0; i < TM; i++) {
                   [unroll]
                   for (int j = 0; j < TN; j++) {
-                    folded[i][j] = int8_element_fold<MMA_K, S>(
-                      folded[i][j], dots[i][j], fold_slot, row_base + uint(16 * i), col_base + uint(16 * j), scale_bias
-                    );
+                    let rows = fold_slot * 128 + row_base + uint(16 * i);
+                    let cols = fold_slot * 128 + col_base + uint(16 * j);
+                    folded[i][j] = makeTuple(folded[i][j], Int8Sums(dots[i][j])).MapElement(
+                      (uint32_t row, uint32_t column, float sum, float dot) => {
+                        let value = fma(S.fold(false, rows + row) * S.fold(true, cols + column), dot, sum);
+                        return scale_bias ? fma(S.fold(true, cols + 64 + column), S.fold(false, rows + 64 + row), value) : value;
+                      });
                     dots[i][j] = Int8Dots(0);
                   }
                 }

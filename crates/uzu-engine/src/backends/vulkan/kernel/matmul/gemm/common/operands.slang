@@ -1,6 +1,5 @@
 import definitions;
 import matmul.common.matmul;
-import generated.gemm;
 import matmul.common.loader;
 import matmul.common.simdgroup_multiply_accumulate;
 

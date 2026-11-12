@@ -1,7 +1,5 @@
 import definitions;
 import matmul.common.matmul;
-import common.quantized_value;
-import generated.quantization_method;
 
 public uint biased_activations(inout uint words[8]) {
   var sum = 0u;

@@ -4,7 +4,6 @@ import generated.gemm_tiling;
 import matmul.common.simdgroup_multiply_accumulate;
 import matmul.gemm.common.operands;
 import matmul.gemm.common.simdgroup_mma_core;
-import matmul.common.threadgroup_tile;
 
 public void gemm_simdgroup<A : IStorageFloat, B : IStorageFloat, D : IStorageFloat, R : IRightOperand<B>, SA : IThreadgroupStorage<A>, SB : IThreadgroupStorage<B>>(
   GemmTiling tiling,

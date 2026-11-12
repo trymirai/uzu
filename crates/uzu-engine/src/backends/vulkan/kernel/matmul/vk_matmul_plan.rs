@@ -9,7 +9,7 @@ use crate::{
             },
         },
         vulkan::{
-            VkDeviceCapabilities as Capability, VkPhysicalDevice,
+            VkDeviceCapabilities, VkPhysicalDevice,
             gpu_types::{gemm::INT8_FOLD_ENTRIES, gemm_b_layout::GemmBLayout, gemm_tiling::GemmTiling},
             kernel::matmul::VkGemvTile,
         },
@@ -44,13 +44,19 @@ impl VkMatmulPlan {
         data_types: [DataType; 3],
         device: &VkPhysicalDevice,
     ) -> Self {
-        let (m, n, k) = (shape.m, shape.n, shape.k);
+        let MatmulShape {
+            m,
+            n,
+            k,
+            ..
+        } = *shape;
         let [weights, input, output] = data_types;
-        let (capabilities, units) = (device.capabilities, device.compute_units);
+        let capabilities = device.capabilities;
+        let units = device.compute_units;
         let max_shared = device.properties.limits.max_compute_shared_memory_size;
         if shape.a == ActivationFormat::Bf16
             && m <= 8
-            && capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
+            && capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT)
             && Self::a8_quantization(shape, data_types, capabilities).is_some()
         {
             return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
@@ -76,7 +82,7 @@ impl VkMatmulPlan {
         if m <= 8 || !capabilities.prefers_int8_gemm() {
             return Self::gemv_int8(m, shape.gathered, device.subgroup_properties.size);
         }
-        let element_fold = capabilities.contains(Capability::INT8_ELEMENT_FOLD);
+        let element_fold = capabilities.contains(VkDeviceCapabilities::INT8_ELEMENT_FOLD);
         let core = |row_block: u32, stage_depth: u32, prefetch: u32, splits: u32, k_slices: u32| Self::GemmInt8 {
             element_fold,
             row_block,
@@ -96,7 +102,7 @@ impl VkMatmulPlan {
             _ if core(64, 64, 1, 1, 1).int8_shared_bytes(shape) <= max_shared => 64,
             _ => 32,
         };
-        let tiles = u64::from(n.div_ceil(64)) * u64::from(m.div_ceil(row_block));
+        let tiles = n.div_ceil(64) * m.div_ceil(row_block);
         let deep_residency = if row_block == 64 {
             2
         } else {
@@ -105,14 +111,19 @@ impl VkMatmulPlan {
         let deep = element_fold
             && (row_block != 64 || shape.b_bits == Some(4))
             && core(row_block, 128, 1, 1, 1).int8_shared_bytes(shape) <= max_shared
-            && units.is_some_and(|units| tiles <= u64::from(deep_residency) * u64::from(units));
-        let (stage_depth, residency) = if deep {
-            (128, deep_residency)
+            && units.is_some_and(|units| tiles <= deep_residency * units);
+        let stage_depth = if deep {
+            128
         } else {
-            (64, 5)
+            64
+        };
+        let residency = if deep {
+            deep_residency
+        } else {
+            5
         };
         let ring = deep && shape.b_bits == Some(4) && row_block <= 32;
-        if ring && units.is_some_and(|units| tiles <= u64::from(units)) {
+        if ring && units.is_some_and(|units| tiles <= units) {
             let sliced = core(16, 64, 4, 1, 4);
             if row_block == 16 && k.is_multiple_of(512) && sliced.int8_shared_bytes(shape) <= max_shared {
                 return sliced;
@@ -137,8 +148,13 @@ impl VkMatmulPlan {
         device: &VkPhysicalDevice,
     ) -> Result<(), &'static str> {
         let [weights, input, _] = data_types;
-        let (m, n, k) = (shape.m, shape.n, shape.k);
-        let (capabilities, limits) = (device.capabilities, &device.properties.limits);
+        let MatmulShape {
+            m,
+            n,
+            k,
+            ..
+        } = *shape;
+        let limits = &device.properties.limits;
         let require = |met: bool, reason: &'static str| met.then_some(()).ok_or(reason);
         require(m > 0 && n > 0 && k > 0, "matmul dimensions must be positive")?;
         require(
@@ -148,16 +164,6 @@ impl VkMatmulPlan {
         require(shape.b_bits.is_none_or(|bits| matches!(bits, 4 | 8)), "quantized B has 4- or 8-bit codes")?;
         let gemm = matches!(self, Self::GemmTensor(_) | Self::Gemm(_));
         let a8 = matches!(self, Self::GemvInt8 { .. } | Self::GemmInt8 { .. });
-        let full_precision = shape.a == ActivationFormat::Bf16;
-        let quantizes_a = full_precision && matches!(self, Self::GemvInt8 { .. });
-        require(
-            a8 != full_precision || quantizes_a,
-            "A8 takes GemvInt8 or GemmInt8, full precision GemvInt8 or the other families",
-        )?;
-        require(
-            !quantizes_a || Self::a8_quantization(shape, data_types, capabilities).is_some(),
-            "GemvInt8 quantizes full-precision A only within the A8 contract",
-        )?;
         require(
             !a8 || Self::a8_shape(shape),
             "A8 takes U4, or U8 symmetric, groups of 32 to 128 over whole 128-value K blocks",
@@ -166,7 +172,6 @@ impl VkMatmulPlan {
             b_layout == GemmBLayout::RowMajor || (!gemm && shape.is_quant() && n % 32 == 0 && k % 128 == 0),
             "tiled B is whole 32 x 128 tiles of codes, which only Gemv and the A8 kernels read",
         )?;
-        require(!gemm || (!shape.gathered && Self::gemm_rows(shape)), "Gemm stages contiguous B rows, without gather")?;
         let shared = match *self {
             Self::GemmInt8 {
                 ..
@@ -275,9 +280,10 @@ impl VkMatmulPlan {
     pub fn a8_quantization(
         shape: &MatmulShape,
         [_, input, output]: [DataType; 3],
-        capabilities: Capability,
+        capabilities: VkDeviceCapabilities,
     ) -> Option<ActivationQuantization> {
-        let (bits, group_size) = (shape.b_bits?, shape.b_group_size?);
+        let bits = shape.b_bits?;
+        let group_size = shape.b_group_size?;
         let scale_bias = shape.b_prologue == GemmBPrologueKind::ScaleBiasDequant;
         let code_layout = Int8CodeLayout::for_right_bits(bits)?;
         let quantization =
@@ -287,7 +293,9 @@ impl VkMatmulPlan {
             && Self::a8_shape(shape)
             && match shape.params_layout {
                 Some(QuantParamsLayout::GroupOutput) => true,
-                Some(QuantParamsLayout::OutputGroup) => capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT),
+                Some(QuantParamsLayout::OutputGroup) => {
+                    capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT)
+                },
                 None => false,
             }
             && shape.b_transpose
@@ -298,13 +306,13 @@ impl VkMatmulPlan {
     pub fn a8_rows(
         m: u32,
         b_layout: GemmBLayout,
-        capabilities: Capability,
+        capabilities: VkDeviceCapabilities,
     ) -> bool {
         match b_layout {
             GemmBLayout::Tiled => m >= 2,
             GemmBLayout::RowMajor => {
                 m >= 1
-                    && (capabilities.contains(Capability::UNSIGNED_DOT_PRODUCT)
+                    && (capabilities.contains(VkDeviceCapabilities::UNSIGNED_DOT_PRODUCT)
                         || (m >= 2 && (m <= 8 || capabilities.prefers_int8_gemm())))
             },
         }
@@ -313,7 +321,7 @@ impl VkMatmulPlan {
     pub fn tiles_weights(
         shape: &MatmulShape,
         data_types: [DataType; 3],
-        capabilities: Capability,
+        capabilities: VkDeviceCapabilities,
     ) -> bool {
         capabilities.prefers_int8_gemm()
             && shape.n.is_multiple_of(32)
@@ -337,12 +345,12 @@ impl VkMatmulPlan {
             input_rows: if gathered {
                 1
             } else {
-                m.clamp(1, 8)
+                m.min(8)
             },
         }
     }
 
-    pub fn a8_shape(shape: &MatmulShape) -> bool {
+    fn a8_shape(shape: &MatmulShape) -> bool {
         let scheme = match shape.b_bits {
             Some(4) => shape.b_prologue != GemmBPrologueKind::FullPrecision,
             Some(8) => shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant,
@@ -353,18 +361,16 @@ impl VkMatmulPlan {
             && shape.k.is_multiple_of(ACTIVATION_SCALE_GROUP_SIZE)
     }
 
-    pub fn gemm_rows(shape: &MatmulShape) -> bool {
-        let (n, k) = (shape.n, shape.k);
+    fn gemm_rows(shape: &MatmulShape) -> bool {
+        let MatmulShape {
+            n,
+            k,
+            ..
+        } = *shape;
         match shape.b_group_size {
             Some(group) => (shape.b_bits != Some(4) || k.is_multiple_of(2)) && group.is_multiple_of(16),
-            None => match shape.b_leading_dimension.unwrap_or(if shape.b_transpose {
-                k
-            } else {
-                n
-            }) {
-                leading if shape.b_transpose => leading == k,
-                leading => k == 1 && leading == 1,
-            },
+            None if shape.b_transpose => shape.b_leading_dimension.is_none_or(|leading| leading == k),
+            None => k == 1 && shape.b_leading_dimension.unwrap_or(n) == 1,
         }
     }
 }
@@ -392,35 +398,34 @@ fn scalar_tiling(
     k: u32,
     group: Option<u32>,
 ) -> GemmTiling {
-    use GemmTiling::*;
     const SIMDGROUP_QUANT_SMALL_M_MAX: u32 = 32;
     const SIMDGROUP_QUANT_NARROW_BLOCK_M: u32 = 8;
     const SIMDGROUP_QUANT_LARGE_M_MIN: u32 = 64;
     const SIMDGROUP_QUANT_WIDE_N_MIN: u32 = 6144;
     let tiling = match group {
-        None if 2_u32.saturating_mul(m.max(n)) > k => Tile64x64x16_Simdgroups2x2,
-        None => Tile64x32x32_Simdgroups2x2,
-        Some(group) if group < 32 => Tile64x64x16_Simdgroups2x2,
+        None if 2 * m.max(n) > k => GemmTiling::Tile64x64x16_Simdgroups2x2,
+        None => GemmTiling::Tile64x32x32_Simdgroups2x2,
+        Some(group) if group < 32 => GemmTiling::Tile64x64x16_Simdgroups2x2,
         Some(_) if m < SIMDGROUP_QUANT_SMALL_M_MAX => {
             if m <= SIMDGROUP_QUANT_NARROW_BLOCK_M || m.is_multiple_of(SIMDGROUP_QUANT_NARROW_BLOCK_M) {
-                Tile8x32x32_Simdgroups1x1
+                GemmTiling::Tile8x32x32_Simdgroups1x1
             } else {
-                Tile32x32x32_Simdgroups2x2
+                GemmTiling::Tile32x32x32_Simdgroups2x2
             }
         },
         Some(_) if m >= SIMDGROUP_QUANT_LARGE_M_MIN && n >= SIMDGROUP_QUANT_WIDE_N_MIN && n.is_multiple_of(64) => {
-            Tile64x64x32_Simdgroups2x2
+            GemmTiling::Tile64x64x32_Simdgroups2x2
         },
-        Some(_) => Tile32x32x32_Simdgroups2x2,
+        Some(_) => GemmTiling::Tile32x32x32_Simdgroups2x2,
     };
     match group {
-        Some(group) if !group.is_multiple_of(tiling.block_k()) => Tile64x64x16_Simdgroups2x2,
+        Some(group) if !group.is_multiple_of(tiling.block_k()) => GemmTiling::Tile64x64x16_Simdgroups2x2,
         _ => tiling,
     }
 }
 
 fn int8_splits(
-    tiles: u64,
+    tiles: u32,
     k: u32,
     residency: u32,
     units: u32,
@@ -428,13 +433,13 @@ fn int8_splits(
     const COLUMNS: u32 = 1536;
     const SHORT_COLUMNS: u32 = 512;
     let fits = |splits: u32| {
-        let workgroups = tiles * u64::from(splits);
-        let columns = if workgroups / 2 <= u64::from(units) {
+        let workgroups = tiles * splits;
+        let columns = if workgroups / 2 <= units {
             SHORT_COLUMNS
         } else {
             COLUMNS
         };
-        workgroups <= u64::from(residency) * u64::from(units) && k.is_multiple_of(128 * splits) && k / splits >= columns
+        workgroups <= residency * units && k.is_multiple_of(128 * splits) && k / splits >= columns
     };
     [8, 4, 2].into_iter().find(|&splits| fits(splits)).unwrap_or(1)
 }

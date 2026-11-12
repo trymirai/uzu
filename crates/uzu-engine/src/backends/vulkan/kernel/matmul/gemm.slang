@@ -4,13 +4,10 @@ import generated.gemm;
 import generated.gemm_tiling;
 import generated.gemm_b_layout;
 import generated.quantization;
-import generated.quantization_method;
-import matmul.common.int8_operands;
 import matmul.common.simdgroup_multiply_accumulate;
 import matmul.common.tensor_tile;
 import matmul.gemm.common.gemm_tiling;
 import matmul.gemm.common.operands;
-import matmul.gemm.common.simdgroup_mma_core;
 import matmul.gemv.common.arguments;
 
 using namespace linalg;
@@ -113,38 +110,6 @@ public struct GemmTensorShared : ITensorShared {
   }
 }
 
-void gemm_tensor_tiling<B : IStorageFloat, D : IStorageFloat>(
-  GemmTiling tiling,
-  Ptr<B, Access.Read> a,
-  Ptr<B, Access.Read> dense,
-  QuantizedWeights<B> weights,
-  bool quantized,
-  Ptr<D, Access.ReadWrite> d,
-  Ptr<B, Access.Read> bias,
-  GemmParams params,
-  uint2 tile,
-  uint tid,
-) {
-  typealias S = GemmTensorShared;
-  if (tiling == GemmTiling.Tile16x64x64_Simdgroups1x4x2) {
-    gemm_tensor_run<B, D, S, 16, 64, 64, 1, 4, 2>(
-      a, dense, weights, quantized, d, bias, params, tile, tid
-    );
-  } else if (tiling == GemmTiling.Tile32x64x64_Simdgroups1x4x2) {
-    gemm_tensor_run<B, D, S, 32, 64, 64, 1, 4, 2>(
-      a, dense, weights, quantized, d, bias, params, tile, tid
-    );
-  } else if (tiling == GemmTiling.Tile64x128x32_Simdgroups2x4x1) {
-    gemm_tensor_run<B, D, S, 64, 128, 32, 2, 4, 1>(
-      a, dense, weights, quantized, d, bias, params, tile, tid
-    );
-  } else if (tiling == GemmTiling.Tile128x128x32_Simdgroups2x4x1) {
-    gemm_tensor_run<B, D, S, 128, 128, 32, 2, 4, 1>(
-      a, dense, weights, quantized, d, bias, params, tile, tid
-    );
-  }
-}
-
 [[Variants("B", "bf16")]]
 [[Variants("D", "float, bf16")]]
 [[Kernel]]
@@ -194,7 +159,23 @@ public func GemmTensor<B: IStorageFloat, D: IStorageFloat>(
   let tile = uint2(column_tile, row_tile);
   let tid = simd_group * 32 + simd_lane;
   let quantized = b_prologue != GemmBPrologueKind.FullPrecision;
-  gemm_tensor_tiling<B, D>(tiling, a, dense, weights, quantized, d, bias, params, tile, tid);
+  if (tiling == GemmTiling.Tile16x64x64_Simdgroups1x4x2) {
+    gemm_tensor_run<B, D, GemmTensorShared, 16, 64, 64, 1, 4, 2>(
+      a, dense, weights, quantized, d, bias, params, tile, tid
+    );
+  } else if (tiling == GemmTiling.Tile32x64x64_Simdgroups1x4x2) {
+    gemm_tensor_run<B, D, GemmTensorShared, 32, 64, 64, 1, 4, 2>(
+      a, dense, weights, quantized, d, bias, params, tile, tid
+    );
+  } else if (tiling == GemmTiling.Tile64x128x32_Simdgroups2x4x1) {
+    gemm_tensor_run<B, D, GemmTensorShared, 64, 128, 32, 2, 4, 1>(
+      a, dense, weights, quantized, d, bias, params, tile, tid
+    );
+  } else if (tiling == GemmTiling.Tile128x128x32_Simdgroups2x4x1) {
+    gemm_tensor_run<B, D, GemmTensorShared, 128, 128, 32, 2, 4, 1>(
+      a, dense, weights, quantized, d, bias, params, tile, tid
+    );
+  }
 }
 
 [[SpecializationConstant]] public const uint GemmInt8_specialize_shared_words = 1;

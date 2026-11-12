@@ -18,6 +18,18 @@ pub struct VkGemvTile {
     pub group_lanes: u32,
 }
 
+const fn lane_default(
+    bits: u32,
+    group: u32,
+) -> VkGemvTile {
+    let pack_factor = match bits {
+        4 => 8,
+        8 => 4,
+        _ => 1,
+    };
+    VkGemvTile::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, group / (2 * pack_factor))
+}
+
 impl VkGemvTile {
     const fn new(
         num_simdgroups: u32,
@@ -38,34 +50,7 @@ impl VkGemvTile {
     pub const fn output_row_tile(self) -> u32 {
         self.num_simdgroups * self.results_per_simdgroup
     }
-}
 
-const fn lane_default(
-    bits: u32,
-    group: u32,
-) -> VkGemvTile {
-    let pack_factor = match bits {
-        4 => 8,
-        8 => 4,
-        _ => 1,
-    };
-    VkGemvTile::new(DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, group / (2 * pack_factor))
-}
-
-fn gathered_tile(
-    bits: u32,
-    group: u32,
-    m: u32,
-    n: u32,
-) -> Option<VkGemvTile> {
-    if !matches!(bits, 4 | 8) || !matches!(group, 16 | 32 | 64 | 128) || !(1..=8).contains(&m) {
-        return None;
-    }
-    let tile = lane_default(bits, group);
-    (n >= tile.results_per_simdgroup).then_some(tile)
-}
-
-impl VkGemvTile {
     pub fn reader() -> Self {
         let mut tile = Self::new(8, 1, 1);
         tile.lane_layout = false;
@@ -87,17 +72,26 @@ impl VkGemvTile {
         b_layout: GemmBLayout,
         bf16_io: bool,
     ) -> Self {
-        let (m, n, k, gathered) = (shape.m, shape.n, shape.k, shape.gathered);
-        let (bits, group) = (shape.b_bits.unwrap_or(0), shape.b_group_size.unwrap_or(0));
+        let MatmulShape {
+            m,
+            n,
+            k,
+            gathered,
+            ..
+        } = *shape;
+        let bits = shape.b_bits.expect("quantized B has bits");
+        let group = shape.b_group_size.expect("quantized B has a group size");
         let general = if bits == 4 && !k.is_multiple_of(2) {
             None
         } else if gathered {
-            gathered_tile(bits, group, m, n)
+            let tile = lane_default(bits, group);
+            let valid = matches!(bits, 4 | 8) && matches!(group, 16 | 32 | 64 | 128) && (1..=8).contains(&m);
+            (valid && n >= tile.results_per_simdgroup).then_some(tile)
         } else if matches!(group, 16 | 32 | 64 | 128) {
             let mut tile = lane_default(bits, group);
             if bf16_io && (2..=GEMV_INPUT_ROW_TILE).contains(&m) {
                 tile.input_row_tile = m;
-                tile.results_per_simdgroup = (16 / m.next_power_of_two()).clamp(1, DEFAULT_RESULTS_PER_SIMDGROUP);
+                tile.results_per_simdgroup = (16 / m.next_power_of_two()).min(4);
             }
             Some(tile)
         } else {
@@ -110,24 +104,14 @@ impl VkGemvTile {
         };
         let narrow =
             bf16_io && m == 1 && b_layout == GemmBLayout::Tiled && !gathered && (group / 2).is_multiple_of(lane_run);
-        match general {
+        let mut tile = match general {
             Some(_) if narrow => Self::new(4, 2, 2),
             Some(general) => general,
             None => Self::reader(),
-        }
-        .finished(group, m, n, k)
-    }
-
-    fn finished(
-        mut self,
-        group: u32,
-        m: u32,
-        n: u32,
-        k: u32,
-    ) -> Self {
-        self.input_aligned = self.lane_layout && k.is_multiple_of(group);
-        self.full_tile =
-            self.lane_layout && n.is_multiple_of(self.output_row_tile()) && m.is_multiple_of(self.input_row_tile);
-        self
+        };
+        tile.input_aligned = tile.lane_layout && k.is_multiple_of(group);
+        tile.full_tile =
+            tile.lane_layout && n.is_multiple_of(tile.output_row_tile()) && m.is_multiple_of(tile.input_row_tile);
+        tile
     }
 }
