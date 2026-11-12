@@ -75,10 +75,6 @@ impl GemvTile {
     pub(super) const fn output_row_tile(self) -> u32 {
         (self.num_simdgroups / self.k_split) * self.results_per_simdgroup
     }
-
-    pub(super) const fn rows_per_lane(self) -> u32 {
-        self.results_per_simdgroup / (32 / self.reduction_lanes)
-    }
 }
 
 fn cap_k_split_to_complete_fp_k_blocks(

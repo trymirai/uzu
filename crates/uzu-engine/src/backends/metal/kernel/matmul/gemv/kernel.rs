@@ -72,7 +72,7 @@ impl GemvSpecialization {
         let tile = if is_quant && !shape.gathered && gemm_b_layout == GemmBLayout::InterleavedRows && shape.m == 1 {
             policy::interleaved_rows_tile(shape.b_group_size.unwrap_or(0), shape.k)
         } else if is_quant && shape.gathered {
-            policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
+            policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m)
         } else if is_quant {
             policy::quantized_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n, bf16_io)
         } else {

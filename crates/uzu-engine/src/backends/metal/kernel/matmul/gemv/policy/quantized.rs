@@ -23,13 +23,11 @@ pub fn gathered_tile(
     bits: u32,
     group: u32,
     m: u32,
-    n: u32,
 ) -> Option<GemvTile> {
     if !matches!((bits, group), (4 | 8, 32 | 64) | (2, 128)) || !(1..=8).contains(&m) {
         return None;
     }
-    let tile = lane_default(bits, group);
-    (n >= tile.rows_per_lane()).then_some(tile)
+    Some(lane_default(bits, group))
 }
 
 pub fn select(
@@ -43,7 +41,7 @@ pub fn select(
     if !bf16_io || (m > 4 && n > 64) {
         return None;
     }
-    gathered_tile(bits, group, m, n)
+    gathered_tile(bits, group, m)
 }
 
 pub fn interleaved_rows_tile(

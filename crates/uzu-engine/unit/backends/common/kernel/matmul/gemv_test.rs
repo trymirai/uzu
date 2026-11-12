@@ -157,14 +157,18 @@ fn gemv_bf16(
 #[cfg(backend = "metal")]
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint)]
-#[case::w8_symmetric(8, QuantizationMethod::ScaleSymmetric)]
+#[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint, 256, 72, 32)]
+#[case::w8_symmetric(8, QuantizationMethod::ScaleSymmetric, 256, 72, 32)]
+#[case::w4_moe_shared_gate(4, QuantizationMethod::ScaleZeroPoint, 2048, 1, 64)]
 fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
+    #[case] k: u32,
+    #[case] n: u32,
+    #[case] group_size: u32,
 ) {
     let context = block_on(<Metal as Backend>::Context::new()).expect("Metal context");
-    let input = QuantInput::<bf16>::new(1, 256, 72, 32, bits, method, 0).with_group_output();
+    let input = QuantInput::<bf16>::new(1, k, n, group_size, bits, method, 0).with_group_output();
     let reference = run_quant_cpu::<bf16>(&input);
 
     let buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
