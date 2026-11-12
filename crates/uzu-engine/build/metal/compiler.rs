@@ -13,7 +13,6 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use super::{
-    ast::MetalKernelInfo,
     bindgen::bindgen_global,
     toolchain::MetalToolchain,
     wrapper::{KernelWrappers, VariantWrapper, wrappers},
@@ -73,8 +72,6 @@ struct Cached {
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
     public_kernels: Box<[Kernel]>,
     has_kernels: bool,
-    num_variants: usize,
-    num_shards: usize,
 }
 
 #[derive(Debug)]
@@ -175,23 +172,17 @@ impl MetalCompiler {
             for path in cached.dependency_hashes.keys() {
                 self.emit_rerun_if_changed_for_dependency(path);
             }
-            let sharding = if cached.has_kernels {
-                format!(" ({} variants / {} shards)", cached.num_variants, cached.num_shards)
-            } else {
-                Default::default()
-            };
-            debug_log!("compile cached: {source_path_relative_str}{sharding}");
+            debug_log!("compile cached: {source_path_relative_str}");
             return Ok((kernel_path, cached.public_kernels, cached.has_kernels));
         }
 
-        let (metal_kernel_infos, dependencies) = self
+        let (kernel_infos, dependencies) = self
             .toolchain
             .analyze(&source_path)
             .with_context(|| format!("cannot analyze {source_path_relative_str}"))?;
 
-        let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
-
         let dependency_hashes = dependencies
+            .into_iter()
             .map(|path| {
                 self.emit_rerun_if_changed_for_dependency(&path);
                 Ok((
@@ -274,7 +265,6 @@ impl MetalCompiler {
                         self.metallib_compressed,
                     )
                     .with_context(|| format!("cannot generate bindings for {}", kernel.name))
-                    .map(|(tokens, _associated_type)| tokens)
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -295,8 +285,6 @@ impl MetalCompiler {
             dependency_hashes,
             public_kernels: public_kernels.clone(),
             has_kernels,
-            num_variants,
-            num_shards,
         };
         fs::write(&cached_file, serde_json::to_vec_pretty(&cached).context("cannot serialize cache")?)
             .context("cannot write cache file")?;
