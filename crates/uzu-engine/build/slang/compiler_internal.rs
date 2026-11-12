@@ -194,8 +194,8 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
         composite_component.link().context("cannot link wrapper module")
     }
 
-    /// Reruns this script when a dependency outside the kernel sources, which it watches, and the output, which it
-    /// writes, changes: a definition another target's sources share.
+    /// Watches the dependencies the source-directory watch misses, such as definitions shared with another target's
+    /// sources. The output directory is skipped because this script writes it.
     fn rerun_if_changed<'a>(
         &self,
         dependencies: impl IntoIterator<Item = &'a String>,

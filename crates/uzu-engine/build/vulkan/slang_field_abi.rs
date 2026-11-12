@@ -1,4 +1,4 @@
-use super::SlangPointeeAbi;
+use crate::vulkan::SlangPointeeAbi;
 
 /// One push-constant argument of a linked entry point, laid out by Slang.
 #[derive(Debug, PartialEq)]

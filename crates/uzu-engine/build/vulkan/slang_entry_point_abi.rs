@@ -7,7 +7,7 @@ use shader_slang::{
     reflection::{EntryPoint, Shader},
 };
 
-use super::{SlangFieldAbi, SlangPointeeAbi, SlangStructFieldAbi};
+use crate::vulkan::{SlangFieldAbi, SlangPointeeAbi, SlangStructFieldAbi};
 
 /// Push-constant block and specialization constants of one entry point of the linked wrapper program.
 #[derive(Debug)]

@@ -1,4 +1,4 @@
-use super::SlangStructFieldAbi;
+use crate::vulkan::SlangStructFieldAbi;
 
 /// A `Ptr<T>` pointee or by-value struct argument, laid out by Slang.
 #[derive(Debug, PartialEq)]
