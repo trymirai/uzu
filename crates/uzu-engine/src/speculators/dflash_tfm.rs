@@ -14,7 +14,7 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
     },
-    config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig, model::SpeculatorModelConfig},
+    config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -115,11 +115,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let data_type = DataType::BF16;
 
-        let config: SpeculatorModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
-        let AnySpeculatorConfig::DFlashSpeculatorConfig(config) = config.speculator_config;
+        let AnySpeculatorConfig::DFlashSpeculatorConfig(config) =
+            serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
-        let speculator_tree = weight_loader.tree().subtree("speculator");
+        let speculator_tree = weight_loader.tree();
 
         let dflash = DFlash::new(
             data_type,

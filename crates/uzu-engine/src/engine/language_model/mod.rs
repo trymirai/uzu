@@ -99,7 +99,9 @@ impl<B: Backend> Engine<B> {
 
         let generation_config = config.generation_config;
         let end_of_thinking_tag = match &config.token_codec_config {
-            AnyTokenCodecConfig::ChatCodecConfig(token_codec_config) => token_codec_config.end_of_thinking_tag.clone(),
+            AnyTokenCodecConfig::ChatCodecConfig(token_codec_config) => {
+                token_codec_config.end_of_thinking_tag().map(str::to_owned)
+            },
             AnyTokenCodecConfig::RawTextCodecConfig(_) => None,
         };
 

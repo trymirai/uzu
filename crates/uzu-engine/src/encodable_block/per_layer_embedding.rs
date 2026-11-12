@@ -7,8 +7,8 @@ use crate::{
         kernel::{GatedActMul, GatedActMulSettings, Kernels, TensorAddBiasKernel, TensorAddScaleKernel},
     },
     config::{
-        activation::AnyActivation,
-        per_layer_embedding::{PLELayerConfig, PLEModelConfig},
+        activation::AnyActivation, per_layer_embedding::PLEModelConfig,
+        stream_op::per_layer_embedding_injection::PerLayerEmbeddingInjectionConfig,
     },
     data_type::DataType,
     encodable_block::{
@@ -182,7 +182,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         num_layers: u32,
         data_type: DataType,
         post_layer_scalar: f32,
-        config: &PLELayerConfig,
+        config: &PerLayerEmbeddingInjectionConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, PerLayerEmbeddingError<B>> {
