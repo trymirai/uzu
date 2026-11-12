@@ -17,7 +17,6 @@ pub fn rewrite_paths_with<F>(
     .visit_expr_mut(expr);
 }
 
-/// `Type::Variant` with the canonical path of the GPU type `Type`; `None` for other paths.
 pub fn qualify_enum_path(
     path: &Path,
     gpu_type_paths: &GpuTypePaths,

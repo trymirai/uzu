@@ -39,7 +39,6 @@ pub fn slang2rust<'a>(
         "int64_t" => Some(Cow::Borrowed("i64")),
         "uint64_t" => Some(Cow::Borrowed("u64")),
         "half" => Some(Cow::Borrowed("f16")),
-        // Vulkan's kernels name their BF16 storage type `bf16`.
         "BFloat16" | "bf16" => Some(Cow::Borrowed("bf16")),
         "float" => Some(Cow::Borrowed("f32")),
         "double" => Some(Cow::Borrowed("f64")),

@@ -24,9 +24,7 @@ pub struct SlangKernel {
     pub public: bool,
     pub name: String,
     pub arguments: Vec<SlangArgument>,
-    /// `(phase, condition)` of each host precondition: phase `new` over the parameters, `encode` also over uniforms.
     pub preconditions: Vec<(String, String)>,
-    /// The subgroup size, a host expression, the kernel's pipelines require in full subgroups.
     pub required_subgroup_size: Option<String>,
 }
 

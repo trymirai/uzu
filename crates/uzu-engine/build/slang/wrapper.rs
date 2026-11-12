@@ -14,7 +14,6 @@ use crate::{
     },
 };
 
-/// The specialization constant of a kernel argument.
 pub fn specialization_name(
     kernel: &str,
     argument: &str,
@@ -22,12 +21,10 @@ pub fn specialization_name(
     format!("{kernel}_specialize_{argument}")
 }
 
-/// The entry points of the kernels of `module`, a block of declarations then one entry point per variant of each.
 pub fn kernel_wrappers<T: SlangTarget>(
     module: &Module,
     kernels: &[SlangKernel],
 ) -> anyhow::Result<Vec<String>> {
-    // A wrapper does not redeclare a specialization constant the module declares itself.
     let module_globals = module
         .module_reflection()
         .children()
@@ -49,11 +46,9 @@ fn kernel_wrapper<T: SlangTarget>(
     module_globals: &HashSet<&str>,
 ) -> anyhow::Result<Vec<String>> {
     let inner_function_name = kernel.name.as_str();
-    // A `[[PipelineVariants]]` uniform travels as a specialization constant too.
     let specialized = |argument_type: &SlangArgumentType, pipeline_variants: bool| {
         matches!(argument_type, SlangArgumentType::Specialize { .. }) || pipeline_variants
     };
-    // A specialization a group size names defaults to 1, so the module compiles before it is specialized.
     let sizes = kernel
         .arguments
         .iter()
@@ -267,7 +262,6 @@ fn kernel_wrapper<T: SlangTarget>(
                     } => {
                         let constant = specialization_name(&kernel.name, &argument.name);
                         let slang_type = specializer.specialize(&argument.slang_type);
-                        // A constant of another type converts back at the call.
                         if T::specialization_type(&slang_type) == slang_type {
                             constant
                         } else {

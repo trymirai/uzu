@@ -1,7 +1,5 @@
 use crate::slang::{SlangArgumentType, SlangKernel};
 
-/// `expr`, a host expression over a kernel's arguments, as Slang: an optional constant's `unwrap_or` becomes its
-/// condition's select, and `div_ceil`, `saturating_mul` and `saturating_sub` become their arithmetic.
 pub fn slang_axis_expr(
     expr: &str,
     kernel: &SlangKernel,

@@ -9,14 +9,12 @@ use shader_slang::{
 
 use crate::vulkan::{SlangFieldAbi, SlangPointeeAbi, SlangStructFieldAbi};
 
-/// Push-constant block and specialization constants of one entry point of the linked wrapper program.
 #[derive(Debug)]
 pub struct SlangEntryPointAbi {
     pub name: String,
     pub group_size: [u32; 3],
     pub block_size: usize,
     pub fields: Vec<SlangFieldAbi>,
-    /// `(name, constant_id)` of every specialization constant of the program.
     pub specialization_ids: Vec<(String, u32)>,
 }
 
@@ -48,7 +46,6 @@ impl SlangEntryPointAbi {
                 [ParameterCategory::Uniform] => {},
                 categories => bail!("'{name}': parameter '{parameter_name}' has unsupported categories {categories:?}"),
             }
-            // The pointee of a `Ptr<T>` argument, or a by-value struct argument itself.
             let described = match layout.kind() {
                 TypeKind::Pointer => Some(layout.element_type_layout().context("pointer has no pointee layout")?),
                 TypeKind::Struct => Some(layout),
@@ -138,7 +135,6 @@ impl SlangEntryPointAbi {
                 ))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        // One linked constant per name: a module and an import declaring the same name would size and set different IDs.
         if let Some(global) = specialization_ids.iter().map(|(global, _)| global).duplicates().next() {
             bail!("'{name}': global '{global}' is linked as more than one specialization constant");
         }

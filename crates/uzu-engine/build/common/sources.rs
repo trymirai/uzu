@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use walkdir::WalkDir;
 
-/// The files under `directory` with `extension`, sorted.
 pub fn source_files(
     directory: &Path,
     extension: &str,

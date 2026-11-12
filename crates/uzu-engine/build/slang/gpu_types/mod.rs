@@ -19,8 +19,6 @@ use gpu_type_enum::gpu_type_gen_enum;
 use gpu_type_option_set::gpu_type_gen_option_set;
 use gpu_type_struct::gpu_type_gen_struct;
 
-/// Writes one Slang file per GPU types file name into `gpu_types_dir`, merging the files of that name in `gpu_types`,
-/// and removes any other file there.
 pub fn gpu_type_gen(
     gpu_types_dir: &Path,
     gpu_types: &[&GpuTypes],
@@ -38,7 +36,6 @@ pub fn gpu_type_gen(
         written.insert(file_path);
     }
 
-    // A types file removed must not leave its Slang file behind.
     for entry in fs::read_dir(gpu_types_dir).context("cannot list generated gpu types")? {
         let path = entry?.path();
         if !written.contains(&path) {

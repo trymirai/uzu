@@ -22,7 +22,6 @@ use crate::{
     vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, SlangFieldAbi, vulkan_target::AXIS_FOLD_GROUPS},
 };
 
-/// Generated file holding a kernel's binding type, next to its SPIR-V.
 pub fn binding_file(
     output_base: &Path,
     kernel_name: &str,
@@ -30,8 +29,6 @@ pub fn binding_file(
     output_base.with_file_name(binding_module(kernel_name).to_string()).with_extension("rs")
 }
 
-/// Module declarations and re-exports of every generated binding from `(file, kernel name, public)`.
-/// `autogen_kernels!` names the binding of every public kernel as its `Kernels` associated type.
 pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
     let modules = bindings.iter().map(|(file, kernel_name, _)| {
         let module = binding_module(kernel_name);
@@ -58,8 +55,6 @@ pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
     }
 }
 
-/// Raw typed binding of a kernel: the common `Kernel` signature over each entry point's reflected ABI, with its SPIR-V
-/// and, for an entry point that stores BF16, the ABI and SPIR-V built with the native BF16 type.
 pub fn bindgen(
     info: &SlangKernel,
     kernel: &Kernel,
@@ -79,7 +74,6 @@ pub fn bindgen(
         variant_abis(variants).all(|other| layout(other) == layout(abi)),
         "{kernel_name}: variants differ in layout"
     );
-    // Vulkan 1.4 guarantees every device 256 bytes of push constants.
     ensure!(abi.block_size <= 256, "{kernel_name}: push-constant block of {} bytes exceeds 256", abi.block_size);
 
     let type_parameters = kernel
@@ -131,7 +125,6 @@ pub fn bindgen(
     let (specialization_names, specialization_types): (Vec<_>, Vec<_>) =
         specializations.iter().map(|specialization| (&specialization.name, &specialization.ty)).unzip();
 
-    // A pinned subgroup size, which the workgroup must fill with whole subgroups within the device's subgroup limit.
     let required_subgroup_size = match info
         .required_subgroup_size
         .as_deref()
@@ -156,8 +149,6 @@ pub fn bindgen(
     let read_count = reads.len();
     let write_count = writes.len();
 
-    // A public kernel's common trait owns `new` and `encode`, so its raw binding takes other names that never shadow the
-    // trait methods on the concrete type.
     let new_fn = if info.public {
         format_ident!("create")
     } else {
@@ -218,15 +209,6 @@ pub fn bindgen(
                 #construction
             }
 
-            /// Records one dispatch. Optional-argument presence is asserted before anything is recorded,
-            /// and an empty dispatch records nothing. Violated preconditions panic; a failed upload, an
-            /// out-of-bounds range or a grid past the device limit ends the recording, as a device error does.
-            ///
-            /// # Safety
-            /// Every range must start at an element of the constructed data type, aligned to it, and
-            /// cover every element the kernel indexes for these scalar arguments. Ranges written by the
-            /// kernel must not alias other arguments unless the kernel defines that aliasing. Range
-            /// bounds are checked; shader indexing within them is not.
             #[allow(non_snake_case, clippy::too_many_arguments)]
             pub unsafe fn #encode_fn(
                 &self,
@@ -261,7 +243,6 @@ pub fn bindgen(
     })
 }
 
-/// A specialization constant: the parameter's name and Rust type, the value it writes and its constant id.
 struct Specialization {
     name: Ident,
     ty: Type,
@@ -269,14 +250,12 @@ struct Specialization {
     id: u32,
 }
 
-/// The `[[PipelineVariants]]` argument: its name, one path per variant of its canonical enum, and its constant id.
 struct PipelineVariants {
     selector: Ident,
     paths: Vec<TokenStream>,
     id: u32,
 }
 
-/// The parameters, push-constant packing and buffer ranges of `encode`, one per kernel argument in declaration order.
 struct ArgumentEncoding {
     parameters: Vec<TokenStream>,
     packing: Vec<TokenStream>,
@@ -284,8 +263,6 @@ struct ArgumentEncoding {
     writes: Vec<TokenStream>,
 }
 
-/// The dispatch of a kernel: its grid, the workgroup size, the grid's `Axis` sizes if it has any, and the dispatch
-/// dimensions as an expression.
 struct Dispatch {
     grid: Vec<Expr>,
     group_sizes: Vec<Expr>,
@@ -293,21 +270,18 @@ struct Dispatch {
     dimensions: TokenStream,
 }
 
-/// The pipeline field of the kernel, its construction in `new`, and the pipeline `encode` dispatches with.
 struct PipelineCode {
     field: TokenStream,
     construction: TokenStream,
     lookup: TokenStream,
 }
 
-/// The specialization constants of the kernel, each written from its parameter's value.
 fn specialization_constants(
     kernel_name: &str,
     kernel: &Kernel,
     abi: &SlangEntryPointAbi,
     gpu_type_paths: &GpuTypePaths,
 ) -> anyhow::Result<Vec<Specialization>> {
-    // Specializations are `bool`, `u32` or a canonical enum (`uint` in Slang); an absent optional one writes 0.
     let mut specializations = Vec::new();
     for parameter in &kernel.parameters {
         let KernelParameterType::Value(text) = &parameter.ty else {
@@ -336,7 +310,6 @@ fn specialization_constants(
     Ok(specializations)
 }
 
-/// The `[[PipelineVariants]]` argument, if the kernel has one.
 fn pipeline_variant_argument(
     kernel_name: &str,
     info: &SlangKernel,
@@ -377,8 +350,6 @@ fn pipeline_variant_argument(
     Ok(pipeline_variants)
 }
 
-/// The asserts that every buffer of a primitive type has the stride of its data type. Buffers of canonical structs
-/// are checked by `canonical_struct`.
 fn stride_checks(
     kernel: &Kernel,
     variants: &[SlangEntryPointVariant],
@@ -407,8 +378,6 @@ fn stride_checks(
         .collect())
 }
 
-/// The canonical struct `field` holds or points to. Its fields and layout are checked against Slang's reflection, and
-/// the asserts are appended to `layout_checks`.
 fn canonical_struct<'a>(
     kernel_name: &str,
     variants: &[SlangEntryPointVariant],
@@ -491,7 +460,6 @@ fn canonical_struct<'a>(
     Ok(Some((path, ty, stride, alignment)))
 }
 
-/// Encodes every kernel argument: its `encode` parameter, its push-constant bytes, and its buffer ranges.
 fn encode_arguments(
     kernel_name: &str,
     kernel: &Kernel,
@@ -508,7 +476,6 @@ fn encode_arguments(
     let mut writes = Vec::new();
     for argument in &kernel.arguments {
         let name = format_ident!("{}", argument.name.as_ref());
-        // The pipeline-selecting argument has no push-constant field.
         if let Some(PipelineVariants {
             selector,
             ..
@@ -547,7 +514,6 @@ fn encode_arguments(
                 };
                 (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
             },
-            // A canonical struct by value: its bytes in the push constants, which an absent optional leaves zero.
             (KernelArgumentType::Value(text), Some((path, ty, stride, _)))
                 if gpu_type_paths.full_path_for(text) == Some(path) =>
             {
@@ -560,7 +526,6 @@ fn encode_arguments(
                 };
                 (quote! { #ty }, bytes)
             },
-            // A `[[Constant]]` pointer is uploaded into the command buffer's memory; an empty slice passes address 0.
             (KernelArgumentType::Value(text), Some((path, ty, _, alignment))) => {
                 ensure!(
                     field.size == 8
@@ -568,7 +533,6 @@ fn encode_arguments(
                         && gpu_type_paths.resolve_type(text)? == parse_quote! { &[#ty] },
                     "{kernel_name}: '{name}' of type '{text}' is not a device address of a canonical '{path}' slice"
                 );
-                // The encoder's upload allocator aligns ranges to at most 64 bytes.
                 ensure!(alignment <= 64, "{kernel_name}: '{path}' needs alignment {alignment} above 64");
                 packing.push(quote! { let #name = command_buffer.upload(#name); });
                 reads.push(quote! { #name.as_ref().map(|(buffer, range)| (buffer, range.clone())) });
@@ -580,7 +544,6 @@ fn encode_arguments(
                 ensure!(field.size == 4 && field.layout.is_none(), "{kernel_name}: '{name}' is not a 4-byte {text}");
                 let ty: Type = gpu_type_paths.resolve_type(text)?;
                 let value = word(kernel_name, gpu_type_paths, &name, &ty, &["u32", "i32", "f32", "bool"])?;
-                // An absent optional constant leaves its bytes zero.
                 let bytes = if argument.conditional {
                     quote! { #name.map_or([0; 4], |#name| #value.to_ne_bytes()) }
                 } else {
@@ -604,8 +567,6 @@ fn encode_arguments(
     })
 }
 
-/// Optional specializations are checked by the constructor, other optional arguments by `encode`. Returns the
-/// constructor's checks, then `encode`'s.
 fn presence_checks(
     kernel_name: &str,
     info: &SlangKernel,
@@ -645,8 +606,6 @@ fn presence_checks(
     Ok((conditions, specialization_conditions))
 }
 
-/// The host preconditions as `(new, encode)` checks. `new` returns an error before anything is created, `encode`
-/// asserts before recording.
 fn preconditions(
     kernel_name: &str,
     kernel: &Kernel,
@@ -726,8 +685,6 @@ fn preconditions(
     Ok((new_preconditions, encode_preconditions))
 }
 
-/// The grid, workgroup size and dispatch dimensions. Axis totals count threads and divide by the group size; Groups
-/// counts are workgroups.
 fn dispatch_plan(
     kernel_name: &str,
     info: &SlangKernel,
@@ -785,7 +742,6 @@ fn dispatch_plan(
             (false, size) => bail!("{kernel_name}: reflected group size {size} on undispatched axis {index}"),
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    // A single axis wider than AXIS_FOLD_GROUPS workgroups folds into rows of them, which the wrapper unfolds.
     let dimensions = if axis && grid.len() == 1 {
         let groups = &counts[0];
         let fold = AXIS_FOLD_GROUPS;
@@ -805,8 +761,6 @@ fn dispatch_plan(
     })
 }
 
-/// The pipeline field, its construction in `new` and its lookup in `encode`: one pipeline, or one per
-/// `[[PipelineVariants]]` value with its constant in the last specialization slot.
 fn pipeline_code(
     pipeline_variants: Option<&PipelineVariants>,
     specializations: &[Specialization],
@@ -872,15 +826,12 @@ fn pipeline_code(
     })
 }
 
-/// The `(entry point name, SPIR-V bytes)` pair `new` builds from: the single entry point of a kernel without type
-/// parameters, or the entry point the data types select.
 fn select_entry(
     kernel_name: &str,
     type_parameters: &[Ident],
     first: &SlangEntryPointVariant,
     variants: &[SlangEntryPointVariant],
 ) -> anyhow::Result<TokenStream> {
-    // A kernel without type parameters has its single entry point; the others select one by data types.
     if type_parameters.is_empty() {
         let entry_point = &first.abi.name;
         let spirv = entry_spirv(&first.spirv, &first.native_bf16);
@@ -906,8 +857,6 @@ fn select_entry(
     })
 }
 
-/// The kernel's common trait, implemented through the raw binding: `new` and `encode` forward to `new_fn` and
-/// `encode_fn` with the specialization constants and the buffers resolved from the trait's arguments.
 fn public_trait_impl(
     kernel_name: &str,
     kernel: &Kernel,
@@ -980,20 +929,16 @@ fn public_trait_impl(
 
             fn encode(&self, #(#trait_arguments,)* command_buffer: &mut VkCommandBufferEncoding) {
                 #(#conversions)*
-                // SAFETY: as for the CPU kernels, the common contract makes callers pass ranges that cover every
-                // element the kernel indexes, aliasing only where the kernel defines it.
                 unsafe { #struct_name::#encode_fn(self, #(#call_arguments,)* command_buffer) }
             }
         }
     })
 }
 
-/// Every type of the canonical GPU type files, across the modules that declare them.
 fn canonical_types<'a>(gpu_types: &[&'a GpuTypes]) -> impl Iterator<Item = &'a GpuType> {
     gpu_types.iter().flat_map(|types| types.files.iter()).flat_map(|file| &file.types)
 }
 
-/// The canonical enum named `short`.
 fn canonical_enum<'a>(
     gpu_types: &[&'a GpuTypes],
     short: &str,
@@ -1004,12 +949,10 @@ fn canonical_enum<'a>(
     })
 }
 
-/// Every entry point's ABI, each variant's native-BF16 ABI included.
 fn variant_abis(variants: &[SlangEntryPointVariant]) -> impl Iterator<Item = &SlangEntryPointAbi> {
     variants.iter().flat_map(|variant| once(&variant.abi).chain(variant.native_bf16.iter().map(|(abi, _)| abi)))
 }
 
-/// The specialization id of `argument`, the constant named for it in the kernel's wrapper.
 fn specialization_id(
     kernel_name: &str,
     abi: &SlangEntryPointAbi,
@@ -1022,7 +965,6 @@ fn specialization_id(
         .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))
 }
 
-/// A host expression from its reflected text, with enum paths qualified.
 fn host_expression(
     kernel_name: &str,
     gpu_type_paths: &GpuTypePaths,
@@ -1034,7 +976,6 @@ fn host_expression(
     Ok(expression)
 }
 
-// A 32-bit word of one of `scalars` or a canonical enum, by discriminant, as Slang lays it out; a `bool` is 0 or 1.
 fn word(
     kernel_name: &str,
     gpu_type_paths: &GpuTypePaths,
@@ -1051,7 +992,6 @@ fn word(
     }
 }
 
-// The native-BF16 SPIR-V on devices with the BF16 type.
 fn entry_spirv(
     object: &str,
     native: &Option<(SlangEntryPointAbi, String)>,
@@ -1068,7 +1008,6 @@ fn entry_spirv(
     }
 }
 
-/// The `DataType` of a Slang scalar type.
 fn data_type(slang_type: &str) -> anyhow::Result<Ident> {
     slang2rust(slang_type, &HashMap::new())
         .map(|rust_type| format_ident!("{}", rust_type.to_uppercase()))
@@ -1086,7 +1025,6 @@ fn binding_module(kernel_name: &str) -> Ident {
     format_ident!("{module}_vulkan_kernel")
 }
 
-/// `T` of an `Option<T>` type.
 fn option_inner(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = ty else {
         return None;
@@ -1101,7 +1039,6 @@ fn option_inner(ty: &Type) -> Option<&Type> {
     }
 }
 
-/// The short name of `path` when it is the full path of a canonical GPU enum.
 fn canonical_enum_name<'a>(
     gpu_type_paths: &GpuTypePaths,
     path: &'a str,
@@ -1111,7 +1048,6 @@ fn canonical_enum_name<'a>(
         .then_some(short)
 }
 
-/// The first identifier among `tokens`, groups included, that satisfies `predicate`.
 fn find_ident(
     tokens: TokenStream,
     predicate: &impl Fn(&Ident) -> bool,

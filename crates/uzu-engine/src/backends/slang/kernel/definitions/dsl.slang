@@ -25,15 +25,11 @@ struct PublicAttribute;
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct KernelAttribute;
 
-// The subgroup size, a host expression over the kernel's specializations, its pipelines require in full subgroups; other
-// kernels run at whatever width the device chooses. Vulkan only.
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct RequiredSubgroupSizeAttribute {
     string size;
 };
 
-// A kernel precondition the binding checks, a host expression: phase "new" over specializations, checked by the
-// constructor before creating anything; phase "encode" also over uniforms, checked before recording. Vulkan only.
 [[__AttributeUsage(_AttributeTargets.Function)]]
 struct PreconditionAttribute {
     string phase;
@@ -69,7 +65,5 @@ struct ThreadsAttribute {
     string threads;
 };
 
-// A uniform canonical enum for which the binding builds one pipeline per enum value, passed as a specialization constant
-// instead of a push constant; the kernel signature keeps it a uniform, chosen at encode. Vulkan only.
 [[__AttributeUsage(_AttributeTargets.Param)]]
 struct PipelineVariantsAttribute;

@@ -62,7 +62,6 @@ impl GpuTypePaths {
         Ok(())
     }
 
-    /// Each named type's short name and canonical path.
     #[cfg_attr(not(any(feature = "webgpu", feature = "vulkan")), allow(dead_code))]
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str)> {
         self.short_name_to_entry.iter().map(|(name, entry)| (&**name, &*entry.path))

@@ -71,7 +71,6 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
             paths.extend(private_gpu_types).context("cannot extend gpu type paths")?;
         }
         let definitions = once(gpu_types).chain(&private_gpu_types).collect::<Vec<_>>();
-        // Before any module loads or cache check, so cached dependency hashes see the current types.
         gpu_type_gen(&self.fields.source_directory.join("generated"), &definitions)
             .context("cannot generate shared gpu types")?;
         let gpu_types = SlangGpuTypes {

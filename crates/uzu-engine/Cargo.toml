@@ -40,7 +40,6 @@ webgpu = [
 ]
 
 vulkan = [
-    # The kernel traits are generated from the built backends, and Vulkan's kernel set names traits only the CPU defines.
     "cpu",
     "dep:shader-slang",
     "dep:blake3",

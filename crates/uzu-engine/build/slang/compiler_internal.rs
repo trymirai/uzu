@@ -23,11 +23,8 @@ use crate::{
 
 pub trait SlangTarget: Send + Sync + Clone + 'static {
     const TARGET_NAME: &'static str;
-    /// The kernel sources, relative to the crate.
     const SOURCE_DIRECTORY: &'static str;
-    /// The backend whose own GPU types the kernels name besides the common ones.
     const PRIVATE_GPU_TYPES: Option<&'static str> = None;
-    /// The preprocessor definitions of each session; the first session links every wrapper.
     const SESSION_DEFINES: &'static [&'static [(&'static str, &'static str)]] = &[&[]];
 
     fn compiler_options(
@@ -39,17 +36,12 @@ pub trait SlangTarget: Send + Sync + Clone + 'static {
 
     fn create_target_desc<'a>(global_session: &'a GlobalSession) -> TargetDesc<'a>;
 
-    /// The type of the specialization constant of a kernel argument of `slang_type`.
     fn specialization_type(slang_type: &str) -> &str;
 
-    /// The statements that return from an entry point outside its grid, and each Axis argument's index, from the total
-    /// and group size of each Axis in order.
     fn axis_guard(axes: &[(String, String)]) -> (String, Vec<String>);
 
-    /// The statements that open the entry point `entry_point`.
     fn entry_point_prologue(entry_point: &str) -> String;
 
-    /// The source of the wrapper that declares the entry points of `kernels`, defined by `module` at `source_path`.
     fn wrapper(
         fields: &SlangCompilerFields<Self>,
         source_path: &Path,
@@ -57,8 +49,6 @@ pub trait SlangTarget: Send + Sync + Clone + 'static {
         kernels: &[SlangKernel],
     ) -> anyhow::Result<String>;
 
-    /// Writes the target code and bindings of `kernels`, described in order by `descriptors`, from `linked`, their
-    /// wrapper at `output_base`.slang linked with its entry points in the first session.
     fn emit(
         compiler: &BlockingSlangCompiler<Self>,
         gpu_types: &SlangGpuTypes,
@@ -69,7 +59,6 @@ pub trait SlangTarget: Send + Sync + Clone + 'static {
         output_base: &Path,
     ) -> anyhow::Result<()>;
 
-    /// The bindings of every module with kernels, by output base: its public kernels and private kernel names.
     fn bindgen_global(
         fields: &SlangCompilerFields<Self>,
         modules: &[(PathBuf, &[Kernel], &[KernelName])],
@@ -81,7 +70,6 @@ pub struct SlangCompilerFields<T: SlangTarget> {
     pub source_directory: PathBuf,
     pub output_directory: PathBuf,
     pub optimization_level: OptimizationLevel,
-    /// The build system's hash with the optimization level, which the cache records check.
     pub buildsystem_hash: [u8; blake3::OUT_LEN],
     _phantom: PhantomData<T>,
 }
@@ -123,7 +111,6 @@ struct Cached {
     compiler_version: String,
     dependency_hashes: HashMap<String, [u8; blake3::OUT_LEN]>,
     public_kernels: Box<[Kernel]>,
-    /// Kernels bound without a common trait.
     private_kernels: Box<[KernelName]>,
 }
 
@@ -139,7 +126,6 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
     pub fn new(fields: SlangCompilerFields<T>) -> anyhow::Result<Self> {
         let global_session = GlobalSession::new().context("cannot create global session")?;
 
-        // The kernel sources, which hold the generated GPU types too.
         let search_path_strings = [CString::new(fields.source_directory.to_string_lossy().as_bytes())
             .context("cannot convert search path to CString")?];
         let search_paths = search_path_strings.iter().map(|path| path.as_ptr()).collect::<Vec<_>>();
@@ -170,8 +156,6 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
         })
     }
 
-    /// The wrapper module at `path` linked in session `session` with its entry points, which must be composed
-    /// explicitly for the linked program to reflect them.
     pub fn link(
         &self,
         session: usize,
@@ -194,8 +178,6 @@ impl<T: SlangTarget> BlockingSlangCompiler<T> {
         composite_component.link().context("cannot link wrapper module")
     }
 
-    /// Watches the dependencies the source-directory watch misses, such as definitions shared with another target's
-    /// sources. The output directory is skipped because this script writes it.
     fn rerun_if_changed<'a>(
         &self,
         dependencies: impl IntoIterator<Item = &'a String>,

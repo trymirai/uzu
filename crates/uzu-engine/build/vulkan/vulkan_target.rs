@@ -22,13 +22,8 @@ use crate::{
     vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen, spirv_hash::export_spirv_hash},
 };
 
-/// SPIR-V capabilities that device selection guarantees: Shader, Float16, Int16, Int8, GroupNonUniform and its
-/// Arithmetic, Ballot and Shuffle, SignedZeroInfNanPreserve, RoundingModeRTE, VulkanMemoryModel and its device scope,
-/// PhysicalStorageBufferAddresses, DotProductInput4x8BitPacked and DotProduct.
 const DEVICE_CAPABILITIES: [u32; 15] = [1, 9, 22, 39, 61, 63, 64, 65, 4466, 4467, 5345, 5346, 5347, 6018, 6019];
-/// BFloat16TypeKHR, which the native BF16 build also declares.
 const BFLOAT16_TYPE: u32 = 5116;
-/// Capabilities only some devices enable, with the device capabilities one of which a `new` precondition must require.
 const GATED_CAPABILITIES: [(u32, &str, &[&str]); 4] = [
     (
         6022,
@@ -40,8 +35,6 @@ const GATED_CAPABILITIES: [(u32, &str, &[&str]); 4] = [
     (5432, "CooperativeMatrixPerElementOperationsNV", &["INT8_ELEMENT_FOLD"]),
 ];
 
-/// Workgroups per row of a folded one-axis grid: Vulkan's minimum maxComputeWorkGroupCount, which wider grids exceed on
-/// devices that report only the minimum.
 pub const AXIS_FOLD_GROUPS: u32 = 65_535;
 
 #[derive(Clone)]
@@ -51,7 +44,6 @@ impl SlangTarget for VulkanTarget {
     const TARGET_NAME: &'static str = "vulkan";
     const SOURCE_DIRECTORY: &'static str = "src/backends/vulkan/kernel";
     const PRIVATE_GPU_TYPES: Option<&'static str> = Some("vulkan");
-    /// The second session compiles `bf16` as VK_KHR_shader_bfloat16's type.
     const SESSION_DEFINES: &'static [&'static [(&'static str, &'static str)]] = &[&[], &[("NATIVE_BF16", "1")]];
 
     fn compiler_options(
@@ -61,16 +53,12 @@ impl SlangTarget for VulkanTarget {
         options
             .emit_spirv_directly(true)
             .vulkan_use_entry_point_name(true)
-            // The subgroup operations the device filter requires.
             .capability(global_session.find_capability("spvGroupNonUniform"))
             .capability(global_session.find_capability("spvGroupNonUniformArithmetic"))
             .capability(global_session.find_capability("spvGroupNonUniformBallot"))
             .capability(global_session.find_capability("spvGroupNonUniformShuffle"))
-            // Declared by the tensor-core and native-BF16 kernels only, whose construction requires the device features.
             .capability(global_session.find_capability("spvCooperativeMatrixKHR"))
             .capability(global_session.find_capability("spvBFloat16KHR"))
-            // Slang requires shader model 5.0 of BF16 conversions and cooperative-matrix operations; their SPIR-V needs none
-            // of its capabilities.
             .capability(global_session.find_capability("sm_5_0"))
     }
 
@@ -78,7 +66,6 @@ impl SlangTarget for VulkanTarget {
         TargetDesc::default().format(CompileTarget::Spirv).profile(global_session.find_profile("spirv_1_6"))
     }
 
-    /// Vulkan specializes only scalars, so enums are `uint`.
     fn specialization_type(slang_type: &str) -> &str {
         match slang_type {
             "bool" => "bool",
@@ -88,7 +75,6 @@ impl SlangTarget for VulkanTarget {
 
     fn axis_guard(axes: &[(String, String)]) -> (String, Vec<String>) {
         if let [(total, size)] = axes {
-            // A single axis may arrive folded into rows of AXIS_FOLD_GROUPS workgroups.
             let index = format!("__dsl_axis_idx.x + __dsl_axis_idx.y * ({AXIS_FOLD_GROUPS}u * ({size}))");
             let guard = format!("  let __dsl_axis = {index};\n  if (__dsl_axis >= ({total})) return;");
             return (guard, vec!["__dsl_axis".to_owned()]);
@@ -103,7 +89,6 @@ impl SlangTarget for VulkanTarget {
         (guards.join("\n"), indices)
     }
 
-    /// Rounds to nearest even and preserves signed zeros, infinities and NaNs like the CPU; Vulkan leaves both open.
     fn entry_point_prologue(entry_point: &str) -> String {
         format!(
             "  spirv_asm {{\n    OpCapability RoundingModeRTE;\n    OpCapability SignedZeroInfNanPreserve;\n    \
@@ -123,7 +108,6 @@ impl SlangTarget for VulkanTarget {
     ) -> anyhow::Result<String> {
         kernels.iter().try_for_each(check_bindable)?;
         let wrappers = kernel_wrappers::<Self>(module, kernels)?;
-        // The wrapper names the generated types the kernels' signatures use, so it imports what the source does.
         let generated = fields.source_directory.join("generated");
         let imports = once("definitions".to_owned())
             .chain(module.dependency_file_paths().filter_map(|path| {
@@ -148,7 +132,6 @@ impl SlangTarget for VulkanTarget {
         linked: &ComponentType,
         output_base: &Path,
     ) -> anyhow::Result<()> {
-        // Specialization constants of the module's kernels with their wire types.
         let mut declared = BTreeMap::new();
         for kernel in kernels {
             for argument in &kernel.arguments {
@@ -162,7 +145,6 @@ impl SlangTarget for VulkanTarget {
                 }
             }
         }
-        // An entry point that stores BF16 also builds with the native type.
         let native = compiler.link(1, &output_base.with_extension("slang"))?;
         for (kernel, descriptor) in kernels.iter().zip(descriptors) {
             let required = kernel
@@ -245,9 +227,6 @@ impl SlangTarget for VulkanTarget {
     }
 }
 
-/// Fails unless each capability `spirv` declares is in DEVICE_CAPABILITIES or gated: a GATED_CAPABILITIES entry one
-/// of whose device capabilities is `required`; the native BF16 build, which only devices with the BF16 type load, may
-/// also declare BFloat16TypeKHR.
 fn check_capabilities(
     entry_point: &str,
     required: &HashSet<String>,
@@ -277,8 +256,6 @@ fn check_capabilities(
     Ok(())
 }
 
-/// The device capabilities a `new` precondition `condition` requires: each `float_tensor_cores` call and each
-/// `VkDeviceCapabilities` flag a `contains` tests, among its `&&` terms; with `flags`, `condition` is `|`-joined flags.
 fn required_capabilities(
     condition: &Expr,
     flags: bool,
@@ -301,7 +278,6 @@ fn required_capabilities(
     }
 }
 
-/// The ABI of the entry point `name` of a linked program, and its SPIR-V on demand.
 fn entry_point<'a>(
     compiled: &'a ComponentType,
     name: &str,
@@ -319,8 +295,6 @@ fn artifact_path(file: &Path) -> anyhow::Result<String> {
     Ok(file.to_str().context("Slang artifact path is not UTF-8")?.to_owned())
 }
 
-/// Fails for what the Vulkan binding cannot bind: GroupShared parameters, ThreadContext arguments, more than one
-/// PipelineVariants argument, and a grid other than Axis or both Groups and Threads.
 fn check_bindable(kernel: &SlangKernel) -> anyhow::Result<()> {
     if let Some(parameter) =
         kernel.parameters.iter().find(|parameter| matches!(parameter.ty, SlangParameterType::GroupShared { .. }))

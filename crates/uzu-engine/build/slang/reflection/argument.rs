@@ -44,7 +44,6 @@ pub struct SlangArgument {
     pub slang_type: String,
     pub argument_type: SlangArgumentType,
     pub binding_type: Option<KernelArgumentType>,
-    /// A uniform for which the Vulkan binding builds one pipeline per value of its enum.
     pub pipeline_variants: bool,
 }
 

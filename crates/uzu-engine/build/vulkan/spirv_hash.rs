@@ -3,8 +3,6 @@ use std::{fs, path::Path};
 use anyhow::Context;
 use walkdir::WalkDir;
 
-/// Exports the hash of every SPIR-V file under `output_directory` as UZU_VULKAN_SPIRV_HASH, which names the pipeline
-/// cache, so a new shader build starts its own instead of growing the previous one.
 pub fn export_spirv_hash(output_directory: &Path) -> anyhow::Result<()> {
     let mut spirv = blake3::Hasher::new();
     for entry in WalkDir::new(output_directory).sort_by_file_name() {
