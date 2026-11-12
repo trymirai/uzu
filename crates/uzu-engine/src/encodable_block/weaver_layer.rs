@@ -142,7 +142,9 @@ impl<B: Backend> WeaverLayer<B> {
         let (mlp, up_input_hadamard_factors) =
             <dyn Mlp<B>>::new(model_dim, hidden_dim, DATA_TYPE, &mlp_config, &parameter_tree.subtree("mlp"), context)
                 .await?;
-        assert!(up_input_hadamard_factors.is_none(), "Weaver MLP does not support input Hadamard factors");
+        if up_input_hadamard_factors.is_some() {
+            return Err(WeaverNewError::InputHadamardFactors);
+        }
         let ancestor_attention = <B::Kernels as Kernels>::AncestorAttentionKernel::new(
             context,
             head_dim,

@@ -75,6 +75,14 @@ impl ChatInstance {
     pub fn reference(&self) -> String {
         self.reference.clone()
     }
+
+    /// Why the instance decodes without the speculator its model ships, where it does.
+    pub fn speculation_notice(&self) -> Option<String> {
+        match &self.kind {
+            ChatInstanceKind::Token(instance) => instance.speculation_notice(),
+            ChatInstanceKind::Message(_) => None,
+        }
+    }
 }
 
 #[bindings::export(Implementation)]
