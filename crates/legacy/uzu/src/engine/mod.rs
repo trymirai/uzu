@@ -553,7 +553,7 @@ impl Engine {
             if candidate.as_deref() != Some(Path::new(&path)) {
                 continue;
             }
-            if self.model_path(&model).await.is_some_and(|model_path| Path::new(&model_path) == Path::new(&path)) {
+            if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
                 matches.push(model);
             }
         }

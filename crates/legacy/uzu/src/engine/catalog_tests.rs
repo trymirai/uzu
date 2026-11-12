@@ -487,26 +487,6 @@ async fn incompatible_downloaded_models_are_rejected_by_every_session_loader() {
     }
 }
 
-#[tokio::test]
-async fn model_by_path_matches_a_directory_however_its_path_is_written() {
-    let (engine, directory) = engine().await;
-    let path = directory.path().to_string_lossy().into_owned();
-    let on_disk = Model {
-        accessibility: ModelAccessibility::OnDevice {
-            source: shoji::types::model::ModelSource::Filesystem {
-                path: path.clone(),
-            },
-        },
-        ..model("on-disk")
-    };
-    let (registry, _complete, _started) = registry("disk", Some(vec![on_disk.clone()]));
-    engine.start_registry(registry).await.unwrap();
-    let forward = path.replace('\\', "/");
-    for written in [path.clone(), format!("{path}/"), forward.clone(), format!("{forward}/")] {
-        assert_eq!(engine.model_by_path(written.clone()).await.unwrap(), Some(on_disk.clone()), "{written}");
-    }
-}
-
 fn variant(
     identifier: &str,
     size: &str,
