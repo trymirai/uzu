@@ -35,6 +35,7 @@ indicatif.workspace = true
 indoc.workspace = true
 iocraft.workspace = true
 jsonschema.workspace = true
+kiban.workspace = true
 nagare.workspace = true
 ratatui.workspace = true
 rocket.workspace = true

@@ -1,6 +1,5 @@
 use std::{
     ops::Add,
-    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -57,8 +56,8 @@ pub async fn run(
 ) -> Result<()> {
     println!("Model: {}", task.repo_id);
 
-    let model_path = Path::new(&model_path)
-        .canonicalize()
+    let model_path = kiban::fs::asyn::canonicalize(&model_path)
+        .await
         .with_context(|| format!("Can not open model path: {model_path}"))?
         .to_string_lossy()
         .into_owned();

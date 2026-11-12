@@ -184,6 +184,7 @@ wasm-bindgen-futures = "0.4.79"
 wasm-bindgen-test = "=0.3.79" # Matches wasm-bindgen and wasm-bindgen-cli in flake.nix.
 openai-harmony = "0.0.8"
 dirs = "7.0.0"
+dunce = "1.0.5"
 dotenvy = "0.15.7"
 ratatui = "0.30.2"
 crossterm = "0.29.0"

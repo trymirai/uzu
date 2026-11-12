@@ -1315,6 +1315,7 @@ dependencies = [
  "indoc",
  "iocraft",
  "jsonschema",
+ "kiban",
  "nagare",
  "ratatui",
  "rocket",
@@ -4284,6 +4285,7 @@ name = "kiban"
 version = "0.6.17"
 dependencies = [
  "async-trait",
+ "dunce",
  "futures-util",
  "tokio",
  "wasm-bindgen",
