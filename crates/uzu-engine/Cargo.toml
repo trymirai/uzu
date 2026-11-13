@@ -41,6 +41,9 @@ webgpu = [
 
 vulkan = [
     "cpu",
+    "dep:ash",
+    "dep:vk-mem",
+    "dep:dirs",
     "dep:shader-slang",
     "dep:blake3",
     "dep:serde_json",
@@ -98,6 +101,9 @@ futures.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
+ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
