@@ -49,7 +49,7 @@ pub(super) enum InputPreparationMode {
 }
 
 impl<B: Backend> TransformedLinear<B> {
-    pub(super) async fn new(
+    pub(super) async fn load(
         input_dimension: u32,
         output_dimension: u32,
         weights_data_type: DataType,

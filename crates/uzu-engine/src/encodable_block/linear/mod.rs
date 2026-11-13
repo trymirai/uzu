@@ -112,7 +112,7 @@ impl<B: Backend> dyn Linear<B> {
                 Ok(Box::new(matrix))
             },
             AnyWeightMatrixSpec::HybridSpec(spec) => {
-                let (linear, _) = TransformedLinear::new(
+                let (linear, _) = TransformedLinear::load(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
@@ -235,7 +235,7 @@ impl<B: Backend> dyn Linear<B> {
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
             AnyWeightMatrixSpec::HybridSpec(spec) => {
-                TransformedLinear::new(
+                TransformedLinear::load(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
