@@ -6,7 +6,7 @@ use std::{
 
 use crate::backends::{
     common::{Buffer, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer, GpuBuffer},
-    cpu::Cpu,
+    cpu::{Cpu, error::CpuError},
 };
 
 #[derive(Debug)]
@@ -56,7 +56,7 @@ impl CpuBuffer for CpuDenseBuffer {
 impl GlobalGpuBuffer for CpuDenseBuffer {}
 
 impl GlobalBufferCpuGpu for CpuDenseBuffer {
-    fn handoff(self) -> Self {
-        self
+    fn handoff(self) -> Result<Self, CpuError> {
+        Ok(self)
     }
 }

@@ -215,6 +215,80 @@ impl VkPhysicalDevice {
     }
 }
 
+impl VkPhysicalDevice {
+    pub fn create_device(
+        &self,
+        instance: &ash::Instance,
+        queue_family_index: u32,
+    ) -> Result<ash::Device, VkContextError> {
+        let queue_priorities = [1.0_f32];
+        let queue_create_info = vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&queue_priorities);
+
+        let bf16_type = self.capabilities.contains(VkDeviceCapabilities::BF16_TYPE);
+        let matrices = self
+            .capabilities
+            .intersects(VkDeviceCapabilities::BF16_TENSOR_CORES | VkDeviceCapabilities::INT8_TENSOR_CORES);
+        let element_fold = self.capabilities.contains(VkDeviceCapabilities::INT8_ELEMENT_FOLD);
+        let mut device_extensions = Vec::new();
+        if matrices {
+            device_extensions.push(khr::cooperative_matrix::NAME.as_ptr());
+        }
+        if bf16_type {
+            device_extensions.push(VkShaderBfloat16Features::EXTENSION_NAME.as_ptr());
+        }
+        if element_fold {
+            device_extensions.push(VkCooperativeMatrix2Features::EXTENSION_NAME.as_ptr());
+        }
+
+        let vk10_features = vk::PhysicalDeviceFeatures::default().shader_int16(true);
+        let mut vk11_features = vk::PhysicalDeviceVulkan11Features::default()
+            .storage_buffer16_bit_access(true)
+            .storage_push_constant16(true);
+        let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
+            .shader_int8(true)
+            .storage_buffer8_bit_access(true)
+            .storage_push_constant8(true)
+            .shader_float16(true)
+            .shader_subgroup_extended_types(true)
+            .buffer_device_address(true)
+            .vulkan_memory_model(true)
+            .vulkan_memory_model_device_scope(true);
+        let mut vk13_features = vk::PhysicalDeviceVulkan13Features::default()
+            .maintenance4(true)
+            .synchronization2(true)
+            .subgroup_size_control(true)
+            .compute_full_subgroups(true)
+            .shader_integer_dot_product(true);
+
+        let mut matrix_features = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
+        let mut bfloat16_features = VkShaderBfloat16Features::default();
+        bfloat16_features.shader_bfloat16_type = vk::TRUE;
+        bfloat16_features.shader_bfloat16_cooperative_matrix =
+            self.capabilities.contains(VkDeviceCapabilities::BF16_TENSOR_CORES).into();
+        let mut matrix2_features = VkCooperativeMatrix2Features::default();
+        matrix2_features.cooperative_matrix_per_element_operations = vk::TRUE;
+        let mut device_create_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(std::slice::from_ref(&queue_create_info))
+            .enabled_extension_names(&device_extensions)
+            .enabled_features(&vk10_features)
+            .push_next(&mut vk11_features)
+            .push_next(&mut vk12_features)
+            .push_next(&mut vk13_features);
+        if matrices {
+            device_create_info = device_create_info.push_next(&mut matrix_features);
+        }
+        if bf16_type {
+            device_create_info = device_create_info.push_next(&mut bfloat16_features);
+        }
+        if element_fold {
+            device_create_info = device_create_info.push_next(&mut matrix2_features);
+        }
+        unsafe { instance.create_device(self.handle, &device_create_info, None) }.map_err(VkContextError::DeviceCreate)
+    }
+}
+
 pub struct VkDeviceLimits {
     pub max_work_group_count: [u32; 3],
     pub max_work_group_size: [u32; 3],

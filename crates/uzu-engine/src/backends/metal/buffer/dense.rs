@@ -74,7 +74,7 @@ impl CpuBuffer for MetalDenseBuffer {
 impl GlobalGpuBuffer for BlockAllocation<MetalDenseBuffer> {}
 
 impl GlobalBufferCpuGpu for BlockAllocation<MetalDenseBuffer> {
-    fn handoff(self) -> Self {
-        self
+    fn handoff(self) -> Result<Self, MetalError> {
+        Ok(self)
     }
 }
