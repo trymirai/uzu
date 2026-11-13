@@ -5,5 +5,5 @@ mod matmul;
 
 pub use attention::VkAttentionKernel;
 pub use check_work_group::check_work_group;
-pub use gdn::VkDeltaNetChunkedPrefill;
+pub use gdn::{VkDeltaNetChunkedPrefill, VkDeltaNetUpdateKernel};
 pub use matmul::VkMatmulKernel;
