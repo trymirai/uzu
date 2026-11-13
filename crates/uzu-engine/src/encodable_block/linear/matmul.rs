@@ -108,7 +108,7 @@ impl<B: Backend> LinearMatmul<B> {
             context,
         )
         .await?;
-        if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
+        if output_hadamard_factors.is_some() && matrix.matmul_b().quantized().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
             ));

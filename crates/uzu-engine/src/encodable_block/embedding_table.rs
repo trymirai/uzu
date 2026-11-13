@@ -6,8 +6,14 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
-        gpu_types::{d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::InputEmbeddingLookupKernel,
+        gpu_types::{
+            d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            quantization_method::QuantizationMethod,
+        },
+        kernel::{
+            InputEmbeddingLookupKernel,
+            matmul::{MatmulB, QuantizedCorrection},
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
@@ -118,16 +124,11 @@ impl<B: Backend> EmbeddingTable<B> {
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let (storage, output_hadamard_factors) = match spec {
             AnyWeightMatrixSpec::D4S4Spec(spec) => {
-                let table = load_d4s4(
-                    tree,
-                    vocab_size,
-                    embedding_dim,
-                    data_type,
-                    spec.layout,
-                    tree.read_buffer("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?,
-                    tree.read_buffer("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?,
-                )
-                .await?;
+                let ladder = tree.read_buffer("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?;
+                let codebook =
+                    tree.read_buffer("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?;
+                let table =
+                    load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout, ladder, codebook).await?;
                 let factors = tree.read_buffer("output_hadamard_factors", &[embedding_dim], DataType::I32).await?;
                 (Storage::D4S4(table), Some(factors))
             },
@@ -151,7 +152,7 @@ impl<B: Backend> EmbeddingTable<B> {
                     },
                     spec => {
                         let matrix = load_matrix(&tree.subtree("quantized"), spec).await?;
-                        if matrix.quantization().is_none() {
+                        if matrix.matmul_b().quantized().is_none() {
                             return Err(EmbeddingTableError::UnsupportedConfiguration(
                                 "output-Hadamard factors require a quantized table".into(),
                             ));
@@ -171,17 +172,18 @@ impl<B: Backend> EmbeddingTable<B> {
 
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => {
-                if let Some(info) = matrix.quantization() {
-                    (EmbeddingTableKind::Quantized, Some(info))
-                } else {
-                    (EmbeddingTableKind::Dense, None)
-                }
+            Storage::Matrix(matrix) => match matrix.matmul_b() {
+                MatmulB::Quantized(quantized) => (EmbeddingTableKind::Quantized, Some(quantized)),
+                _ => (EmbeddingTableKind::Dense, None),
             },
         };
-        let group_size = quantization.map(|info| info.group_size);
-        let mode = quantization.map(|info| info.mode);
-        let method = quantization.map(|info| info.method);
+        let group_size = quantization.as_ref().map(|quantized| quantized.group_size);
+        let mode = quantization.as_ref().map(|quantized| quantized.mode);
+        let method = quantization.as_ref().map(|quantized| match quantized.correction {
+            QuantizedCorrection::Symmetric => QuantizationMethod::ScaleSymmetric,
+            QuantizedCorrection::Biases(_) => QuantizationMethod::ScaleBias,
+            QuantizedCorrection::ZeroPoints(_) => QuantizationMethod::ScaleZeroPoint,
+        });
         let use_hadamard = output_hadamard_factors.is_some();
         let lookup = LookupKernel::<B>::new(context, data_type, table_kind, group_size, mode, method, use_hadamard)
             .map_err(EmbeddingTableError::BackendError)?;

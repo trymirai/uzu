@@ -29,38 +29,27 @@ pub enum WeightMatrixError<B: Backend> {
     UnsupportedConfiguration(String),
 }
 
-#[derive(Clone, Copy)]
-pub struct QuantizationInfo {
-    pub mode: QuantizationMode,
-    pub method: QuantizationMethod,
-    pub group_size: u32,
-}
-
-struct Quantized<B: Backend> {
-    scales: B::GlobalGpuBuffer,
-    correction: QuantizedCorrection<B::GlobalGpuBuffer>,
-    params: QuantParams,
-    mode: QuantizationMode,
-    group_size: u32,
-    signed_codes: bool,
-    weights_layout: WeightsLayout<B>,
-}
-
-struct Trellis<B: Backend> {
-    row_scales: B::GlobalGpuBuffer,
-    codebook: B::GlobalGpuBuffer,
-    format: TrellisFormat,
-}
-
 pub struct WeightMatrix<B: Backend> {
     values: B::GlobalGpuBuffer,
-    encoding: Encoding<B>,
+    encoding: WeightEncoding<B>,
 }
 
-enum Encoding<B: Backend> {
+enum WeightEncoding<B: Backend> {
     Dense,
-    Quantized(Quantized<B>),
-    Trellis(Trellis<B>),
+    Quantized {
+        scales: B::GlobalGpuBuffer,
+        correction: QuantizedCorrection<B::GlobalGpuBuffer>,
+        params: QuantParams,
+        mode: QuantizationMode,
+        group_size: u32,
+        signed_codes: bool,
+        weights_layout: WeightsLayout<B>,
+    },
+    Trellis {
+        row_scales: B::GlobalGpuBuffer,
+        codebook: B::GlobalGpuBuffer,
+        format: TrellisFormat,
+    },
 }
 
 impl<B: Backend> WeightMatrix<B> {
@@ -116,11 +105,11 @@ impl<B: Backend> WeightMatrix<B> {
                 let codebook = buffer.handoff();
                 return Ok(Self {
                     values,
-                    encoding: Encoding::Trellis(Trellis {
+                    encoding: WeightEncoding::Trellis {
                         row_scales,
                         codebook,
                         format,
-                    }),
+                    },
                 });
             },
             spec => return Err(WeightMatrixError::UnsupportedConfiguration(format!("{spec:?}"))),
@@ -139,7 +128,7 @@ impl<B: Backend> WeightMatrix<B> {
             let values = tree.read_buffer("weights", &[rows, columns], data_type).await?;
             return Ok(Self {
                 values,
-                encoding: Encoding::Dense,
+                encoding: WeightEncoding::Dense,
             });
         };
         let mode = match bits {
@@ -179,7 +168,7 @@ impl<B: Backend> WeightMatrix<B> {
 
         Ok(Self {
             values,
-            encoding: Encoding::Quantized(Quantized {
+            encoding: WeightEncoding::Quantized {
                 scales,
                 correction,
                 params,
@@ -187,7 +176,7 @@ impl<B: Backend> WeightMatrix<B> {
                 group_size,
                 signed_codes: false,
                 weights_layout: Default::default(),
-            }),
+            },
         })
     }
 
@@ -195,50 +184,50 @@ impl<B: Backend> WeightMatrix<B> {
         &self.values
     }
 
-    pub fn quantization(&self) -> Option<QuantizationInfo> {
-        self.quantized().map(|quantized| QuantizationInfo {
-            mode: quantized.mode,
-            method: match &quantized.correction {
-                QuantizedCorrection::Symmetric => QuantizationMethod::ScaleSymmetric,
-                QuantizedCorrection::Biases(_) => QuantizationMethod::ScaleBias,
-                QuantizedCorrection::ZeroPoints(_) => QuantizationMethod::ScaleZeroPoint,
-            },
-            group_size: quantized.group_size,
-        })
-    }
-
     pub fn scales(&self) -> Option<&B::GlobalGpuBuffer> {
-        self.quantized().map(|quantized| &quantized.scales)
+        self.matmul_b().quantized().map(|quantized| quantized.scales)
     }
 
     pub fn zero_points(&self) -> Option<&B::GlobalGpuBuffer> {
-        self.quantized()?.correction.zero_points()
+        self.matmul_b().quantized()?.zero_points()
     }
 
     pub fn biases(&self) -> Option<&B::GlobalGpuBuffer> {
-        self.quantized()?.correction.biases()
+        self.matmul_b().quantized()?.biases()
     }
 
     pub fn matmul_b(&self) -> MatmulB<&B::GlobalGpuBuffer> {
         match &self.encoding {
-            Encoding::Dense => MatmulB::FullPrecision {
+            WeightEncoding::Dense => MatmulB::FullPrecision {
                 b: &self.values,
             },
-            Encoding::Quantized(quantized) => MatmulB::Quantized(QuantizedB {
+            WeightEncoding::Quantized {
+                scales,
+                correction,
+                params,
+                mode,
+                group_size,
+                signed_codes,
+                weights_layout,
+            } => MatmulB::Quantized(QuantizedB {
                 codes: &self.values,
-                scales: &quantized.scales,
-                correction: quantized.correction.as_ref(),
-                params: quantized.params,
-                mode: quantized.mode,
-                group_size: quantized.group_size,
-                signed_codes: quantized.signed_codes,
-                weights_layout: quantized.weights_layout,
+                scales,
+                correction: correction.as_ref(),
+                params: *params,
+                mode: *mode,
+                group_size: *group_size,
+                signed_codes: *signed_codes,
+                weights_layout: *weights_layout,
             }),
-            Encoding::Trellis(trellis) => MatmulB::Trellis {
+            WeightEncoding::Trellis {
+                row_scales,
+                codebook,
+                format,
+            } => MatmulB::Trellis {
                 codes: &self.values,
-                row_scales: &trellis.row_scales,
-                codebook: &trellis.codebook,
-                format: trellis.format,
+                row_scales,
+                codebook,
+                format: *format,
             },
         }
     }
@@ -247,23 +236,18 @@ impl<B: Backend> WeightMatrix<B> {
         &mut self,
         optimize: impl FnOnce(&mut B::GlobalGpuBuffer) -> Result<(WeightsLayout<B>, bool), E>,
     ) -> Result<(), E> {
-        let Encoding::Quantized(quantized) = &mut self.encoding else {
+        let WeightEncoding::Quantized {
+            weights_layout,
+            signed_codes,
+            ..
+        } = &mut self.encoding
+        else {
             return Ok(());
         };
-        if quantized.weights_layout != WeightsLayout::<B>::default() {
+        if *weights_layout != WeightsLayout::<B>::default() {
             return Ok(());
         }
-        (quantized.weights_layout, quantized.signed_codes) = optimize(&mut self.values)?;
+        (*weights_layout, *signed_codes) = optimize(&mut self.values)?;
         Ok(())
-    }
-
-    fn quantized(&self) -> Option<&Quantized<B>> {
-        match &self.encoding {
-            Encoding::Quantized(quantized) => Some(quantized),
-            Encoding::Dense
-            | Encoding::Trellis {
-                ..
-            } => None,
-        }
     }
 }
