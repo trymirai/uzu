@@ -6,10 +6,12 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        embedding_table::EmbeddingTableError,
         linear::{LinearBlockError, LinearEncodeError},
         normalization::NormalizationNewError,
         stream_op::{
-            ngram_injection::NGramInjection, per_layer_embedding_injection::PerLayerEmbeddingInjection,
+            ngram_injection::{NGramInjection, NGramInjectionState},
+            per_layer_embedding_injection::PerLayerEmbeddingInjection,
             residual_scale::ResidualScale,
         },
     },
@@ -30,10 +32,14 @@ pub enum StreamOpNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
+    #[error("Embedding table error: {0}")]
+    EmbeddingTable(#[from] EmbeddingTableError<B>),
     #[error("N-gram injection requires a gated residual")]
     NGramInjectionRequiresGatedResidual,
     #[error("{0} requires an additive residual")]
     RequiresAdditiveResidual(&'static str),
+    #[error("Unsupported configuration: {0}")]
+    UnsupportedConfiguration(String),
 }
 
 #[derive(Debug, Error)]
@@ -44,15 +50,25 @@ pub enum StreamOpEncodeError<B: Backend> {
     LinearEncode(#[from] LinearEncodeError<B>),
     #[error("Per-layer embedding injection requires per-layer inputs")]
     MissingPerLayerInputs,
+    #[error("Stateful stream op requires state")]
+    MissingState,
+    #[error("N-gram injection does not support speculation")]
+    SpeculationNotSupported,
 }
 
-/// Inputs to stream ops other than the stream itself.
-// TODO: n-gram injection also needs the token ids and its own state (token history + conv state).
-// lalamo rejects stateful stream ops in layers whose mixer has a KV cache, so the state could live
-// next to the mixer state in the layer state.
-pub struct StreamOpContext<'a, B: Backend, PerLayerInputs> {
-    pub batch_dim: &'a BatchTopology<B>,
-    pub per_layer_inputs: Option<PerLayerInputs>,
+pub enum StreamOpState<B: Backend> {
+    NGramInjection(NGramInjectionState<B>),
+}
+
+impl<B: Backend> StreamOpState<B> {
+    pub fn encode_accept(
+        &mut self,
+        accepted_indices: &[u32],
+    ) {
+        match self {
+            Self::NGramInjection(state) => state.encode_accept(accepted_indices),
+        }
+    }
 }
 
 pub enum StreamOp<B: Backend> {
@@ -108,19 +124,42 @@ impl<B: Backend> StreamOp<B> {
         }
     }
 
+    pub fn create_empty_state(
+        &self,
+        context: &B::Context,
+    ) -> Result<Option<StreamOpState<B>>, B::Error> {
+        match self {
+            Self::NGramInjection(op) => Ok(Some(StreamOpState::NGramInjection(op.create_empty_state(context)?))),
+            Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => Ok(None),
+        }
+    }
+
+    pub fn speculation_supported(&self) -> bool {
+        match self {
+            Self::NGramInjection(_) => false,
+            Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => true,
+        }
+    }
+
     pub fn encode(
         &self,
         stream: B::ScratchBuffer,
-        op_context: &StreamOpContext<'_, B, impl BufferRef<Backend = B>>,
+        batch_dim: &BatchTopology<B>,
+        token_ids: impl BufferRef<Backend = B>,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        state: Option<&mut StreamOpState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, StreamOpEncodeError<B>> {
-        let row_count = op_context.batch_dim.size();
+        let row_count = batch_dim.size();
         match self {
             Self::NGramInjection(op) => {
-                op.encode(stream, op_context.batch_dim, command_buffer).map_err(StreamOpEncodeError::Backend)
+                let Some(StreamOpState::NGramInjection(state)) = state else {
+                    return Err(StreamOpEncodeError::MissingState);
+                };
+                op.encode(stream, token_ids, batch_dim, state, command_buffer)
             },
             Self::PerLayerEmbeddingInjection(op) => {
-                let per_layer_inputs = op_context.per_layer_inputs.ok_or(StreamOpEncodeError::MissingPerLayerInputs)?;
+                let per_layer_inputs = per_layer_inputs.ok_or(StreamOpEncodeError::MissingPerLayerInputs)?;
                 op.encode(stream, per_layer_inputs, row_count, command_buffer)
             },
             Self::ResidualScale(op) => Ok(op.encode(stream, row_count, command_buffer)),
