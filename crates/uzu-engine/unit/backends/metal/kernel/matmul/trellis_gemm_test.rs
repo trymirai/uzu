@@ -7,6 +7,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Kernels,
+            gpu_types::trellis::TrellisCodebook,
             kernel::matmul::{
                 MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape, TrellisFormat,
             },
@@ -93,7 +94,10 @@ fn decode_level(
 type MetalBuffer = <Metal as Backend>::GlobalGpuBuffer;
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
-const CODEBOOK: [f32; 5] = [0.0123, 0.3, -0.25, 0.125, -0.0625];
+const CODEBOOK: TrellisCodebook = TrellisCodebook {
+    scale: 0.0123,
+    offsets: [0.3, -0.25, 0.125, -0.0625],
+};
 const PADDING: usize = 24;
 const SENTINEL: u16 = 0x7F7F;
 const RELATIVE_TOLERANCE: f32 = 1e-2;
@@ -154,7 +158,6 @@ fn run_projection(
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
     let codes = create_buffer_with_data::<Metal, u8>(context, &stored);
     let row_scales_buffer = create_buffer_with_data::<Metal, f32>(context, &row_scales);
-    let codebook = create_buffer_with_data::<Metal, f32>(context, &CODEBOOK);
     let mut output = create_buffer_with_data::<Metal, u16>(context, &vec![SENTINEL; m * (n + PADDING)]);
     let arguments = MatmulArguments {
         a: MatmulA::Trellis {
@@ -165,7 +168,7 @@ fn run_projection(
         b: MatmulB::Trellis {
             codes: &codes,
             row_scales: &row_scales_buffer,
-            codebook: &codebook,
+            codebook: CODEBOOK,
             format,
         },
         b_leading_dimension: None,
@@ -215,9 +218,10 @@ fn run_projection(
             let level_dot: i32 = levels.iter().zip(row_values).map(|(&level, &value)| level * i32::from(value)).sum();
             let sums = &group_sums_host[token * 4..token * 4 + 4];
             // A non-dyadic offset exposes rounding differences in the GPU dot.
-            let offsets_dot =
-                (((sums[0] * CODEBOOK[1]) + sums[1] * CODEBOOK[2]) + sums[2] * CODEBOOK[3]) + sums[3] * CODEBOOK[4];
-            let dot = (level_dot as f32).mul_add(CODEBOOK[0], offsets_dot);
+            let offsets_dot = (((sums[0] * CODEBOOK.offsets[0]) + sums[1] * CODEBOOK.offsets[1])
+                + sums[2] * CODEBOOK.offsets[2])
+                + sums[3] * CODEBOOK.offsets[3];
+            let dot = (level_dot as f32).mul_add(CODEBOOK.scale, offsets_dot);
             let want = bf16::from_f32(dot * row_scales[row] * activation_scales_host[token]).to_f32();
             let got = bf16::from_bits(got).to_f32();
             assert!(

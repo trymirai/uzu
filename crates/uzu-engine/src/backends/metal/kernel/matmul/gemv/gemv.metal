@@ -69,7 +69,8 @@ CONSTRAINT(
     ((B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant ||
       B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) &&
      BITS == 4 && BLOCK_K != 0) ||
-    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BITS == 8 && BLOCK_K != 0) ||
+    (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant && BLOCK_K != 0 &&
+     (BITS == 8 || (BITS == 4 && INPUT_ROW_TILE == 1 && BLOCK_K == 64 && AT == "bfloat" && DT == "bfloat"))) ||
     (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant && BITS == 2 && GEMV_QUANTIZED_ROW_TILE))
 CONSTRAINT((BITS == 2) == (BLOCK_K == 128))
 CONSTRAINT(INPUT_ROW_TILE == 1 || GEMV_BATCHED_INPUT)

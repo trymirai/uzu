@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             Kernels,
             matmul::{
@@ -68,6 +68,10 @@ async fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
+    pub(super) fn output_dim(&self) -> u32 {
+        self.output_dim
+    }
+
     pub async fn load(
         input_dim: u32,
         output_dim: u32,
@@ -89,7 +93,7 @@ impl<B: Backend> LinearMatmul<B> {
         let matrix =
             WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)
                 .await?;
-        if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
+        if output_hadamard_factors.is_some() && matrix.matmul_b().quantized().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),
             ));
@@ -139,6 +143,48 @@ impl<B: Backend> LinearMatmul<B> {
         let mut output = command_buffer
             .allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)
             .map_err(LinearEncodeError::Backend)?;
+        self.encode_output(
+            a,
+            batch_dim,
+            output_dim,
+            gather_indices,
+            MatmulOutput::new(&mut output, self.d_ops()),
+            command_buffer,
+        )?;
+
+        Ok(output)
+    }
+
+    pub(super) fn encode_columns(
+        &self,
+        a: MatmulA<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        output: &mut B::ScratchBuffer,
+        column: u32,
+        row_stride: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), LinearEncodeError<B>> {
+        let element = self.output_data_type.size_in_bytes();
+        if !self.matmul_b().is_trellis() {
+            unreachable!("TODO: support strided output in ordinary GEMM/GEMV");
+        }
+        let output = MatmulOutput {
+            values: output.subrange_mut(column as usize * element..),
+            row_stride: Some(row_stride),
+            ops: self.d_ops(),
+        };
+        self.encode_output(a, batch_dim, self.output_dim, None::<&B::ScratchBuffer>, output, command_buffer)
+    }
+
+    fn encode_output(
+        &self,
+        a: MatmulA<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        output_dim: u32,
+        gather_indices: Option<impl BufferRef<Backend = B>>,
+        output: MatmulOutput<'_, B, impl BufferMut<Backend = B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), LinearEncodeError<B>> {
         self.kernel
             .lock()
             .encode(
@@ -147,7 +193,7 @@ impl<B: Backend> LinearMatmul<B> {
                     b: self.matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
-                    output: MatmulOutput::new(&mut output, self.d_ops()),
+                    output,
                     gather_indices,
                     m: batch_dim,
                     n: output_dim,
@@ -155,9 +201,7 @@ impl<B: Backend> LinearMatmul<B> {
                 },
                 command_buffer,
             )
-            .map_err(LinearEncodeError::Matmul)?;
-
-        Ok(output)
+            .map_err(LinearEncodeError::Matmul)
     }
 
     fn matmul_shape(

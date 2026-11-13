@@ -1,9 +1,11 @@
 #include "../../common/dsl.h"
+#include "../../generated/trellis.h"
 #include "../common/quant_unpack.h"
 #include "common/quantized/trellis.h"
 
 using namespace metal;
 using namespace uzu::gemm;
+using uzu::trellis::TrellisCodebook;
 
 #define SIMDGROUPS 8
 #define ROWS_PER_SIMDGROUP 4
@@ -18,7 +20,7 @@ KERNEL(GemmTrellisDecode)(
     const device float* activation_scales,
     const device uint8_t* codes,
     const device float* row_scales,
-    const device float* scale_and_offsets,
+    const constant TrellisCodebook& codebook,
     device bfloat* output,
     const constant uint& k,
     const constant uint& n,
@@ -86,7 +88,7 @@ KERNEL(GemmTrellisDecode)(
     }
   }
 
-  const float4 offsets = float4(scale_and_offsets[1], scale_and_offsets[2], scale_and_offsets[3], scale_and_offsets[4]);
+  const float4 offsets = float4(codebook.offsets[0], codebook.offsets[1], codebook.offsets[2], codebook.offsets[3]);
   METAL_PRAGMA_UNROLL
   for (uint token = 0; token < MAX_BATCH; ++token) {
     if (token < batch) {
@@ -96,7 +98,7 @@ KERNEL(GemmTrellisDecode)(
         const float level_dot = float(simd_sum(int(sums[token][row])));
         if (lane == 0 && first_row + row < n) {
           output[token * output_stride + first_row + row] = bfloat(
-              (level_dot * scale_and_offsets[0] + offsets_dot) * row_scales[first_row + row] * activation_scales[token]
+              (level_dot * codebook.scale + offsets_dot) * row_scales[first_row + row] * activation_scales[token]
           );
         }
       }

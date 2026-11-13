@@ -27,12 +27,11 @@ static METAL_FUNC uint hadamard_index_before_transpose(ushort lane, ushort simdg
   return METAL_SIMD_SIZE * (simdgroup + SIMDGROUPS_PER_THREADGROUP * value_index) + lane;
 }
 
-// Supported limits; arrays are sized for them.
-UZU_CONST uint MAX_DIMENSION = 20480;
-UZU_CONST uint MIN_HADAMARD_SIZE = 512;
-UZU_CONST uint MAX_HADAMARD_SIZE = 4096;
-UZU_CONST uint MAX_COLUMNS_PER_PASS = 4;
+using trellis::MAX_DIMENSION;
+using trellis::MAX_HADAMARD_SIZE;
+using trellis::MIN_HADAMARD_SIZE;
 
+UZU_CONST uint MAX_COLUMNS_PER_PASS = 4;
 UZU_CONST uint MAX_MIXING_DIMENSION = MAX_DIMENSION / MIN_HADAMARD_SIZE;
 UZU_CONST uint MAX_VALUES_PER_THREAD = MAX_HADAMARD_SIZE / THREADS_PER_THREADGROUP;
 UZU_CONST uint MAX_PRIVATE_VALUES = MAX_DIMENSION / THREADS_PER_THREADGROUP;
@@ -175,7 +174,7 @@ static METAL_FUNC void rotate_columns(
 
 PUBLIC KERNEL(TrellisTransform)(
     device const bfloat* input,
-    device const float* rht_factors,
+    device const int32_t* rht_factors,
     device const float* mixing,
     device int8_t* activations,
     device float4* column_group_sums,
@@ -205,11 +204,11 @@ PUBLIC KERNEL(TrellisTransform)(
     const uint hadamard_index = hadamard_index_before_transpose(lane, simdgroup, value_index);
     const uint first_column = hadamard_index * layout.mixing_dimension;
     const device bfloat* token_input = input + token * dimension + first_column;
-    const device float* token_factors = rht_factors + first_column;
+    const device int32_t* token_factors = rht_factors + first_column;
     METAL_PRAGMA_UNROLL
     for (uint mixing_index = 0; mixing_index < layout.mixing_dimension; ++mixing_index) {
       sign_flipped_input[value_index * layout.mixing_dimension + mixing_index] =
-          float(token_input[mixing_index]) * token_factors[mixing_index];
+          float(token_input[mixing_index]) * float(token_factors[mixing_index]);
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);

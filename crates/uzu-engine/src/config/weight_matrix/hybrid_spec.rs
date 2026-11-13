@@ -1,4 +1,4 @@
-use uzu_engine_macros::uzu_config;
+use uzu_engine_macros::{uzu_config, uzu_config_abstract};
 
 use crate::{config::weight_matrix::AnyWeightMatrixSpec, utils::strict_serde::Unsupported};
 
@@ -10,11 +10,17 @@ pub enum IncoherenceProcessingMode {
     InputOutput,
 }
 
-#[uzu_config]
+#[uzu_config_abstract(HadamardSpec, KroneckerSpec)]
+pub struct IncoherenceProcessorSpec;
+
+#[uzu_config(self::IncoherenceProcessorSpec)]
 pub struct HadamardSpec {
-    #[serde(rename = "type")]
-    ty: monostate::MustBe!("HadamardSpec"),
     pub block_size: u32,
+    pub processing_mode: IncoherenceProcessingMode,
+}
+
+#[uzu_config(self::IncoherenceProcessorSpec)]
+pub struct KroneckerSpec {
     pub processing_mode: IncoherenceProcessingMode,
 }
 
@@ -22,5 +28,5 @@ pub struct HadamardSpec {
 pub struct HybridSpec {
     pub quantization_spec: Box<AnyWeightMatrixSpec>,
     pub adapter_spec: Option<Unsupported>,
-    pub incoherence_spec: Option<HadamardSpec>,
+    pub incoherence_spec: Option<AnyIncoherenceProcessorSpec>,
 }
