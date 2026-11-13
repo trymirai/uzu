@@ -1,6 +1,8 @@
 use derive_more::Debug;
 use thiserror::Error;
 
+use self::transformed_linear::InputPreparationMode;
+
 mod input_rht;
 mod matmul;
 mod transformed_linear;
@@ -110,7 +112,7 @@ impl<B: Backend> dyn Linear<B> {
                 Ok(Box::new(matrix))
             },
             AnyWeightMatrixSpec::HybridSpec(spec) => {
-                let linear = TransformedLinear::new(
+                let (linear, _) = TransformedLinear::new(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
@@ -119,10 +121,11 @@ impl<B: Backend> dyn Linear<B> {
                     has_biases.then_some(parameter_tree),
                     spec,
                     &weights_tree,
+                    InputPreparationMode::InLinear,
                     context,
                 )
                 .await?;
-                Ok(Box::new(linear))
+                Ok(linear)
             },
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
@@ -218,13 +221,13 @@ impl<B: Backend> dyn Linear<B> {
     }
 
     async fn new_with_input_preparation(
-        input_dim: u32,
-        output_dim: u32,
+        input_dimension: u32,
+        output_dimension: u32,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
-        allow_prequantized_activation: bool,
+        allow_quantized_activations: bool,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
@@ -232,24 +235,26 @@ impl<B: Backend> dyn Linear<B> {
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
             AnyWeightMatrixSpec::HybridSpec(spec) => {
-                TransformedLinear::new_with_input_preparation(
-                    input_dim,
-                    output_dim,
+                TransformedLinear::new(
+                    input_dimension,
+                    output_dimension,
                     weights_data_type,
                     input_data_type,
                     output_data_type,
                     has_biases.then_some(parameter_tree),
                     spec,
                     &weights_tree,
-                    allow_prequantized_activation,
+                    InputPreparationMode::AllowExternal {
+                        allow_quantized_activations,
+                    },
                     context,
                 )
                 .await
             },
             _ => {
                 let linear = Self::new_mixed_precision(
-                    input_dim,
-                    output_dim,
+                    input_dimension,
+                    output_dimension,
                     weights_data_type,
                     input_data_type,
                     output_data_type,

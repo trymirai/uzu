@@ -79,9 +79,13 @@ impl<B: Backend> WeightMatrix<B> {
                     },
                 )),
             ),
-            AnyWeightMatrixSpec::QtipGaussianSpec(spec)
-                if spec.layout == Layout::OutputInput && required_layout == Layout::OutputInput =>
-            {
+            AnyWeightMatrixSpec::QtipGaussianSpec(spec) => {
+                if spec.layout != Layout::OutputInput || required_layout != Layout::OutputInput {
+                    return Err(WeightMatrixError::UnsupportedConfiguration(format!(
+                        "Trellis requires OutputInput layout, got stored={:?}, requested={required_layout:?}",
+                        spec.layout
+                    )));
+                }
                 let codebook = match spec.vector_width {
                     2 => &CODEBOOK_V2,
                     4 => &CODEBOOK_V4,
