@@ -5,6 +5,9 @@ use crate::{
     data_type::DataType,
 };
 
+#[cfg(any(backend = "metal", backend = "vulkan"))]
+pub const CHUNK_SIZE: u32 = 64;
+
 pub struct DeltaNetChunkedPrefillArgs<'a, B: Backend> {
     pub in_projected: &'a B::ScratchBuffer,
     pub a_log: &'a B::GlobalGpuBuffer,
