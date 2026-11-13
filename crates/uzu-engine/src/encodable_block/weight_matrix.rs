@@ -1,9 +1,11 @@
+use std::mem::size_of_val;
+
 use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend,
+        Backend, Context, CpuBuffer, GlobalBufferCpuGpu,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
         kernel::{
             matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat, WeightsLayout},
@@ -19,6 +21,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum WeightMatrixError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported weight matrix configuration: {0}")]
@@ -67,6 +71,7 @@ impl<B: Backend> WeightMatrix<B> {
         spec: AnyWeightMatrixSpec,
         required_layout: Layout,
         tree: &ParameterTree<'_, B>,
+        context: &B::Context,
     ) -> Result<Self, WeightMatrixError<B>> {
         let (layout, quantized) = match spec {
             AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout, None),
@@ -105,7 +110,10 @@ impl<B: Backend> WeightMatrix<B> {
                 let code_shape = [output_dim, format.code_row_bytes(input_dim)];
                 let values = tree.read_buffer("codes", &code_shape, DataType::U8).await?;
                 let row_scales = tree.read_buffer("scales", &[output_dim], DataType::F32).await?;
-                let codebook = tree.create_buffer_with_data(codebook)?;
+                let mut buffer =
+                    context.create_buffer_cpu_gpu(size_of_val(codebook)).map_err(WeightMatrixError::Backend)?;
+                buffer.copyin(codebook);
+                let codebook = buffer.handoff();
                 return Ok(Self {
                     values,
                     encoding: Encoding::Trellis(Trellis {

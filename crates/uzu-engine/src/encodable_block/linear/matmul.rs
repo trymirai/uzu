@@ -98,9 +98,16 @@ impl<B: Backend> LinearMatmul<B> {
             }
         }
 
-        let matrix =
-            WeightMatrix::load(output_dim, input_dim, weights_data_type, spec, Layout::OutputInput, weights_tree)
-                .await?;
+        let matrix = WeightMatrix::load(
+            output_dim,
+            input_dim,
+            weights_data_type,
+            spec,
+            Layout::OutputInput,
+            weights_tree,
+            context,
+        )
+        .await?;
         if output_hadamard_factors.is_some() && matrix.quantization().is_none() {
             return Err(LinearMatmulError::UnsupportedConfiguration(
                 "fused output-hadamard factors require quantized weights".into(),

@@ -51,13 +51,10 @@ async fn matrix_parts<'t, B: Backend>(
         return Ok(vec![(expected_rows, spec, tree)]);
     }
     let part_rows_shape = tree.shape("part_rows")?;
-    let [part_count] = part_rows_shape else {
-        return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
-    };
-    let part_rows = tree.read_slice::<i32>("part_rows", part_rows_shape).await?;
-    if part_rows.len() != *part_count as usize {
+    if !matches!(part_rows_shape, [_]) {
         return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
     }
+    let part_rows = tree.read_slice::<i32>("part_rows", part_rows_shape).await?;
     let mut parts = Vec::with_capacity(part_rows.len());
     for (index, part_rows) in part_rows.into_iter().enumerate() {
         let part_rows = u32::try_from(part_rows)

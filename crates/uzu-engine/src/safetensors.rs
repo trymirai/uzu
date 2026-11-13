@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    mem::size_of_val,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -139,16 +138,6 @@ impl<B: Backend> ParameterTree<'_, B> {
             loader: self.loader,
             prefix: format!("{}{name}.", self.prefix),
         }
-    }
-
-    pub fn create_buffer_with_data<T: DataTypeRepr>(
-        &self,
-        data: &[T],
-    ) -> Result<B::GlobalGpuBuffer, ParameterLoaderError<B>> {
-        let mut buffer =
-            self.loader.context.create_buffer_cpu_gpu(size_of_val(data)).map_err(ParameterLoaderError::BackendError)?;
-        buffer.copyin(data);
-        Ok(buffer.handoff())
     }
 
     pub fn shape(

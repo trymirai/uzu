@@ -1,9 +1,11 @@
+use std::mem::size_of_val;
+
 use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
         gpu_types::{d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::InputEmbeddingLookupKernel,
     },
@@ -102,19 +104,16 @@ impl<B: Backend> EmbeddingTable<B> {
             )));
         }
         let load_matrix = async |tree: &ParameterTree<B>, spec| {
-            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree).await
+            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree, context).await
         };
         let load_lattice = async |tree: &ParameterTree<B>, layout| {
-            load_d4s4(
-                tree,
-                vocab_size,
-                embedding_dim,
-                data_type,
-                layout,
-                tree.create_buffer_with_data(&LADDER)?,
-                tree.create_buffer_with_data(&CODEBOOK)?,
-            )
-            .await
+            let mut ladder =
+                context.create_buffer_cpu_gpu(size_of_val(&LADDER)).map_err(EmbeddingTableError::BackendError)?;
+            ladder.copyin(&LADDER);
+            let mut codebook =
+                context.create_buffer_cpu_gpu(size_of_val(&CODEBOOK)).map_err(EmbeddingTableError::BackendError)?;
+            codebook.copyin(&CODEBOOK);
+            load_d4s4(tree, vocab_size, embedding_dim, data_type, layout, ladder.handoff(), codebook.handoff()).await
         };
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let (storage, output_hadamard_factors) = match spec {
