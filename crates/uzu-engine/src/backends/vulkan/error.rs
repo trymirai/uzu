@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ash::vk;
 
 use crate::data_type::DataType;
@@ -91,9 +89,6 @@ pub enum VkContextError {
 
     #[error("the Vulkan validation layer is not installed")]
     ValidationNotSupported,
-
-    #[error("GPU work that nobody awaited failed, so buffers may hold wrong data: {0}")]
-    Failed(#[source] Arc<Error>),
 }
 
 #[derive(Debug, thiserror::Error)]
