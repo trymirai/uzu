@@ -129,9 +129,9 @@ impl MatmulKernel for MatmulCpuKernel {
                 let code_layout = quantization.code_layout();
                 let compatible = matches!(a_group_size, 32 | 64 | 128)
                     && k.is_multiple_of(a_group_size)
-                    && matches!(b.group_size(), Some(32 | 64 | 128))
                     && b.quantized().is_some_and(|quantized| {
                         matches!(quantized.mode, QuantizationMode::U2 | QuantizationMode::U4 | QuantizationMode::U8)
+                            && (quantized.params.is_per_row() || matches!(quantized.group_size, 32 | 64 | 128))
                     });
                 if !compatible {
                     return Err(MatmulCpuError::IncompatibleA {

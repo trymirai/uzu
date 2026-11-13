@@ -14,7 +14,10 @@ use crate::{
         },
         metal::{
             gpu_types::gemm::{GemmBLayout, GemmTiling},
-            kernel::matmul::gemm::{GemmEngine, GemmPlan, policy},
+            kernel::matmul::{
+                gemm::{GemmEngine, GemmPlan, policy},
+                weight_block_k,
+            },
         },
     },
     data_type::DataType,
@@ -41,7 +44,7 @@ pub enum GemmPlanError {
 /// Activation format, tiling and K alignment of the small-M GEMM for W4 and W8 (group 32 or 64) and W2 (group 128).
 pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTiling, u32)> {
     let bits = shape.b_bits?;
-    let group_size = shape.b_group_size?;
+    let group_size = weight_block_k(shape.b_bits, shape.b_group_size)?;
     let packed_half = ActivationFormat::PackedHalf {
         block_k: group_size,
         bits,
@@ -261,7 +264,7 @@ pub(super) fn outer_block_k(
     tiling: GemmTiling,
 ) -> Option<u32> {
     if engine == GemmEngine::Mxu && shape.is_quant() {
-        shape.b_group_size.filter(|&group_size| group_size != 0)
+        weight_block_k(shape.b_bits, shape.b_group_size).filter(|&block_k| block_k != 0)
     } else {
         Some(tiling.block_k()).filter(|&block_k| block_k != 0)
     }

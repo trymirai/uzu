@@ -23,6 +23,7 @@ use crate::{
                 layout,
                 matmul_dispatch::MatmulDispatch,
                 matmul_output_work::MatmulOutputWork,
+                weight_block_k,
             },
         },
     },
@@ -193,7 +194,7 @@ impl MatmulKernel for MatmulMetalKernel {
         shape: &MatmulShape,
         context: &MetalContext,
     ) -> Option<ActivationQuantization> {
-        let weight_group_size = shape.b_group_size?;
+        let weight_group_size = weight_block_k(shape.b_bits, shape.b_group_size)?;
         let emit_group_sums = GemmKernel::requires_activation_group_sums(shape);
         let code_layout = shape.b_bits.and_then(Int8CodeLayout::for_right_bits)?;
         let quantization =
