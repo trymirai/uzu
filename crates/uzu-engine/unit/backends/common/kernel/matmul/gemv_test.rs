@@ -159,7 +159,7 @@ fn gemv_bf16(
 #[test_attr(uzu_test)]
 #[case::w4_zero_point(4, QuantizationMethod::ScaleZeroPoint, 256, 72, 32)]
 #[case::w8_symmetric(8, QuantizationMethod::ScaleSymmetric, 256, 72, 32)]
-#[case::w4_moe_shared_gate(4, QuantizationMethod::ScaleZeroPoint, 2048, 1, 64)]
+#[case::w4_single_row(4, QuantizationMethod::ScaleZeroPoint, 2048, 1, 64)]
 fn group_major_gemv_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,

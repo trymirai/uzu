@@ -2,8 +2,7 @@
 import definitions;
 
 [[Variants("T", "float")]]
-[[Variants("MAX_TOP_K", "8")]]
-[[Public]] [[Kernel]] func MoeRouterTopK<T, let MAX_TOP_K: uint32_t>(
+[[Public]] [[Kernel]] func MoeRouterTopK<T>(
   StructuredBuffer<T> logits,
   RWStructuredBuffer<uint32_t> expert_ids,
   RWStructuredBuffer<float> expert_weights,

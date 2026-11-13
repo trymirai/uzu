@@ -5,9 +5,8 @@
 #include "../common/top_k.h"
 #include "common.h"
 
-template <typename T, uint MAX_TOP_K>
+template <typename T>
 VARIANTS(T, float)
-VARIANTS(MAX_TOP_K, 8)
 PUBLIC KERNEL(MoeRouterTopK)(
     const device T* logits,
     device uint* expert_ids,
@@ -29,8 +28,8 @@ PUBLIC KERNEL(MoeRouterTopK)(
     }
   }
 
-  float chosen_vals[MAX_TOP_K];
-  uint chosen_ids[MAX_TOP_K];
+  float chosen_val = 0.0f;
+  uint chosen_id = 0;
   uint picked = 0;
 
   for (uint k = 0; k < top_k; ++k) {
@@ -46,37 +45,29 @@ PUBLIC KERNEL(MoeRouterTopK)(
       }
     }
 
-    for (ushort offset = METAL_SIMD_SIZE / 2; offset > 0; offset >>= 1) {
-      const uint other_key = simd_shuffle_xor(best_key, offset);
-      const uint other_idx = simd_shuffle_xor(best_idx, offset);
-      if (other_key > best_key || (other_key == best_key && other_idx < best_idx)) {
-        best_key = other_key;
-        best_idx = other_idx;
-      }
-    }
+    const uint max_key = simd_max(best_key);
+    best_idx = simd_min(best_key == max_key ? best_idx : 0xFFFFFFFFu);
+    best_key = max_key;
 
     if ((best_idx & (METAL_SIMD_SIZE - 1)) == lane) {
       picked |= 1u << (best_idx / METAL_SIMD_SIZE);
     }
 
-    chosen_vals[k] = top_k_score_from_key(best_key);
-    chosen_ids[k] = best_idx;
+    if (lane == k) {
+      chosen_val = top_k_score_from_key(best_key);
+      chosen_id = best_idx;
+    }
   }
 
-  if (lane == 0) {
-    const float max_chosen = chosen_vals[0];
-    float sum_exp = 0.0f;
-    for (uint k = 0; k < top_k; ++k) {
-      const float weight = fast::exp(chosen_vals[k] - max_chosen);
-      chosen_vals[k] = weight;
-      sum_exp += weight;
-    }
-    const float inv_sum = 1.0f / sum_exp;
-    device uint* out_ids = expert_ids + token_idx * top_k;
-    device float* out_weights = expert_weights + token_idx * top_k;
-    for (uint k = 0; k < top_k; ++k) {
-      out_ids[k] = chosen_ids[k];
-      out_weights[k] = chosen_vals[k] * inv_sum;
-    }
+  const float max_chosen = simd_shuffle(chosen_val, ushort(0));
+  const float weight = fast::exp(chosen_val - max_chosen);
+  float sum_exp = 0.0f;
+  for (uint k = 0; k < top_k; ++k) {
+    sum_exp += simd_shuffle(weight, ushort(k));
+  }
+  const float inv_sum = 1.0f / sum_exp;
+  if (lane < top_k) {
+    expert_ids[token_idx * top_k + lane] = chosen_id;
+    expert_weights[token_idx * top_k + lane] = weight * inv_sum;
   }
 }

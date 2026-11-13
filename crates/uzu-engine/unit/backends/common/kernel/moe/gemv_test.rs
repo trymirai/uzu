@@ -84,86 +84,77 @@ fn run_moe_gemv<B: Backend>(case: &MoeGemvCase) -> Vec<bf16> {
 
 // The weight scales keep outputs near 1, as in a real model, so 2e-2 is at least two bf16 steps. Every pattern has a
 // prime period, so each expert's weights, zero points and rotation signs differ.
-fn compare_projections(
-    bits: u32,
-    weights_for: impl Fn(u32, u32, u32) -> (Vec<u8>, Vec<bf16>, Option<Vec<u8>>),
-) {
-    for (group_size, (name, in_dim, out_dim, a_per_token)) in
-        [32u32, 64].into_iter().flat_map(|group_size| PROJECTIONS.map(|projection| (group_size, projection)))
-    {
-        let (weights, scales, zero_points) = weights_for(in_dim, out_dim, group_size);
-        let hadamard_factors: Vec<i32> = (0..(NUM_EXPERTS * out_dim) as usize)
-            .map(|i| {
-                if (i * 7 + 3) % 17 < 8 {
-                    1
+#[uzu_test]
+fn moe_gemv_matches_cpu() {
+    for bits in [4u32, 8] {
+        for group_size in [32u32, 64] {
+            for (name, in_dim, out_dim, a_per_token) in PROJECTIONS {
+                let num_groups = in_dim / group_size;
+                let (weights, scales, zero_points): (Vec<u8>, Vec<bf16>, Option<Vec<u8>>) = if bits == 4 {
+                    let weights = (0..(NUM_EXPERTS * out_dim * (in_dim / 2)) as usize)
+                        .map(|i| ((i * 73 + 19) % 251) as u8)
+                        .collect();
+                    let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
+                        .map(|i| bf16::from_f32((((i * 29 + 5) % 41) as f32 + 1.0) * 0.00015))
+                        .collect();
+                    let zero_points = (0..(NUM_EXPERTS * num_groups * (out_dim / 2)) as usize)
+                        .map(|i| (((i * 43 + 11) % 13) | (((i * 61 + 3) % 11) << 4)) as u8)
+                        .collect();
+                    (weights, scales, Some(zero_points))
                 } else {
-                    -1
+                    let weights =
+                        (0..(NUM_EXPERTS * out_dim * in_dim) as usize).map(|i| ((i * 59 + 11) % 251) as u8).collect();
+                    let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
+                        .map(|i| bf16::from_f32((((i * 23 + 7) % 37) as f32 + 1.0) * 0.000012))
+                        .collect();
+                    (weights, scales, None)
+                };
+                let hadamard_factors: Vec<i32> = (0..(NUM_EXPERTS * out_dim) as usize)
+                    .map(|i| {
+                        if (i * 7 + 3) % 17 < 8 {
+                            1
+                        } else {
+                            -1
+                        }
+                    })
+                    .collect();
+                for tokens in [1u32, 2, 16] {
+                    let num_routes = tokens * ACTIVE_EXPERTS;
+                    let mut expert_ids: Vec<u32> =
+                        (0..num_routes as usize).map(|i| ((i * 5 + 3) as u32) % NUM_EXPERTS).collect();
+                    expert_ids[0] = NUM_EXPERTS - 1;
+                    let input_rows = if a_per_token {
+                        tokens
+                    } else {
+                        num_routes
+                    };
+                    let input: Vec<bf16> = (0..(input_rows * in_dim) as usize)
+                        .map(|i| bf16::from_f32((((i * 31 + 17) % 53) as f32 - 26.0) * 0.05))
+                        .collect();
+                    let case = MoeGemvCase {
+                        bits,
+                        group_size,
+                        weights: &weights,
+                        scales: &scales,
+                        zero_points: zero_points.as_deref(),
+                        hadamard_factors: &hadamard_factors,
+                        input: &input,
+                        expert_ids: &expert_ids,
+                        in_dim,
+                        out_dim,
+                        a_per_token,
+                    };
+                    let expected = run_moe_gemv::<Cpu>(&case);
+                    for_each_non_cpu_backend!(|B| {
+                        assert_eq_float(
+                            &expected,
+                            &run_moe_gemv::<B>(&case),
+                            2e-2,
+                            &format!("{bits} bit {name}, group {group_size}, {tokens} tokens"),
+                        );
+                    });
                 }
-            })
-            .collect();
-        for tokens in [1u32, 2, 16] {
-            let num_routes = tokens * ACTIVE_EXPERTS;
-            let mut expert_ids: Vec<u32> =
-                (0..num_routes as usize).map(|i| ((i * 5 + 3) as u32) % NUM_EXPERTS).collect();
-            expert_ids[0] = NUM_EXPERTS - 1;
-            let input_rows = if a_per_token {
-                tokens
-            } else {
-                num_routes
-            };
-            let input: Vec<bf16> = (0..(input_rows * in_dim) as usize)
-                .map(|i| bf16::from_f32((((i * 31 + 17) % 53) as f32 - 26.0) * 0.05))
-                .collect();
-            let case = MoeGemvCase {
-                bits,
-                group_size,
-                weights: &weights,
-                scales: &scales,
-                zero_points: zero_points.as_deref(),
-                hadamard_factors: &hadamard_factors,
-                input: &input,
-                expert_ids: &expert_ids,
-                in_dim,
-                out_dim,
-                a_per_token,
-            };
-            let expected = run_moe_gemv::<Cpu>(&case);
-            for_each_non_cpu_backend!(|B| {
-                assert_eq_float(
-                    &expected,
-                    &run_moe_gemv::<B>(&case),
-                    2e-2,
-                    &format!("{bits} bit {name}, group {group_size}, {tokens} tokens"),
-                );
-            });
+            }
         }
     }
-}
-
-#[uzu_test]
-fn moe_gemv_u4_zero_point_matches_cpu() {
-    compare_projections(4, |in_dim, out_dim, group_size| {
-        let num_groups = in_dim / group_size;
-        let weights =
-            (0..(NUM_EXPERTS * out_dim * (in_dim / 2)) as usize).map(|i| ((i * 73 + 19) % 251) as u8).collect();
-        let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
-            .map(|i| bf16::from_f32((((i * 29 + 5) % 41) as f32 + 1.0) * 0.00015))
-            .collect();
-        let zero_points = (0..(NUM_EXPERTS * num_groups * (out_dim / 2)) as usize)
-            .map(|i| (((i * 43 + 11) % 13) | (((i * 61 + 3) % 11) << 4)) as u8)
-            .collect();
-        (weights, scales, Some(zero_points))
-    });
-}
-
-#[uzu_test]
-fn moe_gemv_u8_symmetric_matches_cpu() {
-    compare_projections(8, |in_dim, out_dim, group_size| {
-        let num_groups = in_dim / group_size;
-        let weights = (0..(NUM_EXPERTS * out_dim * in_dim) as usize).map(|i| ((i * 59 + 11) % 251) as u8).collect();
-        let scales = (0..(NUM_EXPERTS * num_groups * out_dim) as usize)
-            .map(|i| bf16::from_f32((((i * 23 + 7) % 37) as f32 + 1.0) * 0.000012))
-            .collect();
-        (weights, scales, None)
-    });
 }

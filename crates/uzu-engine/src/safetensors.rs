@@ -190,7 +190,7 @@ impl<B: Backend> ParameterTree<'_, B> {
             });
         }
         let (start, end) = tensor.data_offsets;
-        let expected_size = size_for_shape(shape, dtype);
+        let expected_size = size_for_shape(&tensor.shape, dtype);
         if end.checked_sub(start) != Some(expected_size as u64) || self.loader.data_offset.checked_add(end).is_none() {
             return Err(ParameterLoaderError::InvalidTensorRepresentation {
                 key,

@@ -5,18 +5,17 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
         gpu_types::{
-            hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, moe, quantization::QuantizationMode,
-            quantization_method::QuantizationMethod,
+            gemm::GemmBPrologueKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, moe, quantization::QuantizationMode,
         },
         kernel::{
             Kernels, MoeCombineKernel, MoeGemvKernel, MoeRouterTopKKernel,
-            matmul::{ActivationFormat, MatmulA, QuantParams, QuantParamsLayout, QuantParamsStrides},
+            matmul::{ActivationFormat, MatmulA, MatmulB},
         },
     },
     config::{
         mlp::mixture_of_experts::MixtureOfExpertsConfig,
         weight_matrix::{
-            AnyWeightMatrixSpec,
+            AnyWeightMatrixSpec, Layout,
             hybrid_spec::{HadamardSpec, HybridSpec},
         },
     },
@@ -28,7 +27,7 @@ use crate::{
             dense::{DenseMlp, DenseMlpNewError},
             gate_act_mul::MlpGateActMulEncodable,
         },
-        weight_matrix::{ParsedWeightSpec, WeightMatrixError, parse_spec},
+        weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -77,18 +76,6 @@ impl<B: Backend> MoeMlp<B> {
         let num_active_routed_experts = config.num_active_routed_experts;
         let expert_hidden_dim = config.expert_hidden_dim;
         let expert_config = &config.expert_config;
-        if num_routed_experts > moe::ROUTER_MAX_EXPERTS {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "num_routed_experts must be at most {max}, got {num_routed_experts}",
-                max = moe::ROUTER_MAX_EXPERTS
-            )));
-        }
-        if num_active_routed_experts == 0 || num_active_routed_experts > moe::ROUTER_MAX_TOP_K {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "num_active_routed_experts must be in 1..={max}, got {num_active_routed_experts}",
-                max = moe::ROUTER_MAX_TOP_K
-            )));
-        }
 
         let router_weights_tree = parameter_tree.subtree("router").subtree("weights");
         let router_spec = router_weights_tree.metadata("spec")?;
@@ -180,9 +167,8 @@ impl<B: Backend> MoeMlp<B> {
         )
         .await?;
 
-        let router_top_k =
-            <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32, moe::ROUTER_MAX_TOP_K)
-                .map_err(MoeMlpNewError::Backend)?;
+        let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32)
+            .map_err(MoeMlpNewError::Backend)?;
         let input_rht = InputRht::new(
             data_type,
             LinearInputPreparation {
@@ -302,18 +288,11 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
 
 struct RoutedProjection<B: Backend> {
     kernel: <B::Kernels as Kernels>::MoeGemvKernel,
-    weights: B::GlobalGpuBuffer,
-    scales: B::GlobalGpuBuffer,
-    zero_points: Option<B::GlobalGpuBuffer>,
+    weights: WeightMatrix<B>,
     output_hadamard_factors: B::GlobalGpuBuffer,
     input_dim: u32,
     output_dim: u32,
     data_type: DataType,
-    b_expert_stride_bytes: u32,
-    scale_expert_stride: u32,
-    zero_point_expert_stride: u32,
-    scale_strides: QuantParamsStrides,
-    zero_point_strides: QuantParamsStrides,
 }
 
 impl<B: Backend> RoutedProjection<B> {
@@ -340,31 +319,33 @@ impl<B: Backend> RoutedProjection<B> {
         else {
             return Err(MoeMlpNewError::UnsupportedConfiguration(format!("{spec:?}")));
         };
-        let ParsedWeightSpec {
-            quantization: Some(quantization),
-            ..
-        } = parse_spec::<B>(&quantization_spec)?
-        else {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!("{quantization_spec:?}")));
+        let weights = WeightMatrix::load(
+            output_dim,
+            input_dim,
+            data_type,
+            *quantization_spec,
+            Layout::OutputInput,
+            &weights_tree.subtree("quantized").stack_of(num_routed_experts),
+        )
+        .await?;
+        let MatmulB::Quantized(quantized) = weights.matmul_b() else {
+            return Err(MoeMlpNewError::UnsupportedConfiguration("routed experts require quantized weights".into()));
         };
-        if !matches!(
-            (quantization.mode, quantization.method),
-            (QuantizationMode::U4, QuantizationMethod::ScaleZeroPoint)
-                | (QuantizationMode::U8, QuantizationMethod::ScaleSymmetric)
-        ) {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "{} {}",
-                quantization.method, quantization.mode
-            )));
+        match (quantized.mode, quantized.prologue()) {
+            (QuantizationMode::U4, GemmBPrologueKind::ScaleZeroPointDequant)
+            | (QuantizationMode::U8, GemmBPrologueKind::ScaleSymmetricDequant) => {},
+            (mode, prologue) => {
+                return Err(MoeMlpNewError::UnsupportedConfiguration(format!("{mode} {prologue}")));
+            },
         }
-        let packing_divisor = quantization.mode.packing_divisor();
-        let input_block = moe::GEMV_INPUT_BLOCK_BYTES * packing_divisor;
-        if !input_dim.is_multiple_of(input_block) {
-            return Err(MoeMlpNewError::UnsupportedConfiguration(format!(
-                "input_dim must be a multiple of {input_block}, got {input_dim}"
-            )));
-        }
-        let b_expert_stride_bytes = output_dim * (input_dim / packing_divisor);
+        let kernel = <B::Kernels as Kernels>::MoeGemvKernel::new(
+            context,
+            data_type,
+            quantized.group_size,
+            quantized.bits(),
+            a_per_token,
+        )
+        .map_err(MoeMlpNewError::Backend)?;
 
         let input_hadamard_factors =
             weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dim], DataType::I32).await?;
@@ -372,47 +353,14 @@ impl<B: Backend> RoutedProjection<B> {
             .read_buffer("incoherence_signs.output_signs", &[num_routed_experts, output_dim], DataType::I32)
             .await?;
 
-        let quantized_tree = weights_tree.subtree("quantized");
-        let storage_type = quantization.mode.storage_type();
-        let params = QuantParams::new(QuantParamsLayout::GroupOutput, output_dim, input_dim / quantization.group_size);
-        let weights = quantized_tree
-            .read_buffer("weights", &[num_routed_experts, output_dim, input_dim / packing_divisor], storage_type)
-            .await?;
-        let [scale_rows, scale_columns] = params.scale_shape();
-        let scales =
-            quantized_tree.read_buffer("scales", &[num_routed_experts, scale_rows, scale_columns], data_type).await?;
-        let (zero_points, zero_point_expert_stride, zero_point_strides) = if quantization.method
-            == QuantizationMethod::ScaleZeroPoint
-        {
-            let [zero_point_rows, zero_point_columns] = params.zero_point_shape(quantization.mode);
-            let zero_points = quantized_tree
-                .read_buffer("zero_points", &[num_routed_experts, zero_point_rows, zero_point_columns], storage_type)
-                .await?;
-            (Some(zero_points), zero_point_rows * zero_point_columns, params.zero_point_strides(quantization.mode))
-        } else {
-            (None, 0, QuantParamsStrides::default())
-        };
-
-        let bits = DataType::from(quantization.mode).size_in_bits() as u32;
-        let kernel =
-            <B::Kernels as Kernels>::MoeGemvKernel::new(context, data_type, quantization.group_size, bits, a_per_token)
-                .map_err(MoeMlpNewError::Backend)?;
-
         Ok((
             Self {
                 kernel,
                 weights,
-                scales,
-                zero_points,
                 output_hadamard_factors,
                 input_dim,
                 output_dim,
                 data_type,
-                b_expert_stride_bytes,
-                scale_expert_stride: scale_rows * scale_columns,
-                zero_point_expert_stride,
-                scale_strides: params.scale_strides(),
-                zero_point_strides,
             },
             input_hadamard_factors,
         ))
@@ -426,11 +374,18 @@ impl<B: Backend> RoutedProjection<B> {
         num_active_routed_experts: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        let MatmulB::Quantized(weights) = self.weights.matmul_b() else {
+            unreachable!()
+        };
+        let [scale_rows, scale_columns] = weights.params.scale_shape();
+        let [zero_point_rows, zero_point_columns] = weights.params.zero_point_shape(weights.mode);
+        let scale_strides = weights.params.scale_strides();
+        let zero_point_strides = weights.zero_point_strides();
         let mut output = command_buffer.allocate_scratch_for_shape(&[num_routes, self.output_dim], self.data_type)?;
         self.kernel.encode(
-            &self.weights,
-            &self.scales,
-            self.zero_points.as_ref(),
+            weights.codes,
+            weights.scales,
+            weights.zero_points(),
             input,
             expert_ids,
             &mut output,
@@ -439,13 +394,13 @@ impl<B: Backend> RoutedProjection<B> {
             self.output_dim,
             num_routes,
             num_active_routed_experts,
-            self.b_expert_stride_bytes,
-            self.scale_expert_stride,
-            self.zero_point_expert_stride,
-            self.scale_strides.output_stride,
-            self.scale_strides.group_stride,
-            self.zero_point_strides.output_stride,
-            self.zero_point_strides.group_stride,
+            self.output_dim * (self.input_dim / weights.mode.packing_divisor()),
+            scale_rows * scale_columns,
+            zero_point_rows * zero_point_columns,
+            scale_strides.output_stride,
+            scale_strides.group_stride,
+            zero_point_strides.output_stride,
+            zero_point_strides.group_stride,
             command_buffer,
         );
 

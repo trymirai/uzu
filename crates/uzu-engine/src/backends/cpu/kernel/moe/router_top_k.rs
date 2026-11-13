@@ -5,8 +5,7 @@ use crate::data_type::DataTypeRepr;
 
 #[kernel(MoeRouterTopK)]
 #[variants(T, f32)]
-#[variants(MAX_TOP_K, 8)]
-pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
+pub fn moe_router_top_k<T: DataTypeRepr + Float>(
     logits: *const T,
     expert_ids: *mut u32,
     expert_weights: *mut f32,
