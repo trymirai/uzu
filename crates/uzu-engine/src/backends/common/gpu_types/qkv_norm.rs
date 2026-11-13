@@ -1,4 +1,6 @@
-#[derive(Clone, Copy, Debug, Default)]
+use bytemuck::NoUninit;
+
+#[derive(Clone, Copy, Debug, Default, NoUninit)]
 #[repr(C)]
 pub struct QKVNormParams {
     pub enabled: [u32; 3],
