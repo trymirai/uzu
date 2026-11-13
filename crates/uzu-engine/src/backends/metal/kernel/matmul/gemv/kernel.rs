@@ -18,6 +18,7 @@ use crate::{
                 matmul::{
                     MatmulOutputWork,
                     gemv::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK},
+                    weight_block_k,
                 },
             },
         },
@@ -32,7 +33,7 @@ const MXU_TILED_KERNEL_MIN_K: u32 = 2048;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GemvSpecialization {
     b_prologue: GemmBPrologueKind,
-    group_size: u32,
+    block_k: u32,
     bits: u32,
     output_transform: GemmDTransform,
     input_aligned: bool,
@@ -60,6 +61,7 @@ impl GemvSpecialization {
     ) -> Option<Self> {
         let is_quant = shape.is_quant();
         let bits = shape.b_bits.unwrap_or(0);
+        let block_k = weight_block_k(shape.b_bits, shape.b_group_size).unwrap_or(0);
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
         let mxu_tiled_kernel = gemm_b_layout == GemmBLayout::MxuTiled
             && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
@@ -71,11 +73,11 @@ impl GemvSpecialization {
             && shape.k >= MXU_TILED_KERNEL_MIN_K
             && shape.n >= 32 * gpu_core_count;
         let tile = if is_quant && !shape.gathered && gemm_b_layout == GemmBLayout::InterleavedRows && shape.m == 1 {
-            policy::interleaved_rows_tile(shape.b_group_size.unwrap_or(0), shape.k)
+            policy::interleaved_rows_tile(block_k, shape.k)
         } else if is_quant && shape.gathered {
-            policy::gathered_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n)
+            policy::gathered_tile(bits, block_k, shape.m, shape.n)
         } else if is_quant {
-            policy::quantized_tile(bits, shape.b_group_size.unwrap_or(0), shape.m, shape.n, bf16_io)
+            policy::quantized_tile(bits, block_k, shape.m, shape.n, bf16_io)
         } else {
             let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
             Some(policy::fp_tile(shape.m, shape.n, shape.k, input_aligned))
@@ -123,7 +125,7 @@ impl GemvSpecialization {
         let output_transform = output_transform_for_tile(shape, tile)?;
         let specialization = Self {
             b_prologue: shape.b_prologue,
-            group_size: shape.b_group_size.unwrap_or(0),
+            block_k: weight_block_k(shape.b_bits, shape.b_group_size).unwrap_or(0),
             bits,
             output_transform,
             input_aligned,
@@ -164,7 +166,7 @@ impl GemvSpecialization {
             weights_data_type,
             output_data_type,
             self.b_prologue,
-            self.group_size,
+            self.block_k,
             self.bits,
             self.k_split,
             self.input_aligned,
@@ -340,7 +342,7 @@ impl GemvKernel {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => entry.insert(GemvMxuTiledMetalKernel::new(
                     context,
-                    specialization.group_size,
+                    specialization.block_k,
                     specialization.output_transform,
                     specialization.signed_codes,
                 )?),

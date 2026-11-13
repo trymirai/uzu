@@ -21,7 +21,7 @@ pub(super) struct GemmSpecialization {
     pub(super) a_prologue: GemmAPrologueKind,
     pub(super) b_prologue: GemmBPrologueKind,
     pub(super) bits_per_b: Option<u32>,
-    pub(super) b_group_size: Option<u32>,
+    pub(super) b_block_k: Option<u32>,
     pub(super) signed_codes: bool,
     pub(super) gemm_b_layout: GemmBLayout,
     pub(super) hoist_row_metadata: bool,
@@ -50,7 +50,7 @@ impl GemmSpecialization {
             a_prologue,
             b_prologue: shape.b_prologue,
             bits_per_b: shape.b_bits,
-            b_group_size: shape.b_group_size,
+            b_block_k: super::super::weight_block_k(shape.b_bits, shape.b_group_size),
             signed_codes: shape.signed_codes,
             gemm_b_layout,
             hoist_row_metadata: row_scaled_weights

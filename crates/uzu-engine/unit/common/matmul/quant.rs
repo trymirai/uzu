@@ -418,7 +418,11 @@ fn quant_b_variant<TB: BufferRef, T: DataTypeRepr + Float>(
         correction,
         params,
         mode: input.mode,
-        group_size: input.group_size,
+        group_size: if input.one_group_per_row {
+            input.k
+        } else {
+            input.group_size
+        },
         signed_codes: input.signed_codes,
         weights_layout,
     })

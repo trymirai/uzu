@@ -29,7 +29,7 @@ use crate::{
                         specialization::GemmSpecialization,
                         trellis::TrellisGemm,
                     },
-                    supports_integer_right_operand,
+                    supports_integer_right_operand, weight_block_k,
                 },
             },
         },
@@ -85,7 +85,7 @@ impl GemmKernel {
                     specialization.use_mxu,
                     specialization.b_prologue,
                     specialization.bits_per_b.unwrap_or(0),
-                    specialization.b_group_size.unwrap_or(0),
+                    specialization.b_block_k.unwrap_or(0),
                     specialization.a_prologue,
                     specialization.a_group_size.unwrap_or(0),
                     specialization.output_transform,
@@ -566,8 +566,7 @@ fn validate_int8_left_operand(
         )
         && matches!(a_group_size, 32 | 64 | 128)
         && shape.k.is_multiple_of(a_group_size)
-        && shape
-            .b_group_size
+        && weight_block_k(shape.b_bits, shape.b_group_size)
             .is_some_and(|gs| matches!(gs, 32 | 64 | 128) && shape.k.is_multiple_of(gs) && a_group_size >= gs);
     if !compatible {
         return Err(MatmulMetalError::IncompatibleA {
