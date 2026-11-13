@@ -176,7 +176,7 @@ impl<B: Backend> Runner<B> {
     fn encode(
         &mut self,
         repetitions: u32,
-    ) -> Duration {
+    ) -> Option<Duration> {
         let mut command_buffer = self.context.create_command_buffer(None, None).unwrap();
         for _ in 0..repetitions {
             self.kernel.encode(
@@ -205,7 +205,7 @@ impl<B: Backend> Runner<B> {
                 &mut command_buffer,
             );
         }
-        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time().unwrap()
+        block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap().gpu_execution_time()
     }
 }
 
@@ -231,7 +231,7 @@ fn benchmark_ancestor_attention() {
     const SAMPLES: usize = 50;
 
     let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
-    let mut run = || runner.encode(BATCH).div_f64(BATCH as f64);
+    let mut run = || runner.encode(BATCH).unwrap().div_f64(BATCH as f64);
     let warmup = Instant::now();
     while warmup.elapsed() < Duration::from_millis(500) {
         run();

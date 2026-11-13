@@ -1,3 +1,6 @@
+// The Vulkan backend reports no GPU execution time.
+#![cfg(not(backend = "vulkan"))]
+
 use criterion::{BenchmarkId, Criterion, Throughput};
 use futures::executor::block_on;
 use half::bf16;
