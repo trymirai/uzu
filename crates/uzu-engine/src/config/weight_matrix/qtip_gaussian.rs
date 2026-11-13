@@ -8,7 +8,7 @@ pub struct QtipGaussianSpec {
     pub transition_bits: u32,
     pub restart_columns: u32,
     pub layout: Layout,
-    pub tape: u32,
+    pub tape: monostate::MustBe!(2u64),
 }
 
 pub const CODEBOOK_V2: [u32; 5] = [0x3d5583d1, 0xbda85975, 0xbd9f2d3c, 0xbda85975, 0xbd9f2d3c];

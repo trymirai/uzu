@@ -7,8 +7,8 @@ use crate::{
     backends::common::{
         Backend, Context, CpuBuffer, GlobalBufferCpuGpu,
         gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
-        kernel::{
-            matmul::{MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat, WeightsLayout},
+        kernel::matmul::{
+            MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat, WeightsLayout,
         },
     },
     config::weight_matrix::{

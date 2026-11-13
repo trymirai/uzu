@@ -68,16 +68,8 @@ async fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(super) fn input_dim(&self) -> u32 {
-        self.input_dim
-    }
-
     pub(super) fn output_dim(&self) -> u32 {
         self.output_dim
-    }
-
-    pub(super) fn output_data_type(&self) -> DataType {
-        self.output_data_type
     }
 
     pub async fn load(

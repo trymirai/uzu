@@ -7,87 +7,35 @@ use crate::{
     config::weight_matrix::{
         AnyWeightMatrixSpec,
         hybrid_spec::{
-            AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode,
+            AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec,
             IncoherenceProcessingMode::{Input, InputOutput},
         },
     },
     data_type::DataType,
     encodable_block::linear::{
-        Gather, Linear, LinearBlockError, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul,
+        Linear, LinearBlockError, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul,
         input_rht::InputRht,
     },
     safetensors::ParameterTree,
 };
 
-enum Rotation<B: Backend> {
+pub struct TransformedLinear<B: Backend> {
+    transform: Transform<B>,
+}
+
+enum Transform<B: Backend> {
+    Hadamard {
+        input_rht: InputRht<B>,
+        matrix: LinearMatmul<B>,
+    },
     Kronecker {
         kernel: <B::Kernels as Kernels>::TrellisTransformKernel,
         signs: B::GlobalGpuBuffer,
         orthogonal_factor: B::GlobalGpuBuffer,
+        matrices: Box<[LinearMatmul<B>]>,
+        input_dim: u32,
+        output_dim: u32,
     },
-    Hadamard(InputRht<B>),
-}
-
-struct Group<B: Backend> {
-    rotation: Rotation<B>,
-    blocks: Box<[LinearMatmul<B>]>,
-}
-
-pub struct TransformedLinear<B: Backend> {
-    groups: Box<[Group<B>]>,
-    input_dim: u32,
-    output_dim: u32,
-    output_data_type: DataType,
-}
-
-use LinearBlockError::UnsupportedConfiguration as Unsupported;
-
-async fn matrix_parts<'t, B: Backend>(
-    spec: AnyWeightMatrixSpec,
-    expected_rows: u32,
-    tree: ParameterTree<'t, B>,
-) -> Result<Vec<(u32, AnyWeightMatrixSpec, ParameterTree<'t, B>)>, LinearBlockError<B>> {
-    if !matches!(spec, AnyWeightMatrixSpec::OutputStackSpec(_)) {
-        return Ok(vec![(expected_rows, spec, tree)]);
-    }
-    let part_rows_shape = tree.shape("part_rows")?;
-    if !matches!(part_rows_shape, [_]) {
-        return Err(Unsupported(format!("invalid output-stack part_rows shape {part_rows_shape:?}")));
-    }
-    let part_rows = tree.read_slice::<i32>("part_rows", part_rows_shape).await?;
-    let mut parts = Vec::with_capacity(part_rows.len());
-    for (index, part_rows) in part_rows.into_iter().enumerate() {
-        let part_rows = u32::try_from(part_rows)
-            .ok()
-            .filter(|part_rows| *part_rows > 0)
-            .ok_or_else(|| Unsupported(format!("invalid output-stack part row count {part_rows}")))?;
-        let part_tree = tree.subtree("parts").subtree(&index.to_string());
-        let spec = part_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        parts.push((part_rows, spec, part_tree));
-    }
-    let stacked_rows = parts.iter().try_fold(0u32, |total, (part_rows, _, _)| total.checked_add(*part_rows));
-    let Some(stacked_rows) = stacked_rows else {
-        return Err(Unsupported("output-stack row count overflow".into()));
-    };
-    if stacked_rows != expected_rows {
-        return Err(Unsupported(format!("output-stack parts sum to {stacked_rows} rows, expected {expected_rows}")));
-    }
-    Ok(parts)
-}
-
-fn input_rht_mode(spec: &AnyWeightMatrixSpec) -> Option<IncoherenceProcessingMode> {
-    match spec {
-        AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-            incoherence_spec:
-                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                    processing_mode: mode @ (IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput),
-                    ..
-                })),
-            ..
-        }) => Some(mode.clone()),
-        _ => None,
-    }
 }
 
 impl<B: Backend> TransformedLinear<B> {
@@ -98,187 +46,228 @@ impl<B: Backend> TransformedLinear<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         bias_tree: Option<&ParameterTree<'_, B>>,
-        spec: AnyWeightMatrixSpec,
-        weights_tree: ParameterTree<'_, B>,
+        spec: HybridSpec,
+        weights_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, LinearBlockError<B>> {
-        if bias_tree.is_some()
-            && (matches!(spec, AnyWeightMatrixSpec::OutputStackSpec(_)) || input_rht_mode(&spec).is_none())
-        {
-            return Err(Unsupported("biases on output-stacked or Kronecker linears".into()));
+        match spec.incoherence_spec {
+            Some(AnyIncoherenceProcessorSpec::HadamardSpec(hadamard))
+                if matches!(hadamard.processing_mode, Input | InputOutput) =>
+            {
+                let (preparation, matrix) = Self::load_hadamard(
+                    input_dim,
+                    output_dim,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    hadamard,
+                    *spec.quantization_spec,
+                    true,
+                    weights_tree,
+                    bias_tree,
+                    context,
+                )
+                .await?;
+                Self::build_self_contained(input_data_type, preparation, matrix, context)
+            },
+            Some(AnyIncoherenceProcessorSpec::KroneckerSpec(kronecker)) if kronecker.processing_mode == Input => {
+                Self::load_kronecker(
+                    input_dim,
+                    output_dim,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    bias_tree,
+                    *spec.quantization_spec,
+                    weights_tree,
+                    context,
+                )
+                .await
+            },
+            spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
-        let parts = matrix_parts(spec, output_dim, weights_tree).await?;
-        let in_place = parts.len() == 1;
-        let mut groups = Vec::with_capacity(parts.len());
-        for (rows, spec, tree) in parts {
-            let AnyWeightMatrixSpec::HybridSpec(hybrid) = spec else {
-                return Err(Unsupported(format!("{spec:?} as an output-stack part")));
-            };
-            let signs_tree = tree.subtree("incoherence_signs");
-            let quantized_tree = tree.subtree("quantized");
-            let quantization_spec = *hybrid.quantization_spec;
-            let (rotation, blocks) = match hybrid.incoherence_spec {
-                Some(AnyIncoherenceProcessorSpec::KroneckerSpec(spec)) if spec.processing_mode == Input => {
-                    let data_types = [weights_data_type, input_data_type, output_data_type];
-                    if data_types != [DataType::BF16; 3] {
-                        return Err(Unsupported(format!("trellis linears are BF16 only, got {data_types:?}")));
-                    }
-                    let mixing_dimension = mixing_dimension(input_dim);
-                    let hadamard_size = input_dim / mixing_dimension;
-                    if !(512..=4096).contains(&hadamard_size) || input_dim > 20480 {
-                        return Err(Unsupported(format!("Kronecker rotation over {input_dim} columns")));
-                    }
-                    let kernel = <B::Kernels as Kernels>::TrellisTransformKernel::new(context, input_dim)
-                        .map_err(LinearBlockError::Backend)?;
-                    let signs = signs_tree.read_buffer("signs", &[input_dim], DataType::I32).await?;
-                    let orthogonal_factor = signs_tree
-                        .read_buffer("orthogonal_factor", &[mixing_dimension, mixing_dimension], DataType::F32)
-                        .await?;
-                    let rotation = Rotation::Kronecker {
-                        kernel,
-                        signs,
-                        orthogonal_factor,
-                    };
-                    let parts = matrix_parts(quantization_spec, rows, quantized_tree).await?;
-                    let mut blocks = Vec::with_capacity(parts.len());
-                    for (rows, spec, tree) in parts {
-                        if !matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) {
-                            return Err(Unsupported(format!("{spec:?} in a Kronecker linear")));
-                        }
-                        blocks.push(
-                            LinearMatmul::load(
-                                input_dim,
-                                rows,
-                                weights_data_type,
-                                input_data_type,
-                                output_data_type,
-                                spec,
-                                None,
-                                &tree,
-                                None,
-                                context,
-                            )
-                            .await?,
-                        );
-                    }
-                    (rotation, blocks.into_boxed_slice())
-                },
-                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                    processing_mode: mode @ (Input | InputOutput),
-                    ..
-                })) if in_place => {
-                    let (preparation, linear) = Self::load_hadamard(
-                        input_dim,
-                        rows,
-                        weights_data_type,
-                        input_data_type,
-                        output_data_type,
-                        mode,
-                        true,
-                        quantization_spec,
-                        &tree,
-                        bias_tree,
-                        context,
-                    )
-                    .await?;
-                    let rht = InputRht::new(input_data_type, preparation, in_place, context)
-                        .map_err(LinearBlockError::Backend)?;
-                    (Rotation::Hadamard(rht), Box::new([linear]) as Box<[_]>)
-                },
-                spec => return Err(Unsupported(format!("{spec:?} as an output-stack part"))),
-            };
-            groups.push(Group {
-                rotation,
-                blocks,
-            });
-        }
-        Ok(Self {
-            groups: groups.into_boxed_slice(),
+    }
+
+    pub(super) async fn new_with_input_preparation(
+        input_dim: u32,
+        output_dim: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        bias_tree: Option<&ParameterTree<'_, B>>,
+        spec: HybridSpec,
+        weights_tree: &ParameterTree<'_, B>,
+        allow_prequantized_activation: bool,
+        context: &B::Context,
+    ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
+        let (hadamard, quantization_spec) = match spec {
+            HybridSpec {
+                incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(hadamard)),
+                quantization_spec,
+                ..
+            } if matches!(hadamard.processing_mode, Input | InputOutput) => (hadamard, *quantization_spec),
+            spec => {
+                let linear = Self::new(
+                    input_dim,
+                    output_dim,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    bias_tree,
+                    spec,
+                    weights_tree,
+                    context,
+                )
+                .await?;
+                return Ok((Box::new(linear), None));
+            },
+        };
+        let (preparation, matrix) = Self::load_hadamard(
             input_dim,
             output_dim,
+            weights_data_type,
+            input_data_type,
             output_data_type,
+            hadamard,
+            quantization_spec,
+            true,
+            weights_tree,
+            bias_tree,
+            context,
+        )
+        .await?;
+        if preparation.activation_format != ActivationFormat::Bf16 && !allow_prequantized_activation {
+            let linear = Self::build_self_contained(input_data_type, preparation, matrix, context)?;
+            Ok((Box::new(linear), None))
+        } else {
+            Ok((Box::new(matrix), Some(preparation)))
+        }
+    }
+
+    async fn load_kronecker(
+        input_dim: u32,
+        output_dim: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        bias_tree: Option<&ParameterTree<'_, B>>,
+        spec: AnyWeightMatrixSpec,
+        weights_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, LinearBlockError<B>> {
+        if bias_tree.is_some() {
+            return Err(LinearBlockError::UnsupportedConfiguration("Kronecker linear biases".into()));
+        }
+        if [weights_data_type, input_data_type, output_data_type] != [DataType::BF16; 3] {
+            return Err(LinearBlockError::UnsupportedConfiguration("Kronecker linears require BF16".into()));
+        }
+        let hadamard_size = input_dim.isolate_lowest_one();
+        if !(512..=4096).contains(&hadamard_size) || input_dim > 20480 {
+            return Err(LinearBlockError::UnsupportedConfiguration(format!(
+                "Kronecker rotation over {input_dim} columns"
+            )));
+        }
+        let kernel = <B::Kernels as Kernels>::TrellisTransformKernel::new(context, input_dim)
+            .map_err(LinearBlockError::Backend)?;
+        let signs = weights_tree.read_buffer("incoherence_signs.signs", &[input_dim], DataType::I32).await?;
+        let mixing_dimension = mixing_dimension(input_dim);
+        let orthogonal_factor = weights_tree
+            .read_buffer("incoherence_signs.orthogonal_factor", &[mixing_dimension, mixing_dimension], DataType::F32)
+            .await?;
+        let load_matrix = async |rows, spec, tree: &ParameterTree<'_, B>| {
+            if !matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) {
+                return Err(LinearBlockError::UnsupportedConfiguration("expected Trellis weights".into()));
+            }
+            LinearMatmul::load(
+                input_dim,
+                rows,
+                DataType::BF16,
+                DataType::BF16,
+                DataType::BF16,
+                spec,
+                None,
+                tree,
+                None,
+                context,
+            )
+            .await
+            .map_err(LinearBlockError::from)
+        };
+        let matrices = match spec {
+            AnyWeightMatrixSpec::OutputStackSpec(_) => {
+                let shape = weights_tree.shape("quantized.part_rows")?;
+                if shape.len() != 1 {
+                    return Err(LinearBlockError::UnsupportedConfiguration(format!(
+                        "invalid part_rows shape {shape:?}"
+                    )));
+                }
+                let rows = weights_tree.read_slice::<i32>("quantized.part_rows", shape).await?;
+                if rows.is_empty()
+                    || rows.iter().any(|&rows| rows <= 0)
+                    || rows.iter().map(|&rows| i64::from(rows)).sum::<i64>() != i64::from(output_dim)
+                {
+                    return Err(LinearBlockError::UnsupportedConfiguration(format!(
+                        "part_rows must be positive and sum to {output_dim}"
+                    )));
+                }
+                let mut matrices = Vec::with_capacity(rows.len());
+                for (index, rows) in rows.iter().copied().enumerate() {
+                    let part_tree = weights_tree.subtree(&format!("quantized.parts.{index}"));
+                    let spec = part_tree.metadata("spec")?;
+                    matrices.push(load_matrix(rows as u32, spec, &part_tree).await?);
+                }
+                matrices.into_boxed_slice()
+            },
+            spec => Box::new([load_matrix(output_dim, spec, &weights_tree.subtree("quantized")).await?]) as Box<[_]>,
+        };
+        Ok(Self {
+            transform: Transform::Kronecker {
+                kernel,
+                signs,
+                orthogonal_factor,
+                matrices,
+                input_dim,
+                output_dim,
+            },
         })
     }
 
     pub async fn new_with_rotated_output(
-        input_dimension: u32,
-        output_dimension: u32,
+        input_dim: u32,
+        output_dim: u32,
         data_type: DataType,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, LinearBlockError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        if input_rht_mode(&spec) != Some(InputOutput) {
-            return Err(Unsupported(format!("{spec:?}")));
-        }
-        let quantization_spec = weights_tree.subtree("quantized").metadata("spec")?;
-        let (input_preparation, inner_linear) = Self::load_hadamard(
-            input_dimension,
-            output_dimension,
+        let (hadamard, quantization_spec) = match spec {
+            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                incoherence_spec: Some(AnyIncoherenceProcessorSpec::HadamardSpec(hadamard)),
+                quantization_spec,
+                ..
+            }) if hadamard.processing_mode == InputOutput => (hadamard, *quantization_spec),
+            _ => {
+                return Err(LinearBlockError::UnsupportedConfiguration(
+                    "expected input-output Hadamard transform".into(),
+                ));
+            },
+        };
+        let (preparation, matrix) = Self::load_hadamard(
+            input_dim,
+            output_dim,
             data_type,
             data_type,
             data_type,
-            InputOutput,
-            false,
+            hadamard,
             quantization_spec,
+            false,
             &weights_tree,
             None,
             context,
         )
         .await?;
-        Self::build_self_contained(data_type, input_preparation, inner_linear, context)
-    }
-
-    pub(super) async fn new_with_input_preparation(
-        input_dimension: u32,
-        output_dimension: u32,
-        weights_data_type: DataType,
-        input_data_type: DataType,
-        output_data_type: DataType,
-        has_biases: bool,
-        allow_prequantized_activation: bool,
-        parameter_tree: &ParameterTree<'_, B>,
-        context: &B::Context,
-    ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
-        let weights_tree = parameter_tree.subtree("weights");
-        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        let Some(mode) = input_rht_mode(&spec) else {
-            let linear = <dyn Linear<B>>::new_mixed_precision(
-                input_dimension,
-                output_dimension,
-                weights_data_type,
-                input_data_type,
-                output_data_type,
-                has_biases,
-                parameter_tree,
-                context,
-            )
-            .await?;
-            return Ok((linear, None));
-        };
-        let quantization_spec = weights_tree.subtree("quantized").metadata("spec")?;
-        let (input_preparation, inner_linear) = Self::load_hadamard(
-            input_dimension,
-            output_dimension,
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-            mode,
-            true,
-            quantization_spec,
-            &weights_tree,
-            has_biases.then_some(parameter_tree),
-            context,
-        )
-        .await?;
-        if input_preparation.activation_format != ActivationFormat::Bf16 && !allow_prequantized_activation {
-            let wrapper = Self::build_self_contained(input_data_type, input_preparation, inner_linear, context)?;
-            Ok((Box::new(wrapper), None))
-        } else {
-            Ok((Box::new(inner_linear), Some(input_preparation)))
-        }
+        Self::build_self_contained(data_type, preparation, matrix, context)
     }
 
     async fn load_hadamard(
@@ -287,19 +276,23 @@ impl<B: Backend> TransformedLinear<B> {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-        mode: IncoherenceProcessingMode,
-        restore_output_basis: bool,
+        spec: HadamardSpec,
         quantization_spec: AnyWeightMatrixSpec,
+        restore_output_basis: bool,
         weights_tree: &ParameterTree<'_, B>,
         bias_tree: Option<&ParameterTree<'_, B>>,
         context: &B::Context,
     ) -> Result<(LinearInputPreparation<B>, LinearMatmul<B>), LinearBlockError<B>> {
+        if spec.block_size != HADAMARD_TRANSFORM_BLOCK_SIZE {
+            return Err(LinearBlockError::UnsupportedConfiguration(format!("Hadamard block size {}", spec.block_size)));
+        }
+        let has_output_transform = spec.processing_mode == InputOutput;
         let rht_signs =
             weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?;
-        let output_factors = if mode == IncoherenceProcessingMode::InputOutput && restore_output_basis {
+        let output_factors = if has_output_transform && restore_output_basis {
             Some(weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?)
         } else {
-            if mode == IncoherenceProcessingMode::InputOutput {
+            if has_output_transform {
                 weights_tree.ignore("incoherence_signs.output_signs", &[output_dimension], DataType::I32)?;
             }
             None
@@ -337,52 +330,10 @@ impl<B: Backend> TransformedLinear<B> {
             InputRht::new(input_data_type, input_preparation, true, context).map_err(LinearBlockError::Backend)?;
 
         Ok(Self {
-            input_dim: inner_linear.input_dim(),
-            output_dim: inner_linear.output_dim(),
-            output_data_type: inner_linear.output_data_type(),
-            groups: Box::new([Group {
-                rotation: Rotation::Hadamard(input_rht),
-                blocks: Box::new([inner_linear]),
-            }]),
-        })
-    }
-
-    fn prepare(
-        &self,
-        group: &Group<B>,
-        input: impl BufferRef<Backend = B>,
-        batch_dim: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<LinearInput<B>, B::Error> {
-        let (kernel, signs, orthogonal_factor) = match &group.rotation {
-            Rotation::Hadamard(rht) => {
-                let format = group.blocks[0].select_activation_format(batch_dim, command_buffer.context());
-                return rht.prepare(input, batch_dim, format, command_buffer);
+            transform: Transform::Hadamard {
+                input_rht,
+                matrix: inner_linear,
             },
-            Rotation::Kronecker {
-                kernel,
-                signs,
-                orthogonal_factor,
-            } => (kernel, signs, orthogonal_factor),
-        };
-        let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, self.input_dim], DataType::I8)?;
-        let mut column_group_sums =
-            command_buffer.allocate_scratch_for_shape(&[batch_dim, COLUMN_GROUP_COUNT], DataType::F32)?;
-        let mut scales = command_buffer.allocate_scratch_for_shape(&[batch_dim], DataType::F32)?;
-        kernel.encode(
-            input,
-            signs,
-            orthogonal_factor,
-            &mut values,
-            &mut column_group_sums,
-            &mut scales,
-            batch_dim,
-            command_buffer,
-        );
-        Ok(MatmulA::Trellis {
-            values,
-            column_group_sums,
-            scales,
         })
     }
 }
@@ -395,47 +346,85 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("linear (transformed)");
-
-        if self.groups.len() == 1 && self.groups[0].blocks.len() == 1 {
-            let group = &self.groups[0];
-            let block = &group.blocks[0];
-            let a = match input {
-                MatmulA::FullPrecision {
-                    values,
-                    offset,
-                } => match &group.rotation {
-                    Rotation::Hadamard(rht) => {
-                        let format = block.select_activation_format(batch_dim, command_buffer.context());
-                        rht.prepare_in_place(values, offset, batch_dim, format, command_buffer)
+        match &self.transform {
+            Transform::Hadamard {
+                input_rht,
+                matrix,
+            } => {
+                let input = match input {
+                    MatmulA::FullPrecision {
+                        values,
+                        offset,
+                    } => {
+                        let format = matrix.select_activation_format(batch_dim, None, command_buffer.context());
+                        input_rht
+                            .prepare_in_place(values, offset, batch_dim, format, command_buffer)
+                            .map_err(LinearEncodeError::Backend)?
                     },
-                    Rotation::Kronecker {
-                        ..
-                    } => self.prepare(group, (&values).subrange(offset..), batch_dim, command_buffer),
+                    prepared => prepared,
+                };
+                matrix.encode_input(input, batch_dim, command_buffer)
+            },
+            Transform::Kronecker {
+                kernel,
+                signs,
+                orthogonal_factor,
+                matrices,
+                input_dim,
+                output_dim,
+            } => {
+                let input = match input {
+                    MatmulA::FullPrecision {
+                        values: input,
+                        offset,
+                    } => {
+                        let mut values = command_buffer
+                            .allocate_scratch_for_shape(&[batch_dim, *input_dim], DataType::I8)
+                            .map_err(LinearEncodeError::Backend)?;
+                        let mut column_group_sums = command_buffer
+                            .allocate_scratch_for_shape(&[batch_dim, COLUMN_GROUP_COUNT], DataType::F32)
+                            .map_err(LinearEncodeError::Backend)?;
+                        let mut scales = command_buffer
+                            .allocate_scratch_for_shape(&[batch_dim], DataType::F32)
+                            .map_err(LinearEncodeError::Backend)?;
+                        kernel.encode(
+                            (&input).subrange(offset..),
+                            signs,
+                            orthogonal_factor,
+                            &mut values,
+                            &mut column_group_sums,
+                            &mut scales,
+                            batch_dim,
+                            command_buffer,
+                        );
+                        MatmulA::Trellis {
+                            values,
+                            column_group_sums,
+                            scales,
+                        }
+                    },
+                    prepared => prepared,
+                };
+                if let [matrix] = matrices.as_ref() {
+                    return matrix.encode_input(input, batch_dim, command_buffer);
                 }
-                .map_err(LinearEncodeError::Backend)?,
-                prepared => prepared,
-            };
-            return block.encode_with_a(a.as_ref(), batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer);
+                let mut output = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim, *output_dim], DataType::BF16)
+                    .map_err(LinearEncodeError::Backend)?;
+                let mut column = 0;
+                for matrix in matrices {
+                    matrix.encode_columns(
+                        input.as_ref(),
+                        batch_dim,
+                        &mut output,
+                        column,
+                        *output_dim,
+                        command_buffer,
+                    )?;
+                    column += matrix.output_dim();
+                }
+                Ok(output)
+            },
         }
-        let MatmulA::FullPrecision {
-            values: input,
-            offset,
-        } = input
-        else {
-            panic!("transformed linears take full-precision input");
-        };
-        let input = (&input).subrange(offset..);
-        let mut output = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)
-            .map_err(LinearEncodeError::Backend)?;
-        let mut column = 0;
-        for group in &self.groups {
-            let a = self.prepare(group, input, batch_dim, command_buffer).map_err(LinearEncodeError::Backend)?;
-            for block in &group.blocks {
-                block.encode_columns(a.as_ref(), batch_dim, &mut output, column, self.output_dim, command_buffer)?;
-                column += block.output_dim();
-            }
-        }
-        Ok(output)
     }
 }

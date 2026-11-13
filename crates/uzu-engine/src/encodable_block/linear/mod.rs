@@ -13,13 +13,12 @@ pub use untied_readout::UntiedReadout;
 use crate::{
     backends::common::{
         Backend, CommandBuffer, Kernels,
-        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        kernel::matmul::{ActivationFormat, MatmulA, MatmulKernel},
+        kernel::{
+            ActivationFormat,
+            matmul::{MatmulA, MatmulKernel},
+        },
     },
-    config::weight_matrix::{
-        AnyWeightMatrixSpec,
-        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
-    },
+    config::weight_matrix::AnyWeightMatrixSpec,
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -95,7 +94,7 @@ impl<B: Backend> dyn Linear<B> {
             spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
             | AnyWeightMatrixSpec::MLXSpec(_)
             | AnyWeightMatrixSpec::IntSpec(_)) => {
-                let block = LinearMatmul::load(
+                let matrix = LinearMatmul::load(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
@@ -108,22 +107,10 @@ impl<B: Backend> dyn Linear<B> {
                     context,
                 )
                 .await?;
-                Ok(Box::new(block))
+                Ok(Box::new(matrix))
             },
-            spec @ (AnyWeightMatrixSpec::OutputStackSpec(_)
-            | AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                incoherence_spec:
-                    Some(
-                        AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                            block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
-                            processing_mode: IncoherenceProcessingMode::Input | IncoherenceProcessingMode::InputOutput,
-                            ..
-                        })
-                        | AnyIncoherenceProcessorSpec::KroneckerSpec(_),
-                    ),
-                ..
-            })) => Ok(Box::new(
-                TransformedLinear::new(
+            AnyWeightMatrixSpec::HybridSpec(spec) => {
+                let linear = TransformedLinear::new(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
@@ -131,11 +118,12 @@ impl<B: Backend> dyn Linear<B> {
                     output_data_type,
                     has_biases.then_some(parameter_tree),
                     spec,
-                    weights_tree,
+                    &weights_tree,
                     context,
                 )
-                .await?,
-            )),
+                .await?;
+                Ok(Box::new(linear))
+            },
             spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
@@ -171,7 +159,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalGpuBuffer>), LinearBlockError<B>> {
-        let (linear, preparation) = TransformedLinear::new_with_input_preparation(
+        let (linear, preparation) = Self::new_with_input_preparation(
             input_dimension,
             output_dimension,
             weights_data_type,
@@ -194,7 +182,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
-        TransformedLinear::new_with_input_preparation(
+        Self::new_with_input_preparation(
             input_dimension,
             output_dimension,
             data_type,
@@ -227,5 +215,51 @@ impl<B: Backend> dyn Linear<B> {
             context,
         )
         .await
+    }
+
+    async fn new_with_input_preparation(
+        input_dim: u32,
+        output_dim: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        has_biases: bool,
+        allow_prequantized_activation: bool,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
+        let weights_tree = parameter_tree.subtree("weights");
+        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        match spec {
+            AnyWeightMatrixSpec::HybridSpec(spec) => {
+                TransformedLinear::new_with_input_preparation(
+                    input_dim,
+                    output_dim,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    has_biases.then_some(parameter_tree),
+                    spec,
+                    &weights_tree,
+                    allow_prequantized_activation,
+                    context,
+                )
+                .await
+            },
+            _ => {
+                let linear = Self::new_mixed_precision(
+                    input_dim,
+                    output_dim,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    has_biases,
+                    parameter_tree,
+                    context,
+                )
+                .await?;
+                Ok((linear, None))
+            },
+        }
     }
 }
