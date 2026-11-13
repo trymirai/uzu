@@ -1,6 +1,6 @@
 use indoc::indoc;
 use iocraft::prelude::*;
-use uzu_engine::VERSION;
+use uzu_engine::{VERSION, backends::selected_backend};
 
 use crate::interactive::components::ApplicationState;
 
@@ -15,7 +15,7 @@ fn about_text() -> String {
     let home_path = dirs::home_dir();
 
     let mut lines = vec![
-        format!("v{}", VERSION),
+        format!("v{} · {} backend", VERSION, selected_backend()),
         "A high-performance inference engine for AI models".to_string(),
         "Zero latency, full data privacy, no inference costs".to_string(),
     ];
