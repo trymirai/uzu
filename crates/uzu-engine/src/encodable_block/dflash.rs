@@ -5,7 +5,12 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
-    config::{dflash::DFlashDraftConfig, rope::AnyRoPEConfig, token_mixer::AnyTokenMixerConfig},
+    config::{
+        dflash::DFlashDraftConfig,
+        residual::{AnyResidualConfig, additive::AdditiveResidualConfig},
+        rope::AnyRoPEConfig,
+        token_mixer::AnyTokenMixerConfig,
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -121,7 +126,7 @@ impl<B: Backend> DFlash<B> {
         .await?;
         let layers_tree = parameter_tree.subtree("layers");
         let first_layer_config = config.layer_configs.first().expect("DFlash draft model must have at least one layer");
-        let AnyTokenMixerConfig::AttentionConfig(attention_config) = &first_layer_config.mixer_config else {
+        let AnyTokenMixerConfig::AttentionConfig(attention_config) = &first_layer_config.mixer.body_config else {
             return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use attention mixers"));
         };
         let layer_kv_dim = 2 * attention_config.num_groups * attention_config.head_dim;
@@ -135,6 +140,8 @@ impl<B: Backend> DFlash<B> {
             context,
         )
         .await?;
+        // DFlash draft models are hard-coded with an additive residual.
+        let residual_config = AnyResidualConfig::AdditiveResidualConfig(AdditiveResidualConfig::default());
         let mut layers = Vec::with_capacity(num_layers as usize);
         for (layer_config, index) in config.layer_configs.iter().zip(0u32..) {
             layers.push(
@@ -145,6 +152,7 @@ impl<B: Backend> DFlash<B> {
                     index,
                     data_type,
                     layer_config,
+                    &residual_config,
                     &layers_tree.subtree(&index.to_string()),
                     context,
                 )

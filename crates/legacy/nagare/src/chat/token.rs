@@ -15,7 +15,8 @@ use shoji::{
             Error,
             chat_message::{Output, ToolCallState},
             chat_token::{
-                Backend, Instance as ChatTokenBackendInstance, StreamInput, StreamOutput, TokenStreamMetrics,
+                Backend, Instance as ChatTokenBackendInstance, StreamConfig, StreamInput, StreamOutput,
+                TokenStreamMetrics,
             },
         },
     },
@@ -138,7 +139,11 @@ impl Session {
         }
         let time_prefill_start = Instant::now();
         let cancel_token = cancel_token.child_token();
-        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), config.clone(), cancel_token.clone());
+        let stream_config = StreamConfig {
+            reply: config.clone(),
+            grammar_trigger: self.encoding.grammar_trigger().map(str::to_owned),
+        };
+        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), stream_config, cancel_token.clone());
         let output_tokens_start = self.encoding.state().tokens.len();
 
         let stream_state = StreamingState {

@@ -46,6 +46,10 @@ pub struct HanashiEncodingImpl {
 }
 
 impl HanashiEncodingImpl {
+    pub fn grammar_trigger(&self) -> Option<&str> {
+        self.config.rendering.grammar_trigger(&self.state.messages)
+    }
+
     pub fn new(
         config: HanashiConfig,
         tokenizer: Arc<Tokenizer>,

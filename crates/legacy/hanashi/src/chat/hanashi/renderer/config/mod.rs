@@ -7,7 +7,7 @@ pub use jinja_function::JinjaFunction;
 use serde::{Deserialize, Serialize};
 use shoji::types::{
     basic::ReasoningEffort,
-    session::chat::{ChatContentBlockType, ChatRole},
+    session::chat::{ChatContentBlock, ChatContentBlockType, ChatMessage, ChatRole},
 };
 
 use crate::chat::hanashi::messages::{
@@ -20,12 +20,47 @@ pub struct RendererConfig {
     pub jinja: JinjaConfig,
     pub canonization: CanonicalConfig,
     pub rendering: IndexMap<ChatRole, RenderedConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grammar_trigger: Option<String>,
     // Needed when the default lives inside the template rather than its field mapping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl RendererConfig {
+    pub fn grammar_trigger(
+        &self,
+        messages: &[ChatMessage],
+    ) -> Option<&str> {
+        let effort = messages.iter().find_map(|message| {
+            let role = self.rendering.get(&message.role)?;
+            let has_reasoning_control = role.context.values().any(|field| {
+                matches!(
+                    &field.config,
+                    FieldConfig::Unique {
+                        block: ChatContentBlockType::ReasoningEffort,
+                        ..
+                    }
+                )
+            });
+            if !has_reasoning_control {
+                return None;
+            }
+            message.content.iter().find_map(|block| match block {
+                ChatContentBlock::ReasoningEffort {
+                    value,
+                } => Some(*value),
+                _ => None,
+            })
+        });
+        let effort =
+            effort.filter(|effort| *effort != ReasoningEffort::Default).or_else(|| self.default_reasoning_effort());
+        if effort == Some(ReasoningEffort::Disabled) {
+            return None;
+        }
+        self.grammar_trigger.as_deref()
+    }
+
     pub fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
         if let Some(effort) = self.default_reasoning_effort {
             return Some(effort);
@@ -129,6 +164,77 @@ impl RendererConfig {
 mod tests {
     use super::*;
     use crate::chat::hanashi::config::HanashiConfig;
+
+    #[test]
+    fn bundled_grammar_triggers_identify_answer_boundaries() {
+        for (config, expected) in [
+            (HanashiConfig::Gemma4, Some("<channel|>")),
+            (HanashiConfig::GptOss, Some("<|channel|>final<|message|>")),
+            (HanashiConfig::MuseGlimmer, Some(" to=user<|message|>")),
+            (HanashiConfig::Lfm25Thinking, Some("</think>")),
+            (HanashiConfig::Qwen3, Some("</think>")),
+            (HanashiConfig::Qwen3Thinking, Some("</think>")),
+            (HanashiConfig::Qwen35, Some("</think>")),
+            (HanashiConfig::Qwen36, Some("</think>")),
+            (HanashiConfig::Qwen38, Some("</think>")),
+            (HanashiConfig::FunctionGemma, None),
+            (HanashiConfig::Gemma3, None),
+            (HanashiConfig::Lfm2, None),
+            (HanashiConfig::Lfm25Instruct, None),
+            (HanashiConfig::Llama32, None),
+            (HanashiConfig::Qwen3Instruct, None),
+        ] {
+            assert_eq!(config.resolve().unwrap().rendering.grammar_trigger(&[]), expected, "{config:?}");
+        }
+    }
+
+    #[test]
+    fn grammar_trigger_tracks_reasoning_controls() {
+        for config in [
+            HanashiConfig::Gemma4,
+            HanashiConfig::Qwen3,
+            HanashiConfig::Qwen35,
+            HanashiConfig::Qwen36,
+            HanashiConfig::Qwen38,
+        ] {
+            let config = config.resolve().unwrap().rendering;
+            let disabled = [ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled)];
+            assert_eq!(config.grammar_trigger(&disabled), None);
+            let default = [ChatMessage::system().with_reasoning_effort(ReasoningEffort::Default)];
+            assert_eq!(config.grammar_trigger(&default), config.grammar_trigger.as_deref());
+            let uncontrolled = [ChatMessage::user().with_reasoning_effort(ReasoningEffort::Disabled)];
+            assert_eq!(config.grammar_trigger(&uncontrolled), config.grammar_trigger.as_deref());
+        }
+    }
+
+    #[test]
+    fn grammar_trigger_respects_a_disabled_default() {
+        let mut config = HanashiConfig::Gemma4.resolve().unwrap().rendering;
+        config.default_reasoning_effort = Some(ReasoningEffort::Disabled);
+        assert_eq!(config.grammar_trigger(&[]), None);
+        assert_eq!(
+            config.grammar_trigger(&[ChatMessage::system().with_reasoning_effort(ReasoningEffort::Default)]),
+            None
+        );
+        assert_eq!(
+            config.grammar_trigger(&[ChatMessage::system().with_reasoning_effort(ReasoningEffort::High)]),
+            Some("<channel|>")
+        );
+    }
+
+    #[test]
+    fn custom_grammar_trigger_serializes_and_is_optional() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/configs/rendering/gemma-4.json")))
+                .unwrap();
+        json["grammar_trigger"] = serde_json::json!("<answer>");
+        let config: RendererConfig = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(config.grammar_trigger(&[]), Some("<answer>"));
+        assert_eq!(serde_json::to_value(&config).unwrap()["grammar_trigger"], "<answer>");
+        json.as_object_mut().unwrap().remove("grammar_trigger");
+        let config: RendererConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.grammar_trigger(&[]), None);
+    }
 
     #[test]
     fn omitted_default_and_disabled_do_not_prove_the_template_default_is_off() {

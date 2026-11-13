@@ -25,6 +25,12 @@ pub struct TokenStreamMetrics {
     pub num_tokens_returned: usize,
 }
 
+pub struct StreamConfig {
+    pub reply: ChatReplyConfig,
+    /// Generated marker after which grammar constraints apply; absent means immediate enforcement.
+    pub grammar_trigger: Option<String>,
+}
+
 pub type StreamInput = Vec<u64>;
 pub type StreamOutput = TokenStreamOutput;
 pub type StreamMetrics = Option<TokenStreamMetrics>;
@@ -39,7 +45,7 @@ pub trait Backend: Send + Sync {
 
 pub trait Instance:
     InstanceTrait<
-        StreamConfig = ChatReplyConfig,
+        StreamConfig = StreamConfig,
         StreamInput = StreamInput,
         StreamOutput = StreamOutput,
         StreamMetrics = StreamMetrics,

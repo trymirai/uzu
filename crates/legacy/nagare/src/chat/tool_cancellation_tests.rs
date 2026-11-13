@@ -8,7 +8,7 @@ use hanashi::chat::{EncodingConfig, hanashi::config::HanashiConfig};
 use shoji::{
     traits::backend::{
         Error, Instance as BackendInstance, InstanceStream, NoMetricsStream, State,
-        chat_token::{Instance as TokenInstance, StreamInput, StreamOutput, TokenStreamMetrics},
+        chat_token::{Instance as TokenInstance, StreamConfig, StreamInput, StreamOutput, TokenStreamMetrics},
     },
     types::{
         basic::SamplingParameters,
@@ -31,7 +31,7 @@ struct FunctionGemma {
 }
 
 impl BackendInstance for FunctionGemma {
-    type StreamConfig = ChatReplyConfig;
+    type StreamConfig = StreamConfig;
     type StreamInput = StreamInput;
     type StreamOutput = StreamOutput;
     type StreamMetrics = Option<TokenStreamMetrics>;
@@ -47,7 +47,7 @@ impl BackendInstance for FunctionGemma {
         &'a self,
         input: &'a StreamInput,
         _state: &'a mut dyn State,
-        _config: ChatReplyConfig,
+        _config: StreamConfig,
         _cancel_token: CancellationToken,
     ) -> Pin<Box<dyn InstanceStream<Item = Result<StreamOutput, Error>, Metrics = Self::StreamMetrics> + Send + 'a>>
     {

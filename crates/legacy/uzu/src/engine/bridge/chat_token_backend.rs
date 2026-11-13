@@ -13,15 +13,15 @@ use shoji::{
         backend::{
             Error as ShojiBackendError, Instance as BackendInstance, InstanceStream, NoMetricsStream,
             chat_token::{
-                Instance as ChatTokenBackendInstance, StreamInput as ChatTokenStreamInput,
-                StreamMetrics as ChatTokenStreamMetrics, StreamOutput as ChatTokenStreamOutput, TokenStreamMetrics,
-                TokenStreamOutput,
+                Instance as ChatTokenBackendInstance, StreamConfig as ChatTokenStreamConfig,
+                StreamInput as ChatTokenStreamInput, StreamMetrics as ChatTokenStreamMetrics,
+                StreamOutput as ChatTokenStreamOutput, TokenStreamMetrics, TokenStreamOutput,
             },
         },
     },
     types::{
         basic::{BackendError, SamplingParameters, SamplingSeed},
-        session::chat::{ChatConfig, ChatReplyConfig},
+        session::chat::ChatConfig,
     },
 };
 use tokenizers::Tokenizer;
@@ -47,7 +47,6 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     stop_token_ids: Vec<i32>,
     max_context_length: Option<u32>,
     sampling_defaults: SamplingParameters,
-    grammar_trigger_token_sequence: Option<Vec<u64>>,
 }
 
 impl<B: Backend> UzuChatTokenBackendInstance<B> {
@@ -70,8 +69,6 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             suffix_repetition_length: generation_config.suffix_repetition_length.map(|value| value as i64),
         };
         let max_context_length = get_max_context_length(&model, config.context_length.clone());
-        let grammar_trigger_token_sequence =
-            grammar_trigger_token_sequence(model.end_of_thinking_tag(), model.tokenizer());
 
         Ok(Self {
             engine,
@@ -80,13 +77,12 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             stop_token_ids,
             max_context_length,
             sampling_defaults,
-            grammar_trigger_token_sequence,
         })
     }
 }
 
 impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
-    type StreamConfig = ChatReplyConfig;
+    type StreamConfig = ChatTokenStreamConfig;
     type StreamInput = ChatTokenStreamInput;
     type StreamOutput = ChatTokenStreamOutput;
     type StreamMetrics = ChatTokenStreamMetrics;
@@ -121,11 +117,17 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
     > {
         let state = (state as &mut dyn Any).downcast_mut::<UzuChatTokenBackendInstanceState<B>>().unwrap();
 
+        let ChatTokenStreamConfig {
+            reply: config,
+            grammar_trigger,
+        } = config;
         let token_limit = config.token_limit.map(|count| count as usize);
 
         let grammar = if let Some(grammar_config) = config.grammar {
+            let trigger_token_sequence =
+                grammar_trigger_token_sequence(grammar_trigger.as_deref(), self.model.tokenizer());
             let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
-                self.grammar_trigger_token_sequence.as_deref(),
+                trigger_token_sequence.as_deref(),
                 input,
                 self.model.tokenizer(),
             );

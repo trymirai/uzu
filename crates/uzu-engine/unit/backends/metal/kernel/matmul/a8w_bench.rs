@@ -259,7 +259,7 @@ fn bench_bits(
 
         let paths = [BenchPath::A8GemmMxu, BenchPath::Bf16GemmMxu, BenchPath::Bf16Routed];
 
-        group.throughput(Throughput::Elements((m * k * n) as u64));
+        group.throughput(Throughput::Elements(u64::from(m) * u64::from(k) * u64::from(n)));
         for path in paths {
             group.bench_function(BenchmarkId::new(path.label(), &shape_label), |bench| {
                 let benchmark_path =

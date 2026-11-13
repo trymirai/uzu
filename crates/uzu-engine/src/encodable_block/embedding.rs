@@ -87,6 +87,12 @@ impl<B: Backend> Embedding<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Arc<B::GlobalGpuBuffer>>), EmbeddingError<B>> {
+        if *config.permute_indices() {
+            return Err(EmbeddingError::UnsupportedConfiguration(
+                "embeddings with permuted vocabulary indices are not supported".into(),
+            ));
+        }
+
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");

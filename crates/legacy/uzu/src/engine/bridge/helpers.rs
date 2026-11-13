@@ -69,17 +69,13 @@ pub fn get_grammar(
     UzuGrammar::new(&config, tokenizer, trigger_token_sequence, Some(stop_token_ids))
 }
 
-/// The token sequence of the model's end-of-thinking tag. A reasoning model
-/// opens every reply with reasoning tokens that no grammar can accept, so the
-/// grammar must stay disengaged until this sequence has been generated.
-/// Leading whitespace-only tokens are excluded because BPE can merge them with
-/// preceding whitespace in both the prompt and generated reasoning. Tokens that
-/// fuse whitespace with marker text retain their original encoding.
+/// Tokenizes a grammar trigger without leading whitespace-only tokens.
+/// Tokens combining whitespace with marker text retain their original encoding.
 pub fn grammar_trigger_token_sequence(
-    end_of_thinking_tag: Option<&str>,
+    trigger: Option<&str>,
     tokenizer: &Tokenizer,
 ) -> Option<Vec<u64>> {
-    let tag = end_of_thinking_tag?;
+    let tag = trigger?;
     if tag.trim().is_empty() {
         return None;
     }
@@ -376,6 +372,38 @@ mod tests {
                 assert!(!grammar.next_bitmask(&mut [0]));
                 grammar.accept_token(token).unwrap();
             }
+            assert!(grammar.next_bitmask(&mut [0]));
+        }
+    }
+
+    #[test]
+    fn gemma_codec_grammar_waits_for_the_closing_channel_marker() {
+        use hanashi::chat::hanashi::config::HanashiConfig;
+        use shoji::types::{basic::ReasoningEffort, session::chat::ChatMessage};
+
+        let config = HanashiConfig::Gemma4.resolve().unwrap().rendering;
+        let mut tokenizer = bpe_tokenizer();
+        tokenizer.add_special_tokens(&[AddedToken::from("<|channel>", true), AddedToken::from("<channel|>", true)]);
+        let opening = tokenizer.token_to_id("<|channel>").unwrap() as u64;
+        let closing = tokenizer.token_to_id("<channel|>").unwrap() as u64;
+        let trigger = grammar_trigger_token_sequence(config.grammar_trigger(&[]), &tokenizer);
+        assert_eq!(trigger, Some(vec![closing]));
+
+        for grammar_config in grammars() {
+            let mut grammar = get_grammar(grammar_config, &tokenizer, &[12], trigger.clone()).unwrap();
+            grammar.accept_token(opening).unwrap();
+            assert!(!grammar.next_bitmask(&mut [0]));
+            grammar.accept_token(5).unwrap();
+            assert!(!grammar.next_bitmask(&mut [0]));
+            grammar.accept_token(closing).unwrap();
+            assert!(grammar.next_bitmask(&mut [0]));
+        }
+
+        let disabled = [ChatMessage::system().with_reasoning_effort(ReasoningEffort::Disabled)];
+        let trigger = grammar_trigger_token_sequence(config.grammar_trigger(&disabled), &tokenizer);
+        assert_eq!(trigger, None);
+        for grammar_config in grammars() {
+            let mut grammar = get_grammar(grammar_config, &tokenizer, &[12], trigger.clone()).unwrap();
             assert!(grammar.next_bitmask(&mut [0]));
         }
     }

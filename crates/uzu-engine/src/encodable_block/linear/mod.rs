@@ -19,7 +19,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -116,10 +116,14 @@ impl<B: Backend> dyn Linear<B> {
                 Ok(Box::new(block))
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
-                incoherence_block_size: Some(block_size),
-                incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+                incoherence_spec:
+                    Some(HadamardSpec {
+                        block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        processing_mode: IncoherenceProcessingMode::InputOutput,
+                        ..
+                    }),
                 ..
-            }) if block_size == HADAMARD_TRANSFORM_BLOCK_SIZE => Ok(Box::new(
+            }) => Ok(Box::new(
                 RHTLinearWrapper::new(
                     input_dimension,
                     output_dimension,
