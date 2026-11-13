@@ -87,8 +87,7 @@ impl<B: Backend> Embedding<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Arc<B::GlobalGpuBuffer>>), EmbeddingError<B>> {
-        let has_index_permutation = *embedding_config.permute_indices();
-        if has_index_permutation {
+        if *embedding_config.permute_indices() {
             parameter_tree.ignore("index_permutation", &[vocab_size], DataType::I32)?;
         }
 

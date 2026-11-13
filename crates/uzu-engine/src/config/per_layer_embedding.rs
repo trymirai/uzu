@@ -1,6 +1,6 @@
 use uzu_engine_macros::uzu_config;
 
-use super::{activation::AnyActivation, linear::LinearConfig, normalization::NormalizationConfig};
+use super::{linear::LinearConfig, normalization::NormalizationConfig};
 
 #[uzu_config]
 pub struct PLEModelConfig {
@@ -12,12 +12,4 @@ pub struct PLEModelConfig {
     pub input_scale: f32,
     pub linear_config: LinearConfig,
     pub norm_config: NormalizationConfig,
-}
-
-#[uzu_config]
-pub struct PLELayerConfig {
-    pub linear_config: LinearConfig,
-    pub norm_config: NormalizationConfig,
-    pub ple_dim: u32,
-    pub activation: AnyActivation,
 }

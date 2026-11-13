@@ -113,6 +113,7 @@ clang-ast = "0.1.35"
 shader-slang = { git = "https://github.com/trymirai/slang-rs.git", branch = "unsigned_char_fix" }
 shader-slang-sys = { git = "https://github.com/trymirai/slang-rs.git", branch = "unsigned_char_fix" }
 naga = { git = "https://github.com/gfx-rs/wgpu", branch = "v30" }
+spirv = "0.4.0"
 rangemap = "1.8.0"
 parking_lot = "0.12.5"
 futures = "0.3.34"

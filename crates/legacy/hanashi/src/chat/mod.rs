@@ -41,6 +41,10 @@ pub enum Encoding {
 }
 
 impl Encoding {
+    pub fn grammar_trigger(&self) -> Option<&str> {
+        dispatch!(infallible self, grammar_trigger)
+    }
+
     pub fn try_append(
         &mut self,
         messages: &[ChatMessage],

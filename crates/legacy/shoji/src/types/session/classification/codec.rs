@@ -15,6 +15,5 @@ pub struct ChatTokenCodecConfig {
     pub assistant_role_name: String,
     pub eos_token: Option<String>,
     pub bos_token: Option<String>,
-    pub end_of_thinking_tag: Option<String>,
     pub default_system_prompt: Option<String>,
 }

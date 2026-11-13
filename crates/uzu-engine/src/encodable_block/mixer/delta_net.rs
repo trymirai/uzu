@@ -12,7 +12,10 @@ use crate::{
             delta_net_tree_verify::DeltaNetTreeVerify as DeltaNetTreeVerifyTrait,
         },
     },
-    config::token_mixer::delta_net::DeltaNetConfig,
+    config::{
+        activation::{AnyActivation, silu::SiLU},
+        token_mixer::delta_net::DeltaNetConfig,
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -183,6 +186,14 @@ impl<B: Backend> DeltaNet<B> {
             return Err(DeltaNetNewError::UnsupportedConfiguration(format!(
                 "value_head_dim must be 128, got {}",
                 config.value_head_dim
+            )));
+        }
+
+        // TODO: Don't hardcode SiLU
+        if config.output_gate != AnyActivation::SiLU(SiLU::default()) {
+            return Err(DeltaNetNewError::UnsupportedConfiguration(format!(
+                "output_gate must be SiLU, got {:?}",
+                config.output_gate.act_type()
             )));
         }
 

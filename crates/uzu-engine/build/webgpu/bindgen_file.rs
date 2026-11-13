@@ -18,7 +18,7 @@ use crate::{
         kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
         mangling::static_mangle,
     },
-    slang::{SlangArgumentType, SlangBufferAccess, SlangKernel, SlangParameterType, Specializer, slang2rust},
+    slang::{SlangArgumentType, SlangKernel, SlangParameterType, Specializer, slang2rust, specialization_name},
 };
 
 pub fn bindgen_file(
@@ -59,6 +59,14 @@ fn bindgen_kernel(
 ) -> anyhow::Result<TokenStream> {
     let kernel_trait_name = format_ident!("{}Kernel", kernel.name.as_str());
     let kernel_struct_name = format_ident!("{}WebGPUKernel", kernel.name.as_str());
+
+    ensure!(
+        kernel.preconditions.is_empty()
+            && kernel.required_subgroup_size.is_none()
+            && !kernel.arguments.iter().any(|argument| argument.pipeline_variants),
+        "{}: the WebGPU binding implements no Precondition, RequiredSubgroupSize or PipelineVariants",
+        kernel.name
+    );
 
     let globals = shader.global_params_type_layout().unwrap();
 
@@ -119,7 +127,7 @@ fn bindgen_kernel(
                 condition,
             } = &argument.argument_type
             {
-                let slang_name = format!("{}_specialize_{}", kernel.name, argument.name.as_str());
+                let slang_name = specialization_name(&kernel.name, &argument.name);
                 let wgsl_idx = globals
                     .field_by_index(globals.find_field_index_by_name(&slang_name) as u32)
                     .unwrap()
@@ -416,7 +424,6 @@ fn bindgen_kernel(
             match parameter_category {
                 ParameterCategory::DescriptorTableSlot => {
                     let SlangArgumentType::Buffer {
-                        access_type,
                         condition,
                     } = &kernel_argument.unwrap().argument_type
                     else {
@@ -431,9 +438,10 @@ fn bindgen_kernel(
 
                     let buffer_name = parameter_name.to_string();
 
-                    let read_only = matches!(access_type, SlangBufferAccess::Read);
+                    let binding_type = kernel_argument.unwrap().binding_type.as_ref().unwrap();
+                    let read_only = !matches!(binding_type, KernelArgumentType::Buffer(KernelBufferAccess::ReadWrite));
 
-                    let source_type = match kernel_argument.unwrap().binding_type.as_ref().unwrap() {
+                    let source_type = match binding_type {
                         KernelArgumentType::Value(_) => {
                             let element_type = parameter.type_layout().unwrap().resource_result_type().unwrap();
                             let element_type_layout =

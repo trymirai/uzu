@@ -9,11 +9,9 @@ use itertools::{Itertools, izip};
 use quote::{format_ident, quote};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use super::{
-    ast::MetalKernelInfo,
     bindgen::bindgen_global,
     toolchain::MetalToolchain,
     wrapper::{KernelWrappers, VariantWrapper, wrappers},
@@ -21,7 +19,7 @@ use super::{
 use crate::{
     common::{
         caching, codegen::write_tokens, compiler::Compiler, gpu_type_paths::GpuTypePaths, gpu_types::GpuTypes,
-        identifiers::KernelPath, kernel::Kernel,
+        identifiers::KernelPath, kernel::Kernel, sources::source_files,
     },
     debug_log,
     metal::{compression, gpu_types::gpu_type_gen},
@@ -73,8 +71,6 @@ struct Cached {
     dependency_hashes: HashMap<Box<str>, [u8; blake3::OUT_LEN]>,
     public_kernels: Box<[Kernel]>,
     has_kernels: bool,
-    num_variants: usize,
-    num_shards: usize,
 }
 
 #[derive(Debug)]
@@ -175,23 +171,17 @@ impl MetalCompiler {
             for path in cached.dependency_hashes.keys() {
                 self.emit_rerun_if_changed_for_dependency(path);
             }
-            let sharding = if cached.has_kernels {
-                format!(" ({} variants / {} shards)", cached.num_variants, cached.num_shards)
-            } else {
-                Default::default()
-            };
-            debug_log!("compile cached: {source_path_relative_str}{sharding}");
+            debug_log!("compile cached: {source_path_relative_str}");
             return Ok((kernel_path, cached.public_kernels, cached.has_kernels));
         }
 
-        let (metal_kernel_infos, dependencies) = self
+        let (kernel_infos, dependencies) = self
             .toolchain
             .analyze(&source_path)
             .with_context(|| format!("cannot analyze {source_path_relative_str}"))?;
 
-        let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
-
         let dependency_hashes = dependencies
+            .into_iter()
             .map(|path| {
                 self.emit_rerun_if_changed_for_dependency(&path);
                 Ok((
@@ -274,7 +264,6 @@ impl MetalCompiler {
                         self.metallib_compressed,
                     )
                     .with_context(|| format!("cannot generate bindings for {}", kernel.name))
-                    .map(|(tokens, _associated_type)| tokens)
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -295,8 +284,6 @@ impl MetalCompiler {
             dependency_hashes,
             public_kernels: public_kernels.clone(),
             has_kernels,
-            num_variants,
-            num_shards,
         };
         fs::write(&cached_file, serde_json::to_vec_pretty(&cached).context("cannot serialize cache")?)
             .context("cannot write cache file")?;
@@ -334,12 +321,7 @@ impl Compiler for MetalCompiler {
             hasher.finalize().into()
         };
 
-        let metal_sources: Vec<PathBuf> = WalkDir::new(&self.source_directory)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("metal"))
-            .map(|e| e.into_path())
-            .collect();
+        let metal_sources: Vec<PathBuf> = source_files(&self.source_directory, "metal")?;
 
         let compiled: Vec<(KernelPath, Box<[Kernel]>, bool)> = metal_sources
             .into_par_iter()

@@ -42,7 +42,7 @@ fn bench_qwen3_layers_typed<T: DataTypeRepr + Float>(
         )
         .unwrap();
 
-        group.throughput(Throughput::Elements((m * n * k) as u64));
+        group.throughput(Throughput::Elements(u64::from(m) * u64::from(n) * u64::from(k)));
         group.bench_function(BenchmarkId::from_parameter(format!("{layer}_{shape}")), |b| {
             iter_encode_loop::<Metal, _>(context, b, |command_buffer| {
                 matmul.encode(quant_arguments(buffers.next_mut(), &input), command_buffer).expect("encode qwen3 layer");
