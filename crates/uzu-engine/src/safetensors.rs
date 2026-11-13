@@ -177,7 +177,7 @@ impl<B: Backend> ParameterTree<'_, B> {
         let tensor =
             self.loader.header.tensors.get(&key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.clone()))?;
         let shape_as_read = match (self.stack, &tensor.shape[..]) {
-            (Some(count), [leading, rest @ ..]) if *leading == count && rest == shape => rest,
+            (Some(count), [leading, rest @ ..]) if *leading == count => rest,
             (_, stored) => stored,
         };
         if (shape_as_read, tensor.dtype) != (shape, dtype) {

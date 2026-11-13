@@ -94,7 +94,7 @@ impl<B: Backend> MoeMlp<B> {
         .await?;
 
         let routed_tree = parameter_tree.subtree("routed_experts");
-        let (routed_up, input_hadamard_factors) = RoutedProjection::load(
+        let (routed_up, _) = RoutedProjection::load(
             num_routed_experts,
             model_dimension,
             2 * expert_hidden_dim,
@@ -169,16 +169,8 @@ impl<B: Backend> MoeMlp<B> {
 
         let router_top_k = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, DataType::F32)
             .map_err(MoeMlpNewError::Backend)?;
-        let input_rht = InputRht::new(
-            data_type,
-            LinearInputPreparation {
-                rht_signs: input_hadamard_factors,
-                activation_format: shared_preparation.activation_format,
-            },
-            false,
-            context,
-        )
-        .map_err(MoeMlpNewError::Backend)?;
+        let input_rht =
+            InputRht::new(data_type, shared_preparation, false, context).map_err(MoeMlpNewError::Backend)?;
         let combine = <B::Kernels as Kernels>::MoeCombineKernel::new(context, data_type, moe::COMBINE_BLOCK_DIM)
             .map_err(MoeMlpNewError::Backend)?;
 
