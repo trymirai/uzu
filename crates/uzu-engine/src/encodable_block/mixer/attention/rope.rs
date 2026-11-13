@@ -35,6 +35,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
             let inverse_frequency = match rope_config {
                 AnyRoPEConfig::UnscaledRoPEConfig(_) => inverse_frequency,
+                AnyRoPEConfig::MRoPEConfig(_) => inverse_frequency,
                 AnyRoPEConfig::LinearScalingRoPEConfig(config) => inverse_frequency / config.scaling_factor,
                 AnyRoPEConfig::LlamaRoPEConfig(config) => {
                     let low_frequency_wavelength = config.original_context_length as f32 / config.low_frequency_factor;

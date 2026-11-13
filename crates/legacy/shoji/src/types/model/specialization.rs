@@ -10,6 +10,7 @@ pub enum ModelSpecialization {
     TextToSpeech {},
     Translation {},
     Speculation {},
+    Vision {},
 }
 
 impl ModelSpecialization {
@@ -21,6 +22,7 @@ impl ModelSpecialization {
             ModelSpecialization::TextToSpeech {} => "Text to Speech".to_string(),
             ModelSpecialization::Translation {} => "Translation".to_string(),
             ModelSpecialization::Speculation {} => "Speculation".to_string(),
+            ModelSpecialization::Vision {} => "Vision".to_string(),
         }
     }
 }

@@ -58,6 +58,7 @@ impl<B: Backend> dyn Mlp<B> {
                 Ok((Box::new(dense), up_input_hadamard_factors))
             },
             AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockNewError::UnsupportedMixtureOfExperts),
+            AnyMLPConfig::UngatedMLPConfig(_) => todo!("agolokoz: fix"),
         }
     }
 }

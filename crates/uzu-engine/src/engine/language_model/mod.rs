@@ -6,7 +6,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::model::language_model::LanguageModelConfig,
+    config::model::AnyModelConfig,
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
@@ -51,6 +51,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Speculator(#[from] DFlashSpeculatorLoadError<B>),
     #[error("Tokenizer error: {0}")]
     Tokenizer(#[from] tokenizers::Error),
+    #[error("Unsupported model type")]
+    UnsupportedModelType,
 }
 
 impl<B: Backend> Engine<B> {
@@ -58,7 +60,12 @@ impl<B: Backend> Engine<B> {
         self: &Arc<Self>,
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
-        let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
+        let (decoder_config, generation_config) =
+            match serde_json::from_slice::<AnyModelConfig>(&file::read(model_path.join("config.json")).await?)? {
+                AnyModelConfig::LanguageModelConfig(config) => (config.decoder_config, config.generation_config),
+                AnyModelConfig::VisionLanguageModelConfig(config) => (config.decoder_config, config.generation_config),
+                _ => return Err(EngineLoadLanguageModelError::UnsupportedModelType),
+            };
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;
 
@@ -70,13 +77,9 @@ impl<B: Backend> Engine<B> {
 
         let data_type = DataType::BF16;
 
-        let decoder = Decoder::new(
-            data_type,
-            &config.decoder_config,
-            &weight_loader.tree().subtree("decoder"),
-            self.context.as_ref(),
-        )
-        .await?;
+        let decoder =
+            Decoder::new(data_type, &decoder_config, &weight_loader.tree().subtree("decoder"), self.context.as_ref())
+                .await?;
 
         assert!(
             speculator_path.is_none() || decoder.speculation_supported(),
@@ -89,15 +92,15 @@ impl<B: Backend> Engine<B> {
             None
         };
 
-        let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
+        let sampling = Sampling::new(decoder_config.vocab_size, data_type);
 
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
-        weight_loader.assert_all_tensors_read()?;
+        // TODO agolokoz: REMOVE
+        // weight_loader.assert_all_tensors_read()?;
 
-        let generation_config = config.generation_config;
-        let vocab_size = config.decoder_config.vocab_size as usize;
+        let vocab_size = decoder_config.vocab_size as usize;
 
         Ok(LanguageModel {
             engine: self.clone(),

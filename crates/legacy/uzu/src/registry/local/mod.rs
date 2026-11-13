@@ -89,12 +89,13 @@ impl Registry {
         let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| RegistryError::UnableToGetModels {
             message: format!("Invalid local model path: {}", path.display()),
         })?;
-        let specialization = resolve_model_type(path)
+        let specializations = resolve_model_type(path)
             .await
             .map(|model_type| match model_type {
-                ModelType::LanguageModel => ModelSpecialization::Chat {},
-                ModelType::Classifier => ModelSpecialization::Classification {},
-                ModelType::Decision => ModelSpecialization::Decision {},
+                ModelType::LanguageModel => vec![ModelSpecialization::Chat {}],
+                ModelType::Classifier => vec![ModelSpecialization::Classification {}],
+                ModelType::Decision => vec![ModelSpecialization::Decision {}],
+                ModelType::Vision => vec![ModelSpecialization::Chat {}, ModelSpecialization::Vision {}],
             })
             .map_err(|error| RegistryError::UnableToGetModels {
                 message: format!("Unable to resolve specialization for {}: {error}", path.display()),
@@ -106,7 +107,7 @@ impl Registry {
             self.config.backend_identifier.clone(),
             self.config.backend_identifier.clone(),
             self.config.backend_version.clone(),
-            vec![specialization],
+            specializations,
             ModelAccessibility::OnDevice {
                 source: ModelSource::Filesystem {
                     path: path.to_string_lossy().to_string(),

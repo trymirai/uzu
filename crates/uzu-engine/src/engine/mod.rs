@@ -50,6 +50,7 @@ pub enum ModelType {
     LanguageModel,
     Classifier,
     Decision,
+    Vision,
 }
 
 #[derive(Debug, Error)]
@@ -65,6 +66,7 @@ pub async fn resolve_model_type(model_path: &Path) -> Result<ModelType, ResolveM
         AnyModelConfig::LanguageModelConfig(_) => ModelType::LanguageModel,
         AnyModelConfig::ClassifierModelConfig(_) => ModelType::Classifier,
         AnyModelConfig::DecisionModelConfig(_) => ModelType::Decision,
+        AnyModelConfig::VisionLanguageModelConfig(_) => ModelType::Vision,
     })
 }
 
@@ -73,6 +75,7 @@ pub async fn resolve_model_sampling_method(model_path: &Path) -> Result<Option<S
         AnyModelConfig::LanguageModelConfig(config) => Some(config.generation_config.default_sampling_method()),
         AnyModelConfig::ClassifierModelConfig(_) => None,
         AnyModelConfig::DecisionModelConfig(config) => Some(config.generation_config.default_sampling_method()),
+        AnyModelConfig::VisionLanguageModelConfig(config) => Some(config.generation_config.default_sampling_method()),
     })
 }
 
@@ -81,6 +84,7 @@ pub async fn resolve_model_context_length(model_path: &Path) -> Result<Option<u3
         AnyModelConfig::LanguageModelConfig(config) => config.decoder_config.transformer_config,
         AnyModelConfig::ClassifierModelConfig(_) => return Ok(None),
         AnyModelConfig::DecisionModelConfig(config) => config.decoder_config.transformer_config,
+        AnyModelConfig::VisionLanguageModelConfig(config) => config.decoder_config.transformer_config,
     };
     Ok(transformer
         .layer_configs

@@ -6,11 +6,13 @@ pub mod classifier_model;
 pub mod decision_model;
 pub mod generation;
 pub mod language_model;
+pub mod vision_model;
 
 #[uzu_config_abstract(
     language_model::LanguageModelConfig,
     classifier_model::ClassifierModelConfig,
-    decision_model::DecisionModelConfig
+    decision_model::DecisionModelConfig,
+    vision_model::VisionLanguageModelConfig
 )]
 pub struct ModelConfig {
     pub token_codec_config: AnyTokenCodecConfig,
