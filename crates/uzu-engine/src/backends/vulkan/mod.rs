@@ -4,6 +4,8 @@ mod device;
 mod error;
 mod kernel;
 mod vk_compute_pipeline;
+mod vk_context;
+mod vk_instance;
 
 pub use buffer::*;
 pub use command_buffer::*;
@@ -11,3 +13,5 @@ pub use device::*;
 pub use error::{Error, VkBufferError, VkCommandBufferError, VkContextError, VkKernelError, VkPipelineError};
 pub use kernel::*;
 pub use vk_compute_pipeline::{VkComputePipeline, VkComputePipelineKey, VkPipelines};
+pub use vk_context::VkContext;
+pub use vk_instance::VkInstance;
