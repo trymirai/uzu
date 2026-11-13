@@ -12,7 +12,7 @@ pub use untied_readout::UntiedReadout;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, Kernels,
+        Backend, CommandBuffer, Kernels,
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::matmul::{ActivationFormat, MatmulA, MatmulKernel},
     },
@@ -52,6 +52,7 @@ pub trait Linear<B: Backend>: Send + Sync {
     fn select_activation_format(
         &self,
         _batch_dim: u32,
+        _output_dim: Option<u32>,
         _context: &B::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
@@ -59,11 +60,6 @@ pub trait Linear<B: Backend>: Send + Sync {
 }
 
 pub type LinearInput<B> = MatmulA<<B as Backend>::ScratchBuffer>;
-
-pub struct Gather<T: BufferRef> {
-    pub indices: T,
-    pub output_dim: u32,
-}
 
 pub struct LinearInputPreparation<B: Backend> {
     pub rht_signs: B::GlobalGpuBuffer,

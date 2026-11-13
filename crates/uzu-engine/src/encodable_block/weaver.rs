@@ -140,6 +140,7 @@ pub struct Weaver<B: Backend> {
     target_model_dim: u32,
     max_depth: u32,
     candidate_pool_size: u32,
+    vocab_size: u32,
 }
 
 struct PrefixUnrotation<B: Backend> {
@@ -163,7 +164,7 @@ pub enum WeaverNewError<B: Backend> {
     InvalidLayerCount,
     #[error("model_dim must be divisible by num_heads")]
     InvalidHeadConfig,
-    #[error("candidate_pool_size must be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
+    #[error("candidate_pool_size must fit the vocabulary and be in 1..={max}, got {0}", max = CANDIDATES_MAX)]
     InvalidCandidatePoolSize(u32),
     #[error("rope head_dim {actual} does not match model_dim / num_heads = {expected}")]
     InvalidRopeHeadDim {
@@ -197,6 +198,7 @@ pub enum WeaverEncodeError<B: Backend> {
 
 impl<B: Backend> Weaver<B> {
     pub async fn new(
+        vocab_size: u32,
         config: &WeaverConfig,
         readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         parameter_tree: &ParameterTree<'_, B>,
@@ -208,7 +210,10 @@ impl<B: Backend> Weaver<B> {
         if config.num_heads == 0 || !config.model_dim.is_multiple_of(config.num_heads) {
             return Err(WeaverNewError::InvalidHeadConfig);
         }
-        if config.candidate_pool_size == 0 || config.candidate_pool_size > CANDIDATES_MAX {
+        if config.candidate_pool_size == 0
+            || config.candidate_pool_size > CANDIDATES_MAX
+            || config.candidate_pool_size > vocab_size
+        {
             return Err(WeaverNewError::InvalidCandidatePoolSize(config.candidate_pool_size));
         }
         let head_dim = config.model_dim / config.num_heads;
@@ -349,6 +354,7 @@ impl<B: Backend> Weaver<B> {
             target_model_dim: config.target_model_dim,
             max_depth: config.max_depth,
             candidate_pool_size: config.candidate_pool_size,
+            vocab_size,
         })
     }
 
@@ -668,7 +674,7 @@ impl<B: Backend> Weaver<B> {
 
             // Rank the draft logits: the top `candidate_pool_size` tokens per
             // lookahead row form the candidate pool node expansions draw from.
-            let vocab_size = target_embedding.vocab_size();
+            let vocab_size = self.vocab_size;
             assert!(
                 logits.size() >= size_for_shape(&[pool_depth_count, vocab_size], DATA_TYPE),
                 "draft logits do not cover the lookahead rows"

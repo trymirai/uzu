@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{Gather, LinearEncodeError, LinearMatmulError, UntiedReadout},
+        linear::{LinearEncodeError, LinearMatmulError, UntiedReadout},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -83,17 +83,15 @@ impl<B: Backend> Embedding<B> {
         vocab_size: u32,
         model_dim: u32,
         data_type: DataType,
-        config: &AnyEmbeddingConfig,
+        embedding_config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<Arc<B::GlobalGpuBuffer>>), EmbeddingError<B>> {
-        if *config.permute_indices() {
-            return Err(EmbeddingError::UnsupportedConfiguration(
-                "embeddings with permuted vocabulary indices are not supported".into(),
-            ));
+        if *embedding_config.permute_indices() {
+            parameter_tree.ignore("index_permutation", &[vocab_size], DataType::I32)?;
         }
 
-        let (tying, readout_input_hadamard_factors) = match config {
+        let (tying, readout_input_hadamard_factors) = match embedding_config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
                 let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context).await?;
@@ -139,9 +137,9 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
-        let input_scale = config.input_scale().unwrap_or(1.0);
-        let logit_scale = config.logit_scale().unwrap_or(1.0);
-        let logit_soft_cap = *config.logit_soft_cap();
+        let input_scale = embedding_config.input_scale().unwrap_or(1.0);
+        let logit_scale = embedding_config.logit_scale().unwrap_or(1.0);
+        let logit_soft_cap = *embedding_config.logit_soft_cap();
         let logit_transform = if logit_scale != 1.0 || logit_soft_cap.is_some() {
             let kernel =
                 <B::Kernels as Kernels>::LogitTransformKernel::new(context, data_type, logit_soft_cap.is_some())
@@ -205,18 +203,15 @@ impl<B: Backend> Embedding<B> {
     ) -> Result<B::ScratchBuffer, EmbeddingError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("embedding readout");
 
-        assert!(batch_dim > 0 && output_dim > 0, "Embedding readout requires non-empty dimensions");
+        assert!(
+            batch_dim > 0 && output_dim > 0 && (gather_indices.is_some() || output_dim <= self.vocab_size),
+            "invalid embedding readout dimensions"
+        );
         let mut output_buffer = match &self.tying {
             EmbeddingTying::Untied {
                 output,
                 ..
-            } => {
-                let gather = gather_indices.map(|indices| Gather {
-                    indices,
-                    output_dim,
-                });
-                output.encode(input_buffer, batch_dim, gather, command_buffer)?
-            },
+            } => output.encode(input_buffer, batch_dim, output_dim, gather_indices, command_buffer)?,
             EmbeddingTying::Tied {
                 table,
                 readout,
