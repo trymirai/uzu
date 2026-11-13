@@ -65,6 +65,7 @@ impl GemvSpecialization {
             && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
             && shape.m == 1
             && !shape.gathered
+            && shape.n.is_multiple_of(32)
             && bf16_io
             && weights_data_type == DataType::BF16
             && shape.k >= MXU_TILED_KERNEL_MIN_K
@@ -135,7 +136,8 @@ impl GemvSpecialization {
             gathered: shape.gathered,
             signed_codes: shape.signed_codes,
             gemm_b_layout,
-            full_tile: full_tile(shape, tile),
+            full_tile: full_tile(shape, tile)
+                && (gemm_b_layout != GemmBLayout::MxuTiled || shape.gathered || shape.n.is_multiple_of(32)),
             mxu_tiled_kernel: false,
         };
         Some(specialization)
@@ -320,7 +322,13 @@ impl GemvKernel {
                     quantized.zero_point_strides(),
                 )
             });
-        let output_group_count = n.div_ceil(specialization.output_row_tile());
+        // Tiled weights permute rows within each physical group of 32.
+        let traversed_rows = if specialization.gemm_b_layout == GemmBLayout::MxuTiled && !specialization.gathered {
+            n.next_multiple_of(32)
+        } else {
+            n
+        };
+        let output_group_count = traversed_rows.div_ceil(specialization.output_row_tile());
         let context = command_buffer.context();
         if specialization.mxu_tiled_kernel {
             let MatmulB::Quantized(quantized) = b else {

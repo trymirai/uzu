@@ -89,7 +89,7 @@ impl<B: Backend> DenseMlp<B> {
         let command_buffer = &mut *command_buffer.debug_group("mlp (dense)");
 
         let fused_up = self.up.encode_input(input, batch_dim, command_buffer)?;
-        let act_format = self.down.select_activation_format(batch_dim, command_buffer.context());
+        let act_format = self.down.select_activation_format(batch_dim, None, command_buffer.context());
         let down_input = self
             .gate
             .encode_for_linear(&fused_up, batch_dim, act_format, command_buffer)
@@ -104,7 +104,7 @@ impl<B: Backend> DenseMlp<B> {
         batch_dim: u32,
         context: &B::Context,
     ) -> ActivationFormat {
-        self.up.select_activation_format(batch_dim, context)
+        self.up.select_activation_format(batch_dim, None, context)
     }
 
     async fn load_gate_and_down(

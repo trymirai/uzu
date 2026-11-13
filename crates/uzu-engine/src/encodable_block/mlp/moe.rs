@@ -21,7 +21,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        linear::{Gather, InputRht, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, UntiedReadout},
+        linear::{InputRht, Linear, LinearInputPreparation, LinearMatmul, LinearMatmulError, UntiedReadout},
         mlp::{
             Mlp, MlpEncodeError,
             dense::{DenseMlp, DenseMlpNewError},
@@ -263,7 +263,7 @@ impl<B: Backend> Mlp<B> for MoeMlp<B> {
             .map_err(MlpEncodeError::Backend)?;
 
         let shared_gate_logits =
-            self.shared_gate.encode(&rotated_input, batch_dim, None::<Gather<&B::ScratchBuffer>>, command_buffer)?;
+            self.shared_gate.encode(&rotated_input, batch_dim, 1, None::<&B::ScratchBuffer>, command_buffer)?;
         let shared_input = quantized_shared_input.unwrap_or_else(|| MatmulA::full_precision(rotated_input));
         let shared_output = self.shared_expert.encode_input(shared_input, batch_dim, command_buffer)?;
 
