@@ -30,7 +30,7 @@ using namespace uzu::gemm;
 // The A8 MXU route reads its scales into registers, so it asks for no
 // threadgroup B memory.
 #define GEMM_TGB_ELEMENTS                                                                                              \
-  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(GROUP_SIZE) + 16 / int(sizeof(BT))))         \
+  ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) * (int(BLOCK_K) + 16 / int(sizeof(BT))))            \
                                : GEMM_K_PARTIAL_ELEMENTS)                                                              \
              : (GEMM_SMALL_BATCH                                                                                       \
                     ? GEMM_K_PARTIAL_ELEMENTS                                                                          \
@@ -45,7 +45,7 @@ template <
     bool USE_MXU,
     GemmBPrologueKind B_PROLOGUE,
     uint BITS,
-    uint GROUP_SIZE,
+    uint BLOCK_K,
     GemmAPrologueKind A_PROLOGUE,
     uint A_GROUP_SIZE>
 VARIANTS(AT, bfloat)
@@ -76,7 +76,7 @@ VARIANTS(
     GemmBPrologueKind::ScaleZeroPointDequant,
     GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 2, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(BLOCK_K, 0, 32, 64, 128)
 VARIANTS(
     A_PROLOGUE,
     GemmAPrologueKind::FullPrecision,
@@ -93,12 +93,12 @@ CONSTRAINT(
      GEMM_TILING == GemmTiling::Tile64x64x256_Simdgroups2x2 ||
      GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
-CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT((BITS == 0) == (BLOCK_K == 0))
+CONSTRAINT((BITS == 2) == (BLOCK_K == 128))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 2 || BITS == 4)
 CONSTRAINT(
-    (BITS == 2) == (GROUP_SIZE == 128) &&
     (BITS != 2 || A_IS_INT8 ||
      (DT == "bfloat" &&
       (A_PROLOGUE == GemmAPrologueKind::PackedHalf || (!USE_MXU && !GEMM_SMALL_BATCH)))))
@@ -185,7 +185,7 @@ KERNEL(Gemm)(
 
   using LeftOperand = operands::
       LeftOperandFor<A_PROLOGUE, AT, ushort(A_GROUP_SIZE), A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && BITS == 4>;
-  using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(GROUP_SIZE), BT>;
+  using RightOperand = operands::RightOperandFor<B_PROLOGUE, ushort(BITS), ushort(BLOCK_K), BT>;
   static_assert(
       NEEDS_ASYMMETRIC_WEIGHT_CORRECTION == (A_IS_INT8 && RightOperand::NEEDS_CORRECTION),
       "kernel bindings and operand correction policy must agree"
