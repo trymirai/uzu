@@ -213,7 +213,7 @@ impl<B: Backend> ParameterTree<'_, B> {
             .map_err(ParameterLoaderError::BackendError)?;
         self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.loader.data_offset + start).await?;
         tensor.read.store(true, Ordering::Relaxed);
-        Ok(buffer.handoff())
+        buffer.handoff().map_err(ParameterLoaderError::BackendError)
     }
 
     pub async fn read_slice<T: DataTypeRepr>(

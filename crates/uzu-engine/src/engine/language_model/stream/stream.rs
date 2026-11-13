@@ -134,7 +134,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     .collect::<Box<[_]>>(),
             );
 
-            Some(context_ring.handoff())
+            Some(context_ring.handoff().map_err(LanguageModelStreamError::Backend)?)
         } else {
             None
         };

@@ -61,7 +61,7 @@ pub fn create_buffer_with_data<B: Backend, T: DataTypeRepr>(
     let mut buffer =
         context.create_buffer_cpu_gpu(buffer_size_bytes::<T>(data.len())).expect("Failed to create buffer");
     buffer.copyin(data);
-    buffer.handoff()
+    buffer.handoff().expect("Failed to hand off buffer")
 }
 
 pub fn buffer_to_vec<B: Backend, T: DataTypeRepr>(

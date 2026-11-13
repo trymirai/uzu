@@ -117,12 +117,12 @@ impl CpuBuffer for WebGPUDenseBufferCpuGpu {
 }
 
 impl GlobalBufferCpuGpu for WebGPUDenseBufferCpuGpu {
-    fn handoff(self) -> WebGPUDenseBufferGpu {
+    fn handoff(self) -> Result<WebGPUDenseBufferGpu, WebGPUError> {
         let gpu = WebGPUDenseBufferGpu {
             buffer: self.buffer.clone(),
             size: self.size,
         };
         drop(self);
-        gpu
+        Ok(gpu)
     }
 }
