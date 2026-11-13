@@ -131,16 +131,9 @@ impl<B: Backend> WeightMatrix<B> {
                 encoding: WeightEncoding::Dense,
             });
         };
-        let mode = match bits {
-            2 => QuantizationMode::U2,
-            4 => QuantizationMode::U4,
-            8 => QuantizationMode::U8,
-            _ => {
-                return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                    "{method} bits={bits}, group_size={group_size}"
-                )));
-            },
-        };
+        let mode = QuantizationMode::from_unsigned_bits(bits).ok_or_else(|| {
+            WeightMatrixError::UnsupportedConfiguration(format!("{method} bits={bits}, group_size={group_size}"))
+        })?;
         // Parameters swap the weight axes once K is grouped: output-input stores [G, N], input-output stores [N, G].
         let params_layout = match layout {
             Layout::OutputInput => QuantParamsLayout::GroupOutput,
