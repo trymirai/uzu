@@ -5,10 +5,11 @@ use ash::vk;
 use crate::{
     backends::{
         common::{
-            Buffer, BufferRef, CpuBuffer, GlobalGpuBuffer, GpuBuffer, SparseBuffer,
+            Buffer, BufferRef, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer,
+            GpuBuffer, SparseBuffer,
             allocator::{bump::BumpAllocation, pool::PoolAllocation},
         },
-        vulkan::{Error, VkContext, Vulkan},
+        vulkan::{Error, VkContext, VkDeviceCapabilities, Vulkan},
     },
     utils::downcast::downcast_ref,
 };
@@ -18,7 +19,6 @@ pub struct VkBuffer {
     allocation: vk_mem::Allocation,
     buffer: vk::Buffer,
     device_address: vk::DeviceAddress,
-    cpu_ptr: Option<NonNull<c_void>>,
     size: vk::DeviceSize,
 }
 
@@ -29,23 +29,28 @@ impl VkBuffer {
     pub fn new(
         context: Arc<VkContext>,
         size: usize,
-        memory: VkBufferMemory,
     ) -> Result<Arc<Self>, Error> {
+        Ok(Self::allocate(context, size, VkBufferMemory::Device)?.0)
+    }
+
+    fn allocate(
+        context: Arc<VkContext>,
+        size: usize,
+        memory: VkBufferMemory,
+    ) -> Result<(Arc<Self>, *mut c_void), Error> {
         let size = size as u64;
         let (buffer, allocation, info) = context.allocate_buffer(size, memory)?;
-        let cpu_ptr = (memory != VkBufferMemory::Device)
-            .then(|| NonNull::new(info.mapped_data).expect("VMA maps host-visible MAPPED allocations"));
         let device_address = unsafe {
             context.device().get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
         };
-        Ok(Arc::new(Self {
+        let buffer = Arc::new(Self {
             context,
             allocation,
             buffer,
             device_address,
-            cpu_ptr,
             size,
-        }))
+        });
+        Ok((buffer, info.mapped_data))
     }
 
     pub fn context(&self) -> &Arc<VkContext> {
@@ -70,8 +75,10 @@ impl VkBuffer {
     ) -> (&Arc<VkBuffer>, Range<u64>) {
         let (buffer, offset) = if let Some(buffer) = downcast_ref::<Arc<VkBuffer>>(buffer) {
             (buffer, 0)
-        } else if let Some(allocation) = downcast_ref::<BumpAllocation<Arc<VkBuffer>>>(buffer) {
-            (allocation.page(), allocation.range().start)
+        } else if let Some(buffer) = downcast_ref::<VkBufferCpuGpu>(buffer) {
+            (&buffer.buffer, 0)
+        } else if let Some(allocation) = downcast_ref::<BumpAllocation<VkBufferCpuGpu>>(buffer) {
+            (&allocation.page().buffer, allocation.range().start)
         } else if let Some(allocation) = downcast_ref::<PoolAllocation<Arc<VkBuffer>>>(buffer) {
             (allocation.page(), allocation.range().start)
         } else {
@@ -102,13 +109,63 @@ impl Buffer for Arc<VkBuffer> {
 
 impl GpuBuffer for Arc<VkBuffer> {}
 
-impl CpuBuffer for Arc<VkBuffer> {
-    fn cpu_ptr(&self) -> NonNull<c_void> {
-        self.cpu_ptr.expect("device-local Vulkan buffers are not CPU-accessible")
+impl GlobalGpuBuffer for Arc<VkBuffer> {}
+
+pub struct VkBufferCpuGpu {
+    buffer: Arc<VkBuffer>,
+    cpu_ptr: NonNull<c_void>,
+}
+
+unsafe impl Send for VkBufferCpuGpu {}
+unsafe impl Sync for VkBufferCpuGpu {}
+
+impl VkBufferCpuGpu {
+    pub fn new(
+        context: Arc<VkContext>,
+        size: usize,
+        memory: VkBufferMemory,
+    ) -> Result<Self, Error> {
+        let (buffer, mapped) = VkBuffer::allocate(context, size, memory)?;
+        Ok(Self {
+            buffer,
+            cpu_ptr: NonNull::new(mapped).expect("VMA maps host-visible MAPPED allocations"),
+        })
+    }
+
+    pub fn buffer(&self) -> &Arc<VkBuffer> {
+        &self.buffer
     }
 }
 
-impl GlobalGpuBuffer for Arc<VkBuffer> {}
+impl Buffer for VkBufferCpuGpu {
+    type Backend = Vulkan;
+
+    fn size(&self) -> usize {
+        Buffer::size(&self.buffer)
+    }
+}
+
+impl GpuBuffer for VkBufferCpuGpu {}
+
+impl CpuBuffer for VkBufferCpuGpu {
+    fn cpu_ptr(&self) -> NonNull<c_void> {
+        self.cpu_ptr
+    }
+}
+
+impl GlobalBufferCpuGpu for VkBufferCpuGpu {
+    fn handoff(self) -> Result<Arc<VkBuffer>, Error> {
+        let context = self.buffer.context();
+        if context.physical_device().capabilities.contains(VkDeviceCapabilities::UNIFIED_MEMORY) {
+            return Ok(self.buffer);
+        }
+        let mut device = VkBuffer::new(context.clone(), Buffer::size(&self))?;
+        let mut encoding = context.create_command_buffer(None, None)?;
+        encoding.encode_copy(&self, &mut device);
+        encoding.end_encoding().try_submit()?;
+        Ok(device)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VkBufferMemory {
