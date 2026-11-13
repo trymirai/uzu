@@ -3,7 +3,7 @@ use std::mem::size_of;
 use super::{LinearInput, LinearInputPreparation};
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
         kernel::{
             ActivationTransform,
             matmul::{ActivationFormat, MatmulA, packed_half_bytes},
@@ -104,17 +104,28 @@ impl<B: Backend> InputRht<B> {
     pub(super) fn prepare_in_place(
         &self,
         mut input: B::ScratchBuffer,
+        offset: usize,
         batch_dim: u32,
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
         if self.quantizer.as_ref().is_some_and(|kernel| kernel.format() == format) {
-            return self.prepare(&input, batch_dim, format, command_buffer);
+            return self.prepare((&input).subrange(offset..), batch_dim, format, command_buffer);
         }
 
         let input_dim = self.input_dim();
-        self.rht.encode_fp_in_place(&mut input, &self.rht_signs, None, batch_dim, input_dim, command_buffer);
-        Ok(MatmulA::full_precision(input))
+        self.rht.encode_fp_in_place(
+            (&mut input).subrange_mut(offset..),
+            &self.rht_signs,
+            None,
+            batch_dim,
+            input_dim,
+            command_buffer,
+        );
+        Ok(MatmulA::FullPrecision {
+            values: input,
+            offset,
+        })
     }
 
     fn input_dim(&self) -> u32 {

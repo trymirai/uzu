@@ -3,7 +3,7 @@ import { getPlatform } from "@/platform/platform-singleton";
 import { platformInfo } from "@/platform/platform-info";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
-import { SettingDivider, SettingRow } from "./setting-row";
+import { SettingRow } from "./setting-row";
 
 export function CliInstallSetting() {
   const [isInstalling, setIsInstalling] = useState(false);
@@ -38,7 +38,6 @@ export function CliInstallSetting() {
 
   return (
     <>
-      <SettingDivider />
       <SettingRow
         title="Command line tool"
         description="Install the mirai command to use Mirai from the terminal"

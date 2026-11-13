@@ -1,6 +1,6 @@
 import { twMerge } from "tailwind-merge";
 import { DataInteractive } from "@headlessui/react";
-import { IconCheckmark } from "../../icons/checkmark-icon";
+import { CheckmarkIcon } from "../../icons/checkmark-icon";
 import { CHECKBOX_SIZE, CHECKED_BG, CHECKED_BORDER, FOCUS_RING, UNCHECKED_BORDER } from "./constants";
 import type { CheckboxProps } from "./types";
 
@@ -36,7 +36,7 @@ export function Checkbox({
           aria-label={ariaLabel}
         />
       </DataInteractive>
-      <IconCheckmark
+      <CheckmarkIcon
         strokeWidth={2.5}
         size={sizeConfig.icon}
         className={twMerge(

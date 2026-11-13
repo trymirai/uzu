@@ -6,7 +6,7 @@ use crate::backends::common::{gpu_types::trellis::COLUMN_GROUP_COUNT, kernel::mi
 
 fn rotate_token(
     input: &[bf16],
-    rht_factors: &[f32],
+    rht_factors: &[i32],
     mixing: &[f32],
     mixing_dimension: usize,
 ) -> Vec<f32> {
@@ -18,7 +18,7 @@ fn rotate_token(
             .map(|hadamard_index| {
                 (0..mixing_dimension).fold(0.0f32, |accumulated, mixing_index| {
                     let column = hadamard_index * mixing_dimension + mixing_index;
-                    (input[column].to_f32() * rht_factors[column])
+                    (input[column].to_f32() * rht_factors[column] as f32)
                         .mul_add(mixing[output_mixing_index * mixing_dimension + mixing_index], accumulated)
                 })
             })
@@ -34,7 +34,7 @@ fn rotate_token(
 #[kernel(TrellisTransform)]
 pub fn trellis_transform(
     input: *const bf16,
-    rht_factors: *const f32,
+    rht_factors: *const i32,
     mixing: *const f32,
     activations: *mut i8,
     column_group_sums: *mut f32,

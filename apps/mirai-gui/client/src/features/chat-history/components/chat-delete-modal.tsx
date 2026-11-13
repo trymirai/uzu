@@ -19,9 +19,9 @@ export const ChatDeleteModal: React.FC<ChatDeleteModalProps> = ({
 }) => {
   const isBulk = typeof count === "number" && count > 0 && !chatName;
   const description = chatName
-    ? `Are you sure you want to delete chat "${chatName}"? This action cannot be undone.`
+    ? `“${chatName}” will be deleted from this device. This can’t be undone.`
     : isBulk
-      ? `Are you sure you want to delete ${count} ${count === 1 ? "chat" : "chats"}? This action cannot be undone.`
+      ? `${count} ${count === 1 ? "chat" : "chats"} will be deleted from this device. This can’t be undone.`
       : "";
 
   return (

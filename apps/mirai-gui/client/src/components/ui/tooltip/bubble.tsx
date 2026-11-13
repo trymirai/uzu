@@ -4,12 +4,27 @@ import type { TooltipProps } from "./types";
 
 type TooltipBubbleProps = {
   tooltipId: string;
+  side: NonNullable<TooltipProps["side"]>;
+  align: NonNullable<TooltipProps["align"]>;
+  variant: NonNullable<TooltipProps["variant"]>;
+  instant: boolean;
   content: TooltipProps["content"];
   floatingStyles: CSSProperties;
+  positioned: boolean;
   setFloating: (node: HTMLDivElement | null) => void;
 };
 
-export function TooltipBubble({ tooltipId, content, floatingStyles, setFloating }: TooltipBubbleProps) {
+export function TooltipBubble({
+  tooltipId,
+  side,
+  align,
+  variant,
+  instant,
+  content,
+  floatingStyles,
+  positioned,
+  setFloating,
+}: TooltipBubbleProps) {
   return (
     <div
       ref={setFloating}
@@ -18,14 +33,29 @@ export function TooltipBubble({ tooltipId, content, floatingStyles, setFloating 
       className="pointer-events-none fixed z-50"
       style={{
         ...floatingStyles,
-        opacity: 1,
+        // Hidden until it has been placed against its trigger, so it can't flash somewhere else.
+        visibility: positioned ? "visible" : "hidden",
       }}
     >
+      {/* The same floating surface as menus, so it matches the theme it appears in. */}
       <div
+        data-side={side}
         className={twMerge(
-          "rounded-md bg-surface-tertiary shadow-sm text-text-primary [font-variation-settings:'opsz'_18]",
-          "px-2 py-1 text-[11px] font-[450] leading-[1.3]",
-          "whitespace-nowrap",
+          "bg-surface-popover text-text-primary shadow-popover whitespace-nowrap tabular-nums",
+          // A panel matches the hover menus (12px corners, text 12px in from the edge); a label is a
+          // small tip.
+          variant === "panel"
+            ? "rounded-xl px-3 py-2.5"
+            : "rounded-lg px-2.5 py-1.5 text-[12px] font-[500] leading-[16px]",
+          // Grows from the trigger: its middle, or its corner when lined up with its edge.
+          side === "top"
+            ? align === "start"
+              ? "origin-bottom-left"
+              : "origin-bottom"
+            : align === "start"
+              ? "origin-top-left"
+              : "origin-top",
+          instant ? undefined : side === "top" ? "animate-uzu-tip-up" : "animate-uzu-tip-down",
         )}
       >
         {content}

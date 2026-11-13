@@ -16,7 +16,7 @@ use crate::{
         mlp::mixture_of_experts::MixtureOfExpertsConfig,
         weight_matrix::{
             AnyWeightMatrixSpec, Layout,
-            hybrid_spec::{HadamardSpec, HybridSpec},
+            hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
         },
     },
     data_type::DataType,
@@ -146,10 +146,11 @@ impl<B: Backend> MoeMlp<B> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_spec:
-                Some(HadamardSpec {
+                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
                     block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    processing_mode: IncoherenceProcessingMode::Input,
                     ..
-                }),
+                })),
             ..
         }) = gate_spec
         else {
@@ -302,10 +303,11 @@ impl<B: Backend> RoutedProjection<B> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_spec:
-                Some(HadamardSpec {
+                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
                     block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    processing_mode: IncoherenceProcessingMode::InputOutput,
                     ..
-                }),
+                })),
             ..
         }) = spec
         else {

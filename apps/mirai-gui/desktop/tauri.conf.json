@@ -29,6 +29,7 @@
     "icon": ["icons/icon.png", "icons/icon.icns"],
     "category": "public.app-category.productivity",
     "macOS": {
+      "files": { "Resources/Assets.car": "icons/Assets.car" },
       "signingIdentity": "-",
       "minimumSystemVersion": "26.4",
       "dmg": {

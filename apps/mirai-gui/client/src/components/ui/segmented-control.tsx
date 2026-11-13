@@ -16,8 +16,8 @@ export type SegmentedControlProps = {
   ariaLabel: string;
 };
 
-const CONTAINER_CLASSES =
-  "inline-flex w-fit h-7 items-center rounded-lg overflow-clip border border-border-default bg-transparent";
+// A pill track; the chosen segment sits raised on it, like a key pressed into place.
+const CONTAINER_CLASSES = "inline-flex w-fit h-8 items-center gap-0.5 rounded-full bg-control-fill p-0.5";
 
 export function SegmentedControl({ value, onChange, options, ariaLabel }: SegmentedControlProps) {
   const handleSelect = (option: SegmentedControlOption) => {
@@ -27,12 +27,13 @@ export function SegmentedControl({ value, onChange, options, ariaLabel }: Segmen
 
   return (
     <div role="radiogroup" aria-label={ariaLabel} className={CONTAINER_CLASSES}>
-      {options.map((option, index) => {
+      {options.map((option) => {
         const isSelected = option.value === value;
         const segmentClasses = twMerge(
-          "h-full px-2 inline-flex items-center gap-2 text-xs transition-colors select-none",
-          index > 0 ? "border-l border-border-default" : undefined,
-          isSelected ? "bg-surface-tertiary text-text-primary" : "text-text-muted hover:bg-surface-tertiary",
+          "h-full px-3 inline-flex items-center gap-2 rounded-full text-[13px] font-[450] transition-[background-color,color,box-shadow] duration-150 ease-out select-none outline-hidden focus-visible:shadow-focus",
+          isSelected
+            ? "bg-control-selected text-text-primary shadow-[0_1px_2px_rgb(0_0_0/0.08),0_0_0_0.5px_rgb(0_0_0/0.06)] dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)]"
+            : "text-text-muted hover:text-text-primary",
           option.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
         );
 

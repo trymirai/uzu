@@ -124,6 +124,12 @@ export const useUpdateStore = create<UpdateState>()((set, get) => ({
     get().watchDownload(version);
 
     const result = await updater.startUpdateDownload(version);
+    // A download is already running (a second start for the same update, e.g. an effect run
+    // twice): not a failure. Keep watching it, as after a webview reload.
+    if (!result.ok && result.error === "already-in-progress") {
+      await get()._reconcileDownload(version);
+      return;
+    }
     if (!result.ok) {
       get()._downloadListenersCleanup?.();
       set({ status: { phase: UpdatePhase.Idle, downloadError: result.error } });

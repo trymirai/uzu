@@ -1,9 +1,8 @@
 import { CopyButton } from "@/components/ui/copy-button";
-import { Button } from "@/components/ui/button";
 import { Button as HeadlessButton } from "@headlessui/react";
 import { TextArea } from "@/components/ui/text-area";
 import { writeItemsWithFocus } from "@/utils/clipboard";
-import { Pencil } from "lucide-react";
+import { PencilIcon } from "@/components/icons/app-icons";
 import { useId, useRef, useState } from "react";
 import { attachmentStorage } from "../../services/attachment-storage";
 import { AttachedFilesDisplay } from "../composer/attached-files-display";
@@ -64,23 +63,31 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
   };
 
   return (
-    <div className="group/user">
+    <div className="group/user relative">
       {hasAttachments && (
         <div className="mb-3 ml-auto w-fit">
           <AttachedFilesDisplay files={attachmentStorage.getFiles(attachmentIds ?? [])} />
         </div>
       )}
       {editing ? (
-        <div className="ml-auto flex w-full flex-col gap-3 rounded-lg bg-bg-hover p-3">
+        // Drawn like the message box below, since that's what it becomes for a moment: the same
+        // card, the text in the same place, and its actions in one row along the bottom.
+        <div className="ml-auto flex w-full flex-col rounded-[20px] bg-surface-elevated px-4 pt-4 pb-3 shadow-md transition-shadow duration-150 ease-out focus-within:shadow-lg dark:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.1)] dark:focus-within:shadow-[inset_0_0_0_0.5px_rgb(255_255_255/0.18)]">
           <TextArea
             aria-label="Edit message"
             aria-describedby={descriptionId}
             autoFocus
+            // Opens with the caret after the text, ready to add to it.
+            onFocus={(event) => {
+              const end = event.currentTarget.value.length;
+              event.currentTarget.setSelectionRange(end, end);
+            }}
             value={draft}
             onChange={setDraft}
             disabled={saving}
+            rows={1}
             maxHeightPx={320}
-            className="bg-transparent text-[15px] leading-[140%]"
+            className="bg-transparent text-[15px] leading-[1.5]"
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing) return;
               if (event.key === "Escape") {
@@ -92,29 +99,42 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
               }
             }}
           />
-          <p id={descriptionId} className="text-[12px] text-label-muted">
-            Saving removes all later messages.
-          </p>
           {error && (
-            <p role="alert" className="text-[13px] text-error">
+            <p role="alert" className="mt-2 text-[13px] text-error">
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button type="button" size="sm" kind="ghost" disabled={saving} onClick={cancel}>
-              Cancel
-            </Button>
-            <Button type="button" size="sm" disabled={!canSave} onClick={() => void save()}>
-              {saving ? "Saving..." : "Save & send"}
-            </Button>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <p id={descriptionId} className="min-w-0 text-[12px] leading-[1.4] text-label-muted text-pretty">
+              Saving removes all later messages.
+            </p>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={cancel}
+                className="h-7 rounded-full px-3 text-[13px] font-[450] text-text-secondary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill hover:text-text-primary focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!canSave}
+                onClick={() => void save()}
+                className="h-7 rounded-full bg-primary px-3 text-[13px] font-[500] text-primary-contrast outline-hidden transition-[background-color,scale] duration-150 ease-out hover:bg-primary-hover active:scale-[0.97] focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-40"
+              >
+                {saving ? "Saving…" : "Save & send"}
+              </button>
+            </div>
           </div>
         </div>
       ) : (
         <>
-          <div className="font-[350] text-label-title relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[5px] text-[15px] leading-[140%] px-2.5 py-[6px] bg-bg-hover ml-auto">
+          <div className="font-[400] text-user-bubble-text relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[18px] text-[15px] leading-[1.5] px-3.5 py-2 bg-user-bubble ml-auto">
             {text}
           </div>
-          <div className="mt-2 flex h-8 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100 [@media(hover:none)]:opacity-100">
+          {/* Floats under the bubble on hover rather than holding an empty row open below it. */}
+          <div className="absolute right-0 top-full z-10 mt-1 flex h-8 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100 [@media(hover:none)]:opacity-100">
             <CopyButton className="[&_svg]:size-4" onCopy={copy} />
             {onEdit && (
               <HeadlessButton
@@ -124,9 +144,9 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
                 title="Edit message"
                 disabled={!canEdit}
                 onClick={startEditing}
-                className="flex min-h-8 min-w-8 items-center justify-center rounded-[5px] p-[6px] text-label-muted outline-hidden transition-colors hover:bg-card-hover hover:text-label-title data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
+                className="flex min-h-8 min-w-8 items-center justify-center rounded-lg p-[6px] text-label-muted outline-hidden transition-colors hover:bg-card-hover hover:text-label-title data-[focus]:shadow-focus disabled:pointer-events-none disabled:opacity-50"
               >
-                <Pencil className="size-4" />
+                <PencilIcon size={16} />
               </HeadlessButton>
             )}
           </div>

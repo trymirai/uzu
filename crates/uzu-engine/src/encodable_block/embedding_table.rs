@@ -4,13 +4,18 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
-        gpu_types::{d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::InputEmbeddingLookupKernel,
+        gpu_types::{
+            d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            quantization_method::QuantizationMethod,
+        },
+        kernel::{
+            InputEmbeddingLookupKernel,
+            matmul::{MatmulB, QuantizedCorrection},
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
-        d4s4_spec::D4S4Spec,
-        hybrid_spec::{HadamardSpec, HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
@@ -107,26 +112,40 @@ impl<B: Backend> EmbeddingTable<B> {
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let (storage, output_hadamard_factors) = match spec {
             AnyWeightMatrixSpec::D4S4Spec(spec) => {
-                let (table, factors) = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec).await?;
+                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout).await?;
+                let factors = tree.read_buffer("output_hadamard_factors", &[embedding_dim], DataType::I32).await?;
                 (Storage::D4S4(table), Some(factors))
+            },
+            AnyWeightMatrixSpec::LatticeSpec(spec) => {
+                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout).await?;
+                (Storage::D4S4(table), None)
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
                 quantization_spec,
                 incoherence_spec:
-                    Some(HadamardSpec {
+                    Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
                         block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
                         processing_mode: IncoherenceProcessingMode::Output,
                         ..
-                    }),
+                    })),
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
-                let matrix = load_matrix(&tree.subtree("quantized"), *quantization_spec).await?;
-                if matrix.quantization().is_none() {
-                    return Err(EmbeddingTableError::UnsupportedConfiguration(
-                        "output-Hadamard factors require a quantized table".into(),
-                    ));
-                }
-                (Storage::Matrix(matrix), Some(read_output_signs(tree, embedding_dim).await?))
+                let storage = match *quantization_spec {
+                    AnyWeightMatrixSpec::LatticeSpec(spec) => Storage::D4S4(
+                        load_d4s4(&tree.subtree("quantized"), vocab_size, embedding_dim, data_type, spec.layout)
+                            .await?,
+                    ),
+                    spec => {
+                        let matrix = load_matrix(&tree.subtree("quantized"), spec).await?;
+                        if matrix.matmul_b().quantized().is_none() {
+                            return Err(EmbeddingTableError::UnsupportedConfiguration(
+                                "output-Hadamard factors require a quantized table".into(),
+                            ));
+                        }
+                        Storage::Matrix(matrix)
+                    },
+                };
+                (storage, Some(read_output_signs(tree, embedding_dim).await?))
             },
             spec @ AnyWeightMatrixSpec::HybridSpec(_) => {
                 return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
@@ -138,17 +157,18 @@ impl<B: Backend> EmbeddingTable<B> {
 
         let (table_kind, quantization) = match &storage {
             Storage::D4S4(_) => (EmbeddingTableKind::D4S4, None),
-            Storage::Matrix(matrix) => {
-                if let Some(info) = matrix.quantization() {
-                    (EmbeddingTableKind::Quantized, Some(info))
-                } else {
-                    (EmbeddingTableKind::Dense, None)
-                }
+            Storage::Matrix(matrix) => match matrix.matmul_b() {
+                MatmulB::Quantized(quantized) => (EmbeddingTableKind::Quantized, Some(quantized)),
+                _ => (EmbeddingTableKind::Dense, None),
             },
         };
-        let group_size = quantization.map(|info| info.group_size);
-        let mode = quantization.map(|info| info.mode);
-        let method = quantization.map(|info| info.method);
+        let group_size = quantization.as_ref().map(|quantized| quantized.group_size);
+        let mode = quantization.as_ref().map(|quantized| quantized.mode);
+        let method = quantization.as_ref().map(|quantized| match quantized.correction {
+            QuantizedCorrection::Symmetric => QuantizationMethod::ScaleSymmetric,
+            QuantizedCorrection::Biases(_) => QuantizationMethod::ScaleBias,
+            QuantizedCorrection::ZeroPoints(_) => QuantizationMethod::ScaleZeroPoint,
+        });
         let use_hadamard = output_hadamard_factors.is_some();
         let lookup = LookupKernel::<B>::new(context, data_type, table_kind, group_size, mode, method, use_hadamard)
             .map_err(EmbeddingTableError::BackendError)?;
@@ -205,11 +225,11 @@ async fn load_d4s4<B: Backend>(
     vocab_size: u32,
     embedding_dim: u32,
     data_type: DataType,
-    spec: D4S4Spec,
-) -> Result<(D4S4Table<B>, B::GlobalGpuBuffer), EmbeddingTableError<B>> {
-    if spec.layout != Layout::InputOutput || !embedding_dim.is_multiple_of(d4s4::COLUMNS_PER_LADDER_INDEX_BYTE) {
+    layout: Layout,
+) -> Result<D4S4Table<B>, EmbeddingTableError<B>> {
+    if layout != Layout::InputOutput || !embedding_dim.is_multiple_of(d4s4::COLUMNS_PER_LADDER_INDEX_BYTE) {
         return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
-            "{spec:?} with {data_type:?} and embedding dim {embedding_dim}"
+            "{layout:?} with {data_type:?} and embedding dim {embedding_dim}"
         )));
     }
     let read = async |name: &str, shape: &[u32], data_type| tree.read_buffer(name, shape, data_type).await;
@@ -227,8 +247,7 @@ async fn load_d4s4<B: Backend>(
         ladder,
         codebook,
     };
-    let factors = read("output_hadamard_factors", &[embedding_dim], DataType::I32).await?;
-    Ok((table, factors))
+    Ok(table)
 }
 
 pub(super) async fn read_output_signs<B: Backend>(

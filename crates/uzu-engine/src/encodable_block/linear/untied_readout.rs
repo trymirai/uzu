@@ -6,7 +6,7 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
-        hybrid_spec::{HadamardSpec, HybridSpec, IncoherenceProcessingMode},
+        hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
     encodable_block::linear::{
@@ -32,11 +32,11 @@ impl<B: Backend> UntiedReadout<B> {
         let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
             quantization_spec,
             incoherence_spec:
-                Some(HadamardSpec {
+                Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
                     block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
                     processing_mode: IncoherenceProcessingMode::Input,
                     ..
-                }),
+                })),
             ..
         }) = spec
         else {

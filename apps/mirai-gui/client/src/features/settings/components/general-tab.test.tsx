@@ -172,7 +172,7 @@ it("updates and persists chat width from General settings", () => {
   expect(screen.getByRole("radio", { name: "Medium" }).getAttribute("aria-checked")).toBe("true");
 
   for (const [label, width] of [
-    ["Narrow", 800],
+    ["Narrow", 768],
     ["Wide", 1200],
     ["Medium", 1000],
   ] as const) {

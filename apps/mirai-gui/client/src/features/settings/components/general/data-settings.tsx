@@ -6,7 +6,7 @@ import { exportAllChatsZip } from "@/features/chat/services/export-chats";
 import { platformInfo } from "@/platform/platform-info";
 import { useSettingsStore } from "@/stores/use-settings-store";
 import { ClearDataDialog } from "../clear-data-dialog";
-import { SettingDivider, SettingRow } from "./setting-row";
+import { SettingRow } from "./setting-row";
 
 export function DataSettings() {
   const [isExporting, setIsExporting] = useState(false);
@@ -40,7 +40,6 @@ export function DataSettings() {
 
   return (
     <>
-      <SettingDivider />
       <SettingRow
         title="Export all your chats"
         description="As Markdown files in a ZIP archive"
@@ -59,7 +58,6 @@ export function DataSettings() {
       />
       {platformInfo.features.logExport && (
         <>
-          <SettingDivider />
           <SettingRow
             title="Export logs"
             description="Save the current Mirai log file for debugging"
@@ -78,7 +76,6 @@ export function DataSettings() {
           />
         </>
       )}
-      <SettingDivider />
       <SettingRow
         title="Clear data"
         description="Delete chats, models, or logs"

@@ -12,30 +12,21 @@ type SegmentProps = {
   disabled?: boolean;
   children: React.ReactNode;
   ariaLabel?: string;
-  leftDivider?: boolean;
+  /** A square segment holding just an icon. */
+  icon?: boolean;
 };
 
+// The same filled pill track as the search field and the segmented control beside it; segments are
+// pills on it that only show a fill under the pointer.
 const Base: React.FC<GroupButtonProps> = ({ className, children }) => {
   return (
-    <div
-      className={twMerge(
-        "h-8 flex items-center rounded-lg overflow-clip border border-cell-border bg-transparent",
-        className,
-      )}
-    >
+    <div className={twMerge("inline-flex h-8 items-center gap-0.5 rounded-full bg-control-fill p-0.5", className)}>
       {children}
     </div>
   );
 };
 
-const Segment: React.FC<SegmentProps> = ({
-  className,
-  onClick,
-  disabled = false,
-  children,
-  ariaLabel,
-  leftDivider = false,
-}) => {
+const Segment: React.FC<SegmentProps> = ({ className, onClick, disabled = false, children, ariaLabel, icon }) => {
   return (
     <button
       type="button"
@@ -46,10 +37,10 @@ const Segment: React.FC<SegmentProps> = ({
       }}
       disabled={disabled}
       className={twMerge(
-        "px-2 h-8 flex items-center gap-2 transition-colors select-none",
-        "disabled:opacity-50 disabled:cursor-not-allowed",
-        "hover:bg-card-hover",
-        leftDivider && "border-l-[0.5px] border-button-border",
+        "flex h-7 items-center gap-2 rounded-full text-[13px] font-[450] text-text-muted outline-hidden select-none",
+        "transition-[background-color,color] duration-150 ease-out hover:bg-control-fill-hover hover:text-text-primary focus-visible:shadow-focus",
+        "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-muted",
+        icon ? "w-7 justify-center" : "pl-2 pr-3",
         className,
       )}
     >

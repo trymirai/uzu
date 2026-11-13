@@ -1,8 +1,8 @@
 import type { SVGProps } from "react";
 
-export type IconPlayFilledProps = SVGProps<SVGSVGElement> & { size?: number; color?: string };
+export type PlayIconProps = SVGProps<SVGSVGElement> & { size?: number; color?: string };
 
-export function IconPlayFilled({ size = 16, color = "currentColor", ...props }: IconPlayFilledProps) {
+export function PlayIcon({ size = 16, color = "currentColor", ...props }: PlayIconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
       <path

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { toast } from "react-hot-toast";
+import { useToast } from "@/components/ui/toast/use-toast";
 import { dismissUpdateToast, showReadyUpdateToast } from "@/components/update-toast/notifications";
 import { UpdateCheckOutcome, UpdatePhase, useUpdateStore } from "@/stores/use-update-store";
 
@@ -27,6 +27,7 @@ const startUpdateChecks = (): (() => void) => {
 };
 
 export const useUpdateInitialization = (enabled: boolean = true) => {
+  const toast = useToast();
   const status = useUpdateStore((s) => s.status);
   const { startDownload, applyUpdate, dismiss } = useUpdateStore.getState();
 
@@ -37,7 +38,9 @@ export const useUpdateInitialization = (enabled: boolean = true) => {
     if (status.phase === UpdatePhase.Idle) {
       dismissUpdateToast(UPDATE_TOAST_ID);
       if (status.downloadError) {
-        toast.error(`Update download failed: ${status.downloadError}`);
+        // In the app's own toast, not react-hot-toast's default one; the raw error code is for the log.
+        console.warn("[update] download failed", status.downloadError);
+        toast.error("Couldn't download the update", { id: "update-download-failed" });
         useUpdateStore.setState({ status: { phase: UpdatePhase.Idle } });
       }
       return;
@@ -57,5 +60,5 @@ export const useUpdateInitialization = (enabled: boolean = true) => {
         onLater: () => dismiss(),
       });
     }
-  }, [status, startDownload, applyUpdate, dismiss]);
+  }, [status, startDownload, applyUpdate, dismiss, toast]);
 };

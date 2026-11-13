@@ -11,6 +11,10 @@ export type HoverPopoverProviderProps = {
 
 export type HoverPopoverProps = {
   items: ReadonlyArray<HoverPopoverItem>;
+  /** Rows under the list that stay put while it scrolls, e.g. "Download models". */
+  footerItems?: ReadonlyArray<HoverPopoverItem>;
+  /** How many rows of `items` show in full before the list scrolls; half of the next one peeks. */
+  maxVisibleItems?: number;
   trigger: ReactElement;
   side?: HoverPopoverSide;
   align?: HoverPopoverAlign;
@@ -20,6 +24,8 @@ export type HoverPopoverPayload = {
   id: string;
   triggerNode: HTMLButtonElement;
   items: ReadonlyArray<HoverPopoverItem>;
+  footerItems?: ReadonlyArray<HoverPopoverItem>;
+  maxVisibleItems?: number;
   side: HoverPopoverSide;
   align: HoverPopoverAlign;
 };

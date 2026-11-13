@@ -47,3 +47,10 @@ it("still writes a clear typed while the previous save is in flight", async () =
   await Promise.resolve();
   expect(onSave).toHaveBeenCalledTimes(2);
 });
+
+it("offers to add instructions until some are saved, then to change them", () => {
+  const view = render(<GlobalInstructions instructions="" onSave={vi.fn(async () => true)} />);
+  expect(screen.getByRole("button", { name: /Add instructions to all chats/ })).toBeTruthy();
+  view.rerender(<GlobalInstructions instructions="Be brief" onSave={vi.fn(async () => true)} />);
+  expect(screen.getByRole("button", { name: /Change instructions for all chats/ })).toBeTruthy();
+});

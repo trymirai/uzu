@@ -21,7 +21,7 @@ export const ThemeSelector = ({ value, onChange }: Props) => {
       <ListboxButton
         type="button"
         aria-label={`Theme: ${label}`}
-        className="flex h-8 min-w-[110px] items-center justify-between gap-3 rounded-md bg-surface-tertiary px-2.5 text-[13px] font-[450] leading-[1.3] text-text-muted outline-hidden hover:bg-control-surface-hover hover:text-text-primary data-[headlessui-state~=open]:bg-control-surface-active data-[headlessui-state~=open]:text-text-primary data-[focus]:bg-control-surface-hover data-[focus]:text-text-primary data-[focus]:shadow-focus"
+        className="flex h-8 min-w-[110px] items-center justify-between gap-3 rounded-full bg-control-fill px-3 text-[13px] font-[450] leading-[1.3] text-text-primary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill-hover data-[headlessui-state~=open]:bg-control-fill-hover data-[focus]:bg-control-fill-hover data-[focus]:shadow-focus"
       >
         <span>{label}</span>
         <ChevronDown size={16} aria-hidden="true" />
@@ -37,7 +37,7 @@ export const ThemeSelector = ({ value, onChange }: Props) => {
       >
         <div className="absolute right-0 top-full z-50 origin-top-right pt-1">
           <ListboxOptions className="outline-hidden">
-            <SelectionPanel className="min-w-[160px] origin-top-right py-1.5">
+            <SelectionPanel className="min-w-[160px] origin-top-right py-1">
               <SelectionSection>
                 {THEMES.map((theme) => (
                   <ListboxOption key={theme.value} value={theme.value} as={Fragment}>

@@ -39,7 +39,7 @@ export function AutoEjectSetting({
           inputMode="numeric"
           value={minutesInput}
           className={twMerge(
-            "max-w-[72px] px-2 py-1 text-[13px] border border-cell-border bg-background placeholder:text-label-muted rounded-[8px] focus:outline-hidden",
+            "h-8 w-[72px] px-3 text-[13px] tabular-nums text-text-primary rounded-lg border-[0.5px] border-transparent bg-control-fill placeholder:text-label-muted outline-hidden transition-colors duration-150 ease-out focus:border-border-outlined",
             !autoEjectEnabled ? "opacity-60 cursor-not-allowed" : "",
           )}
           onChange={(e) => {
