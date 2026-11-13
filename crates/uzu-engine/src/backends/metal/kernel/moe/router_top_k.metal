@@ -20,12 +20,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
   const device T* row = logits + token_idx * num_experts;
   uint keys[MOE_ROUTER_MAX_PER_LANE];
   for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
-    const uint expert_idx = lane + i * METAL_SIMD_SIZE;
-    if (expert_idx < num_experts) {
-      keys[i] = top_k_score_key(float(row[expert_idx]));
-    } else {
-      keys[i] = 0;
-    }
+    keys[i] = top_k_score_key(float(row[lane + i * METAL_SIMD_SIZE]));
   }
 
   float chosen_val = 0.0f;
@@ -37,7 +32,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
     uint best_idx = 0xFFFFFFFFu;
     for (uint i = 0; i < MOE_ROUTER_MAX_PER_LANE; ++i) {
       const uint expert_idx = lane + i * METAL_SIMD_SIZE;
-      if (expert_idx < num_experts && (picked & (1u << i)) == 0) {
+      if ((picked & (1u << i)) == 0) {
         if (keys[i] > best_key || (keys[i] == best_key && expert_idx < best_idx)) {
           best_key = keys[i];
           best_idx = expert_idx;
