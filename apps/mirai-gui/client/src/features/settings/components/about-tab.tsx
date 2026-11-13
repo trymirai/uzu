@@ -1,6 +1,4 @@
-import { ArrowUpRight, ChevronRight } from "lucide-react";
-import { Link } from "@tanstack/react-router";
-import { platformInfo } from "@/platform/platform-info";
+import { ArrowUpRight } from "lucide-react";
 import { UzuCat } from "@/components/uzu-cat";
 import { SettingGroup } from "./general/setting-row";
 import { Button } from "@/components/ui/button";
@@ -65,25 +63,6 @@ function LinkRow({ title, description, url }: { title: string; description?: str
   );
 }
 
-/** Opens the first-run welcome again, to see what a new install shows. */
-function WelcomeRow() {
-  return (
-    <Link
-      to="/welcome"
-      className="group flex items-center justify-between gap-4 px-4 py-3.5 transition-colors duration-150 ease-out hover:bg-surface-tertiary outline-hidden focus-visible:shadow-focus"
-    >
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-[14px] font-[500] leading-[1.35] text-label-title">Welcome screen</span>
-        <span className="text-[13px] leading-[1.45] text-label-muted text-pretty">What a new install shows first.</span>
-      </span>
-      <ChevronRight
-        aria-hidden
-        className="size-4 shrink-0 text-label-muted transition-[color,translate] duration-150 ease-out group-hover:text-label-title group-hover:translate-x-px"
-      />
-    </Link>
-  );
-}
-
 export default function AboutTab() {
   return (
     <div className="flex flex-col gap-7 pb-8">
@@ -121,13 +100,6 @@ export default function AboutTab() {
           <LinkRow key={link.url} title={link.title} url={link.url} />
         ))}
       </SettingGroup>
-
-      {/* The welcome belongs to the desktop app, which is where it appears on first launch. */}
-      {platformInfo.features.localModelDownloads ? (
-        <SettingGroup title="Preview">
-          <WelcomeRow />
-        </SettingGroup>
-      ) : null}
     </div>
   );
 }
