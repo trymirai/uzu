@@ -1,3 +1,6 @@
+// The Vulkan backend records no timestamps.
+#![cfg(not(backend = "vulkan"))]
+
 use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 

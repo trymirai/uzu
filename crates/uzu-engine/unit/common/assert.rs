@@ -36,3 +36,20 @@ pub fn assert_eq_float<T: DataTypeRepr + Float + Display>(
         );
     }
 }
+
+pub fn assert_parity<T: DataTypeRepr + Float>(
+    label: &str,
+    reference: &[T],
+    actual: &[T],
+    rel_tol: f64,
+    abs_tol: f64,
+) {
+    assert_eq!(reference.len(), actual.len(), "{label}: length mismatch");
+    for (i, (&expected, &actual)) in reference.iter().zip(actual).enumerate() {
+        let expected = expected.to_f32().unwrap();
+        let actual = actual.to_f32().unwrap();
+        let diff = f64::from((expected - actual).abs());
+        let tolerance = abs_tol.max(f64::from(expected.abs()) * rel_tol);
+        assert!(diff <= tolerance, "{label}[{i}]: expected {expected}, got {actual}, diff {diff} > {tolerance}");
+    }
+}

@@ -7,6 +7,7 @@ mod kernel;
 mod vk_compute_pipeline;
 mod vk_context;
 mod vk_instance;
+mod vulkan;
 
 pub use buffer::*;
 pub use command_buffer::*;
@@ -16,3 +17,4 @@ pub use kernel::*;
 pub use vk_compute_pipeline::{VkComputePipeline, VkComputePipelineKey, VkPipelines};
 pub use vk_context::VkContext;
 pub use vk_instance::VkInstance;
+pub use vulkan::Vulkan;
