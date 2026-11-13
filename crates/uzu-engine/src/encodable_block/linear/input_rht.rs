@@ -12,7 +12,7 @@ use crate::{
     data_type::DataType,
 };
 
-pub(super) struct InputRht<B: Backend> {
+pub struct InputRht<B: Backend> {
     rht_signs: B::GlobalGpuBuffer,
     rht: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,

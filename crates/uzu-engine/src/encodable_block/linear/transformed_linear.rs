@@ -22,11 +22,7 @@ use crate::{
     safetensors::ParameterTree,
 };
 
-pub struct TransformedLinear<B: Backend> {
-    transform: Transform<B>,
-}
-
-enum Transform<B: Backend> {
+pub enum TransformedLinear<B: Backend> {
     Hadamard {
         input_rht: InputRht<B>,
         matrix: LinearMatmul<B>,
@@ -173,15 +169,13 @@ impl<B: Backend> TransformedLinear<B> {
                 Box::new([load_matrix(output_dimension, spec, &weights_tree.subtree("quantized")).await?]) as Box<[_]>
             },
         };
-        Ok(Self {
-            transform: Transform::Kronecker {
-                kernel,
-                signs,
-                orthogonal_factor,
-                matrices,
-                input_dimension,
-                output_dimension,
-            },
+        Ok(Self::Kronecker {
+            kernel,
+            signs,
+            orthogonal_factor,
+            matrices,
+            input_dimension,
+            output_dimension,
         })
     }
 
@@ -282,11 +276,9 @@ impl<B: Backend> TransformedLinear<B> {
         let input_rht =
             InputRht::new(input_data_type, input_preparation, true, context).map_err(LinearBlockError::Backend)?;
 
-        Ok(Self {
-            transform: Transform::Hadamard {
-                input_rht,
-                matrix: inner_linear,
-            },
+        Ok(Self::Hadamard {
+            input_rht,
+            matrix: inner_linear,
         })
     }
 }
@@ -299,8 +291,8 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("linear (transformed)");
-        match &self.transform {
-            Transform::Hadamard {
+        match self {
+            Self::Hadamard {
                 input_rht,
                 matrix,
             } => {
@@ -318,7 +310,7 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
                 };
                 matrix.encode_input(input, batch_dim, command_buffer)
             },
-            Transform::Kronecker {
+            Self::Kronecker {
                 kernel,
                 signs,
                 orthogonal_factor,
