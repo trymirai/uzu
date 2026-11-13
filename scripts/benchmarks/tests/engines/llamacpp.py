@@ -4,10 +4,10 @@ import os
 from pathlib import Path
 
 import pytest
+from wsl import linux_command
 
 from .engine_tests import EngineTests
 
-ROOT = Path(__file__).resolve().parents[2]
 MODEL = "unsloth/Qwen3.5-0.8B-GGUF:Q4_K_M"
 
 
@@ -32,4 +32,5 @@ class TestLlamaCpp(EngineTests):
             if not binary.is_file() or not os.access(binary, os.X_OK):
                 raise pytest.UsageError(f"--llamacpp-binary is not an executable file: {binary}")
             return [str(binary), *args]
-        return [str(ROOT / "engine-llamacpp/run.sh"), *args]
+        # On Windows run.sh builds and runs with CUDA inside WSL, from the benchmarks directory.
+        return linux_command(["bash", "engine-llamacpp/run.sh", *args])

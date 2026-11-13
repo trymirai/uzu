@@ -2,6 +2,8 @@
 
 #include <unistd.h>
 
+#include <cinttypes>
+#include <fstream>
 #include <glaze/glaze.hpp>
 #include <iostream>
 #include <stdexcept>
@@ -32,12 +34,28 @@ std::FILE* redirect_stdout_to_stderr() {
 
 memory_counters_t collect_memory_counters() {
     memory_counters_t memory_counters{};
+#ifdef __APPLE__
     const kern_return_t result = get_memory_counters(&memory_counters, false);
     if (result != KERN_SUCCESS) {
         throw std::runtime_error(
             std::string{"Failed to collect memory counters: "} + memory_counters_error_string(result)
         );
     }
+#else
+    // Private anonymous memory including swap as the footprint, and the resident set, as the Python adapters report.
+    std::ifstream status("/proc/self/status");
+    uint64_t anonymous = 0, swap = 0, resident = 0;
+    for (std::string line; std::getline(status, line);) {
+        std::sscanf(line.c_str(), "RssAnon: %" SCNu64, &anonymous);
+        std::sscanf(line.c_str(), "VmSwap: %" SCNu64, &swap);
+        std::sscanf(line.c_str(), "VmRSS: %" SCNu64, &resident);
+    }
+    if (resident == 0) {
+        throw std::runtime_error("Failed to read memory counters from /proc/self/status");
+    }
+    memory_counters.phys_footprint = (anonymous + swap) * 1024;
+    memory_counters.resident_size = resident * 1024;
+#endif
     return memory_counters;
 }
 
@@ -78,6 +96,9 @@ void run_loop(
         try {
             const auto request = get_request_from_json(line);
             validate_request(request);
+            if (request.reasoning_effort.has_value() && !engine.supports_reasoning_effort()) {
+                throw std::runtime_error("This engine does not support reasoning_effort");
+            }
 
             const auto responses = engine.execute(request);
             if (const auto error = glz::write_json(responses, response_json)) {

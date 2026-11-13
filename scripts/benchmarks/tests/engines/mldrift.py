@@ -1,8 +1,8 @@
 """Launch the ML Drift adapter, which builds the patched runner through run.sh."""
 
 import pytest
+from engine_process import EngineProcess
 
-from .engine_process import EngineProcess
 from .engine_tests import EngineTests
 
 MODEL = "Qwen/Qwen3-0.6B"

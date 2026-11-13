@@ -53,4 +53,21 @@ impl Section {
     pub fn all() -> [Section; 3] {
         [Section::Installed, Section::Downloading, Section::Available]
     }
+
+    /// The first section from `self` on, going by `step`, that lists a model, so focus never rests on an empty list;
+    /// `self` when none does.
+    pub fn first_with_models(
+        self,
+        step: fn(&Self) -> Self,
+        count: impl Fn(Self) -> usize,
+    ) -> Self {
+        std::iter::successors(Some(self), |section| Some(step(section)))
+            .take(Self::all().len())
+            .find(|section| count(*section) > 0)
+            .unwrap_or(self)
+    }
 }
+
+#[cfg(test)]
+#[path = "../../unit/storage/sections_test.rs"]
+mod tests;

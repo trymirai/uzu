@@ -4,9 +4,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::Frame,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph},
 };
 use shoji::types::model::ModelIdentifier;
+use unicode_width::UnicodeWidthStr;
 use uzu::storage::DownloadPhase;
 
 use super::{
@@ -24,6 +25,9 @@ pub fn draw(
         Ok(guard) => guard.clone(),
         Err(_) => return, // Skip frame if locked
     };
+    app.active_section = app.active_section.first_with_models(Section::next, |section| {
+        ModelOrganizer::filter_for_section(&models_snapshot, section).len()
+    });
 
     // Main layout
     let chunks = Layout::default()
@@ -63,16 +67,21 @@ fn render_section(
     }
 
     // Regular list rendering
+    let name_width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = section_models
         .iter()
-        .map(|(id, model_with_state)| match &model_with_state.state.phase {
-            DownloadPhase::Initializing {} => ListItem::new(format!("{} (Checking…)", id)),
-            DownloadPhase::Downloaded {} => ListItem::new(format!("✓ {}", id)),
-            DownloadPhase::NotDownloaded {} => {
-                let size_mb = model_with_state.state.total_bytes as f64 / 1_000_000.0;
-                ListItem::new(format!("{} ({:.1} MB)", id, size_mb))
-            },
-            _ => ListItem::new(id.clone()),
+        .map(|(id, model_with_state)| {
+            let (prefix, suffix) = match &model_with_state.state.phase {
+                DownloadPhase::Initializing {} => ("", " (Checking…)".to_string()),
+                DownloadPhase::Downloaded {} => ("✓ ", String::new()),
+                DownloadPhase::NotDownloaded {} => {
+                    let size_mb = model_with_state.state.total_bytes as f64 / 1_000_000.0;
+                    ("", format!(" ({:.1} MB)", size_mb))
+                },
+                _ => ("", String::new()),
+            };
+            let id = truncate_middle(id, name_width.saturating_sub(prefix.width() + suffix.width()));
+            ListItem::new(format!("{prefix}{id}{suffix}"))
         })
         .collect();
 
@@ -94,19 +103,8 @@ fn render_section(
         )
         .highlight_style(highlight_style);
 
-    // Update list state
     let state = app.list_states.get_mut(&section).unwrap();
-
-    if section_models.is_empty() {
-        state.select(None);
-    } else if state.selected().is_none() {
-        state.select(Some(0));
-    } else if let Some(selected) = state.selected()
-        && selected >= section_models.len()
-    {
-        state.select(Some(section_models.len().saturating_sub(1)));
-    }
-
+    update_list_window(state, section_models.len(), area.height.saturating_sub(2) as usize);
     frame.render_stateful_widget(list, area, state);
 }
 
@@ -137,14 +135,9 @@ fn render_downloading_section(
     let visible_count = (available_height / model_height).min(section_models.len());
 
     let state = app.list_states.get_mut(&Section::Downloading).unwrap();
-    let selected = state.selected().unwrap_or(0);
-
-    // Scroll to keep selection visible
-    let scroll_offset = if selected >= visible_count {
-        selected - visible_count + 1
-    } else {
-        0
-    };
+    update_list_window(state, section_models.len(), visible_count);
+    let selected = state.selected();
+    let scroll_offset = state.offset();
 
     let constraints: Vec<Constraint> = (0..visible_count).map(|_| Constraint::Length(model_height as u16)).collect();
 
@@ -162,7 +155,7 @@ fn render_downloading_section(
         }
 
         let (id, model_with_state) = &section_models[model_idx];
-        let is_selected = model_idx == selected;
+        let is_selected = selected == Some(model_idx);
 
         render_downloading_model(frame, *chunk, id, model_with_state, is_selected);
     }
@@ -195,13 +188,14 @@ fn render_downloading_model(
         } => (format!(" [ERROR: {message}]"), Color::Red, Color::Red),
         DownloadPhase::NotDownloaded {} | DownloadPhase::Downloaded {} => (String::new(), Color::Gray, Color::White),
     };
-    let available_width = area.width.saturating_sub(2) as usize;
-    let name = truncate_name_for_label(id, &info, available_width, is_selected);
-    let label = if is_selected {
-        format!("▶ {name}{info}")
+    let indicator = if is_selected {
+        "▶ "
     } else {
-        format!("{name}{info}")
+        ""
     };
+    let available_width = area.width.saturating_sub(2) as usize;
+    let name = truncate_middle(id, available_width.saturating_sub(indicator.width() + info.width()));
+    let label = format!("{indicator}{name}{info}");
     let border_color = if is_selected {
         selected_border
     } else {
@@ -245,41 +239,51 @@ fn render_help(
     frame.render_widget(help, area);
 }
 
-/// Truncate name to fit with progress info
-fn truncate_name_for_label(
-    name: &str,
-    progress_info: &str,
-    available_width: usize,
-    is_selected: bool,
-) -> String {
-    // Account for selection indicator "▶ " if selected
-    let indicator_len = if is_selected {
-        2
-    } else {
-        0
-    };
-    let progress_len = progress_info.len();
-
-    // Calculate max name length
-    let max_name_len = available_width.saturating_sub(indicator_len).saturating_sub(progress_len);
-
-    truncate_text(name, max_name_len)
+/// Stores the selection and scroll offset `list_window` gives the state's list.
+fn update_list_window(
+    state: &mut ListState,
+    count: usize,
+    visible: usize,
+) {
+    let (selected, offset) = list_window(state.selected(), state.offset(), count, visible);
+    state.select(selected);
+    *state.offset_mut() = offset;
 }
 
-/// Truncate text to fit within max_len, adding "..." if needed
-fn truncate_text(
+/// The selection and scroll offset of `count` rows with `visible` on screen: the first row is selected when none is,
+/// the selection stays in range and on screen, and the list never scrolls past its last row.
+fn list_window(
+    selected: Option<usize>,
+    offset: usize,
+    count: usize,
+    visible: usize,
+) -> (Option<usize>, usize) {
+    if count == 0 {
+        return (None, 0);
+    }
+    let visible = visible.max(1);
+    let selected = selected.unwrap_or(0).min(count - 1);
+    let offset = offset.min(selected).max((selected + 1).saturating_sub(visible)).min(count.saturating_sub(visible));
+    (Some(selected), offset)
+}
+
+/// `text` cut in the middle with an ellipsis to fit `max_width` columns: model IDs differ at their ends.
+fn truncate_middle(
     text: &str,
-    max_len: usize,
+    max_width: usize,
 ) -> String {
-    if text.len() <= max_len {
+    let characters: Vec<char> = text.chars().collect();
+    if characters.len() <= max_width {
         return text.to_string();
     }
-
-    if max_len <= 3 {
-        return text.chars().take(max_len).collect();
-    }
-
-    // Reserve 3 chars for "..."
-    let truncate_at = max_len.saturating_sub(3);
-    format!("{}...", text.chars().take(truncate_at).collect::<String>())
+    let kept = max_width.saturating_sub(1);
+    let head = kept.div_ceil(2);
+    let tail = kept - head;
+    let head: String = characters[..head].iter().collect();
+    let tail: String = characters[characters.len() - tail..].iter().collect();
+    format!("{head}…{tail}")
 }
+
+#[cfg(test)]
+#[path = "../../unit/storage/ui_test.rs"]
+mod tests;

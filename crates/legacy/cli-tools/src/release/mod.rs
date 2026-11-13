@@ -9,10 +9,6 @@ pub use version::bump_workspace_version;
 
 use crate::{
     configs::{Paths, PlatformsConfig, WorkspaceManifest},
-    languages::{
-        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
-        WasmLanguageBackend,
-    },
     sync::run_sync,
     types::{Command, Language},
 };
@@ -46,22 +42,8 @@ pub fn run_release(
         if *language == Language::Wasm {
             continue;
         }
-        let backend = backend_for_language(*language, platforms.clone());
-        backend.release(version, release_path)?;
+        language.backend(platforms.clone()).release(version, release_path)?;
     }
 
     Ok(())
-}
-
-fn backend_for_language(
-    language: Language,
-    config: PlatformsConfig,
-) -> Box<dyn LanguageBackend> {
-    match language {
-        Language::Rust => Box::new(RustLanguageBackend::new(config)),
-        Language::Python => Box::new(PythonLanguageBackend::new(config)),
-        Language::Swift => Box::new(SwiftLanguageBackend::new(config)),
-        Language::TypeScript => Box::new(TypeScriptLanguageBackend::new(config)),
-        Language::Wasm => Box::new(WasmLanguageBackend::new(config)),
-    }
 }

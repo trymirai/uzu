@@ -61,6 +61,7 @@ You can run any example via `cargo tools example` \<{% for language in languages
 `uzu` is a native Rust crate with bindings available for:
 
 - `Swift` via [uniffi-rs](https://github.com/mozilla/uniffi-rs)
+- `Kotlin` via [uniffi-rs](https://github.com/mozilla/uniffi-rs)
 - `Python` via [pyo3](https://github.com/PyO3/pyo3)
 - `TypeScript` via [napi-rs](https://github.com/napi-rs/napi-rs)
 
@@ -102,7 +103,7 @@ cargo run --release -p cli
 
 On Linux and Windows this runs on Vulkan. The CLI names the backend it runs on when it starts.
 
-This launches an interactive app where you can browse, download, and interact with models.
+This launches an interactive app where you can browse, download, and interact with models. On Windows it drops emoji typed or pasted into it: crossterm 0.29 does not pair the UTF-16 halves the console sends with a key release between them.
 
 You can also preselect a model with `--model`, passing its identifier or repository id:
 
@@ -123,6 +124,14 @@ On Linux, `nix develop` provides everything but the GPU driver. To build the CLI
 
 ```bash
 cargo run --release -p cli --no-default-features --features cpu
+```
+
+A Windows release build that runs without the Visual C++ Redistributable links the C and C++ runtimes statically. Set the flag for the target alone and name the target, so build scripts keep the dynamic runtime: Windows Defender quarantines statically linked build scripts as a false positive.
+
+```powershell
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
+cargo build --release -p cli --target x86_64-pc-windows-msvc  # target\x86_64-pc-windows-msvc\release\cli.exe
+Remove-Item Env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS
 ```
 
 ## Benchmarks

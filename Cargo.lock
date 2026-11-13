@@ -679,6 +679,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uzu",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -1315,6 +1316,7 @@ dependencies = [
  "indoc",
  "iocraft",
  "jsonschema",
+ "kiban",
  "nagare",
  "ratatui",
  "rocket",
@@ -1358,6 +1360,7 @@ dependencies = [
  "tokio",
  "toml 1.1.8+spec-1.1.0",
  "toml_edit 0.25.17+spec-1.1.0",
+ "uniffi",
  "walkdir",
 ]
 
@@ -4284,6 +4287,7 @@ name = "kiban"
 version = "0.6.17"
 dependencies = [
  "async-trait",
+ "dunce",
  "futures-util",
  "tokio",
  "wasm-bindgen",
@@ -9944,12 +9948,14 @@ dependencies = [
  "indexmap 2.14.2",
  "indicatif",
  "inventory",
+ "jni 0.22.4",
  "kiban",
  "mock-registry",
  "nagare",
  "napi",
  "napi-build",
  "napi-derive",
+ "ndk-context",
  "objc2",
  "objc2-foundation",
  "parking_lot",
@@ -9961,6 +9967,7 @@ dependencies = [
  "reqwest 0.13.5",
  "rodio",
  "rstest",
+ "rustls-platform-verifier",
  "schemars 1.2.3",
  "serde",
  "serde_json",

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use futures_util::StreamExt;
 use ratatui::widgets::ListState;
 use shoji::types::model::{Model, ModelIdentifier};
@@ -47,6 +47,8 @@ pub struct App {
     pub active_section: Section,
     pub list_states: HashMap<Section, ListState>,
     pub should_quit: bool,
+    /// The model `x` asked to delete, until the next key confirms or keeps it.
+    pending_delete: Option<ModelIdentifier>,
     state_listener_handle: Arc<TokioMutex<Option<JoinHandle<()>>>>,
     tokio_handle: tokio::runtime::Handle,
 }
@@ -69,6 +71,7 @@ impl App {
             active_section: Section::Available,
             list_states,
             should_quit: false,
+            pending_delete: None,
             state_listener_handle: Arc::new(TokioMutex::new(None)),
             tokio_handle,
         }
@@ -117,28 +120,43 @@ impl App {
         &mut self,
         event: AppEvent,
     ) {
-        match event {
-            AppEvent::Key(key) => match key {
-                KeyCode::Char('q') => self.should_quit = true,
-                KeyCode::Left => self.prev_section(),
-                KeyCode::Right => self.next_section(),
-                KeyCode::Up => self.previous_item().await,
-                KeyCode::Down => self.next_item().await,
-                KeyCode::Char('d') | KeyCode::Enter => self.download_or_resume_selected().await,
-                KeyCode::Char('p') => self.pause_selected().await,
-                KeyCode::Char('x') => self.delete_selected().await,
-                _ => {},
-            },
-            AppEvent::Tick => {},
+        let AppEvent::Key(key) = event else {
+            return;
+        };
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return;
+        }
+        // A pending deletion takes the next key: y deletes, any other key keeps the model.
+        if let Some(identifier) = self.pending_delete.take() {
+            if key.code == KeyCode::Char('y') && key.modifiers.is_empty() {
+                self.delete(&identifier).await;
+            }
+            return;
+        }
+        if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+            return;
+        }
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Left => self.step_section(Section::prev).await,
+            KeyCode::Right => self.step_section(Section::next).await,
+            KeyCode::Up => self.previous_item().await,
+            KeyCode::Down => self.next_item().await,
+            KeyCode::Char('d') | KeyCode::Enter => self.download_or_resume_selected().await,
+            KeyCode::Char('p') => self.pause_selected().await,
+            KeyCode::Char('x') => self.request_delete().await,
+            _ => {},
         }
     }
 
-    fn next_section(&mut self) {
-        self.active_section = self.active_section.next();
-    }
-
-    fn prev_section(&mut self) {
-        self.active_section = self.active_section.prev();
+    async fn step_section(
+        &mut self,
+        step: fn(&Section) -> Section,
+    ) {
+        let models = self.models.lock().await;
+        self.active_section = step(&self.active_section)
+            .first_with_models(step, |section| ModelOrganizer::filter_for_section(&models, section).len());
     }
 
     async fn next_item(&mut self) {
@@ -229,19 +247,22 @@ impl App {
         }
     }
 
-    async fn delete_selected(&mut self) {
-        let model_id = {
-            let models = self.models.lock().await;
-            self.get_selected_model_id(&models)
-        };
+    async fn request_delete(&mut self) {
+        let models = self.models.lock().await;
+        self.pending_delete = self.get_selected_model_id(&models).filter(|identifier| {
+            models.get(identifier).is_some_and(|model_with_state| model_with_state.state.can_delete())
+        });
+    }
 
-        if let Some(id) = model_id {
-            let models_guard = self.models.lock().await;
-            if let Some(model_with_state) = models_guard.get(&id)
-                && model_with_state.state.can_delete()
-            {
-                let _ = self.engine.downloader(&model_with_state.model).delete().await;
-            }
+    async fn delete(
+        &self,
+        identifier: &ModelIdentifier,
+    ) {
+        let models_guard = self.models.lock().await;
+        if let Some(model_with_state) = models_guard.get(identifier)
+            && model_with_state.state.can_delete()
+        {
+            let _ = self.engine.downloader(&model_with_state.model).delete().await;
         }
     }
 
@@ -249,6 +270,9 @@ impl App {
         &self,
         models: &HashMap<ModelIdentifier, ModelWithState>,
     ) -> Vec<String> {
+        if let Some(identifier) = &self.pending_delete {
+            return vec![format!("Delete {identifier}? y: Delete"), "any other key: Keep".to_string()];
+        }
         let mut helpers = vec!["←→: Switch section".to_string()];
         if let Some(model_with_state) = self.get_selected_model_id(models).and_then(|id| models.get(&id)) {
             helpers.insert(0, "↑↓: Navigate".to_string());
@@ -272,7 +296,7 @@ impl App {
                 } => helpers.push(format!("Locked by {manager_id}, waiting")),
             }
         }
-        helpers.push("q: Quit".to_string());
+        helpers.push("q/Esc: Quit".to_string());
         helpers
     }
 }

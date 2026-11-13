@@ -26,6 +26,7 @@ class BenchRequest(BaseModel):
     speculative_depth: int | None = Field(default=None, ge=0)
     sampling: BenchSampling | None = None
     num_runs: int | None = Field(default=None, ge=0)
+    reasoning_effort: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @property
     def prompt(self) -> str | list[ChatMessage]:
