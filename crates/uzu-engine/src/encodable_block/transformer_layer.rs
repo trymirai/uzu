@@ -19,7 +19,7 @@ use crate::{
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
-        stream_op::{StreamOp, StreamOpContext, StreamOpEncodeError, StreamOpNewError},
+        stream_op::{StreamOp, StreamOpEncodeError, StreamOpNewError, StreamOpState},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::{maybe_mut::MaybeMut, maybe_owned::MaybeOwned},
@@ -76,6 +76,23 @@ struct Sublayer<B: Backend> {
     conv: Option<TransformerLayerConv<B>>,
     post_norm: Option<Normalization<B>>,
     connection: ResidualConnection<B>,
+}
+
+/// Per-op state for a layer's stream ops, `None` for stateless ops.
+pub struct StreamOpStates<B: Backend> {
+    prologue: Box<[Option<StreamOpState<B>>]>,
+    epilogue: Box<[Option<StreamOpState<B>>]>,
+}
+
+impl<B: Backend> StreamOpStates<B> {
+    pub fn encode_accept(
+        &mut self,
+        accepted_indices: &[u32],
+    ) {
+        for state in self.prologue.iter_mut().chain(self.epilogue.iter_mut()).flatten() {
+            state.encode_accept(accepted_indices);
+        }
+    }
 }
 
 pub struct TransformerLayer<B: Backend> {
@@ -429,23 +446,37 @@ impl<B: Backend> TransformerLayer<B> {
         })
     }
 
+    pub fn create_stream_op_states(
+        &self,
+        context: &B::Context,
+    ) -> Result<StreamOpStates<B>, B::Error> {
+        Ok(StreamOpStates {
+            prologue: self.prologue.iter().map(|op| op.create_empty_state(context)).collect::<Result<_, _>>()?,
+            epilogue: self.epilogue.iter().map(|op| op.create_empty_state(context)).collect::<Result<_, _>>()?,
+        })
+    }
+
+    pub fn speculation_supported(&self) -> bool {
+        self.mixer.speculation_supported()
+            && self.prologue.iter().chain(self.epilogue.iter()).all(StreamOp::speculation_supported)
+    }
+
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
+        token_ids: impl BufferRef<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        mut stream_op_states: Option<&mut StreamOpStates<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
         let row_count = batch_dim.size();
-        let op_context = StreamOpContext {
-            batch_dim,
-            per_layer_inputs,
-        };
 
-        for op in &self.prologue {
-            stream = op.encode(stream, &op_context, command_buffer)?;
+        for (index, op) in self.prologue.iter().enumerate() {
+            let op_state = stream_op_states.as_deref_mut().and_then(|states| states.prologue[index].as_mut());
+            stream = op.encode(stream, batch_dim, token_ids, per_layer_inputs, op_state, command_buffer)?;
         }
 
         stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
@@ -456,8 +487,9 @@ impl<B: Backend> TransformerLayer<B> {
             Ok(self.mlp.encode(hidden, row_count, command_buffer)?)
         })?;
 
-        for op in &self.epilogue {
-            stream = op.encode(stream, &op_context, command_buffer)?;
+        for (index, op) in self.epilogue.iter().enumerate() {
+            let op_state = stream_op_states.as_deref_mut().and_then(|states| states.epilogue[index].as_mut());
+            stream = op.encode(stream, batch_dim, token_ids, per_layer_inputs, op_state, command_buffer)?;
         }
 
         Ok(stream)

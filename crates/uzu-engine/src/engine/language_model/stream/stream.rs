@@ -882,11 +882,15 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 &mut embedded,
             );
             let batch_dim = BatchTopology::image(image.grid, start..start + length);
+            let token_ids = command_buffer
+                .allocate_constant_from_slice(&vec![0u32; length as usize])
+                .map_err(LanguageModelStreamError::Backend)?;
             let output = model
                 .decoder
                 .transformer()
                 .encode(
                     embedded,
+                    &token_ids,
                     None::<&B::ScratchBuffer>,
                     &batch_dim,
                     None,

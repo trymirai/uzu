@@ -13,7 +13,7 @@ use crate::{
         mixer::MixerState,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
-        transformer_layer::{TransformerLayer, TransformerLayerError},
+        transformer_layer::{StreamOpStates, TransformerLayer, TransformerLayerError},
     },
     safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
@@ -26,6 +26,7 @@ enum TransformerLayerStateType<B: Backend> {
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
+    stream_op_states: Box<[StreamOpStates<B>]>,
     context_length: u32,
 }
 
@@ -70,6 +71,10 @@ impl<B: Backend> TransformerState<B> {
                 };
 
                 layer_state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
+            }
+
+            for stream_op_states in &mut self.stream_op_states {
+                stream_op_states.encode_accept(accepted_indices);
             }
 
             self.context_length += accepted_indices.len() as u32;
@@ -196,7 +201,7 @@ impl<B: Backend> Transformer<B> {
 
     pub fn speculation_supported(&self) -> bool {
         matches!(self.residual_head, ResidualHead::Additive)
-            && self.layers.iter().all(|layer| layer.mixer.speculation_supported())
+            && self.layers.iter().all(|layer| layer.speculation_supported())
     }
 
     pub fn max_context_length(&self) -> Option<u32> {
@@ -238,10 +243,17 @@ impl<B: Backend> Transformer<B> {
             })
             .collect::<Result<_, B::Error>>()?;
 
+        let stream_op_states = self
+            .layers
+            .iter()
+            .map(|layer| layer.create_stream_op_states(context))
+            .collect::<Result<_, B::Error>>()?;
+
         let context_length = 0;
 
         Ok(TransformerState {
             layer_states,
+            stream_op_states,
             context_length,
         })
     }
@@ -249,6 +261,7 @@ impl<B: Backend> Transformer<B> {
     pub fn encode(
         &self,
         input: B::ScratchBuffer,
+        token_ids: impl BufferRef<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
@@ -274,8 +287,9 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         for layer in self.layers.iter().take(layer_count) {
-            let layer_state = if let Some(state) = &mut state {
-                Some(match &mut state.layer_states[layer.layer_index as usize] {
+            let (layer_state, stream_op_states) = if let Some(state) = &mut state {
+                let layer_index = layer.layer_index as usize;
+                let layer_state = match &mut state.layer_states[layer_index] {
                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
                     TransformerLayerStateType::Shared(owned_layer_index) => {
                         let TransformerLayerStateType::Owned(owned_layer) =
@@ -285,12 +299,21 @@ impl<B: Backend> Transformer<B> {
                         };
                         MaybeMut::Const(owned_layer.as_ref())
                     },
-                })
+                };
+                (Some(layer_state), Some(&mut state.stream_op_states[layer_index]))
             } else {
-                None
+                (None, None)
             };
 
-            stream = layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?;
+            stream = layer.encode(
+                stream,
+                token_ids,
+                per_layer_inputs,
+                batch_dim,
+                layer_state,
+                stream_op_states,
+                command_buffer,
+            )?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {

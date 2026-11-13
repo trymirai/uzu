@@ -175,6 +175,7 @@ impl<B: Backend> Decoder<B> {
 
         let transformer_output = self.transformer.encode(
             embedded,
+            token_ids,
             per_layer_inputs.as_ref(),
             batch_dim,
             output_range,

@@ -120,6 +120,7 @@ impl<B: Backend> Decision<B> {
             .transformer
             .encode(
                 embedded,
+                token_ids,
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
                 Some((token_count - 1..token_count).into()),
