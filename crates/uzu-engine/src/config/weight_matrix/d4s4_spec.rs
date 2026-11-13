@@ -8,7 +8,6 @@ pub struct D4S4Spec {
     pub layout: Layout,
 }
 
-/// Lattice weights exported by Lalamo.
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct LatticeSpec {
     pub kind: monostate::MustBe!("d4"),

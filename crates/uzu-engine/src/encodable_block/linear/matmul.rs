@@ -43,9 +43,9 @@ pub struct LinearMatmul<B: Backend> {
     matrix: WeightMatrix<B>,
     biases: Option<B::GlobalGpuBuffer>,
     output_hadamard_factors: Option<B::GlobalGpuBuffer>,
-    pub(super) input_dim: u32,
-    pub(super) output_dim: u32,
-    pub(super) output_data_type: DataType,
+    input_dim: u32,
+    output_dim: u32,
+    output_data_type: DataType,
     prepared_activation_format: ActivationFormat,
 }
 
@@ -68,6 +68,18 @@ async fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
+    pub(super) fn input_dim(&self) -> u32 {
+        self.input_dim
+    }
+
+    pub(super) fn output_dim(&self) -> u32 {
+        self.output_dim
+    }
+
+    pub(super) fn output_data_type(&self) -> DataType {
+        self.output_data_type
+    }
+
     pub async fn load(
         input_dim: u32,
         output_dim: u32,

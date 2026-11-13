@@ -340,9 +340,9 @@ impl<B: Backend> TransformedLinear<B> {
             InputRht::new(input_data_type, input_preparation, true, context).map_err(LinearBlockError::Backend)?;
 
         Ok(Self {
-            input_dim: inner_linear.input_dim,
-            output_dim: inner_linear.output_dim,
-            output_data_type: inner_linear.output_data_type,
+            input_dim: inner_linear.input_dim(),
+            output_dim: inner_linear.output_dim(),
+            output_data_type: inner_linear.output_data_type(),
             groups: Box::new([Group {
                 rotation: Rotation::Hadamard(input_rht),
                 blocks: Box::new([inner_linear]),
@@ -436,7 +436,7 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
             let a = self.prepare(group, input, batch_dim, command_buffer).map_err(LinearEncodeError::Backend)?;
             for block in &group.blocks {
                 block.encode_columns(a.as_ref(), batch_dim, &mut output, column, self.output_dim, command_buffer)?;
-                column += block.output_dim;
+                column += block.output_dim();
             }
         }
         Ok(output)
