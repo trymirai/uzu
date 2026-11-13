@@ -161,27 +161,11 @@ impl<B: Backend> TransformedLinear<B> {
             .map_err(LinearBlockError::from)
         };
         let matrices = match spec {
-            AnyWeightMatrixSpec::OutputStackSpec(_) => {
-                let shape = weights_tree.shape("quantized.part_rows")?;
-                if shape.len() != 1 {
-                    return Err(LinearBlockError::UnsupportedConfiguration(format!(
-                        "invalid part_rows shape {shape:?}"
-                    )));
-                }
-                let rows = weights_tree.read_slice::<i32>("quantized.part_rows", shape).await?;
-                if rows.is_empty()
-                    || rows.iter().any(|&rows| rows <= 0)
-                    || rows.iter().map(|&rows| i64::from(rows)).sum::<i64>() != i64::from(output_dimension)
-                {
-                    return Err(LinearBlockError::UnsupportedConfiguration(format!(
-                        "part_rows must be positive and sum to {output_dimension}"
-                    )));
-                }
-                let mut matrices = Vec::with_capacity(rows.len());
-                for (index, rows) in rows.iter().copied().enumerate() {
+            AnyWeightMatrixSpec::OutputStackSpec(spec) => {
+                let mut matrices = Vec::with_capacity(spec.parts.len());
+                for (index, part) in spec.parts.into_vec().into_iter().enumerate() {
                     let part_tree = weights_tree.subtree(&format!("quantized.parts.{index}"));
-                    let spec = part_tree.metadata("spec")?;
-                    matrices.push(load_matrix(rows as u32, spec, &part_tree).await?);
+                    matrices.push(load_matrix(part.rows, part.spec, &part_tree).await?);
                 }
                 matrices.into_boxed_slice()
             },

@@ -1,28 +1,23 @@
-use std::mem::size_of_val;
-
 use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, Context, CpuBuffer, GlobalBufferCpuGpu,
-        gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+        Backend,
+        gpu_types::{
+            quantization::QuantizationMode, quantization_method::QuantizationMethod, trellis::TrellisCodebook,
+        },
         kernel::matmul::{
             MatmulB, QuantParams, QuantParamsLayout, QuantizedB, QuantizedCorrection, TrellisFormat, WeightsLayout,
         },
     },
-    config::weight_matrix::{
-        AnyWeightMatrixSpec, Layout,
-        qtip_gaussian::{CODEBOOK_V2, CODEBOOK_V4},
-    },
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum WeightMatrixError<B: Backend> {
-    #[error("Backend error: {0}")]
-    Backend(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported weight matrix configuration: {0}")]
@@ -47,7 +42,7 @@ enum WeightEncoding<B: Backend> {
     },
     Trellis {
         row_scales: B::GlobalGpuBuffer,
-        codebook: B::GlobalGpuBuffer,
+        codebook: TrellisCodebook,
         format: TrellisFormat,
     },
 }
@@ -60,7 +55,6 @@ impl<B: Backend> WeightMatrix<B> {
         spec: AnyWeightMatrixSpec,
         required_layout: Layout,
         tree: &ParameterTree<'_, B>,
-        context: &B::Context,
     ) -> Result<Self, WeightMatrixError<B>> {
         let (layout, quantized) = match spec {
             AnyWeightMatrixSpec::FullPrecisionSpec(spec) => (spec.layout, None),
@@ -86,15 +80,6 @@ impl<B: Backend> WeightMatrix<B> {
                         spec.layout
                     )));
                 }
-                let codebook = match spec.vector_width {
-                    2 => &CODEBOOK_V2,
-                    4 => &CODEBOOK_V4,
-                    width => {
-                        return Err(WeightMatrixError::UnsupportedConfiguration(format!(
-                            "Trellis vector width {width}"
-                        )));
-                    },
-                };
                 let format = TrellisFormat {
                     vector_width: spec.vector_width,
                     transition_bits: spec.transition_bits,
@@ -103,15 +88,11 @@ impl<B: Backend> WeightMatrix<B> {
                 let code_shape = [output_dim, format.code_row_bytes(input_dim)];
                 let values = tree.read_buffer("codes", &code_shape, DataType::U8).await?;
                 let row_scales = tree.read_buffer("scales", &[output_dim], DataType::F32).await?;
-                let mut buffer =
-                    context.create_buffer_cpu_gpu(size_of_val(codebook)).map_err(WeightMatrixError::Backend)?;
-                buffer.copyin(codebook);
-                let codebook = buffer.handoff();
                 return Ok(Self {
                     values,
                     encoding: WeightEncoding::Trellis {
                         row_scales,
-                        codebook,
+                        codebook: spec.codebook,
                         format,
                     },
                 });
@@ -223,7 +204,7 @@ impl<B: Backend> WeightMatrix<B> {
             } => MatmulB::Trellis {
                 codes: &self.values,
                 row_scales,
-                codebook,
+                codebook: *codebook,
                 format: *format,
             },
         }

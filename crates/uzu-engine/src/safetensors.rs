@@ -140,19 +140,6 @@ impl<B: Backend> ParameterTree<'_, B> {
         }
     }
 
-    pub fn shape(
-        &self,
-        name: &str,
-    ) -> Result<&[u32], ParameterLoaderError<B>> {
-        let key = format!("{}{name}", self.prefix);
-        self.loader
-            .header
-            .tensors
-            .get(&key)
-            .map(|tensor| tensor.shape.as_ref())
-            .ok_or(ParameterLoaderError::KeyNotFound(key))
-    }
-
     pub fn metadata<T: DeserializeStrictOwned>(
         &self,
         name: &str,

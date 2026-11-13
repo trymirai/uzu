@@ -1,16 +1,14 @@
 use uzu_engine_macros::uzu_config;
 
 use super::Layout;
+use crate::backends::common::gpu_types::trellis::TrellisCodebook;
 
 #[uzu_config(super::WeightMatrixSpec)]
 pub struct QtipGaussianSpec {
     pub vector_width: u32,
     pub transition_bits: u32,
     pub restart_columns: u32,
+    pub codebook: TrellisCodebook,
     pub layout: Layout,
     pub tape: monostate::MustBe!(2u64),
 }
-
-pub const CODEBOOK_V2: [u32; 5] = [0x3d5583d1, 0xbda85975, 0xbd9f2d3c, 0xbda85975, 0xbd9f2d3c];
-
-pub const CODEBOOK_V4: [u32; 5] = [0x3d552540, 0xbda80ef5, 0xbd9ee6bd, 0xbda009bd, 0xbda61735];

@@ -12,4 +12,9 @@ static constant constexpr uint32_t MAX_DIMENSION = 20480;
 static constant constexpr uint32_t MIN_HADAMARD_SIZE = 512;
 
 static constant constexpr uint32_t MAX_HADAMARD_SIZE = 4096;
+
+typedef struct {
+  float scale;
+  float offsets[4];
+} TrellisCodebook;
 } // namespace uzu::trellis

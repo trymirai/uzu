@@ -1,4 +1,5 @@
 #include "../../common/dsl.h"
+#include "../../generated/trellis.h"
 #include "../../common/defines.h"
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
@@ -12,6 +13,7 @@
 
 using namespace metal;
 using namespace uzu::gemm;
+using uzu::trellis::TrellisCodebook;
 
 #define REDUCE_THREADS 256
 #define REDUCE_VECTOR_WIDTH 4
@@ -24,7 +26,7 @@ using namespace uzu::gemm;
 namespace {
 
 struct TrellisEpilogue {
-  const device float* scale_and_offsets;
+  TrellisCodebook codebook;
   const device float4* group_sums;
   const device float* activation_scales;
   const device float* row_scales;
@@ -36,9 +38,8 @@ struct TrellisEpilogue {
     const int level_dot =
         biased_dot - int(trellis::WEIGHT_BIAS) * int(group_sum.x + group_sum.y + group_sum.z + group_sum.w);
     const float activation_scale = activation_scales[token];
-    const float4 offsets =
-        float4(scale_and_offsets[1], scale_and_offsets[2], scale_and_offsets[3], scale_and_offsets[4]);
-    const float dot = float(level_dot) * scale_and_offsets[0] + metal::dot(group_sum, offsets);
+    const float4 offsets = float4(codebook.offsets[0], codebook.offsets[1], codebook.offsets[2], codebook.offsets[3]);
+    const float dot = float(level_dot) * codebook.scale + metal::dot(group_sum, offsets);
     output[token * output_row_stride + row] = bfloat(dot * row_scales[row] * activation_scale);
   }
 };
@@ -96,7 +97,7 @@ KERNEL(GemmTrellis)(
     const device float* activation_scales,
     const device uint8_t* codes,
     const device float* row_scales,
-    const device float* scale_and_offsets,
+    const constant TrellisCodebook& codebook,
     device bfloat* output,
     const constant uzu::matmul::GemmParams* params,
     threadgroup half stage[TRELLIS_STAGE_ELEMENTS],
@@ -140,14 +141,8 @@ KERNEL(GemmTrellis)(
 
   const bool write_split_k_partials = params->aligned_inner_iterations * trellis::K_STEP < params->K;
   const size_t partial_sum_offset = size_t(group_z) * params->M * params->N;
-  const TrellisEpilogue epilogue{
-      scale_and_offsets,
-      column_group_sums,
-      activation_scales,
-      row_scales,
-      output,
-      params->leading_dimension_d
-  };
+  const TrellisEpilogue
+      epilogue{codebook, column_group_sums, activation_scales, row_scales, output, params->leading_dimension_d};
   const auto store = [&](const uint token, const uint row, const int value) {
     if (token < params->M && row < params->N) {
       if (write_split_k_partials) {
@@ -303,7 +298,7 @@ KERNEL(GemmTrellisReduce)(
     const device float4* column_group_sums,
     const device float* activation_scales,
     const device float* row_scales,
-    const device float* scale_and_offsets,
+    const constant TrellisCodebook& codebook,
     device bfloat* output,
     const constant uint& token_count,
     const constant uint& row_count,
@@ -323,8 +318,7 @@ KERNEL(GemmTrellisReduce)(
   }
   const uint token = token_row_group / row_groups;
   const uint first_row = token_row_group % row_groups * REDUCE_VECTOR_WIDTH;
-  const TrellisEpilogue
-      epilogue{scale_and_offsets, column_group_sums, activation_scales, row_scales, output, output_stride};
+  const TrellisEpilogue epilogue{codebook, column_group_sums, activation_scales, row_scales, output, output_stride};
   for (uint index = 0u; index < REDUCE_VECTOR_WIDTH; ++index) {
     epilogue.store(partial_sum[index], token, first_row + index);
   }

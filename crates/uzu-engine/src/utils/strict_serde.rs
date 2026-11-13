@@ -29,6 +29,7 @@ impl_strict!(
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Box<T> {}
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Box<[T]> {}
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Option<T> {}
+impl<'de, T: DeserializeStrict<'de>, const N: usize> DeserializeStrict<'de> for [T; N] where [T; N]: Deserialize<'de> {}
 impl<'de, A: DeserializeStrict<'de>, B: DeserializeStrict<'de>> DeserializeStrict<'de> for (A, B) {}
 impl<'de, const V: bool> DeserializeStrict<'de> for MustBeBool<V> {}
 impl<'de, const V: u64> DeserializeStrict<'de> for monostate::MustBeU64<V> {}

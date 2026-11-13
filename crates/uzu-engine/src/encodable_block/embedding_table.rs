@@ -1,11 +1,9 @@
-use std::mem::size_of_val;
-
 use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{
             d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             quantization_method::QuantizationMethod,
@@ -17,7 +15,6 @@ use crate::{
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
-        d4s4_spec::{CODEBOOK, LADDER},
         hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
     },
     data_type::DataType,
@@ -110,30 +107,17 @@ impl<B: Backend> EmbeddingTable<B> {
             )));
         }
         let load_matrix = async |tree: &ParameterTree<B>, spec| {
-            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree, context).await
-        };
-        let load_lattice = async |tree: &ParameterTree<B>, layout| {
-            let mut ladder =
-                context.create_buffer_cpu_gpu(size_of_val(&LADDER)).map_err(EmbeddingTableError::BackendError)?;
-            ladder.copyin(&LADDER);
-            let mut codebook =
-                context.create_buffer_cpu_gpu(size_of_val(&CODEBOOK)).map_err(EmbeddingTableError::BackendError)?;
-            codebook.copyin(&CODEBOOK);
-            load_d4s4(tree, vocab_size, embedding_dim, data_type, layout, ladder.handoff(), codebook.handoff()).await
+            WeightMatrix::load(embedding_dim, vocab_size, data_type, spec, Layout::InputOutput, tree).await
         };
         let spec = tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         let (storage, output_hadamard_factors) = match spec {
             AnyWeightMatrixSpec::D4S4Spec(spec) => {
-                let ladder = tree.read_buffer("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?;
-                let codebook =
-                    tree.read_buffer("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?;
-                let table =
-                    load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout, ladder, codebook).await?;
+                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout).await?;
                 let factors = tree.read_buffer("output_hadamard_factors", &[embedding_dim], DataType::I32).await?;
                 (Storage::D4S4(table), Some(factors))
             },
             AnyWeightMatrixSpec::LatticeSpec(spec) => {
-                let table = load_lattice(tree, spec.layout).await?;
+                let table = load_d4s4(tree, vocab_size, embedding_dim, data_type, spec.layout).await?;
                 (Storage::D4S4(table), None)
             },
             AnyWeightMatrixSpec::HybridSpec(HybridSpec {
@@ -147,9 +131,10 @@ impl<B: Backend> EmbeddingTable<B> {
                 ..
             }) if embedding_dim.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE) => {
                 let storage = match *quantization_spec {
-                    AnyWeightMatrixSpec::LatticeSpec(spec) => {
-                        Storage::D4S4(load_lattice(&tree.subtree("quantized"), spec.layout).await?)
-                    },
+                    AnyWeightMatrixSpec::LatticeSpec(spec) => Storage::D4S4(
+                        load_d4s4(&tree.subtree("quantized"), vocab_size, embedding_dim, data_type, spec.layout)
+                            .await?,
+                    ),
                     spec => {
                         let matrix = load_matrix(&tree.subtree("quantized"), spec).await?;
                         if matrix.matmul_b().quantized().is_none() {
@@ -241,8 +226,6 @@ async fn load_d4s4<B: Backend>(
     embedding_dim: u32,
     data_type: DataType,
     layout: Layout,
-    ladder: B::GlobalGpuBuffer,
-    codebook: B::GlobalGpuBuffer,
 ) -> Result<D4S4Table<B>, EmbeddingTableError<B>> {
     if layout != Layout::InputOutput || !embedding_dim.is_multiple_of(d4s4::COLUMNS_PER_LADDER_INDEX_BYTE) {
         return Err(EmbeddingTableError::UnsupportedConfiguration(format!(
@@ -255,6 +238,8 @@ async fn load_d4s4<B: Backend>(
     let ladder_indices =
         read("ladder_indices", &[vocab_size, embedding_dim / d4s4::COLUMNS_PER_LADDER_INDEX_BYTE], DataType::U8)
             .await?;
+    let ladder = read("ladder", &[d4s4::LADDER_SIZE], DataType::F16).await?;
+    let codebook = read("table", &[d4s4::CODEBOOK_SIZE, d4s4::VALUES_PER_CODE], DataType::I8).await?;
     let table = D4S4Table {
         codes,
         row_scales,

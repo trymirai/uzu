@@ -2,7 +2,7 @@ use super::{QuantParams, QuantParamsLayout, WeightsLayout};
 use crate::{
     backends::common::{
         BufferRef,
-        gpu_types::{gemm::GemmBPrologueKind, quantization::QuantizationMode},
+        gpu_types::{gemm::GemmBPrologueKind, quantization::QuantizationMode, trellis::TrellisCodebook},
     },
     data_type::DataType,
 };
@@ -39,7 +39,7 @@ pub enum MatmulB<TB: BufferRef> {
     Trellis {
         codes: TB,
         row_scales: TB,
-        codebook: TB,
+        codebook: TrellisCodebook,
         format: TrellisFormat,
     },
 }
