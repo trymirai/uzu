@@ -3,7 +3,14 @@ import { cloneElement, useContext, useEffect, useId, useRef } from "react";
 import { HoverPopoverContext } from "./provider";
 import type { HoverPopoverProps } from "./types";
 
-export function HoverPopover({ items, trigger, side = "bottom", align = "end" }: HoverPopoverProps) {
+export function HoverPopover({
+  items,
+  footerItems,
+  maxVisibleItems,
+  trigger,
+  side = "bottom",
+  align = "end",
+}: HoverPopoverProps) {
   const context = useContext(HoverPopoverContext);
   if (!context) throw new Error("HoverPopover must be rendered inside a HoverPopoverProvider.");
   const { show, hide, contains } = context;
@@ -15,7 +22,8 @@ export function HoverPopover({ items, trigger, side = "bottom", align = "end" }:
   useEffect(() => () => hide(id), [hide, id]);
 
   const open = (options?: { focusPanel?: boolean }) => {
-    if (triggerNodeRef.current) show({ id, triggerNode: triggerNodeRef.current, items, side, align }, options);
+    if (triggerNodeRef.current)
+      show({ id, triggerNode: triggerNodeRef.current, items, footerItems, maxVisibleItems, side, align }, options);
   };
 
   const mergedTrigger = cloneElement(trigger, {
@@ -23,6 +31,14 @@ export function HoverPopover({ items, trigger, side = "bottom", align = "end" }:
       triggerNodeRef.current = node;
     },
     "aria-haspopup": "menu",
+    // The trigger can do its own thing on click (Regenerate reruns the answer); the menu then
+    // closes, since that choice is made.
+    onClick: (event: MouseEvent<HTMLButtonElement>) => {
+      const own = (trigger.props as { onClick?: (event: MouseEvent<HTMLButtonElement>) => void }).onClick;
+      if (!own) return;
+      own(event);
+      hide(id);
+    },
     onMouseEnter: () => open(),
     onMouseLeave: (event: MouseEvent<HTMLElement>) => {
       if (!contains(event.relatedTarget as Node | null)) hide(id);

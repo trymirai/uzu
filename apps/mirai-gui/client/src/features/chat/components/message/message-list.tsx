@@ -1,9 +1,11 @@
-import { Transition } from "@headlessui/react";
 import { useParams } from "@tanstack/react-router";
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useChatStore } from "@/stores/use-chat-store";
-import { Loader, LoaderIcon } from "@/components/loader";
+import { Loader } from "@/components/loader";
+import { AssistantCat, PendingStatus } from "./assistant-cat";
 import { Message } from "./message";
+import { NewChatCat } from "./new-chat-cat";
+import { UzuBirdHost } from "./uzu-bird";
 
 type MessageListProps = {
   isNew?: boolean;
@@ -17,7 +19,10 @@ type MessageListProps = {
   loadingMessageId?: string | null;
   canceledMessageId?: string | null;
   isModelLoading?: boolean;
-  hasResidentModel?: boolean;
+  /** The composer's text, which the empty chat's cat watches being typed. */
+  draft?: string;
+  /** When a send last failed for want of a model (the empty chat's cat reacts to it). */
+  missingModelAt?: number;
 };
 
 const MessageListComponent: React.FC<MessageListProps> = ({
@@ -32,7 +37,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   loadingMessageId,
   canceledMessageId,
   isModelLoading,
-  hasResidentModel,
+  draft = "",
+  missingModelAt = 0,
 }) => {
   const messages = useChatStore((s) => s.messages);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -160,16 +166,44 @@ const MessageListComponent: React.FC<MessageListProps> = ({
     requestAnimationFrame(tryScroll);
   }, [scrollToMessageId, onScrolled]);
 
+  // Messages already there when a chat opens are simply shown; ones that arrive while you watch
+  // come into focus. A new chat starts with nothing on record, so everything in it arrives.
+  const shownRef = useRef<{ chatId: string; ids: Set<string> | null }>({ chatId, ids: null });
+  if (shownRef.current.chatId !== chatId) shownRef.current = { chatId, ids: null };
+  if (!shownRef.current.ids && (isNew || messages.length > 0)) {
+    shownRef.current.ids = new Set(isNew ? [] : messages.map((m) => m.id));
+  }
+  const arrived = (id: string) => !shownRef.current.ids?.has(id);
+
+  // With room in the margin the cat hangs outside the column, so answers line up with the
+  // composer and your messages; on narrow windows it sits inline beside the answer.
+  const [catHangs, setCatHangs] = useState(false);
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const column = parseFloat(getComputedStyle(container).getPropertyValue("--chat-width")) || Infinity;
+      setCatHangs((container.clientWidth - column) / 2 >= 48);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    measure();
+    return () => observer.disconnect();
+  }, [chatId]);
+
   const lastAssistantIndex = messages.at(-1)?.sender === "assistant" ? messages.length - 1 : -1;
 
   const isBusy = Boolean(isModelLoading || isLoading);
-  const loaderText = isModelLoading || !hasResidentModel ? "Loading model…" : "Prefilling…";
+  // "Loading the model" only when the engine says it is loading one; otherwise the prompt is being
+  // read. Guessing from what the interface last knew flashed "loading" on every first message.
+  const pendingPhase = isModelLoading ? "loadingModel" : "reading";
 
   return (
     <div className="relative flex flex-1 flex-col overflow-clip h-full">
       <div
         ref={scrollContainerRef}
-        className="absolute inset-0 flex flex-col overflow-y-auto overscroll-y-contain scrollbar-hide"
+        data-cat-hang={catHangs || undefined}
+        className="absolute inset-0 flex flex-col overflow-y-auto overscroll-y-contain scrollbar-hide pt-[var(--chat-list-top,2rem)]"
         style={{ paddingInline: "max(1.25rem, calc((100% - var(--chat-width)) / 2))" }}
       >
         {messages.length > 0 ? (
@@ -194,72 +228,67 @@ const MessageListComponent: React.FC<MessageListProps> = ({
 
             const showInlineLoader = isLoadingThisMessage && !hasVisibleParsed;
 
-            const showAssistantLoader = !loadingMessageId && isLastAssistant && isBusy;
+            // Only before the answer has anything to show. Once thinking or text has arrived the
+            // message tells its own state; on fast models the engine can still read as busy between
+            // thinking and the first words, which brought "Reading your message" back mid-answer.
+            const showAssistantLoader = !loadingMessageId && isLastAssistant && isBusy && !hasVisibleParsed;
 
             return (
-              <Transition
+              <div
                 key={message.id}
-                appear
-                show={true}
-                enter="transition-opacity duration-200 ease-out"
-                enterFrom="opacity-0"
-                enterTo="opacity-100"
+                ref={(el) => {
+                  itemRefs.current[message.id] = el;
+                }}
+                className={[
+                  "shrink-0",
+                  isLastAssistant ? "flex flex-col min-h-8" : "",
+                  idx > 0 ? "mt-6" : "",
+                  arrived(message.id) ? "animate-uzu-in" : "",
+                ].join(" ")}
               >
-                <div
-                  ref={(el) => {
-                    itemRefs.current[message.id] = el;
-                  }}
-                  className={["shrink-0", isLastAssistant ? "flex flex-col min-h-8" : "", idx > 0 ? "mt-6" : ""].join(
-                    " ",
-                  )}
-                >
-                  {showAssistantLoader ? (
-                    <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
-                      <Loader text={loaderText} />
-                    </div>
-                  ) : null}
-                  {showInlineLoader ? (
-                    <div className="flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
-                      <Loader text={loaderText} />
-                    </div>
-                  ) : null}
-                  <Message
-                    key={`${message.id}_${message.currentVersionIndex ?? 0}_${message.versions?.length ?? 0}`}
-                    isLoading={isLoadingThisMessage}
-                    chatId={chatId}
-                    isLast={idx === lastAssistantIndex}
-                    isUiStreaming={Boolean(isUiStreaming && isLastAssistant)}
-                    isCanceled={canceledMessageId === message.id}
-                    onModelSelect={onMessageModelSelect}
-                    onEdit={onEditMessage}
-                    canEdit={canEditMessages}
-                    {...message}
-                  />
-                </div>
-              </Transition>
+                <Message
+                  key={`${message.id}_${message.currentVersionIndex ?? 0}_${message.versions?.length ?? 0}`}
+                  isLoading={isLoadingThisMessage}
+                  chatId={chatId}
+                  isLast={idx === lastAssistantIndex}
+                  isUiStreaming={Boolean(isUiStreaming && isLastAssistant)}
+                  isCanceled={canceledMessageId === message.id}
+                  onModelSelect={onMessageModelSelect}
+                  onEdit={onEditMessage}
+                  canEdit={canEditMessages}
+                  pendingPhase={showAssistantLoader || showInlineLoader ? pendingPhase : null}
+                  {...message}
+                />
+              </div>
             );
           })
+        ) : isNew ? (
+          // A new chat sits in the middle of the page with the composer right under it.
+          <div className="flex flex-col items-center justify-end h-full relative pb-7">
+            {/* Keyed by chat, so each new chat gets its own greeting. */}
+            <NewChatCat key={chatId} draft={draft} missingModelAt={missingModelAt} />
+          </div>
         ) : (
           <div className="flex gap-2 items-center justify-center h-full relative">
-            {isNew ? (
-              <>
-                <span className="text-label-muted text-[13px] font-[350]">
-                  Start your new private and local conversation
-                </span>
-                <LoaderIcon />
-              </>
-            ) : (
-              <Loader />
-            )}
+            <Loader />
           </div>
         )}
         {lastAssistantIndex === -1 && isBusy && !loadingMessageId && (
-          <div className="mt-6 flex items-center gap-2 text-left text-[15px] leading-[18px] text-label-muted">
-            <Loader text={loaderText} />
+          <div className="relative mt-6 flex gap-3 animate-uzu-in in-data-cat-hang:block">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center in-data-cat-hang:absolute in-data-cat-hang:-left-10 in-data-cat-hang:top-0">
+              <AssistantCat phase={pendingPhase} live />
+            </div>
+            <PendingStatus phase={pendingPhase} />
           </div>
         )}
-        <div ref={messagesEndRef} className="h-6 shrink-0" />
+        {/* Room for the composer and the gap under it, which the list runs behind, plus 24px above. */}
+        <div
+          ref={messagesEndRef}
+          className="shrink-0"
+          style={{ height: messages.length > 0 ? "calc(var(--composer-h, 0px) + 1.25rem + 1.5rem)" : "1.5rem" }}
+        />
       </div>
+      <UzuBirdHost />
     </div>
   );
 };

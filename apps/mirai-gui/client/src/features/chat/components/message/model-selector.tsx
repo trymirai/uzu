@@ -1,11 +1,16 @@
-import { Listbox, ListboxButton, ListboxOption, ListboxOptions, Transition } from "@headlessui/react";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
+import { RotateCwIcon } from "@/components/icons/app-icons";
 import { useNavigate } from "@tanstack/react-router";
 import React from "react";
+import { HoverPopover } from "@/components/ui/popover/hover-popover";
+import type { PopoverItem } from "@/components/ui/popover/shared/types";
 import { twMerge } from "tailwind-merge";
+import { ModelName } from "@/components/model-name";
 import { useModelsStore } from "@/stores/use-models-store";
 import { modelDownloadPhases } from "@/types/model-manager";
-import { ModelVendorIcon } from "@/components/model-vendor-icon";
+
+const ACTION_CLASSNAME =
+  "flex size-8 items-center justify-center rounded-lg text-label-muted transition-colors duration-150 ease-out enabled:hover:bg-bg-hover enabled:hover:text-label-title outline-hidden focus-visible:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed";
 
 type ModelSelectorProps = {
   selectedModel?: string;
@@ -33,73 +38,72 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
     navigate({ to: "/local-models" });
   };
 
-  return (
-    <div className="w-fit">
-      <Listbox value={selectedModel || ""} onChange={handleModelSelect} disabled={disabled}>
-        <div>
-          <ListboxButton
-            aria-label="Regenerate with model"
-            title="Regenerate with model"
-            className="flex size-8 items-center justify-center rounded-md text-label-muted transition-colors enabled:hover:bg-bg-hover enabled:hover:text-label-title focus:outline-hidden data-[focus]:shadow-focus disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            <RefreshCw className="size-4" aria-hidden="true" />
-          </ListboxButton>
-
-          <Transition
-            enter="transition duration-100 ease-out"
-            enterFrom="transform scale-95 opacity-0"
-            enterTo="transform scale-100 opacity-100"
-            leave="transition duration-75 ease-out"
-            leaveFrom="transform scale-100 opacity-100"
-            leaveTo="transform scale-95 opacity-0"
-          >
-            <ListboxOptions
-              anchor="bottom start"
-              className="overscroll-y-contain thin-scrollbar [--anchor-gap:8px] [--anchor-max-height:360px] bg-bg-modal border border-cell-border rounded-[6px] z-50 pointer-events-auto focus:outline-hidden focus:ring-0"
-            >
-              <div className="p-[6px] flex flex-col gap-2">
-                {loadingModels ? (
-                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted">Loading models...</div>
-                ) : installedModelsList.length > 0 ? (
-                  installedModelsList.map((model) => {
-                    const isSelected = model.repoId === selectedModel;
-                    return (
-                      <ListboxOption
-                        key={model.repoId}
-                        value={model.repoId}
-                        className={twMerge(
-                          "w-full flex items-center gap-2 px-[14px] py-2 rounded-md text-left transition-colors cursor-pointer hover:bg-bg-hover focus:outline-hidden focus:ring-0",
-                          isSelected ? "bg-bg-sub" : "",
-                        )}
-                      >
-                        <ModelVendorIcon vendor={model.vendor} />
-                        <span className="text-sm leading-[130%] text-label-title flex items-center gap-2">
-                          {model.name}
-                        </span>
-                        <span className="text-label-muted text-[10px]">Local</span>
-                      </ListboxOption>
-                    );
-                  })
-                ) : (
-                  <div className="px-[14px] py-2 leading-[130%] text-sm text-label-muted">No models available</div>
+  // Opens on hover, like a tooltip, with the models to regenerate with: names only, three at a time
+  // with the rest scrolling, and "Download models" fixed under them. Above the button: the answer's
+  // actions sit near the composer and the window's bottom, where a long list would run off. Keyboard: Enter or ↓ opens
+  // it, Esc closes it (handled by HoverPopover).
+  const items: PopoverItem[] = loadingModels
+    ? [{ id: "loading", label: "Loading models…", disabled: true }]
+    : installedModelsList.length > 0
+      ? installedModelsList.map((model) => ({
+          id: model.repoId,
+          label: (
+            <span className="flex min-w-0 flex-1 items-center gap-2.5">
+              <ModelName name={model.name} className="flex-1 text-[13px] font-[450] leading-[1.3] text-label-title" />
+              <Check
+                aria-hidden
+                className={twMerge(
+                  "size-4 shrink-0 text-label-title",
+                  model.repoId === selectedModel ? "opacity-100" : "opacity-0",
                 )}
-              </div>
+              />
+            </span>
+          ),
+          onClick: () => handleModelSelect(model.repoId),
+        }))
+      : [{ id: "none", label: "No models available", disabled: true }];
+  const footerItems: PopoverItem[] = [
+    {
+      id: "more",
+      label: (
+        <span className="flex flex-1 items-center justify-between gap-2.5 text-[13px] font-[450] leading-[1.3] text-label-title">
+          Download models
+          <ChevronRight className="size-4 text-label-muted" aria-hidden />
+        </span>
+      ),
+      onClick: handleMoreModelsClick,
+    },
+  ];
 
-              <div className="h-[1px] bg-cell-border" />
+  // Clicking Regenerate itself reruns the answer with the model that has the check (the one that
+  // wrote it); the menu that opens on hover picks a different one.
+  const handleRegenerateClick = () => {
+    const current = installedModelsList.find((model) => model.repoId === selectedModel);
+    if (current) onModelSelect?.(current.repoId, current.name);
+  };
 
-              <div className="p-[10px]">
-                <button
-                  onClick={handleMoreModelsClick}
-                  className="w-full flex items-center justify-between px-[14px] py-2 rounded-md hover:bg-bg-hover transition-colors text-label-title focus:outline-hidden focus:ring-0"
-                >
-                  <span className="text-sm text-label-title">More models</span>
-                  <ChevronRight className="h-4 w-4 text-label-muted" />
-                </button>
-              </div>
-            </ListboxOptions>
-          </Transition>
-        </div>
-      </Listbox>
-    </div>
+  const button = (
+    <button
+      type="button"
+      aria-label="Regenerate"
+      disabled={disabled}
+      onClick={handleRegenerateClick}
+      className={ACTION_CLASSNAME}
+    >
+      <RotateCwIcon size={16} aria-hidden />
+    </button>
+  );
+
+  return disabled ? (
+    button
+  ) : (
+    <HoverPopover
+      trigger={button}
+      items={items}
+      footerItems={footerItems}
+      maxVisibleItems={3}
+      side="top"
+      align="start"
+    />
   );
 };

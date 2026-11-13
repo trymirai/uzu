@@ -27,7 +27,11 @@ afterEach(cleanup);
 const html = (content: string, stock: boolean, small: boolean) => {
   control.stock = stock;
   const view = render(<MarkdownRenderer content={content} useOneFontSize={small} />);
-  const output = view.container.innerHTML.replace(/ node="\[object Object\]"/g, "").replace(/>\n+</g, "><");
+  const output = view.container.innerHTML
+    .replace(/ node="\[object Object\]"/g, "")
+    .replace(/>\n+</g, "><")
+    // Icons name their masks with useId, which differs from one render to the next.
+    .replace(/:r[0-9a-z]+:/g, ":id:");
   cleanup();
   return output;
 };

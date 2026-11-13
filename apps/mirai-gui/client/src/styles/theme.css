@@ -49,6 +49,8 @@
   --color-success: var(--color-green-500);
   --color-success-bg: rgb(from var(--color-green-500) r g b / 0.08);
   --color-success-border: rgb(from var(--color-green-500) r g b / 0.4);
+  /* Green for small marks on a light fill (dots, checks): deep enough to read on white. */
+  --color-success-strong: #00873c;
   --color-text-primary: var(--color-gray-1200);
   --color-text-secondary: var(--color-gray-1100);
   --color-text-muted: var(--color-gray-1000);
@@ -58,9 +60,22 @@
   --color-border-outlined: rgb(from var(--color-black) r g b / 0.15);
   --color-border-outlined-hover: rgb(from var(--color-black) r g b / 0.22);
   --color-slider-track: var(--color-gray-500);
+  /* Fills for controls that sit on a card or panel (selects, inputs, segmented tracks). Translucent,
+     so they always step away from whatever surface is under them instead of matching it. */
+  --color-control-fill: rgb(from var(--color-black) r g b / 0.06);
+  --color-control-fill-hover: rgb(from var(--color-black) r g b / 0.09);
+  --color-control-selected: #ffffff;
+  /* Your own messages: a quiet grey bubble with the strongest text. */
+  --color-user-bubble: var(--color-bg-hover);
+  --color-user-bubble-text: var(--color-label-title);
   --color-surface-secondary: var(--color-gray-100);
   --color-surface-tertiary: var(--color-gray-300);
   --color-surface-elevated: var(--color-gray-50);
+  /* Anything floating above the page (menus, pickers, toasts) is lifted a step off every surface
+     under it, so it never melts into the composer or a card it overlaps. */
+  --color-surface-popover: #ffffff;
+  /* A quiet fill for blocks inside the conversation (reasoning, code): shape without a border. */
+  --color-surface-soft: color-mix(in srgb, var(--color-surface-tertiary) 65%, var(--color-background));
   --color-selection-selected: #e1e1e1;
   --color-selection-hover: #ededed;
   --color-overlay: rgba(0, 0, 0, 0.4);
@@ -96,49 +111,72 @@
     0px 0px 0px 1px rgb(from var(--color-black) r g b / 0.04),
     0px 8px 16px -4px rgb(from var(--color-black) r g b / 0.08),
     0px 16px 32px -8px rgb(from var(--color-black) r g b / 0.1);
+  /* Floating surfaces (menus, pickers): a hairline to hold the edge, a wide soft lift, and a
+     tight shadow underneath so it reads as above the page rather than drawn on it. */
+  --shadow-popover:
+    0 0 0 0.5px rgb(from var(--color-black) r g b / 0.08), 0 8px 40px 0 rgb(from var(--color-black) r g b / 0.06),
+    0 12px 32px -16px rgb(from var(--color-black) r g b / 0.18);
   --shadow-custom: var(--shadow-sm);
   --shadow-custom-hover: var(--shadow-md);
   --shadow-focus: 0 0 0 2px #fff, 0 0 0 4px #0969da;
 }
 
 .dark {
-  --color-gray-50: #0f0f0f;
-  --color-gray-100: #111;
-  --color-gray-200: #191919;
-  --color-gray-300: #222;
-  --color-gray-500: #313131;
-  --color-gray-600: #3a3a3a;
-  --color-gray-700: #484848;
-  --color-gray-1000: #7b7b7b;
+  /* Soft charcoal rather than black, as in Claude desktop: the sidebar is the deepest layer, the
+     content panel a step up, and everything sitting on it (composer, cards, menus) steps lighter. */
+  --color-gray-50: #262626;
+  --color-gray-100: #2e2e2e;
+  --color-gray-200: #333333;
+  --color-gray-300: #383838;
+  --color-gray-500: #444444;
+  --color-gray-600: #454545;
+  --color-gray-700: #555555;
+  --color-gray-1000: #8c8c8c;
   --color-gray-1100: #b5b5b5;
   --color-gray-1200: #eee;
 
-  --color-background: #0a0a0a;
+  --color-background: #1c1c1c;
   --color-border-default: rgb(from var(--color-white) r g b / 0.07);
   --color-border-strong: rgb(from var(--color-white) r g b / 0.2);
   --color-border-outlined: rgb(from var(--color-white) r g b / 0.12);
   --color-border-outlined-hover: rgb(from var(--color-white) r g b / 0.2);
-  --color-surface-tertiary: var(--color-gray-200);
+  /* Neutral greys only (no blue cast), and a hover step light enough to show on the soft cards
+     and on the lifted menu surface alike. */
+  --color-surface-tertiary: #3a3a3a;
   --color-surface-elevated: var(--color-gray-100);
-  --color-selection-selected: color-mix(in srgb, var(--color-surface-elevated), var(--color-text-primary) 8%);
-  --color-selection-hover: color-mix(in srgb, var(--color-surface-elevated), var(--color-text-primary) 4%);
+  --color-surface-popover: #353535;
+  --color-success-strong: #3fd17f;
+  --color-control-fill: rgb(from var(--color-white) r g b / 0.08);
+  --color-control-fill-hover: rgb(from var(--color-white) r g b / 0.12);
+  --color-control-selected: rgb(from var(--color-white) r g b / 0.14);
+  --color-slider-track: #505050;
+  /* In the dark the bubble steps up to the composer's surface and the text softens from pure white,
+     so the pair reads calmly instead of glaring. */
+  --color-user-bubble: var(--color-surface-elevated);
+  --color-user-bubble-text: var(--color-text-primary);
+  /* Menu rows sit on the lifted popover, so their states step up from it, not from the page. */
+  --color-selection-selected: #474747;
+  --color-selection-hover: #404040;
   --color-overlay: rgba(0, 0, 0, 0.7);
 
-  --color-bg-sidebar: #050506;
-  --color-bg-hover: #181a1b;
-  --color-sidebar-chat-selected: #1c1e1f;
-  --color-sidebar-chat-hover: #101213;
-  --color-bg-sub: #1f1f1f;
-  --color-bg-modal: #141414;
-  --color-card-hover: #1f1f1f;
-  --color-button-border: #343434;
-  --color-cell-border: #212227;
+  --color-bg-sidebar: #161616;
+  --color-bg-hover: #262626;
+  --color-sidebar-chat-selected: #282828;
+  --color-sidebar-chat-hover: #202020;
+  --color-bg-sub: #262626;
+  --color-bg-modal: #242424;
+  --color-card-hover: #333333;
+  --color-button-border: #3d3d3d;
+  --color-cell-border: #2c2c2c;
   --color-label-title: #ffffff;
-  --color-label-muted: #9198a1;
+  --color-label-muted: #949494;
 
   --shadow-sm: 0 0 0 1px rgb(from var(--color-white) r g b / 0.1);
   --shadow-md: 0 0 0 1px rgb(from var(--color-white) r g b / 0.15);
   --shadow-lg: 0 0 0 1px rgb(from var(--color-white) r g b / 0.1);
   --shadow-xl: 0 0 0 1px rgb(from var(--color-white) r g b / 0.1);
-  --shadow-focus: 0 0 0 2px #0b0b0b, 0 0 0 4px #58a6ff;
+  --shadow-focus: 0 0 0 2px #1c1c1c, 0 0 0 4px #58a6ff;
+  --shadow-popover:
+    inset 0 0 0 0.5px rgb(from var(--color-white) r g b / 0.12), 0 8px 40px 0 rgb(0 0 0 / 0.45),
+    0 12px 32px -12px rgb(0 0 0 / 0.6);
 }

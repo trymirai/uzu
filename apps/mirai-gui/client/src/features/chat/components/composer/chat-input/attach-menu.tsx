@@ -1,4 +1,4 @@
-import { File as FileIcon, Plus } from "lucide-react";
+import { FileTextIcon, PlusIcon } from "@/components/icons/app-icons";
 import { Button } from "@/components/ui/button";
 import { PopoverMenu } from "@/components/ui/popover/popover-menu";
 import { Text } from "@/components/ui/typography";
@@ -12,29 +12,29 @@ export function AttachMenu({ onSelectFile }: AttachMenuProps) {
     <PopoverMenu
       side="top"
       align="start"
-      sideOffsetPx={4}
-      className="min-w-[280px]"
-      itemClassName="gap-3 px-2 py-2"
+      sideOffsetPx={8}
+      className="min-w-[260px]"
+      itemClassName="gap-3 px-2.5 py-2"
       trigger={
         <Button
           size="xs"
           kind="ghost"
           iconOnly
           ariaLabel="Attach file"
-          icon={<Plus size={18} />}
-          className="bg-surface-tertiary text-text-muted hover:bg-control-surface-hover hover:text-text-primary"
+          icon={<PlusIcon size={18} aria-hidden />}
+          className="rounded-full bg-control-fill text-text-secondary hover:bg-control-fill-hover hover:text-text-primary"
         />
       }
       items={[
         {
           id: "upload",
-          icon: <FileIcon size={16} className="text-text-muted shrink-0" />,
+          icon: <FileTextIcon size={18} className="text-text-muted shrink-0" aria-hidden />,
           label: (
             <span>
-              <Text as="span" color="primary" opticalSize={14} className="block text-[13px] font-[450] leading-[1.3]">
+              <Text as="span" color="primary" className="block text-[13px] font-[500] leading-[1.3]">
                 Upload a file
               </Text>
-              <Text as="span" color="muted" className="block text-[11px] leading-[1.4]">
+              <Text as="span" color="muted" className="mt-0.5 block text-[12px] leading-[1.35]">
                 Supports TXT, MD, JSON, CSV, YAML
               </Text>
             </span>

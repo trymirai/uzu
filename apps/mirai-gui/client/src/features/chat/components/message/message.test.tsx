@@ -82,17 +82,17 @@ it("copies chart-only replies as readable data instead of an empty canvas", asyn
   expect(await read("text/plain")).toContain("Category\tMonthly spending\nRent\t900\nFood\t350");
 });
 
-it("changes Thinking... to Thinking when this response finishes", () => {
+it("changes Thinking… to Thought when this response finishes", () => {
   useChatSessionStore.setState({
     isGenerating: true,
     activeGeneratingChatId: "chat",
     activeAssistantMessageId: message.id,
   });
   render(<Message {...message} chatId="chat" isLast isUiStreaming />);
-  expect(screen.getByText("Thinking...")).toBeTruthy();
+  expect(screen.getByText("Thinking…")).toBeTruthy();
 
   act(() => useChatSessionStore.getState().setGenerating(false));
-  expect(screen.getByText("Thinking")).toBeTruthy();
+  expect(screen.getByText(/^Thought/)).toBeTruthy();
 });
 
 it("tracks the actual message when regenerating an earlier response", () => {
@@ -109,7 +109,10 @@ it("tracks the actual message when regenerating an earlier response", () => {
       <Message {...later} chatId="chat" isLast isUiStreaming />
     </>,
   );
-  expect(screen.getAllByText(/^Thinking/).map((element) => element.textContent)).toEqual(["Thinking...", "Thinking"]);
+  expect(screen.getAllByText(/^Th(inking|ought)/).map((element) => element.textContent)).toEqual([
+    "Thinking…",
+    expect.stringMatching(/^Thought/),
+  ]);
 });
 
 it("keeps an older version and other chats marked finished", () => {
@@ -121,11 +124,11 @@ it("keeps an older version and other chats marked finished", () => {
     activeAssistantMessageId: message.id,
   });
   const view = render(<Message {...message} chatId="chat" isLast isUiStreaming />);
-  expect(screen.getByText("Thinking")).toBeTruthy();
+  expect(screen.getByText(/^Thought/)).toBeTruthy();
 
   act(() => useChatStore.setState({ messages: [message] }));
   view.rerender(<Message {...message} chatId="other-chat" isLast isUiStreaming />);
-  expect(screen.getByText("Thinking")).toBeTruthy();
+  expect(screen.getByText(/^Thought/)).toBeTruthy();
 });
 
 const renderThinkingMessage = () => {
@@ -141,7 +144,7 @@ const renderThinkingMessage = () => {
     activeAssistantMessageId: message.id,
   });
   const view = render(<Message {...thinkingMessage} chatId="chat" isLast isUiStreaming />);
-  return { view, thinkingMessage, toggle: screen.getByRole("button", { name: /^Thinking/ }) };
+  return { view, thinkingMessage, toggle: screen.getByRole("button", { name: /^(Thinking|Thought)/ }) };
 };
 
 it("opens during reasoning, collapses when the answer starts, and allows reopening", () => {
@@ -212,7 +215,7 @@ it("renders each reasoning, text and tool turn in order and collapses reasoning 
     activeAssistantMessageId: message.id,
   });
   const view = render(<Message {...message} chatId="chat" isLast isUiStreaming />);
-  const firstToggle = screen.getByRole("button", { name: /^Thinking/ });
+  const firstToggle = screen.getByRole("button", { name: /^(Thinking|Thought)/ });
   expect(firstToggle.getAttribute("aria-expanded")).toBe("true");
 
   const firstTurn: TranscriptItem[] = [
@@ -222,7 +225,7 @@ it("renders each reasoning, text and tool turn in order and collapses reasoning 
   ];
   update(firstTurn);
   expect(firstToggle.getAttribute("aria-expanded")).toBe("false");
-  expect(view.container.textContent).toContain("Checking the date and time...");
+  expect(view.container.textContent).toContain("Checking the date and time…");
   expect(view.container.textContent).not.toContain("Renaming the chat");
   expect(view.container.textContent).not.toContain("Response");
   const answerNode = screen.getByText("Checking the time.");
@@ -234,8 +237,8 @@ it("renders each reasoning, text and tool turn in order and collapses reasoning 
   ];
   update(nextTurn);
   expect(screen.getByText("Checking the time.")).toBe(answerNode);
-  expect(view.container.textContent).toMatch(/Checking the time\..*Checked the date and time.*Thinking\.\.\./s);
-  const secondToggle = screen.getAllByRole("button", { name: /^Thinking/ })[1]!;
+  expect(view.container.textContent).toMatch(/Checking the time\..*Checked the date and time.*Thinking…/s);
+  const secondToggle = screen.getAllByRole("button", { name: /^(Thinking|Thought)/ })[1]!;
   expect(secondToggle.getAttribute("aria-expanded")).toBe("true");
   fireEvent.click(firstToggle);
   expect(firstToggle.getAttribute("aria-expanded")).toBe("true");
@@ -253,6 +256,26 @@ it("renders each reasoning, text and tool turn in order and collapses reasoning 
   expect(secondToggle.getAttribute("aria-expanded")).toBe("true");
 });
 
+it("folds a run of reasoning and tool calls into one step", () => {
+  useChatStore.getState().updateMessage(message.id, {
+    output: {
+      transcript: [
+        { type: "thinking", text: "Try a chart", completed: true },
+        { type: "toolCall", name: "show_chart", called: false, failed: true },
+        { type: "thinking", text: "Try again", completed: true },
+        { type: "toolCall", name: "show_chart", called: false, failed: true },
+        { type: "thinking", text: "Answer in text", completed: true },
+        { type: "text", text: "Here it is." },
+      ],
+    },
+  });
+  render(<Message {...message} chatId="chat" isLast />);
+  const toggles = screen.getAllByRole("button", { name: /^(Thinking|Thought)/ });
+  expect(toggles).toHaveLength(1);
+  expect(toggles[0]!.textContent).toContain("2 tool calls");
+  expect(screen.getByText("Here it is.")).toBeTruthy();
+});
+
 it("keeps one reasoning block across hidden housekeeping and preserves manual toggles", () => {
   useChatStore.getState().updateMessage(message.id, {
     output: { transcript: [{ type: "thinking", text: "Choose a title", completed: false }] },
@@ -263,7 +286,7 @@ it("keeps one reasoning block across hidden housekeeping and preserves manual to
     activeAssistantMessageId: message.id,
   });
   render(<Message {...message} chatId="chat" isLast isUiStreaming />);
-  const toggle = screen.getByRole("button", { name: /^Thinking/ });
+  const toggle = screen.getByRole("button", { name: /^(Thinking|Thought)/ });
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -274,7 +297,7 @@ it("keeps one reasoning block across hidden housekeeping and preserves manual to
       },
     }),
   );
-  expect(screen.getAllByRole("button", { name: /^Thinking/ })).toEqual([toggle]);
+  expect(screen.getAllByRole("button", { name: /^(Thinking|Thought)/ })).toEqual([toggle]);
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -289,7 +312,7 @@ it("keeps one reasoning block across hidden housekeeping and preserves manual to
     }),
   );
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  expect(screen.getByText("Thinking")).toBeTruthy();
+  expect(screen.getByText(/^Thought/)).toBeTruthy();
 });
 
 it("shows a chat naming tool requested explicitly by the user", () => {
@@ -307,7 +330,7 @@ it("keeps interrupted tool calls visible without claiming they are still running
   });
   const view = render(<Message {...message} chatId="chat" isCanceled />);
   expect(view.container.textContent).toContain("Stopped checking the date and time");
-  expect(view.container.textContent).not.toContain("Checking the date and time...");
+  expect(view.container.textContent).not.toContain("Checking the date and time…");
 });
 
 it("does not claim a failed tool call succeeded", () => {

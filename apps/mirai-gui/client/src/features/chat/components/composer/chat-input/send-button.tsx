@@ -1,7 +1,7 @@
 import { twMerge } from "tailwind-merge";
 import { Button } from "@/components/ui/button";
-import { IconPlayerStopFilled } from "@/components/icons/player-stop-filled-icon";
-import { IconSend } from "@/components/icons/send-icon";
+import { SquareIcon } from "@/components/icons/square-icon";
+import { ArrowUpIcon } from "@/components/icons/arrow-up-icon";
 
 export type SendButtonProps = {
   disabled: boolean;
@@ -19,9 +19,13 @@ export function SendButton({ disabled, hasContent, onClick, streaming = false, o
         kind="primary"
         iconOnly
         ariaLabel="Stop generating"
-        icon={<IconPlayerStopFilled size={14} />}
+        icon={
+          <span key="stop" className="flex animate-uzu-swap">
+            <SquareIcon size={14} />
+          </span>
+        }
         onClick={onStop}
-        className="active:scale-100"
+        className="rounded-full active:scale-100"
       />
     );
   }
@@ -32,12 +36,16 @@ export function SendButton({ disabled, hasContent, onClick, streaming = false, o
       kind={hasContent ? "primary" : "ghost"}
       iconOnly
       ariaLabel="Send message"
-      icon={<IconSend />}
+      icon={
+        <span key="send" className="flex animate-uzu-swap">
+          <ArrowUpIcon />
+        </span>
+      }
       disabled={disabled}
       onClick={onClick}
       className={twMerge(
-        "active:scale-100",
-        hasContent ? "" : "bg-surface-tertiary text-text-disabled cursor-not-allowed opacity-100",
+        "rounded-full active:scale-100",
+        hasContent ? "" : "bg-control-fill text-text-disabled cursor-not-allowed opacity-100",
       )}
     />
   );

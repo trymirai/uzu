@@ -1,11 +1,11 @@
 import type { SVGProps } from "react";
 
-export type IconCheckmarkProps = SVGProps<SVGSVGElement> & {
+export type CheckmarkIconProps = SVGProps<SVGSVGElement> & {
   size?: number;
   color?: string;
 };
 
-export function IconCheckmark({ size = 16, color = "currentColor", strokeWidth, ...props }: IconCheckmarkProps) {
+export function CheckmarkIcon({ size = 16, color = "currentColor", strokeWidth, ...props }: CheckmarkIconProps) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" {...props}>
       <path

@@ -84,7 +84,7 @@ export function FamilyDetailPage({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-10">
       {detail.installed.length > 0 && (
         <ModelTable title="Downloaded" compact={isMobile}>
           {detail.installed.map((m) => renderRow(m))}

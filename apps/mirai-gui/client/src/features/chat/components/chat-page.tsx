@@ -1,16 +1,12 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 
-import { ChatHeader } from "./chat-header";
-import { UNTITLED_CHAT_TITLE } from "@/constants/chat";
 import { useToast } from "@/components/ui/toast/use-toast";
-import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useModelsStore } from "@/stores/use-models-store";
 import { useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
-import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { isChatGenerating } from "@/features/runtime/runtime-busy";
 import { useChatModelSelector } from "../hooks/use-chat-model-selector";
 import { useLlmStream } from "../hooks/use-llm-stream";
@@ -28,6 +24,8 @@ import { useModelSwitch } from "../hooks/use-model-switch";
 import { useRegenerateMessage } from "../hooks/use-regenerate-message";
 import { useSendChatMessage } from "../hooks/use-send-chat-message";
 import { useStopChatRun } from "../hooks/use-stop-chat-run";
+import { useIsMobile, useMediaQuery } from "@/hooks/use-media-query";
+import { useSidebarStore } from "@/stores/use-sidebar-store";
 
 type ChatSearchParams = {
   isNew?: boolean;
@@ -41,11 +39,14 @@ export function ChatPage() {
 
   const toast = useToast();
 
-  const isSidebarOpen = useSidebarStore((s) => s.isOpen);
   const chatWidth = useAppStore((s) => s.chatWidth);
+  // With the sidebar hidden (or floating, in a narrow window), its button and the traffic lights sit
+  // over the conversation's top-left corner, so the top of the list fades under them.
+  const isMobile = useIsMobile();
+  const isSidebarOpen = useSidebarStore((s) => s.isOpen);
+  const chromeOverChat = isMobile || !isSidebarOpen;
   const globalInstructions = useGlobalInstructionsStore((s) => s.instructions);
   const loadInstructions = useGlobalInstructionsStore((s) => s.loadInstructions);
-  const residentSession = useRuntimeSessionStore((s) => s.residentSession);
   const isModelLoading = useChatSessionStore((s) => s.isModelLoading);
   const isSessionBusy = useChatSessionStore(
     (s) => s.operationState !== "idle" || s.isGenerating || s.isTitleGenerating || s.isModelLoading || s.isEjecting,
@@ -53,7 +54,6 @@ export function ChatPage() {
   const isTitleGenerating = useChatSessionStore((s) => s.isTitleGenerating);
   const titleGenChatId = useChatSessionStore((s) => s.titleGenChatId);
   const isTitleGeneratingForChat = isTitleGenerating && titleGenChatId === chatId;
-  const savedChats = useChatStore((s) => s.savedChats);
   const isChatStreaming = useChatSessionStore((s) => isChatGenerating(s, chatId));
   const loadingMessageId = useChatSessionStore((s) =>
     s.loadingMessage?.chatId === chatId ? s.loadingMessage.messageId : null,
@@ -85,6 +85,12 @@ export function ChatPage() {
     setScrollTargetId(null);
   }, []);
 
+  // A new chat is a place to type: put the cursor in the composer so you can start right away.
+  useEffect(() => {
+    if (!search.isNew) return;
+    document.querySelector<HTMLTextAreaElement>("textarea[data-composer-input]")?.focus({ preventScroll: true });
+  }, [chatId, search.isNew]);
+
   useChatSwitchEffect({
     chatId,
     isNewChat: !!search.isNew,
@@ -97,8 +103,6 @@ export function ChatPage() {
   }, [loadInstructions]);
 
   const runStatus = useChatRunStatus({ chatId, modelId: currentModelId });
-
-  const currentChatTitle = savedChats.find((c) => c.id === chatId)?.title || UNTITLED_CHAT_TITLE;
 
   useEjectDrivenModelReset({
     chatId,
@@ -149,27 +153,99 @@ export function ChatPage() {
   );
   const modelParamsModified = isCustomParams(selectedModelParams, globalModelChatNamingEnabled, selectedModelSize);
 
+  // A new, empty chat puts the composer in the middle of the page, under the cat. Once the first
+  // message goes out the composer settles at the bottom, gliding there rather than jumping.
+  const hasMessages = useChatStore((s) => s.messages.length > 0);
+  const centered = !!search.isNew && !hasMessages && !isLoading && !isModelLoading;
+  const composerRef = useRef<HTMLDivElement>(null);
+  const composerTopRef = useRef<number | null>(null);
+  // The conversation runs behind the composer to the panel's edge, so the fade and the room at the
+  // end of the list follow the composer's height.
+  const [composerHeight, setComposerHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const update = () => setComposerHeight(el.offsetHeight);
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // The glide belongs to one moment only: the first message going out in this same new chat.
+  // Arriving at a chat, from wherever, never animates; the composer is simply where it belongs.
+  const settledFromRef = useRef<{ chatId: string; centered: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    const before = composerTopRef.current;
+    const last = settledFromRef.current;
+    settledFromRef.current = { chatId, centered };
+    const sentFirstMessage = last?.chatId === chatId && last.centered && !centered;
+    if (!el || before === null || reducedMotion || !sentFirstMessage) return;
+    const delta = before - el.getBoundingClientRect().top;
+    if (Math.abs(delta) < 2) return;
+    el.animate([{ transform: `translateY(${delta}px)` }, { transform: "none" }], {
+      duration: 520,
+      easing: "cubic-bezier(0.32, 0.72, 0, 1)",
+    });
+  }, [centered, chatId, reducedMotion]);
+  useLayoutEffect(() => {
+    composerTopRef.current = composerRef.current?.getBoundingClientRect().top ?? null;
+  });
+
+  // Sending with no model chosen: the cat is not pleased and glares at the picker, which nudges.
+  const [missingModelAt, setMissingModelAt] = useState(0);
+  const handleMissingModel = () => {
+    setMissingModelAt(Date.now());
+    if (reducedMotion) return;
+    document
+      .querySelector("[data-model-picker]")
+      ?.animate(
+        [
+          { transform: "translateX(0)" },
+          { transform: "translateX(-3px)" },
+          { transform: "translateX(3px)" },
+          { transform: "translateX(-2px)" },
+          { transform: "translateX(0)" },
+        ],
+        { duration: 360, delay: 450, easing: "cubic-bezier(0.32, 0.72, 0, 1)" },
+      );
+  };
+
   return (
     <div
-      className="flex flex-col h-full min-h-0 bg-background pt-4 pb-5 px-5"
-      style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
+      className="flex flex-col h-full min-h-0 bg-background px-5 pb-5"
+      style={
+        {
+          "--chat-width": `${chatWidth}px`,
+          "--composer-h": `${composerHeight}px`,
+          // Room for the top fade, so the first message starts below it.
+          "--chat-list-top": chromeOverChat ? "3.5rem" : "2rem",
+        } as CSSProperties
+      }
     >
       <div className="w-full flex flex-col h-full min-h-0">
-        <ChatHeader
-          className="shrink-0"
-          title={currentChatTitle}
-          isSidebarOpen={isSidebarOpen}
-          isTitleGenerating={isTitleGeneratingForChat}
-        />
+        {/* A new chat: the cat and its words (about 197px with the air above the ears, plus 32px of
+            room above them) sit at the bottom of this area, and the leftover height is shared
+            equally above that block and
+            below the composer. The space below starts 64px larger, so the group sits 32px above
+            the true middle, where the eye expects it. */}
 
-        <div className="flex-1 overflow-clip min-h-0 -mx-5">
+        {/* In a conversation the list reaches behind the composer and the gap under it to the panel's
+            edge. A fade covers that stretch: solid page colour in the gap below the composer,
+            clearing toward its top edge, so text beside the composer (the cat, wide content) fades
+            out as it goes down instead of being cut off. */}
+        <div
+          className={`${centered ? "flex-[1_1_229px]" : "flex-1"} relative overflow-clip min-h-0 -mx-5`}
+          style={centered ? undefined : { marginBottom: "calc(-1 * (var(--composer-h) + 1.25rem))" }}
+        >
           <ChatMessageList
             isNewChat={!!search.isNew}
             isChatStreaming={isChatStreaming}
             isLoadingStream={isLoading}
             isTitleGeneratingForChat={isTitleGeneratingForChat}
             isModelLoading={isModelLoading}
-            hasResidentModel={residentSession?.repoId === currentModelId}
             scrollTargetId={scrollTargetId}
             onScrolled={() => setScrollTargetId(null)}
             loadingMessageId={loadingMessageId}
@@ -177,10 +253,36 @@ export function ChatPage() {
             onMessageModelSelect={handleMessageModelSelect}
             onEditMessage={handleEditMessage}
             canEditMessages={runStatus.canRun && !isSessionBusy}
+            draft={composer.draft}
+            missingModelAt={missingModelAt}
           />
+          {!centered && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-[calc(var(--composer-h)+1.25rem)] bg-[linear-gradient(to_top,var(--color-background)_1.25rem,transparent)]"
+            />
+          )}
+          {/* The same fade at the top, while the sidebar button sits over it: page colour at the edge,
+              fading to clear over its whole height, with a light blur that clears the same way. */}
+          {!centered && (
+            <>
+              <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-x-0 top-0 h-14 backdrop-blur-[3px] [mask-image:linear-gradient(to_bottom,black,transparent)] transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${chromeOverChat ? "opacity-100" : "opacity-0"}`}
+              />
+              <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-x-0 top-0 h-14 bg-[linear-gradient(to_bottom,var(--color-background),transparent)] transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${chromeOverChat ? "opacity-100" : "opacity-0"}`}
+              />
+            </>
+          )}
         </div>
 
-        <div className="flex-shrink-0 w-full max-w-[var(--chat-width)] mx-auto">
+        {/* 8px wider than the text column on each side. */}
+        <div
+          ref={composerRef}
+          className="relative z-10 flex-shrink-0 self-center w-[calc(100%+1rem)] max-w-[calc(var(--chat-width)+1rem)]"
+        >
           <ChatComposer
             chatId={chatId}
             isChatStreaming={isChatStreaming}
@@ -200,8 +302,10 @@ export function ChatPage() {
             onRemoveFile={composer.removeFile}
             onOpenModelParams={() => setParamsDrawerOpen(true)}
             modelParamsModified={modelParamsModified}
+            onMissingModel={handleMissingModel}
           />
         </div>
+        <div aria-hidden className={centered ? "flex-[1_1_76px] min-h-0" : "flex-[0]"} />
       </div>
 
       <ModelParamsDrawer

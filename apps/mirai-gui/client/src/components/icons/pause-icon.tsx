@@ -1,8 +1,8 @@
 import type { SVGProps } from "react";
 
-export type IconPauseFilledProps = SVGProps<SVGSVGElement> & { size?: number; color?: string };
+export type PauseIconProps = SVGProps<SVGSVGElement> & { size?: number; color?: string };
 
-export function IconPauseFilled({ size = 16, color = "currentColor", ...props }: IconPauseFilledProps) {
+export function PauseIcon({ size = 16, color = "currentColor", ...props }: PauseIconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
       <path

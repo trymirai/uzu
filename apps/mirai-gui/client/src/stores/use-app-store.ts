@@ -3,7 +3,7 @@ import { APP_STORE_KEY, migrateAppStorage } from "./migrate-app-storage";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type ChatWidth = 800 | 1000 | 1200;
+export type ChatWidth = 768 | 1000 | 1200;
 export const DEFAULT_CHAT_WIDTH: ChatWidth = 1000;
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -20,7 +20,10 @@ export const isDarkTheme = (
   systemDark = typeof window !== "undefined" && (window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false),
 ): boolean => theme === "dark" || (theme === "system" && systemDark);
 
-const isChatWidth = (value: unknown): value is ChatWidth => value === 800 || value === 1000 || value === 1200;
+const isChatWidth = (value: unknown): value is ChatWidth => value === 768 || value === 1000 || value === 1200;
+
+// Narrow used to be 800px; it's 768px now (as in ChatGPT). A saved 800 stays Narrow.
+const LEGACY_NARROW_WIDTH = 800;
 
 type AppState = {
   isDarkMode: boolean;
@@ -66,7 +69,7 @@ export const useAppStore = create<AppState>()(
       merge: (persisted, current) => {
         const stored = (persisted ?? {}) as Partial<Omit<AppState, "chatWidth">> & { chatWidth?: unknown };
         const theme = resolveTheme(stored);
-        const { chatWidth } = stored;
+        const chatWidth = stored.chatWidth === LEGACY_NARROW_WIDTH ? 768 : stored.chatWidth;
         return {
           ...current,
           theme,

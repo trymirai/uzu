@@ -34,18 +34,20 @@
   overflow: clip;
 }
 
+/* A page's own scroller. On macOS the scrollbar overlays the content and fades out when idle; when
+   the system is set to always show scrollbars it takes real width instead, so the gutter is
+   reserved on both edges: filtering a list down never makes the content jump sideways, and the
+   centred column stays centred. */
+@utility page-scrollbar {
+  @apply thin-scrollbar;
+  scrollbar-gutter: stable both-edges;
+}
+
+/* The standard properties only, never ::-webkit-scrollbar: styling that pseudo-element makes
+   WebKit swap the native overlay scrollbar (which hides when you stop scrolling) for a classic one
+   that is always on screen. */
 @utility thin-scrollbar {
-  &::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  &::-webkit-scrollbar-track {
-    background-color: transparent;
-  }
-  &::-webkit-scrollbar-thumb {
-    background-color: var(--color-gray-500);
-    border-radius: 9999px;
-  }
+  scrollbar-width: thin;
 }
 
 @layer base {
@@ -96,6 +98,10 @@
   body {
     @apply bg-background text-label-title font-sans;
     font-family: InterVariable, Inter, system-ui, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    /* Inter Variable carries an optical size axis: small UI text opens up, large text tightens. */
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   code,
   kbd,
@@ -136,23 +142,37 @@
     content-visibility: visible !important;
   }
 
+  /* No divider under the header: the language label and the buttons sit on the block itself. */
   [data-streamdown="code-block-header"] {
-    @apply relative border-b border-cell-border bg-bg-modal px-3 py-2 text-xs text-label-muted;
+    @apply relative bg-bg-modal px-3 py-2 text-xs text-label-muted;
+    border-bottom: 0 !important;
     padding-right: 2.5rem;
   }
 
+  /* The two buttons sit close: 4px between their hover squares. */
   [data-streamdown="code-block-actions"] {
     border: 0 !important;
     padding: 0 !important;
+    gap: 4px !important;
     backdrop-filter: none !important;
   }
 
+  /* The same square as the actions under a message: hover fills it, focus rings it. */
   [data-streamdown="code-block-actions"] button {
-    @apply min-w-6 min-h-6;
+    @apply flex size-8 items-center justify-center rounded-lg p-0 text-label-muted outline-hidden transition-colors duration-150 ease-out;
+  }
+  /* The block is already a raised grey, so hover uses the stronger fill from menus to show on it. */
+  [data-streamdown="code-block-actions"] button:enabled:hover {
+    @apply bg-selection-hover text-label-title;
+  }
+  [data-streamdown="code-block-actions"] button:focus-visible {
+    @apply shadow-focus;
   }
 
+  /* The code starts as far below the language label as the label sits below the block's top edge. */
   [data-streamdown="code-block-body"] {
     @apply p-4;
+    padding-top: 1px !important;
     /* Horizontal code scrolling stays local; vertical gestures scroll the chat. */
     overscroll-behavior: contain auto;
     background: transparent !important;
@@ -197,6 +217,204 @@
      the scroll owner; the wrapper only clips the corners. */
   [data-streamdown="code-block"] {
     overflow: clip;
+  }
+}
+
+/* Arrivals: things the user caused (a new message, a step, a status) come into focus rather than
+   pop in. Short, soft blur plus a few pixels of travel; skipped entirely under reduced motion. */
+@keyframes uzu-in {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+/* The first-run welcome: a slower, deeper version of the arrival for a screen seen once. Each part
+   starts out of focus, a little low and small, and settles over most of a second. The cat starts
+   softer and smaller still, so it reads as waking into view. Blur stays under 20px. */
+@keyframes uzu-welcome {
+  from {
+    opacity: 0;
+    filter: blur(12px);
+    transform: translateY(10px) scale(0.97);
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+@keyframes uzu-welcome-cat {
+  from {
+    opacity: 0;
+    filter: blur(16px);
+    transform: scale(0.88);
+  }
+  55% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+/* Swaps in place (an icon or a label changing): blur and scale, no travel. */
+@keyframes uzu-swap {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+
+/* Tooltips grow out of their trigger: from 0.95, nudged 4px toward it. */
+@keyframes uzu-tip {
+  from {
+    opacity: 0;
+    transform: translateY(var(--tip-from, 4px)) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@utility animate-uzu-tip-up {
+  --tip-from: 4px;
+  animation: uzu-tip 160ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@utility animate-uzu-tip-down {
+  --tip-from: -4px;
+  animation: uzu-tip 160ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+/* Menus and pickers grow out of their trigger (set transform-origin on the element). */
+@keyframes uzu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@utility animate-uzu-pop {
+  animation: uzu-pop 180ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+/* Toasts drop into focus from just above, and leave faster and quieter than they came. */
+@keyframes uzu-toast-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+@keyframes uzu-toast-out {
+  to {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+@utility animate-uzu-toast-in {
+  animation: uzu-toast-in 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@utility animate-uzu-toast-out {
+  animation: uzu-toast-out 180ms ease-in both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* Moving between levels (a model family and its models): the new level slides in from the side
+   you are heading toward, coming into focus as it arrives. */
+@keyframes uzu-push {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateX(var(--push-from, 16px));
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+@utility animate-uzu-forward {
+  --push-from: 16px;
+  animation: uzu-push 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@utility animate-uzu-back {
+  --push-from: -16px;
+  animation: uzu-push 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+/* Fills backwards only, so once done the element is exactly its resting self; and it keeps its own
+   layer, so WebKit doesn't hand the text back to ordinary rendering at the last frame (a visible
+   flash as it re-sharpens). */
+@utility animate-uzu-welcome {
+  animation: uzu-welcome 900ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  will-change: transform, filter, opacity;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@utility animate-uzu-welcome-cat {
+  animation: uzu-welcome-cat 1100ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  will-change: transform, filter, opacity;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@utility animate-uzu-in {
+  animation: uzu-in 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+@utility animate-uzu-swap {
+  animation: uzu-swap 180ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
   }
 }
 

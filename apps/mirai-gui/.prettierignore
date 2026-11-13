@@ -3,3 +3,5 @@ client/dist-*/
 desktop/target/
 desktop/gen/
 pnpm-lock.yaml
+# Written by Icon Composer in its own JSON style; it rewrites the file on every save.
+desktop/icons/*.icon/

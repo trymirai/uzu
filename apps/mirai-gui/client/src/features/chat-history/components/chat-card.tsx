@@ -1,7 +1,6 @@
 import React from "react";
 import { DataInteractive } from "@headlessui/react";
 import { formatDistanceToNow } from "date-fns";
-import { ChatsIcon } from "@/components/icons/chats-icon";
 import { Checkbox } from "@/components/ui/checkbox";
 import { twMerge } from "tailwind-merge";
 
@@ -47,34 +46,32 @@ const ChatCard: React.FC<ChatCardProps> = ({
             },
           })}
       className={twMerge(
-        "rounded-lg overflow-clip bg-background cursor-pointer transition-colors border-[0.5px] border-cell-border",
-        !selectMode && "outline-hidden data-[focus]:shadow-focus",
-        selectMode ? "hover:bg-card-hover" : "hover:bg-card-hover",
-        selected ? "bg-bg-modal border-button-border" : "",
+        "rounded-xl bg-surface-soft cursor-pointer transition-colors duration-150 ease-out",
+        !selectMode && "outline-hidden data-[focus]:bg-surface-tertiary",
+        // Two steps, as in the menus: the pointer lifts a card a little, choosing it a step more.
+        selected ? "bg-selection-selected" : "hover:bg-surface-tertiary",
       )}
     >
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 p-3 w-full">
-        <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-          {selectMode ? (
-            <span onClick={(e) => e.stopPropagation()}>
-              <Checkbox
-                checked={checked}
-                onChange={() => onCheckedChange?.()}
-                size="sm"
-                aria-label={`Select ${title}`}
-              />
-            </span>
-          ) : (
-            <ChatsIcon className="w-5 h-5 text-label-title" />
-          )}
-        </div>
+      {/* The title alone leads; the checkbox takes the leading slot only while selecting. */}
+      <div
+        className={twMerge(
+          "grid items-center gap-3 h-14 px-4 w-full",
+          selectMode ? "grid-cols-[auto_1fr_auto]" : "grid-cols-[1fr_auto]",
+        )}
+      >
+        {selectMode ? (
+          // A flex box, not an inline span: inline, the box sat on the text baseline, below centre.
+          <div className="flex size-4 shrink-0 items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <Checkbox checked={checked} onChange={() => onCheckedChange?.()} size="sm" aria-label={`Select ${title}`} />
+          </div>
+        ) : null}
         <div className="min-w-0">
-          <h3 className="text-[15px] leading-[150%] font-[350] text-label-title overflow-clip text-ellipsis whitespace-nowrap">
+          <h3 className="text-[14px] leading-[1.35] font-[450] text-label-title overflow-clip text-ellipsis whitespace-nowrap">
             {title}
           </h3>
         </div>
         <div className="flex-shrink-0 ml-2">
-          <span className="text-xs text-label-muted font-mono whitespace-nowrap">{timeAgo}</span>
+          <span className="text-[13px] text-label-muted tabular-nums whitespace-nowrap">{timeAgo}</span>
         </div>
       </div>
     </DataInteractive>

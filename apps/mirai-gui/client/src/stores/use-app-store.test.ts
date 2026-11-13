@@ -21,14 +21,20 @@ it("defaults to Medium and persists the pixel width with existing preferences", 
   });
 });
 
-it.each([800, 1000, 1200])("restores the saved %s pixel width on hydration", async (chatWidth) => {
+it.each([768, 1000, 1200])("restores the saved %s pixel width on hydration", async (chatWidth) => {
   localStorage.setItem(APP_STORE_KEY, JSON.stringify({ state: { chatWidth }, version: 0 }));
   await useAppStore.persist.rehydrate();
   expect(useAppStore.getState().chatWidth).toBe(chatWidth);
   expect(useAppStore.getState().theme).toBe("system");
 });
 
-it.each([undefined, null, 799, 1201, "1000"])(
+it("keeps Narrow saved under its old 800 pixel width as Narrow", async () => {
+  localStorage.setItem(APP_STORE_KEY, JSON.stringify({ state: { chatWidth: 800 }, version: 0 }));
+  await useAppStore.persist.rehydrate();
+  expect(useAppStore.getState().chatWidth).toBe(768);
+});
+
+it.each([undefined, null, 767, 799, 1201, "1000"])(
   "uses Medium for missing or invalid stored width %s",
   async (chatWidth) => {
     localStorage.setItem(APP_STORE_KEY, JSON.stringify({ state: { chatWidth, isDarkMode: false }, version: 0 }));
@@ -37,7 +43,7 @@ it.each([undefined, null, 799, 1201, "1000"])(
   },
 );
 
-it.each([799, 1201, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid setter value %s", (width) => {
+it.each([767, 800, 1201, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid setter value %s", (width) => {
   useAppStore.getState().setChatWidth(width);
   expect(useAppStore.getState().chatWidth).toBe(1000);
   expect(JSON.parse(localStorage.getItem(APP_STORE_KEY)!).state.chatWidth).toBe(1000);

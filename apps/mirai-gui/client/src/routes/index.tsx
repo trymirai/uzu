@@ -1,5 +1,6 @@
 import { Loader } from "@/components/loader";
 import { platformInfo } from "@/platform/platform-info";
+import { hasSeenWelcome } from "@/features/welcome/welcome-seen";
 import { useModelsStore } from "@/stores/use-models-store";
 import { modelDownloadPhases } from "@/types/model-manager";
 import { createFileRoute, Navigate } from "@tanstack/react-router";
@@ -20,6 +21,9 @@ function HomePage() {
   const error = useModelsStore((s) => s.error);
 
   if (platformInfo.isWeb) return <Navigate to="/chats" replace />;
+
+  // A new install says hello first.
+  if (!hasSeenWelcome()) return <Navigate to="/welcome" replace />;
 
   if (models.some((model) => modelPhasesById[model.repoId] === modelDownloadPhases.downloaded)) {
     return <Navigate to="/chat/$chatId" params={{ chatId }} search={{ isNew: true }} replace />;

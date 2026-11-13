@@ -1,4 +1,5 @@
 import { Search } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 import { Input } from "./input";
 
 export type SearchInputProps = {
@@ -11,13 +12,17 @@ export type SearchInputProps = {
 export function SearchInput({ value, onChange, placeholder = "Search", className }: SearchInputProps) {
   return (
     <Input
-      size="sm"
+      size="md"
       fullWidth
-      leftIcon={<Search size={14} />}
+      leftIcon={<Search size={15} />}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={className}
+      // A filled pill rather than an outlined box: it sits on the page like the other controls.
+      className={twMerge(
+        "h-8 rounded-full border-transparent bg-control-fill hover:border-transparent focus-within:border-border-outlined",
+        className,
+      )}
     />
   );
 }

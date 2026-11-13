@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 
+// Absent in some test environments (jsdom).
+const canMatchMedia = () => typeof window !== "undefined" && typeof window.matchMedia === "function";
+
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() =>
-    typeof window !== "undefined" ? window.matchMedia(query).matches : false,
-  );
+  const [matches, setMatches] = useState(() => (canMatchMedia() ? window.matchMedia(query).matches : false));
 
   useEffect(() => {
+    if (!canMatchMedia()) return;
     const media = window.matchMedia(query);
     setMatches(media.matches);
 

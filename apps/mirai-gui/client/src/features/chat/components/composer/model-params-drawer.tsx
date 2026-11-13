@@ -56,30 +56,31 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-black/25" />
+          <div className="fixed inset-0 bg-black/20" />
         </TransitionChild>
 
-        <div className="fixed inset-y-0 right-0 flex max-w-full">
+        {/* A floating sheet inset from the window edges, on the same surface as menus. */}
+        <div className="fixed inset-y-2 right-2 flex max-w-[calc(100%-1rem)]">
           <TransitionChild
             as={Fragment}
-            enter="transform transition ease-out duration-300"
-            enterFrom="translate-x-full"
+            enter="transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
+            enterFrom="translate-x-[calc(100%+0.5rem)]"
             enterTo="translate-x-0"
-            leave="transform transition ease-in duration-200"
+            leave="transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
             leaveFrom="translate-x-0"
-            leaveTo="translate-x-full"
+            leaveTo="translate-x-[calc(100%+0.5rem)]"
           >
-            <DialogPanel className="flex h-full w-[320px] flex-col border-l border-cell-border bg-bg-modal px-5 pb-6 pt-[18px] shadow-xl">
+            <DialogPanel className="flex h-full w-[340px] flex-col overflow-clip rounded-2xl bg-surface-popover px-5 pt-4 shadow-popover">
               <div className="flex items-center justify-between gap-3">
-                <DialogTitle as="h3" className="text-[17px] font-medium leading-[130%] text-label-title">
+                <DialogTitle as="h3" className="text-[16px] font-[600] leading-[1.3] text-label-title">
                   Edit parameters
                 </DialogTitle>
                 <Button
                   onClick={onClose}
-                  className="text-label-muted transition-colors hover:text-label-title outline-hidden data-[focus]:shadow-focus"
+                  className="-mr-1.5 flex size-8 items-center justify-center rounded-full text-label-muted transition-colors duration-150 ease-out hover:bg-control-fill-hover hover:text-label-title outline-hidden data-[focus]:shadow-focus"
                   aria-label="Close"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="size-[18px]" />
                 </Button>
               </div>
 
@@ -93,7 +94,8 @@ export const ModelParamsDrawer = ({ open, chatId, repoId, onClose }: ModelParams
                 />
               </div>
 
-              <div className="mt-4 flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
+              {/* Runs to the panel's bottom edge; the closing padding scrolls with the list. */}
+              <div className="mt-5 -mx-5 px-5 pb-5 flex-1 min-h-0 overflow-y-auto overscroll-y-contain thin-scrollbar">
                 {repoId &&
                   (defaults?.repoId === repoId ? (
                     <ModelParamsControls

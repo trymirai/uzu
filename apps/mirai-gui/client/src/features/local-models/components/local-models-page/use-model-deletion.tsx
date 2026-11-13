@@ -1,3 +1,4 @@
+import { InlineModelName } from "@/components/model-name";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { ejectRuntimeSessionAndWait } from "@/features/runtime/eject-runtime-session";
 import { useModelsStore } from "@/stores/use-models-store";
@@ -27,9 +28,18 @@ export function useModelDeletion(fetchModels: () => Promise<void>): ModelDeletio
         }
 
         await useModelsStore.getState().deleteLocalModel(model.repoId);
-        toast.success(`Deleted ${model.name}`);
+        toast.success(
+          <>
+            Deleted <InlineModelName name={model.name} />
+          </>,
+        );
       } catch (error) {
-        toast.error(`Failed to uninstall ${model.name}`);
+        toast.error(
+          <>
+            Couldn't delete <InlineModelName name={model.name} />
+          </>,
+          { description: error instanceof Error ? error.message : undefined },
+        );
         console.error(error);
       } finally {
         await fetchModels();

@@ -1,3 +1,4 @@
+import { useHeldTrue } from "@/hooks/use-held-true";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { useInstalledPickerModels } from "../../hooks/use-picker-models";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
@@ -6,6 +7,8 @@ import type { AttachedFile } from "@/types/files";
 import { MAX_FILES_PER_MESSAGE, SUPPORTED_FILE_TYPES } from "@/constants/attachments";
 import { isValidFileSize, isValidFileType, processFile } from "../../services/attachment-files";
 import { ChatInput } from "./chat-input";
+
+const UNLOCK_HOLD_MS = 300;
 
 type ChatComposerProps = {
   chatId: string;
@@ -26,6 +29,8 @@ type ChatComposerProps = {
   onRemoveFile: (fileId: string) => void;
   onOpenModelParams: () => void;
   modelParamsModified: boolean;
+  /** Called when a message can't go out because no model is chosen. */
+  onMissingModel?: () => void;
 };
 
 const ATTACH_ACCEPT = SUPPORTED_FILE_TYPES.text.join(",");
@@ -49,6 +54,7 @@ export const ChatComposer = ({
   onRemoveFile,
   onOpenModelParams,
   modelParamsModified,
+  onMissingModel,
 }: ChatComposerProps) => {
   const toast = useToast();
 
@@ -63,8 +69,11 @@ export const ChatComposer = ({
         ? "A response is already generating in another chat."
         : undefined;
 
-  const isLoading = isLoadingStream || isTitleGeneratingForChat;
-  const isStreaming = isChatStreaming || isTitleGeneratingForChat;
+  // After an answer the chat is named, but only once the answer has fully finished; for a frame or
+  // two in between nothing is running, and the model picker and send button flickered to enabled and
+  // back. They now unlock only once they have stayed unlocked for a moment.
+  const isLoading = useHeldTrue(isLoadingStream || isTitleGeneratingForChat, UNLOCK_HOLD_MS);
+  const isStreaming = useHeldTrue(isChatStreaming || isTitleGeneratingForChat, UNLOCK_HOLD_MS);
   const busy = isStreaming || isLoading || isEjecting;
 
   const handleAttach = async (file: File) => {
@@ -103,7 +112,8 @@ export const ChatComposer = ({
           if (files.length > 0) toast.error("Add a message to send attachments");
           return;
         }
-        toast.error(blockedMessage || "Sending is blocked right now");
+        if (!selectedModelId || autoSelectSuppressed) onMissingModel?.();
+        toast.warning(blockedMessage || "Sending is blocked right now");
       }}
       streaming={isStreaming}
       onStop={onStopResponse}

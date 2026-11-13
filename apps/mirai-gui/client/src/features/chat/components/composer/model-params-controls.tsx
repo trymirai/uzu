@@ -53,7 +53,7 @@ const ChangedMarker = () => (
 
 const SectionHeading = ({ name, changed, onReset }: { name: string; changed: boolean; onReset: () => void }) => (
   <div className="flex h-5 items-center gap-1">
-    <span className="text-[12px] font-[450] text-label-muted">{name}</span>
+    <span className="text-[13px] font-[500] text-label-muted">{name}</span>
     {changed && (
       <Button
         type="button"
@@ -164,8 +164,8 @@ export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }:
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
         <SectionHeading name="Sampling" changed={samplingChanged} onReset={resetSampling} />
         <SegmentedControl
           ariaLabel="Sampling"
@@ -195,7 +195,7 @@ export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }:
             transition={{ duration: 0.2, ease: "easeInOut" }}
             className="overflow-clip"
           >
-            <div className="flex flex-col gap-3 pt-3">
+            <div className="flex flex-col gap-4 pt-1">
               <NumberSliderRow
                 label="Temperature"
                 changed={fieldChanged("temperature")}
@@ -279,21 +279,25 @@ export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }:
         )}
       </AnimatePresence>
 
-      <div className="flex flex-col gap-3 border-t border-cell-border pt-3">
+      <div className="flex flex-col gap-4 pt-3">
         <SectionHeading
           name="Tools"
           changed={dateTimeChanged || chartChanged || chatNamingChanged}
           onReset={resetTools}
         />
         {!supportsTools && (
-          <p className="text-[12px] leading-relaxed text-label-muted">This model does not support tool calls.</p>
+          <p className="text-[13px] leading-[1.45] text-label-muted text-pretty">
+            This model does not support tool calls.
+          </p>
         )}
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-[13px] text-label-title">
+            <span className="text-[14px] font-[450] text-label-title">
               Current date and time{dateTimeChanged && <ChangedMarker />}
             </span>
-            <p className="text-[12px] leading-relaxed text-label-muted">Look up the current local date and time.</p>
+            <p className="text-[13px] leading-[1.45] text-label-muted text-pretty">
+              Look up the current local date and time.
+            </p>
           </div>
           <Toggle
             label="Current date and time"
@@ -304,8 +308,10 @@ export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }:
         </div>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-[13px] text-label-title">Draw charts{chartChanged && <ChangedMarker />}</span>
-            <p className="text-[12px] leading-relaxed text-label-muted">Show charts in replies.</p>
+            <span className="text-[14px] font-[450] text-label-title">
+              Draw charts{chartChanged && <ChangedMarker />}
+            </span>
+            <p className="text-[13px] leading-[1.45] text-label-muted text-pretty">Show charts in replies.</p>
           </div>
           <Toggle
             label="Draw charts"
@@ -317,8 +323,10 @@ export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }:
         {globalModelChatNamingEnabled && (
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-[13px] text-label-title">Name chat{chatNamingChanged && <ChangedMarker />}</span>
-              <p className="text-[12px] leading-relaxed text-label-muted">
+              <span className="text-[14px] font-[450] text-label-title">
+                Name chat{chatNamingChanged && <ChangedMarker />}
+              </span>
+              <p className="text-[13px] leading-[1.45] text-label-muted text-pretty">
                 Name and rename the chat using a tool call.
               </p>
             </div>
@@ -393,7 +401,7 @@ const NumberSliderRow = ({
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center">
           <div className="flex items-center gap-2">
-            <span id={labelId} className="text-[13px] text-label-title">
+            <span id={labelId} className="text-[14px] font-[450] text-label-title">
               {label}
             </span>
             {optional && (
@@ -408,7 +416,7 @@ const NumberSliderRow = ({
           aria-labelledby={labelId}
           inputMode="decimal"
           disabled={!active}
-          className="w-20"
+          className="w-20 rounded-lg border-transparent bg-control-fill hover:border-transparent focus-within:border-border-outlined tabular-nums"
           value={active ? draft : ""}
           onChange={(e) => onInput(e.target.value)}
           onBlur={onBlur}
@@ -423,7 +431,7 @@ const NumberSliderRow = ({
           step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="my-1 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slider-track [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-text-primary"
+          className="my-1.5 h-1 w-full cursor-pointer appearance-none rounded-full bg-slider-track outline-hidden [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-surface-popover [&::-webkit-slider-thumb]:shadow-[0_0_0_0.5px_rgb(0_0_0/0.12),0_1px_3px_rgb(0_0_0/0.18)] dark:[&::-webkit-slider-thumb]:shadow-[0_0_0_0.5px_rgb(255_255_255/0.2),0_1px_3px_rgb(0_0_0/0.5)] [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:duration-150 active:[&::-webkit-slider-thumb]:scale-110 focus-visible:[&::-webkit-slider-thumb]:shadow-focus"
         />
       )}
     </div>

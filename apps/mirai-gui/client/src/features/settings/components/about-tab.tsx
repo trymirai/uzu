@@ -1,20 +1,23 @@
-import { ChevronRight, Heart } from "lucide-react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { platformInfo } from "@/platform/platform-info";
+import { UzuCat } from "@/components/uzu-cat";
+import { SettingGroup } from "./general/setting-row";
 import { Button } from "@/components/ui/button";
-const links = [
-  {
-    title: "Website",
-    url: "https://trymirai.com/",
-  },
+const connectLinks = [
+  { title: "Website", url: "https://trymirai.com/" },
+  { title: "About us", url: "https://trymirai.com/about-us" },
   { title: "GitHub", url: "https://github.com/trymirai" },
-  { title: "Vision", url: "https://trymirai.com/about-us" },
-  { title: "Docs", url: "https://docs.trymirai.com/" },
+  { title: "Hugging Face", url: "https://huggingface.co/trymirai" },
+  { title: "Discord", url: "https://discord.gg/trymirai" },
 ];
 
-const productLinks = [
+const moreLinks = [
+  { title: "Metrics", description: "uzu against MLX, MTPLX and llama.cpp.", url: "https://trymirai.com/metrics" },
   {
-    title: "Mirai platform",
-    description: "A web console for setting up the SDK in your product.",
-    url: "https://platform.trymirai.com",
+    title: "Models",
+    description: "25 Mirai checkpoints with per-device benchmarks.",
+    url: "https://trymirai.com/models",
   },
   {
     title: "Command-line interface",
@@ -26,6 +29,7 @@ const productLinks = [
     description: "Runs models on the hardware they were built for.",
     url: "https://github.com/trymirai/uzu",
   },
+  { title: "Careers", description: "Explore open positions.", url: "https://trymirai.com/careers" },
 ];
 
 const legalLinks = [
@@ -39,90 +43,91 @@ const legalLinks = [
   },
 ];
 
+function LinkRow({ title, description, url }: { title: string; description?: string; url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group flex items-center justify-between gap-4 px-4 py-3.5 transition-colors duration-150 ease-out hover:bg-surface-tertiary outline-hidden focus-visible:shadow-focus"
+    >
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-[14px] font-[500] leading-[1.35] text-label-title">{title}</span>
+        {description ? (
+          <span className="text-[13px] leading-[1.45] text-label-muted text-pretty">{description}</span>
+        ) : null}
+      </span>
+      <ArrowUpRight
+        aria-hidden
+        className="size-4 shrink-0 text-label-muted transition-[color,translate] duration-150 ease-out group-hover:text-label-title group-hover:translate-x-px group-hover:-translate-y-px"
+      />
+    </a>
+  );
+}
+
+/** Opens the first-run welcome again, to see what a new install shows. */
+function WelcomeRow() {
+  return (
+    <Link
+      to="/welcome"
+      className="group flex items-center justify-between gap-4 px-4 py-3.5 transition-colors duration-150 ease-out hover:bg-surface-tertiary outline-hidden focus-visible:shadow-focus"
+    >
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-[14px] font-[500] leading-[1.35] text-label-title">Welcome screen</span>
+        <span className="text-[13px] leading-[1.45] text-label-muted text-pretty">What a new install shows first.</span>
+      </span>
+      <ChevronRight
+        aria-hidden
+        className="size-4 shrink-0 text-label-muted transition-[color,translate] duration-150 ease-out group-hover:text-label-title group-hover:translate-x-px"
+      />
+    </Link>
+  );
+}
+
 export default function AboutTab() {
   return (
-    <div className="h-full flex flex-col justify-between">
-      <div className="flex flex-col">
-        <div className="flex flex-col gap-4 px-5 lg:max-w-[800px] mx-auto w-full">
-          <Heart className="w-6 h-6 text-blue" />
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <h3 className="text-[18px] font-medium leading-[130%] tracking-[0.2px] text-label-title">
-              Built by a team that shares a vision for <br />
-              accessible and powerful local AI.
-            </h3>
-            <Button
-              size="sm"
-              href="https://discord.gg/trymirai"
-              target="_blank"
-              className="bg-blue/10 text-blue hover:bg-blue/20 active:bg-blue/25"
-            >
-              Join our Discord
-            </Button>
-          </div>
+    <div className="flex flex-col gap-7 pb-8">
+      <div className="flex flex-col items-center text-center">
+        <div className="mb-1">
+          <UzuCat state="welcome" size={96} className="text-text-primary" label="uzu, saying hello" />
         </div>
-        <div className="mt-5 h-[1px] bg-cell-border" />
-
-        <div className="grid grid-cols-4 lg:max-w-[800px] mx-auto w-full">
-          {links.map((link) => (
-            <a
-              key={link.url}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:bg-bg-sub flex items-center justify-between px-5 py-5 border-r last:border-r-0 border-cell-border"
-            >
-              <h4 className="min-w-0 text-[15px] font-[350] leading-[150%] text-label-title overflow-clip">
-                {link.title}
-              </h4>
-              <ChevronRight className="w-[14px] h-[14px] text-label-muted" />
-            </a>
-          ))}
-        </div>
-
-        <div className="mb-5 h-[1px] bg-cell-border" />
-      </div>
-
-      <div>
-        <h3 className="lg:max-w-[800px] mx-auto w-full text-xs font-mono leading-[130%] text-label-muted px-5">
-          Our products
+        <h3 className="max-w-[440px] text-[15px] font-[500] leading-[1.35] text-label-title text-balance">
+          Built by a small, senior team building the full on-device stack to achieve realtime local intelligence.
         </h3>
-        <div className="flex flex-col w-full mt-3">
-          {productLinks.map((link, index) => (
-            <div key={link.url} className="w-full">
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="lg:max-w-[800px] mx-auto w-full hover:bg-bg-sub flex items-center justify-between px-5 py-5"
-              >
-                <div className="flex flex-col gap-1">
-                  <h4 className="text-[15px] font-[350] leading-[150%] text-label-title overflow-clip">{link.title}</h4>
-                  <p className="text-[13px] font-[350] leading-[150%] text-label-muted">{link.description}</p>
-                </div>
-
-                <ChevronRight className="w-[14px] h-[14px] text-label-muted" />
-              </a>
-              {index < productLinks.length - 1 && <div className="h-[1px] bg-cell-border" />}
-            </div>
-          ))}
-        </div>
-
-        <div className="h-[1px] bg-cell-border" />
-        <div className="grid grid-cols-2 lg:max-w-[800px] mx-auto w-full">
-          {legalLinks.map((link) => (
-            <a
-              key={link.url}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:bg-bg-sub flex items-center justify-between px-5 py-5 border-r last:border-r-0 border-cell-border"
-            >
-              <h4 className="text-[15px] font-[350] leading-[150%] text-label-title">{link.title}</h4>
-              <ChevronRight className="w-[14px] h-[14px] text-label-muted" />
-            </a>
-          ))}
-        </div>
+        <Button
+          size="sm"
+          href="https://x.com/trymirai"
+          target="_blank"
+          className="mt-5 rounded-full bg-blue/10 text-blue hover:bg-blue/20 active:bg-blue/25"
+        >
+          Connect with us on X
+        </Button>
       </div>
+
+      <SettingGroup title="Connect">
+        {connectLinks.map((link) => (
+          <LinkRow key={link.url} title={link.title} url={link.url} />
+        ))}
+      </SettingGroup>
+
+      <SettingGroup title="More from Mirai Labs">
+        {moreLinks.map((link) => (
+          <LinkRow key={link.url} title={link.title} description={link.description} url={link.url} />
+        ))}
+      </SettingGroup>
+
+      <SettingGroup title="Legal">
+        {legalLinks.map((link) => (
+          <LinkRow key={link.url} title={link.title} url={link.url} />
+        ))}
+      </SettingGroup>
+
+      {/* The welcome belongs to the desktop app, which is where it appears on first launch. */}
+      {platformInfo.features.localModelDownloads ? (
+        <SettingGroup title="Preview">
+          <WelcomeRow />
+        </SettingGroup>
+      ) : null}
     </div>
   );
 }

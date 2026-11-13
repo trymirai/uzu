@@ -6,7 +6,7 @@ type SelectionPanelProps = ComponentPropsWithoutRef<"div">;
 export function SelectionPanel({ className, ...props }: SelectionPanelProps) {
   return (
     <div
-      className={twMerge("rounded-lg bg-surface-elevated shadow-sm outline-hidden origin-bottom-right", className)}
+      className={twMerge("rounded-xl bg-surface-popover shadow-popover outline-hidden origin-bottom-right", className)}
       {...props}
     />
   );
