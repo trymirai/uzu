@@ -3,6 +3,9 @@ pub(crate) mod common;
 #[cfg(backend = "metal")]
 pub(crate) mod metal;
 
+#[cfg(backend = "vulkan")]
+pub mod vulkan;
+
 #[cfg(backend = "webgpu")]
 pub(crate) mod webgpu;
 
