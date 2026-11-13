@@ -11,6 +11,7 @@ use uzu::{
     engine::{Engine, EngineConfig},
     storage::DownloadPhase,
 };
+use uzu_engine::backends::selected_backend;
 
 use crate::{
     common::thinking::ThinkingSupport,
@@ -26,6 +27,7 @@ pub async fn run_non_interactive(
     reasoning_effort: Option<ReasoningEffort>,
     seed: Option<i64>,
 ) -> Result<()> {
+    eprintln!("Backend: {}", selected_backend());
     let preferences = ApplicationState::load_preferences().unwrap_or_default();
     let config = EngineConfig::default();
     let engine = Engine::new(config).await?;
