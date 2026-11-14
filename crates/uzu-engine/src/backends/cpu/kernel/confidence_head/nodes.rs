@@ -62,7 +62,7 @@ pub fn confidence_head_nodes(
             let floored = log_logit.max(LOG_PROB_FLOOR);
             let hidden = dense(&entry_weights, &entry_biases, &[log_draft, floored - log_draft, noise])
                 .into_iter()
-                .map(|value| ActivationType::SILU.activate(value))
+                .map(|value| ActivationType::SILU.activate(value, 1.0))
                 .collect::<Vec<_>>();
             let encoded = dense(&hidden_weights, &hidden_biases, &hidden);
             for (unit, value) in encoded.into_iter().enumerate() {

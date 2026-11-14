@@ -66,7 +66,7 @@ pub fn conv_tree_scan<T: DataTypeRepr + Float>(
                 };
             }
 
-            unsafe { *out_proj.add(proj_idx) = T::from(ActivationType::SILU.activate(acc)).unwrap() };
+            unsafe { *out_proj.add(proj_idx) = T::from(ActivationType::SILU.activate(acc, 1.0)).unwrap() };
         }
     }
 }

@@ -40,6 +40,7 @@ PUBLIC KERNEL(TreeVerify)(
     device T* o,
     constant const float& scale,
     constant const float& norm_epsilon,
+    constant const float& activation_alpha,
     constant const uint& batch_size,
     constant const uint& tree_size,
     constant const uint& num_k_heads,
@@ -48,6 +49,7 @@ PUBLIC KERNEL(TreeVerify)(
     constant const uint& head_v_dim,
     constant const uint& conv_dim,
     constant const uint& total_proj_dim,
+    const ActivationType act_type SPECIALIZE,
     threadgroup T out_tile[NB * BLOCK_SIZE * OUT_STRIDE],
     threadgroup float a_tiles[NB * NB * BLOCK_SIZE * BLOCK_SIZE],
     threadgroup float qkd_tile[NB * NB * BLOCK_SIZE * BLOCK_SIZE],
@@ -284,7 +286,9 @@ PUBLIC KERNEL(TreeVerify)(
     T4 result;
     METAL_PRAGMA_UNROLL
     for (uint j = 0; j < 4; ++j) {
-      result[j] = static_cast<T>(values[j] * inv_rms * norm_weight[dv + j] * activate_silu(float(z_row[j])));
+      const float z_i = float(z_row[j]);
+      const float z_gate = activate(z_i, act_type, activation_alpha);
+      result[j] = static_cast<T>(values[j] * inv_rms * norm_weight[dv + j] * z_gate);
     }
     *reinterpret_cast<device T4*>(o + value_base + token * value_token_stride + dv) = result;
   }

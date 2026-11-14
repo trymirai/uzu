@@ -8,4 +8,5 @@ enum ActivationType : uint32_t {
   GELUExact = 2,
   IDENTITY = 3,
   SOFTPLUS = 4,
+  SIGMOID = 5,
 };

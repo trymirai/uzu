@@ -34,8 +34,8 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
         Ok(Self {
             arguments: *arguments,
             kernels: [
-                <MetalKernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, 1)?,
-                <MetalKernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, 2)?,
+                <MetalKernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, 1, arguments.act_type)?,
+                <MetalKernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, 2, arguments.act_type)?,
             ],
         })
     }
@@ -63,6 +63,7 @@ impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
             &mut output,
             1.0,
             arguments.norm_epsilon,
+            arguments.activation_alpha,
             1,
             arguments.tree_size,
             self.arguments.num_k_heads,

@@ -23,6 +23,7 @@ use crate::{
 struct Input<T: DataTypeRepr + Float> {
     data: Box<[T]>,
     act_type: ActivationType,
+    alpha: f32,
     in_place: bool,
 }
 
@@ -45,14 +46,28 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     if input.in_place {
         let mut output_buffer = create_buffer_with_data::<B, T>(&context, &input.data);
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
-        kernel.encode(None::<&B::GlobalGpuBuffer>, &mut output_buffer, n as u32, input.act_type, &mut command_buffer);
+        kernel.encode(
+            None::<&B::GlobalGpuBuffer>,
+            &mut output_buffer,
+            n as u32,
+            input.act_type,
+            input.alpha,
+            &mut command_buffer,
+        );
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         buffer_to_vec::<B, T>(&context, &output_buffer)
     } else {
         let input_buffer = create_buffer_with_data::<B, T>(&context, &input.data);
         let mut output_buffer = create_buffer::<B, T>(&context, n);
         let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to get command buffer");
-        kernel.encode(Some(&input_buffer), &mut output_buffer, n as u32, input.act_type, &mut command_buffer);
+        kernel.encode(
+            Some(&input_buffer),
+            &mut output_buffer,
+            n as u32,
+            input.act_type,
+            input.alpha,
+            &mut command_buffer,
+        );
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         buffer_to_vec::<B, T>(&context, &output_buffer)
     }
@@ -60,6 +75,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
 fn get_test_data<T: DataTypeRepr + Float>(
     act_type: ActivationType,
+    alpha: f32,
     in_place: bool,
 ) -> (Input<T>, Vec<T>) {
     let n = 128;
@@ -68,6 +84,7 @@ fn get_test_data<T: DataTypeRepr + Float>(
     let input = Input {
         data: data.into_boxed_slice(),
         act_type,
+        alpha,
         in_place,
     };
 
@@ -78,6 +95,7 @@ fn get_test_data<T: DataTypeRepr + Float>(
 /// Large input to exercise more threads on GPU.
 fn get_test_data_large<T: DataTypeRepr + Float>(
     act_type: ActivationType,
+    alpha: f32,
     in_place: bool,
 ) -> (Input<T>, Vec<T>) {
     let n = 4096;
@@ -86,6 +104,7 @@ fn get_test_data_large<T: DataTypeRepr + Float>(
     let input = Input {
         data: data.into_boxed_slice(),
         act_type,
+        alpha,
         in_place,
     };
 
@@ -113,157 +132,198 @@ fn test_internal<T: DataTypeRepr + Float + Debug + Display>(
 
 fn test_activation<T: DataTypeRepr + Float + Debug + Display>(
     act_type: ActivationType,
+    alpha: f32,
     in_place: bool,
 ) {
     let label = format!(
-        "{:?}_{}",
+        "{:?}_alpha{}_{}",
         act_type,
+        alpha,
         if in_place {
             "in_place"
         } else {
             "out_of_place"
         }
     );
-    let (input, expected) = get_test_data::<T>(act_type, in_place);
+    let (input, expected) = get_test_data::<T>(act_type, alpha, in_place);
     test_internal::<T>(&input, &expected, &label);
 }
 
 fn test_activation_large<T: DataTypeRepr + Float + Debug + Display>(
     act_type: ActivationType,
+    alpha: f32,
     in_place: bool,
 ) {
     let label = format!(
-        "{:?}_{}_large",
+        "{:?}_alpha{}_{}_large",
         act_type,
+        alpha,
         if in_place {
             "in_place"
         } else {
             "out_of_place"
         }
     );
-    let (input, expected) = get_test_data_large::<T>(act_type, in_place);
+    let (input, expected) = get_test_data_large::<T>(act_type, alpha, in_place);
     test_internal::<T>(&input, &expected, &label);
 }
 
 // SILU out-of-place tests
 #[uzu_test]
 fn test_silu_f32() {
-    test_activation::<f32>(ActivationType::SILU, false);
+    test_activation::<f32>(ActivationType::SILU, 1.0, false);
 }
 
 #[uzu_test]
 fn test_silu_f16() {
-    test_activation::<f16>(ActivationType::SILU, false);
+    test_activation::<f16>(ActivationType::SILU, 1.0, false);
 }
 
 #[uzu_test]
 fn test_silu_bf16() {
-    test_activation::<bf16>(ActivationType::SILU, false);
+    test_activation::<bf16>(ActivationType::SILU, 1.0, false);
 }
 
 // SILU in-place tests
 #[uzu_test]
 fn test_silu_in_place_f32() {
-    test_activation::<f32>(ActivationType::SILU, true);
+    test_activation::<f32>(ActivationType::SILU, 1.0, true);
 }
 
 #[uzu_test]
 fn test_silu_in_place_f16() {
-    test_activation::<f16>(ActivationType::SILU, true);
+    test_activation::<f16>(ActivationType::SILU, 1.0, true);
 }
 
 #[uzu_test]
 fn test_silu_in_place_bf16() {
-    test_activation::<bf16>(ActivationType::SILU, true);
+    test_activation::<bf16>(ActivationType::SILU, 1.0, true);
 }
 
 // GELU out-of-place tests
 #[uzu_test]
 fn test_gelu_f32() {
-    test_activation::<f32>(ActivationType::GELUApprox, false);
+    test_activation::<f32>(ActivationType::GELUApprox, 1.0, false);
 }
 
 #[uzu_test]
 fn test_gelu_f16() {
-    test_activation::<f16>(ActivationType::GELUApprox, false);
+    test_activation::<f16>(ActivationType::GELUApprox, 1.0, false);
 }
 
 #[uzu_test]
 fn test_gelu_bf16() {
-    test_activation::<bf16>(ActivationType::GELUApprox, false);
+    test_activation::<bf16>(ActivationType::GELUApprox, 1.0, false);
 }
 
 // Exact GELU out-of-place tests
 #[uzu_test]
 fn test_gelu_exact_f32() {
-    test_activation::<f32>(ActivationType::GELUExact, false);
+    test_activation::<f32>(ActivationType::GELUExact, 1.0, false);
 }
 
 #[uzu_test]
 fn test_gelu_exact_f16() {
-    test_activation::<f16>(ActivationType::GELUExact, false);
+    test_activation::<f16>(ActivationType::GELUExact, 1.0, false);
 }
 
 #[uzu_test]
 fn test_gelu_exact_bf16() {
-    test_activation::<bf16>(ActivationType::GELUExact, false);
+    test_activation::<bf16>(ActivationType::GELUExact, 1.0, false);
+}
+
+// Sigmoid out-of-place tests
+#[uzu_test]
+fn test_sigmoid_f32() {
+    test_activation::<f32>(ActivationType::SIGMOID, 1.0, false);
+}
+
+#[uzu_test]
+fn test_sigmoid_f16() {
+    test_activation::<f16>(ActivationType::SIGMOID, 1.0, false);
+}
+
+#[uzu_test]
+fn test_sigmoid_bf16() {
+    test_activation::<bf16>(ActivationType::SIGMOID, 1.0, false);
 }
 
 // GELU in-place tests
 #[uzu_test]
 fn test_gelu_in_place_f32() {
-    test_activation::<f32>(ActivationType::GELUApprox, true);
+    test_activation::<f32>(ActivationType::GELUApprox, 1.0, true);
 }
 
 #[uzu_test]
 fn test_gelu_in_place_f16() {
-    test_activation::<f16>(ActivationType::GELUApprox, true);
+    test_activation::<f16>(ActivationType::GELUApprox, 1.0, true);
 }
 
 #[uzu_test]
 fn test_gelu_in_place_bf16() {
-    test_activation::<bf16>(ActivationType::GELUApprox, true);
+    test_activation::<bf16>(ActivationType::GELUApprox, 1.0, true);
 }
 
 // Large SILU tests
 #[uzu_test]
 fn test_silu_large_f32() {
-    test_activation_large::<f32>(ActivationType::SILU, false);
+    test_activation_large::<f32>(ActivationType::SILU, 1.0, false);
 }
 
 #[uzu_test]
 fn test_silu_large_f16() {
-    test_activation_large::<f16>(ActivationType::SILU, false);
+    test_activation_large::<f16>(ActivationType::SILU, 1.0, false);
 }
 
 #[uzu_test]
 fn test_silu_large_bf16() {
-    test_activation_large::<bf16>(ActivationType::SILU, false);
+    test_activation_large::<bf16>(ActivationType::SILU, 1.0, false);
 }
 
 // Large GELU tests
 #[uzu_test]
 fn test_gelu_large_f32() {
-    test_activation_large::<f32>(ActivationType::GELUApprox, false);
+    test_activation_large::<f32>(ActivationType::GELUApprox, 1.0, false);
 }
 
 #[uzu_test]
 fn test_gelu_large_f16() {
-    test_activation_large::<f16>(ActivationType::GELUApprox, false);
+    test_activation_large::<f16>(ActivationType::GELUApprox, 1.0, false);
 }
 
 #[uzu_test]
 fn test_gelu_large_bf16() {
-    test_activation_large::<bf16>(ActivationType::GELUApprox, false);
+    test_activation_large::<bf16>(ActivationType::GELUApprox, 1.0, false);
 }
 
 // Large in-place tests
 #[uzu_test]
 fn test_silu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::SILU, true);
+    test_activation_large::<f32>(ActivationType::SILU, 1.0, true);
 }
 
 #[uzu_test]
 fn test_gelu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::GELUApprox, true);
+    test_activation_large::<f32>(ActivationType::GELUApprox, 1.0, true);
+}
+
+// SILU with custom alpha tests
+#[uzu_test]
+fn test_silu_custom_alpha_f32() {
+    test_activation::<f32>(ActivationType::SILU, 1.7, false);
+}
+
+#[uzu_test]
+fn test_silu_custom_alpha_f16() {
+    test_activation::<f16>(ActivationType::SILU, 1.7, false);
+}
+
+#[uzu_test]
+fn test_silu_custom_alpha_bf16() {
+    test_activation::<bf16>(ActivationType::SILU, 1.7, false);
+}
+
+#[uzu_test]
+fn test_silu_custom_alpha_in_place_f32() {
+    test_activation::<f32>(ActivationType::SILU, 1.7, true);
 }

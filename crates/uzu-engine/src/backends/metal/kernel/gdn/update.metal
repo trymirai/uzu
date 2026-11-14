@@ -29,6 +29,8 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     constant const uint& key_dim,
     constant const uint& value_dim,
     constant const float& norm_epsilon,
+    constant const float& activation_alpha,
+    const ActivationType act_type SPECIALIZE,
     threadgroup float shared_o[UPDATE_MAX_HEAD_V_DIM],
     threadgroup float shared_scratch[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
@@ -108,7 +110,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  // RMSNorm over all dv, then SiLU gate + write out.
+  // RMSNorm over all dv, then output gate + write out.
   float o_sq = 0.0f;
   for (uint dv = tid; dv < head_v_dim; dv += UPDATE_THREADS) {
     const float o = shared_o[dv];
@@ -122,8 +124,8 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     if (lane == 0) {
       const float nw = float(norm_weight[dv]);
       const float z_i = float(in_proj[conv_dim + hv_idx * head_v_dim + dv]);
-      const float z_silu = activate_silu(z_i);
-      out[hv_idx * head_v_dim + dv] = static_cast<T>(shared_o[dv] * inv_rms * nw * z_silu);
+      const float z_gate = activate(z_i, act_type, activation_alpha);
+      out[hv_idx * head_v_dim + dv] = static_cast<T>(shared_o[dv] * inv_rms * nw * z_gate);
     }
   }
 }

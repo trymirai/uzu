@@ -4,13 +4,13 @@ use uzu_engine_macros::kernel;
 
 use crate::{backends::common::gpu_types::activation_type::ActivationType, data_type::DataTypeRepr};
 
-// In-place RMSNorm + SiLU gate for DeltaNet prefill output.
+// In-place RMSNorm + output gate for DeltaNet prefill output.
 //
 // in_out:      [suffix_len, value_dim] — raw input, overwritten with final output
 // in_proj:     [suffix_len, total_proj_dim] — for reading z values
 // norm_weight: [head_v_dim]
 //
-// Per (token, head): in_out[i] = in_out[i] * inv_rms * norm_weight[i] * silu(z[i])
+// Per (token, head): in_out[i] = in_out[i] * inv_rms * norm_weight[i] * act(z[i])
 // where inv_rms = rsqrt(mean(in_out^2) + epsilon)
 // and z is at in_proj[token * total_proj_dim + conv_dim + hv * head_v_dim + i]
 #[kernel(DeltaNetNormGate)]
@@ -25,7 +25,9 @@ pub fn delta_net_norm_gate<T: DataTypeRepr + Float>(
     conv_dim: u32,
     total_proj_dim: u32,
     norm_epsilon: f32,
+    activation_alpha: f32,
     suffix_len: u32,
+    #[specialize] act_type: ActivationType,
 ) {
     let in_out_ptr = in_out as *const T;
     let num_v_heads = num_v_heads as usize;
@@ -51,7 +53,8 @@ pub fn delta_net_norm_gate<T: DataTypeRepr + Float>(
                 let norm_w = unsafe { *norm_weight.add(i) };
                 let z_idx = token * total_proj_dim + conv_dim + hv * head_v_dim + i;
                 let z_i = unsafe { (*in_proj.add(z_idx)).to_f32().unwrap() };
-                let final_val = o_i * inv_rms * norm_w * ActivationType::SILU.activate(z_i);
+                let z_gate = act_type.activate(z_i, activation_alpha);
+                let final_val = o_i * inv_rms * norm_w * z_gate;
                 unsafe {
                     *in_out.add(base + i) = T::from(final_val).unwrap();
                 }

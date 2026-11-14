@@ -6,8 +6,7 @@ use crate::{
     backends::{
         common::{
             gpu_types::{
-                activation_type::{ActivationType, activation_silu_alpha},
-                gated_act_mul::GatedActMulOp,
+                activation_type::ActivationType, gated_act_mul::GatedActMulOp,
                 hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             },
             kernel::matmul::Int8CodeLayout,
@@ -53,7 +52,9 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
     #[expect(unused_variables)]
     #[specialize]
     weight_bits: u32,
-    #[specialize] custom_activation_alpha: bool,
+    #[expect(unused_variables)]
+    #[specialize]
+    custom_activation_alpha: bool,
     #[specialize] clip_gate: bool,
     #[specialize] clip_value: bool,
 ) {
@@ -87,11 +88,7 @@ pub fn gated_act_mul<T: DataTypeRepr + Float>(
             } else {
                 gate
             };
-            let activated: T = if custom_activation_alpha && act_type == ActivationType::SILU {
-                activation_silu_alpha(gate, activation_alpha.unwrap())
-            } else {
-                act_type.activate(gate)
-            };
+            let activated: T = act_type.activate(gate, activation_alpha.unwrap_or(1.0));
             let value = if clip_value {
                 let value = value.to_f32().unwrap().clamp(value_clip_min.unwrap(), value_clip_max.unwrap());
                 T::from(value).unwrap()

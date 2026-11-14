@@ -1,4 +1,7 @@
-use crate::{backends::common::Backend, data_type::DataType};
+use crate::{
+    backends::common::{Backend, gpu_types::activation_type::ActivationType},
+    data_type::DataType,
+};
 
 #[derive(Clone, Copy)]
 pub struct TreeVerifyNewArguments {
@@ -7,6 +10,7 @@ pub struct TreeVerifyNewArguments {
     pub num_v_heads: u32,
     pub head_k_dim: u32,
     pub head_v_dim: u32,
+    pub act_type: ActivationType,
 }
 
 #[derive(Clone, Copy)]
@@ -23,6 +27,7 @@ pub struct TreeVerifyEncodeArguments<'a, B: Backend> {
     pub conv_dim: u32,
     pub total_proj_dim: u32,
     pub norm_epsilon: f32,
+    pub activation_alpha: f32,
     pub tree_size: u32,
 }
 

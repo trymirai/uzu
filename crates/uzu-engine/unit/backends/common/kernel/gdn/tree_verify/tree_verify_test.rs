@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::TreeVerifyKernel,
+            gpu_types::activation_type::ActivationType, kernel::TreeVerifyKernel,
         },
         cpu::Cpu,
         metal::Metal,
@@ -36,9 +36,14 @@ fn wave<T: Float>(
     (0..len).map(|i| T::from((i as f32 * step).sin() * amplitude + bias).unwrap()).collect()
 }
 
-fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
+fn run<B: Backend, T: DataTypeRepr + Float>(
+    n: usize,
+    act_type: ActivationType,
+) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("context");
-    let kernel = <B::Kernels as Kernels>::TreeVerifyKernel::new(&context, T::data_type(), (n > 16) as u32 + 1).unwrap();
+    let kernel =
+        <B::Kernels as Kernels>::TreeVerifyKernel::new(&context, T::data_type(), (n > 16) as u32 + 1, act_type)
+            .unwrap();
     let q = create_buffer_with_data::<B, T>(&context, &wave(n * K_HEADS * DIM, 0.017, 0.2, 0.01));
     let k = create_buffer_with_data::<B, T>(&context, &wave(n * K_HEADS * DIM, 0.019, 0.18, -0.02));
     let v = create_buffer_with_data::<B, T>(&context, &wave(n * V_HEADS * DIM, 0.023, 0.5, 0.03));
@@ -66,6 +71,7 @@ fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
         &mut o,
         1.0,
         1e-6,
+        1.0,
         1,
         n as u32,
         K_HEADS as u32,
@@ -82,8 +88,10 @@ fn run<B: Backend, T: DataTypeRepr + Float>(n: usize) -> Vec<T> {
 
 #[uzu_test]
 fn test_tree_verify() {
-    for n in [1, 16, 17, 32] {
-        assert_eq_float(&run::<Cpu, f32>(n), &run::<Metal, f32>(n), 5e-4, "f32");
-        assert_eq_float(&run::<Cpu, bf16>(n), &run::<Metal, bf16>(n), 1.6e-2, "bf16");
+    for act_type in [ActivationType::SILU, ActivationType::SIGMOID] {
+        for n in [1, 16, 17, 32] {
+            assert_eq_float(&run::<Cpu, f32>(n, act_type), &run::<Metal, f32>(n, act_type), 5e-4, "f32");
+            assert_eq_float(&run::<Cpu, bf16>(n, act_type), &run::<Metal, bf16>(n, act_type), 1.6e-2, "bf16");
+        }
     }
 }

@@ -31,6 +31,7 @@ pub enum PredictionHeadError<B: Backend> {
 pub struct PredictionHead<B: Backend> {
     hidden_dim: u32,
     activation: ActivationType,
+    activation_alpha: f32,
     dense_projection: Box<dyn Linear<B>>,
     activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
     normalization: Normalization<B>,
@@ -57,6 +58,7 @@ impl<B: Backend> PredictionHead<B> {
         .await?;
 
         let activation = config.activation.act_type();
+        let activation_alpha = config.activation.alpha();
         let activation_kernel = <B::Kernels as Kernels>::ActivationKernel::new(context, data_type, true)
             .map_err(PredictionHeadError::Backend)?;
 
@@ -80,6 +82,7 @@ impl<B: Backend> PredictionHead<B> {
         Ok(Self {
             hidden_dim,
             activation,
+            activation_alpha,
             dense_projection,
             activation_kernel,
             normalization,
@@ -101,6 +104,7 @@ impl<B: Backend> PredictionHead<B> {
             &mut hidden,
             self.hidden_dim,
             self.activation,
+            self.activation_alpha,
             command_buffer,
         );
         let normalized = self

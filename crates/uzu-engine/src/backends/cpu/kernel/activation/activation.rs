@@ -11,6 +11,7 @@ pub fn activation<T: DataTypeRepr + Float>(
     output: *mut T,
     n: u32,
     act_type: crate::backends::common::gpu_types::activation_type::ActivationType,
+    activation_alpha: f32,
     #[specialize] in_place: bool,
 ) {
     let input = match in_place {
@@ -19,7 +20,7 @@ pub fn activation<T: DataTypeRepr + Float>(
     };
     unsafe {
         for i in 0..n as usize {
-            *output.add(i) = act_type.activate(*input.add(i));
+            *output.add(i) = act_type.activate(*input.add(i), activation_alpha);
         }
     }
 }

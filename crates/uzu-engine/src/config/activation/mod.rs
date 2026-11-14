@@ -4,9 +4,10 @@ use crate::backends::common::gpu_types::activation_type::ActivationType;
 
 pub mod gelu;
 pub mod identity;
+pub mod sigmoid;
 pub mod silu;
 
-#[uzu_config_abstract(silu::SiLU, gelu::GELU, identity::Identity)]
+#[uzu_config_abstract(silu::SiLU, gelu::GELU, identity::Identity, sigmoid::Sigmoid)]
 pub struct Activation;
 
 impl AnyActivation {
@@ -22,13 +23,14 @@ impl AnyActivation {
                 ..
             }) => ActivationType::GELUExact,
             AnyActivation::Identity(_) => ActivationType::IDENTITY,
+            AnyActivation::Sigmoid(_) => ActivationType::SIGMOID,
         }
     }
 
     pub fn alpha(&self) -> f32 {
         match self {
             AnyActivation::SiLU(config) => config.alpha,
-            AnyActivation::GELU(_) | AnyActivation::Identity(_) => 1.0,
+            AnyActivation::GELU(_) | AnyActivation::Identity(_) | AnyActivation::Sigmoid(_) => 1.0,
         }
     }
 

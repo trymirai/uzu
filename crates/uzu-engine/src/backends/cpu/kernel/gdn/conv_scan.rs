@@ -50,7 +50,8 @@ pub fn delta_net_conv_scan<T: DataTypeRepr + Float, const KERNEL_SIZE: u32>(
                 }
                 acc += unsafe { *conv_weight.add(channel * kernel_size + taps) } * sample;
                 unsafe {
-                    *in_proj.add(token * out_stride + channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
+                    *in_proj.add(token * out_stride + channel) =
+                        T::from(ActivationType::SILU.activate(acc, 1.0)).unwrap();
                 }
                 window.remove(0);
                 window.push(sample);

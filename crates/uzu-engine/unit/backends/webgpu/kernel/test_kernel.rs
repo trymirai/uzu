@@ -257,7 +257,7 @@ fn enums<T: DataTypeRepr>() {
             *dst = T::from(if act == ActivationType::GELUExact {
                 x
             } else {
-                act.activate(x)
+                act.activate(x, 1.0)
             })
             .unwrap();
         }
