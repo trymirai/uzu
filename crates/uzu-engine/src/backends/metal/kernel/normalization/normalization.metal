@@ -27,6 +27,7 @@ PUBLIC KERNEL(Normalization)(
     constant uint& element_count,
     constant float& epsilon,
     constant float& scale_offset,
+    constant uint& mixture_size,
     const bool in_place SPECIALIZE,
     const bool subtract_mean SPECIALIZE,
     const bool full_layer SPECIALIZE,
@@ -45,6 +46,7 @@ PUBLIC KERNEL(Normalization)(
   }
 
   const uint batch_offset = batch_idx * element_count;
+  const uint affine_offset = (batch_idx % mixture_size) * element_count;
   input += batch_offset;
   output += batch_offset;
   if (copy_to_shortcut) {
@@ -111,7 +113,7 @@ PUBLIC KERNEL(Normalization)(
     // If not, cast to OutputT after normalize, scale in OutputT
     OutputT val;
     if (has_scales) {
-      AccumT scale = static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
+      AccumT scale = static_cast<AccumT>(scales[affine_offset + i]) + static_cast<AccumT>(scale_offset);
       if (full_layer) {
         val = static_cast<OutputT>((x - mean) * rms_inv * scale);
       } else {
@@ -122,7 +124,7 @@ PUBLIC KERNEL(Normalization)(
     }
 
     if (has_biases) {
-      val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[i]));
+      val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[affine_offset + i]));
     }
 
     if (use_hadamard) {
