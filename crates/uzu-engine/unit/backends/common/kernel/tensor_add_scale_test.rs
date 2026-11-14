@@ -41,16 +41,18 @@ fn get_input<T: DataTypeRepr + Float>(
 fn get_output<T: DataTypeRepr + Float, B: Backend>(
     input: &Input<T>,
     in_place: bool,
+    has_bias: bool,
 ) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(&context, T::data_type(), in_place)
-        .expect("Failed to create TensorAddScaleKernel");
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(&context, T::data_type(), in_place, has_bias)
+            .expect("Failed to create TensorAddScaleKernel");
 
     let length = input.length as usize;
     let num_cols = input.num_cols as usize;
     let input_buffer = (!in_place).then(|| create_buffer_with_data::<B, T>(&context, &input.input[..length]));
-    let bias_buffer = create_buffer_with_data::<B, T>(&context, &input.bias[..num_cols]);
+    let bias_buffer = has_bias.then(|| create_buffer_with_data::<B, T>(&context, &input.bias[..num_cols]));
     let mut output_buffer = match in_place {
         true => create_buffer_with_data::<B, T>(&context, &input.input[..length]),
         false => create_buffer::<B, T>(&context, length),
@@ -59,7 +61,7 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
     kernel.encode(
         input_buffer.as_ref(),
-        &bias_buffer,
+        bias_buffer.as_ref(),
         &mut output_buffer,
         input.num_cols,
         input.length,
@@ -84,7 +86,7 @@ fn get_test_data_basic<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
         scale: 0.5,
     };
 
-    let expected = get_output::<T, Cpu>(&input, false);
+    let expected = get_output::<T, Cpu>(&input, false, true);
     (input, expected)
 }
 
@@ -101,7 +103,7 @@ fn get_test_data_large<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
         scale: 2.0,
     };
 
-    let expected = get_output::<T, Cpu>(&input, false);
+    let expected = get_output::<T, Cpu>(&input, false, true);
     (input, expected)
 }
 
@@ -120,7 +122,7 @@ fn get_test_data_edge<T: DataTypeRepr + Float>() -> (Input<T>, Vec<T>) {
         scale: 1.0,
     };
 
-    let expected = get_output::<T, Cpu>(&input, false);
+    let expected = get_output::<T, Cpu>(&input, false, true);
     (input, expected)
 }
 
@@ -132,7 +134,7 @@ fn test_basic<T: DataTypeRepr + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_basic::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input, false);
+        let output = get_output::<T, B>(&input, false, true);
         assert_eq_float::<T>(
             &expected,
             &output,
@@ -150,7 +152,7 @@ fn test_large<T: DataTypeRepr + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_large::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input, false);
+        let output = get_output::<T, B>(&input, false, true);
         assert_eq_float::<T>(
             &expected,
             &output,
@@ -168,7 +170,7 @@ fn test_edge<T: DataTypeRepr + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_edge::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input, false);
+        let output = get_output::<T, B>(&input, false, true);
         assert_eq_float::<T>(
             &expected,
             &output,
@@ -186,12 +188,38 @@ fn test_in_place<T: DataTypeRepr + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_basic::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input, true);
+        let output = get_output::<T, B>(&input, true, true);
         assert_eq_float::<T>(
             &expected,
             &output,
             eps,
             &format!("TensorAddScale in-place test failed for backend {}", std::any::type_name::<B>()),
+        );
+    });
+}
+
+fn test_no_bias<T: DataTypeRepr + Float + Debug + Display>() {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.05f32
+    } else {
+        1e-5
+    };
+    let (input, _) = get_test_data_basic::<T>();
+    let expected: Vec<T> =
+        input.input.iter().map(|&value| T::from(value.to_f32().unwrap() * input.scale).unwrap()).collect();
+    assert_eq_float::<T>(
+        &expected,
+        &get_output::<T, Cpu>(&input, true, false),
+        eps,
+        "TensorAddScale no-bias test failed for CPU",
+    );
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<T, B>(&input, true, false);
+        assert_eq_float::<T>(
+            &expected,
+            &output,
+            eps,
+            &format!("TensorAddScale no-bias test failed for backend {}", std::any::type_name::<B>()),
         );
     });
 }
@@ -257,4 +285,19 @@ fn test_in_place_f16() {
 #[uzu_test]
 fn test_in_place_bf16() {
     test_in_place::<bf16>();
+}
+
+#[uzu_test]
+fn test_no_bias_f32() {
+    test_no_bias::<f32>();
+}
+
+#[uzu_test]
+fn test_no_bias_f16() {
+    test_no_bias::<f16>();
+}
+
+#[uzu_test]
+fn test_no_bias_bf16() {
+    test_no_bias::<bf16>();
 }

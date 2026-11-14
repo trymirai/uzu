@@ -16,7 +16,7 @@ pub trait Backend: Clone + Send + Sync + 'static {
     type AllocationPool: Send + Sync;
     type CaptureSpan: Send + Sync;
     type Kernels: Kernels<Backend = Self>;
-    type Error: Error;
+    type Error: Error + Send;
 
     const NAME: &'static str;
 }

@@ -12,7 +12,7 @@ use crate::{
         linear::Linear,
         mixer::attention::{KVCache, rope::PrecalculatedRoPE},
         mlp::Mlp,
-        normalization::{Normalization, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, ShortcutMode},
         weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverEncodeError, WeaverNewError},
     },
     safetensors::ParameterTree,
@@ -115,7 +115,6 @@ impl<B: Backend> WeaverLayer<B> {
             } else {
                 ShortcutMode::Copy
             },
-            PostLayerScalar::None,
             norm_config,
             &parameter_tree.subtree("pre_attention_norm"),
             context,
@@ -127,7 +126,6 @@ impl<B: Backend> WeaverLayer<B> {
             DATA_TYPE,
             None,
             ShortcutMode::Add,
-            PostLayerScalar::None,
             norm_config,
             &parameter_tree.subtree("pre_mlp_norm"),
             context,

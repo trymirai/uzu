@@ -4,13 +4,14 @@ import definitions;
 [[Variants("T", "float, half, BFloat16")]]
 [[Public]] [[Kernel]] func TensorAddScale<T>(
   [[Optional("!in_place")]] StructuredBuffer<T> input,
-  StructuredBuffer<T> bias,
+  [[Optional("has_bias")]] StructuredBuffer<T> bias,
   RWStructuredBuffer<T> output,
   uint32_t num_cols,
   uint32_t length,
   float scale,
   [[Axis("length", "32")]] uint32_t position,
   [[Specialize]] bool in_place,
+  [[Specialize]] bool has_bias,
 ) {
   // TODO
 }

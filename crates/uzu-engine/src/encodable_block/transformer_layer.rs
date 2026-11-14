@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
 use derive_more::Debug;
-use num_traits::AsPrimitive;
+use futures::future::try_join_all;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
-    },
+    backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform},
     config::{
         residual::AnyResidualConfig,
-        stream_op::AnyStreamOpConfig,
-        transformer_layer::{TransformerLayerConfig, TransformerLayerConvConfig},
+        transformer_layer::{SublayerConfigCommon, TransformerLayerConfig, TransformerLayerConvConfig},
     },
     data_type::DataType,
     encodable_block::{
@@ -20,12 +17,12 @@ use crate::{
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
-        per_layer_embedding::{PerLayerEmbeddingError, PerLayerEmbeddingProjection},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualConnection, ResidualNewError},
+        stream_op::{StreamOp, StreamOpContext, StreamOpEncodeError, StreamOpNewError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
-    utils::{dispatch_dtype::dispatch_dtype, maybe_mut::MaybeMut},
+    utils::maybe_mut::MaybeMut,
 };
 
 #[derive(Debug, Error)]
@@ -50,35 +47,16 @@ pub enum TransformerLayerError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("Linear encoding error: {0}")]
     LinearEncode(#[from] LinearEncodeError<B>),
-    #[error("Per-layer embedding error: {0}")]
-    PerLayerEmbedding(#[from] PerLayerEmbeddingError<B>),
     #[error("Residual error: {0}")]
     Residual(#[from] ResidualNewError<B>),
-    #[error("Layer {layer_index} sets a residual scale op but has no mlp post_norm")]
-    ResidualScaleWithoutPostMlpNorm {
+    #[error("Stream op error: {0}")]
+    StreamOp(#[from] StreamOpNewError<B>),
+    #[error("Stream op encoding error: {0}")]
+    StreamOpEncode(#[from] StreamOpEncodeError<B>),
+    #[error("Layer {layer_index} {sublayer} body expects RHT-rotated input but has no pre_norm or conv to apply it")]
+    UnappliedInputRht {
         layer_index: u32,
-    },
-    #[error("Layer {layer_index} uses prologue stream ops, which are not supported")]
-    UnsupportedPrologueOps {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} uses an n-gram injection op, which is not supported")]
-    UnsupportedNGramInjection {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} has multiple per-layer embedding injection ops, but only one is applied")]
-    MultiplePerLayerEmbeddingInjectionOps {
-        layer_index: u32,
-    },
-    #[error("Layer {layer_index} has multiple residual scale ops, but only one is applied")]
-    MultipleResidualScaleOps {
-        layer_index: u32,
-    },
-    #[error("Transformer layers except the first one if it doesn't have rht in mixer require a mixer pre_norm")]
-    MissingPreMixerNormConfig,
-    #[error("Layer {layer_index} requires an mlp pre_norm")]
-    MissingPreMlpNormConfig {
-        layer_index: u32,
+        sublayer: &'static str,
     },
 }
 
@@ -91,24 +69,23 @@ struct TransformerLayerConv<B: Backend> {
     coefficient_count: u32,
 }
 
+struct Sublayer<B: Backend> {
+    model_dim: u32,
+    pre_norm: Option<Normalization<B>>,
+    conv: Option<TransformerLayerConv<B>>,
+    post_norm: Option<Normalization<B>>,
+    connection: ResidualConnection<B>,
+}
+
 pub struct TransformerLayer<B: Backend> {
     pub layer_index: u32,
     pub kv_source_layer_index: Option<u32>,
-    pub pre_mixer_norm: Option<Normalization<B>>,
-    mixer_conv: Option<TransformerLayerConv<B>>,
+    prologue: Box<[StreamOp<B>]>,
     pub mixer: Box<dyn Mixer<B>>,
-    pub post_mixer_norm: Option<Normalization<B>>,
-    pub pre_mlp_norm: Normalization<B>,
-    mlp_conv: Option<TransformerLayerConv<B>>,
+    mixer_sublayer: Sublayer<B>,
     pub mlp: Box<dyn Mlp<B>>,
-    pub post_mlp_norm: Option<Normalization<B>>,
-    pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
-    // TODO: read these in `encode` once norm kernels stop fusing the residual add (ShortcutMode):
-    // the stream update becomes `self.mixer_connection.encode_update(...)` / `mlp_connection`.
-    #[allow(dead_code)]
-    mixer_connection: ResidualConnection<B>,
-    #[allow(dead_code)]
-    mlp_connection: ResidualConnection<B>,
+    mlp_sublayer: Sublayer<B>,
+    epilogue: Box<[StreamOp<B>]>,
 }
 
 impl<B: Backend> TransformerLayerConv<B> {
@@ -206,6 +183,134 @@ impl<B: Backend> TransformerLayerConv<B> {
     }
 }
 
+impl<B: Backend> Sublayer<B> {
+    async fn new(
+        model_dim: u32,
+        data_type: DataType,
+        layer_index: u32,
+        name: &'static str,
+        config: &SublayerConfigCommon,
+        mut input_hadamard_factors: Option<B::GlobalGpuBuffer>,
+        residual_config: &AnyResidualConfig,
+        layer_parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, TransformerLayerError<B>> {
+        let parameter_tree = layer_parameter_tree.subtree(name);
+
+        let conv = if let Some(conv_config) = &config.conv_config {
+            Some(
+                TransformerLayerConv::new(
+                    model_dim,
+                    data_type,
+                    input_hadamard_factors.take(),
+                    conv_config,
+                    &parameter_tree.subtree("conv"),
+                    context,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let pre_norm = if let Some(norm_config) = &config.pre_norm_config {
+            Some(
+                Normalization::new(
+                    model_dim,
+                    data_type,
+                    data_type,
+                    input_hadamard_factors.take().map(Arc::new),
+                    ShortcutMode::None,
+                    norm_config,
+                    &parameter_tree.subtree("pre_norm"),
+                    context,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        if input_hadamard_factors.is_some() {
+            return Err(TransformerLayerError::UnappliedInputRht {
+                layer_index,
+                sublayer: name,
+            });
+        }
+
+        let post_norm = if let Some(norm_config) = &config.post_norm_config {
+            Some(
+                Normalization::new(
+                    model_dim,
+                    data_type,
+                    data_type,
+                    None,
+                    ShortcutMode::None,
+                    norm_config,
+                    &parameter_tree.subtree("post_norm"),
+                    context,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let connection =
+            ResidualConnection::new(residual_config, data_type, &parameter_tree.subtree("connection"), context)?;
+
+        Ok(Self {
+            model_dim,
+            pre_norm,
+            conv,
+            post_norm,
+            connection,
+        })
+    }
+
+    fn encode(
+        &self,
+        stream: B::ScratchBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        body: impl FnOnce(
+            B::ScratchBuffer,
+            &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        ) -> Result<B::ScratchBuffer, TransformerLayerError<B>>,
+    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
+        let mut hidden = if let Some(pre_norm) = &self.pre_norm {
+            pre_norm
+                .encode(&stream, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                .map_err(TransformerLayerError::Backend)?
+        } else {
+            let mut hidden = command_buffer.allocate_scratch(stream.size()).map_err(TransformerLayerError::Backend)?;
+            command_buffer.encode_copy(&stream, &mut hidden);
+            hidden
+        };
+
+        if let Some(conv) = &self.conv {
+            let (conv_output, coefficients) = conv.encode_pre_convolution(&hidden, row_count, command_buffer)?;
+            let body_output = body(conv_output, command_buffer)?;
+            hidden = conv
+                .encode_post_convolution(&body_output, &coefficients, row_count, command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
+        } else {
+            hidden = body(hidden, command_buffer)?;
+        }
+
+        if let Some(post_norm) = &self.post_norm {
+            hidden = post_norm
+                .encode(&hidden, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
+        }
+
+        let update = hidden;
+        self.connection
+            .encode_update(&stream, &update, row_count * self.model_dim, command_buffer)
+            .map_err(TransformerLayerError::Backend)
+    }
+}
+
 impl<B: Backend> TransformerLayer<B> {
     pub async fn new(
         model_dim: u32,
@@ -218,62 +323,37 @@ impl<B: Backend> TransformerLayer<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
-        if !layer_config.prologue_configs.is_empty() {
-            return Err(TransformerLayerError::UnsupportedPrologueOps {
+        let prologue_params = parameter_tree.subtree("prologue");
+        let prologue = try_join_all(layer_config.prologue_configs.iter().enumerate().map(|(i, cfg)| {
+            StreamOp::new(
+                model_dim,
                 layer_index,
-            });
-        }
+                num_layers,
+                data_type,
+                cfg,
+                residual_config,
+                prologue_params.subtree(&i.to_string()),
+                context,
+            )
+        }))
+        .await?
+        .into_boxed_slice();
 
-        // TODO: Apply epilogue ops as a sequence properly.
-        let mut ple_op = None;
-        let mut residual_scale_op_index = None;
-        for (index, op) in layer_config.epilogue_configs.iter().enumerate() {
-            match op {
-                AnyStreamOpConfig::NGramInjectionConfig(_) => {
-                    return Err(TransformerLayerError::UnsupportedNGramInjection {
-                        layer_index,
-                    });
-                },
-                AnyStreamOpConfig::PerLayerEmbeddingInjectionConfig(config) => {
-                    if ple_op.replace((index, config)).is_some() {
-                        return Err(TransformerLayerError::MultiplePerLayerEmbeddingInjectionOps {
-                            layer_index,
-                        });
-                    }
-                },
-                AnyStreamOpConfig::ResidualScaleConfig(_) => {
-                    if residual_scale_op_index.replace(index).is_some() {
-                        return Err(TransformerLayerError::MultipleResidualScaleOps {
-                            layer_index,
-                        });
-                    }
-                },
-            }
-        }
-
-        let post_layer_scalar = if let Some(op_index) = residual_scale_op_index {
-            if layer_config.mlp.common.post_norm_config.is_none() {
-                return Err(TransformerLayerError::ResidualScaleWithoutPostMlpNorm {
-                    layer_index,
-                });
-            }
-            let scalar = dispatch_dtype!(|(T: data_type)| parameter_tree
-                .subtree("epilogue")
-                .subtree(&op_index.to_string())
-                .read_slice::<T>("scale", &[1])
-                .await?[0]
-                .as_());
-            Some(scalar)
-        } else {
-            None
-        };
-
-        // When a PLE projection is present it owns the post-layer scalar (applied
-        // to the combined residual), so the norms must not also apply it.
-        let (residual_sum_scalar, output_scalar) = match (post_layer_scalar, ple_op.is_none()) {
-            (Some(scalar), true) => (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar)),
-            _ => (PostLayerScalar::None, PostLayerScalar::None),
-        };
+        let epilogue_params = parameter_tree.subtree("epilogue");
+        let epilogue = try_join_all(layer_config.epilogue_configs.iter().enumerate().map(|(i, cfg)| {
+            StreamOp::new(
+                model_dim,
+                layer_index,
+                num_layers,
+                data_type,
+                cfg,
+                residual_config,
+                epilogue_params.subtree(&i.to_string()),
+                context,
+            )
+        }))
+        .await?
+        .into_boxed_slice();
 
         let (mixer, mixer_hadamard_factors) = <dyn Mixer<B>>::new(
             model_dim,
@@ -284,71 +364,20 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )
         .await?;
+        let mixer_sublayer = Sublayer::new(
+            model_dim,
+            data_type,
+            layer_index,
+            "mixer",
+            &layer_config.mixer.common,
+            mixer_hadamard_factors,
+            residual_config,
+            parameter_tree,
+            context,
+        )
+        .await?;
 
-        let (mixer_conv, mixer_hadamard_factors) = match &layer_config.mixer.common.conv_config {
-            Some(config) => (
-                Some(
-                    TransformerLayerConv::new(
-                        model_dim,
-                        data_type,
-                        mixer_hadamard_factors,
-                        config,
-                        &parameter_tree.subtree("mixer").subtree("conv"),
-                        context,
-                    )
-                    .await?,
-                ),
-                None,
-            ),
-            None => (None, mixer_hadamard_factors),
-        };
-
-        let pre_mixer_norm = if let Some(pre_mixer_norm_config) = &layer_config.mixer.common.pre_norm_config {
-            Some(
-                Normalization::new(
-                    model_dim,
-                    data_type,
-                    data_type,
-                    mixer_hadamard_factors.map(Arc::new),
-                    if layer_index > 0 {
-                        ShortcutMode::Add
-                    } else {
-                        ShortcutMode::Copy
-                    },
-                    PostLayerScalar::None,
-                    pre_mixer_norm_config,
-                    &parameter_tree.subtree("mixer").subtree("pre_norm"),
-                    context,
-                )
-                .await?,
-            )
-        } else {
-            if layer_index != 0 || mixer_hadamard_factors.is_some() {
-                return Err(TransformerLayerError::MissingPreMixerNormConfig);
-            }
-            None
-        };
-
-        let post_mixer_norm = if let Some(norm_config) = &layer_config.mixer.common.post_norm_config {
-            Some(
-                Normalization::new(
-                    model_dim,
-                    data_type,
-                    data_type,
-                    None,
-                    ShortcutMode::None,
-                    PostLayerScalar::None,
-                    norm_config,
-                    &parameter_tree.subtree("mixer").subtree("post_norm"),
-                    context,
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
-
-        let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
+        let (mlp, mlp_hadamard_factors) = <dyn Mlp<B>>::new(
             model_dim,
             layer_config.hidden_dim.unwrap_or(hidden_dim),
             data_type,
@@ -357,107 +386,34 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )
         .await?;
-
-        let (mlp_conv, mlp_input_hadamard_factors) = match &layer_config.mlp.common.conv_config {
-            Some(config) => (
-                Some(
-                    TransformerLayerConv::new(
-                        model_dim,
-                        data_type,
-                        mlp_input_hadamard_factors,
-                        config,
-                        &parameter_tree.subtree("mlp").subtree("conv"),
-                        context,
-                    )
-                    .await?,
-                ),
-                None,
-            ),
-            None => (None, mlp_input_hadamard_factors),
-        };
-
-        let Some(pre_mlp_norm_config) = &layer_config.mlp.common.pre_norm_config else {
-            return Err(TransformerLayerError::MissingPreMlpNormConfig {
-                layer_index,
-            });
-        };
-        let pre_mlp_norm = Normalization::new(
+        let mlp_sublayer = Sublayer::new(
             model_dim,
             data_type,
-            data_type,
-            mlp_input_hadamard_factors.map(Arc::new),
-            ShortcutMode::Add,
-            residual_sum_scalar,
-            pre_mlp_norm_config,
-            &parameter_tree.subtree("mlp").subtree("pre_norm"),
+            layer_index,
+            "mlp",
+            &layer_config.mlp.common,
+            mlp_hadamard_factors,
+            residual_config,
+            parameter_tree,
             context,
         )
         .await?;
 
-        let post_mlp_norm = if let Some(norm_config) = &layer_config.mlp.common.post_norm_config {
-            Some(
-                Normalization::new(
-                    model_dim,
-                    data_type,
-                    data_type,
-                    None,
-                    ShortcutMode::None,
-                    output_scalar,
-                    norm_config,
-                    &parameter_tree.subtree("mlp").subtree("post_norm"),
-                    context,
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
-
-        let mixer_connection =
-            ResidualConnection::new(residual_config, data_type, &parameter_tree.subtree("mixer.connection"), context)?;
-        let mlp_connection =
-            ResidualConnection::new(residual_config, data_type, &parameter_tree.subtree("mlp.connection"), context)?;
-
-        let ple_projection = if let Some((op_index, ple_config)) = ple_op {
-            let ple_loader = parameter_tree.subtree("epilogue").subtree(&op_index.to_string());
-            Some(
-                PerLayerEmbeddingProjection::new(
-                    model_dim,
-                    num_layers,
-                    data_type,
-                    post_layer_scalar.unwrap_or(1.0),
-                    ple_config,
-                    &ple_loader,
-                    context,
-                )
-                .await
-                .expect("Failed to create per-layer embedding projection"),
-            )
-        } else {
-            None
-        };
-
         Ok(Self {
             layer_index,
             kv_source_layer_index: layer_config.kv_source_layer_index,
-            pre_mixer_norm,
-            mixer_conv,
+            prologue,
             mixer,
-            post_mixer_norm,
-            pre_mlp_norm,
-            mlp_conv,
+            mixer_sublayer,
             mlp,
-            post_mlp_norm,
-            ple_projection,
-            mixer_connection,
-            mlp_connection,
+            mlp_sublayer,
+            epilogue,
         })
     }
 
     pub fn encode(
         &self,
-        input: B::ScratchBuffer,
-        mut shortcut: impl BufferMut<Backend = B>,
+        mut stream: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         precalculated_rope: Option<&PrecalculatedRoPE<B>>,
         batch_dim: &BatchTopology,
@@ -465,89 +421,28 @@ impl<B: Backend> TransformerLayer<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
-
-        let mut hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
-            pre_mixer_norm
-                .encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)
-                .map_err(TransformerLayerError::Backend)?
-        } else {
-            assert!(self.layer_index == 0);
-            command_buffer.encode_copy(&input, shortcut.reborrow());
-            input
+        let row_count = batch_dim.size();
+        let op_context = StreamOpContext {
+            batch_dim,
+            per_layer_inputs,
         };
 
-        let mixer_coefficients = if let Some(convolution) = &self.mixer_conv {
-            let (output, coefficients) =
-                convolution.encode_pre_convolution(&hidden, batch_dim.size(), command_buffer)?;
-            hidden = output;
-            Some(coefficients)
-        } else {
-            None
-        };
-
-        // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
-
-        if let Some(coefficients) = mixer_coefficients {
-            let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");
-            hidden = convolution
-                .encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)
-                .map_err(TransformerLayerError::Backend)?;
+        for op in &self.prologue {
+            stream = op.encode(stream, op_context, command_buffer)?;
         }
 
-        if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm
-                .encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
-                .map_err(TransformerLayerError::Backend)?;
+        stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
+            Ok(self.mixer.encode(hidden, precalculated_rope, batch_dim, state, command_buffer)?)
+        })?;
+
+        stream = self.mlp_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
+            Ok(self.mlp.encode(hidden, row_count, command_buffer)?)
+        })?;
+
+        for op in &self.epilogue {
+            stream = op.encode(stream, op_context, command_buffer)?;
         }
 
-        // TODO: the mixer update is currently folded into the stream by the ShortcutMode::Add
-        // fused into this norm kernel; replace with an explicit mixer_connection.encode_update.
-        hidden = self
-            .pre_mlp_norm
-            .encode(&hidden, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)
-            .map_err(TransformerLayerError::Backend)?;
-
-        let mlp_coefficients = if let Some(convolution) = &self.mlp_conv {
-            let (output, coefficients) =
-                convolution.encode_pre_convolution(&hidden, batch_dim.size(), command_buffer)?;
-            hidden = output;
-            Some(coefficients)
-        } else {
-            None
-        };
-
-        hidden = self.mlp.encode(hidden, batch_dim.size(), command_buffer)?;
-
-        if let Some(coefficients) = mlp_coefficients {
-            let convolution = self.mlp_conv.as_ref().expect("mlp convolution required");
-            hidden = convolution
-                .encode_post_convolution(&hidden, &coefficients, batch_dim.size(), command_buffer)
-                .map_err(TransformerLayerError::Backend)?;
-        }
-
-        if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden = post_mlp_norm
-                .encode(&hidden, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
-                .map_err(TransformerLayerError::Backend)?;
-        }
-
-        // TODO: the MLP update is folded into the stream by the next layer's pre-norm (or the
-        // output norm); the layer should return `mlp_connection.encode_update(shortcut, hidden)`
-        // so the stream is passed by value, like lalamo's Sublayer does.
-        if let Some(ple_projection) = &self.ple_projection {
-            let per_layer_inputs = per_layer_inputs.expect("per-layer inputs required for PLE layer");
-            ple_projection.encode(
-                per_layer_inputs,
-                shortcut,
-                &hidden,
-                self.layer_index,
-                batch_dim.size(),
-                command_buffer,
-            )?;
-            command_buffer.encode_fill(&mut hidden, 0);
-        }
-
-        Ok(hidden)
+        Ok(stream)
     }
 }

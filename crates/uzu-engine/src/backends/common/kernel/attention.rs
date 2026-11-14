@@ -8,7 +8,7 @@ use crate::{
 
 pub trait AttentionKernel: Sized + Send + Sync {
     type Backend: Backend<Kernels: Kernels<AttentionKernel = Self>>;
-    type Error: Error + 'static;
+    type Error: Error + Send + 'static;
 
     fn new(
         context: &<Self::Backend as Backend>::Context,
