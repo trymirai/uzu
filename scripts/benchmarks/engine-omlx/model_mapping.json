@@ -1,0 +1,44 @@
+{
+  "trymirai/LFM2.5-1.2B-Instruct-L": "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit",
+  "trymirai/LFM2.5-1.2B-Instruct-M": "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit",
+  "trymirai/LFM2.5-1.2B-Thinking-L": "LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit",
+  "trymirai/LFM2.5-1.2B-Thinking-M": "LiquidAI/LFM2.5-1.2B-Thinking-MLX-4bit",
+  "trymirai/LFM2.5-2.6B-L": "LiquidAI/LFM2.5-2.6B-MLX-8bit",
+  "trymirai/LFM2.5-2.6B-M": "LiquidAI/LFM2.5-2.6B-MLX-4bit",
+  "trymirai/LFM2.5-230M-L": "LiquidAI/LFM2.5-230M-MLX-8bit",
+  "trymirai/LFM2.5-230M-M": "LiquidAI/LFM2.5-230M-MLX-4bit",
+  "trymirai/LFM2.5-350M-L": "LiquidAI/LFM2.5-350M-MLX-8bit",
+  "trymirai/LFM2.5-350M-M": "LiquidAI/LFM2.5-350M-MLX-4bit",
+  "trymirai/Muse-Glimmer-30B-L": "mlx-community/Muse-Glimmer-30B-8bit",
+  "trymirai/Muse-Glimmer-30B-M": "mlx-community/Muse-Glimmer-30B-4bit",
+  "trymirai/Qwen3.5-0.8B-L": "mlx-community/Qwen3.5-0.8B-8bit",
+  "trymirai/Qwen3.5-0.8B-M": "mlx-community/Qwen3.5-0.8B-4bit",
+  "trymirai/Qwen3.5-2B-L": "mlx-community/Qwen3.5-2B-8bit",
+  "trymirai/Qwen3.5-2B-M": "mlx-community/Qwen3.5-2B-4bit",
+  "trymirai/Qwen3.5-4B-L": "mlx-community/Qwen3.5-4B-8bit",
+  "trymirai/Qwen3.5-4B-M": "mlx-community/Qwen3.5-4B-4bit",
+  "trymirai/Qwen3.5-9B-L": {
+    "model": "mlx-community/Qwen3.5-9B-8bit",
+    "draft_model": "z-lab/Qwen3.5-9B-DFlash"
+  },
+  "trymirai/Qwen3.5-9B-M": {
+    "model": "mlx-community/Qwen3.5-9B-4bit",
+    "draft_model": "z-lab/Qwen3.5-9B-DFlash"
+  },
+  "trymirai/Qwen3.6-27B-L": {
+    "model": "mlx-community/Qwen3.6-27B-8bit",
+    "draft_model": "z-lab/Qwen3.6-27B-DFlash"
+  },
+  "trymirai/Qwen3.6-27B-M": {
+    "model": "mlx-community/Qwen3.6-27B-4bit",
+    "draft_model": "z-lab/Qwen3.6-27B-DFlash"
+  },
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "mlx-community/Qwen3.8-27B-8bit",
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2"
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2"
+  }
+}

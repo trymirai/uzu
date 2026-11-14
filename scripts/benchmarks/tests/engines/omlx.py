@@ -1,5 +1,7 @@
 """Launch oMLX with a small instruction model supporting text, chat, and EOS."""
 
+from pathlib import Path
+
 import pytest
 
 from .engine_tests import EngineTests
@@ -17,8 +19,5 @@ class TestOMLX(EngineTests):
     engine_name = "omlx"
 
     @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        args = ["uv", "run", "--project", "engine-omlx", "bench-omlx", "--model", config.getoption("omlx_model")]
-        if draft := config.getoption("omlx_draft_model"):
-            args.extend(["--draft-model", draft])
-        return args
+    def command(config: pytest.Config, model: Path) -> list[str]:
+        return ["uv", "run", "--project", "engine-omlx", "bench-omlx", str(model)]

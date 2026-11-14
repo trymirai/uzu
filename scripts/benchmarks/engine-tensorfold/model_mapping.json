@@ -1,0 +1,12 @@
+{
+  "trymirai/Qwen3.5-2B-L": "mlx-community/Qwen3.5-2B-MLX-4bit",
+  "trymirai/Qwen3.5-2B-M": "mlx-community/Qwen3.5-2B-MLX-4bit",
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2"
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2"
+  }
+}

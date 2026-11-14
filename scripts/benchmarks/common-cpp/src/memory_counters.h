@@ -1,7 +1,7 @@
 #ifndef __benchmarks_memory_counters_h__
 #define __benchmarks_memory_counters_h__
 
-#include <mach/mach.h>
+#include <mach/kern_return.h>
 #include <stdbool.h>
 #include <stdint.h>
 

@@ -20,11 +20,22 @@ struct LlamaEngine::RunConfig {
 
 LlamaEngine::LlamaEngine(
     const std::string& model,
-    const std::string& draft_model
-) {
+    const BenchSampling& sampling,
+    const std::string& draft_model,
+    size_t speculative_depth
+)
+    : speculative_depth(speculative_depth),
+      sampling(sampling) {
+    if (speculative_depth > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        throw std::invalid_argument("speculative_depth exceeds the supported range");
+    }
+    if (speculative_depth == 0 && !draft_model.empty()) {
+        throw std::invalid_argument("draft_model requires a positive speculative_depth");
+    }
+
     const std::filesystem::path model_path = get_model_path(model);
     llama_model_params params = llama_model_default_params();
-    params.load_mtp = draft_model.empty() && has_mtp_weights(model_path);
+    params.load_mtp = speculative_depth > 0 && draft_model.empty() && has_mtp_weights(model_path);
     this->model.reset(llama_model_load_from_file(model_path.c_str(), params));
     if (!this->model) {
         throw std::runtime_error("Failed to load model: " + model_path.string());
@@ -41,6 +52,9 @@ LlamaEngine::LlamaEngine(
     }
 
     this->has_mtp = params.load_mtp && llama_model_n_layer_nextn(this->model.get()) > 0;
+    if (speculative_depth > 0 && !this->has_mtp && draft_model.empty()) {
+        throw std::invalid_argument("A positive speculative_depth requires MTP weights or a draft model");
+    }
 
     if (!draft_model.empty()) {
         const std::filesystem::path draft_path = get_model_path(draft_model, true);
@@ -78,77 +92,67 @@ LlamaEngine::LlamaEngine(
 
 std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) const {
     std::vector<llama_token> prompt_tokens;
-    if (request.prompt_text.has_value()) {
-        const std::string& text = request.prompt_text.value();
-        const int32_t prompt_tokens_count =
-            -llama_tokenize(this->tokenizer, text.c_str(), text.size(), nullptr, 0, true, true);
-        if (prompt_tokens_count <= 0) {
-            throw std::runtime_error("Failed to determine prompt token count");
-        }
-
-        prompt_tokens.resize(prompt_tokens_count);
-        const int tokenize_result = llama_tokenize(
-            this->tokenizer,
-            text.c_str(),
-            text.size(),
-            prompt_tokens.data(),
-            prompt_tokens.size(),
-            true,
-            true
-        );
-        if (tokenize_result < 0) {
-            throw std::runtime_error("Failed to tokenize prompt");
-        }
-    } else if (request.prompt_chat.has_value()) {
-        const auto request_json = glz::write_json(request);
-        if (!request_json) {
-            throw std::runtime_error("Failed to serialize request: " + glz::format_error(request_json.error()));
-        }
-
-        const auto json = common_json::parse(request_json.value());
-        common_chat_templates_inputs inputs;
-        inputs.messages = common_chat_msgs_parse_oaicompat(json.at("prompt_chat"));
-        if (json.contains("tools")) {
-            const auto& tools = json.at("tools");
-            inputs.tools = common_chat_tools_parse_oaicompat(tools);
-            inputs.chat_template_kwargs["tools"] = tools.dump();
-        }
-        if (json.contains("tool_choice")) {
-            const auto& tool_choice = json.at("tool_choice");
-            if (tool_choice.is_string()) {
-                inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice.get<std::string>());
-            }
-            inputs.chat_template_kwargs["tool_choice"] = tool_choice.dump();
-        }
-        inputs.use_jinja = true;
-        inputs.add_generation_prompt = true;
-
-        const std::string formatted_prompt =
-            common_chat_templates_apply(this->chat_templates.get(), inputs).prompt.str();
-        const int32_t prompt_tokens_count =
-            -llama_tokenize(this->tokenizer, formatted_prompt.c_str(), formatted_prompt.size(), nullptr, 0, true, true);
-        if (prompt_tokens_count <= 0) {
-            throw std::runtime_error("Failed to determine prompt token count");
-        }
-
-        prompt_tokens.resize(prompt_tokens_count);
-        const int32_t tokenize_result = llama_tokenize(
-            this->tokenizer,
-            formatted_prompt.c_str(),
-            formatted_prompt.size(),
-            prompt_tokens.data(),
-            prompt_tokens.size(),
-            true,
-            true
-        );
-        if (tokenize_result < 0) {
-            throw std::runtime_error("Failed to tokenize prompt");
-        }
-
-        prompt_tokens.resize(tokenize_result);
-    } else {
-        throw std::invalid_argument("prompt_text and prompt_chat are absent");
+    const auto request_json = glz::write_json(request);
+    if (!request_json) {
+        throw std::runtime_error("Failed to serialize request: " + glz::format_error(request_json.error()));
     }
+
+    const auto json = common_json::parse(request_json.value());
+    common_chat_templates_inputs inputs;
+    inputs.messages = common_chat_msgs_parse_oaicompat(json.at("messages"));
+    if (json.contains("tools")) {
+        const auto& tools = json.at("tools");
+        inputs.tools = common_chat_tools_parse_oaicompat(tools);
+        inputs.chat_template_kwargs["tools"] = tools.dump();
+    }
+    if (json.contains("tool_choice")) {
+        const auto& tool_choice = json.at("tool_choice");
+        if (tool_choice.is_string()) {
+            inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice.get<std::string>());
+        }
+        inputs.chat_template_kwargs["tool_choice"] = tool_choice.dump();
+    }
+    inputs.use_jinja = true;
+    inputs.add_generation_prompt = true;
+    const std::string effort = json.at("reasoning_effort").get<std::string>();
+    if (effort == "disabled") {
+        common_chat_templates_inputs thinking = inputs;
+        thinking.enable_thinking = true;
+        inputs.enable_thinking = false;
+        if (common_chat_templates_apply(this->chat_templates.get(), inputs).prompt.str() ==
+            common_chat_templates_apply(this->chat_templates.get(), thinking).prompt.str()) {
+            throw std::invalid_argument("Chat template cannot disable thinking");
+        }
+    } else if (effort != "default") {
+        const auto levels = common_chat_templates_get_caps(this->chat_templates.get()).at("reasoning_effort_levels");
+        if (std::find(levels.begin(), levels.end(), effort) == levels.end()) {
+            throw std::invalid_argument("Chat template does not support reasoning_effort " + effort);
+        }
+        inputs.chat_template_kwargs["reasoning_effort"] = common_json(effort).dump();
+    }
+
+    const std::string formatted_prompt = common_chat_templates_apply(this->chat_templates.get(), inputs).prompt.str();
+    const int32_t prompt_tokens_count =
+        -llama_tokenize(this->tokenizer, formatted_prompt.c_str(), formatted_prompt.size(), nullptr, 0, true, true);
+    if (prompt_tokens_count <= 0) {
+        throw std::runtime_error("Failed to determine prompt token count");
+    }
+
+    prompt_tokens.resize(prompt_tokens_count);
+    const int32_t tokenize_result = llama_tokenize(
+        this->tokenizer,
+        formatted_prompt.c_str(),
+        formatted_prompt.size(),
+        prompt_tokens.data(),
+        prompt_tokens.size(),
+        true,
+        true
+    );
+    if (tokenize_result < 0) {
+        throw std::runtime_error("Failed to tokenize prompt");
+    }
+
+    prompt_tokens.resize(tokenize_result);
 
     return prompt_tokens;
 }
@@ -201,7 +205,7 @@ BenchResponse LlamaEngine::run_single(
         }
     }
 
-    size_t forward_passes = 0;
+    size_t decode_passes = 0;
     size_t tokens_generated = 0;
     std::string output_text;
 
@@ -225,7 +229,11 @@ BenchResponse LlamaEngine::run_single(
     common_batch batch(ctx.get());
     batch.tokens.reserve(logical_batch_size);
 
+    const double energy_start = collect_gpu_energy();
     const int64_t time_start = llama_time_us();
+    for (const llama_token token : tokens) {
+        llama_sampler_accept(sampler_chain.get(), token);
+    }
     const size_t prefill_batch_size = use_speculation ? physical_batch_size : logical_batch_size;
     for (size_t offset = 0; offset < tokens.size(); offset += prefill_batch_size) {
         batch.clear();
@@ -236,8 +244,6 @@ BenchResponse LlamaEngine::run_single(
         if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
             throw std::runtime_error("Prefill failed");
         }
-        // A single-sequence prefill call can contain multiple physical forward passes.
-        forward_passes += (end - offset + physical_batch_size - 1) / physical_batch_size;
         if (!common_speculative_process(spec.get(), batch)) {
             throw std::runtime_error("Draft prefill failed");
         }
@@ -291,7 +297,7 @@ BenchResponse LlamaEngine::run_single(
         if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
             throw std::runtime_error("Token decode failed: " + std::to_string(token));
         }
-        forward_passes++;
+        decode_passes++;
         llama_synchronize(ctx.get());
 
         // Sample only from target logits; accept a draft token only when the target sampler agrees.
@@ -321,7 +327,6 @@ BenchResponse LlamaEngine::run_single(
                 if (llama_process(ctx.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
                     throw std::runtime_error("Failed to replay accepted speculative tokens");
                 }
-                forward_passes++;
             }
             if (!common_speculative_process(spec.get(), batch)) {
                 throw std::runtime_error("Draft verification failed");
@@ -342,49 +347,47 @@ BenchResponse LlamaEngine::run_single(
     }
 
     const int64_t time_end = llama_time_us();
+    const double energy_gpu = collect_gpu_energy() - energy_start;
 
     // collect metrics
     const double prefill_duration = (time_prefill_end - time_start) / 1e6;
     const double decode_duration = (time_end - time_first_token) / 1e6;
     const double total_duration = (time_end - time_start) / 1e6;
     const double time_to_first_token = (time_first_token - time_start) / 1e6;
-    const double prompt_tps = prefill_duration > 0.0 ? (prompt_tokens_count / prefill_duration) : 0.0;
+    const double prefill_tps = prefill_duration > 0.0 ? (prompt_tokens_count / prefill_duration) : 0.0;
     const double decode_tps = decode_duration > 0.0 ? (tokens_generated - 1) / decode_duration : 0.0;
-    const double tokens_per_fp = forward_passes > 0 ? (double)(tokens_generated) / forward_passes : 1.0;
+    const std::optional<double> tokens_per_forward_pass = use_speculation && decode_passes > 0
+        ? std::optional<double>{(double)(tokens_generated - 1) / decode_passes}
+        : std::nullopt;
+    // llama.cpp maps its weights from the file, which no memory counter charges to it, so add up what it holds.
+    uint64_t memory_used = llama_model_size(model.get()) + llama_state_get_size(ctx.get());
+    if (draft_model) {
+        memory_used += llama_model_size(draft_model.get());
+    }
+    if (ctx_draft) {
+        memory_used += llama_state_get_size(ctx_draft.get());
+    }
     return BenchResponse{
         output_text,
+        stop ? FinishReason::stop : FinishReason::length,
+        prompt_tokens_count,
         tokens_generated,
         time_to_first_token,
-        prompt_tps,
+        prefill_tps,
         decode_tps,
-        tokens_per_fp,
+        tokens_per_forward_pass,
         total_duration,
+        energy_gpu,
+        memory_used,
         memory_counters_max.phys_footprint,
         memory_counters_max.resident_size,
         memory_counters_max.graphics_total
     };
 }
 
-std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) const {
-    if (!request.prompt_text.has_value() && !request.prompt_chat.has_value()) {
-        throw std::invalid_argument("prompt_text and prompt_chat are absent");
-    }
-
-    const size_t num_runs = request.num_runs.value_or(1);
-    if (num_runs == 0) {
-        throw std::invalid_argument("num_runs must be 1 or greater");
-    }
-
-    const size_t speculative_depth = request.speculative_depth.value_or(0);
-    if (speculative_depth > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-        throw std::invalid_argument("speculative_depth exceeds the supported range");
-    }
-    if (speculative_depth > 0 && !this->has_mtp && !this->draft_model) {
-        throw std::invalid_argument("Positive speculative_depth requires MTP weights or a draft model");
-    }
-
+BenchResponse LlamaEngine::execute(const BenchRequest& request) const {
     const std::vector<llama_token> tokens = tokenize(request);
-    std::optional<size_t> max_tokens = request.max_tokens;
+    std::optional<size_t> max_tokens = request.max_output_tokens;
     if (max_tokens == 0) {
         max_tokens.reset();
     }
@@ -414,15 +417,17 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
         ? std::max<size_t>(config.ctx_params.n_ctx, tokens.size() + max_tokens.value())
         : 0;  // Let llama.cpp use the model's declared context capacity for EOS-only generation.
 
-    const bool use_dflash = speculative_depth > 0 && this->draft_model;
-    const bool use_mtp = speculative_depth > 0 && this->has_mtp;
+    const bool use_dflash = this->draft_model != nullptr;
+    const bool use_mtp = this->has_mtp;
     if (use_dflash || use_mtp) {
         config.spec_params.types = {
             use_dflash ? COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH : COMMON_SPECULATIVE_TYPE_DRAFT_MTP
         };
         // keep verification in one physical batch so recurrent snapshots cover every draft token.
-        config.spec_params.draft.n_max =
-            std::min<int32_t>(speculative_depth, std::min(config.ctx_params.n_batch, config.ctx_params.n_ubatch) - 1);
+        config.spec_params.draft.n_max = std::min<int32_t>(
+            this->speculative_depth,
+            std::min(config.ctx_params.n_batch, config.ctx_params.n_ubatch) - 1
+        );
         if (use_dflash) {
             config.spec_params.draft.n_max = std::min<size_t>(config.spec_params.draft.n_max, this->dflash_depth);
         }
@@ -440,35 +445,48 @@ std::vector<BenchResponse> LlamaEngine::execute(const BenchRequest& request) con
         }
     }
 
-    // build the sampling pipeline once.
-    // run_single resets its mutable state before each run.
     llama_sampler_chain_params sampler_chain_params = llama_sampler_chain_default_params();
     llama_sampler_ptr sampler_chain{llama_sampler_chain_init(sampler_chain_params)};
-    if (request.sampling.has_value()) {
-        const auto& sampling = request.sampling.value();
-        if (sampling.top_k.has_value()) {
-            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_top_k(sampling.top_k.value()));
-        }
-        if (sampling.top_p.has_value()) {
-            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_top_p(sampling.top_p.value(), 1));
-        }
-        if (sampling.min_p.has_value()) {
-            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_min_p(sampling.min_p.value(), 1));
-        }
-        if (sampling.temp.has_value()) {
-            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_temp(sampling.temp.value()));
-        }
-        llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
-    } else {
+    if (std::holds_alternative<GreedySampling>(this->sampling)) {
         llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_greedy());
+    } else {
+        const auto& sampling = std::get<StochasticSampling>(this->sampling);
+        if (sampling.repetition_penalty.has_value()) {
+            llama_sampler_chain_add(
+                sampler_chain.get(),
+                llama_sampler_init_penalties(
+                    llama_vocab_n_tokens(this->tokenizer),
+                    static_cast<int32_t>(sampling.suffix_repetition_length.value()),
+                    sampling.repetition_penalty.value(),
+                    0.0f,
+                    0.0f
+                )
+            );
+        }
+        if (sampling.top_k) {
+            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_top_k(*sampling.top_k));
+        }
+        if (sampling.top_p) {
+            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_top_p(*sampling.top_p, 1));
+        }
+        if (sampling.min_p) {
+            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_min_p(*sampling.min_p, 1));
+        }
+        if (sampling.temp) {
+            llama_sampler_chain_add(sampler_chain.get(), llama_sampler_init_temp(*sampling.temp));
+        }
+        if (request.seed == LLAMA_DEFAULT_SEED) {
+            throw std::invalid_argument(
+                "llama.cpp reserves seed " + std::to_string(LLAMA_DEFAULT_SEED) + " for random seeds"
+            );
+        }
+        llama_sampler_chain_add(
+            sampler_chain.get(),
+            llama_sampler_init_dist(request.seed.value_or(LLAMA_DEFAULT_SEED))
+        );
     }
 
-    std::vector<BenchResponse> responses;
-    for (size_t i = 0; i < num_runs; ++i) {
-        BenchResponse response = run_single(tokens, config, sampler_chain);
-        responses.push_back(response);
-    }
-    return responses;
+    return run_single(tokens, config, sampler_chain);
 }
 
 std::string decode_token(

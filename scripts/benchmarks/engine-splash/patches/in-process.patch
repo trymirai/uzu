@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..bb863e7
 --- /dev/null
 +++ b/install/inprocess.py
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,93 @@
 +"""The engine's commands inside this process, where none can be started (iOS),
 +with the subset of subprocess.run and subprocess.Popen that Splash uses."""
 +
@@ -11,29 +11,19 @@ index 0000000..bb863e7
 +import os
 +import subprocess
 +import threading
-+from functools import cache
-+
-+from . import paths
 +
 +
-+@cache
 +def _engine():
-+    engine = ctypes.CDLL(str(paths.BINARY))
-+    engine.benchmarks_splash_main.argtypes = [
-+        ctypes.c_int,
-+        ctypes.POINTER(ctypes.c_char_p),
-+        ctypes.c_int,
-+        ctypes.c_int,
-+    ]
-+    engine.benchmarks_splash_terminate.argtypes = []
-+    return engine
++    import splash_bindings
++
++    return splash_bindings
 +
 +
 +def _main(args, input, output):
-+    argv = (ctypes.c_char_p * (len(args) + 1))(*(str(arg).encode() for arg in args), None)
-+    returncode = _engine().benchmarks_splash_main(len(args), argv, input, output)
-+    ctypes.CDLL(None).fflush(None)
-+    return returncode
++    argv = (ctypes.POINTER(ctypes.c_char) * (len(args) + 1))(
++        *(ctypes.create_string_buffer(str(arg).encode()) for arg in args), None
++    )
++    return _engine().benchmarks_splash_main(len(args), argv, input, output)
 +
 +
 +def _drain(descriptor, chunks):
@@ -137,7 +127,7 @@ diff --git a/install/paths.py b/install/paths.py
 index 4509cc6..5c2eff8 100644
 --- a/install/paths.py
 +++ b/install/paths.py
-@@ -1,11 +1,18 @@
+@@ -1,11 +1,17 @@
  """Immutable program files and writable per-user data, for source or release."""
  
 +import sys
@@ -149,10 +139,9 @@ index 4509cc6..5c2eff8 100644
 -MODELS = DATA / "models" if PACKAGED else ROOT / "install/models"
 -RUNTIME = DATA / "runtime" if PACKAGED else ROOT / "build/runtime"
 +SANDBOXED = sys.platform == "ios"
-+PER_USER = PACKAGED or SANDBOXED
-+DATA = Path.home() / "Library/Application Support/Splash" if PER_USER else ROOT
-+MODELS = DATA / "models" if PER_USER else ROOT / "install/models"
-+RUNTIME = DATA / "runtime" if PER_USER else ROOT / "build/runtime"
++DATA = Path.home() / "Library/Application Support/Splash"
++MODELS = DATA / "models"
++RUNTIME = DATA / "runtime"
  PYTHON = ROOT / ("python/bin/python3" if PACKAGED else ".venv/bin/python")
 -BINARY = ROOT / ("engine/splash" if PACKAGED else "build/splash")
 +BINARY = (
@@ -177,10 +166,12 @@ diff --git a/runtime/main.mm b/runtime/main.mm
 index 3e157b1..67363f4 100644
 --- a/runtime/main.mm
 +++ b/runtime/main.mm
-@@ -7,9 +7,12 @@
+@@ -7,9 +7,14 @@
  #include "engine/Status.hpp"
  #include "model/ModelDescriptor.hpp"
  
++#include "benchmarks.h"
++#include <cstdio>
 +#include <TargetConditionals.h>
 +#if TARGET_OS_OSX
  #include <IOKit/pwr_mgt/IOPMLib.h>
@@ -314,7 +305,7 @@ index 3e157b1..67363f4 100644
 -int main(int argc, char **argv) {
 +extern "C" void benchmarks_splash_terminate() { splash::requestShutdownFromSignal(SIGTERM); }
 +
-+extern "C" int benchmarks_splash_main(int argc, char **argv, int input, int output) {
++static int splashMain(int argc, char **argv, int input, int output) {
    @autoreleasepool {
      try {
        if (argc == 2 && std::string_view(argv[1]) == "device-check")
@@ -327,11 +318,34 @@ index 3e157b1..67363f4 100644
      } catch (const splash::engine::UsageError &error) {
        splash::writeStderrLine(std::string("error: ") + error.what());
        splash::printUsage(argc > 0 ? argv[0] : "splash");
-@@ -452,3 +463,7 @@ int main(int argc, char **argv) {
+@@ -452,3 +463,13 @@ int main(int argc, char **argv) {
      }
    }
  }
 +
++int benchmarks_splash_main(int argc, char **argv, int input, int output) {
++  const int result = splashMain(argc, argv, input, output);
++  std::fflush(nullptr);
++  return result;
++}
++
 +int main(int argc, char **argv) {
 +  return benchmarks_splash_main(argc, argv, STDIN_FILENO, STDOUT_FILENO);
 +}
+diff --git a/runtime/benchmarks.h b/runtime/benchmarks.h
+new file mode 100644
+--- /dev/null
++++ b/runtime/benchmarks.h
+@@ -0,0 +1,12 @@
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++int benchmarks_splash_main(int argc, char **argv, int input, int output);
++void benchmarks_splash_terminate(void);
++
++#ifdef __cplusplus
++}
++#endif

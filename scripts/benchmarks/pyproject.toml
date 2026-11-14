@@ -1,13 +1,12 @@
 [project]
 name = "benchmarks"
 version = "0.0.1"
-readme = "README.md"
 requires-python = ">=3.13.7"
 
 dependencies = ["benchmarks-common", "server"]
 
 [dependency-groups]
-dev = ["packaging>=26.3", "pytest>=9.2.0", "ruff>=0.17.3", "ty>=0.0.96"]
+dev = ["pytest>=9.2.0", "ruff>=0.17.3", "ty>=0.0.96"]
 
 [tool.uv.sources]
 benchmarks-common = { path = "common-py", editable = true }
@@ -21,11 +20,11 @@ testpaths = ["tests"]
 pythonpath = ["common-py/src"]
 markers = [
     "integration: runs real inference engines (opt in with --engine)",
-    "engine_versions: checks engine pins against upstream releases (requires network)",
 ]
 
 [tool.ruff]
 line-length = 120
+extend-exclude = ["common-py/src/mach/_bindings.py", "engine-splash/splash_bindings.py"]
 
 [tool.ruff.lint]
 extend-select = ["E501"]

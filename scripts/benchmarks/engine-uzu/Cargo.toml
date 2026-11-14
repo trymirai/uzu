@@ -9,6 +9,10 @@ repository.workspace = true
 license.workspace = true
 publish = false
 
+[[bin]]
+name = "bench-uzu"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 
@@ -18,6 +22,7 @@ clap.workspace = true
 futures.workspace = true
 hanashi.workspace = true
 libc.workspace = true
+monostate.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -25,4 +30,5 @@ tokio-util.workspace = true
 uzu = { workspace = true, features = ["metal"] }
 
 [build-dependencies]
+bindgen = "0.72"
 cc = "1"

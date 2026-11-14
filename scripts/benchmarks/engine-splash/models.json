@@ -1,0 +1,44 @@
+{
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "revision": "10c35caafbb80f7dc6a7a432cdd11af10a6d4818",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "revision": "10c35caafbb80f7dc6a7a432cdd11af10a6d4818",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  }
+}

@@ -2,6 +2,7 @@
 
 #include <arg.h>
 #include <common.h>
+#include <download.h>
 #include <ggml-cpp.h>
 
 #include <stdexcept>
@@ -17,9 +18,15 @@ std::filesystem::path get_model_path(
     }
 
     common_params params;
-    auto& model_params = dflash ? params.speculative.draft.mparams : params.model;
+    const auto [repo, tag] = common_download_split_repo_tag(model);
+    const bool sidecar = dflash && !tag.ends_with(".gguf");
+    auto& model_params = sidecar ? params.speculative.draft.mparams : params.model;
     model_params.hf_repo = model;
-    if (dflash) {
+    if (tag.ends_with(".gguf")) {
+        model_params.hf_repo = repo;
+        model_params.hf_file = tag;
+    }
+    if (sidecar) {
         // DFlash sidecars are excluded from the upstream primary-model search.
         params.speculative.types = {COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH};
     }

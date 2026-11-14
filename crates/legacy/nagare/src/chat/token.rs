@@ -508,10 +508,11 @@ impl StreamingState<'_> {
 }
 
 fn speculator_stats(metrics: &TokenStreamMetrics) -> Option<ChatReplySpeculatorStats> {
-    let num_forward_passes = metrics.num_prefill_forward_passes + metrics.num_decode_forward_passes;
-    (num_forward_passes > 0 && metrics.num_tokens_proposed > num_forward_passes).then_some(ChatReplySpeculatorStats {
-        tokens_per_forward_pass: metrics.num_tokens_accepted as f64 / num_forward_passes as f64,
-        num_decode_forward_passes: num_forward_passes as u32,
+    let num_decode_tokens_proposed = metrics.num_tokens_proposed - metrics.num_prefill_forward_passes;
+    let num_decode_tokens_accepted = metrics.num_tokens_accepted.saturating_sub(metrics.num_prefill_forward_passes);
+    (num_decode_tokens_proposed > metrics.num_decode_forward_passes).then_some(ChatReplySpeculatorStats {
+        tokens_per_forward_pass: num_decode_tokens_accepted as f64 / metrics.num_decode_forward_passes as f64,
+        num_decode_forward_passes: metrics.num_decode_forward_passes as u32,
     })
 }
 
@@ -553,8 +554,8 @@ mod tests {
                 ..metrics.clone()
             };
             let stats = speculator_stats(&speculative).unwrap();
-            assert_eq!(stats.tokens_per_forward_pass, accepted as f64 / 4.0);
-            assert_eq!(stats.num_decode_forward_passes, 4);
+            assert_eq!(stats.tokens_per_forward_pass, (accepted - 1) as f64 / 3.0);
+            assert_eq!(stats.num_decode_forward_passes, 3);
         }
     }
 }

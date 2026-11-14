@@ -10,9 +10,18 @@ from typing import Annotated, Any
 from unittest.mock import patch
 
 import typer
-from bench import BenchRequest, BenchResponse, BenchSampling
-from common import InferenceEngine, get_model_path, get_tokenized_prompt, run_loop
-from mach import MemoryCounters, get_memory_counters
+from bench import BenchRequest, BenchResponse, ModelConfig
+from common import (
+    InferenceEngine,
+    check_specdec,
+    get_finish_reason,
+    get_model_path,
+    get_sampling,
+    get_tokenized_prompt,
+    run_loop,
+)
+from mach import MemoryCounters, get_gpu_energy, get_memory_counters
+from mlx import core as mx
 from omlx.engine.base import GenerationOutput
 from omlx.engine.batched import BatchedEngine
 from omlx.engine_core import get_mlx_executor
@@ -21,35 +30,37 @@ from omlx.speculative.dflash import load_dflash_drafter
 from omlx.utils.model_loading import _checkpoint_has_mtp_weights, _is_mtp_compatible
 
 
+class OMLXConfig(ModelConfig):
+    revision: str | None = None
+    draft_model: str | None = None
+    draft_revision: str | None = None
+    speculative_depth: int | None = None
+
+
 class OMLXEngine(InferenceEngine):
     engine: BatchedEngine
     runner: asyncio.Runner
     closed: bool
     mtp: bool
     mtp_model: Any
-    max_depth: int
-    default_depth: int
+    speculative_depth: int
 
-    def __init__(
-        self,
-        model: str | Path,
-        *,
-        draft_model: str | Path | None = None,
-    ):
+    def __init__(self, config: OMLXConfig):
         super().__init__()
+        self.sampling = get_sampling(config.sampling)
         self.mtp = False
-        self.dflash = draft_model is not None
+        if config.draft_revision is not None and config.draft_model is None:
+            raise ValueError("draft_revision requires draft_model")
+        self.dflash = config.draft_model is not None
         self.mtp_model = None
-        self.max_depth = 0
-        local_path = Path(model).expanduser()
-        model_path = str(local_path) if local_path.is_dir() else get_model_path(model)
+        max_depth = 0
+        model_path = get_model_path(config.model, config.revision)
 
-        if draft_model is not None:
-            draft_path = Path(draft_model).expanduser()
-            draft_path = str(draft_path) if draft_path.is_dir() else get_model_path(draft_model)
-            config = json.loads((Path(draft_path) / "config.json").read_text())
-            self.max_depth = int(config.get("block_size", 0)) - 1
-            if self.max_depth < 1:
+        if config.draft_model is not None:
+            draft_path = get_model_path(config.draft_model, config.draft_revision)
+            draft = json.loads((Path(draft_path) / "config.json").read_text())
+            max_depth = int(draft.get("block_size", 0)) - 1
+            if max_depth < 1:
                 raise ValueError("DFlash requires a draft checkpoint with block_size >= 2")
 
             self.engine = BatchedEngine(
@@ -62,10 +73,10 @@ class OMLXEngine(InferenceEngine):
                 ),
             )
         else:
-            config = json.loads((Path(model_path) / "config.json").read_text())
-            model_type = config.get("model_type")
+            checkpoint = json.loads((Path(model_path) / "config.json").read_text())
+            model_type = checkpoint.get("model_type")
             self.mtp = (
-                _is_mtp_compatible(config, model_type)
+                _is_mtp_compatible(checkpoint, model_type)
                 # Gemma 4 MTP requires oMLX's VLM engine, not BatchedEngine.
                 and model_type not in ("gemma4", "gemma4_unified")
                 and _checkpoint_has_mtp_weights(model_path)
@@ -75,13 +86,13 @@ class OMLXEngine(InferenceEngine):
                 model_settings=ModelSettings(mtp_enabled=self.mtp),
             )
 
-        self.default_depth = self.max_depth
+        default_depth = max_depth
         self.runner = asyncio.Runner()
         self.closed = False
         try:
             self.runner.run(self.engine.start())
             if self.dflash:
-                self.default_depth = self.max_depth = self.runner.run(self._load_drafter(draft_path))
+                default_depth = max_depth = self.runner.run(self._load_drafter(draft_path))
                 self.mtp_model = self.engine._model
             elif self.mtp:
                 from omlx.patches.mlx_lm_mtp.batch_generator import (
@@ -94,8 +105,18 @@ class OMLXEngine(InferenceEngine):
                 if not _model_has_mtp_module(self.mtp_model) or not _model_mtp_decode_enabled(self.mtp_model):
                     raise ValueError("Detected MTP weights, but oMLX did not load and enable the model's MTP heads")
 
-                chain, self.default_depth, _ = _resolve_mtp_chain_depth(self.mtp_model)
-                self.max_depth = MAX_LIGHTNING_MTP_DRAFT_TOKENS if chain else 1
+                chain, default_depth, _ = _resolve_mtp_chain_depth(self.mtp_model)
+                max_depth = MAX_LIGHTNING_MTP_DRAFT_TOKENS if chain else 1
+
+            self.speculative_depth = default_depth if config.speculative_depth is None else config.speculative_depth
+            if not 0 <= self.speculative_depth <= max_depth:
+                raise ValueError(f"speculative_depth must be between 0 and {max_depth} for this model")
+            check_specdec(config, self.speculative_depth > 0)
+            if self.mtp or self.dflash:
+                model = self.mtp_model
+                for host in (model, getattr(model, "language_model", model), getattr(model, "_language_model", model)):
+                    host._omlx_mtp_decode_enabled = self.speculative_depth > 0
+                    host._omlx_mtp_depth = max(1, self.speculative_depth)
         except BaseException:
             self.close()
             raise
@@ -114,16 +135,6 @@ class OMLXEngine(InferenceEngine):
         self.engine.set_dflash_drafter(drafter)
         return drafter.depth
 
-    def _configure_depth(self, depth: int) -> None:
-        if depth < 0 or self.max_depth < depth:
-            raise ValueError(f"speculative_depth must be between 0 and {self.max_depth} for this engine")
-
-        if self.mtp or self.dflash:
-            model = self.mtp_model
-            for host in (model, getattr(model, "language_model", model), getattr(model, "_language_model", model)):
-                host._omlx_mtp_decode_enabled = depth > 0
-                host._omlx_mtp_depth = max(1, depth)
-
     def close(self) -> None:
         if self.closed:
             return
@@ -134,46 +145,40 @@ class OMLXEngine(InferenceEngine):
         finally:
             self.runner.close()
 
-    def execute(self, request: BenchRequest) -> list[BenchResponse]:
+    def execute(self, request: BenchRequest) -> BenchResponse:
         if self.closed:
             raise RuntimeError("Engine is closed")
 
         return self.runner.run(self._execute(request))
 
-    async def _execute(self, request: BenchRequest) -> list[BenchResponse]:
-        num_runs = request.num_runs if request.num_runs is not None else 1
-        if num_runs < 1:
-            raise ValueError("num_runs must be 1 or greater")
-
-        if request.max_tokens is not None and request.max_tokens < 0:
-            raise ValueError("max_tokens must be 0 or greater")
-
-        depth = self.default_depth if request.speculative_depth is None else request.speculative_depth
-        self._configure_depth(depth)
-
+    async def _execute(self, request: BenchRequest) -> BenchResponse:
         prompt: list[int] = get_tokenized_prompt(request, self.engine.tokenizer)
 
-        sampling = request.sampling or BenchSampling()
+        sampling = self.sampling
         generate = partial(
             self.engine.stream_generate,
             prompt=prompt,
-            max_tokens=request.max_tokens or (sys.maxsize - len(prompt) - 1),
-            temperature=sampling.temp if sampling.temp is not None else 0.7,
-            top_p=sampling.top_p if sampling.top_p is not None else 0.9,
-            min_p=sampling.min_p or 0.0,
-            top_k=sampling.top_k or 0,
+            max_tokens=request.max_output_tokens or (sys.maxsize - len(prompt) - 1),
+            temperature=1.0 if sampling.temp is None else sampling.temp,
+            top_p=1.0 if sampling.top_p is None else sampling.top_p,
+            min_p=0.0 if sampling.min_p is None else sampling.min_p,
+            top_k=0 if sampling.top_k is None else sampling.top_k,
+            repetition_penalty=1.0,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            seed=request.seed,
         )
 
-        return [await self._run(generate, len(prompt), depth) for _ in range(num_runs)]
+        return await self._run(generate, len(prompt))
 
-    async def _run(
-        self, generate: Callable[[], AsyncIterator[GenerationOutput]], prompt_size: int, depth: int
-    ) -> BenchResponse:
+    async def _run(self, generate: Callable[[], AsyncIterator[GenerationOutput]], prompt_size: int) -> BenchResponse:
         time_first_token: float | None = None
         time_last_token: float | None = None
         completion_tokens = 0
         response: GenerationOutput | None = None
         mem_counters_max: MemoryCounters = get_memory_counters()
+        depth = self.speculative_depth
+        speculative = (self.mtp or self.dflash) and depth > 0
         decode_forwards = speculative_forwards = 0
 
         # Public outputs omit target-forward counts.
@@ -196,6 +201,8 @@ class OMLXEngine(InferenceEngine):
                     return original_forward(instance, inputs, *args, **kwargs)
 
                 hooks.enter_context(patch.object(model_type, "__call__", counted))
+            mx.reset_peak_memory()
+            energy_start = get_gpu_energy()
             time_start = time.perf_counter()
             async for response in generate():
                 if response.completion_tokens > completion_tokens:
@@ -211,15 +218,14 @@ class OMLXEngine(InferenceEngine):
                 if counters.graphics_total > mem_counters_max.graphics_total:
                     mem_counters_max = counters
         time_total: float = time.perf_counter() - time_start
+        energy_gpu = get_gpu_energy() - energy_start
 
         if response is None:
             raise RuntimeError("Generation did not return a response")
         if response.finish_reason == "error":
             raise RuntimeError("oMLX generation failed; see engine stderr")
 
-        forward_passes = None
         if self.mtp or self.dflash:
-            forward_passes = decode_forwards
             if depth and completion_tokens > 2 and speculative_forwards == 0:
                 raise RuntimeError("Speculative decoding requested but no verification ran")
             print(
@@ -234,35 +240,33 @@ class OMLXEngine(InferenceEngine):
         decode_time = (
             time_last_token - time_first_token if time_first_token is not None and time_last_token is not None else 0.0
         )
-        prompt_tokens = response.prompt_tokens - response.cached_tokens
+        if response.cached_tokens:
+            raise RuntimeError("oMLX reused cached prompt tokens")
+        prompt_tokens = response.prompt_tokens
+        tokens_per_forward_pass = (completion_tokens - 1) / decode_forwards if speculative and decode_forwards else None
 
         return BenchResponse(
             text=response.text,
-            tokens_count=completion_tokens,
+            finish_reason=get_finish_reason(response.finish_reason),
+            input_tokens_count=prompt_tokens,
+            output_tokens_count=completion_tokens,
             time_to_first_token=time_to_first_token,
-            prompt_tps=prompt_tokens / time_to_first_token if time_to_first_token > 0.0 else 0.0,
+            prefill_tps=prompt_tokens / time_to_first_token if time_to_first_token > 0.0 else 0.0,
             decode_tps=(completion_tokens - 1) / decode_time if decode_time > 0.0 else 0.0,
-            tokens_per_forward_pass=(
-                max(0, completion_tokens - 1) / forward_passes
-                if forward_passes
-                else (1.0 if completion_tokens and forward_passes is None else 0.0)
-            ),
+            tokens_per_forward_pass=tokens_per_forward_pass,
             duration=time_total,
+            energy_gpu=energy_gpu,
+            memory_used=mx.get_peak_memory(),
             memory_phys_footprint=mem_counters_max.phys_footprint,
             memory_resident=mem_counters_max.resident_size,
             memory_graphics_total=mem_counters_max.graphics_total,
         )
 
 
-def run(
-    model: Annotated[str, typer.Option("-m", "--model")],
-    draft_model: Annotated[
-        str | None, typer.Option("-d", "--draft-model", help="DFlash draft checkpoint path or Hugging Face repository.")
-    ] = None,
-) -> None:
+def run(model: Annotated[Path, typer.Argument(help="Engine model configuration JSON.")]) -> None:
     engine: OMLXEngine
     with redirect_stdout(sys.stderr):
-        engine = OMLXEngine(model, draft_model=draft_model)
+        engine = OMLXEngine(OMLXConfig.model_validate_json(model.read_text()))
     try:
         run_loop(engine)
     finally:

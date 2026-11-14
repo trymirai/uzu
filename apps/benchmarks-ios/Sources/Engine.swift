@@ -10,10 +10,19 @@ enum Engine: String, Codable {
     case splash
     case uzu
 
-    func run(arguments: [String]) -> Int32 {
-        switch self {
+    func run(configuration: String) -> Int32 {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("model-\(UUID().uuidString).json")
+        do {
+            try configuration.write(to: file, atomically: true, encoding: .utf8)
+        } catch {
+            fputs("Cannot write model configuration: \(error)\n", stderr)
+            return 1
+        }
+        defer { try? FileManager.default.removeItem(at: file) }
+        let arguments = [file.path]
+        return switch self {
         case .llamacpp:
-            Self.main(benchmarks_llamacpp_main, ["engine-llamacpp"] + arguments)
+            Self.main(benchmarks_llamacpp_main, ["bench-llamacpp"] + arguments)
         case .mldrift:
             Self.mldrift(arguments)
         case .mlx:
@@ -27,23 +36,26 @@ enum Engine: String, Codable {
         case .splash:
             PythonRuntime.main("splash", "bench_splash", arguments)
         case .uzu:
-            Self.main(benchmarks_uzu_main, ["benchmarks-uzu"] + arguments)
+            Self.main(benchmarks_uzu_main, ["bench-uzu"] + arguments)
         }
     }
 
     private static func mldrift(_ arguments: [String]) -> Int32 {
-        guard arguments.count == 2, ["-m", "--model"].contains(arguments[0]) else {
-            fputs("Usage: engine-mldrift -m DIRECTORY\n", stderr)
+        guard let file = arguments.first,
+            let data = FileManager.default.contents(atPath: file),
+            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let directory = config["model"] as? String
+        else {
+            fputs("Expected a model.json with a model directory\n", stderr)
             return 2
         }
-        let directory = arguments[1]
         guard FileManager.default.fileExists(atPath: "\(directory)/layer_info.txt") else {
             fputs("\(directory) has no ML Drift weights; convert them on a Mac\n", stderr)
             return 2
         }
         return main(
             benchmarks_mldrift_main,
-            ["engine-mldrift", "--checkpoint=\(directory)", "--weights=\(directory)"])
+            ["engine-mldrift", "--config=\(file)", "--checkpoint=\(directory)", "--weights=\(directory)"])
     }
 
     private static func mlxserve(_ arguments: [String]) -> Int32 {

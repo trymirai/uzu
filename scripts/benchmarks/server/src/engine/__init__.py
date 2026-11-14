@@ -3,13 +3,14 @@ import signal
 import subprocess
 import sys
 import time
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from contextlib import suppress
 from enum import StrEnum
 from typing import Any
 
 import httpx2
-from bench import BenchResponse
+from bench import BenchRequest, BenchResponse, ModelConfig, ReasoningEffort
+from common import InferenceEngine, get_sampling
 
 
 class ServerEngineType(StrEnum):
@@ -19,16 +20,26 @@ class ServerEngineType(StrEnum):
     UZU = "uzu"
 
 
-class ServerEngine(ABC):
+def get_openai_reasoning(effort: ReasoningEffort) -> dict[str, Any]:
+    if effort == "default":
+        return {}
+    return {"reasoning_effort": "none" if effort == "disabled" else effort}
+
+
+class ServerEngine(InferenceEngine):
     host: str
     port: int
     model: str
     process: subprocess.Popen | None
+    supports_min_p = True
 
-    def __init__(self, host: str, port: int, model: str):
+    def __init__(self, host: str, port: int, config: ModelConfig):
+        self.sampling = get_sampling(config.sampling)
+        if not self.supports_min_p and self.sampling.min_p not in (None, 0):
+            raise ValueError(f"{type(self).__name__} does not support min_p sampling")
         self.host = host
         self.port = port
-        self.model = model
+        self.model = config.model
         self.process = None
 
     @abstractmethod
@@ -36,8 +47,30 @@ class ServerEngine(ABC):
         pass
 
     @abstractmethod
-    def handle_request(self, request: dict[str, Any]) -> BenchResponse:
+    def get_reasoning(self, effort: ReasoningEffort, messages: list[Any], body: dict[str, Any]) -> dict[str, Any]:
+        """Request fields for an effort other than default, rejecting efforts the model does not support."""
+
+    @abstractmethod
+    def handle_request(self, messages: list[Any], body: dict[str, Any]) -> BenchResponse:
         pass
+
+    def execute(self, request: BenchRequest) -> BenchResponse:
+        sampling = self.sampling
+        messages = [message.model_dump(mode="json", exclude_none=True) for message in request.messages]
+        body = {
+            "temperature": 1.0 if sampling.temp is None else sampling.temp,
+            "top_k": 0 if sampling.top_k is None else sampling.top_k,
+            "top_p": 1.0 if sampling.top_p is None else sampling.top_p,
+            "min_p": 0.0 if sampling.min_p is None else sampling.min_p,
+            **request.model_dump(mode="json", include={"tools", "tool_choice"}, exclude_none=True),
+        }
+        if request.max_output_tokens:
+            body["max_tokens"] = request.max_output_tokens
+        if request.seed is not None:
+            body["seed"] = request.seed
+        if request.reasoning_effort != "default":
+            body.update(self.get_reasoning(request.reasoning_effort, messages, body))
+        return self.handle_request(messages, body)
 
     def start(self) -> None:
         if self.process is not None:

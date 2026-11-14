@@ -1,5 +1,7 @@
 """Launch the MLX benchmark adapter in its own uv project."""
 
+from pathlib import Path
+
 import pytest
 
 from .engine_tests import EngineTests
@@ -16,5 +18,5 @@ class TestMLX(EngineTests):
     engine_name = "mlx"
 
     @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "--project", "engine-mlx", "bench-mlx", "--model", config.getoption("mlx_model")]
+    def command(config: pytest.Config, model: Path) -> list[str]:
+        return ["uv", "run", "--project", "engine-mlx", "bench-mlx", str(model)]

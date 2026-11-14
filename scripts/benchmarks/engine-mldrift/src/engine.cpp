@@ -118,26 +118,20 @@ MlDriftEngine::MlDriftEngine(
     this->tokenizer = std::move(tokenizer).value();
 }
 
-std::vector<BenchResponse> MlDriftEngine::execute(const BenchRequest& request) const {
-    const size_t num_runs = request.num_runs.value_or(1);
-    if (num_runs == 0) {
-        throw std::invalid_argument("num_runs must be 1 or greater");
-    }
-    if (request.speculative_depth.value_or(0) > 0) {
-        throw std::invalid_argument("ML Drift does not support speculative decoding");
-    }
-    if (request.sampling.has_value()) {
-        throw std::invalid_argument("ML Drift supports greedy decoding only");
-    }
+BenchResponse MlDriftEngine::execute(const BenchRequest& request) const {
     if (request.tools.has_value() || request.tool_choice.has_value()) {
         throw std::invalid_argument("ML Drift does not support tools");
     }
+    if (request.reasoning_effort != ReasoningEffort::default_effort) {
+        throw std::invalid_argument("ML Drift does not support reasoning_effort");
+    }
+    if (request.seed.has_value()) {
+        throw std::invalid_argument("ML Drift does not support seed");
+    }
 
-    const std::string prompt = request.prompt_text.has_value()
-        ? request.prompt_text.value()
-        : render_chat(this->model_info.type, request.prompt_chat.value());
+    const std::string prompt = render_chat(this->model_info.type, request.messages);
     const std::vector<int> tokens = this->tokenizer->EncodeInputTokens(prompt, false);
-    const size_t max_tokens = request.max_tokens.value_or(0);
+    const size_t max_tokens = request.max_output_tokens.value_or(0);
     if (tokens.size() >= this->context_capacity || max_tokens > this->context_capacity - tokens.size()) {
         throw std::invalid_argument("Prompt and generation length exceed the model's context capacity");
     }
@@ -146,40 +140,43 @@ std::vector<BenchResponse> MlDriftEngine::execute(const BenchRequest& request) c
         : this->context_capacity;
     const size_t generation_limit = max_tokens > 0 ? max_tokens : context_size - tokens.size();
 
-    const auto runner = ml_drift::CreateLlmModelRunner();
-    check(runner->Init(this->weights, tokens.size(), context_size, this->model_info.force_fp32));
-    check(runner->InitSliceAndGreedy());
-    std::vector<int> warmup_tokens;
-    check(runner->PostProcessGreedy(*this->tokenizer, tokens, 1, warmup_tokens));
-
-    std::vector<BenchResponse> responses;
-    for (size_t i = 0; i < num_runs; ++i) {
-        std::vector<int> output_tokens;
-        const auto time_start = std::chrono::steady_clock::now();
-        check(runner->PostProcessGreedy(*this->tokenizer, tokens, generation_limit, output_tokens));
-        const std::chrono::duration<double> duration = std::chrono::steady_clock::now() - time_start;
-        if (max_tokens == 0 && output_tokens.size() == generation_limit) {
-            throw std::runtime_error(
-                "Context capacity exhausted before EOS (" + std::to_string(context_size) + " tokens)"
-            );
-        }
-
-        const ml_drift::GenerationStats& stats = runner->stats();
-        const memory_counters_t memory_counters = collect_memory_counters();
-        responses.push_back(
-            BenchResponse{
-                this->tokenizer->DecodeOutputTokens(output_tokens),
-                output_tokens.size(),
-                stats.prefill_seconds,
-                stats.prefill_seconds > 0.0 ? tokens.size() / stats.prefill_seconds : 0.0,
-                stats.decode_seconds > 0.0 ? (output_tokens.size() - 1) / stats.decode_seconds : 0.0,
-                1.0,
-                duration.count(),
-                memory_counters.phys_footprint,
-                memory_counters.resident_size,
-                memory_counters.graphics_total
-            }
-        );
+    if (!this->runner || this->runner_prompt_size != tokens.size() || this->runner_context_size != context_size) {
+        this->runner.reset();
+        auto runner = ml_drift::CreateLlmModelRunner();
+        check(runner->Init(this->weights, tokens.size(), context_size, this->model_info.force_fp32));
+        check(runner->InitSliceAndGreedy());
+        this->runner = std::move(runner);
+        this->runner_prompt_size = tokens.size();
+        this->runner_context_size = context_size;
     }
-    return responses;
+
+    std::vector<int> output_tokens;
+    const double energy_start = collect_gpu_energy();
+    const auto time_start = std::chrono::steady_clock::now();
+    check(this->runner->PostProcessGreedy(*this->tokenizer, tokens, generation_limit, output_tokens));
+    const std::chrono::duration<double> duration = std::chrono::steady_clock::now() - time_start;
+    const double energy_gpu = collect_gpu_energy() - energy_start;
+    if (max_tokens == 0 && output_tokens.size() == generation_limit) {
+        throw std::runtime_error("Context capacity exhausted before EOS (" + std::to_string(context_size) + " tokens)");
+    }
+
+    const ml_drift::GenerationStats& stats = this->runner->stats();
+    const memory_counters_t memory_counters = collect_memory_counters();
+    return BenchResponse{
+        this->tokenizer->DecodeOutputTokens(output_tokens),
+        output_tokens.size() == generation_limit ? FinishReason::length : FinishReason::stop,
+        tokens.size(),
+        output_tokens.size(),
+        stats.prefill_seconds,
+        stats.prefill_seconds > 0.0 ? tokens.size() / stats.prefill_seconds : 0.0,
+        stats.decode_seconds > 0.0 ? (output_tokens.size() - 1) / stats.decode_seconds : 0.0,
+        std::nullopt,
+        duration.count(),
+        energy_gpu,
+        // ML Drift reports no memory; the kernel's count of its graphics memory is its Metal allocation.
+        memory_counters.graphics_total,
+        memory_counters.phys_footprint,
+        memory_counters.resident_size,
+        memory_counters.graphics_total
+    };
 }

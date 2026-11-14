@@ -3,48 +3,55 @@ use std::{
     os::fd::{AsFd, AsRawFd, OwnedFd, RawFd},
 };
 
+use anyhow::ensure;
+
 use crate::{
-    bench::{BenchRequest, BenchResponse},
+    bench::{BenchRequest, BenchResponse, Request, Response},
     engine::UzuEngine,
+    system::await_cooldown,
 };
 
 pub trait InferenceEngine {
     async fn execute(
         &mut self,
         request: &BenchRequest,
-    ) -> anyhow::Result<Vec<BenchResponse>>;
+    ) -> anyhow::Result<BenchResponse>;
 }
 
 async fn execute(
     engine: &mut UzuEngine,
-    req_str: &str,
-) -> anyhow::Result<String> {
-    let request = serde_json::from_str::<BenchRequest>(req_str)?;
+    request: &BenchRequest,
+) -> anyhow::Result<BenchResponse> {
     let mut redirect = StdoutRedirect::to_stderr()?;
-    let responses = engine.execute(&request).await;
+    let response = engine.execute(request).await;
     redirect.restore()?;
-    Ok(serde_json::to_string(&responses?)?)
+    response
+}
+
+fn write_response(response: &Response) -> anyhow::Result<()> {
+    let mut output = io::stdout().lock();
+    writeln!(output, "{}", serde_json::to_string(response)?)?;
+    output.flush()?;
+    Ok(())
 }
 
 pub async fn run_loop(engine: &mut UzuEngine) -> anyhow::Result<()> {
+    write_response(&Response::ReadyResponse)?;
     for line in io::stdin().lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
 
-        match execute(engine, &line).await {
-            Ok(response_json) => {
-                let mut output = io::stdout().lock();
-                writeln!(output, "{response_json}")?;
-                output.flush()?;
+        let response = match serde_json::from_str::<Request>(&line)? {
+            Request::CooldownRequest(request) => {
+                let cooldown_result = unsafe { await_cooldown(request.temperature, request.only_if_capped) };
+                ensure!(cooldown_result == 0, "Cooldown failed ({cooldown_result})");
+                Response::CooldownResponse
             },
-            Err(error) => {
-                let mut error_output = io::stderr().lock();
-                writeln!(error_output, "Failed to process request: {error}")?;
-                error_output.flush()?;
-            },
-        }
+            Request::BenchRequest(request) => Response::BenchResponse(execute(engine, &request).await?),
+        };
+        write_response(&response)?;
     }
 
     Ok(())

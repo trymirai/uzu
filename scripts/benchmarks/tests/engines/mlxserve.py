@@ -1,5 +1,7 @@
 """Launch the source-built native mlx-serve benchmark runner."""
 
+from pathlib import Path
+
 import pytest
 
 from .engine_tests import EngineTests
@@ -17,8 +19,5 @@ class TestMLXServe(EngineTests):
     engine_name = "mlxserve"
 
     @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        args = ["./engine-mlxserve/run.sh", "--model", config.getoption("mlxserve_model")]
-        if draft := config.getoption("mlxserve_draft_model"):
-            args.extend(["--draft-model", draft])
-        return args
+    def command(config: pytest.Config, model: Path) -> list[str]:
+        return ["./engine-mlxserve/run.sh", str(model)]

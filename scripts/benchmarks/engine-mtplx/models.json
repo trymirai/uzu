@@ -1,0 +1,170 @@
+{
+  "trymirai/Qwen3.5-4B-L": {
+    "model": "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Quality",
+    "revision": "a8751cb77ff566ac0eed7620dc9662f581232b84",
+    "specdec": true,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.05,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-4B-M": {
+    "model": "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed",
+    "revision": "550153beba237bb1f2f6ccba31ccedfe48ff78ec",
+    "specdec": true,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": 1.1,
+      "suffix_repetition_length": 1024
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-9B-L": {
+    "model": "Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed",
+    "revision": "86c7eb1b9155a45dd70a898743d7acfc13e12b25",
+    "specdec": true,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-9B-M": {
+    "model": "Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed-FP16",
+    "revision": "abd7bc62f89eb42f363ca97fa37f1c14952e668e",
+    "specdec": true,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.6-27B-L": {
+    "model": "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality",
+    "revision": "1fc72c18db7a735802a540d4d21457733884e97a",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.6-27B-M": {
+    "model": "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed-V2",
+    "revision": "908ec14b70acf69c1755be85478aad1843b18ba9",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality",
+    "revision": "300a4ac6c6058585e80571ff6c910819711843ec",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "Youssofal/Qwen3.8-27B-MTPLX-Bare-Speed",
+    "revision": "b59d7002368575f08a58ba0d26686b53a9c162d6",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  }
+}

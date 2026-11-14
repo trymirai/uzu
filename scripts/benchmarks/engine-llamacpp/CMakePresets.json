@@ -45,7 +45,7 @@
       "configurePreset": "debug",
       "configuration": "Debug",
       "targets": [
-        "engine-llamacpp"
+        "bench-llamacpp"
       ],
       "jobs": 8
     },
@@ -54,7 +54,7 @@
       "configurePreset": "release",
       "configuration": "Release",
       "targets": [
-        "engine-llamacpp"
+        "bench-llamacpp"
       ],
       "jobs": 8
     }

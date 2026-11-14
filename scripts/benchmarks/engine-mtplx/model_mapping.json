@@ -1,0 +1,10 @@
+{
+  "trymirai/Qwen3.5-4B-L": "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Quality",
+  "trymirai/Qwen3.5-4B-M": "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed",
+  "trymirai/Qwen3.5-9B-L": "Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed",
+  "trymirai/Qwen3.5-9B-M": "Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed-FP16",
+  "trymirai/Qwen3.6-27B-L": "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality",
+  "trymirai/Qwen3.6-27B-M": "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed-V2",
+  "trymirai/Qwen3.8-27B-L": "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality",
+  "trymirai/Qwen3.8-27B-M": "Youssofal/Qwen3.8-27B-MTPLX-Bare-Speed"
+}

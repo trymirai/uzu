@@ -669,11 +669,13 @@ name = "benchmarks-uzu"
 version = "0.6.17"
 dependencies = [
  "anyhow",
+ "bindgen",
  "cc",
  "clap",
  "futures",
  "hanashi",
  "libc",
+ "monostate 1.0.3",
  "serde",
  "serde_json",
  "tokio",

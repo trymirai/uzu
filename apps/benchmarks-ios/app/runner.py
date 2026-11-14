@@ -1,11 +1,8 @@
 import importlib
-import os
 import sys
 import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
-
-MODEL_OPTIONS = {"-m", "--model", "-d", "--draft-model"}
 
 
 @contextmanager
@@ -38,13 +35,9 @@ def main(module: str, *arguments: str) -> int:
 def model_paths(*arguments: str) -> list[str]:
     with standard_streams():
         try:
-            from common import get_model_path
+            from common import get_model_arguments
 
-            paths = list(arguments)
-            for index in range(1, len(paths)):
-                if paths[index - 1] in MODEL_OPTIONS and not os.path.isdir(paths[index]):
-                    paths[index] = get_model_path(paths[index])
+            return get_model_arguments(arguments[0])
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             return []
-        return paths

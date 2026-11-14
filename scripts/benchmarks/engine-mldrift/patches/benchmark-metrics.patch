@@ -29,12 +29,13 @@ index b12d23c..9d9a911 100644
  use_repo(rust, "rust_toolchains")
  
  register_toolchains("@rust_toolchains//:all")
-@@ -235,7 +238,12 @@ crate.spec(
+@@ -235,7 +238,13 @@ crate.spec(
      package = "serde_json",
      version = "1.0",
  )
 -crate.from_specs()
 +crate.from_specs(
++    cargo_lockfile = "//benchmarks:Cargo.lock",
 +    supported_platform_triples = [
 +        "aarch64-apple-darwin",
 +        "aarch64-apple-ios",
@@ -43,7 +44,7 @@ index b12d23c..9d9a911 100644
  use_repo(crate, crate_index = "crates")
  
  http_archive(
-@@ -263,3 +271,16 @@ http_archive(
+@@ -263,3 +272,16 @@ http_archive(
      strip_prefix = "tokenizers-cpp-0.1.1",
      url = "https://github.com/mlc-ai/tokenizers-cpp/archive/refs/tags/v0.1.1.tar.gz",
  )

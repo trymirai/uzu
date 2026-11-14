@@ -13,10 +13,12 @@ class LlamaEngine final : public InferenceEngine {
 public:
     explicit LlamaEngine(
         const std::string& model,
-        const std::string& draft_model = ""
+        const BenchSampling& sampling,
+        const std::string& draft_model = "",
+        size_t speculative_depth = 0
     );
 
-    std::vector<BenchResponse> execute(const BenchRequest& request) const override;
+    BenchResponse execute(const BenchRequest& request) const override;
 
 private:
     struct RunConfig;
@@ -32,9 +34,11 @@ private:
     llama_model_ptr model;
     llama_model_ptr draft_model;
     size_t dflash_depth = 0;
+    size_t speculative_depth;
     const llama_vocab* tokenizer;
     common_chat_templates_ptr chat_templates;
     bool has_mtp;
+    BenchSampling sampling;
 };
 
 std::string decode_token(

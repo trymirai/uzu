@@ -11,6 +11,6 @@ async fn main() -> anyhow::Result<()> {
 // only says so, which keeps workspace-wide builds working on Windows and Linux.
 #[cfg(not(target_vendor = "apple"))]
 fn main() {
-    eprintln!("benchmarks-uzu runs on Apple platforms only");
+    eprintln!("bench-uzu runs on Apple platforms only");
     std::process::exit(1);
 }

@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import queue
 import secrets
@@ -11,26 +10,26 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from bench import BenchRequest, BenchResponse, BenchSampling
-from common import InferenceEngine, run_loop
-from mach import get_memory_counters
+from bench import BenchRequest, BenchResponse, ModelConfig, ReasoningEffort, StochasticSampling
+from common import InferenceEngine, check_specdec, get_finish_reason, get_sampling, run_loop
+from mach import get_gpu_energy, get_memory_counters
 
 PROJECT_DIR = Path(__file__).resolve().parent
-SPLASH_DIR = PROJECT_DIR / "deps" / "splash"
-BUILD_DIR = SPLASH_DIR / "build"
-SPLASH_BINARY = BUILD_DIR / "splash"
+SPLASH_DIR = Path(os.environ.get("BENCHMARK_SPLASH_ROOT", PROJECT_DIR / "deps" / "splash"))
 MEMORY_SAMPLE_INTERVAL = 0.1
 
 
-def get_model_path(model: str | Path) -> Path:
+def get_model_path(model: str, revision: str | None) -> Path:
     from splash.install import models, paths, upstream
 
     path = Path(model).expanduser()
     if path.is_dir():
+        if revision is not None:
+            raise ValueError(f"A local model directory has no revision: {model}")
         root = path.resolve()
     else:
         # Benchmark requests contain text only; skip vision weights and warmup.
-        selection = models.Selection.of(paths.MODELS, str(model), language_only=True)
+        selection = models.Selection.of(paths.MODELS, model, revision=revision, language_only=True)
         upstream.prepare(selection)
         root = selection.link.resolve()
 
@@ -41,31 +40,35 @@ def get_model_path(model: str | Path) -> Path:
     return root
 
 
-def sampling_options(sampling: BenchSampling | None) -> dict[str, float | int]:
-    # Match Frontend's float32 and native top-k limits for raw prompts too.
-    minimum = float.fromhex("0x1p-149")
-    sampling = sampling or BenchSampling()
+def get_splash_reasoning(effort: ReasoningEffort, reasoning: dict) -> str:
+    if reasoning["thinks"] is None or effort != "disabled" and effort not in reasoning["efforts"]:
+        raise ValueError(f"The model does not support reasoning_effort {effort}")
+    return "none" if effort == "disabled" else effort
 
-    temperature = sampling.temp if sampling.temp is not None else 1.0
-    if not math.isfinite(temperature) or not 0 <= temperature <= 2 or 0 < temperature < minimum:
-        raise ValueError("Splash requires temp in [0, 2]")
 
-    top_p = sampling.top_p if sampling.top_p is not None else 0.95
-    if not math.isfinite(top_p) or not minimum <= top_p <= 1:
-        raise ValueError("Splash requires top_p in (0, 1]")
-
-    top_k = sampling.top_k if sampling.top_k is not None else 20
-    if not 1 <= top_k <= 32:
+def sampling_options(sampling: StochasticSampling) -> dict[str, float | int]:
+    if sampling.top_k is None or not 1 <= sampling.top_k <= 32:
         raise ValueError("Splash requires top_k in [1, 32]")
 
     if sampling.min_p not in (None, 0.0):
         raise ValueError("Splash does not support nonzero min_p")
 
-    return {"temperature": temperature, "top_p": top_p, "top_k": top_k}
+    return {
+        "temperature": 1.0 if sampling.temp is None else sampling.temp,
+        "top_p": 1.0 if sampling.top_p is None else sampling.top_p,
+        "top_k": sampling.top_k,
+    }
+
+
+class SplashConfig(ModelConfig):
+    revision: str | None = None
 
 
 class SplashEngine(InferenceEngine):
-    def __init__(self, model: str | Path):
+    def __init__(self, config: SplashConfig):
+        self.sampling = sampling_options(get_sampling(config.sampling))
+        # Every prepared Splash model pairs its target with a draft.
+        check_specdec(config, True)
         sys.path.insert(0, str(SPLASH_DIR.parent))
         sys.path.insert(0, str(SPLASH_DIR))
         from splash.install import assembly, models, paths
@@ -74,7 +77,7 @@ class SplashEngine(InferenceEngine):
         self._processes.run([str(paths.BINARY), "device-check"], check=True)
 
         from splash.server import protocol as wire
-        from splash.server.backend import Job, NativeBackend
+        from splash.server.backend import NativeBackend
         from splash.server.chat_templates import ChatTemplates
         from splash.server.constraints import ConstraintFactory, validate_tokenizer
         from splash.server.frontend import Frontend
@@ -84,14 +87,13 @@ class SplashEngine(InferenceEngine):
         from transformers import AutoTokenizer
 
         self._wire = wire
-        self._job_type = Job
         self._metrics = metrics_dict
         self._timings = timings_dict
         self.closed = False
         self.process = None
         self.runtime = None
         self.backend = None
-        root = get_model_path(model)
+        root = get_model_path(config.model, config.revision)
         family = assembly.family(root)
         if family is None:
             raise ValueError(f"Splash cannot determine the prepared model's family: {root}")
@@ -126,7 +128,7 @@ class SplashEngine(InferenceEngine):
             self.frontend = Frontend(
                 self.tokenizer,
                 self.backend,
-                str(model),
+                config.model,
                 ready.max_context_tokens,
                 1800.0,
                 ready.max_concurrent_requests,
@@ -165,58 +167,24 @@ class SplashEngine(InferenceEngine):
         )
         return self.process
 
-    def execute(self, request: BenchRequest) -> list[BenchResponse]:
+    def execute(self, request: BenchRequest) -> BenchResponse:
         if self.closed:
             raise RuntimeError("Engine is closed")
 
-        num_runs = request.num_runs if request.num_runs is not None else 1
-        if num_runs < 1:
-            raise ValueError("num_runs must be 1 or greater")
-
-        if request.speculative_depth not in (None, 7):
-            raise ValueError("Splash uses a fixed speculative_depth of 7; it cannot disable or resize drafting")
-
-        if request.max_tokens is not None and request.max_tokens < 0:
-            raise ValueError("max_tokens must be 0 or greater")
-
-        body: dict = sampling_options(request.sampling)
-        if request.max_tokens:
-            body["max_tokens"] = request.max_tokens
-        if request.prompt_text is None:
-            if request.prompt_chat is None:
-                raise ValueError("prompt_text and prompt_chat are None")
-            body["messages"] = [message.model_dump(mode="json", exclude_none=True) for message in request.prompt_chat]
-            body.update(request.model_dump(mode="json", include={"tools", "tool_choice"}))
-
-        return [self._run(self._prepare(request, body)) for _ in range(num_runs)]
-
-    def _prepare(self, request: BenchRequest, body: dict):
+        body = {
+            **self.sampling,
+            "messages": [message.model_dump(mode="json", exclude_none=True) for message in request.messages],
+            "cache_salt": secrets.token_hex(16),
+            **request.model_dump(mode="json", include={"tools", "tool_choice"}),
+        }
+        if request.max_output_tokens:
+            body["max_tokens"] = request.max_output_tokens
+        if request.seed is not None:
+            body["seed"] = request.seed
+        if request.reasoning_effort != "default":
+            body["reasoning_effort"] = get_splash_reasoning(request.reasoning_effort, self.frontend.reasoning)
         deadline = self.frontend.request_deadline(body, time.monotonic())
-        if request.prompt_text is None:
-            return self.frontend.prepare(body, deadline=deadline)
-
-        # Submit raw tokens to the same native runtime without a chat template.
-        tokens = self.frontend.tokenize({"content": request.prompt_text, "add_special": True}, deadline=deadline)
-        if not tokens:
-            raise ValueError("Input prompt is empty")
-        # Native Splash requires a positive, context-bounded output budget.
-        # Its EOS handling still stops generation before this limit.
-        max_tokens = body.get("max_tokens", self.frontend.max_context - len(tokens))
-        if max_tokens < 1 or len(tokens) + max_tokens > self.frontend.max_context:
-            raise ValueError("prompt and max_tokens exceed the context window")
-
-        return self._job_type(
-            request_id=next(self.frontend.ids),
-            prompt_tokens=tokens,
-            max_new_tokens=max_tokens,
-            seed=secrets.randbits(64),
-            sampling=self._wire.SamplingParameters(
-                temperature=body["temperature"],
-                top_p=body["top_p"],
-                top_k=body["top_k"],
-            ),
-            deadline=deadline,
-        )
+        return self._run(self.frontend.prepare(body, deadline=deadline))
 
     def _status(self) -> dict:
         # NativeBackend.status() may return cached telemetry on a timeout.
@@ -255,6 +223,7 @@ class SplashEngine(InferenceEngine):
         submitted = False
         terminal = False
 
+        energy_start = get_gpu_energy()
         try:
             self.backend.submit(job)
             submitted = True
@@ -300,6 +269,7 @@ class SplashEngine(InferenceEngine):
                 self._cancel_and_drain(job, timed_out=isinstance(error, TimeoutError))
             raise
 
+        energy_gpu = get_gpu_energy() - energy_start
         after = self._status()
         if self.process is not process or self.runtime.restart_count != restarts:
             raise RuntimeError("Splash restarted during the benchmark")
@@ -308,19 +278,29 @@ class SplashEngine(InferenceEngine):
         latency = self._metrics(result)["request_latency"]
         decode_batches = after["scheduler"]["decode_batches"] - before["scheduler"]["decode_batches"]
         decode_tokens = after["metrics"]["decode_output_tokens"] - before["metrics"]["decode_output_tokens"]
-        if decode_batches < 0 or decode_tokens < 0:
-            raise RuntimeError("Splash native counters moved backwards")
 
+        # Splash keeps earlier requests' KV pages and states as a prefix cache. Leave its whole KV pool and cached
+        # states out of what Metal holds, and count the pages this request's tokens fill.
+        kv = after["kv"]
+        pages = -(-(result.prompt_tokens + result.completion_tokens) // kv["block_tokens"])
+        memory_used = (
+            after["memory_actual"]["current_bytes"]
+            - kv["allocated_bytes"]
+            - after["state"]["bytes"]
+            + pages * kv["allocated_bytes"] // kv["pages_allocated"]
+        )
         return BenchResponse(
             text="".join(chunks),
-            tokens_count=result.completion_tokens,
+            finish_reason=get_finish_reason(result.reason),
+            input_tokens_count=result.prompt_tokens,
+            output_tokens_count=result.completion_tokens,
             time_to_first_token=latency.get("ttft_ms", result.request_wall_ms) / 1000.0,
-            prompt_tps=timings["prompt_per_second"],
+            prefill_tps=timings["prompt_per_second"],
             decode_tps=timings["predicted_per_second"],
-            tokens_per_forward_pass=(
-                decode_tokens / decode_batches if decode_batches else float(result.completion_tokens > 0)
-            ),
+            tokens_per_forward_pass=decode_tokens / decode_batches if decode_batches else None,
             duration=result.request_wall_ms / 1000.0,
+            energy_gpu=energy_gpu,
+            memory_used=memory_used,
             memory_phys_footprint=memory.phys_footprint,
             memory_resident=memory.resident_size,
             memory_graphics_total=memory.graphics_total,
@@ -345,13 +325,13 @@ class SplashEngine(InferenceEngine):
             raise
 
 
-def run(model: Annotated[str, typer.Option("-m", "--model")]) -> None:
-    if sys.platform != "ios" and not SPLASH_BINARY.is_file():
+def run(model: Annotated[Path, typer.Argument(help="Engine model configuration JSON.")]) -> None:
+    if sys.platform != "ios" and "BENCHMARK_SPLASH_ROOT" not in os.environ:
         subprocess.run([str(PROJECT_DIR / "bootstrap.sh")], check=True, stdout=sys.stderr)
 
     engine: SplashEngine
     with redirect_stdout(sys.stderr):
-        engine = SplashEngine(model)
+        engine = SplashEngine(SplashConfig.model_validate_json(model.read_text()))
     try:
         run_loop(engine)
     finally:
