@@ -18,7 +18,7 @@ use crate::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PositionedRoPE},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         per_layer_embedding::{PerLayerEmbeddingError, PerLayerEmbeddingProjection},
@@ -459,8 +459,8 @@ impl<B: Backend> TransformerLayer<B> {
         input: B::ScratchBuffer,
         mut shortcut: impl BufferMut<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        rope: Option<&PositionedRoPE<'_, B>>,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
@@ -486,7 +486,7 @@ impl<B: Backend> TransformerLayer<B> {
         };
 
         // TODO: In prefill outside of sampling suffix in last layer part of mixer (ie out projection) and everything after is dead code
-        hidden = self.mixer.encode(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        hidden = self.mixer.encode(hidden, rope, batch_dim, state, command_buffer)?;
 
         if let Some(coefficients) = mixer_coefficients {
             let convolution = self.mixer_conv.as_ref().expect("mixer convolution required");

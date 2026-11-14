@@ -4,9 +4,9 @@ use crate::data_type::DataTypeRepr;
 
 pub(super) fn apply_rope<ElementT: DataTypeRepr + Float>(
     head: *const ElementT,
-    cosines: *const (impl DataTypeRepr + Float),
-    sines: *const (impl DataTypeRepr + Float),
-    batch_idx: usize,
+    inverse_frequencies: *const f32,
+    scale: f32,
+    position: u32,
     head_dim_idx: usize,
     rope_dim: usize,
 ) -> ElementT {
@@ -23,8 +23,8 @@ pub(super) fn apply_rope<ElementT: DataTypeRepr + Float>(
     } else {
         paired
     };
-    let cos_val = unsafe { (*cosines.add(batch_idx * rope_dim + head_dim_idx)).to_f32().unwrap() };
-    let sin_val = unsafe { (*sines.add(batch_idx * rope_dim + head_dim_idx)).to_f32().unwrap() };
+    let angle = position as f32 * unsafe { *inverse_frequencies.add(head_dim_idx % half_rope_dim) };
+    let (sin_val, cos_val) = angle.sin_cos();
 
-    ElementT::from(input * cos_val + signed_paired * sin_val).unwrap()
+    ElementT::from(input * (cos_val * scale) + signed_paired * (sin_val * scale)).unwrap()
 }

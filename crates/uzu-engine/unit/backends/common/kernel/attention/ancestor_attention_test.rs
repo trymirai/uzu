@@ -37,8 +37,7 @@ struct Runner<B: Backend> {
     prefix_kv: KVCache<B>,
     node_kv: KVCache<B>,
     current_qkv: B::GlobalGpuBuffer,
-    cosines: B::GlobalGpuBuffer,
-    sines: B::GlobalGpuBuffer,
+    rope_inverse_frequencies: B::GlobalGpuBuffer,
     node_metadata: B::GlobalGpuBuffer,
     ancestor_indices: B::GlobalGpuBuffer,
     ancestor_counts: B::GlobalGpuBuffer,
@@ -77,19 +76,8 @@ impl<B: Backend> Runner<B> {
             }
         }
 
-        let half_dim = HEAD_DIM / 2;
-        let mut cosines = vec![0.0f32; (MAX_DEPTH as usize + 1) * HEAD_DIM];
-        let mut sines = vec![0.0f32; (MAX_DEPTH as usize + 1) * HEAD_DIM];
-        for position in 0..=MAX_DEPTH as usize {
-            for pair in 0..half_dim {
-                let angle = position as f32 / 10_000f32.powf(2.0 * pair as f32 / HEAD_DIM as f32);
-                let row_base = position * HEAD_DIM;
-                cosines[row_base + pair] = angle.cos();
-                cosines[row_base + half_dim + pair] = angle.cos();
-                sines[row_base + pair] = angle.sin();
-                sines[row_base + half_dim + pair] = angle.sin();
-            }
-        }
+        let rope_inverse_frequencies =
+            (0..HEAD_DIM / 2).map(|pair| 1.0 / 10_000f32.powf(2.0 * pair as f32 / HEAD_DIM as f32)).collect::<Vec<_>>();
         let mut node_metadata = vec![0u32; rows * MetadataIdx::COUNT];
         for row in 0..rows {
             node_metadata[MetadataIdx::Depth as usize * rows + row] = (row as u32 * 3) % MAX_DEPTH;
@@ -110,12 +98,12 @@ impl<B: Backend> Runner<B> {
             let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
                 &context,
                 DataType::BF16,
-                DataType::F32,
                 HEAD_DIM as u32,
                 false,
                 NUM_HEADS,
                 layout.backend_opaque_layout,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -140,14 +128,16 @@ impl<B: Backend> Runner<B> {
                 None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
-                None::<&B::GlobalGpuBuffer>,
                 Default::default(),
                 0,
+                None,
+                None,
                 None,
                 0,
                 kv_width as u32,
                 length as u32,
                 0,
+                None::<&B::GlobalGpuBuffer>,
                 &mut command,
             );
             block_on(command.end_encoding().submit().wait_until_completed()).unwrap();
@@ -157,8 +147,7 @@ impl<B: Backend> Runner<B> {
             prefix_kv: prepare_cache(prefix_length, 0),
             node_kv: prepare_cache(nodes, 11),
             current_qkv: create_buffer_with_data::<B, bf16>(&context, &values(rows * qkv_width, 29)),
-            cosines: create_buffer_with_data::<B, f32>(&context, &cosines),
-            sines: create_buffer_with_data::<B, f32>(&context, &sines),
+            rope_inverse_frequencies: create_buffer_with_data::<B, f32>(&context, &rope_inverse_frequencies),
             node_metadata: create_buffer_with_data::<B, u32>(&context, &node_metadata),
             ancestor_indices: create_buffer_with_data::<B, u32>(&context, &ancestor_indices),
             ancestor_counts: create_buffer_with_data::<B, u32>(&context, &ancestor_counts),
@@ -189,8 +178,7 @@ impl<B: Backend> Runner<B> {
                 self.node_kv.v_codes.as_mut(),
                 self.node_kv.v_scales.as_mut(),
                 &self.current_qkv,
-                &self.cosines,
-                &self.sines,
+                &self.rope_inverse_frequencies,
                 &self.node_metadata,
                 &self.ancestor_indices,
                 &self.ancestor_counts,
@@ -201,6 +189,7 @@ impl<B: Backend> Runner<B> {
                 self.ancestor_stride,
                 self.node_capacity,
                 MAX_DEPTH,
+                1.0,
                 1.0 / (HEAD_DIM as f32).sqrt(),
                 &mut command_buffer,
             );

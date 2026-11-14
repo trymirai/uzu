@@ -12,7 +12,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PositionedRoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -38,6 +38,7 @@ pub struct Attention<B: Backend> {
     qkv_norm_params: QKVNormParams,
     qkv_norm_scales: [Option<B::GlobalGpuBuffer>; 3],
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    prepare_trie: <B::Kernels as Kernels>::AttentionPrepareKernel,
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -162,7 +163,6 @@ impl<B: Backend> Attention<B> {
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
             data_type,
-            DataType::F32,
             head_dim,
             rope_config.is_some(),
             num_groups,
@@ -171,6 +171,21 @@ impl<B: Backend> Attention<B> {
             qkv_norm_scales[0].is_some(),
             qkv_norm_scales[1].is_some(),
             qkv_norm_scales[2].is_some(),
+            false,
+        )
+        .map_err(AttentionNewError::Backend)?;
+        let prepare_trie = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+            context,
+            data_type,
+            head_dim,
+            rope_config.is_some(),
+            num_groups,
+            kernel.kv_layout().backend_opaque_layout,
+            !is_kv_sharing,
+            qkv_norm_scales[0].is_some(),
+            qkv_norm_scales[1].is_some(),
+            qkv_norm_scales[2].is_some(),
+            true,
         )
         .map_err(AttentionNewError::Backend)?;
 
@@ -199,6 +214,7 @@ impl<B: Backend> Attention<B> {
                 qkv_norm_params,
                 qkv_norm_scales,
                 prepare,
+                prepare_trie,
                 sinks,
                 kernel,
                 out_projection,
@@ -210,8 +226,8 @@ impl<B: Backend> Attention<B> {
     fn attend(
         &self,
         hidden: B::ScratchBuffer,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        rope: Option<&PositionedRoPE<'_, B>>,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<AttentionState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, AttentionEncodeError<B>> {
@@ -239,14 +255,16 @@ impl<B: Backend> Attention<B> {
                     (MaybeMut::Mut(&mut scratch_kv), cache)
                 },
             };
+            let trie = batch_dim.nodes();
             let (queries, query_scales) = self
                 .prepare(
                     &qkvg,
                     &mut kv,
                     cache.prefix_len(),
                     self.num_q_heads,
-                    precalculated_rope,
+                    rope,
                     batch_dim.size(),
+                    trie,
                     command_buffer,
                 )
                 .map_err(AttentionEncodeError::Backend)?;
@@ -258,16 +276,12 @@ impl<B: Backend> Attention<B> {
                 v_codes: kv.v_codes.as_ref(),
                 v_scales: kv.v_scales.as_ref(),
             };
-            let trie = (!batch_dim.is_flat())
-                .then(|| command_buffer.allocate_constant_from_slice(batch_dim.nodes()))
-                .transpose()
-                .map_err(AttentionEncodeError::Backend)?;
             self.kernel
                 .encode(
                     input,
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
-                        trie: trie.as_ref(),
+                        trie,
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,
@@ -283,7 +297,7 @@ impl<B: Backend> Attention<B> {
     pub fn append_projected_kv(
         &self,
         key_value: impl BufferRef<Backend = B>,
-        precalculated_rope: &PrecalculatedRoPE<B>,
+        rope: &PositionedRoPE<'_, B>,
         batch_dim: u32,
         state: &mut AttentionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -294,8 +308,9 @@ impl<B: Backend> Attention<B> {
             &mut MaybeMut::Mut(&mut state.kv),
             prefix_len,
             0,
-            Some(precalculated_rope),
+            Some(rope),
             batch_dim,
+            None,
             command_buffer,
         )?;
         state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
@@ -308,8 +323,9 @@ impl<B: Backend> Attention<B> {
         kv: &mut MaybeMut<'_, KVCache<B>>,
         kv_token_offset: u32,
         num_q_heads: u32,
-        rope: Option<&PrecalculatedRoPE<B>>,
+        rope: Option<&PositionedRoPE<'_, B>>,
         suffix_length: u32,
+        trie: Option<&B::GlobalGpuBuffer>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         assert_eq!(kv.layout, self.kernel.kv_layout(), "shared KV layout mismatch");
@@ -331,7 +347,12 @@ impl<B: Backend> Attention<B> {
         // K/V-only calls still need bound query buffers.
         let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
         let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
-        self.prepare.encode(
+        let prepare = if trie.is_some() {
+            &self.prepare_trie
+        } else {
+            &self.prepare
+        };
+        prepare.encode(
             qkvg,
             &mut query_codes,
             &mut query_scales,
@@ -339,18 +360,20 @@ impl<B: Backend> Attention<B> {
             k_scales,
             v_codes,
             v_scales,
-            rope.map(|rope| &rope.cosines),
-            rope.map(|rope| &rope.sines),
+            rope.map(|rope| &rope.rope.inverse_frequencies),
             self.qkv_norm_scales[0].as_ref(),
             self.qkv_norm_scales[1].as_ref(),
             self.qkv_norm_scales[2].as_ref(),
             self.qkv_norm_params,
             num_q_heads,
-            rope.map(|rope| rope.dim),
+            rope.map(|rope| rope.rope.dim),
+            rope.map(|rope| rope.rope.scale),
+            rope.map(|rope| rope.position_offset),
             kv_token_offset,
             input_row_stride,
             suffix_length,
             num_q_heads / self.num_groups * suffix_length,
+            trie,
             command_buffer,
         );
         Ok((query_codes, query_scales))
@@ -377,18 +400,18 @@ impl<B: Backend> Mixer<B> for Attention<B> {
     fn encode(
         &self,
         hidden: B::ScratchBuffer,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        rope: Option<&PositionedRoPE<'_, B>>,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("attention");
 
-        assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
+        assert_eq!(rope.is_some(), self.max_rope_length.is_some(), "rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
+        let output = self.attend(hidden, rope, batch_dim, state, command_buffer)?;
 
         Ok(output)
     }

@@ -8,7 +8,6 @@ use crate::{
     config::{
         dflash::DFlashDraftConfig,
         residual::{AnyResidualConfig, additive::AdditiveResidualConfig},
-        rope::AnyRoPEConfig,
         token_mixer::AnyTokenMixerConfig,
     },
     data_type::DataType,
@@ -18,9 +17,7 @@ use crate::{
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mixer::{
             MixerState,
-            attention::{
-                ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::PrecalculatedRoPE,
-            },
+            attention::{ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::RoPE},
         },
         mlp::MlpBlockNewError,
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
@@ -49,7 +46,7 @@ pub struct DFlash<B: Backend> {
     layer_kv_dim: u32,
     layers: Box<[TransformerLayer<B>]>,
     output_norm: Normalization<B>,
-    rope_config: AnyRoPEConfig,
+    rope: RoPE<B>,
     model_dim: u32,
     max_context_length: u32,
     block_size: u32,
@@ -180,7 +177,7 @@ impl<B: Backend> DFlash<B> {
             layer_kv_dim,
             layers: layers.into_boxed_slice(),
             output_norm,
-            rope_config: config.rope_config.clone(),
+            rope: RoPE::new(&config.rope_config, context).map_err(DFlashNewError::Backend)?,
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
@@ -256,9 +253,7 @@ impl<B: Backend> DFlash<B> {
             .projected_feature_norm
             .encode(&projected_features, 0, num_tokens, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
-        let token_positions = (state.context_length..state.context_length + num_tokens).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
-            .map_err(DFlashEncodeError::Backend)?;
+        let rope = self.rope.at(state.context_length);
 
         let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, command_buffer)?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
@@ -299,7 +294,7 @@ impl<B: Backend> DFlash<B> {
     pub fn encode_draft(
         &self,
         target_embedding: &Embedding<B>,
-        target_output_token: u32,
+        target_output_token: impl BufferRef<Backend = B>,
         batch_size: u32,
         state: &mut DFlashState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -312,16 +307,17 @@ impl<B: Backend> DFlash<B> {
             "DFlash block positions exceed configured RoPE capacity"
         );
 
-        let mut tokens = vec![self.mask_token_id; batch_size as usize];
-        tokens[0] = target_output_token;
-        let token_ids = command_buffer.allocate_constant_from_slice(&tokens).map_err(DFlashEncodeError::Backend)?;
+        let word_bytes = DataType::U32.size_in_bytes();
+        assert_eq!(target_output_token.size(), word_bytes, "target output token must be a single u32");
+        let mut token_ids = command_buffer
+            .allocate_constant_from_slice(&vec![self.mask_token_id; batch_size as usize])
+            .map_err(DFlashEncodeError::Backend)?;
+        command_buffer.encode_copy(target_output_token, token_ids.subrange_mut(..word_bytes));
 
         let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
 
-        let batch_topology = BatchTopology::flat(batch_size, true);
-        let token_positions = (state.context_length..state.context_length + batch_size).collect::<Box<[_]>>();
-        let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
-            .map_err(DFlashEncodeError::Backend)?;
+        let batch_topology = BatchTopology::flat(batch_size);
+        let rope = self.rope.at(state.context_length);
 
         let mut hidden = token_embeddings;
         let mut residual = command_buffer.allocate_scratch(hidden.size()).map_err(DFlashEncodeError::Backend)?;

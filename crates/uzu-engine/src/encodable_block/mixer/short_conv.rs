@@ -11,7 +11,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{Linear, LinearBlockError},
-        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PositionedRoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::{maybe_mut::MaybeMut, size_for_shape::size_for_shape},
@@ -300,14 +300,14 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
     fn encode(
         &self,
         hidden: B::ScratchBuffer,
-        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
-        batch_dim: &BatchTopology,
+        rope: Option<&PositionedRoPE<'_, B>>,
+        batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("short conv");
 
-        assert!(precalculated_rope.is_none(), "unexpected rope for short conv mixer");
+        assert!(rope.is_none(), "unexpected rope for short conv mixer");
 
         let state = state.expect("short conv requires state");
         let state = state.downcast::<ShortConvState<B>>().expect("incorrect type of short conv state");
@@ -336,10 +336,9 @@ impl<B: Backend> Mixer<B> for ShortConv<B> {
             });
             conv_output
         } else {
-            let token_parents =
-                command_buffer.allocate_constant_from_slice(batch_dim.parents()).map_err(MixerEncodeError::Backend)?;
+            let token_parents = batch_dim.nodes().expect("trie conv requires trie nodes");
             let (conv_output, conv_states) = self
-                .encode_trie_conv(&in_projected, &token_parents, batch_dim.size(), state, command_buffer)
+                .encode_trie_conv(&in_projected, token_parents, batch_dim.size(), state, command_buffer)
                 .map_err(MixerEncodeError::Backend)?;
             state.suffix_state = Some(ShortConvStateSuffixStatus::Trie {
                 conv_states,

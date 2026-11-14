@@ -5,6 +5,7 @@ mod confidence_head_test;
 mod embedding;
 mod gated_act_mul_test;
 mod gdn;
+mod linearize_tree_test;
 mod logit_transform_test;
 mod matmul;
 mod moe;

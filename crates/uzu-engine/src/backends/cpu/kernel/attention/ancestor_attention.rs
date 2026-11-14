@@ -21,8 +21,7 @@ fn ancestor_attention<const HEAD_DIM: u32>(
     node_v_codes: *mut u8,
     node_v_scales: *mut bf16,
     current_qkv: *const bf16,
-    cosines: *const f32,
-    sines: *const f32,
+    rope_inverse_frequencies: *const f32,
     node_metadata: *const u32,
     ancestor_indices: *const u32,
     ancestor_counts: *const u32,
@@ -33,6 +32,7 @@ fn ancestor_attention<const HEAD_DIM: u32>(
     ancestor_stride: u32,
     node_capacity: u32,
     max_depth: u32,
+    rope_scale: f32,
     scale: f32,
     #[specialize] num_heads: u32,
     #[specialize] backend_opaque_layout: u32,
@@ -49,8 +49,15 @@ fn ancestor_attention<const HEAD_DIM: u32>(
                 let rotate = |component| {
                     (0..dim)
                         .map(|c| {
-                            apply_rope(qkv.add(component * model_dim), cosines, sines, depth as usize + 1, c, dim)
-                                .to_f32()
+                            apply_rope(
+                                qkv.add(component * model_dim),
+                                rope_inverse_frequencies,
+                                rope_scale,
+                                depth + 1,
+                                c,
+                                dim,
+                            )
+                            .to_f32()
                         })
                         .collect()
                 };

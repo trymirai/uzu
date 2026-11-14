@@ -15,13 +15,13 @@ use crate::{
             WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
         },
     },
-    config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
+    config::weaver::WeaverConfig,
     data_type::DataType,
     encodable_block::{
         confidence_head::{ConfidenceHead, ConfidenceHeadError, ConfidenceHeadStep},
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError, LinearEncodeError, TransformedLinear},
-        mixer::attention::{KVCache, KVCacheView, rope::PrecalculatedRoPE},
+        mixer::attention::{KVCache, KVCacheView, rope::RoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
@@ -31,7 +31,6 @@ use crate::{
 };
 
 pub const DATA_TYPE: DataType = DataType::BF16;
-pub const ROPE_DATA_TYPE: DataType = DataType::F32;
 
 pub struct WeaverTreeShape {
     pub tree_budget: u32,
@@ -44,7 +43,7 @@ pub struct WeaverTreeShape {
 }
 
 impl WeaverTreeShape {
-    fn slot_count(&self) -> u32 {
+    pub fn slot_count(&self) -> u32 {
         1 + self.rounds.saturating_sub(1) * self.expand_per_round
     }
 }
@@ -54,70 +53,13 @@ pub struct EncodedWeaverTree<B: Backend> {
     frontier: B::GlobalGpuBuffer,
 }
 
-pub struct ProposalNode {
-    pub token_id: u32,
-    pub depth: u32,
-    pub logprob: f32,
-    pub child_indices: Vec<usize>,
-}
-
 impl<B: Backend> EncodedWeaverTree<B> {
-    pub async fn read_nodes(
-        self,
-        context: &B::Context,
-    ) -> Result<Vec<ProposalNode>, B::Error> {
-        let (packed_tree, frontier) = futures::future::try_join(
-            context.copyout::<u32>(&self.packed_tree),
-            context.copyout::<u32>(&self.frontier),
-        )
-        .await?;
+    pub fn packed_tree(&self) -> &B::GlobalGpuBuffer {
+        &self.packed_tree
+    }
 
-        let tree_slot_count = packed_tree.len() / TreeIdx::COUNT;
-        let frontier_capacity = frontier.len() / FrontierIdx::COUNT;
-        let tree_field = |field: TreeIdx, slot: usize| packed_tree[field as usize * tree_slot_count + slot];
-        let frontier_field = |field: FrontierIdx, slot: usize| frontier[field as usize * frontier_capacity + slot];
-
-        let mut slot_to_index = vec![usize::MAX; tree_slot_count];
-        let mut nodes: Vec<ProposalNode> = Vec::new();
-        for slot in 0..tree_slot_count {
-            if tree_field(TreeIdx::Valid, slot) == 0 {
-                continue;
-            }
-            let parent_slot = tree_field(TreeIdx::ParentSlot, slot) as i32;
-            let parent = (parent_slot >= 0).then(|| {
-                let parent = slot_to_index[parent_slot as usize];
-                assert_ne!(parent, usize::MAX, "tree slot {slot} names padding slot {parent_slot} as its parent");
-                parent
-            });
-            let index = nodes.len();
-            slot_to_index[slot] = index;
-            if let Some(parent) = parent {
-                nodes[parent].child_indices.push(index);
-            }
-            nodes.push(ProposalNode {
-                token_id: tree_field(TreeIdx::TokenId, slot),
-                depth: tree_field(TreeIdx::Depth, slot),
-                logprob: f32::from_bits(tree_field(TreeIdx::EdgeLogprobBits, slot)),
-                child_indices: Vec::new(),
-            });
-        }
-        for slot in 0..frontier_capacity {
-            if frontier_field(FrontierIdx::Active, slot) == 0 {
-                continue;
-            }
-            let parent_slot = frontier_field(FrontierIdx::ParentSlot, slot) as usize;
-            let parent = slot_to_index[parent_slot];
-            assert_ne!(parent, usize::MAX, "frontier slot {slot} names padding slot {parent_slot} as its parent");
-            let index = nodes.len();
-            nodes[parent].child_indices.push(index);
-            nodes.push(ProposalNode {
-                token_id: frontier_field(FrontierIdx::TokenId, slot),
-                depth: frontier_field(FrontierIdx::Depth, slot),
-                logprob: f32::from_bits(frontier_field(FrontierIdx::EdgeLogprobBits, slot)),
-                child_indices: Vec::new(),
-            });
-        }
-        Ok(nodes)
+    pub fn frontier(&self) -> &B::GlobalGpuBuffer {
+        &self.frontier
     }
 }
 
@@ -130,7 +72,7 @@ pub struct Weaver<B: Backend> {
     readout_norm: Normalization<B>,
     readout_query_projection: Box<dyn Linear<B>>,
     prefix_unrotation: Option<PrefixUnrotation<B>>,
-    rope_config: AnyRoPEConfig,
+    rope: RoPE<B>,
     top_k: <B::Kernels as Kernels>::RadixTopKSmall,
     top_children: <B::Kernels as Kernels>::WeaverSelectKernel,
     top_children_with_prune_noise: <B::Kernels as Kernels>::WeaverSelectKernel,
@@ -343,7 +285,7 @@ impl<B: Backend> Weaver<B> {
             readout_norm,
             readout_query_projection,
             prefix_unrotation,
-            rope_config: config.rope_config.clone(),
+            rope: RoPE::new(&config.rope_config, context).map_err(WeaverNewError::Backend)?,
             top_k,
             top_children,
             top_children_with_prune_noise,
@@ -365,7 +307,7 @@ impl<B: Backend> Weaver<B> {
         &self,
         target_hidden: impl BufferRef<Backend = B>,
         draft_hidden: impl BufferRef<Backend = B>,
-        rope: &PrecalculatedRoPE<B>,
+        rope: &RoPE<B>,
         depth: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Vec<KVCache<B>>, WeaverEncodeError<B>> {
@@ -445,7 +387,7 @@ impl<B: Backend> Weaver<B> {
         &self,
         target_embedding: &Embedding<B>,
         mut prefix_kv_layers: impl Iterator<Item = &'a KVCache<B>>,
-        rope: &PrecalculatedRoPE<B>,
+        rope: &RoPE<B>,
         mut node_kv_layers: impl Iterator<Item = &'a mut KVCache<B>>,
         mut packed_tree: impl BufferMut<Backend = B>,
         mut frontier: impl BufferMut<Backend = B>,
@@ -545,8 +487,7 @@ impl<B: Backend> Weaver<B> {
                 node_kv.v_codes.as_mut(),
                 node_kv.v_scales.as_mut(),
                 &current_qkv,
-                &rope.cosines,
-                &rope.sines,
+                &rope.inverse_frequencies,
                 node_metadata_ref,
                 node_ancestor_indices.as_ref(),
                 node_metadata_ref.subrange(MetadataIdx::AncestorCount as usize * metadata_field_bytes..),
@@ -557,6 +498,7 @@ impl<B: Backend> Weaver<B> {
                 ancestor_stride,
                 tree_slot_count,
                 layer.max_depth,
+                rope.scale,
                 layer.attention_scale,
                 command_buffer,
             );
@@ -642,7 +584,7 @@ impl<B: Backend> Weaver<B> {
         target_embedding: &Embedding<B>,
         logits: impl BufferRef<Backend = B>,
         depth_seeds: &[u64],
-        root_token_id: u32,
+        root_token: impl BufferRef<Backend = B>,
         shape: WeaverTreeShape,
         confidence_head: Option<&ConfidenceHead<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -697,12 +639,8 @@ impl<B: Backend> Weaver<B> {
                 )
                 .map_err(WeaverEncodeError::Backend)?;
 
-            let rope_positions = (0..=self.max_depth).collect::<Box<[_]>>();
-            let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &rope_positions, command_buffer)
-                .map_err(WeaverEncodeError::Backend)?;
-
             let prefix_kv_layers =
-                self.encode_prefix(target_hidden, draft_hidden, &rope, shape.dflash_depth, command_buffer)?;
+                self.encode_prefix(target_hidden, draft_hidden, &self.rope, shape.dflash_depth, command_buffer)?;
 
             // Per-layer KV cache for tree nodes, one slot per packed-tree slot.
             let mut node_kv_layers = prefix_kv_layers
@@ -711,10 +649,11 @@ impl<B: Backend> Weaver<B> {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(WeaverEncodeError::Backend)?;
 
-            let root = command_buffer
-                .allocate_constant_from_slice(&[root_token_id, 1u32])
-                .map_err(WeaverEncodeError::Backend)?;
             let word_bytes = DataType::U32.size_in_bytes();
+            assert_eq!(root_token.size(), word_bytes, "root token must be a single u32");
+            let mut root =
+                command_buffer.allocate_constant_from_slice(&[0u32, 1u32]).map_err(WeaverEncodeError::Backend)?;
+            command_buffer.encode_copy(root_token, root.subrange_mut(..word_bytes));
             let tree_field_bytes = size_for_shape(&[tree_slot_count], DataType::U32);
             let mut packed_tree = command_buffer
                 .allocate_scratch(TreeIdx::COUNT * tree_field_bytes)
@@ -797,7 +736,7 @@ impl<B: Backend> Weaver<B> {
                 self.encode_step(
                     target_embedding,
                     prefix_kv_layers.iter(),
-                    &rope,
+                    &self.rope,
                     node_kv_layers.iter_mut(),
                     &mut packed_tree,
                     &mut frontier,

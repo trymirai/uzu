@@ -4,7 +4,9 @@
 #include "../hadamard_transform/hadamard_transform.h"
 #include "kv_layout.h"
 #include "int8_quantization.h"
+#include "rope.h"
 #include "../generated/qkv_norm.h"
+#include "../generated/trie.h"
 
 namespace kv_layout = uzu::kv_layout;
 
@@ -19,20 +21,22 @@ METAL_FUNC T prepare_norm(
     bool full_layer,
     float scale_offset
 ) {
-  if (!enabled)
+  if (!enabled) {
     return value;
+  }
   const float normalized = float(value) * inverse_rms;
-  if (!has_scales)
+  if (!has_scales) {
     return T(normalized);
+  }
   const float scale = scales[channel] + scale_offset;
-  if (full_layer)
+  if (full_layer) {
     return T(normalized * scale);
+  }
   return T(T(normalized) * T(scale));
 }
 
-template <typename ElementT, typename RopeT, uint HEAD_DIM>
+template <typename ElementT, uint HEAD_DIM>
 VARIANTS(ElementT, bfloat, float)
-VARIANTS(RopeT, float)
 VARIANTS(HEAD_DIM, 64, 128, 256, 512)
 PUBLIC KERNEL(AttentionPrepare)(
     const device ElementT* qkvg, // [token, input_row_stride], with an optional trailing gate
@@ -42,18 +46,20 @@ PUBLIC KERNEL(AttentionPrepare)(
     device bfloat* k_scales OPTIONAL(append_kv),
     device uchar* v_codes OPTIONAL(append_kv),
     device bfloat* v_scales OPTIONAL(append_kv),
-    const device RopeT* cosines OPTIONAL(has_rope),
-    const device RopeT* sines OPTIONAL(has_rope),
+    const device float* rope_inverse_frequencies OPTIONAL(has_rope),
     const device float* query_norm_scales OPTIONAL(has_query_norm_scales),
     const device float* key_norm_scales OPTIONAL(has_key_norm_scales),
     const device float* value_norm_scales OPTIONAL(has_value_norm_scales),
     const constant uzu::qkv_norm::QKVNormParams& norm_params,
     const constant uint32_t& num_q_heads,
     const constant uint32_t& rope_dim OPTIONAL(has_rope),
+    const constant float& rope_scale OPTIONAL(has_rope),
+    const constant uint32_t& rope_position_offset OPTIONAL(has_rope),
     const constant uint32_t& kv_token_offset,
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
+    const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -61,6 +67,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool has_query_norm_scales SPECIALIZE,
     const bool has_key_norm_scales SPECIALIZE,
     const bool has_value_norm_scales SPECIALIZE,
+    const bool has_trie SPECIALIZE,
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
@@ -79,6 +86,7 @@ PUBLIC KERNEL(AttentionPrepare)(
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
+  const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
@@ -86,8 +94,9 @@ PUBLIC KERNEL(AttentionPrepare)(
   const float norm_scale_offset = norm_params.scale_offset[norm_index];
   const bool has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
   const device float* norm_scales = nullptr;
-  if (has_scales)
+  if (has_scales) {
     norm_scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
+  }
   float inverse_rms = 1.0f;
   if (norm_enabled) {
     float sum = 0.0f;
@@ -128,10 +137,8 @@ PUBLIC KERNEL(AttentionPrepare)(
           norm_full_layer,
           norm_scale_offset
       ));
-      const float signed_paired = channel < half_dim ? -paired : paired;
       element = ElementT(
-          float(element) * float(cosines[token_idx * rope_dim + channel]) +
-          signed_paired * float(sines[token_idx * rope_dim + channel])
+          rope_rotate(float(element), paired, rope_inverse_frequencies, rope_scale, rope_position, channel, rope_dim)
       );
     }
     values[value_index] = float(element);
