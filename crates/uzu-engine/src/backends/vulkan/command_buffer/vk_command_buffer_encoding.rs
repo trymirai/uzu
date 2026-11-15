@@ -17,8 +17,7 @@ use crate::backends::{
     },
     vulkan::{
         Error, VkBuffer, VkBufferCpuGpu, VkBufferMemory, VkCommandBuffer, VkCommandBufferError,
-        VkCommandBufferExecutable, VkCommandBufferResources, VkCommandBufferSubmission, VkComputePipeline, VkContext,
-        Vulkan,
+        VkCommandBufferExecutable, VkCommandBufferSubmission, VkCommandPool, VkComputePipeline, VkContext, Vulkan,
     },
 };
 
@@ -29,7 +28,7 @@ const SEGMENT_WORK: u64 = 64_000_000_000;
 
 pub struct VkCommandBufferEncoding {
     context: Arc<VkContext>,
-    resources: Option<VkCommandBufferResources>,
+    command_pool: Option<VkCommandPool>,
     retained: Vec<Arc<dyn Send + Sync>>,
     reads: RangeSet<u64>,
     writes: RangeSet<u64>,
@@ -48,10 +47,10 @@ impl VkCommandBufferEncoding {
         allocation_pool: Arc<PoolAllocator<Arc<VkBuffer>>>,
         name: Option<&str>,
     ) -> Result<Self, Error> {
-        let resources = context.submitter().acquire()?;
-        context.submitter().unsubmitted.fetch_add(1, Ordering::Relaxed);
+        let command_pool = context.command_queue().acquire()?;
+        context.command_queue().unsubmitted.fetch_add(1, Ordering::Relaxed);
         let encoding = Self {
-            resources: Some(resources),
+            command_pool: Some(command_pool),
             context,
             retained: Vec::new(),
             reads: RangeSet::new(),
@@ -142,7 +141,7 @@ impl VkCommandBufferEncoding {
     }
 
     fn command_buffer(&self) -> vk::CommandBuffer {
-        self.resources.as_ref().expect("encoding owns resources until it ends").command_buffer()
+        self.command_pool.as_ref().expect("encoding owns its command pool until it ends").command_buffer()
     }
 
     fn debug_utils(&self) -> Option<&ext::debug_utils::Device> {
@@ -184,7 +183,7 @@ impl VkCommandBufferEncoding {
         let work = take(&mut self.declared_work);
         if self.segment_work > 0
             && self.segment_work + work > SEGMENT_WORK
-            && self.context.submitter().unsubmitted.load(Ordering::Relaxed) == 1
+            && self.context.command_queue().unsubmitted.load(Ordering::Relaxed) == 1
         {
             if let Err(error) = self.submit_segment() {
                 self.failure = Some(error);
@@ -236,8 +235,8 @@ impl VkCommandBufferEncoding {
 
     fn submit_segment(&mut self) -> Result<(), Error> {
         self.end_segment()?;
-        let next = self.context.submitter().acquire()?;
-        let ended = self.resources.replace(next).expect("encoding owns resources until it ends");
+        let next = self.context.command_queue().acquire()?;
+        let ended = self.command_pool.replace(next).expect("encoding owns its command pool until it ends");
         let submitted =
             unsafe { VkCommandBufferSubmission::submit(self.context.clone(), ended, take(&mut self.retained)) };
         self.reads.clear();
@@ -267,10 +266,10 @@ impl VkCommandBufferEncoding {
 
 impl Drop for VkCommandBufferEncoding {
     fn drop(&mut self) {
-        if let Some(resources) = self.resources.take() {
-            self.context.submitter().recycle(resources);
+        if let Some(command_pool) = self.command_pool.take() {
+            self.context.command_queue().recycle(command_pool);
         }
-        self.context.submitter().unsubmitted.fetch_sub(1, Ordering::Relaxed);
+        self.context.command_queue().unsubmitted.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -390,11 +389,11 @@ impl CommandBufferEncoding for VkCommandBufferEncoding {
             self.end_debug_label();
         }
         let failure = self.failure.take().or_else(|| self.end_segment().err().map(Error::from));
-        let resources = self.resources.take().expect("encoding owns resources until it ends");
+        let command_pool = self.command_pool.take().expect("encoding owns its command pool until it ends");
         unsafe {
             VkCommandBufferExecutable::new(
                 self.context.clone(),
-                resources,
+                command_pool,
                 take(&mut self.retained),
                 take(&mut self.segments),
                 failure,
