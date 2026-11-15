@@ -22,8 +22,7 @@ fn ios_set_current_dir() {
 }
 
 pub fn uzu_harness(tests: &[&UzuTest]) {
-    let args = std::env::args().collect::<Vec<String>>();
-    let benchmarks = args.contains(&"--bench".to_string());
+    let benchmarks = std::env::args().any(|arg| arg == "--bench");
     if benchmarks {
         #[cfg(target_os = "ios")]
         ios_set_current_dir();
