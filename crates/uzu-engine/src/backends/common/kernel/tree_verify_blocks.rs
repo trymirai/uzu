@@ -1,13 +1,7 @@
 use crate::{
-    backends::{
-        common::{
-            Backend, CommandBufferEncoding, Kernels,
-            kernel::{TreeVerifyKernel, delta_net_tree_verify::DeltaNetTreeVerify},
-        },
-        metal::{
-            Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
-            kernel::MetalKernels,
-        },
+    backends::common::{
+        Backend, CommandBuffer, CommandBufferEncoding, Kernels,
+        kernel::{TreeVerifyKernel, delta_net_tree_verify::DeltaNetTreeVerify},
     },
     encodable_block::mixer::delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
 };
@@ -15,36 +9,39 @@ use crate::{
 const TOKEN_BLOCK: u32 = 16;
 const MAX_TREE_SIZE: u32 = 2 * TOKEN_BLOCK;
 
-pub struct MetalDeltaNetTreeVerify {
+// Verifies a tree of up to two token blocks with the TreeVerify kernel specialized for one or two blocks.
+pub struct TreeVerifyBlocks<B: Backend> {
     arguments: TreeVerifyNewArguments,
-    kernels: [<MetalKernels as Kernels>::TreeVerifyKernel; 2],
+    kernels: [<B::Kernels as Kernels>::TreeVerifyKernel; 2],
 }
 
-impl DeltaNetTreeVerify for MetalDeltaNetTreeVerify {
-    type Backend = Metal;
+impl<B: Backend<Kernels: Kernels<DeltaNetTreeVerify = TreeVerifyBlocks<B>>>> DeltaNetTreeVerify
+    for TreeVerifyBlocks<B>
+{
+    type Backend = B;
 
-    fn is_supported(_context: &MetalContext) -> bool {
+    fn is_supported(_context: &B::Context) -> bool {
         true
     }
 
     fn new(
-        context: &MetalContext,
+        context: &B::Context,
         arguments: &TreeVerifyNewArguments,
-    ) -> Result<Self, MetalError> {
+    ) -> Result<Self, B::Error> {
+        let new = |blocks| {
+            <B::Kernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, blocks, arguments.act_type)
+        };
         Ok(Self {
             arguments: *arguments,
-            kernels: [
-                <MetalKernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, 1, arguments.act_type)?,
-                <MetalKernels as Kernels>::TreeVerifyKernel::new(context, arguments.data_type, 2, arguments.act_type)?,
-            ],
+            kernels: [new(1)?, new(2)?],
         })
     }
 
     fn encode(
         &self,
-        arguments: TreeVerifyEncodeArguments<'_, Metal>,
-        command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+        arguments: TreeVerifyEncodeArguments<'_, B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
         assert!(arguments.tree_size <= MAX_TREE_SIZE, "GDN tree verification supports at most {MAX_TREE_SIZE} nodes");
         let mut output = command_buffer.allocate_scratch_for_shape(
             &[arguments.tree_size, self.arguments.num_v_heads, self.arguments.head_v_dim],
