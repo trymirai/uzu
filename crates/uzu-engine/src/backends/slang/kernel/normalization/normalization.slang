@@ -16,6 +16,7 @@ import definitions;
   uint32_t element_count,
   float epsilon,
   float scale_offset,
+  uint32_t mixture_size,
   [[Specialize]] bool in_place,
   [[Specialize]] bool subtract_mean,
   [[Specialize]] bool full_layer,

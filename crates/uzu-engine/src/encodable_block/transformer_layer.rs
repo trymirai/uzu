@@ -18,11 +18,11 @@ use crate::{
         mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
-        residual::{ResidualConnection, ResidualNewError},
+        residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
         stream_op::{StreamOp, StreamOpContext, StreamOpEncodeError, StreamOpNewError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
-    utils::maybe_mut::MaybeMut,
+    utils::{maybe_mut::MaybeMut, maybe_owned::MaybeOwned},
 };
 
 #[derive(Debug, Error)]
@@ -49,6 +49,8 @@ pub enum TransformerLayerError<B: Backend> {
     LinearEncode(#[from] LinearEncodeError<B>),
     #[error("Residual error: {0}")]
     Residual(#[from] ResidualNewError<B>),
+    #[error("Residual encoding error: {0}")]
+    ResidualEncode(#[from] ResidualEncodeError<B>),
     #[error("Stream op error: {0}")]
     StreamOp(#[from] StreamOpNewError<B>),
     #[error("Stream op encoding error: {0}")]
@@ -70,7 +72,6 @@ struct TransformerLayerConv<B: Backend> {
 }
 
 struct Sublayer<B: Backend> {
-    model_dim: u32,
     pre_norm: Option<Normalization<B>>,
     conv: Option<TransformerLayerConv<B>>,
     post_norm: Option<Normalization<B>>,
@@ -256,11 +257,16 @@ impl<B: Backend> Sublayer<B> {
             None
         };
 
-        let connection =
-            ResidualConnection::new(residual_config, data_type, &parameter_tree.subtree("connection"), context)?;
+        let connection = ResidualConnection::new(
+            residual_config,
+            model_dim,
+            data_type,
+            &parameter_tree.subtree("connection"),
+            context,
+        )
+        .await?;
 
         Ok(Self {
-            model_dim,
             pre_norm,
             conv,
             post_norm,
@@ -278,36 +284,38 @@ impl<B: Backend> Sublayer<B> {
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         ) -> Result<B::ScratchBuffer, TransformerLayerError<B>>,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
-        let mut hidden = if let Some(pre_norm) = &self.pre_norm {
-            pre_norm
-                .encode(&stream, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
-                .map_err(TransformerLayerError::Backend)?
-        } else {
-            let mut hidden = command_buffer.allocate_scratch(stream.size()).map_err(TransformerLayerError::Backend)?;
-            command_buffer.encode_copy(&stream, &mut hidden);
-            hidden
-        };
+        self.connection.encode(&stream, row_count, command_buffer, |input, command_buffer| {
+            let mut hidden = match (&self.pre_norm, input) {
+                (Some(pre_norm), input) => pre_norm
+                    .encode(&*input, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                    .map_err(TransformerLayerError::Backend)?,
+                (None, MaybeOwned::Owned(input)) => input,
+                (None, MaybeOwned::Borrowed(input)) => {
+                    let mut hidden =
+                        command_buffer.allocate_scratch(input.size()).map_err(TransformerLayerError::Backend)?;
+                    command_buffer.encode_copy(input, &mut hidden);
+                    hidden
+                },
+            };
 
-        if let Some(conv) = &self.conv {
-            let (conv_output, coefficients) = conv.encode_pre_convolution(&hidden, row_count, command_buffer)?;
-            let body_output = body(conv_output, command_buffer)?;
-            hidden = conv
-                .encode_post_convolution(&body_output, &coefficients, row_count, command_buffer)
-                .map_err(TransformerLayerError::Backend)?;
-        } else {
-            hidden = body(hidden, command_buffer)?;
-        }
+            if let Some(conv) = &self.conv {
+                let (conv_output, coefficients) = conv.encode_pre_convolution(&hidden, row_count, command_buffer)?;
+                let body_output = body(conv_output, command_buffer)?;
+                hidden = conv
+                    .encode_post_convolution(&body_output, &coefficients, row_count, command_buffer)
+                    .map_err(TransformerLayerError::Backend)?;
+            } else {
+                hidden = body(hidden, command_buffer)?;
+            }
 
-        if let Some(post_norm) = &self.post_norm {
-            hidden = post_norm
-                .encode(&hidden, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
-                .map_err(TransformerLayerError::Backend)?;
-        }
+            if let Some(post_norm) = &self.post_norm {
+                hidden = post_norm
+                    .encode(&hidden, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                    .map_err(TransformerLayerError::Backend)?;
+            }
 
-        let update = hidden;
-        self.connection
-            .encode_update(&stream, &update, row_count * self.model_dim, command_buffer)
-            .map_err(TransformerLayerError::Backend)
+            Ok(hidden)
+        })
     }
 }
 

@@ -28,6 +28,7 @@ fn get_output<
 >(
     input: &[InputT],
     scales: Option<&[AffineT]>,
+    mixture_size: u32,
     batch_size: u32,
     element_count: u32,
     epsilon: f32,
@@ -70,6 +71,7 @@ fn get_output<
         element_count,
         epsilon,
         0.0,
+        mixture_size,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).expect("Failed to wait command buffer");
@@ -98,6 +100,7 @@ fn test_internal<
     let expected = get_output::<Cpu, InputT, AffineT, OutputT>(
         &input,
         scales.as_deref(),
+        1,
         batch_size,
         element_count,
         epsilon,
@@ -118,6 +121,7 @@ fn test_internal<
         let actual = get_output::<B, InputT, AffineT, OutputT>(
             &input,
             scales.as_deref(),
+            1,
             batch_size,
             element_count,
             epsilon,
@@ -165,7 +169,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
         })
         .collect();
 
-    let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), batch_size, element_count, epsilon, true, None);
+    let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), 1, batch_size, element_count, epsilon, true, None);
 
     let context = block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Context");
     let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
@@ -195,6 +199,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
         let actual = get_output::<B, T, T, T>(
             &input,
             Some(&scales),
+            1,
             batch_size,
             element_count,
             epsilon,
@@ -204,6 +209,62 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
         let message = format!("Normalization hadamard kernel test failed with backend={}", std::any::type_name::<B>());
         assert_eq_float::<T>(&expected, &actual, eps, &message);
     });
+}
+
+// Row `i` has to use the scales of mixture member `i % mixture_size`
+fn test_mixture<T: DataTypeRepr + Float + Debug + Display>() {
+    let mixture_size = 3u32;
+    let batch_size = 2 * mixture_size;
+    let element_count = 64u32;
+    let epsilon = 1e-6f32;
+
+    let input: Vec<T> = (0..(batch_size * element_count))
+        .map(|index| T::from(((index * 37) % 101) as f32 * 0.02 - 1.0).unwrap())
+        .collect();
+    let scales: Vec<T> = (0..(mixture_size * element_count))
+        .map(|index| T::from(0.5f32 + ((index * 13) % 29) as f32 * 0.05).unwrap())
+        .collect();
+
+    let element_count_usize = element_count as usize;
+    let expected: Vec<T> = (0..batch_size as usize)
+        .flat_map(|row| {
+            let member = row % mixture_size as usize;
+            let row_input = &input[row * element_count_usize..(row + 1) * element_count_usize];
+            let row_scales = &scales[member * element_count_usize..(member + 1) * element_count_usize];
+            get_output::<Cpu, T, T, T>(row_input, Some(row_scales), 1, 1, element_count, epsilon, true, None)
+        })
+        .collect();
+
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        1e-2
+    } else {
+        1e-5
+    };
+
+    for_each_backend!(|B| {
+        let actual = get_output::<B, T, T, T>(
+            &input,
+            Some(&scales),
+            mixture_size,
+            batch_size,
+            element_count,
+            epsilon,
+            true,
+            None,
+        );
+        let message = format!("Normalization mixture kernel test failed with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<T>(&expected, &actual, eps, &message);
+    });
+}
+
+#[uzu_test]
+fn test_normalization_mixture_f32() {
+    test_mixture::<f32>();
+}
+
+#[uzu_test]
+fn test_normalization_mixture_bf16() {
+    test_mixture::<bf16>();
 }
 
 #[uzu_test]
