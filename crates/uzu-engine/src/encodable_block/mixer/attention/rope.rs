@@ -9,6 +9,20 @@ pub struct PrecalculatedRoPE<B: Backend> {
     pub dim: u32,
 }
 
+/// Half-rotation span: number of channel pairs that receive a rotation.
+/// Pairs beyond this span stay unrotated (partial rotary / NoPE tail).
+fn rotary_pair_count(rope_config: &AnyRoPEConfig, head_dim: u32) -> usize {
+    let rotary_dim = match rope_config.rotary_dim() {
+        Some(dim) if *dim > 0 => *dim,
+        _ => head_dim,
+    };
+    assert!(
+        rotary_dim <= head_dim && rotary_dim.is_multiple_of(2),
+        "RoPE rotary_dim must be even and not exceed head_dim"
+    );
+    (rotary_dim / 2) as usize
+}
+
 impl<B: Backend> PrecalculatedRoPE<B> {
     pub fn precalculate(
         rope_config: &AnyRoPEConfig,
@@ -26,11 +40,13 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             _ => 1.0,
         };
 
+        let rotary_half = rotary_pair_count(rope_config, head_dim);
         let element_count = token_positions.len() * head_dim as usize;
         let half_offset = half_dim as usize;
         let mut sines = vec![0.0; element_count];
-        let mut cosines = vec![0.0; element_count];
-        for pair_index in 0..half_dim {
+        // Pairs outside the rotary span stay unrotated (cosine 1, sine 0).
+        let mut cosines = vec![1.0; element_count];
+        for pair_index in 0..rotary_half {
             let channel_index = pair_index * 2;
             let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
             let inverse_frequency = match rope_config {
@@ -85,7 +101,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                     } else {
                         &config.short_factor
                     };
-                    inverse_frequency / factors[pair_index as usize]
+                    inverse_frequency / factors[pair_index]
                 },
             };
 
@@ -93,7 +109,60 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                 let embedding = *token_position as f32 * inverse_frequency;
                 let sine = embedding.sin() * attention_scaling_factor;
                 let cosine = embedding.cos() * attention_scaling_factor;
-                let pair_offset = token_index * head_dim as usize + pair_index as usize;
+                let pair_offset = token_index * head_dim as usize + pair_index;
+                sines[pair_offset] = sine;
+                sines[pair_offset + half_offset] = sine;
+                cosines[pair_offset] = cosine;
+                cosines[pair_offset + half_offset] = cosine;
+            }
+        }
+
+        Ok(Self {
+            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
+            sines: command_buffer.allocate_constant_from_slice(&sines)?,
+            dim: *rope_config.head_dim(),
+        })
+    }
+
+    pub fn precalculate_mrope(
+        rope_config: &AnyRoPEConfig,
+        mrope_positions: &[[u32; 3]],
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, B::Error> {
+        let head_dim = *rope_config.head_dim();
+        assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
+        let half_dim = head_dim / 2;
+        let attention_scaling_factor = match rope_config {
+            AnyRoPEConfig::YARNRoPEConfig(config) => 0.1 * config.scaling_factor.ln() + 1.0,
+            AnyRoPEConfig::LongRoPEConfig(config) if config.scaling_factor > 1.0 => {
+                (1.0 + config.scaling_factor.ln() / (config.original_context_length as f32).ln()).sqrt()
+            },
+            _ => 1.0,
+        };
+
+        let rotary_half = rotary_pair_count(rope_config, head_dim);
+        let element_count = mrope_positions.len() * head_dim as usize;
+        let half_offset = half_dim as usize;
+        let mut sines = vec![0.0; element_count];
+        // Pairs outside the rotary span stay unrotated (cosine 1, sine 0).
+        let mut cosines = vec![1.0; element_count];
+        for pair_index in 0..rotary_half {
+            let channel_index = pair_index * 2;
+            let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
+            let coord_dim = if (1..33).contains(&pair_index) && (pair_index - 1) % 3 == 0 {
+                1 // H
+            } else if (2..30).contains(&pair_index) && (pair_index - 2) % 3 == 0 {
+                2 // W
+            } else {
+                0 // T
+            };
+
+            for (token_index, pos_3d) in mrope_positions.iter().enumerate() {
+                let token_position = pos_3d[coord_dim];
+                let embedding = token_position as f32 * inverse_frequency;
+                let sine = embedding.sin() * attention_scaling_factor;
+                let cosine = embedding.cos() * attention_scaling_factor;
+                let pair_offset = token_index * head_dim as usize + pair_index;
                 sines[pair_offset] = sine;
                 sines[pair_offset + half_offset] = sine;
                 cosines[pair_offset] = cosine;

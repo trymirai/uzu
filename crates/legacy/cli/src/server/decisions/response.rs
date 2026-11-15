@@ -2,10 +2,12 @@ use indexmap::IndexMap;
 use serde::Serialize;
 use shoji::types::session::decision::{DecisionAnswer, DecisionOutput, DecisionQuestion};
 
+use uzu_engine::d1_omni::D1Response;
+
 #[derive(Serialize)]
 pub struct DecisionResponse {
     pub model: String,
-    pub answers: IndexMap<String, DecisionResponseAnswer>,
+    pub answers: IndexMap<String, serde_json::Value>,
     pub usage: DecisionResponseUsage,
 }
 
@@ -48,7 +50,13 @@ impl DecisionResponse {
             .into_iter()
             .zip(questions)
             .zip(output.results)
-            .map(|((id, question), result)| (id, DecisionResponseAnswer::new(question, result.answer)))
+            .map(|((id, question), result)| {
+                (
+                    id,
+                    serde_json::to_value(DecisionResponseAnswer::new(question, result.answer))
+                        .unwrap_or(serde_json::Value::Null),
+                )
+            })
             .collect();
         Self {
             model,
@@ -56,6 +64,20 @@ impl DecisionResponse {
             usage: DecisionResponseUsage {
                 input_tokens,
                 output_tokens: 0,
+            },
+        }
+    }
+
+    pub fn from_d1(
+        model: String,
+        output: D1Response,
+    ) -> Self {
+        Self {
+            model,
+            answers: output.answers.into_iter().collect(),
+            usage: DecisionResponseUsage {
+                input_tokens: output.usage.input_tokens as i64,
+                output_tokens: output.usage.output_tokens as i64,
             },
         }
     }

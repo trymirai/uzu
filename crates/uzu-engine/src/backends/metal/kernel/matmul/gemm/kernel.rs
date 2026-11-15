@@ -472,7 +472,10 @@ impl GemmKernel {
         )?;
 
         let elem = (m as usize) * (n as usize);
-        let partial_data_type = if a_int8.is_some() || tiling.is_small_batch_variant() {
+        // Quantized weights dequantize to full 0..(2^bits - 1) magnitude, so bf16
+        // partials lose low bits long before the reduce; keep quantized split-K
+        // partials in f32 (the reduce kernel accepts both).
+        let partial_data_type = if a_int8.is_some() || shape.is_quant() || tiling.is_small_batch_variant() {
             DataType::F32
         } else {
             self.output_data_type

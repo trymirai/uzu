@@ -8,10 +8,16 @@ mod safetensors;
 mod speculators;
 mod trie;
 mod utils;
+pub mod verbose;
 
+pub mod audio;
 pub mod backends;
-
+pub mod d1_omni;
 pub mod engine;
+#[cfg(backend = "metal")]
+pub mod haru;
+pub mod omni;
+pub mod vision;
 
 pub use utils::version::{TOOLCHAIN_VERSION, VERSION};
 

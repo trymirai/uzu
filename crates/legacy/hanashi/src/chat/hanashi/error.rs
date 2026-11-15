@@ -14,6 +14,8 @@ pub enum Error {
     InvalidConfig(String),
     #[error("Unable to encode text")]
     UnableToEncodeText,
+    #[error("Reserved template marker '{marker}' in message content cannot be safely represented as plain text")]
+    ReservedMarkerInContent { marker: String },
     #[error("Unable to decode token")]
     UnableToDecodeToken,
     #[error(transparent)]

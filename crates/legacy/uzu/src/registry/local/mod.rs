@@ -49,7 +49,7 @@ impl RegistryTrait for Registry {
     type Error = RegistryError;
 
     fn identifier(&self) -> String {
-        "local".to_string()
+        format!("local:{}", self.config.path)
     }
 
     fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
@@ -117,18 +117,25 @@ impl Registry {
     }
 }
 
-async fn load_encoding(model_path: &Path) -> Option<Value> {
-    let Ok(text) = fs::read_to_string(model_path.join("encoding.json")).await else {
-        return None;
-    };
-    let parsed = serde_json::from_str::<serde_json::Value>(&text);
-    let encodings: Vec<Value> = match parsed {
-        Ok(serde_json::Value::Array(entries)) => entries.into_iter().map(Value::from).collect(),
-        Ok(entry) => vec![Value::from(entry)],
-        Err(error) => {
-            tracing::warn!(?error, path = %model_path.display(), "ignoring invalid encoding.json");
-            vec![]
-        },
-    };
-    EncodingConfig::select(&encodings)
+pub(crate) async fn load_encoding(model_path: &Path) -> Option<Value> {
+    if let Ok(text) = fs::read_to_string(model_path.join("encoding.json")).await {
+        let parsed = serde_json::from_str::<serde_json::Value>(&text);
+        let encodings: Vec<Value> = match parsed {
+            Ok(serde_json::Value::Array(entries)) => entries.into_iter().map(Value::from).collect(),
+            Ok(entry) => vec![Value::from(entry)],
+            Err(error) => {
+                tracing::warn!(?error, path = %model_path.display(), "ignoring invalid encoding.json");
+                vec![]
+            },
+        };
+        if let Some(enc) = EncodingConfig::select(&encodings) {
+            return Some(enc);
+        }
+    }
+    // Fallback for local models without explicit encoding.json: use ChatML/qwen3.5 template
+    let default_val = serde_json::json!({
+        "type": "hanashi",
+        "name": "qwen3.5"
+    });
+    Some(Value::from(default_val))
 }

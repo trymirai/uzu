@@ -29,7 +29,7 @@ pub async fn run_non_interactive(
     let preferences = ApplicationState::load_preferences().unwrap_or_default();
     let config = EngineConfig::default();
     let engine = Engine::new(config).await?;
-    let model = engine.model(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?;
+    let model = crate::common::hf::resolve_model_or_prompt_hf(&engine, &model, true).await?;
     if !model.is_chat_capable() {
         bail!("--message requires a chat model");
     }

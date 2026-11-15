@@ -35,9 +35,35 @@ pub struct EngineConfig {
 
 impl Default for EngineConfig {
     fn default() -> Self {
+        let mut local_paths: Vec<String> = Vec::new();
+        if let Ok(paths) = env::var(KEY_LOCAL_PATH) {
+            for p in paths.split(&[':', ';'][..]) {
+                let p = p.trim();
+                if !p.is_empty() && !local_paths.contains(&p.to_string()) {
+                    local_paths.push(p.to_string());
+                }
+            }
+        }
+        if let Ok(home) = env::var("HOME") {
+            let candidates = [
+                format!("{home}/.mirai/models"),
+                format!("{home}/.cache/mirai/models"),
+            ];
+            for cand in candidates {
+                if std::path::Path::new(&cand).is_dir() && !local_paths.contains(&cand) {
+                    local_paths.push(cand);
+                }
+            }
+        }
+        let local_path = if local_paths.is_empty() {
+            None
+        } else {
+            Some(local_paths.join(":"))
+        };
+
         Self {
             mirai_api_key: env::var(KEY_MIRAI_API_KEY).ok(),
-            local_path: env::var(KEY_LOCAL_PATH).ok(),
+            local_path,
             huggingface_api_key: env::var(KEY_HF_TOKEN).ok(),
             openai_api_key: env::var(KEY_OPENAI_API_KEY).ok(),
             anthropic_api_key: env::var(KEY_ANTHROPIC_API_KEY).ok(),

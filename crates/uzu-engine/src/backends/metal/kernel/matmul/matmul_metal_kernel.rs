@@ -289,7 +289,25 @@ impl MatmulKernel for MatmulMetalKernel {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), Self::Error> {
         let shape = MatmulShape::from_arguments(&arguments);
-        let plan = match self.select_dispatch(&shape, arguments.b.weights_layout(), command_buffer.context()) {
+        let dispatch = self.select_dispatch(&shape, arguments.b.weights_layout(), command_buffer.context());
+        static PROFILE_GEMV: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *PROFILE_GEMV.get_or_init(|| std::env::var_os("UZU_PROFILE_GEMV").is_some()) {
+            use std::sync::{Mutex, OnceLock};
+            static SEEN: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+            let label = match &dispatch {
+                MatmulDispatch::Gemv(gemv) => format!("gemv {gemv:?}"),
+                MatmulDispatch::Gemm(plan) => format!("gemm {plan:?}"),
+            };
+            let message = format!(
+                "matmul m={} n={} k={} bits={:?} group={:?} layout={:?} -> {label}",
+                shape.m, shape.n, shape.k, shape.b_bits, shape.b_group_size, arguments.b.weights_layout()
+            );
+            let mut seen = SEEN.get_or_init(Default::default).lock().unwrap();
+            if seen.insert(message.clone()) {
+                eprintln!("{message}");
+            }
+        }
+        let plan = match dispatch {
             MatmulDispatch::Gemv(gemv) => {
                 return self.gemv.encode(arguments, gemv, &self.output_work, command_buffer);
             },

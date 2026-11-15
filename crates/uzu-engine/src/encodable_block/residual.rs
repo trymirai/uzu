@@ -1,3 +1,5 @@
+use std::fmt;
+
 use thiserror::Error;
 
 use crate::{
@@ -18,7 +20,7 @@ use crate::{
     utils::maybe_owned::MaybeOwned,
 };
 
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub enum ResidualNewError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
@@ -149,6 +151,19 @@ impl<B: Backend> GatedStreamReader<B> {
         );
 
         Ok((normalized, mixed))
+    }
+}
+
+// Derived Debug would require `B: Debug`, which `Backend` does not guarantee
+// (`B::Error` is only `Error`, hence Debug). Keep `ResidualNewError<B>: Debug`
+// unconditionally so generic callers (unit tests) can `unwrap()` results.
+impl<B: Backend> fmt::Debug for ResidualNewError<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backend(error) => f.debug_tuple("Backend").field(error).finish(),
+            Self::Linear(error) => f.debug_tuple("Linear").field(error).finish(),
+            Self::Normalization(error) => f.debug_tuple("Normalization").field(error).finish(),
+        }
     }
 }
 

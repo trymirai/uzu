@@ -6,3 +6,4 @@ mod decision_backend;
 mod helpers;
 
 pub use backend::UzuLlmBackend;
+pub use chat_token_backend::UzuChatTokenBackendInstance;

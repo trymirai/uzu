@@ -75,6 +75,10 @@ impl BackendInstance for FunctionGemma {
 }
 
 impl TokenInstance for FunctionGemma {
+    fn as_any(&self) -> &(dyn std::any::Any + 'static) {
+        self
+    }
+
     fn with_config(
         &self,
         _config: ChatConfig,

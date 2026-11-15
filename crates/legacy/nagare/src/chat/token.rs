@@ -46,6 +46,10 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn backend_instance(&self) -> &Arc<dyn ChatTokenBackendInstance> {
+        &self.instance
+    }
+
     pub async fn create_instance(
         backend: &dyn Backend,
         config: ChatConfig,

@@ -99,11 +99,15 @@ CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(
     B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 ||
     (A_PROLOGUE == GemmAPrologueKind::Int8Symmetric && BLOCK_K == 64 && DT == "bfloat"))
-CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 2 || BITS == 4)
+CONSTRAINT(
+    B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 2 || BITS == 4 || BITS == 8)
+// Quantized split-K partials accumulate in f32 (gemm kernel.rs), so the
+// transposed simdgroup tiles also need f32-output instantiations.
 CONSTRAINT(
     (BITS != 2 || A_IS_INT8 ||
      (DT == "bfloat" &&
-      (A_PROLOGUE == GemmAPrologueKind::PackedHalf || (!USE_MXU && !GEMM_SMALL_BATCH)))))
+      (A_PROLOGUE == GemmAPrologueKind::PackedHalf || (!USE_MXU && !GEMM_SMALL_BATCH))) ||
+     (!USE_MXU && !GEMM_SMALL_BATCH && TRANSPOSE_B)))
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
     (TRANSPOSE_B && GEMM_TILING != GemmTiling::Tile64x32x32_Simdgroups2x2))

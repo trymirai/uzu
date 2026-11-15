@@ -89,6 +89,10 @@ pub fn bindgen(
     });
 
     let kernel_tokens = quote! {
+        // Bindings are emitted for every kernel in the .metal sources; wiring
+        // each one up on the Rust side is a separate decision, so unused
+        // generated bindings must not fail `-D warnings` builds.
+        #[allow(dead_code)]
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
             #(#conditional_buffer_fields,)*
@@ -96,7 +100,7 @@ pub fn bindgen(
             #(#retained_specialization_fields,)*
         }
 
-        #[allow(clippy::style, clippy::complexity, clippy::perf)]
+        #[allow(clippy::style, clippy::complexity, clippy::perf, dead_code)]
         impl #trait_implementation_for #struct_name {
             #associate_backend
 

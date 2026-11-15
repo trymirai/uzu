@@ -304,6 +304,290 @@ impl ToolCallStreamer {
     }
 }
 
+#[allow(dead_code)]
+pub fn format_lfm_tool_preamble(tools: &[&OaiTool]) -> String {
+    let items: Vec<String> = tools
+        .iter()
+        .map(|tool| {
+            let mut function = serde_json::json!({
+                "name": tool.function.name,
+                "description": tool.function.description,
+            });
+            if let Some(parameters) = &tool.function.parameters {
+                function["parameters"] =
+                    serde_json::from_value(parameters.json.parse().unwrap_or(serde_json::Value::Null))
+                        .unwrap_or(serde_json::Value::Null);
+            }
+            serde_json::json!({
+                "type": "function",
+                "function": function,
+            })
+            .to_string()
+        })
+        .collect();
+    format!("List of tools: <|tool_list_start|>[{}]<|tool_list_end|>", items.join(", "))
+}
+
+#[allow(dead_code)]
+pub fn format_lfm_assistant_tool_calls(calls: &[OaiToolCall]) -> String {
+    let formatted: Vec<String> = calls
+        .iter()
+        .map(|c| {
+            let args_map: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(&c.function.arguments).unwrap_or_default();
+            let kwargs: Vec<String> = args_map
+                .into_iter()
+                .map(|(k, v)| format!("{k}={}", serde_json::to_string(&v).unwrap_or_else(|_| "null".into())))
+                .collect();
+            format!("{}({})", c.function.name, kwargs.join(", "))
+        })
+        .collect();
+    format!("<|tool_call_start|>[{}]<|tool_call_end|>", formatted.join(", "))
+}
+
+pub fn parse_lfm_tool_calls(
+    raw_text: &str,
+    _parameter_types: &ToolParameterTypes,
+) -> (Option<Vec<OaiToolCall>>, String) {
+    const START: &str = "<|tool_call_start|>";
+    const END: &str = "<|tool_call_end|>";
+    let mut calls = Vec::new();
+    let mut clean = String::with_capacity(raw_text.len());
+    let mut rest = raw_text;
+
+    while let Some(start_idx) = rest.find(START) {
+        clean.push_str(&rest[..start_idx]);
+        let after_start = &rest[start_idx + START.len()..];
+        let Some(end_idx) = after_start.find(END) else {
+            rest = "";
+            break;
+        };
+        let block = after_start[..end_idx].trim();
+        parse_lfm_call_list(block, &mut calls);
+        rest = &after_start[end_idx + END.len()..];
+    }
+    clean.push_str(rest);
+    let clean_trimmed = clean
+        .replace("<|im_end|>", "")
+        .replace("<|text_end|>", "")
+        .trim()
+        .to_string();
+    ((!calls.is_empty()).then_some(calls), clean_trimmed)
+}
+
+fn parse_lfm_call_list(block: &str, out: &mut Vec<OaiToolCall>) {
+    let inner = block
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(block)
+        .trim();
+    for item in split_top_level(inner, ',') {
+        let item = item.trim();
+        let Some(open_paren) = item.find('(') else { continue };
+        let Some(close_paren) = item.rfind(')') else { continue };
+        if close_paren < open_paren {
+            continue;
+        }
+        let name = item[..open_paren].trim();
+        if name.is_empty() {
+            continue;
+        }
+        let args_str = item[open_paren + 1..close_paren].trim();
+        let mut args_obj = serde_json::Map::new();
+        for kv in split_top_level(args_str, ',') {
+            let kv = kv.trim();
+            if kv.is_empty() {
+                continue;
+            }
+            if let Some(eq_idx) = kv.find('=') {
+                let k = kv[..eq_idx].trim().trim_matches(|c| c == '"' || c == '\'');
+                let v_raw = kv[eq_idx + 1..].trim();
+                args_obj.insert(k.to_string(), parse_pythonic_value(v_raw));
+            }
+        }
+        let index = out.len();
+        out.push(OaiToolCall {
+            index: Some(index),
+            id: format!("call_{}", index + 1),
+            kind: "function".to_string(),
+            function: OaiFunctionCall {
+                name: name.to_string(),
+                arguments: serde_json::Value::Object(args_obj).to_string(),
+            },
+        });
+    }
+}
+
+fn split_top_level(s: &str, delim: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escape = false;
+    for (idx, ch) in s.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == '\\' {
+                escape = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            c if c == delim && depth == 0 => {
+                parts.push(&s[start..idx]);
+                start = idx + ch.len_utf8();
+            },
+            _ => {},
+        }
+    }
+    if start <= s.len() {
+        parts.push(&s[start..]);
+    }
+    parts
+}
+
+fn parse_pythonic_value(raw: &str) -> serde_json::Value {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        return v;
+    }
+    if raw == "True" {
+        return serde_json::Value::Bool(true);
+    }
+    if raw == "False" {
+        return serde_json::Value::Bool(false);
+    }
+    if raw == "None" {
+        return serde_json::Value::Null;
+    }
+    if let Some(unquoted) = raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        return serde_json::Value::String(unquoted.to_string());
+    }
+    let normalized = raw.replace('\'', "\"").replace("True", "true").replace("False", "false").replace("None", "null");
+    serde_json::from_str(&normalized).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+}
+
+/// Official LFM3-Audio tool preamble: one JSON definition per line inside `<tools>...</tools>`.
+pub fn format_lfm3_audio_tool_preamble(tools: &[&OaiTool]) -> String {
+    let items: Vec<String> = tools
+        .iter()
+        .map(|tool| {
+            let mut function = serde_json::json!({
+                "name": tool.function.name,
+                "description": tool.function.description,
+            });
+            if let Some(parameters) = &tool.function.parameters {
+                function["parameters"] =
+                    serde_json::from_value(parameters.json.parse().unwrap_or(serde_json::Value::Null))
+                        .unwrap_or(serde_json::Value::Null);
+            }
+            serde_json::json!({
+                "type": "function",
+                "function": function,
+            })
+            .to_string()
+        })
+        .collect();
+    format!("List of tools:\n<tools>\n{}\n</tools>", items.join("\n"))
+}
+
+/// Official LFM3-Audio assistant tool call serialization in XML-inline format.
+pub fn format_lfm3_audio_assistant_tool_calls(calls: &[OaiToolCall]) -> String {
+    let mut blocks = Vec::with_capacity(calls.len());
+    for call in calls {
+        let args_map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&call.function.arguments).unwrap_or_default();
+        let mut body = format!("<tool_call>\n<function={}>\n", call.function.name);
+        for (k, v) in args_map {
+            let val_str = match v {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            };
+            body.push_str(&format!("<parameter={k}>\n{val_str}\n</parameter>\n"));
+        }
+        body.push_str("</function>\n</tool_call>");
+        blocks.push(body);
+    }
+    blocks.join("\n\n")
+}
+
+/// Parse official LFM3-Audio XML-inline `<tool_call><function=...>...</function></tool_call>` blocks,
+/// falling back to `<|tool_call_start|>...<|tool_call_end|>` if present.
+pub fn parse_lfm3_audio_tool_calls(
+    raw_text: &str,
+    parameter_types: &ToolParameterTypes,
+) -> (Option<Vec<OaiToolCall>>, String) {
+    if raw_text.contains("<|tool_call_start|>") {
+        return parse_lfm_tool_calls(raw_text, parameter_types);
+    }
+    const START: &str = "<tool_call>";
+    const END: &str = "</tool_call>";
+    let mut calls = Vec::new();
+    let mut clean = String::with_capacity(raw_text.len());
+    let mut rest = raw_text;
+
+    while let Some(start_idx) = rest.find(START) {
+        clean.push_str(&rest[..start_idx]);
+        let after_start = &rest[start_idx + START.len()..];
+        let Some(end_idx) = after_start.find(END) else {
+            rest = "";
+            break;
+        };
+        let block = after_start[..end_idx].trim();
+        if let Some(fn_start) = block.find("<function=") {
+            let after_fn = &block[fn_start + "<function=".len()..];
+            if let Some(gt_idx) = after_fn.find('>') {
+                let name = after_fn[..gt_idx].trim();
+                let fn_body = after_fn[gt_idx + 1..]
+                    .split("</function>")
+                    .next()
+                    .unwrap_or("");
+                let mut args = serde_json::Map::new();
+                let mut p_rest = fn_body;
+                while let Some(p_start) = p_rest.find("<parameter=") {
+                    let after_p = &p_rest[p_start + "<parameter=".len()..];
+                    let Some(p_gt) = after_p.find('>') else { break };
+                    let key = after_p[..p_gt].trim().to_string();
+                    let after_val = &after_p[p_gt + 1..];
+                    let Some(p_end) = after_val.find("</parameter>") else { break };
+                    let raw_val = after_val[..p_end].trim();
+                    let val = serde_json::from_str::<serde_json::Value>(raw_val)
+                        .unwrap_or_else(|_| serde_json::Value::String(raw_val.to_string()));
+                    args.insert(key, val);
+                    p_rest = &after_val[p_end + "</parameter>".len()..];
+                }
+                if !name.is_empty() {
+                    let idx = calls.len() + 1;
+                    calls.push(OaiToolCall {
+                        index: None,
+                        id: format!("call_{idx}"),
+                        kind: "function".to_string(),
+                        function: OaiFunctionCall {
+                            name: name.to_string(),
+                            arguments: serde_json::Value::Object(args).to_string(),
+                        },
+                    });
+                }
+            }
+        }
+        rest = &after_start[end_idx + END.len()..];
+    }
+    clean.push_str(rest);
+    let clean_trimmed = clean
+        .replace("<|im_end|>", "")
+        .replace("<|text_end|>", "")
+        .trim()
+        .to_string();
+    ((!calls.is_empty()).then_some(calls), clean_trimmed)
+}
+
 #[cfg(test)]
 #[path = "../../unit/server/chat_tool_calls_test.rs"]
 mod tests;

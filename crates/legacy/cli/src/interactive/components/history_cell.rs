@@ -108,10 +108,10 @@ pub fn HistoryCell(
         .into(),
         Some(HistoryCellType::ChatTranscript {
             items,
-            stats,
+            ..
         }) => chat_transcript_component(
             items,
-            stats,
+            None,
             theme.subtitle_color,
             theme.overlay_color(),
             theme.padding(),
@@ -472,7 +472,7 @@ fn decision_answer_component(
     .into()
 }
 
-fn chat_reply_stats_component(
+pub fn chat_reply_stats_component(
     stats: &ChatReplyStats,
     subtitle_color: Color,
 ) -> AnyElement<'static> {

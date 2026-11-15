@@ -193,6 +193,44 @@ impl<B: Backend> AttentionState<B> {
         self.cache.view()
     }
 
+    pub fn compact_sink_window(
+        &mut self,
+        sink_len: u32,
+        evict_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        if evict_count == 0 {
+            return;
+        }
+        if let KVCacheState::Full {
+            length,
+        } = &mut self.cache
+        {
+            if *length <= sink_len + evict_count {
+                return;
+            }
+            let keep_len = *length - sink_len - evict_count;
+            let copies: Vec<Copy> = (0..keep_len)
+                .map(|i| Copy {
+                    source: sink_len + evict_count + i,
+                    destination: sink_len + i,
+                })
+                .collect();
+            for chunk in copies.chunks(2048) {
+                self.kv_cache_update.encode(
+                    self.kv.k_codes.as_mut(),
+                    self.kv.v_codes.as_mut(),
+                    self.kv.k_scales.as_mut(),
+                    self.kv.v_scales.as_mut(),
+                    chunk,
+                    chunk.len() as u32,
+                    command_buffer,
+                );
+            }
+            *length -= evict_count;
+        }
+    }
+
     pub fn create_empty(
         attention: &Attention<B>,
         max_context_length: Option<u32>,
@@ -290,6 +328,14 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
             );
         }
 
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), B::Error> {
+        self.cache = match self.cache {
+            KVCacheState::Full { .. } => KVCacheState::full(),
+            KVCacheState::Ring { capacity, .. } => KVCacheState::ring(capacity),
+        };
         Ok(())
     }
 }

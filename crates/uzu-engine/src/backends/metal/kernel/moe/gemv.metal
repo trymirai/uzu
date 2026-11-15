@@ -13,8 +13,8 @@
 using namespace uzu;
 using namespace uzu::gemm;
 
-// Requires in_vec_size % (BITS == 4 ? 512 : 256) == 0, out_vec_size % MOE_GEMV_OUTPUT_ROW_TILE == 0, and every
-// expert plane's byte and scale offsets within uint.
+// Requires in_vec_size % (BITS == 4 ? moe::GEMV_W4_INPUT_BLOCK : moe::GEMV_W8_INPUT_BLOCK) == 0,
+// out_vec_size % moe::GEMV_OUTPUT_ROW_TILE == 0, and every expert plane's byte and scale offsets within uint.
 template <
     typename T,
     uint GROUP_SIZE,
@@ -43,7 +43,7 @@ PUBLIC KERNEL(MoeGemv)(
     const constant uint& zero_point_output_stride,
     const constant uint& zero_point_group_stride,
     const bool a_per_token SPECIALIZE,
-    threadgroup float shared_results[MOE_GEMV_OUTPUT_ROW_TILE],
+    threadgroup float shared_results[moe::GEMV_OUTPUT_ROW_TILE],
     const uint route_idx GROUPS(num_routes),
     const uint output_tile_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(METAL_SIMD_SIZE),
@@ -92,7 +92,7 @@ PUBLIC KERNEL(MoeGemv)(
   constexpr uint GROUP_LANES = GROUP_SIZE * BITS / 64;
   using Tile = GemvTile<
       /* INPUT_ROW_TILE = */ 1,
-      /* OUTPUT_ROW_TILE = */ MOE_GEMV_OUTPUT_ROW_TILE,
+      /* OUTPUT_ROW_TILE = */ moe::GEMV_OUTPUT_ROW_TILE,
       /* REDUCTION_LANES = */ 32,
       GROUP_LANES,
       /* NUM_SIMDGROUPS = */ MOE_GEMV_NUM_SIMDGROUPS,

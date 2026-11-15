@@ -79,6 +79,10 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             sampling_defaults,
         })
     }
+
+    pub fn language_model(&self) -> &Arc<LanguageModel<B>> {
+        &self.model
+    }
 }
 
 impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
@@ -218,6 +222,10 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
 }
 
 impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn with_config(
         &self,
         config: ChatConfig,

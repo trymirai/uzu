@@ -41,6 +41,7 @@ pub struct Attention<B: Backend> {
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
+    is_causal: bool,
 }
 
 #[derive(Debug, Error)]
@@ -202,6 +203,7 @@ impl<B: Backend> Attention<B> {
                 sinks,
                 kernel,
                 out_projection,
+                is_causal,
             },
             in_projection_input_hadamard_factors,
         ))
@@ -258,7 +260,8 @@ impl<B: Backend> Attention<B> {
                 v_codes: kv.v_codes.as_ref(),
                 v_scales: kv.v_scales.as_ref(),
             };
-            let trie = (!batch_dim.is_flat())
+            let use_trie = !batch_dim.is_flat() && !(batch_dim.is_set_attention() && self.is_causal);
+            let trie = use_trie
                 .then(|| command_buffer.allocate_constant_from_slice(batch_dim.nodes()))
                 .transpose()
                 .map_err(AttentionEncodeError::Backend)?;

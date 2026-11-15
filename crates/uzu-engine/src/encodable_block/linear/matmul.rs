@@ -132,7 +132,7 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(self.prepared_activation_format)
     }
 
-    pub(super) fn encode_with_a(
+    pub fn encode_with_a(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,

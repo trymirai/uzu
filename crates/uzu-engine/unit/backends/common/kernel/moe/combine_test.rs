@@ -6,7 +6,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-            kernel::MoeCombineKernel,
+            gpu_types::moe, kernel::MoeCombineKernel,
         },
         cpu::Cpu,
     },
@@ -17,8 +17,6 @@ use crate::{
     },
 };
 
-const MOE_COMBINE_BLOCK_DIM: u32 = 256;
-// Qwen3.5-35B-A3B: 8 routed experts plus the gated shared expert, model_dim 2048.
 const MODEL_DIM: u32 = 2048;
 const ACTIVE_EXPERTS: u32 = 8;
 
@@ -37,7 +35,7 @@ fn run_moe_combine<B: Backend>(
     let mut output_buf = create_buffer::<B, bf16>(&context, (batch_dim * MODEL_DIM) as usize);
 
     let kernel =
-        <B::Kernels as Kernels>::MoeCombineKernel::new(&context, DataType::BF16, MOE_COMBINE_BLOCK_DIM).unwrap();
+        <B::Kernels as Kernels>::MoeCombineKernel::new(&context, DataType::BF16, moe::COMBINE_BLOCK_DIM).unwrap();
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &routed_buf,

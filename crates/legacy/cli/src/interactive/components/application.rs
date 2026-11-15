@@ -381,6 +381,10 @@ pub fn Application(
         let state = state.read();
         state.session_state().and_then(SessionState::pending_history_cell)
     };
+    let latest_stats: Option<shoji::types::session::chat::ChatReplyStats> = pending_reply
+        .as_ref()
+        .and_then(extract_chat_stats)
+        .or_else(|| state.read().history.iter().rev().find_map(extract_chat_stats));
     let pending_reply_component: AnyElement<'static> = match pending_reply {
         Some(history_cell) => element! {
             HistoryCell(r#type: Some(history_cell), live: true)
@@ -394,33 +398,91 @@ pub fn Application(
         None => element! { View }.into(),
     };
 
+    let theme = state.read().theme().clone();
+    let padding = theme.padding();
+    let show_sidebar = width >= 80;
+    let sidebar_width = 38u16;
+
+    let main_column = element! {
+        View(
+            flex_direction: FlexDirection::Column,
+            flex_grow: 1.0_f32,
+            flex_shrink: 1.0_f32,
+            min_width: 0,
+        ) {
+            View(
+                padding_left: padding,
+                padding_right: padding,
+            ) {
+                Logo
+            }
+            View(
+                flex_direction: FlexDirection::Column
+            ) {
+                #(history_cell_components.into_iter())
+            }
+            #(pending_reply_component)
+            View(
+                flex_direction: FlexDirection::Column,
+                column_gap: 0,
+            ) {
+                View(height: padding)
+                #(selected_model_component)
+                #(input_component)
+            }
+        }
+    };
+
+    let stats_sidebar: Option<AnyElement<'static>> = show_sidebar.then(|| {
+        let body: AnyElement<'static> = match latest_stats.as_ref() {
+            Some(stats) => crate::interactive::components::chat_reply_stats_component(stats, theme.subtitle_color),
+            None => element! {
+                Text(content: "Waiting for reply...", color: theme.subtitle_color)
+            }
+            .into(),
+        };
+        element! {
+            View(
+                width: sidebar_width,
+                flex_shrink: 0.0_f32,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::End,
+                border_style: BorderStyle::Single,
+                border_color: theme.subtitle_color,
+                border_edges: Some(Edges::Left),
+                padding_left: padding,
+                padding_right: padding,
+                padding_bottom: padding,
+                margin_left: padding,
+                row_gap: padding,
+            ) {
+                Text(content: "Metrics", weight: Weight::Bold, color: theme.accent_color)
+                #(body)
+            }
+        }
+        .into()
+    });
+
     element! {
         ContextProvider(value: Context::owned(state)) {
             View(
-                flex_direction: FlexDirection::Column,
+                flex_direction: FlexDirection::Row,
                 width: width,
+                align_items: AlignItems::Stretch,
             ) {
-                View(
-                    padding_left: state.read().theme().padding(),
-                    padding_right: state.read().theme().padding(),
-                ) {
-                    Logo
-                }
-                View(
-                    flex_direction: FlexDirection::Column
-                ) {
-                    #(history_cell_components.into_iter())
-                }
-                #(pending_reply_component)
-                View(
-                    flex_direction: FlexDirection::Column,
-                    column_gap: 0,
-                ) {
-                    View(height: state.read().theme().padding())
-                    #(selected_model_component)
-                    #(input_component)
-                }
+                #(main_column)
+                #(stats_sidebar)
             }
         }
+    }
+}
+
+fn extract_chat_stats(cell: &HistoryCellType) -> Option<shoji::types::session::chat::ChatReplyStats> {
+    match cell {
+        HistoryCellType::ChatTranscript {
+            stats,
+            ..
+        } => stats.clone(),
+        _ => None,
     }
 }

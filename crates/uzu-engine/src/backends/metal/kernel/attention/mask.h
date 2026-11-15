@@ -36,6 +36,10 @@ static inline bool should_use_key(
 
       if (is_causal) {
         use_key &= q_seq_idx >= key_trie.trie_start && q_seq_idx <= key_trie.trie_end;
+      } else {
+        // Set Attention: height holds state_len; state attends to all, each group attends to state + itself.
+        use_key &= (q_seq_idx < key_trie.height) ||
+                   (q_seq_idx >= key_trie.trie_start && q_seq_idx <= key_trie.trie_end);
       }
     } else {
       // Non-trie, position equals index in the suffix

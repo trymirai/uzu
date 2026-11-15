@@ -1,7 +1,7 @@
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::data_type::DataTypeRepr;
+use crate::{backends::common::gpu_types::moe, data_type::DataTypeRepr};
 
 #[kernel(MoeRouterTopK)]
 #[variants(T, f32)]
@@ -14,8 +14,7 @@ pub fn moe_router_top_k<T: DataTypeRepr + Float, const MAX_TOP_K: u32>(
     top_k: u32,
     batch_size: u32,
 ) {
-    // The Metal kernel holds up to 256 experts, 8 in each of its 32 lanes.
-    assert!(num_experts <= 256);
+    assert!(num_experts <= moe::ROUTER_MAX_EXPERTS);
     assert!(top_k > 0 && top_k <= MAX_TOP_K && top_k <= num_experts);
     let num_experts_usize = num_experts as usize;
     let top_k_usize = top_k as usize;

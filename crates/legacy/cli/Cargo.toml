@@ -52,6 +52,12 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, default-features = false }
+token-stream-parser.workspace = true
+tokenizers.workspace = true
+image.workspace = true
+base64.workspace = true
+reqwest.workspace = true
+libc.workspace = true
 
 [lints]
 workspace = true

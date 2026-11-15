@@ -1,13 +1,13 @@
 mod backend;
 mod buffer;
 mod capture;
-mod command_buffer;
-mod context;
+pub(crate) mod command_buffer;
+pub(crate) mod context;
 mod decompression;
 mod error;
 mod gpu_types;
 mod heaps;
-mod kernel;
+pub(crate) mod kernel;
 mod metal_extensions;
 mod timestamp_recorder;
 

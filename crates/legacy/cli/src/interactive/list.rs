@@ -14,6 +14,9 @@ pub fn get_checkpoints(
     models
         .iter()
         .filter(|model| {
+            if model.identifier == model_id {
+                return true;
+            }
             let Some(family) = &model.family else {
                 return false;
             };
@@ -52,6 +55,12 @@ pub fn get_families(models: &[Model]) -> Vec<ModelFamily> {
                     name: format!("{} {}", family.metadata.name, properties.metadata.name),
                 })
             }
+        } else if !ids_set.contains(&model.identifier) {
+            ids_set.insert(model.identifier.clone());
+            families.push(ModelFamily {
+                id: model.identifier.clone(),
+                name: format!("[Local] {}", model.name()),
+            });
         }
     }
 

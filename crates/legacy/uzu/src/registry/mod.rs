@@ -1,5 +1,7 @@
 mod cached;
 mod error;
+#[cfg(not(target_family = "wasm"))]
+pub mod hf_cache;
 pub mod local;
 mod merged;
 pub mod mirai;

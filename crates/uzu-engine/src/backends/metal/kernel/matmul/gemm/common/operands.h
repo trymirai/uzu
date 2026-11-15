@@ -140,6 +140,15 @@ struct RightStorage {
     return scales[scale_index(row, group, params)];
   }
 
+  METAL_FUNC typename Right::ScaleElement bias(
+      const uint row,
+      const uint group,
+      const constant uzu::matmul::GemmParams* params
+  ) const thread {
+    static_assert(Right::SCHEME == GemmBPrologueKind::ScaleBiasDequant, "bias is only valid for ScaleBiasDequant");
+    return biases[scale_index(row, group, params)];
+  }
+
   METAL_FUNC uint
   zero_point_index(const uint row, const uint group, const constant uzu::matmul::GemmParams* params) const thread {
     return row * params->zero_point_output_stride + group * params->zero_point_group_stride;

@@ -652,6 +652,15 @@ impl ChatSession {
     }
 }
 
+impl ChatSession {
+    pub async fn chat_token_backend_instance(&self) -> Option<Arc<dyn shoji::traits::backend::chat_token::Instance>> {
+        match &*self.instance.lock().await {
+            Instance::Token(token_session) => Some(token_session.backend_instance().clone()),
+            _ => None,
+        }
+    }
+}
+
 fn build_message(
     output: &BackendOutput,
     generated_tool_call_identifiers: &mut Vec<Option<String>>,

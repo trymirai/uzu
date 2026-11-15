@@ -1,6 +1,5 @@
 use rocket::{
     Request, Response,
-    data::Data,
     fairing::{Fairing, Info, Kind},
 };
 
@@ -13,16 +12,8 @@ impl Fairing for RequestLoggingFairing {
     fn info(&self) -> Info {
         Info {
             name: "Request and response logger",
-            kind: Kind::Request | Kind::Response,
+            kind: Kind::Response,
         }
-    }
-
-    async fn on_request(
-        &self,
-        request: &mut Request<'_>,
-        _data: &mut Data<'_>,
-    ) {
-        let _ = request.local_cache(|| RequestInfo::new(request.method(), request.uri().to_string()));
     }
 
     async fn on_response<'r>(

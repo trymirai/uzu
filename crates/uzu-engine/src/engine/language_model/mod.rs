@@ -19,6 +19,7 @@ use crate::{
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
+pub mod raw;
 pub mod state;
 pub mod stream;
 
@@ -94,6 +95,8 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
+        weight_loader.ignore_prefix("vision_tower.");
+        weight_loader.ignore_prefix("merger.");
         weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
@@ -158,5 +161,29 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn tokenizer(&self) -> &Arc<Tokenizer> {
         &self.tokenizer
+    }
+
+    pub fn decoder(&self) -> &Decoder<B> {
+        &self.decoder
+    }
+
+    /// GPU-side sampling block, shared with the text generation stream.
+    pub fn sampling(&self) -> &Sampling<B> {
+        &self.sampling
+    }
+
+    /// GPU-side repetition-penalty ring update, shared with the text stream.
+    pub fn context_ring_update(&self) -> &<B::Kernels as Kernels>::ContextRingUpdateKernel {
+        &self.context_ring_update
+    }
+
+    /// Padded readout width from `decoder_config.vocab_size`. The tokenizer may
+    /// expose fewer tokens; the decoder logits always use this width.
+    pub fn vocab_size(&self) -> usize {
+        self.vocab_size
+    }
+
+    pub fn context(&self) -> &B::Context {
+        &self.engine.context
     }
 }

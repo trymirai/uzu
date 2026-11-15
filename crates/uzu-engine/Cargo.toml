@@ -81,6 +81,8 @@ tempfile = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 
 [dependencies]
+rand.workspace = true
+anyhow.workspace = true
 uzu-engine-macros.workspace = true
 bitflags.workspace = true
 derive_more = { workspace = true, features = ["debug"] }
@@ -100,6 +102,7 @@ libm.workspace = true
 futures.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
+image.workspace = true
 wgpu = { workspace = true, optional = true }
 ash = { workspace = true, optional = true }
 vk-mem = { workspace = true, optional = true }

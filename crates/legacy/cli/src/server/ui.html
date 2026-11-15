@@ -1,0 +1,2632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Uzu Studio — Model &amp; Audio API Workbench</title>
+  <style>
+    :root {
+      --bg: #111214;
+      --bg-elevated: #17191c;
+      --bg-input: #1d2024;
+      --bg-hover: #24282e;
+      --border: #2a2e35;
+      --border-strong: #3a404a;
+      --text: #eef0f3;
+      --text-secondary: #a6aeb9;
+      --text-muted: #8c95a3;
+      --accent: #e08b3e;
+      --accent-hover: #ec9a4f;
+      --accent-soft: rgba(224, 139, 62, 0.14);
+      --ok: #3fb984;
+      --ok-soft: rgba(63, 185, 132, 0.14);
+      --warn: #d8a142;
+      --err: #e05d5d;
+      --err-soft: rgba(224, 93, 93, 0.14);
+      --radius: 8px;
+      --radius-sm: 6px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    ::selection { background: var(--accent-soft); color: var(--text); }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Custom subtle scrollbars */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    /* Top bar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 18px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      font-size: 15px;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 22px;
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 5px;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .status-strip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      max-width: 340px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .dot.ready { background: var(--ok); }
+    .dot.loading { background: var(--warn); }
+    .dot.failed { background: var(--err); }
+
+    /* Main split */
+    .workspace {
+      display: grid;
+      grid-template-columns: 296px 1fr;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      background: var(--bg-elevated);
+      border-right: 1px solid var(--border);
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .panel-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      font-family: inherit;
+      font-size: 13px;
+      transition: border-color 120ms ease;
+    }
+
+    input:hover, select:hover, textarea:hover {
+      border-color: var(--border-strong);
+    }
+
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--bg-hover);
+      border-color: var(--border-strong);
+    }
+
+    .btn:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #12100e;
+      font-weight: 600;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .btn-danger {
+      color: #f39191;
+      border-color: rgba(243, 145, 145, 0.35);
+      background: var(--err-soft);
+    }
+
+    .btn-recording {
+      background: var(--err);
+      border-color: var(--err);
+      color: #fff;
+    }
+
+    .btn-sm {
+      padding: 4px 9px;
+      font-size: 12px;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .toggle-row input[type="checkbox"] {
+      accent-color: var(--accent);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+
+    /* Main content area */
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .tab-list {
+      display: flex;
+      gap: 6px;
+    }
+
+    .tab {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      border: 0;
+      color: var(--text-secondary);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .tab:hover { color: var(--text); }
+    .tab[aria-selected="true"] {
+      color: var(--text);
+    }
+    .tab[aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: -6px;
+      height: 2px;
+      background: var(--accent);
+      border-radius: 2px 2px 0 0;
+    }
+
+    .tab-panel {
+      display: none;
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .tab-panel.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Chat View */
+    .chat-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px;
+    }
+
+    .chat-inner {
+      max-width: 78ch;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .empty-state {
+      margin: 48px auto;
+      max-width: 52ch;
+      text-align: center;
+      color: var(--text-secondary);
+    }
+
+    .empty-state h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+
+    .empty-state p {
+      margin: 0 0 18px;
+      font-size: 13px;
+    }
+
+    .starter-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+    }
+
+    .msg.user {
+      background: var(--bg-input);
+      border-color: var(--border-strong);
+    }
+
+    .msg-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .msg-role {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .msg-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-muted);
+    }
+
+    .msg-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+    }
+
+    .msg audio {
+      width: 100%;
+      height: 36px;
+      margin-top: 4px;
+      color-scheme: dark;
+    }
+
+    .composer-wrap {
+      border-top: 1px solid var(--border);
+      background: var(--bg-elevated);
+      padding: 12px 24px 16px;
+    }
+
+    .composer {
+      max-width: 78ch;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .attachment-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .attachment-bar.visible { display: flex; }
+
+    .composer-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .composer-row textarea {
+      min-height: 44px;
+      max-height: 180px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    /* Tool Panels (ASR & TTS) */
+    .tool-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .tool-container {
+      max-width: 78ch;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .tool-header h2 {
+      margin: 0 0 4px;
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .tool-header p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 24px;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      text-align: center;
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .result-box {
+      padding: 14px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mono-out {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+
+    /* Inspector drawer */
+    .inspector-box {
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+      padding: 12px 24px;
+      max-height: 220px;
+      overflow-y: auto;
+      display: none;
+    }
+    .inspector-box.open { display: block; }
+
+    .error-banner {
+      display: none;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--err-soft);
+      border: 1px solid rgba(224, 93, 93, 0.35);
+      color: #f4a3a3;
+      font-size: 12px;
+    }
+    .error-banner.visible { display: block; }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 860px) {
+      .workspace {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+      }
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+        max-height: 36vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v18M6 8v8M18 8v8M2 11v2M22 11v2"/>
+          </svg>
+        </span>
+        <span>Uzu Studio</span>
+      </div>
+      <div class="status-strip">
+        <div class="status-pill" id="statusPill" title="Server model slot status">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusText">Checking server…</span>
+        </div>
+        <button type="button" class="btn btn-sm" id="refreshStatusBtn">Refresh</button>
+        <button type="button" class="btn btn-sm" id="toggleInspectorBtn" aria-expanded="false">API Inspector</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar" aria-label="Model and generation controls">
+        <section class="panel-section">
+          <h2 class="section-title">Model Slot</h2>
+          <div class="field">
+            <label for="modelSelect">Target model</label>
+            <select id="modelSelect"></select>
+          </div>
+          <div class="field">
+            <label for="customModelInput">Or path / identifier</label>
+            <input type="text" id="customModelInput" placeholder="Leave blank to use selected" />
+          </div>
+          <div class="row-2">
+            <button type="button" class="btn btn-primary" id="loadModelBtn">Load</button>
+            <button type="button" class="btn btn-danger" id="unloadModelBtn">Unload</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">Generation Parameters</h2>
+          <div class="field">
+            <label for="systemPromptInput">System prompt</label>
+            <textarea id="systemPromptInput" rows="3" placeholder="Optional system instruction…"></textarea>
+          </div>
+          <div class="row-2">
+            <div class="field">
+              <label for="temperatureInput">Temperature</label>
+              <input type="number" id="temperatureInput" step="0.05" min="0" max="2" placeholder="default" />
+            </div>
+            <div class="field">
+              <label for="maxTokensInput">Max tokens</label>
+              <input type="number" id="maxTokensInput" value="512" min="1" max="8192" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="seedInput">Seed (optional)</label>
+            <input type="number" id="seedInput" placeholder="random" />
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">Audio &amp; Modality Options</h2>
+          <div class="field">
+            <label for="reasoningEffortSelect">Reasoning (&lt;think&gt;)</label>
+            <select id="reasoningEffortSelect">
+              <option value="" selected>Default (auto)</option>
+              <option value="medium">Enable &lt;think&gt; (Text-only)</option>
+              <option value="none">Bypass &lt;think&gt;&lt;/think&gt;</option>
+            </select>
+          </div>
+          <label class="toggle-row">
+            <span>Reply with speech (WAV)</span>
+            <input type="checkbox" id="audioReplyToggle" />
+          </label>
+          <label class="toggle-row">
+            <span>Auto-play received audio</span>
+            <input type="checkbox" id="autoplayToggle" checked />
+          </label>
+          <label class="toggle-row">
+            <span>Stream text &amp; audio chunks</span>
+            <input type="checkbox" id="streamToggle" checked />
+          </label>
+          <label class="toggle-row">
+            <span>Enable Demo Tools (weather / time / calc)</span>
+            <input type="checkbox" id="toolsToggle" />
+          </label>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-title">Speech Sampling</h2>
+          <div class="row-2">
+            <div class="field">
+              <label for="audioTempInput">audio_temp</label>
+              <input type="number" id="audioTempInput" step="0.05" min="0" max="2" placeholder="1.0" />
+            </div>
+            <div class="field">
+              <label for="audioTopKInput">audio_top_k</label>
+              <input type="number" id="audioTopKInput" step="1" min="0" max="2048" placeholder="128" />
+            </div>
+          </div>
+          <div class="row-2">
+            <div class="field">
+              <label for="audioRepPenInput">audio_rep_pen</label>
+              <input type="number" id="audioRepPenInput" step="0.05" min="1" max="2" placeholder="1.1" />
+            </div>
+            <div class="field">
+              <label for="audioRepWinInput">audio_rep_win</label>
+              <input type="number" id="audioRepWinInput" step="64" min="0" max="8192" placeholder="4096" />
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <button type="button" class="btn" id="clearChatBtn">Clear conversation</button>
+        </section>
+      </aside>
+
+      <main class="main">
+        <div class="tabs" role="tablist" aria-label="API Modes">
+          <div class="tab-list">
+            <button type="button" class="tab" role="tab" id="tab-chat" aria-selected="true" aria-controls="panel-chat">Chat &amp; Voice</button>
+            <button type="button" class="tab" role="tab" id="tab-asr" aria-selected="false" aria-controls="panel-asr">ASR (19 Langs)</button>
+            <button type="button" class="tab" role="tab" id="tab-live" aria-selected="false" aria-controls="panel-live">LiveASR (EN)</button>
+            <button type="button" class="tab" role="tab" id="tab-tts" aria-selected="false" aria-controls="panel-tts">TTS (19 Langs)</button>
+            <button type="button" class="tab" role="tab" id="tab-translate" aria-selected="false" aria-controls="panel-translate">Translate &amp; Understand</button>
+            <button type="button" class="tab" role="tab" id="tab-decisions" aria-selected="false" aria-controls="panel-decisions">Decisions (System One)</button>
+          </div>
+          <span class="msg-meta" id="endpointBadge">POST /v1/chat/completions</span>
+        </div>
+
+        <!-- Chat Panel -->
+        <section class="tab-panel active" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat">
+          <div class="chat-scroll" id="chatScroll">
+            <div class="chat-inner" id="chatList">
+              <div class="empty-state" id="chatEmpty">
+                <h2>LFM3-Omni Multimodal Workbench</h2>
+                <p>Multimodal Video + Image + Audio + Text chat, English streaming voice chat (6 text : 12 audio frames), &lt;think&gt; reasoning, and spoken XML tool calling. <em>Note: Voice chat with spoken replies currently targets English; multilingual text &amp; speech works across Chinese, Japanese, English, and 16 more languages.</em></p>
+                <div class="starter-row">
+                  <button type="button" class="btn btn-sm starter-btn" data-text="What colors and shapes do you see in this image? Answer briefly." data-system="Respond with interleaved text and audio." data-audio="1" data-sample-image="1">🖼️ Image + Voice (EN)</button>
+                  <button type="button" class="btn btn-sm starter-btn" data-text="Tell me a short fun fact about ocean waves." data-system="Respond with interleaved text and audio." data-audio="1">🇺🇸 Voice Chat (EN)</button>
+                  <button type="button" class="btn btn-sm starter-btn" data-text="你好！请用简洁的中文介绍一下你自己，并推荐一道适合今天吃的家常菜。" data-system="Respond with text.">🇨🇳 中文对话</button>
+                  <button type="button" class="btn btn-sm starter-btn" data-text="こんにちは！日本語で簡単に自己紹介して、日本の好きな季節を教えてください。" data-system="Respond with text.">🇯🇵 日本語会話</button>
+                  <button type="button" class="btn btn-sm starter-btn" data-text="Why does the sky appear blue during the day and red at sunset? Explain concisely." data-system="Respond with text." data-think="medium">🧠 Reasoning (&lt;think&gt;)</button>
+                  <button type="button" class="btn btn-sm starter-btn" data-text="What is the weather in Tokyo and what is 128 * 37?" data-system="Respond with function calls, and interleaved text and audio." data-tools="1" data-audio="1">🛠️ Spoken Tools</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer-wrap">
+            <form class="composer" id="chatForm">
+              <div class="error-banner" id="chatError" role="alert"></div>
+              <div class="attachment-bar" id="chatAttachmentBar" style="flex-wrap:wrap; gap:8px;">
+                <div id="chatAttachmentPreview" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"></div>
+                <span id="chatAttachmentLabel">Attached media</span>
+                <button type="button" class="btn btn-sm" id="clearChatAudioBtn">Clear</button>
+              </div>
+              <div class="composer-row">
+                <label for="chatInput" class="visually-hidden">Message</label>
+                <textarea id="chatInput" placeholder="Message model or drop image/video/WAV… (Enter to send, Shift+Enter for newline)"></textarea>
+                <input type="file" id="chatImageInput" accept="image/*" multiple class="visually-hidden" />
+                <input type="file" id="chatVideoInput" accept="video/*" class="visually-hidden" />
+                <input type="file" id="chatWavInput" accept=".wav,audio/wav" class="visually-hidden" />
+                <button type="button" class="btn" id="chatImageBtn" title="Attach image">Img</button>
+                <button type="button" class="btn" id="chatVideoBtn" title="Attach video (sampled at 2.0 FPS)">Vid</button>
+                <button type="button" class="btn" id="chatUploadBtn" title="Attach WAV file">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  WAV
+                </button>
+                <button type="button" class="btn" id="chatMicBtn" title="Record microphone (16 kHz WAV)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="21"/>
+                  </svg>
+                  <span id="chatMicLabel">Mic</span>
+                </button>
+                <button type="submit" class="btn btn-primary" id="chatSendBtn">Send</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- ASR Panel -->
+        <section class="tab-panel" id="panel-asr" role="tabpanel" aria-labelledby="tab-asr">
+          <div class="tool-scroll">
+            <div class="tool-container">
+              <div class="tool-header">
+                <h2>Audio Transcription</h2>
+                <p>Tests <code>POST /v1/audio/transcriptions</code> via multipart WAV upload.</p>
+              </div>
+
+              <div class="dropzone" id="asrDropzone">
+                <input type="file" id="asrFileInput" accept=".wav,audio/wav" class="visually-hidden" />
+                <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center;">
+                  <button type="button" class="btn" id="asrPickBtn">Choose WAV File</button>
+                  <button type="button" class="btn" id="asrMicBtn">Record Microphone</button>
+                </div>
+                <span class="msg-meta" id="asrFileLabel">Drop a .wav file here or record from microphone</span>
+                <audio id="asrPreview" controls style="display:none; width:100%; height:36px; color-scheme:dark;"></audio>
+              </div>
+
+              <div class="row-2">
+                <div class="field">
+                  <label for="asrLangInput">Language (19 locales or auto)</label>
+                  <select id="asrLangInput">
+                    <option value="auto">Auto-detect (Perform ASR.)</option>
+                    <option value="English" selected>English</option>
+                    <option value="Chinese">Chinese (中文)</option>
+                    <option value="Japanese">Japanese (日本語)</option>
+                    <option value="Korean">Korean (한국어)</option>
+                    <option value="French">French</option>
+                    <option value="German">German</option>
+                    <option value="Spanish">Spanish</option>
+                    <option value="Italian">Italian</option>
+                    <option value="Portuguese">Portuguese</option>
+                    <option value="Arabic">Arabic</option>
+                    <option value="Dutch">Dutch</option>
+                    <option value="Polish">Polish</option>
+                    <option value="Swedish">Swedish</option>
+                    <option value="Finnish">Finnish</option>
+                    <option value="Danish">Danish</option>
+                    <option value="Greek">Greek</option>
+                    <option value="Hebrew">Hebrew</option>
+                    <option value="Turkish">Turkish</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="asrPromptInput">User prompt (optional)</label>
+                  <input type="text" id="asrPromptInput" placeholder="Optional prompt…" />
+                </div>
+              </div>
+
+              <div style="display:flex; gap:10px; align-items:center;">
+                <button type="button" class="btn btn-primary" id="asrRunBtn" disabled>Transcribe</button>
+                <span class="msg-meta" id="asrTiming"></span>
+              </div>
+
+              <div class="error-banner" id="asrError" role="alert"></div>
+
+              <div class="result-box" id="asrResultBox" style="display:none;">
+                <div class="msg-head">
+                  <span class="msg-role">Transcript</span>
+                  <span class="msg-meta" id="asrMeta"></span>
+                </div>
+                <div class="msg-body" id="asrTranscript"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- LiveASR Panel -->
+        <section class="tab-panel" id="panel-live" role="tabpanel" aria-labelledby="tab-live">
+          <div class="tool-scroll">
+            <div class="tool-container">
+              <div class="tool-header">
+                <h2>Live Streaming ASR <span class="msg-meta">(English only · Causal ~0.96s chunks)</span></h2>
+                <p>Uses <code>POST /v1/audio/live-asr/{start,chunk,stop}</code> with <code>Perform live ASR.</code> and incremental KV/encoder prefill. Note: LiveASR currently supports English only.</p>
+              </div>
+
+              <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <button type="button" class="btn btn-primary" id="liveMicBtn">Start Live Mic</button>
+                <button type="button" class="btn" id="liveWavBtn">Simulate Live from WAV</button>
+                <input type="file" id="liveWavInput" accept=".wav,audio/wav" class="visually-hidden" />
+                <button type="button" class="btn btn-danger" id="liveStopBtn" disabled>Stop &amp; Flush</button>
+                <span class="msg-meta" id="liveStatus">Idle</span>
+              </div>
+
+              <div class="error-banner" id="liveError" role="alert"></div>
+
+              <div class="result-box">
+                <div class="msg-head">
+                  <span class="msg-role">Live Transcript</span>
+                  <span class="msg-meta" id="liveMeta">0 chunks</span>
+                </div>
+                <div class="msg-body" id="liveTranscript" style="min-height:96px;">(Waiting for speech…)</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TTS Panel -->
+        <section class="tab-panel" id="panel-tts" role="tabpanel" aria-labelledby="tab-tts">
+          <div class="tool-scroll">
+            <div class="tool-container">
+              <div class="tool-header">
+                <h2>Multilingual Text to Speech</h2>
+                <p>Tests <code>POST /v1/audio/speech</code> across 19 locales and decodes 24 kHz audio via MetalLiquidCodec (supports streaming SSE chunks).</p>
+              </div>
+
+              <div class="starter-row" style="justify-content:flex-start;">
+                <button type="button" class="btn btn-sm tts-preset-btn" data-lang="American English" data-voice="female" data-text="Hello! Welcome to Liquid Audio on Metal. The weather is sunny and warm today.">🇺🇸 English (US)</button>
+                <button type="button" class="btn btn-sm tts-preset-btn" data-lang="Chinese" data-voice="female" data-text="你好，欢迎使用基于 Metal 的 LFM3 语音合成系统，祝你今天心情愉快！">🇨🇳 中文 (Chinese)</button>
+                <button type="button" class="btn btn-sm tts-preset-btn" data-lang="Japanese" data-voice="female" data-text="こんにちは！ローカルで動作する音声合成モデルのテストです。よろしくお願いします。">🇯🇵 日本語 (Japanese)</button>
+                <button type="button" class="btn btn-sm tts-preset-btn" data-lang="French" data-voice="male" data-text="Bonjour ! Bienvenue sur le modèle audio local LFM3.">🇫🇷 Français</button>
+              </div>
+
+              <form id="ttsForm" style="display:flex; flex-direction:column; gap:12px;">
+                <div class="field">
+                  <label for="ttsInput">Text to synthesize</label>
+                  <textarea id="ttsInput" rows="3">Hello! Welcome to Liquid Audio on Metal. The weather is sunny and warm today.</textarea>
+                </div>
+                <div class="row-2">
+                  <div class="field">
+                    <label for="ttsLangSelect">Language / Locale</label>
+                    <select id="ttsLangSelect">
+                      <option value="American English" selected>American English</option>
+                      <option value="British English">British English</option>
+                      <option value="Chinese">Chinese (中文)</option>
+                      <option value="Japanese">Japanese (日本語)</option>
+                      <option value="Korean">Korean (한국어)</option>
+                      <option value="French">French</option>
+                      <option value="German">German</option>
+                      <option value="Spanish">Spanish</option>
+                      <option value="Italian">Italian</option>
+                      <option value="Portuguese">Portuguese</option>
+                      <option value="Arabic">Arabic</option>
+                      <option value="Dutch">Dutch</option>
+                      <option value="Polish">Polish</option>
+                      <option value="Swedish">Swedish</option>
+                      <option value="Finnish">Finnish</option>
+                      <option value="Danish">Danish</option>
+                      <option value="Greek">Greek</option>
+                      <option value="Hebrew">Hebrew</option>
+                      <option value="Turkish">Turkish</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="ttsVoiceSelect">Voice</label>
+                    <select id="ttsVoiceSelect">
+                      <option value="female" selected>female</option>
+                      <option value="male">male</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row-2">
+                  <div class="field">
+                    <label for="ttsSystemInput">Custom system prompt (optional override)</label>
+                    <input type="text" id="ttsSystemInput" placeholder="Auto: Perform TTS in <lang> using a <voice> voice." />
+                  </div>
+                  <div class="field">
+                    <label for="ttsFormatSelect">Response format</label>
+                    <select id="ttsFormatSelect">
+                      <option value="json" selected>json (includes timing &amp; frames)</option>
+                      <option value="wav">wav (raw audio/wav binary)</option>
+                      <option value="stream">SSE stream (incremental 24 kHz chunks)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center;">
+                  <button type="submit" class="btn btn-primary" id="ttsRunBtn">Synthesize Speech</button>
+                  <span class="msg-meta" id="ttsTiming"></span>
+                </div>
+              </form>
+
+              <div class="error-banner" id="ttsError" role="alert"></div>
+
+              <div class="result-box" id="ttsResultBox" style="display:none;">
+                <div class="msg-head">
+                  <span class="msg-role">Synthesized Audio (24 kHz WAV)</span>
+                  <a id="ttsDownloadLink" class="btn btn-sm" download="uzu_speech.wav">Download WAV</a>
+                </div>
+                <audio id="ttsAudio" controls style="width:100%; height:36px; color-scheme:dark;"></audio>
+                <div class="msg-meta" id="ttsMeta"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Translate & Audio Understanding Panel -->
+        <section class="tab-panel" id="panel-translate" role="tabpanel" aria-labelledby="tab-translate">
+          <div class="tool-scroll">
+            <div class="tool-container">
+              <div class="tool-header">
+                <h2>Multilingual Translation &amp; Audio Understanding</h2>
+                <p>Speech/Text translation via <code>POST /v1/audio/translate</code> and grounded audio event/music/speech QA via <code>POST /v1/chat/completions</code>.</p>
+              </div>
+
+              <div class="starter-row" style="justify-content:flex-start;">
+                <button type="button" class="btn btn-sm tr-preset-btn" data-src="Chinese" data-tgt="English" data-text="今天天气真不错，我们去公园散步吧。">🇨🇳 中文 → 🇺🇸 English</button>
+                <button type="button" class="btn btn-sm tr-preset-btn" data-src="Japanese" data-tgt="English" data-text="東京の天気は晴れで、とても過ごしやすいです。">🇯🇵 日本語 → 🇺🇸 English</button>
+                <button type="button" class="btn btn-sm tr-preset-btn" data-src="English" data-tgt="Chinese" data-text="Local multimodal models run privately with very low latency.">🇺🇸 English → 🇨🇳 中文</button>
+                <button type="button" class="btn btn-sm tr-preset-btn" data-src="English" data-tgt="Japanese" data-text="Please help me book a quiet table near the window.">🇺🇸 English → 🇯🇵 日本語</button>
+              </div>
+
+              <div class="row-2">
+                <div class="field">
+                  <label for="trSourceLang">Source language</label>
+                  <input type="text" id="trSourceLang" value="Chinese" />
+                </div>
+                <div class="field">
+                  <label for="trTargetLang">Target language</label>
+                  <input type="text" id="trTargetLang" value="English" />
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="trTextInput">Text to translate (or leave empty and attach/record speech below)</label>
+                <textarea id="trTextInput" rows="2">今天天气真不错，我们去公园散步吧。</textarea>
+              </div>
+
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <input type="file" id="trFileInput" accept=".wav,audio/wav" class="visually-hidden" />
+                <button type="button" class="btn" id="trPickBtn">Attach WAV</button>
+                <button type="button" class="btn" id="trMicBtn">Record Speech</button>
+                <button type="button" class="btn" id="trClearAudioBtn" style="display:none;">Clear Audio</button>
+                <span class="msg-meta" id="trAudioLabel">No speech attached (text mode)</span>
+              </div>
+
+              <div style="display:flex; gap:10px; align-items:center;">
+                <button type="button" class="btn btn-primary" id="trRunBtn">Translate</button>
+                <button type="button" class="btn" id="understandRunBtn">Run Audio Understanding QA</button>
+                <span class="msg-meta" id="trTiming"></span>
+              </div>
+
+              <div class="error-banner" id="trError" role="alert"></div>
+
+              <div class="result-box" id="trResultBox" style="display:none;">
+                <div class="msg-head">
+                  <span class="msg-role" id="trResultTitle">Result</span>
+                  <span class="msg-meta" id="trMeta"></span>
+                </div>
+                <div class="msg-body" id="trResultBody"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- System One Decisions Panel -->
+        <section class="tab-panel" id="panel-decisions" role="tabpanel" aria-labelledby="tab-decisions">
+          <div class="tool-scroll">
+            <div class="tool-container">
+              <div class="tool-header">
+                <h2>System One Decision Workbench</h2>
+                <p>Structured decisions (<code>noul</code>, <code>choice</code>, <code>score</code>, <code>text</code>, <code>number</code>, <code>box</code>, <code>boxes</code>) over text, image, or audio via <code>POST /v1/decisions</code>.</p>
+              </div>
+
+              <div class="starter-row" style="justify-content:flex-start;">
+                <button type="button" class="btn btn-sm" id="d1PresetTextBtn">Preset: Text 5Q</button>
+                <button type="button" class="btn btn-sm" id="d1PresetImageBtn">Preset: Image 3Q</button>
+                <button type="button" class="btn btn-sm" id="d1PresetAudioBtn">Preset: Audio 2Q</button>
+                <button type="button" class="btn btn-sm" id="d1PresetSpokenBtn">Preset: Spoken Q</button>
+                <button type="button" class="btn btn-sm" id="d1PresetVideoBtn">Preset: Video</button>
+              </div>
+
+              <div class="field">
+                <label for="d1StateInput">State (text or JSON, optional when media is attached)</label>
+                <textarea id="d1StateInput" rows="2">Customer Maya Chen requested a full refund of 49.50 USD for order #1234 placed on 2026-03-15.</textarea>
+              </div>
+
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <input type="file" id="d1ImageInput" accept="image/*" class="visually-hidden" />
+                <button type="button" class="btn" id="d1PickImageBtn">Attach Image</button>
+                <button type="button" class="btn" id="d1ClearImageBtn" style="display:none;">Clear Image</button>
+                <span class="msg-meta" id="d1ImageLabel">No image</span>
+                <input type="file" id="d1VideoInput" accept="image/*" multiple class="visually-hidden" />
+                <button type="button" class="btn" id="d1PickVideoBtn">Attach Video Frames</button>
+                <button type="button" class="btn" id="d1ClearVideoBtn" style="display:none;">Clear Video</button>
+                <span class="msg-meta" id="d1VideoLabel">No video</span>
+                <input type="file" id="d1AudioInput" accept=".wav,audio/wav" class="visually-hidden" />
+                <button type="button" class="btn" id="d1PickAudioBtn">Attach WAV</button>
+                <button type="button" class="btn" id="d1ClearAudioBtn" style="display:none;">Clear WAV</button>
+                <span class="msg-meta" id="d1AudioLabel">No audio</span>
+              </div>
+
+              <div id="d1PreviewWrap" style="display:none; position:relative; max-width:480px; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:#000;">
+                <img id="d1PreviewImg" alt="Uploaded preview" style="display:block; width:100%; height:auto;" />
+                <svg id="d1BoxOverlay" viewBox="0 0 1 1" preserveAspectRatio="none" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;"></svg>
+              </div>
+
+              <div class="field">
+                <label for="d1QuestionsInput">Questions (JSON object)</label>
+                <textarea id="d1QuestionsInput" rows="9" style="font-family:var(--mono); font-size:12px;">{
+  "is_refund": { "type": "noul", "instructions": "Is the customer asking for a refund?" },
+  "sentiment": { "type": "choice", "instructions": "What is the customer sentiment?", "criteria": { "pos": "positive", "neu": "neutral", "neg": "negative" } },
+  "urgency": { "type": "score", "instructions": "How urgent is this request?", "criteria": ["low", "medium", "high"] },
+  "customer_name": { "type": "text", "instructions": "What is the customer's full name?" },
+  "amount": { "type": "number", "instructions": "What is the refund amount in USD?", "range": [0, 100], "step": 0.5, "unit": "USD" }
+}</textarea>
+              </div>
+
+              <div style="display:flex; gap:10px; align-items:center;">
+                <button type="button" class="btn btn-primary" id="d1RunBtn">Run Decisions</button>
+                <span class="msg-meta" id="d1Timing"></span>
+              </div>
+
+              <div class="error-banner" id="d1Error" role="alert"></div>
+
+              <div class="result-box" id="d1ResultBox" style="display:none;">
+                <div class="msg-head">
+                  <span class="msg-role">Decision Answers</span>
+                  <span class="msg-meta" id="d1Meta"></span>
+                </div>
+                <pre class="msg-body" id="d1ResultBody" style="margin:0; font-family:var(--mono); font-size:12px; white-space:pre-wrap;"></pre>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- API Inspector -->
+        <section class="inspector-box" id="inspectorBox" aria-label="Last HTTP API call">
+          <div class="msg-head" style="margin-bottom:6px;">
+            <span class="msg-role" id="inspectorTitle">No API call recorded yet</span>
+            <span class="msg-meta" id="inspectorMeta"></span>
+          </div>
+          <pre class="mono-out" id="inspectorBody"></pre>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+
+      const state = {
+        residentModel: null,
+        messages: [],
+        chatWavBlob: null,
+        chatWavName: null,
+        chatImages: [],
+        chatVideos: [],
+        asrWavBlob: null,
+        recorder: null,
+        isBusy: false,
+      };
+
+      // ---- API Inspector ----
+      function recordApi(method, path, status, elapsedMs, payloadPreview) {
+        $('inspectorTitle').textContent = `${method} ${path} → ${status}`;
+        $('inspectorMeta').textContent = `${elapsedMs.toFixed(1)} ms`;
+        $('inspectorBody').textContent = typeof payloadPreview === 'string'
+          ? payloadPreview
+          : JSON.stringify(payloadPreview, null, 2);
+      }
+
+      $('toggleInspectorBtn').addEventListener('click', () => {
+        const box = $('inspectorBox');
+        const open = box.classList.toggle('open');
+        $('toggleInspectorBtn').setAttribute('aria-expanded', String(open));
+      });
+
+      // ---- Model Status & Admin ----
+      async function refreshStatus() {
+        try {
+          const [statusRes, modelsRes] = await Promise.all([
+            fetch('/v1/models/status'),
+            fetch('/v1/models').catch(() => null),
+          ]);
+          if (!statusRes.ok && modelsRes && modelsRes.ok) {
+            const mdata = await modelsRes.json().catch(() => null);
+            const firstId = mdata?.data?.[0]?.id;
+            if (firstId) {
+              state.residentModel = firstId;
+              $('statusDot').className = 'dot ready';
+              $('statusText').textContent = `ready · ${firstId} · system-one`;
+              const decTab = $('tab-decisions');
+              if (decTab && decTab.getAttribute('aria-selected') !== 'true') {
+                decTab.click();
+              }
+              return;
+            }
+          }
+          const data = await statusRes.json();
+          const dot = $('statusDot');
+          dot.className = 'dot ' + (data.status || '');
+          if (data.status === 'ready') {
+            state.residentModel = data.model || data.loaded?.model || null;
+            const caps = (data.loaded?.audio && data.loaded?.vlm)
+              ? ' · omni'
+              : (data.loaded?.audio ? ' · audio' : (data.loaded?.vlm ? ' · vlm' : ' · text-only'));
+            $('statusText').textContent = `ready · ${state.residentModel}${caps}`;
+            if (data.loaded?.audio) {
+              fetch('/v1/omni/capabilities').then((r) => r.ok ? r.json() : null).then((c) => {
+                const defs = c?.audio_sampling_defaults;
+                if (defs) {
+                  if (defs.audio_temperature !== undefined) $('audioTempInput').placeholder = Number(defs.audio_temperature).toFixed(2);
+                  if (defs.audio_top_k !== undefined) $('audioTopKInput').placeholder = String(defs.audio_top_k);
+                  if (defs.audio_repetition_penalty !== undefined) $('audioRepPenInput').placeholder = Number(defs.audio_repetition_penalty).toFixed(2);
+                  if (defs.audio_repetition_window !== undefined) $('audioRepWinInput').placeholder = String(defs.audio_repetition_window);
+                }
+              }).catch(() => {});
+            }
+          } else if (data.status === 'loading') {
+            $('statusText').textContent = `loading · ${data.model || ''}`;
+          } else if (data.status === 'failed') {
+            $('statusText').textContent = `failed · ${data.error || ''}`;
+          } else {
+            state.residentModel = null;
+            $('statusText').textContent = 'idle (no model loaded)';
+          }
+
+          if (modelsRes && modelsRes.ok) {
+            const modelsJson = await modelsRes.json();
+            const list = Array.isArray(modelsJson.data) ? modelsJson.data : [];
+            const select = $('modelSelect');
+            const prev = select.value;
+            select.innerHTML = '';
+            if (list.length === 0) {
+              const opt = document.createElement('option');
+              opt.value = state.residentModel || '';
+              opt.textContent = state.residentModel || '(no models_dir configured)';
+              select.appendChild(opt);
+            } else {
+              for (const m of list) {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.id;
+                select.appendChild(opt);
+              }
+              if (prev && list.some((m) => m.id === prev)) {
+                select.value = prev;
+              } else if (state.residentModel && list.some((m) => m.id === state.residentModel)) {
+                select.value = state.residentModel;
+              }
+            }
+          }
+        } catch (err) {
+          $('statusDot').className = 'dot failed';
+          $('statusText').textContent = 'server unreachable';
+        }
+      }
+
+      $('refreshStatusBtn').addEventListener('click', refreshStatus);
+
+      $('loadModelBtn').addEventListener('click', async () => {
+        const target = $('customModelInput').value.trim() || $('modelSelect').value.trim();
+        if (!target) return;
+        const t0 = performance.now();
+        $('loadModelBtn').disabled = true;
+        try {
+          const res = await fetch('/v1/models/load', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: target }),
+          });
+          const body = await res.json();
+          recordApi('POST', '/v1/models/load', res.status, performance.now() - t0, body);
+          await refreshStatus();
+        } finally {
+          $('loadModelBtn').disabled = false;
+        }
+      });
+
+      $('unloadModelBtn').addEventListener('click', async () => {
+        const t0 = performance.now();
+        const res = await fetch('/v1/models/unload', { method: 'POST' });
+        const body = await res.json();
+        recordApi('POST', '/v1/models/unload', res.status, performance.now() - t0, body);
+        await refreshStatus();
+      });
+
+      // ---- Tabs ----
+      const endpointLabels = {
+        'tab-chat': 'POST /v1/chat/completions',
+        'tab-asr': 'POST /v1/audio/transcriptions',
+        'tab-live': 'POST /v1/audio/live-asr/{start,chunk,stop}',
+        'tab-tts': 'POST /v1/audio/speech',
+        'tab-translate': 'POST /v1/audio/translate',
+        'tab-decisions': 'POST /v1/decisions',
+      };
+      document.querySelectorAll('.tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', 'false'));
+          document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+          tab.setAttribute('aria-selected', 'true');
+          $(tab.getAttribute('aria-controls')).classList.add('active');
+          $('endpointBadge').textContent = endpointLabels[tab.id] || '';
+        });
+      });
+
+      // ---- 16 kHz Mono PCM16 WAV Microphone Recorder (Web Audio API) ----
+      function encodeWavPcm16(samples, sampleRate) {
+        const dataLen = samples.length * 2;
+        const buf = new ArrayBuffer(44 + dataLen);
+        const view = new DataView(buf);
+        const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataLen, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataLen, true);
+        let off = 44;
+        for (let i = 0; i < samples.length; i++, off += 2) {
+          const s = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        }
+        return new Blob([buf], { type: 'audio/wav' });
+      }
+
+      function downsampleTo16k(float32, srcRate) {
+        if (srcRate === 16000) return float32;
+        const ratio = srcRate / 16000;
+        const outLen = Math.max(1, Math.floor(float32.length / ratio));
+        const out = new Float32Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          const src = i * ratio;
+          const idx = Math.floor(src);
+          const next = Math.min(float32.length - 1, idx + 1);
+          const frac = src - idx;
+          out[i] = float32[idx] * (1 - frac) + float32[next] * frac;
+        }
+        return out;
+      }
+
+      async function toggleMic(target, btn, labelEl) {
+        if (state.recorder && state.recorder.target === target) {
+          const rec = state.recorder;
+          state.recorder = null;
+          rec.processor.disconnect();
+          rec.source.disconnect();
+          rec.stream.getTracks().forEach((t) => t.stop());
+          const srcRate = rec.ctx.sampleRate;
+          await rec.ctx.close();
+          btn.classList.remove('btn-recording');
+          if (labelEl) labelEl.textContent = 'Mic';
+          else btn.textContent = 'Record Microphone';
+
+          const total = rec.chunks.reduce((acc, c) => acc + c.length, 0);
+          const merged = new Float32Array(total);
+          let pos = 0;
+          for (const c of rec.chunks) { merged.set(c, pos); pos += c.length; }
+          const wavBlob = encodeWavPcm16(downsampleTo16k(merged, srcRate), 16000);
+          if (target === 'chat') {
+            setChatWav(wavBlob, `mic_${(wavBlob.size / 1024).toFixed(1)} KB.wav`);
+          } else if (target === 'tr') {
+            setTrWav(wavBlob, `mic_recording.wav`);
+          } else {
+            setAsrWav(wavBlob, `mic_recording.wav`);
+          }
+          return;
+        }
+
+        if (state.recorder) return;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        const chunks = [];
+        processor.onaudioprocess = (ev) => {
+          chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+        };
+        source.connect(processor);
+        processor.connect(ctx.destination);
+        state.recorder = { target, stream, ctx, source, processor, chunks };
+        btn.classList.add('btn-recording');
+        if (labelEl) labelEl.textContent = 'Stop';
+        else btn.textContent = 'Stop Recording';
+      }
+
+      // ---- Chat helpers ----
+      function renderAttachmentBar() {
+        const preview = $('chatAttachmentPreview');
+        preview.innerHTML = '';
+        const labels = [];
+        state.chatImages.forEach((item) => {
+          const img = document.createElement('img');
+          img.src = item.url;
+          img.alt = item.name;
+          img.style.cssText = 'width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);';
+          preview.appendChild(img);
+          labels.push(`Img: ${item.name}`);
+        });
+        state.chatVideos.forEach((item) => {
+          const vid = document.createElement('video');
+          vid.src = item.url;
+          vid.muted = true;
+          vid.style.cssText = 'width:56px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);';
+          preview.appendChild(vid);
+          labels.push(`Vid: ${item.name} (2.0 FPS)`);
+        });
+        if (state.chatWavBlob) {
+          labels.push(`Audio: ${state.chatWavName} (${(state.chatWavBlob.size / 1024).toFixed(1)} KB)`);
+        }
+        if (labels.length > 0) {
+          $('chatAttachmentLabel').textContent = labels.join(' · ');
+          $('chatAttachmentBar').classList.add('visible');
+        } else {
+          $('chatAttachmentLabel').textContent = '';
+          $('chatAttachmentBar').classList.remove('visible');
+        }
+      }
+
+      function setChatWav(blob, name) {
+        state.chatWavBlob = blob;
+        state.chatWavName = name;
+        renderAttachmentBar();
+      }
+
+      function addChatImage(file) {
+        state.chatImages.push({ blob: file, name: file.name || 'image.png', url: URL.createObjectURL(file) });
+        renderAttachmentBar();
+      }
+
+      function addChatVideo(file) {
+        state.chatVideos.push({ blob: file, name: file.name || 'video.mp4', url: URL.createObjectURL(file) });
+        renderAttachmentBar();
+      }
+
+      function clearChatMedia() {
+        state.chatWavBlob = null;
+        state.chatWavName = null;
+        state.chatImages = [];
+        state.chatVideos = [];
+        $('chatWavInput').value = '';
+        $('chatImageInput').value = '';
+        $('chatVideoInput').value = '';
+        renderAttachmentBar();
+      }
+
+      $('clearChatAudioBtn').addEventListener('click', clearChatMedia);
+      $('chatImageBtn').addEventListener('click', () => $('chatImageInput').click());
+      $('chatVideoBtn').addEventListener('click', () => $('chatVideoInput').click());
+      $('chatUploadBtn').addEventListener('click', () => $('chatWavInput').click());
+      $('chatImageInput').addEventListener('change', (e) => {
+        Array.from(e.target.files || []).forEach(addChatImage);
+      });
+      $('chatVideoInput').addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (f) addChatVideo(f);
+      });
+      $('chatWavInput').addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (f) setChatWav(f, f.name);
+      });
+      $('chatForm').addEventListener('dragover', (e) => { e.preventDefault(); });
+      $('chatForm').addEventListener('drop', (e) => {
+        e.preventDefault();
+        for (const f of Array.from(e.dataTransfer?.files || [])) {
+          if (f.type.startsWith('image/')) addChatImage(f);
+          else if (f.type.startsWith('video/')) addChatVideo(f);
+          else if (f.type.includes('wav') || f.name.toLowerCase().endsWith('.wav')) setChatWav(f, f.name);
+        }
+      });
+      $('chatMicBtn').addEventListener('click', () => {
+        toggleMic('chat', $('chatMicBtn'), $('chatMicLabel')).catch((err) => {
+          showError('chatError', `Microphone error: ${err.message}`);
+        });
+      });
+
+      function showError(id, msg) {
+        const el = $(id);
+        if (!msg) {
+          el.classList.remove('visible');
+          el.textContent = '';
+        } else {
+          el.textContent = msg;
+          el.classList.add('visible');
+        }
+      }
+
+      function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const s = String(reader.result || '');
+            resolve(s.includes(',') ? s.split(',')[1] : s);
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      function appendMessage(role, text, opts = {}) {
+        const empty = $('chatEmpty');
+        if (empty) empty.style.display = 'none';
+
+        const card = document.createElement('div');
+        card.className = `msg ${role}`;
+
+        const head = document.createElement('div');
+        head.className = 'msg-head';
+        const roleEl = document.createElement('span');
+        roleEl.className = 'msg-role';
+        roleEl.textContent = role === 'user' ? 'You' : 'Assistant';
+        const metaEl = document.createElement('span');
+        metaEl.className = 'msg-meta';
+        metaEl.textContent = opts.meta || '';
+        head.append(roleEl, metaEl);
+
+        const body = document.createElement('div');
+        body.className = 'msg-body';
+        body.textContent = text;
+
+        card.append(head, body);
+
+        if (opts.imageUrls && opts.imageUrls.length > 0) {
+          const strip = document.createElement('div');
+          strip.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;';
+          for (const url of opts.imageUrls) {
+            const img = document.createElement('img');
+            img.src = url;
+            img.style.cssText = 'max-width:180px;max-height:140px;border-radius:8px;border:1px solid var(--border);object-fit:cover;';
+            strip.appendChild(img);
+          }
+          card.appendChild(strip);
+        }
+
+        if (opts.videoUrls && opts.videoUrls.length > 0) {
+          for (const url of opts.videoUrls) {
+            const vid = document.createElement('video');
+            vid.src = url;
+            vid.controls = true;
+            vid.muted = true;
+            vid.style.cssText = 'max-width:240px;max-height:160px;border-radius:8px;margin-top:8px;border:1px solid var(--border);';
+            card.appendChild(vid);
+          }
+        }
+
+        if (opts.audioUrl) {
+          const audio = document.createElement('audio');
+          audio.controls = true;
+          audio.src = opts.audioUrl;
+          card.appendChild(audio);
+          if (opts.autoplay) {
+            audio.play().catch(() => {});
+          }
+        }
+
+        $('chatList').appendChild(card);
+        $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+        return { card, body, metaEl };
+      }
+
+      $('clearChatBtn').addEventListener('click', () => {
+        state.messages = [];
+        state.sessionId = null;
+        state.unsentFromIndex = 0;
+        state.lastSessionKey = '';
+        const list = $('chatList');
+        list.querySelectorAll('.msg').forEach((n) => n.remove());
+        if ($('chatEmpty')) $('chatEmpty').style.display = '';
+        showError('chatError', '');
+      });
+
+      document.querySelectorAll('.starter-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          $('chatInput').value = btn.dataset.text || '';
+          if (btn.dataset.system !== undefined) {
+            $('systemPromptInput').value = btn.dataset.system;
+          }
+          $('audioReplyToggle').checked = btn.dataset.audio === '1';
+          if (btn.dataset.tools !== undefined) {
+            $('toolsToggle').checked = btn.dataset.tools === '1';
+          }
+          $('reasoningEffortSelect').value = btn.dataset.think || '';
+          if (btn.dataset.sampleImage === '1') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 128, 128);
+            grad.addColorStop(0, '#ef4444');
+            grad.addColorStop(0.5, '#f59e0b');
+            grad.addColorStop(1, '#3b82f6');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 128, 128);
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(64, 64, 28, 0, Math.PI * 2);
+            ctx.fill();
+            const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+            if (blob) addChatImage(new File([blob], 'sample-omni.png', { type: 'image/png' }));
+          }
+          $('chatForm').requestSubmit();
+        });
+      });
+
+      // IME-safe Enter submit (covers Safari WebKit bug 165004 via keyCode === 229)
+      $('chatInput').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          if (event.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          $('chatForm').requestSubmit();
+        }
+      });
+
+      $('chatForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (state.isBusy) return;
+        const text = $('chatInput').value.trim();
+        const wavBlob = state.chatWavBlob;
+        const wavName = state.chatWavName;
+        const images = state.chatImages.slice();
+        const videos = state.chatVideos.slice();
+        if (!text && !wavBlob && images.length === 0 && videos.length === 0) return;
+
+        showError('chatError', '');
+        const wantsAudio = $('audioReplyToggle').checked;
+        const useStream = $('streamToggle').checked;
+        const sys = $('systemPromptInput').value.trim();
+        const tempVal = $('temperatureInput').value.trim();
+        const maxTok = parseInt($('maxTokensInput').value, 10) || 512;
+        const seedVal = $('seedInput').value.trim();
+
+        let userApiContent;
+        let userAudioUrl = null;
+        const userImageUrls = images.map((i) => i.url);
+        const userVideoUrls = videos.map((v) => v.url);
+        if (wavBlob || images.length > 0 || videos.length > 0) {
+          const parts = [];
+          for (const img of images) {
+            const b64 = await blobToBase64(img.blob);
+            const mime = img.blob.type || 'image/png';
+            parts.push({ type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } });
+          }
+          for (const vid of videos) {
+            const b64 = await blobToBase64(vid.blob);
+            const mime = vid.blob.type || 'video/mp4';
+            parts.push({ type: 'video_url', video_url: { url: `data:${mime};base64,${b64}` } });
+          }
+          if (wavBlob) {
+            const b64 = await blobToBase64(wavBlob);
+            userAudioUrl = URL.createObjectURL(wavBlob);
+            parts.push({ type: 'input_audio', input_audio: { data: b64, format: 'wav' } });
+          }
+          if (text) parts.push({ type: 'text', text });
+          userApiContent = parts;
+        } else {
+          userApiContent = text;
+        }
+
+        const metaParts = [];
+        if (images.length > 0) metaParts.push(`${images.length} img`);
+        if (videos.length > 0) metaParts.push(`${videos.length} vid`);
+        if (wavBlob) metaParts.push(wavName);
+        appendMessage('user', text || `[${metaParts.join(', ')}]`, {
+          audioUrl: userAudioUrl,
+          imageUrls: userImageUrls,
+          videoUrls: userVideoUrls,
+          meta: metaParts.join(' · '),
+        });
+        $('chatInput').value = '';
+        clearChatMedia();
+
+        const DEMO_TOOLS = [
+          {
+            type: 'function',
+            function: {
+              name: 'get_weather',
+              description: 'Get the current weather for a city.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  city: { type: 'string', description: 'City name, e.g. Tokyo' },
+                  unit: { type: 'string', enum: ['celsius', 'fahrenheit'] },
+                },
+                required: ['city'],
+              },
+            },
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'get_current_time',
+              description: 'Get the current local date and time.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  timezone: { type: 'string', description: 'Optional IANA timezone, e.g. Asia/Tokyo' },
+                },
+              },
+            },
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'calculate',
+              description: 'Evaluate a basic arithmetic expression (+, -, *, /, parentheses).',
+              parameters: {
+                type: 'object',
+                properties: {
+                  expression: { type: 'string', description: 'Arithmetic expression, e.g. 128 * 37' },
+                },
+                required: ['expression'],
+              },
+            },
+          },
+        ];
+
+        function executeDemoTool(name, rawArgs) {
+          let args = {};
+          try { args = typeof rawArgs === 'string' ? JSON.parse(rawArgs || '{}') : (rawArgs || {}); } catch {}
+          if (name === 'get_weather') {
+            const city = args.city || 'Unknown';
+            const unit = args.unit === 'fahrenheit' ? 'fahrenheit' : 'celsius';
+            const tempC = 19 + (city.length % 9);
+            const temp = unit === 'fahrenheit' ? Math.round(tempC * 9 / 5 + 32) : tempC;
+            return JSON.stringify({ city, temperature: temp, unit, condition: 'Clear sky', humidity: '52%' });
+          }
+          if (name === 'get_current_time') {
+            const tz = args.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+            try {
+              return JSON.stringify({ timezone: tz, local_time: new Date().toLocaleString('en-US', { timeZone: tz }) });
+            } catch {
+              return JSON.stringify({ timezone: 'UTC', local_time: new Date().toISOString() });
+            }
+          }
+          if (name === 'calculate') {
+            const expr = String(args.expression || '').trim();
+            if (!/^[0-9+\-*/().\s]+$/.test(expr)) {
+              return JSON.stringify({ error: 'Only basic arithmetic (+ - * / parentheses) is supported' });
+            }
+            try {
+              const value = Function(`"use strict"; return (${expr});`)();
+              return JSON.stringify({ expression: expr, result: value });
+            } catch (e) {
+              return JSON.stringify({ error: String(e) });
+            }
+          }
+          return JSON.stringify({ error: `Unknown tool: ${name}` });
+        }
+
+        const enableTools = $('toolsToggle').checked;
+        const sessionKey = `${sys}::${enableTools ? '1' : '0'}`;
+        if (state.lastSessionKey && state.lastSessionKey !== sessionKey) {
+          state.sessionId = null;
+          state.unsentFromIndex = 0;
+        }
+        state.lastSessionKey = sessionKey;
+
+        async function runTurn(turnDepth) {
+          const useSessionDelta = Boolean(state.sessionId && (state.unsentFromIndex || 0) > 0 && state.unsentFromIndex < state.messages.length);
+          const apiMessages = [];
+          if (!useSessionDelta) {
+            if (sys) apiMessages.push({ role: 'system', content: sys });
+            for (const m of state.messages) apiMessages.push(m);
+          } else {
+            for (const m of state.messages.slice(state.unsentFromIndex)) apiMessages.push(m);
+          }
+
+          const payload = {
+            model: state.residentModel || undefined,
+            messages: apiMessages,
+            max_tokens: wantsAudio ? Math.max(maxTok, 1024) : maxTok,
+            stream: useStream,
+          };
+          if (state.sessionId) payload.session_id = state.sessionId;
+          if (tempVal !== '') payload.temperature = parseFloat(tempVal);
+          if (seedVal !== '') payload.seed = parseInt(seedVal, 10);
+          const reasoningEffort = $('reasoningEffortSelect').value;
+          if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
+          const aTemp = $('audioTempInput').value.trim();
+          const aTopK = $('audioTopKInput').value.trim();
+          const aRepP = $('audioRepPenInput').value.trim();
+          const aRepW = $('audioRepWinInput').value.trim();
+          if (aTemp !== '') payload.audio_temperature = parseFloat(aTemp);
+          if (aTopK !== '') payload.audio_top_k = parseInt(aTopK, 10);
+          if (aRepP !== '') payload.audio_repetition_penalty = parseFloat(aRepP);
+          if (aRepW !== '') payload.audio_repetition_window = parseInt(aRepW, 10);
+          if (wantsAudio) payload.modalities = ['text', 'audio'];
+          if (enableTools) payload.tools = DEMO_TOOLS;
+
+          const tTurn = performance.now();
+          const res = await fetch('/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
+            recordApi('POST', '/v1/chat/completions', res.status, performance.now() - tTurn, errJson);
+            showError('chatError', errJson?.error?.message || `HTTP ${res.status}`);
+            return;
+          }
+
+          const headerSid = res.headers.get('X-Session-ID');
+          if (headerSid) state.sessionId = headerSid;
+
+          let replyText = '';
+          let toolCalls = null;
+
+          if (useStream) {
+            const assistant = appendMessage('assistant', '', { meta: 'streaming…' });
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            let streamTokCount = '';
+            let hasAudio = false;
+            let audioChunkCount = 0;
+            const audioStream = createGaplessAudioStream($('autoplayToggle').checked);
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const lines = buf.split('\n');
+              buf = lines.pop() || '';
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith('data:')) continue;
+                const dataStr = trimmed.slice(5).trim();
+                if (dataStr === '[DONE]') continue;
+                try {
+                  const evt = JSON.parse(dataStr);
+                  if (evt?.error?.message) {
+                    showError('chatError', evt.error.message);
+                    continue;
+                  }
+                  const delta = evt?.choices?.[0]?.delta?.content || '';
+                  if (delta) {
+                    replyText += delta;
+                    assistant.body.textContent = replyText;
+                    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+                  }
+                  const tcDelta = evt?.choices?.[0]?.delta?.tool_calls;
+                  if (Array.isArray(tcDelta) && tcDelta.length > 0) {
+                    toolCalls = tcDelta;
+                    const summary = tcDelta.map((c) => `${c.function?.name}(${c.function?.arguments || ''})`).join('\n');
+                    assistant.body.textContent = (replyText ? replyText + '\n' : '') + `[Tool Call]\n${summary}`;
+                  }
+                  const reasonDelta = evt?.choices?.[0]?.delta?.reasoning_content;
+                  if (reasonDelta) {
+                    const details = document.createElement('details');
+                    details.style.marginBottom = '8px';
+                    details.innerHTML = `<summary class="msg-meta" style="cursor:pointer;">Reasoning (&lt;think&gt;)</summary><pre class="mono-out" style="margin-top:4px; white-space:pre-wrap;"></pre>`;
+                    details.querySelector('pre').textContent = reasonDelta;
+                    assistant.body.parentElement.insertBefore(details, assistant.body);
+                  }
+                  const audioDelta = evt?.choices?.[0]?.delta?.audio;
+                  if (audioDelta?.data) {
+                    hasAudio = true;
+                    audioChunkCount += 1;
+                    audioStream.pushWavBase64(audioDelta.data);
+                    assistant.metaEl.textContent = `streaming audio… (${audioChunkCount} chunks)`;
+                    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+                  }
+                  if (evt?.usage?.completion_tokens !== undefined) {
+                    streamTokCount = evt.usage.completion_tokens;
+                  }
+                } catch {}
+              }
+            }
+            const mergedWavBlob = audioStream.mergeWavBlob();
+            if (mergedWavBlob) {
+              const player = document.createElement('audio');
+              player.controls = true;
+              player.src = URL.createObjectURL(mergedWavBlob);
+              assistant.body.parentElement.appendChild(player);
+              $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+            }
+            const elapsed = performance.now() - tTurn;
+            assistant.metaEl.textContent = `${elapsed.toFixed(0)} ms${streamTokCount !== '' ? ` · ${streamTokCount} tok` : ''}${audioChunkCount > 0 ? ` · ${audioChunkCount} audio chunks` : ''} (stream)`;
+            recordApi('POST', '/v1/chat/completions', res.status, elapsed, {
+              streamed_text: replyText,
+              tool_calls: toolCalls,
+              has_audio: hasAudio,
+              audio_chunks: audioChunkCount,
+            });
+          } else {
+            const data = await res.json();
+            const elapsed = performance.now() - tTurn;
+            const preview = { ...data };
+            if (preview?.choices?.[0]?.message?.audio?.data) {
+              preview.choices = [{
+                ...preview.choices[0],
+                message: {
+                  ...preview.choices[0].message,
+                  audio: {
+                    ...preview.choices[0].message.audio,
+                    data: `<base64 ${preview.choices[0].message.audio.data.length} chars>`,
+                  },
+                },
+              }];
+            }
+            recordApi('POST', '/v1/chat/completions', res.status, elapsed, preview);
+
+            const msg = data?.choices?.[0]?.message || {};
+            toolCalls = msg.tool_calls || null;
+            replyText = msg.content || msg.audio?.transcript || '';
+            const displayText = toolCalls
+              ? ((replyText ? replyText + '\n' : '') + '[Tool Call]\n' + toolCalls.map((c) => `${c.function?.name}(${c.function?.arguments || ''})`).join('\n'))
+              : replyText;
+            let replyAudioUrl = null;
+            if (msg.audio?.data) {
+              const bin = Uint8Array.from(atob(msg.audio.data), (c) => c.charCodeAt(0));
+              replyAudioUrl = URL.createObjectURL(new Blob([bin], { type: 'audio/wav' }));
+            }
+            const tokCount = data?.usage?.completion_tokens ?? '';
+            appendMessage('assistant', displayText, {
+              audioUrl: replyAudioUrl,
+              autoplay: $('autoplayToggle').checked,
+              meta: `${elapsed.toFixed(0)} ms${tokCount !== '' ? ` · ${tokCount} tok` : ''}`,
+            });
+          }
+
+          if (toolCalls && toolCalls.length > 0 && turnDepth < 3) {
+            state.messages.push({ role: 'assistant', content: replyText || null, tool_calls: toolCalls });
+            state.unsentFromIndex = state.messages.length;
+            for (const call of toolCalls) {
+              const resultStr = executeDemoTool(call.function?.name, call.function?.arguments);
+              appendMessage('user', `[Tool Result: ${call.function?.name}]\n${resultStr}`, { meta: 'local demo tool' });
+              state.messages.push({
+                role: 'tool',
+                tool_call_id: call.id || 'call_1',
+                name: call.function?.name,
+                content: resultStr,
+              });
+            }
+            await runTurn(turnDepth + 1);
+          } else {
+            state.messages.push({ role: 'assistant', content: replyText });
+            state.unsentFromIndex = state.messages.length;
+          }
+        }
+
+        state.isBusy = true;
+        $('chatSendBtn').disabled = true;
+
+        try {
+          state.messages.push({ role: 'user', content: userApiContent });
+          await runTurn(0);
+          // Replace any heavy base64 audio part in saved history with text placeholder
+          for (const m of state.messages) {
+            if (m.role === 'user' && Array.isArray(m.content)) {
+              m.content = text || '[audio]';
+            }
+          }
+        } catch (err) {
+          showError('chatError', err.message);
+        } finally {
+          state.isBusy = false;
+          $('chatSendBtn').disabled = false;
+        }
+      });
+
+      // ---- ASR Panel ----
+      function setAsrWav(blob, label) {
+        state.asrWavBlob = blob;
+        $('asrFileLabel').textContent = `${label} (${(blob.size / 1024).toFixed(1)} KB)`;
+        const audio = $('asrPreview');
+        audio.src = URL.createObjectURL(blob);
+        audio.style.display = 'block';
+        $('asrRunBtn').disabled = false;
+      }
+
+      $('asrPickBtn').addEventListener('click', () => $('asrFileInput').click());
+      $('asrFileInput').addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (f) setAsrWav(f, f.name);
+      });
+      $('asrMicBtn').addEventListener('click', () => {
+        toggleMic('asr', $('asrMicBtn'), null).catch((err) => {
+          showError('asrError', `Microphone error: ${err.message}`);
+        });
+      });
+
+      const dz = $('asrDropzone');
+      dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+      dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dz.classList.remove('dragover');
+        const f = e.dataTransfer?.files?.[0];
+        if (f) setAsrWav(f, f.name);
+      });
+
+      $('asrRunBtn').addEventListener('click', async () => {
+        if (!state.asrWavBlob) return;
+        showError('asrError', '');
+        $('asrRunBtn').disabled = true;
+        const fd = new FormData();
+        fd.append('file', state.asrWavBlob, 'audio.wav');
+        if (state.residentModel) fd.append('model', state.residentModel);
+        const lang = $('asrLangInput').value.trim();
+        const prompt = $('asrPromptInput').value.trim();
+        const sys = $('systemPromptInput').value.trim();
+        if (lang) fd.append('language', lang);
+        if (prompt) fd.append('prompt', prompt);
+        if (sys) fd.append('system_prompt', sys);
+
+        const t0 = performance.now();
+        try {
+          const res = await fetch('/v1/audio/transcriptions', { method: 'POST', body: fd });
+          const data = await res.json();
+          const elapsed = performance.now() - t0;
+          recordApi('POST', '/v1/audio/transcriptions', res.status, elapsed, data);
+          if (!res.ok) {
+            showError('asrError', data?.error?.message || `HTTP ${res.status}`);
+            return;
+          }
+          $('asrTranscript').textContent = data.text || '(empty)';
+          const t = data.usage?.timing;
+          $('asrTiming').textContent = t
+            ? `total ${elapsed.toFixed(0)} ms · prep ${t.prep_ms.toFixed(1)} · prefill ${t.prefill_ms.toFixed(1)} · backbone ${t.backbone_ms.toFixed(1)} ms`
+            : `${elapsed.toFixed(0)} ms`;
+          $('asrMeta').textContent = `${data.usage?.tokens ?? 0} tokens`;
+          $('asrResultBox').style.display = 'flex';
+        } catch (err) {
+          showError('asrError', err.message);
+        } finally {
+          $('asrRunBtn').disabled = false;
+        }
+      });
+
+      // ---- Gapless Streaming Audio Player & Merger ----
+      function createGaplessAudioStream(autoplay) {
+        const pcmParts = [];
+        let sampleRate = 24000;
+        let ctx = null;
+        let nextTime = 0;
+
+        function pushWavBase64(b64) {
+          const rawStr = atob(b64);
+          const bytes = new Uint8Array(rawStr.length);
+          for (let i = 0; i < rawStr.length; i++) bytes[i] = rawStr.charCodeAt(i);
+          if (bytes.length <= 44) return;
+
+          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          if (bytes.length >= 28 && bytes[0] === 0x52 && bytes[1] === 0x49) {
+            const sr = view.getUint32(24, true);
+            if (sr > 0) sampleRate = sr;
+          }
+          const pcmBytes = bytes.subarray(44);
+          const count = Math.floor(pcmBytes.byteLength / 2);
+          if (count === 0) return;
+
+          const f32 = new Float32Array(count);
+          for (let i = 0; i < count; i++) {
+            const lo = pcmBytes[i * 2];
+            const hi = pcmBytes[i * 2 + 1];
+            const val = (hi << 8) | lo;
+            const signed = val >= 0x8000 ? val - 0x10000 : val;
+            f32[i] = signed / 32768.0;
+          }
+          pcmParts.push(f32);
+
+          if (autoplay) {
+            if (!ctx) {
+              ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+              nextTime = ctx.currentTime + 0.02;
+            }
+            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+            const audioBuf = ctx.createBuffer(1, f32.length, sampleRate);
+            audioBuf.copyToChannel(f32, 0);
+            const src = ctx.createBufferSource();
+            src.buffer = audioBuf;
+            src.connect(ctx.destination);
+            const startAt = Math.max(ctx.currentTime + 0.01, nextTime);
+            src.start(startAt);
+            nextTime = startAt + audioBuf.duration;
+          }
+        }
+
+        function mergeWavBlob() {
+          if (pcmParts.length === 0) return null;
+          const totalLen = pcmParts.reduce((sum, p) => sum + p.length, 0);
+          const merged = new Float32Array(totalLen);
+          let off = 0;
+          for (const part of pcmParts) {
+            merged.set(part, off);
+            off += part.length;
+          }
+          return encodeWavPcm16(merged, sampleRate);
+        }
+
+        return { pushWavBase64, mergeWavBlob };
+      }
+
+      // ---- LiveASR (English-only ~0.96s causal chunks) ----
+      let liveSessionId = null;
+      let liveMicStream = null;
+      let liveAudioCtx = null;
+      let liveProcessor = null;
+      let livePcmBuf = [];
+      let liveChunkCount = 0;
+      let liveSending = Promise.resolve();
+      const LIVE_CHUNK_SAMPLES = 15360; // 0.96s @ 16 kHz
+
+      function float32ToPcm16Base64(samples) {
+        const buf = new ArrayBuffer(samples.length * 2);
+        const view = new DataView(buf);
+        for (let i = 0; i < samples.length; i++) {
+          const s = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        }
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      }
+
+      async function sendLiveChunk(samples, isFinal) {
+        if (!liveSessionId) return;
+        const b64 = samples.length > 0 ? float32ToPcm16Base64(samples) : '';
+        const t0 = performance.now();
+        const res = await fetch('/v1/audio/live-asr/chunk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: state.residentModel || undefined,
+            session_id: liveSessionId,
+            audio_base64: b64 || undefined,
+            format: 'pcm16',
+            sample_rate: 16000,
+            is_final: isFinal,
+          }),
+        });
+        const data = await res.json();
+        recordApi('POST', '/v1/audio/live-asr/chunk', res.status, performance.now() - t0, data);
+        if (!res.ok) {
+          showError('liveError', data?.error?.message || `HTTP ${res.status}`);
+          return;
+        }
+        liveChunkCount += 1;
+        if (data.text) {
+          const cur = $('liveTranscript').textContent === '(Waiting for speech…)' ? '' : $('liveTranscript').textContent;
+          $('liveTranscript').textContent = cur + data.text;
+        }
+        $('liveMeta').textContent = `${liveChunkCount} chunks · ${data.context_tokens} ctx tok`;
+      }
+
+      async function startLiveSession() {
+        showError('liveError', '');
+        $('liveTranscript').textContent = '(Waiting for speech…)';
+        liveChunkCount = 0;
+        const t0 = performance.now();
+        const res = await fetch('/v1/audio/live-asr/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: state.residentModel || undefined }),
+        });
+        const data = await res.json();
+        recordApi('POST', '/v1/audio/live-asr/start', res.status, performance.now() - t0, data);
+        if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+        liveSessionId = data.session_id;
+      }
+
+      async function stopLiveSession() {
+        if (liveProcessor) { liveProcessor.disconnect(); liveProcessor = null; }
+        if (liveMicStream) { liveMicStream.getTracks().forEach((t) => t.stop()); liveMicStream = null; }
+        if (liveAudioCtx) { await liveAudioCtx.close().catch(() => {}); liveAudioCtx = null; }
+        $('liveMicBtn').disabled = false;
+        $('liveWavBtn').disabled = false;
+        $('liveStopBtn').disabled = true;
+        if (!liveSessionId) return;
+        const rem = livePcmBuf.splice(0, livePcmBuf.length);
+        liveSending = liveSending.then(() => sendLiveChunk(new Float32Array(rem), true));
+        await liveSending;
+        const sid = liveSessionId;
+        liveSessionId = null;
+        await fetch('/v1/audio/live-asr/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sid }),
+        }).catch(() => {});
+        $('liveStatus').textContent = 'Stopped (flushed)';
+      }
+
+      $('liveMicBtn').addEventListener('click', async () => {
+        try {
+          await startLiveSession();
+          livePcmBuf = [];
+          liveMicStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+          liveAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const src = liveAudioCtx.createMediaStreamSource(liveMicStream);
+          liveProcessor = liveAudioCtx.createScriptProcessor(4096, 1, 1);
+          const inRate = liveAudioCtx.sampleRate;
+          liveProcessor.onaudioprocess = (ev) => {
+            const input = ev.inputBuffer.getChannelData(0);
+            const ratio = inRate / 16000;
+            const outLen = Math.max(1, Math.floor(input.length / ratio));
+            for (let i = 0; i < outLen; i++) {
+              livePcmBuf.push(input[Math.min(input.length - 1, Math.floor(i * ratio))]);
+            }
+            while (livePcmBuf.length >= LIVE_CHUNK_SAMPLES) {
+              const chunk = new Float32Array(livePcmBuf.splice(0, LIVE_CHUNK_SAMPLES));
+              liveSending = liveSending.then(() => sendLiveChunk(chunk, false));
+            }
+          };
+          src.connect(liveProcessor);
+          liveProcessor.connect(liveAudioCtx.destination);
+          $('liveMicBtn').disabled = true;
+          $('liveWavBtn').disabled = true;
+          $('liveStopBtn').disabled = false;
+          $('liveStatus').textContent = 'Listening (English LiveASR)…';
+        } catch (err) {
+          showError('liveError', err.message);
+          await stopLiveSession();
+        }
+      });
+
+      $('liveStopBtn').addEventListener('click', () => { stopLiveSession().catch((e) => showError('liveError', e.message)); });
+      $('liveWavBtn').addEventListener('click', () => $('liveWavInput').click());
+      $('liveWavInput').addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        try {
+          await startLiveSession();
+          $('liveMicBtn').disabled = true;
+          $('liveWavBtn').disabled = true;
+          $('liveStatus').textContent = `Simulating LiveASR from ${file.name}…`;
+          const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+          const ab = await file.arrayBuffer();
+          const decoded = await ctx.decodeAudioData(ab);
+          const ch0 = decoded.getChannelData(0);
+          await ctx.close().catch(() => {});
+          for (let off = 0; off < ch0.length; off += LIVE_CHUNK_SAMPLES) {
+            const slice = ch0.subarray(off, Math.min(ch0.length, off + LIVE_CHUNK_SAMPLES));
+            const isLast = off + LIVE_CHUNK_SAMPLES >= ch0.length;
+            await sendLiveChunk(slice, isLast);
+          }
+          $('liveStatus').textContent = `Completed (${file.name})`;
+        } catch (err) {
+          showError('liveError', err.message);
+        } finally {
+          liveSessionId = null;
+          $('liveMicBtn').disabled = false;
+          $('liveWavBtn').disabled = false;
+          $('liveStopBtn').disabled = true;
+        }
+      });
+
+      // ---- TTS Presets & Streaming ----
+      document.querySelectorAll('.tts-preset-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          $('ttsLangSelect').value = btn.dataset.lang || 'American English';
+          $('ttsVoiceSelect').value = btn.dataset.voice || 'female';
+          $('ttsInput').value = btn.dataset.text || '';
+        });
+      });
+
+      $('ttsForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = $('ttsInput').value.trim();
+        if (!input) return;
+        showError('ttsError', '');
+        $('ttsRunBtn').disabled = true;
+
+        const formatChoice = $('ttsFormatSelect').value;
+        const isStream = formatChoice === 'stream';
+        const body = {
+          model: state.residentModel || undefined,
+          input,
+          language: $('ttsLangSelect').value,
+          voice: $('ttsVoiceSelect').value,
+          response_format: isStream ? 'json' : formatChoice,
+          stream: isStream,
+          max_tokens: parseInt($('maxTokensInput').value, 10) || 512,
+        };
+        const sys = $('ttsSystemInput').value.trim();
+        if (sys) body.system_prompt = sys;
+        const tempVal = $('temperatureInput').value.trim();
+        if (tempVal !== '') body.temperature = parseFloat(tempVal);
+        const seedVal = $('seedInput').value.trim();
+        if (seedVal !== '') body.seed = parseInt(seedVal, 10);
+        const aTemp = $('audioTempInput').value.trim();
+        const aTopK = $('audioTopKInput').value.trim();
+        const aRepP = $('audioRepPenInput').value.trim();
+        const aRepW = $('audioRepWinInput').value.trim();
+        if (aTemp !== '') body.audio_temperature = parseFloat(aTemp);
+        if (aTopK !== '') body.audio_top_k = parseInt(aTopK, 10);
+        if (aRepP !== '') body.audio_repetition_penalty = parseFloat(aRepP);
+        if (aRepW !== '') body.audio_repetition_window = parseInt(aRepW, 10);
+
+        const t0 = performance.now();
+        try {
+          const res = await fetch('/v1/audio/speech', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const elapsed = performance.now() - t0;
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
+            recordApi('POST', '/v1/audio/speech', res.status, elapsed, errJson);
+            showError('ttsError', errJson?.error?.message || `HTTP ${res.status}`);
+            return;
+          }
+
+          if (isStream) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            const ttsStream = createGaplessAudioStream($('autoplayToggle').checked);
+            let sampleRate = 24000;
+            let frames = 0;
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const lines = buf.split('\n');
+              buf = lines.pop() || '';
+              for (const line of lines) {
+                const t = line.trim();
+                if (!t.startsWith('data:')) continue;
+                try {
+                  const evt = JSON.parse(t.slice(5).trim());
+                  if (evt.type === 'audio_chunk' && evt.audio_base64) {
+                    ttsStream.pushWavBase64(evt.audio_base64);
+                  } else if (evt.type === 'done') {
+                    sampleRate = evt.sample_rate || 24000;
+                    frames = evt.frames || 0;
+                    recordApi('POST', '/v1/audio/speech (SSE)', res.status, performance.now() - t0, evt);
+                  } else if (evt.type === 'error') {
+                    showError('ttsError', evt.error);
+                  }
+                } catch {}
+              }
+            }
+            const mergedBlob = ttsStream.mergeWavBlob();
+            if (mergedBlob) {
+              const wavUrl = URL.createObjectURL(mergedBlob);
+              $('ttsAudio').src = wavUrl;
+              $('ttsDownloadLink').href = wavUrl;
+              $('ttsResultBox').style.display = 'flex';
+            }
+            $('ttsTiming').textContent = `streamed ${(performance.now() - t0).toFixed(0)} ms`;
+            $('ttsMeta').textContent = `${frames} frames @ ${sampleRate} Hz (streamed)`;
+            return;
+          }
+
+          let wavUrl;
+          if (formatChoice === 'wav') {
+            const blob = await res.blob();
+            wavUrl = URL.createObjectURL(blob);
+            recordApi('POST', '/v1/audio/speech', res.status, elapsed, `audio/wav (${blob.size} bytes)`);
+            $('ttsTiming').textContent = `total ${elapsed.toFixed(0)} ms`;
+            $('ttsMeta').textContent = `${(blob.size / 1024).toFixed(1)} KB WAV`;
+          } else {
+            const data = await res.json();
+            recordApi('POST', '/v1/audio/speech', res.status, elapsed, {
+              ...data,
+              audio_base64: `<base64 ${(data.audio_base64 || '').length} chars>`,
+            });
+            const bin = Uint8Array.from(atob(data.audio_base64 || ''), (c) => c.charCodeAt(0));
+            const blob = new Blob([bin], { type: 'audio/wav' });
+            wavUrl = URL.createObjectURL(blob);
+            const t = data.timing;
+            $('ttsTiming').textContent = t
+              ? `total ${elapsed.toFixed(0)} ms · prefill ${t.prefill_ms.toFixed(1)} · depth ${t.depth_ms.toFixed(1)} · backbone ${t.backbone_ms.toFixed(1)} · codec ${t.codec_ms.toFixed(1)} ms`
+              : `${elapsed.toFixed(0)} ms`;
+            $('ttsMeta').textContent = `${data.frames} frames @ ${data.sample_rate} Hz`;
+          }
+
+          const audioEl = $('ttsAudio');
+          audioEl.src = wavUrl;
+          $('ttsDownloadLink').href = wavUrl;
+          $('ttsResultBox').style.display = 'flex';
+          if ($('autoplayToggle').checked) audioEl.play().catch(() => {});
+        } catch (err) {
+          showError('ttsError', err.message);
+        } finally {
+          $('ttsRunBtn').disabled = false;
+        }
+      });
+
+      // ---- Translate & Audio Understanding Panel ----
+      let trWavBlob = null;
+      function setTrWav(blob, label) {
+        trWavBlob = blob;
+        $('trAudioLabel').textContent = `${label} (${(blob.size / 1024).toFixed(1)} KB)`;
+        $('trClearAudioBtn').style.display = 'inline-flex';
+      }
+      document.querySelectorAll('.tr-preset-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          $('trSourceLang').value = btn.dataset.src || 'Chinese';
+          $('trTargetLang').value = btn.dataset.tgt || 'English';
+          $('trTextInput').value = btn.dataset.text || '';
+        });
+      });
+      $('trPickBtn').addEventListener('click', () => $('trFileInput').click());
+      $('trFileInput').addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (f) setTrWav(f, f.name);
+      });
+      $('trClearAudioBtn').addEventListener('click', () => {
+        trWavBlob = null;
+        $('trAudioLabel').textContent = 'No speech attached (text mode)';
+        $('trClearAudioBtn').style.display = 'none';
+      });
+      $('trMicBtn').addEventListener('click', () => {
+        toggleMic('tr', $('trMicBtn'), null).catch((err) => showError('trError', err.message));
+      });
+
+      $('trRunBtn').addEventListener('click', async () => {
+        showError('trError', '');
+        $('trRunBtn').disabled = true;
+        const t0 = performance.now();
+        try {
+          const body = {
+            model: state.residentModel || undefined,
+            source_language: $('trSourceLang').value.trim() || 'Chinese',
+            target_language: $('trTargetLang').value.trim() || 'English',
+            text: $('trTextInput').value.trim() || undefined,
+            max_tokens: parseInt($('maxTokensInput').value, 10) || 512,
+          };
+          if (trWavBlob) body.audio_base64 = await blobToBase64(trWavBlob);
+          const res = await fetch('/v1/audio/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+          const elapsed = performance.now() - t0;
+          recordApi('POST', '/v1/audio/translate', res.status, elapsed, data);
+          if (!res.ok) { showError('trError', data?.error?.message || `HTTP ${res.status}`); return; }
+          $('trResultTitle').textContent = `Translation (${data.source_language} → ${data.target_language})`;
+          $('trResultBody').textContent = data.text || '(empty)';
+          $('trMeta').textContent = `${data.usage?.tokens ?? 0} tokens · ${elapsed.toFixed(0)} ms`;
+          $('trResultBox').style.display = 'flex';
+        } catch (err) {
+          showError('trError', err.message);
+        } finally {
+          $('trRunBtn').disabled = false;
+        }
+      });
+
+      $('understandRunBtn').addEventListener('click', async () => {
+        showError('trError', '');
+        if (!trWavBlob) { showError('trError', 'Please attach or record a WAV clip for Audio Understanding QA.'); return; }
+        $('understandRunBtn').disabled = true;
+        const t0 = performance.now();
+        try {
+          const b64 = await blobToBase64(trWavBlob);
+          const q = $('trTextInput').value.trim() || 'What is happening in this recording?';
+          const res = await fetch('/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: state.residentModel || undefined,
+              max_tokens: parseInt($('maxTokensInput').value, 10) || 512,
+              messages: [
+                { role: 'system', content: 'Answer questions about the provided audio clip. Base every answer only on what can be heard.' },
+                { role: 'user', content: [{ type: 'input_audio', input_audio: { data: b64, format: 'wav' } }, { type: 'text', text: q }] },
+              ],
+            }),
+          });
+          const data = await res.json();
+          const elapsed = performance.now() - t0;
+          recordApi('POST', '/v1/chat/completions', res.status, elapsed, data);
+          if (!res.ok) { showError('trError', data?.error?.message || `HTTP ${res.status}`); return; }
+          $('trResultTitle').textContent = 'Audio Understanding Answer';
+          $('trResultBody').textContent = data?.choices?.[0]?.message?.content || '(empty)';
+          $('trMeta').textContent = `${data?.usage?.completion_tokens ?? 0} tokens · ${elapsed.toFixed(0)} ms`;
+          $('trResultBox').style.display = 'flex';
+        } catch (err) {
+          showError('trError', err.message);
+        } finally {
+          $('understandRunBtn').disabled = false;
+        }
+      });
+
+      // ---- System One Decisions Workbench ----
+      let d1ImageDataUrl = null;
+      let d1VideoFrames = [];
+      let d1AudioDataUrl = null;
+      const readFileDataUrl = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('read failed'));
+        reader.readAsDataURL(file);
+      });
+      const renderD1Boxes = (answers) => {
+        const svg = $('d1BoxOverlay');
+        if (!svg) return;
+        svg.innerHTML = '';
+        if (!d1ImageDataUrl || !answers || typeof answers !== 'object') return;
+        const colors = ['#22c55e', '#38bdf8', '#f59e0b', '#f43f5e', '#a855f7'];
+        let ci = 0;
+        const addBox = (b, label) => {
+          if (!b || typeof b.left !== 'number' || typeof b.top !== 'number' || typeof b.right !== 'number' || typeof b.bottom !== 'number') return;
+          const color = colors[ci++ % colors.length];
+          const w = Math.max(0, b.right - b.left);
+          const h = Math.max(0, b.bottom - b.top);
+          const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          rect.setAttribute('x', String(b.left));
+          rect.setAttribute('y', String(b.top));
+          rect.setAttribute('width', String(w));
+          rect.setAttribute('height', String(h));
+          rect.setAttribute('fill', 'none');
+          rect.setAttribute('stroke', color);
+          rect.setAttribute('stroke-width', '0.008');
+          svg.appendChild(rect);
+          const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          txt.setAttribute('x', String(Math.min(0.98, b.left + 0.01)));
+          txt.setAttribute('y', String(Math.max(0.05, b.top + 0.045)));
+          txt.setAttribute('fill', color);
+          txt.setAttribute('font-size', '0.04');
+          txt.setAttribute('font-weight', 'bold');
+          txt.textContent = label;
+          svg.appendChild(txt);
+        };
+        for (const [qid, ans] of Object.entries(answers)) {
+          if (ans?.type === 'box' && ans.box) {
+            const conf = typeof ans.confidence === 'number' ? ` ${(ans.confidence * 100).toFixed(0)}%` : '';
+            addBox(ans.box, `${qid}${conf}`);
+          } else if (ans?.type === 'boxes' && Array.isArray(ans.boxes)) {
+            ans.boxes.forEach((b, idx) => addBox(b, `${qid}#${idx + 1}`));
+          }
+        }
+      };
+      $('d1PickImageBtn').addEventListener('click', () => $('d1ImageInput').click());
+      $('d1ImageInput').addEventListener('change', async () => {
+        const file = $('d1ImageInput').files?.[0];
+        if (!file) return;
+        d1ImageDataUrl = await readFileDataUrl(file);
+        $('d1ImageLabel').textContent = file.name;
+        $('d1ClearImageBtn').style.display = 'inline-flex';
+        $('d1PreviewImg').src = d1ImageDataUrl;
+        $('d1PreviewWrap').style.display = 'block';
+        $('d1BoxOverlay').innerHTML = '';
+      });
+      $('d1ClearImageBtn').addEventListener('click', () => {
+        d1ImageDataUrl = null;
+        $('d1ImageInput').value = '';
+        $('d1ImageLabel').textContent = 'No image';
+        $('d1ClearImageBtn').style.display = 'none';
+        $('d1PreviewWrap').style.display = 'none';
+        $('d1BoxOverlay').innerHTML = '';
+      });
+      $('d1PickVideoBtn').addEventListener('click', () => $('d1VideoInput').click());
+      $('d1VideoInput').addEventListener('change', async () => {
+        const files = Array.from($('d1VideoInput').files || []);
+        if (!files.length) return;
+        d1VideoFrames = await Promise.all(files.map(readFileDataUrl));
+        $('d1VideoLabel').textContent = `${files.length} frame(s)`;
+        $('d1ClearVideoBtn').style.display = 'inline-flex';
+      });
+      $('d1ClearVideoBtn').addEventListener('click', () => {
+        d1VideoFrames = [];
+        $('d1VideoInput').value = '';
+        $('d1VideoLabel').textContent = 'No video';
+        $('d1ClearVideoBtn').style.display = 'none';
+      });
+      $('d1PickAudioBtn').addEventListener('click', () => $('d1AudioInput').click());
+      $('d1AudioInput').addEventListener('change', async () => {
+        const file = $('d1AudioInput').files?.[0];
+        if (!file) return;
+        d1AudioDataUrl = await readFileDataUrl(file);
+        $('d1AudioLabel').textContent = file.name;
+        $('d1ClearAudioBtn').style.display = 'inline-flex';
+      });
+      $('d1ClearAudioBtn').addEventListener('click', () => {
+        d1AudioDataUrl = null;
+        $('d1AudioInput').value = '';
+        $('d1AudioLabel').textContent = 'No audio';
+        $('d1ClearAudioBtn').style.display = 'none';
+      });
+      $('d1PresetTextBtn').addEventListener('click', () => {
+        $('d1StateInput').value = 'Customer Maya Chen requested a full refund of 49.50 USD for order #1234 placed on 2026-03-15.';
+        $('d1QuestionsInput').value = JSON.stringify({
+          is_refund: { type: 'noul', instructions: 'Is the customer asking for a refund?' },
+          sentiment: { type: 'choice', instructions: 'What is the customer sentiment?', criteria: { pos: 'positive', neu: 'neutral', neg: 'negative' } },
+          urgency: { type: 'score', instructions: 'How urgent is this request?', criteria: ['low', 'medium', 'high'] },
+          customer_name: { type: 'text', instructions: "What is the customer's full name?" },
+          amount: { type: 'number', instructions: 'What is the refund amount in USD?', range: [0, 100], step: 0.5, unit: 'USD' },
+        }, null, 2);
+      });
+      $('d1PresetImageBtn').addEventListener('click', () => {
+        $('d1StateInput').value = '';
+        $('d1QuestionsInput').value = JSON.stringify({
+          has_text: { type: 'noul', instructions: 'Does this image contain text?' },
+          style: { type: 'choice', instructions: 'What kind of image is this?', criteria: { photo: 'photograph', logo: 'logo or banner', chart: 'chart' } },
+          logo_box: { type: 'box', instructions: 'Where is the main text or logo?' },
+        }, null, 2);
+      });
+      $('d1PresetAudioBtn').addEventListener('click', () => {
+        $('d1StateInput').value = '';
+        $('d1QuestionsInput').value = JSON.stringify({
+          is_speech: { type: 'noul', instructions: 'Does this audio contain human speech?' },
+          greeting: { type: 'noul', instructions: 'Does the speaker say hello?' },
+        }, null, 2);
+      });
+      $('d1PresetSpokenBtn').addEventListener('click', () => {
+        $('d1StateInput').value = 'Customer Maya Chen requested a full refund of 49.50 USD for order #1234.';
+        $('d1QuestionsInput').value = JSON.stringify({
+          spoken_q: { type: 'noul', instructions: { type: 'audio', data: '__ATTACHED_WAV__' } },
+        }, null, 2);
+      });
+      $('d1PresetVideoBtn').addEventListener('click', () => {
+        $('d1StateInput').value = '';
+        $('d1QuestionsInput').value = JSON.stringify({
+          has_motion: { type: 'noul', instructions: 'Do these frames show a logo or banner?' },
+        }, null, 2);
+      });
+      $('d1RunBtn').addEventListener('click', async () => {
+        showError('d1Error', '');
+        let questions;
+        try {
+          questions = JSON.parse($('d1QuestionsInput').value);
+        } catch (err) {
+          showError('d1Error', `Invalid questions JSON: ${err.message}`);
+          return;
+        }
+        let usedAttachedWavAsSpoken = false;
+        for (const q of Object.values(questions)) {
+          if (q?.instructions && typeof q.instructions === 'object' && q.instructions.type === 'audio' && q.instructions.data === '__ATTACHED_WAV__') {
+            if (!d1AudioDataUrl) {
+              showError('d1Error', 'Attach a WAV file for the spoken question instruction.');
+              return;
+            }
+            q.instructions.data = d1AudioDataUrl;
+            usedAttachedWavAsSpoken = true;
+          }
+        }
+        const rawState = $('d1StateInput').value.trim();
+        let stateVal = rawState ? rawState : null;
+        if (rawState.startsWith('{') || rawState.startsWith('[')) {
+          try { stateVal = JSON.parse(rawState); } catch (_) {}
+        }
+        const payload = { state: stateVal, questions };
+        if (d1ImageDataUrl) payload.images = [d1ImageDataUrl];
+        if (d1VideoFrames.length > 0) payload.videos = [d1VideoFrames];
+        if (d1AudioDataUrl && !usedAttachedWavAsSpoken) payload.audio = [d1AudioDataUrl];
+        $('d1RunBtn').disabled = true;
+        $('d1Timing').textContent = 'Running…';
+        const t0 = performance.now();
+        try {
+          const res = await fetch('/v1/decisions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          const elapsed = performance.now() - t0;
+          recordApi('POST', '/v1/decisions', res.status, elapsed, data);
+          if (!res.ok) {
+            showError('d1Error', data?.error?.message || `HTTP ${res.status}`);
+            $('d1Timing').textContent = '';
+            return;
+          }
+          $('d1Timing').textContent = `${elapsed.toFixed(0)} ms`;
+          $('d1Meta').textContent = `${data?.usage?.input_tokens ?? 0} input tokens · ${elapsed.toFixed(0)} ms`;
+          $('d1ResultBody').textContent = JSON.stringify(data.answers, null, 2);
+          $('d1ResultBox').style.display = 'flex';
+          renderD1Boxes(data.answers);
+        } catch (err) {
+          showError('d1Error', err.message);
+          $('d1Timing').textContent = '';
+        } finally {
+          $('d1RunBtn').disabled = false;
+        }
+      });
+
+      refreshStatus();
+    })();
+  </script>
+</body>
+</html>

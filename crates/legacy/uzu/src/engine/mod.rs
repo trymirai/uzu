@@ -46,6 +46,8 @@ use shoji::{
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
+#[cfg(not(target_family = "wasm"))]
+use crate::registry::hf_cache::Registry as HfCacheRegistry;
 use crate::{
     device::Device,
     engine::bridge::UzuLlmBackend,
@@ -58,7 +60,6 @@ use crate::{
     },
     storage::{BearerToken, Config as StorageConfig, DownloadPhase, DownloadState, Storage},
 };
-#[cfg(not(target_family = "wasm"))]
 use crate::{
     logs,
     registry::openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
@@ -135,14 +136,29 @@ impl Engine {
             engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
             initializations.push(engine.start_registry(mirai_registry).await?);
 
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let hf_cache_registry =
+                    Box::new(HfCacheRegistry::new(uzu_backend_identifier.clone(), uzu_backend_version.clone()));
+                initializations.push(engine.start_registry(hf_cache_registry).await?);
+            }
+
             if let Some(local_path) = config.local_path {
-                let local_registry = LocalRegistry::new(LocalRegistryConfig::new(
-                    uzu_backend_identifier.clone(),
-                    uzu_backend_version.clone(),
-                    local_path,
-                ))
-                .await?;
-                initializations.push(engine.start_registry(Box::new(local_registry)).await?);
+                for path_str in local_path.split(&[':', ';'][..]) {
+                    let path_str = path_str.trim();
+                    if path_str.is_empty() {
+                        continue;
+                    }
+                    if let Ok(local_registry) = LocalRegistry::new(LocalRegistryConfig::new(
+                        uzu_backend_identifier.clone(),
+                        uzu_backend_version.clone(),
+                        path_str.to_string(),
+                    ))
+                    .await
+                    {
+                        initializations.push(engine.start_registry(Box::new(local_registry)).await?);
+                    }
+                }
             }
         }
 
@@ -505,6 +521,15 @@ impl Engine {
         }
 
         let models = self.models().await?;
+        if !identifier.contains('/') {
+            let by_repo_name = unique_model(
+                &identifier,
+                models.iter().filter(|model| model.identifier.rsplit('/').next() == Some(identifier.as_str())).cloned(),
+            )?;
+            if let Some(model) = by_repo_name {
+                return Ok(Some(model));
+            }
+        }
         #[cfg(not(target_family = "wasm"))]
         let memory_total = {
             let mut system = sysinfo::System::new();

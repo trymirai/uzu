@@ -71,6 +71,39 @@ fn main() -> anyhow::Result<ExitCode> {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if backend_metal {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
+
+        let src_file = PathBuf::from("src/vision/metal_vision.m");
+        if src_file.exists() {
+            println!("cargo::rerun-if-changed={}", src_file.display());
+            let obj_file = out_dir.join("metal_vision.o");
+            let lib_file = out_dir.join("libmetal_vision.a");
+            let clang_status = std::process::Command::new("clang")
+                .args([
+                    "-c",
+                    "-O3",
+                    src_file.to_str().unwrap(),
+                    "-o",
+                    obj_file.to_str().unwrap(),
+                    "-fobjc-arc",
+                ])
+                .status()
+                .context("Failed to execute clang for metal_vision.m")?;
+            if !clang_status.success() {
+                anyhow::bail!("clang failed to compile metal_vision.m");
+            }
+
+            let ar_status = std::process::Command::new("ar")
+                .args(["crus", lib_file.to_str().unwrap(), obj_file.to_str().unwrap()])
+                .status()
+                .context("Failed to execute ar for libmetal_vision.a")?;
+            if !ar_status.success() {
+                anyhow::bail!("ar failed to create libmetal_vision.a");
+            }
+
+            println!("cargo::rustc-link-search=native={}", out_dir.display());
+            println!("cargo::rustc-link-lib=static=metal_vision");
+            println!("cargo::rustc-link-lib=framework=MetalPerformanceShaders");
+        }
     }
 
     #[cfg(feature = "webgpu")]

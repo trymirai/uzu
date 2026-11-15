@@ -4,8 +4,11 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
-        common::gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        cpu::kernel::activation_transform::hadamard_transform,
+        common::gpu_types::{hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, moe},
+        cpu::kernel::{
+            activation_transform::hadamard_transform,
+            matmul::{read_zero_point, unpack_code},
+        },
     },
     data_type::DataTypeRepr,
 };
@@ -37,11 +40,10 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
     #[specialize] a_per_token: bool,
 ) {
     assert_eq!(zero_points.is_some(), BITS == 4);
-    // A reduction block holds 512 W4 or 256 W8 values, and the output rotation works on blocks of 32.
     let block_size = if BITS == 4 {
-        512
+        moe::GEMV_W4_INPUT_BLOCK
     } else {
-        256
+        moe::GEMV_W8_INPUT_BLOCK
     };
     assert!(in_vec_size.is_multiple_of(block_size));
     assert!(out_vec_size.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
@@ -73,33 +75,19 @@ pub fn moe_gemv<T: DataTypeRepr + Float, const GROUP_SIZE: u32, const BITS: u32>
             let mut acc = 0.0f32;
             for input_dim_idx in 0..k_u {
                 let a_val = unsafe { *route_a.add(input_dim_idx) }.to_f32().unwrap();
-                let pack_factor = 32 / bits;
                 let weight_linear_index = output_dim_idx * k_u + input_dim_idx;
-                let word_index = weight_linear_index / pack_factor;
-                let code_index_in_word = weight_linear_index % pack_factor;
-                let bit_offset = code_index_in_word * bits;
-                let weights_words = expert_b as *const u32;
-                let word = unsafe { weights_words.add(word_index).read_unaligned() };
-                let code_mask = (1u32 << bits) - 1;
-                let weight_code = ((word >> bit_offset) & code_mask) as u8;
-                let quantized_value = f32::from(weight_code);
+                let quantized_value = unsafe { unpack_code(expert_b as *const u32, weight_linear_index, bits, false) };
                 let group_index = input_dim_idx / group_size;
                 let metadata_index =
                     output_dim_idx * scale_output_stride as usize + group_index * scale_group_stride as usize;
                 let scale = unsafe { *expert_scales.add(metadata_index) }.to_f32().unwrap();
-                let zero_point_offset = if BITS == 4 {
-                    let zp_index = output_dim_idx * zero_point_output_stride as usize
+                let midpoint = (1u32 << (bits - 1)) as f32;
+                let zero_point = expert_zero_points.map(|expert_zero_points| {
+                    let zero_point_index = output_dim_idx * zero_point_output_stride as usize
                         + group_index * zero_point_group_stride as usize;
-                    let byte_value = unsafe { *expert_zero_points.unwrap().add(zp_index / 2) };
-                    let zp = if zp_index.is_multiple_of(2) {
-                        (byte_value & 0x0F) as f32
-                    } else {
-                        ((byte_value >> 4) & 0x0F) as f32
-                    };
-                    -scale * zp
-                } else {
-                    -scale * (1u32 << (bits - 1)) as f32
-                };
+                    unsafe { read_zero_point(expert_zero_points, zero_point_index, bits) }
+                });
+                let zero_point_offset = -scale * zero_point.unwrap_or(midpoint);
                 let b_val = scale * quantized_value + zero_point_offset;
                 acc += a_val * b_val;
             }

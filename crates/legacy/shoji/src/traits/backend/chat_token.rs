@@ -49,8 +49,10 @@ pub trait Instance:
         StreamInput = StreamInput,
         StreamOutput = StreamOutput,
         StreamMetrics = StreamMetrics,
-    >
+    > + Send + Sync + 'static
 {
+    fn as_any(&self) -> &dyn std::any::Any;
+
     fn with_config(
         &self,
         config: ChatConfig,

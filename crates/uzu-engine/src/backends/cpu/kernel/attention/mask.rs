@@ -26,6 +26,9 @@ pub fn should_use_key(
 
             if is_causal {
                 use_key &= q_seq_idx >= trie_node.trie_start && q_seq_idx <= trie_node.trie_end;
+            } else {
+                use_key &= (q_seq_idx < trie_node.height)
+                    || (q_seq_idx >= trie_node.trie_start && q_seq_idx <= trie_node.trie_end);
             }
         } else {
             // Non-trie, position equals index in the suffix

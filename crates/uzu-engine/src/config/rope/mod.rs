@@ -17,4 +17,9 @@ pub struct RoPEConfig {
     pub base: f32,
     pub max_sequence_length: u32,
     pub head_dim: u32,
+    /// Number of leading head channels subject to rotation (partial rotary).
+    /// Channels beyond `rotary_dim` keep their original value: their sine
+    /// entries are zero and cosine entries one. Defaults to `head_dim`.
+    #[serde(default)]
+    pub rotary_dim: Option<u32>,
 }

@@ -131,7 +131,16 @@ pub fn get_max_context_length<B: Backend>(
         } => model.max_context_length(),
         ContextLength::Custom {
             length,
-        } => Some(length.max(0) as u32),
+        } => {
+            // A custom request must still fit the model's RoPE limit; the
+            // attention state asserts on larger values (e.g. the server default
+            // 131072 for LFM3-VL, whose max is 128000).
+            let requested = length.max(0) as u32;
+            match model.max_context_length() {
+                Some(model_max) => Some(requested.min(model_max)),
+                None => Some(requested),
+            }
+        },
     }
 }
 

@@ -89,7 +89,16 @@ struct DirectSchedule {
             for (uint row_pair = 0; row_pair < 2; ++row_pair) {
               const uint row = weight_rows[tile_n][row_pair];
               scale_dst[tile_n][row_pair] = float(right.scale(row, weight_group_index, params));
-              offset_dst[tile_n][row_pair] = magic_dequant_bias(scale_dst[tile_n][row_pair]);
+              // The magic-number trick reconstructs (code - origin) * scale exactly; the
+              // offset term completes the dequant. Symmetric 8-bit codes are offset-binary
+              // (origin 128, offset -128 * scale); ScaleBias codes are unsigned and the
+              // per-row bias is the offset term.
+              if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant) {
+                offset_dst[tile_n][row_pair] =
+                    magic_dequant_bias(scale_dst[tile_n][row_pair]) + float(right.bias(row, weight_group_index, params));
+              } else {
+                offset_dst[tile_n][row_pair] = magic_dequant_bias(scale_dst[tile_n][row_pair]);
+              }
             }
           }
         };
@@ -121,8 +130,10 @@ struct DirectSchedule {
       auto weight_generator = [&](ushort k_index, ushort tile_n) -> float2 {
         const uint word_index = k_index * RightOperand::BITS / 32;
         auto decode = [&](ushort row_pair) {
+          constexpr uint CODE_ORIGIN =
+              RightOperand::SCHEME == GemmBPrologueKind::ScaleBiasDequant ? 0u : symmetric_zero_point<8>();
           return fma(
-              magic_code_float<symmetric_zero_point<8>()>(
+              magic_code_float<CODE_ORIGIN>(
                   extract_bits(weight_words[tile_n][row_pair][word_index], 8 * (k_index % 4), 8)
               ),
               weight_scales[tile_n][row_pair],

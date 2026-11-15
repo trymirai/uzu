@@ -402,12 +402,17 @@ METAL_FUNC void attention_matrix_mxu(
                 visible = ((row_mask >> ulong(key - prefix_length)) & 1ul) != 0ul;
               } else {
                 const auto node = trie[key - prefix_length];
-                const uint query = (query_row_base + uint(row)) % params.q_len;
-                visible = query >= node.trie_start && query <= node.trie_end;
+                visible = query_positions[row] >= node.trie_start && query_positions[row] <= node.trie_end;
               }
             }
           } else {
             visible = visible && key <= uint(row_mask);
+          }
+        } else if (is_trie) {
+          if (visible && key >= prefix_length) {
+            const auto node = trie[key - prefix_length];
+            visible = (query_positions[row] < node.height) ||
+                      (query_positions[row] >= node.trie_start && query_positions[row] <= node.trie_end);
           }
         }
         return visible ? value : -metal::numeric_limits<AccumType>::infinity();

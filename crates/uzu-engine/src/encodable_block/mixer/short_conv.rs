@@ -71,6 +71,12 @@ impl<B: Backend> MixerState<B> for ShortConvState<B> {
             },
         }
     }
+
+    fn reset(&mut self) -> Result<(), B::Error> {
+        self.is_empty = true;
+        self.suffix_state = None;
+        Ok(())
+    }
 }
 
 pub struct ShortConv<B: Backend> {

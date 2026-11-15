@@ -113,6 +113,12 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
         }
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<(), B::Error> {
+        self.is_empty = true;
+        self.suffix_status = None;
+        Ok(())
+    }
 }
 
 pub struct DeltaNet<B: Backend> {

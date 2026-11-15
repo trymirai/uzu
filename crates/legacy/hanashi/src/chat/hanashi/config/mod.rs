@@ -44,6 +44,12 @@ pub enum HanashiConfig {
     Lfm25Instruct,
     #[serde(rename = "lfm2.5-thinking")]
     Lfm25Thinking,
+    #[serde(rename = "lfm3")]
+    Lfm3,
+    /// LFM3-VL reply markup (`<tool_call><function=...>` XML-inline), which
+    /// differs from the LFM2/LFM3 text tool markers.
+    #[serde(rename = "lfm3-vl")]
+    Lfm3Vl,
     #[serde(rename = "llama-3.2")]
     Llama32,
     #[serde(rename = "qwen3")]
@@ -126,6 +132,8 @@ impl HanashiConfig {
             HanashiConfig::Lfm2 => resolve_bundled_config("lfm2"),
             HanashiConfig::Lfm25Instruct => resolve_bundled_config("lfm2.5-instruct"),
             HanashiConfig::Lfm25Thinking => resolve_bundled_config("lfm2.5-thinking"),
+            HanashiConfig::Lfm3 => resolve_bundled_config("lfm3"),
+            HanashiConfig::Lfm3Vl => resolve_bundled_config("lfm3-vl"),
             HanashiConfig::Llama32 => resolve_bundled_config("llama-3.2"),
             HanashiConfig::Qwen3 => resolve_bundled_config("qwen3"),
             HanashiConfig::Qwen3Instruct => resolve_bundled_config("qwen3-instruct"),

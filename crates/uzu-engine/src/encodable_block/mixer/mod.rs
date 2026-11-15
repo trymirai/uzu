@@ -36,6 +36,10 @@ pub trait MixerState<B: Backend>: Any + Send {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
+
+    fn reset(&mut self) -> Result<(), B::Error> {
+        Ok(())
+    }
 }
 
 impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {

@@ -153,6 +153,8 @@ reqwest = { version = "0.13.5", features = [
     "blocking",
     "query",
 ] }
+hf-hub = "1.0.0"
+image = "0.25"
 crc32c = "0.6.8"
 base64 = "0.23.1"
 bitflags = "2.13.2"

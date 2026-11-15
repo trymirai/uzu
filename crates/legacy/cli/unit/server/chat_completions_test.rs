@@ -86,7 +86,8 @@ fn response_format_validation_errors_are_request_errors() {
     let error = ResponseFormatError::InvalidResponseFormat("unknown type".to_string());
     match invalid_request_response("response_format", error.code(), error.message()) {
         ChatCompletionResult::Error(_) => {},
-        ChatCompletionResult::Json(_, _) | ChatCompletionResult::Stream(_) => {
+        ChatCompletionResult::Json(..) | ChatCompletionResult::Stream(..)
+        | ChatCompletionResult::ModelNotLoaded(_) => {
             panic!("response_format validation errors should be request errors")
         },
     }
@@ -413,10 +414,77 @@ fn message_content_accepts_string_null_and_text_parts() {
     let missing = request(r#"{"messages":[{"role":"user"}]}"#);
     assert_eq!(missing.messages[0].content, None);
 
-    let image = serde_json::from_str::<ChatCompletionRequest>(
+    let invalid_image = serde_json::from_str::<ChatCompletionRequest>(
         r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}"#,
     );
-    assert!(image.is_err());
+    assert!(invalid_image.is_err());
+}
+
+#[test]
+fn message_content_accepts_valid_base64_image_url() {
+    let tiny_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let json = format!(
+        r#"{{"messages":[{{"role":"user","content":[{{"type":"text","text":"What is this?"}},{{"type":"image_url","image_url":{{"url":"data:image/png;base64,{tiny_png_b64}"}}}}]}}]}}"#
+    );
+    let req = request(&json);
+    assert_eq!(req.messages[0].content.as_deref(), Some("What is this?"));
+    assert_eq!(req.messages[0].images.len(), 1);
+    assert_eq!(req.messages[0].images[0].image.width(), 1);
+    assert_eq!(req.messages[0].images[0].image.height(), 1);
+
+    let chat_messages = to_chat_messages(&req.messages);
+    assert_eq!(chat_messages.len(), 1);
+    let has_image_block = chat_messages[0].content.iter().any(|b| matches!(b, ChatContentBlock::Image { .. }));
+    let has_text_block = chat_messages[0].content.iter().any(|b| matches!(b, ChatContentBlock::Text { .. }));
+    assert!(has_image_block);
+    assert!(has_text_block);
+}
+
+#[test]
+fn message_content_accepts_file_url() {
+    let repo_dir = std::env::current_dir().unwrap();
+    let img_path = repo_dir.join("flux-tools.bfl.ai_precise-editing.png");
+    if img_path.exists() {
+        let file_url = format!("file://{}", img_path.display());
+        let json = format!(
+            r#"{{"messages":[{{"role":"user","content":[{{"type":"image_url","image_url":{{"url":"{file_url}"}}}}]}}]}}"#
+        );
+        let req = request(&json);
+        assert_eq!(req.messages[0].images.len(), 1);
+        assert_eq!(req.messages[0].images[0].image.width(), 1422);
+        assert_eq!(req.messages[0].images[0].image.height(), 1064);
+    }
+}
+
+#[test]
+fn message_content_rejects_nonexistent_file() {
+    let json = r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"file:///nonexistent/path/never_existed.png"}}]}]}"#;
+    assert!(serde_json::from_str::<ChatCompletionRequest>(json).is_err());
+}
+
+#[test]
+fn multiturn_messages_preserve_per_turn_images_and_latest_selection() {
+    let tiny_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let json = format!(
+        r#"{{"messages":[
+            {{"role":"user","content":[{{"type":"text","text":"First turn"}},{{"type":"image_url","image_url":{{"url":"data:image/png;base64,{tiny_png_b64}"}}}}]}},
+            {{"role":"assistant","content":"First reply"}},
+            {{"role":"user","content":[{{"type":"text","text":"Second turn"}},{{"type":"image_url","image_url":{{"url":"data:image/png;base64,{tiny_png_b64}"}}}}]}}
+        ]}}"#
+    );
+    let req = request(&json);
+    assert_eq!(req.messages.len(), 3);
+    assert_eq!(req.messages[0].images.len(), 1);
+    assert_eq!(req.messages[1].images.len(), 0);
+    assert_eq!(req.messages[2].images.len(), 1);
+
+    // Latest selection logic
+    let target = req
+        .messages
+        .iter()
+        .rev()
+        .find_map(|m| m.images.last().map(|img| &img.image));
+    assert!(target.is_some());
 }
 
 #[test]
@@ -688,3 +756,50 @@ fn overflow_text_without_the_variant_stays_a_backend_error() {
     assert_eq!(body["error"]["param"], serde_json::Value::Null);
     assert_eq!(body["error"]["message"], "Context overflow");
 }
+
+#[test]
+fn unclosed_think_promotes_to_content_on_clean_stop() {
+    // MiniCPM short-answer pattern: open <think> in the prompt, the model
+    // writes the answer and hits EOS without ever emitting </think>.
+    let (reasoning, content, promoted) =
+        promote_unclosed_think("RAW-HIGH".to_string(), String::new(), "stop", "RAW-HIGH");
+    assert!(promoted);
+    assert_eq!(reasoning, None);
+    assert_eq!(content, "RAW-HIGH");
+}
+
+#[test]
+fn unclosed_think_is_kept_as_reasoning_on_truncation() {
+    // A truncated turn genuinely is unfinished reasoning.
+    let (reasoning, content, promoted) =
+        promote_unclosed_think("still thinking".to_string(), String::new(), "length", "still thinking");
+    assert!(!promoted);
+    assert_eq!(reasoning.as_deref(), Some("still thinking"));
+    assert!(content.is_empty());
+}
+
+#[test]
+fn closed_think_is_never_promoted() {
+    // Normal contract: reasoning, then </think>, then the body.
+    let (reasoning, content, promoted) = promote_unclosed_think(
+        "let me compute".to_string(),
+        "42".to_string(),
+        "stop",
+        "let me compute</think>42",
+    );
+    assert!(!promoted);
+    assert_eq!(reasoning.as_deref(), Some("let me compute"));
+    assert_eq!(content, "42");
+}
+
+#[test]
+fn closed_think_with_empty_body_is_not_promoted() {
+    // The model closed the section and ended without a body: an empty reply,
+    // not a promotion (the reasoning is real reasoning, not the answer).
+    let (reasoning, content, promoted) =
+        promote_unclosed_think("real reasoning".to_string(), String::new(), "stop", "real reasoning</think>");
+    assert!(!promoted);
+    assert_eq!(reasoning.as_deref(), Some("real reasoning"));
+    assert!(content.is_empty());
+}
+

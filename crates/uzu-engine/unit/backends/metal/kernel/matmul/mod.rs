@@ -3,6 +3,7 @@ mod dispatch_paths_test;
 mod gemm_bench;
 mod interleaved_rows_test;
 mod quant_dispatch_test;
+mod prefill_gemm_bench_test;
 mod quant_gemm_bench;
 mod qwen3_bench;
 mod trellis_gemm_test;

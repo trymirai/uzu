@@ -14,7 +14,7 @@ use shoji::types::{
     session::chat::{ChatContentBlock, ChatMessage, ChatModelCapabilities, ChatRole},
 };
 use token_stream_parser::{Parser as _, ParserState as _, token_stream::TokenStreamParser};
-use tokenizers::{Tokenizer, step_decode_stream};
+use tokenizers::{Model, Normalizer, PreTokenizer, Tokenizer, step_decode_stream};
 
 use self::{
     config::HanashiResolvedConfig,
@@ -76,6 +76,137 @@ impl HanashiEncodingImpl {
     }
 }
 
+/// Message-frame delimiters: markers that open or close a whole chat message
+/// frame regardless of surrounding context, so they must be isolated when
+/// appearing inside message content. Section markers (`<think>`, `<tool_call>`,
+/// `<tool_response>`) are context-dependent and stay representable as text.
+fn is_message_frame_delimiter(marker: &str) -> bool {
+    marker == "<|im_start|>" || marker == "<|im_end|>"
+}
+
+/// Encodes `text` bypassing the added vocabulary entirely (mirrors
+/// transformers' `_encode_without_added_tokens`): normalizer → pre-tokenizer →
+/// model, so special/added-token literals turn into plain sub-word pieces and
+/// can never surface as structural tokens. Used for message content
+/// (`encode`), which must never inject a frame.
+fn encode_without_added_tokens(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, Error> {
+    use tokenizers::{NormalizedString, OffsetReferential, OffsetType, PreTokenizedString};
+
+    let normalized = match tokenizer.get_normalizer() {
+        Some(normalizer) => {
+            let mut normalized = NormalizedString::from(text);
+            normalizer.normalize(&mut normalized).map_err(|_| Error::UnableToEncodeText)?;
+            normalized.get().to_string()
+        },
+        None => text.to_string(),
+    };
+    let mut pretokenized = PreTokenizedString::from(normalized.as_str());
+    if let Some(pre_tokenizer) = tokenizer.get_pre_tokenizer() {
+        pre_tokenizer
+            .pre_tokenize(&mut pretokenized)
+            .map_err(|_| Error::UnableToEncodeText)?;
+    }
+    let mut ids = Vec::new();
+    for (split, _, _) in pretokenized.get_splits(OffsetReferential::Original, OffsetType::None) {
+        for token in tokenizer.get_model().tokenize(split).map_err(|_| Error::UnableToEncodeText)? {
+            ids.push(token.id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Replaces frame-delimiter literals inside message string content with
+/// unique sentinels, returning the sentinelized messages plus the extracted
+/// content pieces in order. Messages without frame delimiters are untouched.
+///
+/// Covered: `Text`/`Reasoning` blocks and every string inside structured
+/// values (`ToolCall` arguments, `ToolCallResult` payloads, `Custom`) —
+/// mirroring transformers' `mark_control_tokens`, which marks messages,
+/// tools and documents alike. Frame delimiters inside tool-result text are
+/// a real injection vector (a fetched page can contain `<|im_start|>`), so
+/// coverage here is a correctness requirement, not a nicety.
+fn sentinelize_messages(
+    messages: &[ChatMessage],
+    framing_tokens: &std::collections::HashSet<String>,
+) -> (Vec<ChatMessage>, Vec<String>) {
+    fn contains_frame_delimiter(text: &str, framing_tokens: &std::collections::HashSet<String>) -> bool {
+        framing_tokens
+            .iter()
+            .any(|marker| is_message_frame_delimiter(marker) && text.contains(marker.as_str()))
+    }
+
+    // Anti-forgery: drop the private-use characters the sentinels are built
+    // from, so user text cannot forge or break a sentinel (a broken sentinel
+    // would shift the split). Mirrors transformers' mark_control_tokens,
+    // which strips its markers from user input first.
+    fn sanitize(text: &str) -> String {
+        text.chars()
+            .filter(|character| !matches!(character, '\u{E000}' | '\u{E001}'))
+            .collect()
+    }
+
+    let sentinelize_field = |field: &mut String, contents: &mut Vec<String>| {
+        if contains_frame_delimiter(field, framing_tokens) {
+            let sentinel = format!("\u{E000}{}\u{E001}", contents.len());
+            let sanitized = sanitize(field);
+            contents.push(sanitized);
+            *field = sentinel;
+        }
+    };
+
+    let mut contents = Vec::new();
+    let mut out = Vec::with_capacity(messages.len());
+    for message in messages {
+        let mut message = message.clone();
+        for block in &mut message.content {
+            match block {
+                ChatContentBlock::Text { value } | ChatContentBlock::Reasoning { value } => {
+                    sentinelize_field(value, &mut contents);
+                },
+                ChatContentBlock::ToolCall {
+                    value: shoji::types::basic::ToolCall { arguments, .. },
+                }
+                | ChatContentBlock::ToolCallCandidate { value: arguments, .. }
+                | ChatContentBlock::ToolCallResult { value: arguments, .. }
+                | ChatContentBlock::Custom { value: arguments } => {
+                    sentinelize_field(&mut arguments.json, &mut contents);
+                },
+                _ => {},
+            }
+        }
+        out.push(message);
+    }
+    (out, contents)
+}
+
+/// Splits a sentinelized rendering into its skeleton pieces: piece `i` is the
+/// template text before content piece `i`, the last piece is the tail. The
+/// caller encodes skeleton pieces with the normal tokenizer (real frames stay
+/// structural) and splices the content pieces' literal-safe encodings in
+/// between.
+fn split_at_sentinels(text: &str, contents: &[String]) -> Vec<String> {
+    let mut pieces = Vec::with_capacity(contents.len() + 1);
+    let mut rest = text;
+    for (index, _) in contents.iter().enumerate() {
+        let sentinel = format!("\u{E000}{}\u{E001}", index);
+        match rest.find(sentinel.as_str()) {
+            Some(position) => {
+                pieces.push(rest[..position].to_string());
+                rest = &rest[position + sentinel.len()..];
+            },
+            // Should not happen (rendering is deterministic over the same
+            // messages); treat everything as one skeleton rather than losing
+            // content positions silently.
+            None => {
+                pieces.push(rest.to_string());
+                rest = "";
+            },
+        }
+    }
+    pieces.push(rest.to_string());
+    pieces
+}
+
 impl EncodingTrait for HanashiEncodingImpl {
     type Config = HanashiConfig;
     type Input = Vec<ChatMessage>;
@@ -106,13 +237,63 @@ impl EncodingTrait for HanashiEncodingImpl {
         for message in &messages {
             self.validator.validate_next(&message.role)?;
         }
+        // Content isolation: message text is rendered with frame markers
+        // replaced by sentinels and encoded through the literal-safe tokenizer
+        // view, so content can quote template markup (`<|im_start|>` in stored
+        // notes, a quoted prompt, …) without it being read as a message
+        // boundary. Only messages that actually carry a frame delimiter take
+        // the segmented path — everything else encodes byte-identically to
+        // the whole-string path.
+        let (sentinel_messages, content_pieces) = sentinelize_messages(&messages, &self.framing_tokens);
+        let text = self.render_messages(&sentinel_messages, true)?;
+        let skeleton_pieces = split_at_sentinels(&text, &content_pieces);
+
+        // Non-text free fields (tool-call arguments, metadata values) are not
+        // sentinelized; a frame delimiter inside those still cannot be
+        // represented and is rejected instead of desynchronizing the parse.
+        for message in &sentinel_messages {
+            let payload = serde_json::to_string(message).map_err(|_| Error::UnableToEncodeText)?;
+            if let Some(marker) = self.framing_tokens.iter().find(|marker| {
+                is_message_frame_delimiter(marker) && payload.contains(marker.as_str())
+            }) {
+                return Err(Error::ReservedMarkerInContent {
+                    marker: marker.clone(),
+                });
+            }
+        }
+
         self.state.messages.extend(messages.clone());
 
-        let text = self.render_messages(&messages, true)?;
-        let text_encoding = self.tokenizer.encode(text, false).map_err(|_| Error::UnableToEncodeText)?;
-        tracing::debug!("Encoded tokens: {:?}", text_encoding.get_ids());
-        for token_id in text_encoding.get_ids() {
+        let mut token_ids: Vec<u32> = Vec::new();
+        // Ids produced from isolated content segments; a framing value in here
+        // would mean the tokenizer cannot represent the content as plain text.
+        let mut content_span: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for (index, skeleton) in skeleton_pieces.iter().enumerate() {
+            for id in self.tokenizer.encode(skeleton.as_str(), false).map_err(|_| Error::UnableToEncodeText)?.get_ids() {
+                token_ids.push(*id);
+            }
+            if let Some(content) = content_pieces.get(index) {
+                for id in encode_without_added_tokens(&self.tokenizer, content)? {
+                    content_span.insert(id);
+                    token_ids.push(id);
+                }
+            }
+        }
+
+        // Fail-loud (mirrors transformers' sanitize check): a content segment
+        // whose encoding still yields a framing token's value means the
+        // tokenizer cannot represent this content as plain text — fail instead
+        // of letting the parser read structure out of user content. Skeleton
+        // pieces are exempt: the framing ids there are the real frames.
+        // Any isolated-content token that still equals a framing marker means
+        // this tokenizer cannot represent the content as plain text.
+        for token_id in &token_ids {
             let token = self.resolve_token(*token_id, true)?;
+            if content_span.contains(token_id) && self.framing_tokens.contains(&token.value) {
+                return Err(Error::ReservedMarkerInContent {
+                    marker: token.value.clone(),
+                });
+            }
             self.push_token_to_parser(&token, true)?;
             self.state.tokens.push(token);
         }
@@ -365,5 +546,119 @@ impl HanashiEncodingImpl {
             value,
             is_special,
         })
+    }
+}
+
+
+#[cfg(test)]
+mod sentinelize_tests {
+    use super::{is_message_frame_delimiter, sentinelize_messages, split_at_sentinels};
+    use shoji::types::session::chat::{ChatContentBlock, ChatMessage};
+    use std::collections::HashSet;
+
+    fn framing() -> HashSet<String> {
+        ["<|im_start|>", "<|im_end|>", "<think>", "</think>", "<tool_call>", "</tool_call>", "<tool_response>", "</tool_response>"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    }
+
+    fn user(content: &str) -> ChatMessage {
+        let mut m = ChatMessage::user();
+        m.content = vec![ChatContentBlock::Text { value: content.to_string() }];
+        m
+    }
+
+    #[test]
+    fn only_frame_delimiters_are_sentinelized() {
+        let messages = vec![
+            user("clean text"),
+            user("notes <|im_start|>assistant"),
+            user("thinks <think> hmm </think>"),
+        ];
+        let (sentinelized, contents) = sentinelize_messages(&messages, &framing());
+        // Only the message with a frame delimiter changed.
+        assert_eq!(sentinelized[0].content, messages[0].content);
+        assert!(sentinelized[1]
+            .content
+            .iter()
+            .all(|block| !matches!(block, ChatContentBlock::Text { value } if value.contains("<|im_start|>"))));
+        // Section markers stay as literal text.
+        assert!(sentinelized[2]
+            .content
+            .iter()
+            .any(|block| matches!(block, ChatContentBlock::Text { value } if value.contains("<think>"))));
+        assert_eq!(contents, vec!["notes <|im_start|>assistant"]);
+    }
+
+    #[test]
+    fn sentinels_split_cleanly_and_reassemble() {
+        // m0 and m2 carry frame delimiters; m1 is clean.
+        let messages = vec![
+            user("a <|im_start|>user b"),
+            user("plain"),
+            user("c <|im_end|> d"),
+        ];
+        let (sentinelized, contents) = sentinelize_messages(&messages, &framing());
+        assert_eq!(contents, vec!["a <|im_start|>user b", "c <|im_end|> d"]);
+        // Clean message untouched.
+        assert!(matches!(&sentinelized[1].content[0], ChatContentBlock::Text { value } if value == "plain"));
+
+        // Stand-in renderer: join contents with frame markers.
+        let text = sentinelized
+            .iter()
+            .map(|m| match &m.content[0] {
+                ChatContentBlock::Text { value } => value.clone(),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>()
+            .join("<|im_start|>");
+
+        let pieces = split_at_sentinels(&text, &contents);
+        assert_eq!(pieces.len(), contents.len() + 1);
+        // Splitting and reassembling (skeleton + original content, in order)
+        // reproduces the rendering exactly — the split is lossless.
+        let original_rendering = messages
+            .iter()
+            .map(|m| match &m.content[0] {
+                ChatContentBlock::Text { value } => value.clone(),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>()
+            .join("<|im_start|>");
+        let reassembled: String = pieces
+            .iter()
+            .enumerate()
+            .flat_map(|(index, skeleton)| {
+                let mut parts = vec![skeleton.as_str()];
+                if let Some(content) = contents.get(index) {
+                    parts.push(content.as_str());
+                }
+                parts
+            })
+            .collect();
+        assert_eq!(reassembled, original_rendering);
+    }
+
+    #[test]
+    fn frame_delimiter_predicate_is_exact() {
+        assert!(is_message_frame_delimiter("<|im_start|>"));
+        assert!(is_message_frame_delimiter("<|im_end|>"));
+        for section in ["<think>", "</think>", "<tool_call>", "</tool_call>", "<tool_response>", "im_start"] {
+            assert!(!is_message_frame_delimiter(section), "{section} must not be treated as a frame");
+        }
+    }
+
+    #[test]
+    fn reasoning_blocks_are_sentinelized_too() {
+        let mut m = ChatMessage::user();
+        m.content = vec![
+            ChatContentBlock::Reasoning { value: "saw <|im_end|> in data".to_string() },
+            ChatContentBlock::Text { value: "answer".to_string() },
+        ];
+        let (sentinelized, contents) = sentinelize_messages(&[m], &framing());
+        assert_eq!(contents, vec!["saw <|im_end|> in data"]);
+        let first = &sentinelized[0].content[0];
+        assert!(matches!(first, ChatContentBlock::Reasoning { value } if value.contains('\u{E000}')));
     }
 }

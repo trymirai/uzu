@@ -4,6 +4,7 @@ pub mod d4s4_spec;
 pub mod full_precision_spec;
 pub mod hybrid_spec;
 pub mod int_spec;
+pub mod jangtq2_spec;
 pub mod mlx_spec;
 pub mod output_stack;
 pub mod qtip_gaussian;
@@ -19,6 +20,7 @@ pub enum Layout {
     full_precision_spec::FullPrecisionSpec,
     hybrid_spec::HybridSpec,
     int_spec::IntSpec,
+    jangtq2_spec::Jangtq2Spec,
     mlx_spec::MLXSpec,
     d4s4_spec::D4S4Spec,
     d4s4_spec::LatticeSpec,

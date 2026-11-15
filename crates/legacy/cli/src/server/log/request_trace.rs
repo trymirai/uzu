@@ -1,7 +1,8 @@
 use std::fmt;
 
+use chrono::Local;
 use tracing::{
-    Event, Subscriber,
+    Event, Level, Subscriber,
     field::{Field, Visit},
     span::{Attributes, Id},
 };
@@ -11,6 +12,9 @@ use tracing_subscriber::{
     layer::Context,
     registry::LookupSpan,
 };
+
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_DIM: &str = "\x1b[2m";
 
 #[derive(Default)]
 struct RequestId(Option<String>);
@@ -60,7 +64,46 @@ where
     }
 }
 
-pub(super) struct RequestFormatter;
+fn level_ansi(level: &Level) -> &'static str {
+    match *level {
+        Level::ERROR => "\x1b[31m",
+        Level::WARN => "\x1b[33m",
+        Level::INFO => "\x1b[32m",
+        Level::DEBUG => "\x1b[34m",
+        Level::TRACE => "\x1b[35m",
+    }
+}
+
+/// Console/file event format: `<timestamp> <LEVEL> [<request_id>] <fields>`.
+///
+/// Colors and dimming are emitted only when constructed with
+/// [`RequestFormatter::colored`]; the file log uses the plain variant.
+pub(super) struct RequestFormatter {
+    ansi: bool,
+}
+
+impl RequestFormatter {
+    pub(super) fn colored() -> Self {
+        Self {
+            ansi: true,
+        }
+    }
+
+    pub(super) fn plain() -> Self {
+        Self {
+            ansi: false,
+        }
+    }
+
+    fn timestamp(&self) -> String {
+        let now = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        if self.ansi {
+            format!("{}{now}{}", ANSI_DIM, ANSI_RESET)
+        } else {
+            now.to_string()
+        }
+    }
+}
 
 impl<S, N> FormatEvent<S, N> for RequestFormatter
 where
@@ -73,15 +116,31 @@ where
         mut writer: Writer<'_>,
         event: &Event<'_>,
     ) -> fmt::Result {
+        let metadata = event.metadata();
+        write!(writer, "{} ", self.timestamp())?;
+        let level = metadata.level().to_string();
+        let padded = format!("{level:<5}");
+        if self.ansi {
+            write!(writer, "{}{padded}{}", level_ansi(metadata.level()), ANSI_RESET)?;
+        } else {
+            write!(writer, "{padded}")?;
+        }
+
         if let Some(scope) = ctx.event_scope() {
             for span in scope {
                 let extensions = span.extensions();
                 if let Some(RequestId(Some(id))) = extensions.get::<RequestId>() {
-                    write!(writer, "[{id}] ")?;
+                    if self.ansi {
+                        write!(writer, " \x1b[36m[{id}]\x1b[0m")?;
+                    } else {
+                        write!(writer, " [{id}]")?;
+                    }
                     break;
                 }
             }
         }
+
+        write!(writer, " ")?;
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         writeln!(writer)
     }

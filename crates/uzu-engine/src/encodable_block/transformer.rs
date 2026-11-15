@@ -9,7 +9,10 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        mixer::{MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            MixerState,
+            attention::{AttentionState, rope::PrecalculatedRoPE},
+        },
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
@@ -25,7 +28,8 @@ enum TransformerLayerStateType<B: Backend> {
 
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
-    context_length: u32,
+    pub context_length: u32,
+    pub mrope_delta: i64,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -76,6 +80,43 @@ impl<B: Backend> TransformerState<B> {
         command_buffer.debug_point(&format!("accepted {} tokens", accepted_indices.len()));
 
         Ok(())
+    }
+
+    pub fn reset(&mut self) -> Result<(), B::Error> {
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
+
+            layer_state.reset()?;
+        }
+
+        self.context_length = 0;
+        self.mrope_delta = 0;
+
+        Ok(())
+    }
+
+    pub fn compact_sink_window(
+        &mut self,
+        sink_len: u32,
+        evict_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        if evict_count == 0 || self.context_length <= sink_len + evict_count {
+            return;
+        }
+        let command_buffer = &mut *command_buffer.debug_group("transformer sink window compact");
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
+            if let Some(attn) = (&mut **layer_state as &mut dyn std::any::Any).downcast_mut::<AttentionState<B>>() {
+                attn.compact_sink_window(sink_len, evict_count, command_buffer);
+            }
+        }
+        self.context_length -= evict_count;
+        self.mrope_delta += evict_count as i64;
     }
 }
 
@@ -250,10 +291,12 @@ impl<B: Backend> Transformer<B> {
             .collect::<Result<_, B::Error>>()?;
 
         let context_length = 0;
+        let mrope_delta = 0;
 
         Ok(TransformerState {
             layer_states,
             context_length,
+            mrope_delta,
         })
     }
 
@@ -261,6 +304,29 @@ impl<B: Backend> Transformer<B> {
         &self,
         input: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        batch_dim: &BatchTopology,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
+        self.encode_multimodal(
+            input,
+            per_layer_inputs,
+            None,
+            batch_dim,
+            output_range,
+            hidden_feature_layer_indices,
+            state,
+            command_buffer,
+        )
+    }
+
+    pub fn encode_multimodal(
+        &self,
+        input: B::ScratchBuffer,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        mrope_positions: Option<&[[u32; 3]]>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
@@ -285,12 +351,22 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
+        let mrope_delta = state.as_ref().map(|state| state.mrope_delta).unwrap_or(0);
+        let token_positions = batch_dim
+            .heights()
+            .map(|rel_pos| (context_length as i64 + mrope_delta + rel_pos as i64).max(0) as u32)
+            .collect::<Box<[u32]>>();
 
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
+            .map(|rope_config| {
+                if let Some(mrope) = mrope_positions {
+                    PrecalculatedRoPE::precalculate_mrope(rope_config, mrope, command_buffer)
+                } else {
+                    PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer)
+                }
+            })
             .collect::<Result<Box<[_]>, B::Error>>()
             .map_err(TransformerEncodeError::Backend)?;
 

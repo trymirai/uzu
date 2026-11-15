@@ -106,6 +106,7 @@ web-sys = { workspace = true, features = ["Navigator", "Window"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 backend-remote.workspace = true
+hf-hub.workspace = true
 rodio.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["full"] }

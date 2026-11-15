@@ -1,7 +1,7 @@
 pub(crate) mod common;
 
 #[cfg(backend = "metal")]
-pub(crate) mod metal;
+pub mod metal;
 
 #[cfg(backend = "vulkan")]
 pub mod vulkan;

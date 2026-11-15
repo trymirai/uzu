@@ -152,6 +152,24 @@ fn assert_parity<T: DataTypeRepr + Float + Debug + Display>(
     }
 }
 
+#[uzu_test]
+fn probe_scale_bias_8_plan() {
+    let context = block_on(MetalContext::new()).expect("Metal context");
+    for (bits, method) in [(8u32, QuantizationMethod::ScaleBias), (4u32, QuantizationMethod::ScaleBias), (8u32, QuantizationMethod::ScaleSymmetric)] {
+    let input = QuantInput::<bf16>::new(64, 2048, 256, 64, bits, method, 0);
+    let gemm = GemmKernel::new(DataType::BF16, DataType::BF16, DataType::BF16);
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let args = quant_arguments(&mut buffers, &input);
+    let shape = MatmulShape::from_arguments(&args);
+    for engine in [GemmEngine::Simdgroup, GemmEngine::Mxu] {
+        match gemm.select_plan_for_engine(&shape, engine, &context) {
+            Ok(plan) => println!("PLAN bits={bits} {method:?} {engine:?}: {plan:?}"),
+            Err(error) => println!("PLAN bits={bits} {method:?} {engine:?}: error {error:?}"),
+        }
+    }
+    }
+}
+
 fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
     m: u32,
     k: u32,
@@ -214,6 +232,11 @@ fn parity_bf16(
 #[test_attr(uzu_test)]
 #[case::gs32_8bit_symmetric_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleSymmetric)]
 #[case::gs64_8bit_symmetric_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
+#[case::gs64_8bit_mlx_decode(1, 2048, 256, 64, 8, QuantizationMethod::ScaleBias)]
+#[case::gs64_8bit_mlx_small(8, 2048, 256, 64, 8, QuantizationMethod::ScaleBias)]
+#[case::gs64_8bit_mlx_prefill(64, 2048, 256, 64, 8, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_mlx_prefill_split(64, 2048, 256, 64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_8bit_mlx_prefill_nosplit(64, 256, 256, 64, 8, QuantizationMethod::ScaleBias)]
 fn parity_bf16_8bit_splitk(
     #[case] m: u32,
     #[case] k: u32,
