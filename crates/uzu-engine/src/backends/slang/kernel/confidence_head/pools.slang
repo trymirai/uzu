@@ -9,6 +9,7 @@ import generated.confidence_head;
   RWStructuredBuffer<float> pool_features,
   ConfidenceHeadParams params,
   uint depths,
+  float noise_scale,
   ThreadContext context,
   [[Groups("depths")]] uint depth,
   [[Threads("512")]] uint lid,

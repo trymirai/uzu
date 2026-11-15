@@ -151,6 +151,7 @@ impl<B: Backend> ConfidenceHead<B> {
         tree_slot_count: u32,
         vocab_size: u32,
         round_rows: u32,
+        noise_scale: f32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<ConfidenceHeadStep<B>, ConfidenceHeadError<B>> {
         let params = ConfidenceHeadParams {
@@ -197,6 +198,7 @@ impl<B: Backend> ConfidenceHead<B> {
             &mut pool_features,
             params,
             depths,
+            noise_scale,
             command_buffer,
         );
         Ok(ConfidenceHeadStep {

@@ -74,6 +74,7 @@ fn select<B: Backend>() -> Vec<u32> {
         3,
         3,
         4,
+        1.0,
         None,
         &mut command_buffer,
     );

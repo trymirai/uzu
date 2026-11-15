@@ -39,6 +39,7 @@ pub fn weaver_select<const BLOCK_THREADS: u32>(
     ancestor_stride: u32,
     lookahead_count: u32,
     candidate_depth_count: u32,
+    noise_scale: f32,
     #[optional(has_prune_noise)] prune_noise_scale: Option<f32>,
     #[specialize] mode: WeaverSelectionMode,
     #[specialize] has_prune_noise: bool,
@@ -83,8 +84,10 @@ pub fn weaver_select<const BLOCK_THREADS: u32>(
                 .collect::<Vec<_>>();
             let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let log_sum = logits.iter().map(|value| (value - max).exp()).sum::<f32>().ln() + max;
+            // The sampler draws argmax(l / T + G) = argmax(l + T G): children are ranked by the logits plus the noise
+            // scaled by the sampling temperature `noise_scale`.
             let perturbed = (0..candidates)
-                .map(|index| logits[index] + gumbel_float(seed, revidx(token(index), vocab_size)))
+                .map(|index| logits[index] + noise_scale * gumbel_float(seed, revidx(token(index), vocab_size)))
                 .collect::<Vec<_>>();
             // Final pruning weighs each edge by the pool softmax of logits plus the target's noise scaled by 1 / sigma.
             let prune = has_prune_noise.then(|| {
