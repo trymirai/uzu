@@ -11,7 +11,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError, LinearEncodeError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
     },
     safetensors::ParameterTree,
 };
@@ -68,7 +68,6 @@ impl<B: Backend> PredictionHead<B> {
             data_type,
             None,
             ShortcutMode::None,
-            PostLayerScalar::None,
             &config.normalization_config,
             &parameter_tree.subtree("norm"),
             context,

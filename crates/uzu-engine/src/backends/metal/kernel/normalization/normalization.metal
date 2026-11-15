@@ -27,15 +27,12 @@ PUBLIC KERNEL(Normalization)(
     constant uint& element_count,
     constant float& epsilon,
     constant float& scale_offset,
-    constant float& post_layer_scalar,
     const bool in_place SPECIALIZE,
     const bool subtract_mean SPECIALIZE,
     const bool full_layer SPECIALIZE,
     const bool copy_to_shortcut SPECIALIZE,
     const bool residual_add SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
-    const bool scale_residual_sum SPECIALIZE,
-    const bool scale_output SPECIALIZE,
     const bool has_biases SPECIALIZE,
     const bool has_scales SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
@@ -67,9 +64,6 @@ PUBLIC KERNEL(Normalization)(
     if (copy_to_shortcut) {
       if (residual_add) {
         val += shortcut[i];
-        if (scale_residual_sum) {
-          val = static_cast<InputT>(static_cast<float>(val) * post_layer_scalar);
-        }
       }
       shortcut[i] = val;
     }
@@ -137,10 +131,6 @@ PUBLIC KERNEL(Normalization)(
           val,
           hadamard_factors[i]
       ));
-    }
-
-    if (scale_output) {
-      val = static_cast<OutputT>(static_cast<float>(val) * post_layer_scalar);
     }
 
     output[i] = val;

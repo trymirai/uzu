@@ -8,7 +8,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
         prediction_head::{PredictionHead, PredictionHeadError},
         transformer::{Transformer, TransformerEncodeError, TransformerNewError},
     },
@@ -66,7 +66,6 @@ impl<B: Backend> Classifier<B> {
             data_type,
             None,
             ShortcutMode::None,
-            PostLayerScalar::None,
             &config.embedding_norm_config,
             &parameter_tree.subtree("embedding_norm"),
             context,

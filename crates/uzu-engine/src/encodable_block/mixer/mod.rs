@@ -86,8 +86,6 @@ pub enum MixerNewError<B: Backend> {
     DeltaNet(#[from] DeltaNetNewError<B>),
     #[error("Short conv mixer error: {0}")]
     ShortConv(#[from] ShortConvNewError<B>),
-    #[error("Sparse attention mixers are not supported")]
-    SparseAttentionUnsupported,
 }
 
 impl<B: Backend> dyn Mixer<B> {
@@ -122,7 +120,7 @@ impl<B: Backend> dyn Mixer<B> {
 
                 Ok((Box::new(short_conv), in_projection_input_hadamard_factors))
             },
-            AnyTokenMixerConfig::SparseAttentionConfig(_) => Err(MixerNewError::SparseAttentionUnsupported),
+            AnyTokenMixerConfig::SparseAttentionConfig(_) => todo!("sparse attention"),
         }
     }
 }

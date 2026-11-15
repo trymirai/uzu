@@ -4,7 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{
         dflash::DFlashDraftConfig,
         residual::{AnyResidualConfig, additive::AdditiveResidualConfig},
@@ -23,7 +23,7 @@ use crate::{
             },
         },
         mlp::MlpBlockNewError,
-        normalization::{Normalization, NormalizationNewError, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, NormalizationNewError, ShortcutMode},
         transformer_layer::{TransformerLayer, TransformerLayerError},
     },
     safetensors::ParameterTree,
@@ -119,7 +119,6 @@ impl<B: Backend> DFlash<B> {
             data_type,
             None,
             ShortcutMode::None,
-            PostLayerScalar::None,
             &config.context_norm_config,
             &parameter_tree.subtree("context_norm"),
             context,
@@ -165,8 +164,7 @@ impl<B: Backend> DFlash<B> {
             data_type,
             data_type,
             readout_input_hadamard_factors,
-            ShortcutMode::Add,
-            PostLayerScalar::None,
+            ShortcutMode::None,
             &config.output_norm_config,
             &parameter_tree.subtree("output_norm"),
             context,
@@ -323,13 +321,11 @@ impl<B: Backend> DFlash<B> {
         let rope = PrecalculatedRoPE::precalculate(&self.rope_config, &token_positions, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
-        let mut hidden = token_embeddings;
-        let mut residual = command_buffer.allocate_scratch(hidden.size()).map_err(DFlashEncodeError::Backend)?;
+        let mut stream = token_embeddings;
         for (layer, mixer_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
             mixer_state.prepare(state.context_length, batch_size).map_err(DFlashEncodeError::Backend)?;
-            hidden = layer.encode(
-                hidden,
-                &mut residual,
+            stream = layer.encode(
+                stream,
                 None::<&B::ScratchBuffer>,
                 Some(&rope),
                 &batch_topology,
@@ -339,7 +335,7 @@ impl<B: Backend> DFlash<B> {
         }
         let draft_hidden = self
             .output_norm
-            .encode(&hidden, 0, batch_size, Some(&mut residual), command_buffer)
+            .encode(&stream, 0, batch_size, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
 
         let row_bytes = size_for_shape(&[target_embedding.model_dim()], DataType::BF16);

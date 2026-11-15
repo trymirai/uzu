@@ -17,7 +17,7 @@ use crate::{
     encodable_block::{
         confidence_head::{ConfidenceHeadError, DATA_TYPE},
         linear::Linear,
-        normalization::{Normalization, PostLayerScalar, ShortcutMode},
+        normalization::{Normalization, ShortcutMode},
     },
     safetensors::ParameterTree,
 };
@@ -70,7 +70,6 @@ impl<B: Backend> TreeAttention<B> {
                 DATA_TYPE,
                 None,
                 first,
-                PostLayerScalar::None,
                 norm_config,
                 &layer.subtree("attention_norm"),
                 context,
@@ -84,7 +83,6 @@ impl<B: Backend> TreeAttention<B> {
                 DATA_TYPE,
                 None,
                 ShortcutMode::Add,
-                PostLayerScalar::None,
                 norm_config,
                 &layer.subtree("mlp_norm"),
                 context,
@@ -136,7 +134,6 @@ impl<B: Backend> TreeAttention<B> {
             DATA_TYPE,
             None,
             final_mode,
-            PostLayerScalar::None,
             norm_config,
             &parameter_tree.subtree("final_norm"),
             context,
