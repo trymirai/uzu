@@ -14,6 +14,7 @@ pub fn confidence_head_pools(
     pool_features: *mut f32,
     params: ConfidenceHeadParams,
     depths: u32,
+    noise_scale: f32,
 ) {
     let candidates = params.candidates as usize;
     for depth in 0..depths as usize {
@@ -26,7 +27,7 @@ pub fn confidence_head_pools(
             let features = unsafe { pool_features.add(depth * 3 * candidates) };
             unsafe {
                 *features.add(index) = (logit - log_sum).max(LOG_PROB_FLOOR);
-                *features.add(candidates + index) = gumbel_float(seed, revidx(token, params.vocab_size));
+                *features.add(candidates + index) = noise_scale * gumbel_float(seed, revidx(token, params.vocab_size));
                 *features.add(2 * candidates + index) = rank.ln_1p();
             }
         }

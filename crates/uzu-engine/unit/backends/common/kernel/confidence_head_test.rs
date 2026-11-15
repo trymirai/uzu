@@ -218,6 +218,10 @@ fn pool_inputs() -> (Vec<u32>, Vec<u32>, Vec<f32>) {
 }
 
 fn run_pools<B: Backend>() -> Vec<f32> {
+    run_pools_scaled::<B>(1.0)
+}
+
+fn run_pools_scaled<B: Backend>(noise_scale: f32) -> Vec<f32> {
     let context = create_context::<B>();
     let candidate_logits = create_buffer_with_data::<B, f32>(&context, &values(DEPTHS * CANDIDATES as usize, 0.3, 6.0));
     let candidate_ids = create_buffer_with_data::<B, u32>(
@@ -235,6 +239,7 @@ fn run_pools<B: Backend>() -> Vec<f32> {
         &mut pool_features,
         params(),
         DEPTHS as u32,
+        noise_scale,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -245,6 +250,32 @@ fn run_pools<B: Backend>() -> Vec<f32> {
 fn pools_match_cpu() {
     let expected = run_pools::<Cpu>();
     for_each_non_cpu_backend!(|B| assert_close("pool features", &run_pools::<B>(), &expected, 1e-4));
+}
+
+/// The noise feature is the sampler's noise in units of the logits, the temperature times G: at scale T it is T times
+/// the feature at scale 1 (the product by 1 is exact in f32, so the CPU values agree bit for bit), and the log-softmax
+/// and rank features do not depend on the scale.
+#[uzu_test]
+fn pools_noise_feature_scales_with_temperature() {
+    let unit = run_pools_scaled::<Cpu>(1.0);
+    let candidates = CANDIDATES as usize;
+    for noise_scale in [0.25f32, 0.6, 1.7] {
+        let scaled = run_pools_scaled::<Cpu>(noise_scale);
+        for (offset, (&actual, &base)) in scaled.iter().zip(&unit).enumerate() {
+            let expected = if (offset / candidates) % 3 == 1 {
+                noise_scale * base
+            } else {
+                base
+            };
+            assert_eq!(actual.to_bits(), expected.to_bits(), "scale {noise_scale}, offset {offset}");
+        }
+        for_each_non_cpu_backend!(|B| assert_close(
+            "pool features",
+            &run_pools_scaled::<B>(noise_scale),
+            &scaled,
+            1e-4
+        ));
+    }
 }
 
 fn run_nodes<B: Backend>() -> (Vec<f32>, Vec<f32>, Vec<f32>) {

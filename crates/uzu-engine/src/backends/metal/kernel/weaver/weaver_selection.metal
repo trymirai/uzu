@@ -42,6 +42,7 @@ PUBLIC KERNEL(WeaverSelect)(
     constant uint& ancestor_stride,
     constant uint& lookahead_count,
     constant uint& candidate_depth_count,
+    constant float& noise_scale,
     constant float& prune_noise_scale OPTIONAL(has_prune_noise),
     const WeaverSelectionMode mode SPECIALIZE,
     const bool has_prune_noise SPECIALIZE,
@@ -95,10 +96,12 @@ PUBLIC KERNEL(WeaverSelect)(
         second_valid ? candidate_logits[base + second_index] + float(residual_logits[base + second_index]) : -INFINITY;
     const uint first_token = first_valid ? uint(candidate_ids[base + first_index]) : 0xffffffffu;
     const uint second_token = second_valid ? uint(candidate_ids[base + second_index]) : 0xffffffffu;
+    // The sampler draws argmax(l / T + G) = argmax(l + T G): children are ranked by the logits plus the noise scaled
+    // by the sampling temperature `noise_scale`.
     const uint first_score =
-        first_valid ? top_k_score_key(first_logit + gumbel_noise(seed, first_token, vocab_size)) : 0u;
+        first_valid ? top_k_score_key(first_logit + noise_scale * gumbel_noise(seed, first_token, vocab_size)) : 0u;
     const uint second_score =
-        second_valid ? top_k_score_key(second_logit + gumbel_noise(seed, second_token, vocab_size)) : 0u;
+        second_valid ? top_k_score_key(second_logit + noise_scale * gumbel_noise(seed, second_token, vocab_size)) : 0u;
     bool first_active = first_valid;
     bool second_active = second_valid;
 

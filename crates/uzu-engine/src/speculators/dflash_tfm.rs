@@ -352,6 +352,14 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         None => (None, prune_sigma),
                     },
                 };
+                // The target samples argmax(l / T + G) = argmax(l + T G): the tree sees the noise scaled by T.
+                let noise_scale = match sampling_method {
+                    SamplingMethod::Stochastic {
+                        temperature: Some(temperature),
+                        ..
+                    } => *temperature,
+                    _ => 1.0,
+                };
                 let tree = weaver.encode_tree(
                     target_output_norm,
                     &dflash_output.draft_hidden,
@@ -366,7 +374,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         rounds,
                         expand_per_round,
                         expand_width,
-                        prune_noise_scale: prune_sigma.map(f32::recip),
+                        noise_scale,
+                        prune_noise_scale: prune_sigma.map(|sigma| noise_scale / sigma),
                     },
                     head,
                     &mut command_buffer,
