@@ -47,7 +47,7 @@ pub struct GemvSpecialization {
     signed_codes: bool,
     gemm_b_layout: GemmBLayout,
     full_tile: bool,
-    mxu_tiled_kernel: bool,
+    use_w8_fast_path: bool,
 }
 
 impl GemvSpecialization {
@@ -63,15 +63,6 @@ impl GemvSpecialization {
         let bits = shape.b_bits.unwrap_or(0);
         let block_k = weight_block_k(shape.b_bits, shape.b_group_size).unwrap_or(0);
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
-        let mxu_tiled_kernel = gemm_b_layout == GemmBLayout::MxuTiled
-            && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
-            && shape.m == 1
-            && !shape.gathered
-            && shape.n.is_multiple_of(32)
-            && bf16_io
-            && weights_data_type == DataType::BF16
-            && shape.k >= MXU_TILED_KERNEL_MIN_K
-            && shape.n >= 32 * gpu_core_count;
         let tile = if is_quant && !shape.gathered && gemm_b_layout == GemmBLayout::InterleavedRows && shape.m == 1 {
             policy::interleaved_rows_tile(block_k, shape.k)
         } else if is_quant && shape.gathered {
@@ -82,10 +73,18 @@ impl GemvSpecialization {
             let input_aligned = shape.k.is_multiple_of(FP_K_BLOCK);
             Some(policy::fp_tile(shape.m, shape.n, shape.k, input_aligned))
         };
-        Self::select_tile(shape, gemm_b_layout, tile?).map(|specialization| Self {
-            mxu_tiled_kernel,
-            ..specialization
-        })
+        let mut specialization = Self::select_tile(shape, gemm_b_layout, tile?)?;
+        specialization.use_w8_fast_path = gemm_b_layout == GemmBLayout::MxuTiled
+            && bits == 8
+            && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant
+            && shape.m == 1
+            && !shape.gathered
+            && shape.n.is_multiple_of(32)
+            && bf16_io
+            && weights_data_type == DataType::BF16
+            && shape.k >= MXU_TILED_KERNEL_MIN_K
+            && shape.n >= 32 * gpu_core_count;
+        Some(specialization)
     }
 
     pub fn select_tile(
@@ -140,7 +139,7 @@ impl GemvSpecialization {
             gemm_b_layout,
             full_tile: full_tile(shape, tile)
                 && (gemm_b_layout != GemmBLayout::MxuTiled || shape.gathered || shape.n.is_multiple_of(32)),
-            mxu_tiled_kernel: false,
+            use_w8_fast_path: false,
         };
         Some(specialization)
     }
@@ -332,7 +331,7 @@ impl GemvKernel {
         };
         let output_group_count = traversed_rows.div_ceil(specialization.output_row_tile());
         let context = command_buffer.context();
-        if specialization.mxu_tiled_kernel {
+        if specialization.use_w8_fast_path {
             let MatmulB::Quantized(quantized) = b else {
                 return Err(MatmulMetalError::UnsupportedLayout {
                     path: "Gemv",
@@ -365,53 +364,11 @@ impl GemvKernel {
             return Ok(());
         }
         let pipeline = self.get_or_create(context, specialization)?;
-        match b {
+        let weights = match b {
             MatmulB::FullPrecision {
-                b: weights,
-            } => pipeline.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                a,
-                d.reborrow(),
-                gemv_bias,
-                gemv_rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                scale_strides.output_stride,
-                scale_strides.group_stride,
-                zero_point_strides.output_stride,
-                zero_point_strides.group_stride,
-                soft_cap,
-                command_buffer,
-            ),
-            MatmulB::Quantized(quantized) => pipeline.encode(
-                quantized.codes,
-                scales,
-                zero_points,
-                biases,
-                a,
-                d.reborrow(),
-                gemv_bias,
-                gemv_rht_factors,
-                gather_indices,
-                k,
-                n,
-                m,
-                ab_scale,
-                output_group_count,
-                scale_strides.output_stride,
-                scale_strides.group_stride,
-                zero_point_strides.output_stride,
-                zero_point_strides.group_stride,
-                soft_cap,
-                command_buffer,
-            ),
+                b,
+            } => b,
+            MatmulB::Quantized(quantized) => quantized.codes,
             MatmulB::Trellis {
                 ..
             } => {
@@ -419,7 +376,29 @@ impl GemvKernel {
                     path: "Gemv",
                 });
             },
-        }
+        };
+        pipeline.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            a,
+            d.reborrow(),
+            gemv_bias,
+            gemv_rht_factors,
+            gather_indices,
+            k,
+            n,
+            m,
+            ab_scale,
+            output_group_count,
+            scale_strides.output_stride,
+            scale_strides.group_stride,
+            zero_point_strides.output_stride,
+            zero_point_strides.group_stride,
+            soft_cap,
+            command_buffer,
+        );
 
         if let Some(factors) = deferred_factors {
             output_work.apply(d, factors, output_bias, m, n, command_buffer);
