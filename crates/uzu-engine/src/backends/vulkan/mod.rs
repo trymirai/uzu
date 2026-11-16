@@ -2,6 +2,7 @@ mod buffer;
 mod command_buffer;
 mod device;
 mod error;
+mod gpu_types;
 mod kernel;
 mod vk_compute_pipeline;
 mod vk_context;

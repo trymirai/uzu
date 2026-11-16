@@ -1,0 +1,5 @@
+pub const DELTA_NET_HEAD_K_DIM: u32 = 128;
+pub const DELTA_NET_CHUNKED_CHUNK: u32 = 64;
+pub const DELTA_NET_CHUNKED_BLOCK: u32 = 16;
+pub const DELTA_NET_CHUNKED_MAX_GROUPS: u32 = 4;
+pub const TREE_VERIFY_TOKEN_BLOCK: u32 = 16;
