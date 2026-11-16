@@ -73,7 +73,7 @@ fn prepare_cache<B: Backend>(
     kv
 }
 
-fn check_kv_copy<B: Backend>() {
+fn check_kv_copy<B: Backend>(keys_only: bool) {
     let context = create_context::<B>();
     let layout = kv_layout::<B>(&context, HEAD_DIM, NUM_HEADS);
     let mut rows: Vec<bf16> =
@@ -81,15 +81,20 @@ fn check_kv_copy<B: Backend>() {
     let mut actual = prepare_cache::<B>(&context, layout, &rows);
     rows.copy_within(40 * ROW_WIDTH..41 * ROW_WIDTH, 5 * ROW_WIDTH);
     let expected = prepare_cache::<B>(&context, layout, &rows);
-    let kernel =
-        <B::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, HEAD_DIM, NUM_HEADS, layout.backend_opaque_layout)
-            .unwrap();
+    let kernel = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(
+        &context,
+        HEAD_DIM,
+        NUM_HEADS,
+        layout.backend_opaque_layout,
+        keys_only,
+    )
+    .unwrap();
     let mut command = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         actual.k_codes.as_mut(),
-        actual.v_codes.as_mut(),
+        (!keys_only).then_some(actual.v_codes.as_mut()),
         actual.k_scales.as_mut(),
-        actual.v_scales.as_mut(),
+        (!keys_only).then_some(actual.v_scales.as_mut()),
         &[Copy {
             source: 40,
             destination: 5,
@@ -98,12 +103,17 @@ fn check_kv_copy<B: Backend>() {
         &mut command,
     );
     submit_command_buffer(command);
-    for (actual, expected) in [
+    let mut buffers = vec![
         (actual.k_codes.as_ref(), expected.k_codes.as_ref()),
-        (actual.v_codes.as_ref(), expected.v_codes.as_ref()),
         (actual.k_scales.as_ref(), expected.k_scales.as_ref()),
-        (actual.v_scales.as_ref(), expected.v_scales.as_ref()),
-    ] {
+    ];
+    if !keys_only {
+        buffers.extend([
+            (actual.v_codes.as_ref(), expected.v_codes.as_ref()),
+            (actual.v_scales.as_ref(), expected.v_scales.as_ref()),
+        ]);
+    }
+    for (actual, expected) in buffers {
         assert_eq!(
             buffer_to_vec::<B, u8>(&context, &buffer_readback::<B>(&context, actual)),
             buffer_to_vec::<B, u8>(&context, &buffer_readback::<B>(&context, expected)),
@@ -113,5 +123,7 @@ fn check_kv_copy<B: Backend>() {
 
 #[uzu_test]
 fn test_kv_copy() {
-    for_each_backend!(|B| check_kv_copy::<B>());
+    for keys_only in [false, true] {
+        for_each_backend!(|B| check_kv_copy::<B>(keys_only));
+    }
 }
