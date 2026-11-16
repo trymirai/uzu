@@ -9,6 +9,19 @@ using namespace metal;
 
 #define BLOCK_SIZE 1024
 
+UZU_CONST uint VALUES_PER_THREAD = 4;
+static_assert(VALUES_PER_THREAD == HADAMARD_VECTOR_SIZE, "rotation operates on the same per-thread values");
+
+template <typename T>
+static METAL_FUNC vec<T, VALUES_PER_THREAD> load_values(const device T* source) {
+  return *reinterpret_cast<const device packed_vec<T, VALUES_PER_THREAD>*>(source);
+}
+
+template <typename T, typename SourceT>
+static METAL_FUNC void store_values(device T* destination, const vec<SourceT, VALUES_PER_THREAD> source) {
+  *reinterpret_cast<device packed_vec<T, VALUES_PER_THREAD>*>(destination) = vec<T, VALUES_PER_THREAD>(source);
+}
+
 // TODO: Are numerics of subtract_mean fine?
 
 template <typename InputT, typename AffineT, typename OutputT, typename AccumT>
@@ -57,23 +70,26 @@ PUBLIC KERNEL(Normalization)(
   AccumT thread_sum = static_cast<AccumT>(0.0f);
   AccumT thread_sum_of_squares = static_cast<AccumT>(0.0f);
 
-  for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
-    InputT val = input[i];
+  for (uint first = thread_in_row * VALUES_PER_THREAD; first < element_count; first += BLOCK_SIZE * VALUES_PER_THREAD) {
+    vec<InputT, VALUES_PER_THREAD> vals = load_values(input + first);
     // We can also fuse:
     // - TensorCopy (copy_to_shortcut)
     // - TensorAddSwap (copy_to_shortcut + residual_add)
     // Normalization in TensorAddSwap fusion mode operates on input + shortcut
     if (copy_to_shortcut) {
       if (residual_add) {
-        val += shortcut[i];
+        vals += load_values(shortcut + first);
       }
-      shortcut[i] = val;
+      store_values(shortcut + first, vals);
     }
-    AccumT val_accum_t = static_cast<AccumT>(val);
-    if (subtract_mean) {
-      thread_sum += val_accum_t;
+    METAL_PRAGMA_UNROLL
+    for (uint k = 0; k < VALUES_PER_THREAD; ++k) {
+      AccumT val_accum_t = static_cast<AccumT>(vals[k]);
+      if (subtract_mean) {
+        thread_sum += val_accum_t;
+      }
+      thread_sum_of_squares += val_accum_t * val_accum_t;
     }
-    thread_sum_of_squares += val_accum_t * val_accum_t;
   }
 
   // Step 2 - threads reduce their partial sums / sums of squares
@@ -99,42 +115,52 @@ PUBLIC KERNEL(Normalization)(
   AccumT rms_inv = rsqrt(var + static_cast<AccumT>(epsilon));
 
   // Step 3 - elementwise normalization
-  for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
-    AccumT x;
-    // If we fuse TensorAddSwap, read shortcut (that now has input + shortcut)
-    // No need for memory barrier because each thread only reads what it wrote
-    if (residual_add) {
-      x = static_cast<AccumT>(shortcut[i]);
-    } else {
-      x = static_cast<AccumT>(input[i]);
-    }
+  for (uint round_start = 0; round_start < element_count; round_start += BLOCK_SIZE * VALUES_PER_THREAD) {
+    const uint first = round_start + thread_in_row * VALUES_PER_THREAD;
+    const bool in_bounds = first < element_count;
+    float4 values = 0.0f;
+    vec<OutputT, VALUES_PER_THREAD> outs = 0;
+    if (in_bounds) {
+      // If we fuse TensorAddSwap, read shortcut (that now has input + shortcut)
+      // No need for memory barrier because each thread only reads what it wrote
+      vec<InputT, VALUES_PER_THREAD> xs = residual_add ? load_values(shortcut + first) : load_values(input + first);
+      METAL_PRAGMA_UNROLL
+      for (uint k = 0; k < VALUES_PER_THREAD; ++k) {
+        const uint affine_index = affine_offset + first + k;
+        const AccumT x = static_cast<AccumT>(xs[k]);
+        // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
+        // If not, cast to OutputT after normalize, scale in OutputT
+        OutputT val;
+        if (has_scales) {
+          AccumT scale = static_cast<AccumT>(scales[affine_index]) + static_cast<AccumT>(scale_offset);
+          if (full_layer) {
+            val = static_cast<OutputT>((x - mean) * rms_inv * scale);
+          } else {
+            val = static_cast<OutputT>((x - mean) * rms_inv) * static_cast<OutputT>(scale);
+          }
+        } else {
+          val = static_cast<OutputT>((x - mean) * rms_inv);
+        }
 
-    // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
-    // If not, cast to OutputT after normalize, scale in OutputT
-    OutputT val;
-    if (has_scales) {
-      AccumT scale = static_cast<AccumT>(scales[affine_offset + i]) + static_cast<AccumT>(scale_offset);
-      if (full_layer) {
-        val = static_cast<OutputT>((x - mean) * rms_inv * scale);
-      } else {
-        val = static_cast<OutputT>((x - mean) * rms_inv) * static_cast<OutputT>(scale);
+        if (has_biases) {
+          val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[affine_index]));
+        }
+        values[k] = static_cast<float>(val);
+        outs[k] = val;
       }
-    } else {
-      val = static_cast<OutputT>((x - mean) * rms_inv);
+      if (use_hadamard) {
+        values *= float4(load_hadamard_vector(hadamard_factors + first));
+      }
     }
-
-    if (has_biases) {
-      val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[affine_offset + i]));
-    }
-
     if (use_hadamard) {
-      val = static_cast<OutputT>(simdgroup_input_random_hadamard_transform(
-          static_cast<ushort>(thread_in_row % METAL_SIMD_SIZE),
-          val,
-          hadamard_factors[i]
-      ));
+      values = simdgroup_hadamard_transform_vector(thread_context.simd_lane_id, values);
     }
-
-    output[i] = val;
+    if (in_bounds) {
+      if (use_hadamard) {
+        store_hadamard_vector(output + first, values);
+      } else {
+        store_values(output + first, outs);
+      }
+    }
   }
 }

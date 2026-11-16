@@ -79,6 +79,7 @@ impl<B: Backend> Normalization<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
+        assert!(element_count.is_multiple_of(4), "normalization width ({element_count}) must be a multiple of 4");
         let affine_shape: &[u32] = if let Some(mixture_size) = mixture_size {
             &[mixture_size, element_count]
         } else {
