@@ -68,9 +68,9 @@ PUBLIC KERNEL(AncestorAttention)(
     key[i] = float(apply_rope(qkv + model_dim, cosines, sines, position, channel, HEAD_DIM)) * sign;
     value[i] = float(qkv[2 * model_dim + channel]) * sign;
   }
-  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, query);
-  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, key);
-  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, value);
+  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, query);
+  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, key);
+  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, value);
   int q[N], k[N], v[N];
   const float qs = float(kv_quantize_row<N>(query, q));
   const bfloat ks = kv_quantize_row<N>(key, k);
@@ -124,7 +124,7 @@ PUBLIC KERNEL(AncestorAttention)(
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < N; ++i)
     result[i] /= denominator;
-  simdgroup_hadamard_transform<N, METAL_SIMD_SIZE>(lane, result);
+  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, result);
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < N; ++i) {
     const uint channel = i * METAL_SIMD_SIZE + lane;

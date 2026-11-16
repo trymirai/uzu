@@ -57,7 +57,7 @@ pub fn normalization<
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();
     let element_count_accum = AccumT::from(element_count).unwrap();
-    let mut row = vec![OutputT::zero(); element_count];
+    let mut row = vec![AccumT::zero(); element_count];
 
     for batch in 0..(batch_size as usize) {
         let batch_offset = batch * element_count;
@@ -97,27 +97,24 @@ pub fn normalization<
             } else {
                 unsafe { AccumT::from(*input.add(batch_offset + i)).unwrap() }
             };
-            let normalized: AccumT = (input_val - mean) * rms_inv;
-            let mut result: OutputT = if has_scales {
+            let mut normalized: AccumT = (input_val - mean) * rms_inv;
+            if has_scales {
                 let scale_val = unsafe { AccumT::from(*scales.unwrap().add(affine_offset + i)).unwrap() };
-                if full_layer {
-                    // Full-layer: keep everything in accumulation precision
-                    let scale_with_offset: AccumT = scale_val + scale_offset;
-                    OutputT::from(normalized * scale_with_offset).unwrap()
+                let scale_with_offset = scale_val + scale_offset;
+                normalized = if full_layer {
+                    normalized * scale_with_offset
                 } else {
-                    // Only-normalization: cast down to output precision for the scale multiply
-                    let normalized_out = OutputT::from(normalized).unwrap();
-                    let scale_with_offset_out = OutputT::from(scale_val + scale_offset).unwrap();
-                    normalized_out * scale_with_offset_out
-                }
-            } else {
-                OutputT::from(normalized).unwrap()
-            };
-            if has_biases {
-                let bias = unsafe { AccumT::from(*biases.unwrap().add(affine_offset + i)).unwrap() };
-                result = OutputT::from(AccumT::from(result).unwrap() + bias).unwrap();
+                    let product = OutputT::from(normalized).unwrap() * OutputT::from(scale_with_offset).unwrap();
+                    AccumT::from(product).unwrap()
+                };
             }
-            row[i] = result;
+            if !use_hadamard {
+                normalized = AccumT::from(OutputT::from(normalized).unwrap()).unwrap();
+            }
+            if has_biases {
+                normalized = normalized + unsafe { AccumT::from(*biases.unwrap().add(affine_offset + i)).unwrap() };
+            }
+            row[i] = normalized;
         }
 
         // Input RHT like the Metal kernel: apply the factors, then transform each block
@@ -129,13 +126,13 @@ pub fn normalization<
                 });
                 hadamard_transform(&mut block);
                 for (lane, value) in block.into_iter().enumerate() {
-                    row[block_start + lane] = OutputT::from(value).unwrap();
+                    row[block_start + lane] = AccumT::from(value).unwrap();
                 }
             }
         }
 
         for (i, &value) in row.iter().enumerate() {
-            unsafe { *output.add(batch_offset + i) = value };
+            unsafe { *output.add(batch_offset + i) = OutputT::from(value).unwrap() };
         }
     }
 }

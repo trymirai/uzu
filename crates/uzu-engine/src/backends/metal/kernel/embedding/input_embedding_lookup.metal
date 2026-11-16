@@ -84,7 +84,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
              float(point[dim_idx % uzu::d4s4::VALUES_PER_CODE]) * input_scale;
   }
   if (use_hadamard) {
-    loaded = simdgroup_output_random_hadamard_transform(
+    loaded = hadamard::simdgroup_output_transform(
         static_cast<ushort>(dim_idx % METAL_SIMD_SIZE),
         loaded,
         hadamard_factors[dim_idx]

@@ -55,14 +55,14 @@ PUBLIC KERNEL(GatedActMul) (
     uint thread_index THREADS(NUM_THREADS),
     const ThreadContext thread_context
 ) {
-  const uint first_index = activation_tile_index * TILE_ELEMENTS + thread_index * HADAMARD_VECTOR_SIZE;
+  const uint first_index = activation_tile_index * TILE_ELEMENTS + thread_index * hadamard::VECTOR_SIZE;
   const ushort lane_index = thread_context.simd_lane_id;
   const uint valid_count =
-      first_index < gated_dim ? min(static_cast<uint>(HADAMARD_VECTOR_SIZE), gated_dim - first_index) : 0u;
-  const bool use_vector_io = valid_count == HADAMARD_VECTOR_SIZE;
+      first_index < gated_dim ? min(static_cast<uint>(hadamard::VECTOR_SIZE), gated_dim - first_index) : 0u;
+  const bool use_vector_io = valid_count == hadamard::VECTOR_SIZE;
 
-  vec<T, HADAMARD_VECTOR_SIZE> value = static_cast<T>(0);
-  vec<T, HADAMARD_VECTOR_SIZE> gate = static_cast<T>(0);
+  vec<T, hadamard::VECTOR_SIZE> value = static_cast<T>(0);
+  vec<T, hadamard::VECTOR_SIZE> gate = static_cast<T>(0);
   {
     const device T* value_row;
     const device T* gate_row;
@@ -74,8 +74,8 @@ PUBLIC KERNEL(GatedActMul) (
       gate_row = act_operand + batch_idx * gated_dim;
     }
     if (use_vector_io) {
-      value = load_hadamard_vector(value_row + first_index);
-      gate = load_hadamard_vector(gate_row + first_index);
+      value = load_vec4(value_row + first_index);
+      gate = load_vec4(gate_row + first_index);
     } else {
       for (uint index = 0; index < valid_count; ++index) {
         value[index] = value_row[first_index + index];
@@ -84,10 +84,10 @@ PUBLIC KERNEL(GatedActMul) (
     }
   }
   if (clip_gate) {
-    gate = vec<T, HADAMARD_VECTOR_SIZE>(clamp(float4(gate), gate_clip_min, gate_clip_max));
+    gate = vec<T, hadamard::VECTOR_SIZE>(clamp(float4(gate), gate_clip_min, gate_clip_max));
   }
   if (clip_value) {
-    value = vec<T, HADAMARD_VECTOR_SIZE>(clamp(float4(value), value_clip_min, value_clip_max));
+    value = vec<T, hadamard::VECTOR_SIZE>(clamp(float4(value), value_clip_min, value_clip_max));
   }
 
   const bool hadamard = QUANTIZED || use_hadamard;
@@ -95,7 +95,7 @@ PUBLIC KERNEL(GatedActMul) (
       (first_index / HADAMARD_TRANSFORM_BLOCK_SIZE + 1) * HADAMARD_TRANSFORM_BLOCK_SIZE <= gated_dim;
   float4 results = 0.0f;
   METAL_PRAGMA_UNROLL
-  for (uint index = 0; index < HADAMARD_VECTOR_SIZE; ++index) {
+  for (uint index = 0; index < hadamard::VECTOR_SIZE; ++index) {
     if (index < valid_count && (!hadamard || block_in_bounds)) {
       const float alpha = custom_activation_alpha ? activation_alpha : 1.0f;
       results[index] = gated_act_mul(value[index], gate[index], act_type, alpha);
@@ -103,15 +103,15 @@ PUBLIC KERNEL(GatedActMul) (
   }
   if (hadamard) {
     if (block_in_bounds) {
-      results *= float4(load_hadamard_vector(hadamard_factors + first_index));
+      results *= float4(load_vec4(hadamard_factors + first_index));
     }
-    results = simdgroup_hadamard_transform_vector(lane_index, results);
+    results = hadamard::simdgroup_transform_vector(lane_index, results);
   }
 
   if (!QUANTIZED && !PACKED_HALF) {
     device T* out_row = fp_out + batch_idx * gated_dim;
     if (use_vector_io) {
-      store_hadamard_vector(out_row + first_index, results);
+      store_vec4(out_row + first_index, results);
     } else {
       for (uint index = 0; index < valid_count; ++index) {
         out_row[first_index + index] = static_cast<T>(results[index]);
