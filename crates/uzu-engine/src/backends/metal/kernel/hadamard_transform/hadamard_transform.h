@@ -60,7 +60,7 @@ static METAL_FUNC void simdgroup_transform(ushort lane_index, thread float* valu
     for (ushort index = 0; index < VALUES_PER_LANE; index += CHUNK) {
       thread Chunk& chunk = *reinterpret_cast<thread Chunk*>(values + index);
       const Chunk partner = simd_shuffle_xor(chunk, lane_stride);
-      chunk = (lane_index & lane_stride) ? (partner - chunk) : (partner + chunk);
+      chunk = fma(chunk, Chunk((lane_index & lane_stride) ? -1.0f : 1.0f), partner);
     }
   }
   METAL_PRAGMA_UNROLL
