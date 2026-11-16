@@ -697,6 +697,7 @@ fn gemv_mxu_tiled_prefix_preserves_output_bounds() {
 #[case::w4_zp_gs32_wide(1024u32, 3584u32, 32u32, 4u32, ScaleZeroPoint)]
 #[case::w4_zp_gs64_deep(3584u32, 1024u32, 64u32, 4u32, ScaleZeroPoint)]
 #[case::w4_bias_gs64(2048u32, 2048u32, 64u32, 4u32, ScaleBias)]
+#[case::w4_sym_gs64_blocks(2048u32, 4096u32, 64u32, 4u32, QuantizationMethod::ScaleSymmetric)]
 #[case::w8_sym_gs64(1024u32, 2048u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
 #[case::w8_sym_gs64_blocks(2048u32, 4096u32, 64u32, 8u32, QuantizationMethod::ScaleSymmetric)]
 #[case::w8_sym_gs32_blocks(2048u32, 4096u32, 32u32, 8u32, QuantizationMethod::ScaleSymmetric)]
