@@ -3,16 +3,15 @@ use std::{ffi::CStr, ops::RangeInclusive};
 use ash::{amd, arm, khr, nv, vk};
 use bitflags::bitflags;
 
-use crate::{
-    backends::vulkan::{VkContextError, VkCooperativeMatrix2Features, VkShaderBfloat16Features},
-    data_type::DataType,
-};
+use crate::backends::vulkan::{VkContextError, VkCooperativeMatrix2Features, VkKernelError, VkShaderBfloat16Features};
 
 pub const API_VERSION_1_4: u32 = vk::make_api_version(0, 1, 4, 0);
 
 pub struct VkPhysicalDevice {
     pub handle: vk::PhysicalDevice,
     pub name: Box<str>,
+    pub device_type: vk::PhysicalDeviceType,
+    pub queue_family_index: u32,
     pub limits: VkDeviceLimits,
     pub capabilities: VkDeviceCapabilities,
     pub gpu_core_count: Option<u32>,
@@ -22,17 +21,17 @@ impl VkPhysicalDevice {
     pub fn select(
         entry: &ash::Entry,
         instance: &ash::Instance,
-    ) -> Result<(Self, u32), VkContextError> {
+    ) -> Result<Self, VkContextError> {
         let handles = unsafe { instance.enumerate_physical_devices() }.map_err(VkContextError::DeviceEnumeration)?;
         let mut candidates = Vec::new();
         for handle in handles {
-            if let Some(candidate) = Self::probe(entry, instance, handle)? {
+            if let Some(candidate) = Self::new(entry, instance, handle)? {
                 candidates.push(candidate);
             }
         }
         candidates
             .into_iter()
-            .min_by_key(|(device_type, ..)| match *device_type {
+            .min_by_key(|candidate| match candidate.device_type {
                 vk::PhysicalDeviceType::DISCRETE_GPU => 0,
                 vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
                 vk::PhysicalDeviceType::VIRTUAL_GPU => 2,
@@ -40,15 +39,15 @@ impl VkPhysicalDevice {
                 vk::PhysicalDeviceType::OTHER => 4,
                 _ => 5,
             })
-            .map(|(_, queue_family_index, physical_device)| (physical_device, queue_family_index))
             .ok_or(VkContextError::NoSuitableDevice)
     }
 
-    fn probe(
+    // Returns None for a device the backend cannot run on.
+    fn new(
         entry: &ash::Entry,
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Option<(vk::PhysicalDeviceType, u32, Self)>, VkContextError> {
+    ) -> Result<Option<Self>, VkContextError> {
         let extensions = unsafe { instance.enumerate_device_extension_properties(physical_device) }
             .map_err(VkContextError::CapabilityQuery)?;
         let has_extension = |name: &CStr| {
@@ -60,49 +59,21 @@ impl VkPhysicalDevice {
         let mut device_subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
         let mut float_controls = vk::PhysicalDeviceFloatControlsProperties::default();
         let mut vk13properties = vk::PhysicalDeviceVulkan13Properties::default();
-        let mut sm_builtins = vk::PhysicalDeviceShaderSMBuiltinsPropertiesNV::default();
-        let mut core_properties = vk::PhysicalDeviceShaderCoreProperties2AMD::default();
-        let mut core_builtins = vk::PhysicalDeviceShaderCoreBuiltinsPropertiesARM::default();
         let mut properties2 = vk::PhysicalDeviceProperties2::default()
             .push_next(&mut vk13properties)
             .push_next(&mut device_subgroup_properties)
             .push_next(&mut float_controls);
-        let unit_extensions = [
-            has_extension(nv::shader_sm_builtins::NAME),
-            has_extension(amd::shader_core_properties2::NAME),
-            has_extension(arm::shader_core_builtins::NAME),
-        ];
-        if unit_extensions[0] {
-            properties2 = properties2.push_next(&mut sm_builtins);
-        }
-        if unit_extensions[1] {
-            properties2 = properties2.push_next(&mut core_properties);
-        }
-        if unit_extensions[2] {
-            properties2 = properties2.push_next(&mut core_builtins);
-        }
         unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) }
         let properties = properties2.properties;
         if properties.api_version < API_VERSION_1_4 {
             return Ok(None);
         }
-        let gpu_core_count = unit_extensions
-            .into_iter()
-            .zip([
-                sm_builtins.shader_sm_count,
-                core_properties.active_compute_unit_count,
-                core_builtins.shader_core_count,
-            ])
-            .find_map(|(present, units)| (present && units > 0).then_some(units));
-
         let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-        let memory = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-        let unified_memory = memory.memory_heap_count == 1
-            && memory.memory_types_as_slice().iter().any(|memory_type| {
-                memory_type
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE)
-            });
+        let Some(queue_family_index) =
+            queue_families.iter().position(|family| family.queue_flags.contains(vk::QueueFlags::COMPUTE))
+        else {
+            return Ok(None);
+        };
 
         let mut vk11features = vk::PhysicalDeviceVulkan11Features::default();
         let mut vk12features = vk::PhysicalDeviceVulkan12Features::default();
@@ -124,6 +95,27 @@ impl VkPhysicalDevice {
             features2 = features2.push_next(&mut bfloat16_features);
         }
         unsafe { instance.get_physical_device_features2(physical_device, &mut features2) }
+        // Vulkan 1.4 mandates every other feature that `create_device` enables.
+        let meets_requirements = [
+            vk12features.storage_push_constant8,
+            vk11features.storage_push_constant16,
+            vk12features.shader_float16,
+            float_controls.shader_rounding_mode_rte_float16,
+            float_controls.shader_rounding_mode_rte_float32,
+            float_controls.shader_signed_zero_inf_nan_preserve_float16,
+            float_controls.shader_signed_zero_inf_nan_preserve_float32,
+        ]
+        .iter()
+        .all(|&supported| supported == vk::TRUE)
+            && device_subgroup_properties.supported_operations.contains(
+                vk::SubgroupFeatureFlags::ARITHMETIC
+                    | vk::SubgroupFeatureFlags::BALLOT
+                    | vk::SubgroupFeatureFlags::SHUFFLE,
+            );
+        if !meets_requirements {
+            return Ok(None);
+        }
+
         let limits = VkDeviceLimits {
             max_work_group_count: properties.limits.max_compute_work_group_count,
             max_work_group_size: properties.limits.max_compute_work_group_size,
@@ -159,8 +151,6 @@ impl VkPhysicalDevice {
         let unsigned_dot_product = vk13properties.integer_dot_product4x8_bit_packed_unsigned_accelerated == vk::TRUE
             && vk13properties.integer_dot_product4x8_bit_packed_signed_accelerated != vk::TRUE;
         let capabilities = [
-            (VkDeviceCapabilities::DISCRETE, properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU),
-            (VkDeviceCapabilities::UNIFIED_MEMORY, unified_memory),
             (VkDeviceCapabilities::SUBGROUP_SIZE_32, limits.subgroup_size_requirable(32)),
             (VkDeviceCapabilities::BF16_TYPE, bf16_type),
             (
@@ -180,50 +170,24 @@ impl VkPhysicalDevice {
         .into_iter()
         .filter_map(|(capability, supported)| supported.then_some(capability))
         .collect();
-        let meets_requirements = [
-            vk12features.storage_push_constant8,
-            vk11features.storage_push_constant16,
-            vk12features.shader_float16,
-            float_controls.shader_rounding_mode_rte_float16,
-            float_controls.shader_rounding_mode_rte_float32,
-            float_controls.shader_signed_zero_inf_nan_preserve_float16,
-            float_controls.shader_signed_zero_inf_nan_preserve_float32,
-        ]
-        .iter()
-        .all(|&supported| supported == vk::TRUE)
-            && device_subgroup_properties.supported_operations.contains(
-                vk::SubgroupFeatureFlags::ARITHMETIC
-                    | vk::SubgroupFeatureFlags::BALLOT
-                    | vk::SubgroupFeatureFlags::SHUFFLE,
-            );
-
-        let Some(queue_family_index) = queue_families
-            .iter()
-            .position(|properties| properties.queue_flags.contains(vk::QueueFlags::COMPUTE))
-            .filter(|_| meets_requirements)
-        else {
-            return Ok(None);
-        };
-        let device = Self {
+        Ok(Some(Self {
             handle: physical_device,
             name: properties.device_name_as_c_str().unwrap_or_default().to_string_lossy().into(),
+            device_type: properties.device_type,
+            queue_family_index: queue_family_index as u32,
             limits,
             capabilities,
-            gpu_core_count,
-        };
-        Ok(Some((properties.device_type, queue_family_index as u32, device)))
+            gpu_core_count: gpu_core_count(instance, physical_device, has_extension),
+        }))
     }
-}
 
-impl VkPhysicalDevice {
     pub fn create_device(
         &self,
         instance: &ash::Instance,
-        queue_family_index: u32,
     ) -> Result<ash::Device, VkContextError> {
         let queue_priorities = [1.0_f32];
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
-            .queue_family_index(queue_family_index)
+            .queue_family_index(self.queue_family_index)
             .queue_priorities(&queue_priorities);
 
         let bf16_type = self.capabilities.contains(VkDeviceCapabilities::BF16_TYPE);
@@ -289,6 +253,30 @@ impl VkPhysicalDevice {
     }
 }
 
+// Streaming multiprocessors, compute units or shader cores, where the vendor reports them.
+fn gpu_core_count(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    has_extension: impl Fn(&CStr) -> bool,
+) -> Option<u32> {
+    let mut nvidia = vk::PhysicalDeviceShaderSMBuiltinsPropertiesNV::default();
+    let mut amd = vk::PhysicalDeviceShaderCoreProperties2AMD::default();
+    let mut arm = vk::PhysicalDeviceShaderCoreBuiltinsPropertiesARM::default();
+    let mut properties = vk::PhysicalDeviceProperties2::default();
+    if has_extension(nv::shader_sm_builtins::NAME) {
+        properties = properties.push_next(&mut nvidia);
+    }
+    if has_extension(amd::shader_core_properties2::NAME) {
+        properties = properties.push_next(&mut amd);
+    }
+    if has_extension(arm::shader_core_builtins::NAME) {
+        properties = properties.push_next(&mut arm);
+    }
+    unsafe { instance.get_physical_device_properties2(physical_device, &mut properties) }
+    // A struct that was not queried keeps its zero default.
+    [nvidia.shader_sm_count, amd.active_compute_unit_count, arm.shader_core_count].into_iter().find(|&count| count > 0)
+}
+
 pub struct VkDeviceLimits {
     pub max_work_group_count: [u32; 3],
     pub max_work_group_size: [u32; 3],
@@ -306,6 +294,35 @@ impl VkDeviceLimits {
     ) -> bool {
         self.requirable_subgroup_sizes.as_ref().is_some_and(|sizes| sizes.contains(&size))
     }
+
+    pub fn check_work_group(
+        &self,
+        kernel: &'static str,
+        size: [u32; 3],
+        subgroup_size: Option<u32>,
+    ) -> Result<(), VkKernelError> {
+        assert!(!size.contains(&0), "{kernel}: work group {size:?} has a zero dimension");
+        let invocations = size.iter().product::<u32>();
+        if size.iter().zip(self.max_work_group_size).any(|(&size, limit)| size > limit)
+            || invocations > self.max_work_group_invocations
+        {
+            return Err(VkKernelError::WorkGroupSize {
+                kernel,
+                size,
+                limit: self.max_work_group_size,
+                invocations: self.max_work_group_invocations,
+            });
+        }
+        if let Some(subgroup_size) = subgroup_size
+            && (!size[0].is_multiple_of(subgroup_size) || invocations > subgroup_size * self.max_work_group_subgroups)
+        {
+            return Err(VkKernelError::KernelPrecondition {
+                kernel,
+                condition: "a workgroup of whole subgroups of its required size, within maxComputeWorkgroupSubgroups",
+            });
+        }
+        Ok(())
+    }
 }
 
 bitflags! {
@@ -319,22 +336,5 @@ bitflags! {
         const INT8_ELEMENT_FOLD = 1 << 4;
         const UNSIGNED_DOT_PRODUCT = 1 << 5;
         const BF16_TYPE = 1 << 6;
-        const DISCRETE = 1 << 7;
-        const UNIFIED_MEMORY = 1 << 8;
-    }
-}
-
-impl VkDeviceCapabilities {
-    pub fn float_tensor_cores(
-        self,
-        data_type: DataType,
-    ) -> bool {
-        self.contains(Self::SUBGROUP_SIZE_32) && data_type == DataType::BF16 && self.contains(Self::BF16_TENSOR_CORES)
-    }
-
-    pub fn prefers_int8_gemm(self) -> bool {
-        self.contains(Self::SUBGROUP_SIZE_32)
-            && self.intersects(Self::INT8_TENSOR_CORES)
-            && !self.contains(Self::UNSIGNED_DOT_PRODUCT)
     }
 }

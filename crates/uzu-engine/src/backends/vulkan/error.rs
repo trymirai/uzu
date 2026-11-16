@@ -16,8 +16,6 @@ pub enum Error {
     CommandBuffer(#[from] VkCommandBufferError),
     #[error(transparent)]
     Kernel(#[from] VkKernelError),
-    #[error("Vulkan validation failed: {0}")]
-    Validation(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -32,19 +30,6 @@ pub enum VkBufferError {
 pub enum VkCommandBufferError {
     #[error("the completion thread stopped before the command buffer completed")]
     Wait,
-    #[error("buffer range {start}..{end} is reversed or exceeds a buffer of {size} bytes")]
-    BufferRange {
-        start: u64,
-        end: u64,
-        size: u64,
-    },
-    #[error("cannot dispatch {0}: {1}")]
-    Dispatch(&'static str, #[source] Box<VkCommandBufferError>),
-    #[error("dispatch of {groups:?} groups exceeds the device limit {limit:?}")]
-    DispatchGroups {
-        groups: [u32; 3],
-        limit: [u32; 3],
-    },
     #[error(transparent)]
     Vulkan(#[from] vk::Result),
 }
@@ -65,12 +50,6 @@ pub enum VkContextError {
 
     #[error("cannot create the memory allocator: {0}")]
     MemoryAllocatorCreate(#[source] vk::Result),
-
-    #[error("cannot create the pipeline cache: {0}")]
-    PipelineCacheCreate(#[source] vk::Result),
-
-    #[error("cannot read the pipeline cache {0}: {1}")]
-    PipelineCacheRead(std::path::PathBuf, #[source] std::io::Error),
 
     #[error("cannot enumerate Vulkan devices: {0}")]
     DeviceEnumeration(#[source] vk::Result),
@@ -93,8 +72,6 @@ pub enum VkContextError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VkPipelineError {
-    #[error("shader is not valid SPIR-V: {0}")]
-    Spirv(#[source] std::io::Error),
     #[error("compute pipelines cannot require subgroups of {0} invocations on this device")]
     SubgroupSize(u32),
     #[error(transparent)]
@@ -113,8 +90,9 @@ pub enum VkKernelError {
         kernel: &'static str,
         condition: &'static str,
     },
-    #[error("work group {size:?} exceeds the device limit {limit:?} or {invocations} invocations")]
+    #[error("kernel {kernel}: work group {size:?} exceeds the device limit {limit:?} or {invocations} invocations")]
     WorkGroupSize {
+        kernel: &'static str,
         size: [u32; 3],
         limit: [u32; 3],
         invocations: u32,
