@@ -97,26 +97,26 @@ PUBLIC KERNEL(AttentionPrepare)(
   if (has_scales)
     norm_scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   if (block_mean) {
-    // Raw rows: the tokens after the last complete block, then one per suffix node.
+    // raw_keys: open-block cache rows, then one row per suffix node.
     const uint tail_rows = compression_ratio - 1;
     const uint block_start = prefix_tokens - prefix_tokens % compression_ratio;
     const uint position = prefix_tokens + pool_nodes[token_idx].height;
     const bool completes_block = (position + 1) % compression_ratio == 0;
     float sums[VALUES_PER_LANE] = {};
     if (completes_block) {
-      METAL_PRAGMA_NO_UNROLL
+      METAL_PRAGMA_UNROLL
       for (uint i = 0; i < compression_ratio; ++i) {
         const uint slot = uint(pool_windows[token_idx * compression_ratio + i]);
         const device ElementT* row = slot >= prefix_tokens ? qkvg + size_t(slot - prefix_tokens) * input_row_stride
                                                            : raw_keys + size_t(slot - block_start) * HEAD_DIM;
         METAL_PRAGMA_UNROLL
         for (ushort v = 0; v < VALUES_PER_LANE; ++v)
-          sums[v] += float(row[v * METAL_SIMD_SIZE + lane]);
+          sums[v] += float(row[lane * VALUES_PER_LANE + v]);
       }
     }
     METAL_PRAGMA_UNROLL
     for (ushort v = 0; v < VALUES_PER_LANE; ++v) {
-      const uint channel = v * METAL_SIMD_SIZE + lane;
+      const uint channel = lane * VALUES_PER_LANE + v;
       raw_keys[size_t(tail_rows + token_idx) * HEAD_DIM + channel] = head[channel];
       block_mean_row[channel] = float(ElementT(sums[v] / compression_ratio));
     }
