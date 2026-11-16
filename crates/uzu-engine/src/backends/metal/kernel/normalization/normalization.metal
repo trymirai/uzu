@@ -117,28 +117,25 @@ PUBLIC KERNEL(Normalization)(
       METAL_PRAGMA_UNROLL
       for (uint k = 0; k < VALUES_PER_THREAD; ++k) {
         const uint affine_index = affine_offset + first + k;
-        const AccumT x = static_cast<AccumT>(xs[k]);
+        AccumT normalized = (static_cast<AccumT>(xs[k]) - mean) * rms_inv;
         // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
         // If not, cast to OutputT after normalize, scale in OutputT
-        OutputT val;
         if (has_scales) {
           AccumT scale = static_cast<AccumT>(scales[affine_index]) + static_cast<AccumT>(scale_offset);
-          if (full_layer) {
-            val = static_cast<OutputT>((x - mean) * rms_inv * scale);
-          } else {
-            val = static_cast<OutputT>((x - mean) * rms_inv) * static_cast<OutputT>(scale);
-          }
-        } else {
-          val = static_cast<OutputT>((x - mean) * rms_inv);
+          normalized = full_layer ? normalized * scale
+                                  : static_cast<AccumT>(static_cast<OutputT>(normalized) * static_cast<OutputT>(scale));
         }
-
+        if (!use_hadamard) {
+          normalized = static_cast<AccumT>(static_cast<OutputT>(normalized));
+        }
         if (has_biases) {
-          val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[affine_index]));
+          normalized += static_cast<AccumT>(biases[affine_index]);
         }
-        outs[k] = val;
+        values[k] = normalized;
+        outs[k] = static_cast<OutputT>(normalized);
       }
       if (use_hadamard) {
-        values = float4(outs) * float4(load_vec4(hadamard_factors + first));
+        values *= float4(load_vec4(hadamard_factors + first));
       }
     }
     if (use_hadamard) {
