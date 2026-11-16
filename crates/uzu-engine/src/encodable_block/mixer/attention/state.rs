@@ -238,6 +238,7 @@ impl<B: Backend> AttentionState<B> {
             head_dim,
             num_kv_heads,
             layout.backend_opaque_layout,
+            false,
         )?;
 
         Ok(Self {
@@ -281,9 +282,9 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         if !copies.is_empty() {
             self.kv_cache_update.encode(
                 self.kv.k_codes.as_mut(),
-                self.kv.v_codes.as_mut(),
+                Some(self.kv.v_codes.as_mut()),
                 self.kv.k_scales.as_mut(),
-                self.kv.v_scales.as_mut(),
+                Some(self.kv.v_scales.as_mut()),
                 &copies,
                 copies.len() as u32,
                 command_buffer,

@@ -4,14 +4,15 @@ import generated.kv_cache_update;
 
 [[Public]] [[Kernel]] func KVCacheUpdate(
   RWStructuredBuffer<int8_t> in_place_k_codes,
-  RWStructuredBuffer<uint8_t> in_place_v_codes,
+  [[Optional("!keys_only")]] RWStructuredBuffer<uint8_t> in_place_v_codes,
   RWStructuredBuffer<BFloat16> in_place_k_scales,
-  RWStructuredBuffer<BFloat16> in_place_v_scales,
+  [[Optional("!keys_only")]] RWStructuredBuffer<BFloat16> in_place_v_scales,
   [[Constant]] StructuredBuffer<Copy> copies,
   uint32_t copy_count,
   [[Specialize]] uint32_t head_dim,
   [[Specialize]] uint32_t num_kv_heads,
   [[Specialize]] uint32_t backend_opaque_layout,
+  [[Specialize]] bool keys_only,
   [[Axis("num_kv_heads* head_dim", "256")]] uint32_t element,
 ) {
   // TODO
