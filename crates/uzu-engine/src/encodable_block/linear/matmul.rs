@@ -8,8 +8,8 @@ use crate::{
         kernel::{
             Kernels,
             matmul::{
-                ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput,
-                MatmulShape,
+                ActivationFormat, MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulGather, MatmulKernel,
+                MatmulOutput, MatmulShape,
             },
         },
     },
@@ -132,48 +132,26 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(self.prepared_activation_format)
     }
 
-    pub(super) fn encode_with_a(
-        &self,
-        a: MatmulA<impl BufferRef<Backend = B>>,
-        batch_dim: u32,
-        output_dim: u32,
-        gather_indices: Option<impl BufferRef<Backend = B>>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        let mut output = command_buffer
-            .allocate_scratch_for_shape(&[batch_dim, output_dim], self.output_data_type)
-            .map_err(LinearEncodeError::Backend)?;
-        self.encode_output(
-            a,
-            batch_dim,
-            output_dim,
-            gather_indices,
-            MatmulOutput::new(&mut output, self.d_ops()),
-            command_buffer,
-        )?;
-
-        Ok(output)
-    }
-
     pub(super) fn encode_columns(
         &self,
         a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,
         output: &mut B::ScratchBuffer,
         column: u32,
+        column_count: u32,
         row_stride: u32,
+        gather: Option<MatmulGather<impl BufferRef<Backend = B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), LinearEncodeError<B>> {
         let element = self.output_data_type.size_in_bytes();
-        if !self.matmul_b().is_trellis() {
-            unreachable!("TODO: support strided output in ordinary GEMM/GEMV");
-        }
+        let first_byte = column as usize * element;
+        let written_bytes = ((batch_dim as usize - 1) * row_stride as usize + column_count as usize) * element;
         let output = MatmulOutput {
-            values: output.subrange_mut(column as usize * element..),
+            values: output.subrange_mut(first_byte..first_byte + written_bytes),
             row_stride: Some(row_stride),
             ops: self.d_ops(),
         };
-        self.encode_output(a, batch_dim, self.output_dim, None::<&B::ScratchBuffer>, output, command_buffer)
+        self.encode_output(a, batch_dim, column_count, gather, output, command_buffer)
     }
 
     fn encode_output(
@@ -181,7 +159,7 @@ impl<B: Backend> LinearMatmul<B> {
         a: MatmulA<impl BufferRef<Backend = B>>,
         batch_dim: u32,
         output_dim: u32,
-        gather_indices: Option<impl BufferRef<Backend = B>>,
+        gather: Option<MatmulGather<impl BufferRef<Backend = B>>>,
         output: MatmulOutput<'_, B, impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), LinearEncodeError<B>> {
@@ -194,7 +172,7 @@ impl<B: Backend> LinearMatmul<B> {
                     b_leading_dimension: None,
                     b_transpose: true,
                     output,
-                    gather_indices,
+                    gather,
                     m: batch_dim,
                     n: output_dim,
                     k: self.input_dim,
@@ -248,7 +226,18 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
-        self.encode_with_a(input.as_ref(), batch_dim, self.output_dim, None::<&B::ScratchBuffer>, command_buffer)
+        let mut output = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)
+            .map_err(LinearEncodeError::Backend)?;
+        self.encode_output(
+            input.as_ref(),
+            batch_dim,
+            self.output_dim,
+            None::<MatmulGather<&B::ScratchBuffer>>,
+            MatmulOutput::new(&mut output, self.d_ops()),
+            command_buffer,
+        )?;
+        Ok(output)
     }
 
     fn select_activation_format(

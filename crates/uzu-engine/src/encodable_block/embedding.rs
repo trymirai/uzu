@@ -9,7 +9,7 @@ use crate::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             LogitTransformKernel,
-            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput},
+            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulGather, MatmulKernel, MatmulOutput},
         },
     },
     config::{embedding::AnyEmbeddingConfig, weight_matrix::AnyWeightMatrixSpec},
@@ -228,7 +228,11 @@ impl<B: Backend> Embedding<B> {
                     b_leading_dimension: None,
                     b_transpose: true,
                     output: MatmulOutput::new(&mut output, MatmulDOps::none()),
-                    gather_indices,
+                    gather: gather_indices.map(|indices| MatmulGather {
+                        indices,
+                        first_row: 0,
+                        row_count: self.vocab_size,
+                    }),
                     m: batch_dim,
                     n: output_dim,
                     k: self.model_dim,

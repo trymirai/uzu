@@ -6,9 +6,12 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
-        gpu_types::weaver::{
-            CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
-            WeaverSelectionMode::{Children, Frontier, Fused},
+        gpu_types::{
+            hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            weaver::{
+                CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
+                WeaverSelectionMode::{Children, Frontier, Fused},
+            },
         },
         kernel::{
             ActivationTransform, AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel,
@@ -319,7 +322,13 @@ impl<B: Backend> Weaver<B> {
             .map(|factors| {
                 Ok(PrefixUnrotation {
                     factors,
-                    transform: ActivationTransform::output_rht(context, DATA_TYPE, None, true)?,
+                    transform: ActivationTransform::output_rht(
+                        context,
+                        DATA_TYPE,
+                        None,
+                        HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        true,
+                    )?,
                 })
             })
             .transpose()

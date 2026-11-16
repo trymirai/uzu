@@ -18,6 +18,7 @@ import generated.quantization_method;
   RWStructuredBuffer<T> output,
   uint32_t batch_size,
   uint32_t vocab_size,
+  uint32_t first_row,
   uint32_t model_dim,
   float input_scale,
   [[Specialize]] EmbeddingTableKind table_kind,

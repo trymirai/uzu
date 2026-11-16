@@ -75,6 +75,7 @@ PUBLIC KERNEL(MoeGemv)(
   const GemvParams params = {
       in_vec_size,
       out_vec_size,
+      out_vec_size,
       scale_output_stride,
       scale_group_stride,
       zero_point_output_stride,

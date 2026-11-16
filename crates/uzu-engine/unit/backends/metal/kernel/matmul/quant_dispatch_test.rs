@@ -20,8 +20,8 @@ use crate::{
                 ActivationQuantization, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
-                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel, MatmulShape, QuantParams,
-                    QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
+                    ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulGather, MatmulKernel,
+                    MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
                 },
             },
         },
@@ -791,7 +791,11 @@ fn gathered_gemv_reads_weight_layout_bf16(
     }
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     let mut arguments = quant_arguments(&mut buffers, &input);
-    arguments.gather_indices = Some(&gather_indices_buffer);
+    arguments.gather = Some(MatmulGather {
+        indices: &gather_indices_buffer,
+        first_row: 0,
+        row_count: weight_rows,
+    });
     arguments.n = gathered_rows;
     matmul.encode(arguments, &mut command_buffer).expect("gathered GEMV");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -894,7 +898,7 @@ fn run_packed_half_pipeline(
         b_leading_dimension: arguments.b_leading_dimension,
         b_transpose: arguments.b_transpose,
         output: arguments.output,
-        gather_indices: arguments.gather_indices,
+        gather: arguments.gather,
         m: arguments.m,
         n: arguments.n,
         k: arguments.k,

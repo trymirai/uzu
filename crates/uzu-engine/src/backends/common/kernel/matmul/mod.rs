@@ -6,7 +6,7 @@ mod matmul_b;
 mod output;
 pub mod routing;
 
-pub use arguments::MatmulArguments;
+pub use arguments::{MatmulArguments, MatmulGather};
 pub use d_ops::MatmulDOps;
 pub use kernel::MatmulKernel;
 pub use matmul_a::{Int8CodeLayout, MatmulA, packed_half_bytes};

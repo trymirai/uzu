@@ -28,6 +28,7 @@ pub fn input_embedding_lookup<T: DataTypeRepr + Float>(
     output: *mut T,
     batch_size: u32,
     vocab_size: u32,
+    first_row: u32,
     model_dim: u32,
     input_scale: f32,
     #[specialize] table_kind: EmbeddingTableKind,
@@ -59,7 +60,9 @@ pub fn input_embedding_lookup<T: DataTypeRepr + Float>(
     let dense_scale = T::from(input_scale).unwrap();
     for batch in 0..batch_size as usize {
         let row = unsafe { std::slice::from_raw_parts_mut(output.add(batch * dim), dim) };
-        let token = unsafe { *token_ids.add(batch) };
+        let Some(token) = unsafe { *token_ids.add(batch) }.checked_sub(first_row) else {
+            continue;
+        };
         if token >= vocab_size {
             row.fill(T::zero());
             continue;

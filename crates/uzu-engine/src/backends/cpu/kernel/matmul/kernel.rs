@@ -2,10 +2,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CpuBuffer, Kernels,
-            gpu_types::quantization::QuantizationMode,
+            gpu_types::{hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, quantization::QuantizationMode},
             kernel::{
                 ActivationTransform, TensorAddBiasKernel,
-                matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel},
+                matmul::{Int8CodeLayout, MatmulA, MatmulArguments, MatmulKernel, MatmulOutput},
             },
         },
         cpu::{
@@ -47,7 +47,8 @@ impl MatmulKernel for MatmulCpuKernel {
                 return Err(MatmulCpuError::UnsupportedDataType(data_type));
             }
         }
-        let output_rht = ActivationTransform::output_rht(context, output_data_type, None, true)?;
+        let output_rht =
+            ActivationTransform::output_rht(context, output_data_type, None, HADAMARD_TRANSFORM_BLOCK_SIZE, true)?;
         let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
             context,
             output_data_type,
@@ -84,10 +85,15 @@ impl MatmulKernel for MatmulCpuKernel {
             m,
             n,
             k,
-            gather_indices,
+            gather,
             ..
         } = arguments;
-        let (mut d, ops) = output.into_contiguous(n, "CpuMatmul")?;
+        let row_stride = output.checked_row_stride(n)? as usize;
+        let MatmulOutput {
+            values: mut d,
+            ops,
+            ..
+        } = output;
         let output_scale = ops.ab_scale;
         let bias_buffer = ops.bias;
         let post_rht = ops.rht_factors;
@@ -163,9 +169,13 @@ impl MatmulKernel for MatmulCpuKernel {
             },
         };
         let bias_ptr = bias_buffer.map(|bias| SendPtr(bias.cpu_ptr().as_ptr().cast::<u8>().cast_const()));
-        let gather_ptr = gather_indices.map(|indices| {
-            let (indices, range) = indices.parts();
-            SendPtr(indices.cpu_address().as_ptr().cast::<u32>().cast_const().wrapping_byte_add(range.start))
+        let gather_window = gather.map(|gather| {
+            let (indices, range) = gather.indices.parts();
+            (
+                SendPtr(indices.cpu_address().as_ptr().cast::<u32>().cast_const().wrapping_byte_add(range.start)),
+                gather.first_row as usize,
+                gather.row_count as usize,
+            )
         });
         let (d_buffer, d_range) = d.reborrow().parts();
         let d_ptr = SendPtrMut(d_buffer.cpu_address().as_ptr().cast::<u8>().wrapping_byte_add(d_range.start));
@@ -180,9 +190,16 @@ impl MatmulKernel for MatmulCpuKernel {
             unsafe {
                 for row in 0..m_u {
                     for col in 0..n_u {
-                        // Gather remaps output column `col` to B-row `gather_indices[row * n + col]`.
-                        let b_col = match gather_ptr {
-                            Some(g) => *g.as_ptr().add(row * n_u + col) as usize,
+                        // Gather remaps output column `col` to B-row `gather_indices[row * n + col] - first_row`.
+                        let b_col = match gather_window {
+                            Some((indices, first_row, row_count)) => {
+                                let gathered_row = *indices.as_ptr().add(row * n_u + col) as usize;
+                                let b_col = gathered_row.wrapping_sub(first_row);
+                                if b_col >= row_count {
+                                    continue;
+                                }
+                                b_col
+                            },
                             None => col,
                         };
                         let mut accumulator = 0.0f32;
@@ -272,7 +289,7 @@ impl MatmulKernel for MatmulCpuKernel {
                             accumulator += a_value * b_value;
                         }
 
-                        let output_index = row * n_u + col;
+                        let output_index = row * row_stride + col;
                         let mut value = output_scale * accumulator;
                         if !bias_after_rht && let Some(bias) = bias_ptr {
                             value += load(bias.as_ptr(), weights_data_type, col);

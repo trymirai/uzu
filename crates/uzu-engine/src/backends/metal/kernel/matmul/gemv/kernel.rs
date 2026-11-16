@@ -218,7 +218,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::backends::{
     common::{
         BufferMut, BufferRef,
-        kernel::matmul::{MatmulA, MatmulArguments},
+        kernel::matmul::{MatmulA, MatmulArguments, MatmulOutput},
     },
     metal::{Metal, kernel::matmul::MatmulMetalError},
 };
@@ -287,10 +287,15 @@ impl GemvKernel {
             m,
             n,
             k,
-            gather_indices,
+            gather,
             ..
         } = arguments;
-        let (mut d, ops) = output.into_contiguous(n, "Gemv")?;
+        let output_row_stride = output.checked_row_stride(n)?;
+        let MatmulOutput {
+            values: mut d,
+            ops,
+            ..
+        } = output;
         let ab_scale = ops.ab_scale;
         let output_bias = ops.bias;
         let rht_factors = ops.rht_factors;
@@ -386,9 +391,10 @@ impl GemvKernel {
             d.reborrow(),
             gemv_bias,
             gemv_rht_factors,
-            gather_indices,
+            gather.map(|gather| gather.indices),
             k,
             n,
+            output_row_stride,
             m,
             ab_scale,
             output_group_count,
@@ -397,6 +403,8 @@ impl GemvKernel {
             zero_point_strides.output_stride,
             zero_point_strides.group_stride,
             soft_cap,
+            gather.map(|gather| gather.first_row),
+            gather.map(|gather| gather.row_count),
             command_buffer,
         );
 

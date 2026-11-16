@@ -19,6 +19,7 @@ KERNEL(GemmSplitKReduce)(
     const constant uint& partition_count,
     const constant uint& threadgroup_count,
     const constant uint& column_count,
+    const constant uint& output_row_stride,
     const constant float& output_scale
         OPTIONAL(output_transform.contains(GemmDTransform::SCALE)),
     const constant float& soft_cap
@@ -40,8 +41,9 @@ KERNEL(GemmSplitKReduce)(
     return;
   }
 
-  device vec<T, 4>* output_vectors = reinterpret_cast<device vec<T, 4>*>(output);
   const device vec<Input, 4>* partial_sum_vectors = reinterpret_cast<const device vec<Input, 4>*>(partial_sums);
+  const uint first_element = vector_index * 4u;
+  const uint column = first_element % column_count;
 
   float4 accumulator = float4(0.0f);
   for (uint partition = 0u; partition < partition_count; ++partition) {
@@ -52,12 +54,12 @@ KERNEL(GemmSplitKReduce)(
     accumulator *= output_scale;
   }
   if (output_transform.contains(GemmDTransform::BIAS)) {
-    const uint column = (vector_index * 4u) % column_count;
     accumulator += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));
   }
   if (output_transform.contains(GemmDTransform::SOFT_CAP)) {
     accumulator = uzu::apply_soft_cap(accumulator, soft_cap);
   }
 
-  output_vectors[vector_index] = vec<T, 4>(accumulator);
+  *reinterpret_cast<device vec<T, 4>*>(output + first_element / column_count * output_row_stride + column) =
+      vec<T, 4>(accumulator);
 }

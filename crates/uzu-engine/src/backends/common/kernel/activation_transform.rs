@@ -130,6 +130,7 @@ impl<B: Backend> ActivationTransform<B> {
         context: &B::Context,
         data_type: DataType,
         bias_data_type: Option<DataType>,
+        hadamard_size: u32,
         in_place: bool,
     ) -> Result<Self, B::Error> {
         Self::new(
@@ -137,7 +138,7 @@ impl<B: Backend> ActivationTransform<B> {
             data_type,
             bias_data_type,
             ActivationTransformOp::OutputRht,
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
+            hadamard_size,
             in_place,
             ActivationFormat::Bf16,
         )

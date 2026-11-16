@@ -15,7 +15,7 @@ use crate::{
             gpu_types::quantization_method::QuantizationMethod,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulGather, MatmulKernel, MatmulOutput},
             },
         },
         cpu::Cpu,
@@ -23,7 +23,7 @@ use crate::{
     data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_non_cpu_backend},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
         matmul::{QuantBuffers, QuantInput},
     },
 };
@@ -35,8 +35,11 @@ struct Input<T: DataTypeRepr + Float> {
     k: usize,
     n: usize,
     ids: Option<Box<[u32]>>,
+    gather_first_row: u32,
     soft_cap: Option<f32>,
 }
+
+const UNWRITTEN: f32 = 7.0;
 
 fn get_test_data<T: DataTypeRepr + Float>(
     m: usize,
@@ -53,6 +56,7 @@ fn get_test_data<T: DataTypeRepr + Float>(
         k,
         n,
         ids: None,
+        gather_first_row: 0,
         soft_cap: None,
     };
 
@@ -60,18 +64,18 @@ fn get_test_data<T: DataTypeRepr + Float>(
     (input, expected)
 }
 
-// Encode one GEMV (dense, or a per-row B-row gather when `gather_indices` is set) and copy out.
+// Encode one GEMV (dense, or a per-row B-row gather when `gather` is set) and copy out.
 fn run_gemv<B: Backend, T: DataTypeRepr + Float>(
     context: &B::Context,
     a: impl BufferRef<Backend = B>,
     b: MatmulB<impl BufferRef<Backend = B>>,
-    gather_indices: Option<impl BufferRef<Backend = B>>,
+    gather: Option<MatmulGather<impl BufferRef<Backend = B>>>,
     m: usize,
     n_out: usize,
     k: usize,
     soft_cap: Option<f32>,
 ) -> Vec<T> {
-    let mut d = create_buffer::<B, T>(context, m * n_out);
+    let mut d = create_buffer_with_data::<B, T>(context, &vec![T::from(UNWRITTEN).unwrap(); m * n_out]);
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(context, T::data_type(), T::data_type(), T::data_type())
             .expect("MatmulKernel");
@@ -93,7 +97,7 @@ fn run_gemv<B: Backend, T: DataTypeRepr + Float>(
                         ..MatmulDOps::none()
                     },
                 ),
-                gather_indices,
+                gather,
                 m: m as u32,
                 n: n_out as u32,
                 k: k as u32,
@@ -116,7 +120,11 @@ fn get_output<T: DataTypeRepr + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         MatmulB::FullPrecision {
             b: &weights,
         },
-        ids.as_ref(),
+        ids.as_ref().map(|indices| MatmulGather {
+            indices,
+            first_row: input.gather_first_row,
+            row_count: (input.b.len() / input.k) as u32 - input.gather_first_row,
+        }),
         input.m,
         input.n,
         input.k,
@@ -172,7 +180,7 @@ fn group_major_gemv_bf16(
         &context,
         &buffers.x,
         buffers.matmul_b(&input),
-        None::<&<Metal as Backend>::GlobalGpuBuffer>,
+        None::<MatmulGather<&<Metal as Backend>::GlobalGpuBuffer>>,
         1,
         input.n as usize,
         input.k as usize,
@@ -205,35 +213,50 @@ fn assert_gather<T: DataTypeRepr + Float + Debug + Display>(
     m: usize,
     vocab: usize,
     ids_per_row: usize,
+    first_row: usize,
     eps: f32,
     name: &str,
 ) {
-    let mut expected = vec![T::from(0.0).unwrap(); m * ids_per_row];
+    let mut expected = vec![T::from(UNWRITTEN).unwrap(); m * ids_per_row];
     for r in 0..m {
         for c in 0..ids_per_row {
-            expected[r * ids_per_row + c] = dense[r * vocab + ids[r * ids_per_row + c] as usize];
+            let row = (ids[r * ids_per_row + c] as usize).wrapping_sub(first_row);
+            if row < vocab - first_row {
+                expected[r * ids_per_row + c] = dense[r * vocab + row];
+            }
         }
     }
     assert_eq_float(&expected, gather, eps, &format!("gather vs dense ({name})"));
 }
 
 macro_rules! check_gather {
-    ($m:expr, $vocab:expr, $ids:expr, $ids_per_row:expr, $eps:expr, |$B:ident| $run:block) => {{
+    ($m:expr, $vocab:expr, $ids:expr, $ids_per_row:expr, $first_row:expr, $eps:expr, |$B:ident| $run:block) => {{
         {
             #[allow(non_camel_case_types)]
             type $B = Cpu;
             let (dense, gather) = $run;
-            assert_gather(&dense, &gather, &$ids, $m, $vocab, $ids_per_row, $eps, "Cpu");
+            assert_gather(&dense, &gather, &$ids, $m, $vocab, $ids_per_row, $first_row, $eps, "Cpu");
         }
         for_each_non_cpu_backend!(|$B| {
             let (dense, gather) = $run;
-            assert_gather(&dense, &gather, &$ids, $m, $vocab, $ids_per_row, $eps, std::any::type_name::<$B>());
+            assert_gather(
+                &dense,
+                &gather,
+                &$ids,
+                $m,
+                $vocab,
+                $ids_per_row,
+                $first_row,
+                $eps,
+                std::any::type_name::<$B>(),
+            );
         });
     }};
 }
 
 fn fp_gather_case<T: DataTypeRepr + Float + Debug + Display>(
     soft_cap: Option<f32>,
+    first_row: usize,
     eps: f32,
 ) {
     let (m, k, vocab, ids_per_row) = (4usize, 128usize, 256usize, 8usize);
@@ -249,31 +272,55 @@ fn fp_gather_case<T: DataTypeRepr + Float + Debug + Display>(
         k,
         n,
         ids,
+        gather_first_row: first_row as u32,
         soft_cap,
     };
     let dense_input = make(vocab, None);
     let gather_input = make(ids_per_row, Some(ids.clone().into_boxed_slice()));
 
-    check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
+    check_gather!(m, vocab, ids, ids_per_row, first_row, eps, |B| {
         (get_output::<T, B>(&dense_input), get_output::<T, B>(&gather_input))
     });
 }
 
 fn quant_gather_case(
     input: QuantInput<bf16>,
+    first_row: usize,
     eps: f32,
 ) {
     let (m, k, vocab, ids_per_row) = (input.m as usize, input.k as usize, input.n as usize, 8);
     let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
     // K_SPLIT == 1 keeps dense and gathered accumulation order identical.
-    check_gather!(m, vocab, ids, ids_per_row, eps, |B| {
+    check_gather!(m, vocab, ids, ids_per_row, first_row, eps, |B| {
         let context = block_on(<B as Backend>::Context::new()).expect("context");
         let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
         let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
         let b = || buffers.matmul_b(&input);
         (
-            run_gemv::<B, bf16>(&context, &buffers.x, b(), None::<&<B as Backend>::GlobalGpuBuffer>, m, vocab, k, None),
-            run_gemv::<B, bf16>(&context, &buffers.x, b(), Some(&ids_alloc), m, ids_per_row, k, None),
+            run_gemv::<B, bf16>(
+                &context,
+                &buffers.x,
+                b(),
+                None::<MatmulGather<&<B as Backend>::GlobalGpuBuffer>>,
+                m,
+                vocab,
+                k,
+                None,
+            ),
+            run_gemv::<B, bf16>(
+                &context,
+                &buffers.x,
+                b(),
+                Some(MatmulGather {
+                    indices: &ids_alloc,
+                    first_row: first_row as u32,
+                    row_count: (vocab - first_row) as u32,
+                }),
+                m,
+                ids_per_row,
+                k,
+                None,
+            ),
         )
     });
 }
@@ -281,9 +328,9 @@ fn quant_gather_case(
 #[uzu_test]
 fn gemv_gather() {
     // Full-precision GEMV.
-    for soft_cap in [None, Some(15.0)] {
-        fp_gather_case::<bf16>(soft_cap, 0.1);
-        fp_gather_case::<f32>(soft_cap, 0.01);
+    for (soft_cap, first_row) in [(None, 0), (Some(15.0), 0), (None, 61)] {
+        fp_gather_case::<bf16>(soft_cap, first_row, 0.1);
+        fp_gather_case::<f32>(soft_cap, first_row, 0.01);
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
     for (bits, method, signed_codes) in [
@@ -296,10 +343,13 @@ fn gemv_gather() {
         if signed_codes {
             input = input.with_signed_weight_codes();
         }
-        quant_gather_case(input, 0.05);
+        for first_row in [0, 13] {
+            quant_gather_case(input.clone(), first_row, 0.05);
+        }
     }
     quant_gather_case(
         QuantInput::new(8, 96, 66, 32, 4, QuantizationMethod::ScaleZeroPoint, 0x5EED).with_group_output(),
+        21,
         0.5,
     );
 }
