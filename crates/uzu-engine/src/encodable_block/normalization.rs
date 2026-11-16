@@ -6,10 +6,12 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{Kernels, NormalizationKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
     data_type::DataType,
+    encodable_block::linear::InputRhtParameters,
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::size_for_shape::size_for_shape,
 };
@@ -48,7 +50,7 @@ impl<B: Backend> Normalization<B> {
         element_count: u32,
         input_data_type: DataType,
         output_data_type: DataType,
-        hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
+        hadamard_factors: Option<InputRhtParameters<B>>,
         shortcut_mode: ShortcutMode,
         config: &NormalizationConfig,
         parameter_tree: &ParameterTree<'_, B>,
@@ -73,12 +75,13 @@ impl<B: Backend> Normalization<B> {
         element_count: u32,
         input_data_type: DataType,
         output_data_type: DataType,
-        hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
+        hadamard_factors: Option<InputRhtParameters<B>>,
         shortcut_mode: ShortcutMode,
         config: &NormalizationConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
+        let (hadamard_size, hadamard_factors) = hadamard_factors.map(|rht| (rht.hadamard_size, rht.signs)).unzip();
         assert!(element_count.is_multiple_of(4), "normalization width ({element_count}) must be a multiple of 4");
         let affine_shape: &[u32] = if let Some(mixture_size) = mixture_size {
             &[mixture_size, element_count]
@@ -114,6 +117,7 @@ impl<B: Backend> Normalization<B> {
             copy_to_shortcut,
             residual_add,
             hadamard_factors.is_some(),
+            hadamard_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
             biases.is_some(),
             scales.is_some(),
         )

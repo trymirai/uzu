@@ -37,6 +37,7 @@ PUBLIC KERNEL(Normalization)(
     const bool copy_to_shortcut SPECIALIZE,
     const bool residual_add SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
+    const uint hadamard_size SPECIALIZE,
     const bool has_biases SPECIALIZE,
     const bool has_scales SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
@@ -139,7 +140,9 @@ PUBLIC KERNEL(Normalization)(
       }
     }
     if (use_hadamard) {
-      outs = vec<OutputT, VALUES_PER_THREAD>(hadamard::simdgroup_transform_vector(thread_context.simd_lane_id, values));
+      outs = vec<OutputT, VALUES_PER_THREAD>(
+          hadamard::simdgroup_transform_vector(thread_context.simd_lane_id, values, hadamard_size)
+      );
     }
     if (in_bounds) {
       store_vec4(output + first, outs);

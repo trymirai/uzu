@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError},
+        linear::{InputRhtParameters, Linear, LinearBlockError},
         mixer::{
             Mixer, MixerEncodeError, MixerState,
             attention::rope::PrecalculatedRoPE,
@@ -167,7 +167,7 @@ impl<B: Backend> DeltaNet<B> {
         config: &DeltaNetConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<B::GlobalGpuBuffer>), DeltaNetNewError<B>> {
+    ) -> Result<(Self, Option<InputRhtParameters<B>>), DeltaNetNewError<B>> {
         if config.kernel_size != 4 {
             return Err(DeltaNetNewError::UnsupportedConfiguration(format!(
                 "kernel_size must be 4, got {}",

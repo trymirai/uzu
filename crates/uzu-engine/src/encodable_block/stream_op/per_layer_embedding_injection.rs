@@ -66,7 +66,7 @@ impl<B: Backend> PerLayerEmbeddingInjection<B> {
             activation_alpha: (activation_alpha != 1.0).then_some(activation_alpha),
             ..Default::default()
         };
-        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, false, settings)
+        let gate_act_mul = GatedActMul::full_precision(context, data_type, false, None, settings)
             .map_err(StreamOpNewError::Backend)?;
         let residual_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true, true)
             .map_err(StreamOpNewError::Backend)?;

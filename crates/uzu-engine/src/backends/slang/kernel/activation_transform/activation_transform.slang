@@ -16,6 +16,7 @@ import generated.activation_transform;
   uint32_t element_count,
   [[Optional("(ops == ActivationTransformOp::PackHalf)")]] RWStructuredBuffer<uint32_t> packed_half_out,
   [[Specialize]] ActivationTransformOp ops,
+  [[Specialize]] uint32_t hadamard_size,
   [[Specialize]] bool grouped_by_weight_nibble,
   [[Specialize]] bool in_place,
   [[Specialize]] uint32_t activation_scale_group_size,

@@ -1,9 +1,10 @@
-use std::mem::size_of;
+use std::{mem::size_of, sync::Arc};
 
 use super::{LinearInput, LinearInputPreparation};
 use crate::{
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform,
             matmul::{ActivationFormat, MatmulA, packed_half_bytes},
@@ -12,8 +13,22 @@ use crate::{
     data_type::DataType,
 };
 
+pub struct InputRhtParameters<B: Backend> {
+    pub hadamard_size: u32,
+    pub signs: Arc<B::GlobalGpuBuffer>,
+}
+
+impl<B: Backend> InputRhtParameters<B> {
+    pub fn h32(signs: Arc<B::GlobalGpuBuffer>) -> Self {
+        Self {
+            hadamard_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+            signs,
+        }
+    }
+}
+
 pub struct InputRht<B: Backend> {
-    rht_signs: B::GlobalGpuBuffer,
+    rht_signs: Arc<B::GlobalGpuBuffer>,
     rht: ActivationTransform<B>,
     quantizer: Option<ActivationTransform<B>>,
 }
@@ -26,12 +41,15 @@ impl<B: Backend> InputRht<B> {
         context: &B::Context,
     ) -> Result<Self, B::Error> {
         let LinearInputPreparation {
-            rht_signs,
+            rht: InputRhtParameters {
+                hadamard_size,
+                signs: rht_signs,
+            },
             activation_format,
         } = preparation;
-        let rht = ActivationTransform::input_rht(context, data_type, in_place)?;
+        let rht = ActivationTransform::input_rht(context, data_type, hadamard_size, in_place)?;
         let quantizer = (activation_format != ActivationFormat::Bf16)
-            .then(|| ActivationTransform::quantize(context, data_type, activation_format))
+            .then(|| ActivationTransform::quantize(context, data_type, hadamard_size, activation_format))
             .transpose()?;
 
         Ok(Self {
@@ -56,7 +74,7 @@ impl<B: Backend> InputRht<B> {
             } = format
             {
                 let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, block_k, bits))?;
-                quantizer.encode_pack_half(input, &mut values, &self.rht_signs, batch_dim, input_dim, command_buffer);
+                quantizer.encode_pack_half(input, &mut values, &*self.rht_signs, batch_dim, input_dim, command_buffer);
                 return Ok(MatmulA::PackedHalf {
                     values,
                     block_k,
@@ -81,7 +99,7 @@ impl<B: Backend> InputRht<B> {
                 &mut values,
                 &mut scales,
                 group_sums.as_mut(),
-                &self.rht_signs,
+                &*self.rht_signs,
                 batch_dim,
                 input_dim,
                 command_buffer,
@@ -97,7 +115,7 @@ impl<B: Backend> InputRht<B> {
 
         let input_dim = self.input_dim();
         let mut transformed = command_buffer.allocate_scratch(input.size())?;
-        self.rht.encode_fp(input, &mut transformed, &self.rht_signs, batch_dim, input_dim, command_buffer);
+        self.rht.encode_fp(input, &mut transformed, &*self.rht_signs, batch_dim, input_dim, command_buffer);
         Ok(MatmulA::full_precision(transformed))
     }
 
@@ -116,7 +134,7 @@ impl<B: Backend> InputRht<B> {
         let input_dim = self.input_dim();
         self.rht.encode_fp_in_place(
             (&mut input).subrange_mut(offset..),
-            &self.rht_signs,
+            &*self.rht_signs,
             None,
             batch_dim,
             input_dim,

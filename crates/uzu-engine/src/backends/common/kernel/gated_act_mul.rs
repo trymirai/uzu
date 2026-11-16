@@ -41,29 +41,32 @@ impl<B: Backend> GatedActMul<B> {
         context: &B::Context,
         data_type: DataType,
         interleaved: bool,
-        use_hadamard: bool,
+        hadamard_size: Option<u32>,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let mut options = GatedActMulOptions::empty();
         options.set(GatedActMulOptions::INTERLEAVED, interleaved);
-        options.set(GatedActMulOptions::HADAMARD, use_hadamard);
-        Self::new(context, data_type, options, settings, ActivationFormat::Bf16)
+        options.set(GatedActMulOptions::HADAMARD, hadamard_size.is_some());
+        let hadamard_size = hadamard_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE);
+        Self::new(context, data_type, options, hadamard_size, settings, ActivationFormat::Bf16)
     }
 
     pub fn quantized(
         context: &B::Context,
         data_type: DataType,
+        hadamard_size: u32,
         quantization: ActivationFormat,
         settings: GatedActMulSettings,
     ) -> Result<Self, B::Error> {
         let options = GatedActMulOptions::INTERLEAVED | GatedActMulOptions::HADAMARD;
-        Self::new(context, data_type, options, settings, quantization)
+        Self::new(context, data_type, options, hadamard_size, settings, quantization)
     }
 
     fn new(
         context: &B::Context,
         data_type: DataType,
         options: GatedActMulOptions,
+        hadamard_size: u32,
         settings: GatedActMulSettings,
         format: ActivationFormat,
     ) -> Result<Self, B::Error> {
@@ -94,6 +97,7 @@ impl<B: Backend> GatedActMul<B> {
             codes_grouped_by_nibble,
             options.contains(GatedActMulOptions::INTERLEAVED),
             options.contains(GatedActMulOptions::HADAMARD),
+            hadamard_size,
             scale_group_size,
             sum_group_size,
             weight_bits,

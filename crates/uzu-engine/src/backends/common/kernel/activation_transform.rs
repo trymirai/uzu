@@ -68,6 +68,7 @@ impl<B: Backend> ActivationTransform<B> {
         data_type: DataType,
         bias_data_type: Option<DataType>,
         ops: ActivationTransformOp,
+        hadamard_size: u32,
         in_place: bool,
         format: ActivationFormat,
     ) -> Result<Self, B::Error> {
@@ -92,6 +93,7 @@ impl<B: Backend> ActivationTransform<B> {
             data_type,
             bias_data_type.unwrap_or(data_type),
             ops,
+            hadamard_size,
             codes_grouped_by_nibble,
             in_place,
             scale_group_size,
@@ -110,9 +112,18 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn input_rht(
         context: &B::Context,
         data_type: DataType,
+        hadamard_size: u32,
         in_place: bool,
     ) -> Result<Self, B::Error> {
-        Self::new(context, data_type, None, ActivationTransformOp::InputRht, in_place, ActivationFormat::Bf16)
+        Self::new(
+            context,
+            data_type,
+            None,
+            ActivationTransformOp::InputRht,
+            hadamard_size,
+            in_place,
+            ActivationFormat::Bf16,
+        )
     }
 
     pub fn output_rht(
@@ -126,6 +137,7 @@ impl<B: Backend> ActivationTransform<B> {
             data_type,
             bias_data_type,
             ActivationTransformOp::OutputRht,
+            HADAMARD_TRANSFORM_BLOCK_SIZE,
             in_place,
             ActivationFormat::Bf16,
         )
@@ -134,6 +146,7 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn quantize(
         context: &B::Context,
         data_type: DataType,
+        hadamard_size: u32,
         quantization: ActivationFormat,
     ) -> Result<Self, B::Error> {
         let op = match quantization {
@@ -144,7 +157,7 @@ impl<B: Backend> ActivationTransform<B> {
             } => ActivationTransformOp::PackHalf,
             ActivationFormat::Bf16 | ActivationFormat::Trellis => unreachable!(),
         };
-        Self::new(context, data_type, None, op, false, quantization)
+        Self::new(context, data_type, None, op, hadamard_size, false, quantization)
     }
 
     pub fn format(&self) -> ActivationFormat {

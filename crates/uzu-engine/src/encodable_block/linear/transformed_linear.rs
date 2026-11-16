@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
@@ -16,8 +18,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Linear, LinearBlockError, LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul,
-        input_rht::InputRht,
+        InputRhtParameters, Linear, LinearBlockError, LinearEncodeError, LinearInput, LinearInputPreparation,
+        LinearMatmul, input_rht::InputRht,
     },
     safetensors::ParameterTree,
 };
@@ -230,12 +232,23 @@ impl<B: Backend> TransformedLinear<B> {
         bias_tree: Option<&ParameterTree<'_, B>>,
         context: &B::Context,
     ) -> Result<(LinearInputPreparation<B>, LinearMatmul<B>), LinearBlockError<B>> {
-        if spec.block_size != HADAMARD_TRANSFORM_BLOCK_SIZE {
-            return Err(LinearBlockError::UnsupportedConfiguration(format!("Hadamard block size {}", spec.block_size)));
-        }
         let has_output_transform = spec.processing_mode == InputOutput;
-        let rht_signs =
-            weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?;
+        let hadamard_size = spec.block_size;
+        // The output rotation only exists for the global block size
+        match (hadamard_size, spec.processing_mode) {
+            (HADAMARD_TRANSFORM_BLOCK_SIZE, _) | (128, Input) => {},
+            _ => {
+                return Err(LinearBlockError::UnsupportedConfiguration(format!("Hadamard block size {hadamard_size}")));
+            },
+        }
+        if !input_dimension.is_multiple_of(hadamard_size) {
+            return Err(LinearBlockError::UnsupportedConfiguration(format!(
+                "Hadamard block size {hadamard_size} for input dimension {input_dimension}"
+            )));
+        }
+        let signs = Arc::new(
+            weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?,
+        );
         let output_factors = if has_output_transform && restore_output_basis {
             Some(weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?)
         } else {
@@ -260,7 +273,10 @@ impl<B: Backend> TransformedLinear<B> {
         let activation_format = inner_linear.prepare_activation(context).map_err(LinearBlockError::Backend)?;
         Ok((
             LinearInputPreparation {
-                rht_signs,
+                rht: InputRhtParameters {
+                    hadamard_size,
+                    signs,
+                },
                 activation_format,
             },
             inner_linear,

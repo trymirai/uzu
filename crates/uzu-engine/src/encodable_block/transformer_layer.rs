@@ -14,7 +14,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
-        linear::{Linear, LinearBlockError, LinearEncodeError},
+        linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PrecalculatedRoPE},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -67,7 +67,7 @@ struct TransformerLayerConv<B: Backend> {
     pre_conv: SeparableCausalConv<B>,
     kernel_projection: Box<dyn Linear<B>>,
     post_conv: SeparableCausalConv<B>,
-    input_rht: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
+    input_rht: Option<(ActivationTransform<B>, Arc<B::GlobalGpuBuffer>)>,
     coefficient_count: u32,
 }
 
@@ -93,7 +93,7 @@ impl<B: Backend> TransformerLayerConv<B> {
     async fn new(
         model_dim: u32,
         data_type: DataType,
-        input_hadamard_factors: Option<B::GlobalGpuBuffer>,
+        input_hadamard_factors: Option<InputRhtParameters<B>>,
         config: &TransformerLayerConvConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
@@ -132,7 +132,10 @@ impl<B: Backend> TransformerLayerConv<B> {
         .await?;
 
         let input_rht = input_hadamard_factors
-            .map(|factors| ActivationTransform::input_rht(context, data_type, true).map(|kernel| (kernel, factors)))
+            .map(|rht| {
+                ActivationTransform::input_rht(context, data_type, rht.hadamard_size, true)
+                    .map(|kernel| (kernel, rht.signs))
+            })
             .transpose()
             .map_err(TransformerLayerError::Backend)?;
 
@@ -160,8 +163,8 @@ impl<B: Backend> TransformerLayerConv<B> {
             .pre_conv
             .encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, command_buffer)
             .map_err(TransformerLayerError::Backend)?;
-        if let Some((transform, factors)) = &self.input_rht {
-            transform.encode_fp_in_place(&mut output, factors, None, sequence_length, self.model_dim, command_buffer);
+        if let Some((transform, signs)) = &self.input_rht {
+            transform.encode_fp_in_place(&mut output, &**signs, None, sequence_length, self.model_dim, command_buffer);
         }
         Ok((output, coefficients))
     }
@@ -191,7 +194,7 @@ impl<B: Backend> Sublayer<B> {
         layer_index: u32,
         name: &'static str,
         config: &SublayerConfigCommon,
-        mut input_hadamard_factors: Option<B::GlobalGpuBuffer>,
+        mut input_hadamard_factors: Option<InputRhtParameters<B>>,
         residual_config: &AnyResidualConfig,
         layer_parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
@@ -220,7 +223,7 @@ impl<B: Backend> Sublayer<B> {
                     model_dim,
                     data_type,
                     data_type,
-                    input_hadamard_factors.take().map(Arc::new),
+                    input_hadamard_factors.take(),
                     ShortcutMode::None,
                     norm_config,
                     &parameter_tree.subtree("pre_norm"),

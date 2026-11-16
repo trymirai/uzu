@@ -4,10 +4,7 @@ use uzu_engine_macros::kernel;
 
 use super::{hadamard_transform, min_max_symmetric_divisor, quantize_symmetric_i8};
 use crate::{
-    backends::common::{
-        gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
-        kernel::matmul::Int8CodeLayout,
-    },
+    backends::common::{gpu_types::activation_transform::ActivationTransformOp, kernel::matmul::Int8CodeLayout},
     data_type::DataTypeRepr,
 };
 
@@ -68,6 +65,7 @@ pub fn activation_transform<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float
     #[optional(ops == ActivationTransformOp::PackHalf)]
     packed_half_out: Option<*mut u32>,
     #[specialize] ops: ActivationTransformOp,
+    #[specialize] hadamard_size: u32,
     #[specialize] grouped_by_weight_nibble: bool,
     #[specialize] in_place: bool,
     #[specialize] activation_scale_group_size: u32,
@@ -88,11 +86,11 @@ pub fn activation_transform<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float
     assert_eq!(bias.is_some(), has_bias);
 
     let mut transformed = vec![0.0f32; columns];
+    let mut stripe = vec![0.0f32; hadamard_size as usize];
     for row in 0..rows {
         let row_offset = row * columns;
-        for stripe_start in (0..columns).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
-            let mut stripe = [0.0f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize];
-            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+        for stripe_start in (0..columns).step_by(hadamard_size as usize) {
+            for lane in 0..hadamard_size as usize {
                 let index = stripe_start + lane;
                 let value: f32 = NumCast::from(unsafe { *input.add(row_offset + index) }).unwrap();
                 let factor = unsafe { *rht_factors.add(index) } as f32;
@@ -105,7 +103,7 @@ pub fn activation_transform<T: DataTypeRepr + Float, BiasT: DataTypeRepr + Float
 
             hadamard_transform(&mut stripe);
 
-            for lane in 0..HADAMARD_TRANSFORM_BLOCK_SIZE as usize {
+            for lane in 0..hadamard_size as usize {
                 let index = stripe_start + lane;
                 let factor = unsafe { *rht_factors.add(index) } as f32;
                 transformed[index] = if input_rht {

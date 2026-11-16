@@ -23,6 +23,7 @@ import definitions;
   [[Specialize]] bool copy_to_shortcut,
   [[Specialize]] bool residual_add,
   [[Specialize]] bool use_hadamard,
+  [[Specialize]] uint32_t hadamard_size,
   [[Specialize]] bool has_biases,
   [[Specialize]] bool has_scales,
   ThreadContext thread_context,

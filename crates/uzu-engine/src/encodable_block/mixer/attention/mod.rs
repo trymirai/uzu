@@ -11,7 +11,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError, LinearEncodeError},
+        linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -73,7 +73,7 @@ impl<B: Backend> Attention<B> {
         config: &AttentionConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<B::GlobalGpuBuffer>), AttentionNewError<B>> {
+    ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;

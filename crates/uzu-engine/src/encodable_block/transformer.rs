@@ -9,6 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        linear::InputRhtParameters,
         mixer::{MixerState, attention::rope::PrecalculatedRoPE},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
@@ -168,7 +169,7 @@ impl<B: Backend> Transformer<B> {
                     transformer_config.model_dim,
                     input_data_type,
                     output_data_type,
-                    hadamard_factors,
+                    hadamard_factors.map(InputRhtParameters::h32),
                     ShortcutMode::None,
                     output_norm_config,
                     &parameter_tree.subtree("output_norm"),

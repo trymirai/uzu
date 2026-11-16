@@ -8,7 +8,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::{quantization::QuantizationMode, quantization_method::QuantizationMethod},
+            gpu_types::{
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE, quantization::QuantizationMode,
+                quantization_method::QuantizationMethod,
+            },
             kernel::{
                 ActivationFormat, ActivationQuantization, ActivationTransform, Kernels,
                 matmul::{
@@ -269,9 +272,13 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             code_layout,
         )
         .expect("supported activation quantization");
-        let transform =
-            ActivationTransform::<Cpu>::quantize(&context, T::data_type(), ActivationFormat::Int8(quantization))
-                .expect("CPU activation quantization transform");
+        let transform = ActivationTransform::<Cpu>::quantize(
+            &context,
+            T::data_type(),
+            HADAMARD_TRANSFORM_BLOCK_SIZE,
+            ActivationFormat::Int8(quantization),
+        )
+        .expect("CPU activation quantization transform");
         let mut command_buffer = context.create_command_buffer(None, None).expect("CPU command buffer");
         transform.encode_quantize(
             &input,
