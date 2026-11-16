@@ -5,6 +5,7 @@
 #include "kv_layout.h"
 #include "int8_quantization.h"
 #include "../generated/qkv_norm.h"
+#include "../generated/trie.h"
 
 namespace kv_layout = uzu::kv_layout;
 
@@ -47,6 +48,9 @@ PUBLIC KERNEL(AttentionPrepare)(
     const device float* query_norm_scales OPTIONAL(has_query_norm_scales),
     const device float* key_norm_scales OPTIONAL(has_key_norm_scales),
     const device float* value_norm_scales OPTIONAL(has_value_norm_scales),
+    const device uzu::trie::TrieNode* pool_nodes OPTIONAL(block_mean),
+    const device int* pool_windows OPTIONAL(block_mean),
+    device ElementT* raw_keys OPTIONAL(block_mean),
     const constant uzu::qkv_norm::QKVNormParams& norm_params,
     const constant uint32_t& num_q_heads,
     const constant uint32_t& rope_dim OPTIONAL(has_rope),
@@ -54,6 +58,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
+    const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -61,6 +66,9 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool has_query_norm_scales SPECIALIZE,
     const bool has_key_norm_scales SPECIALIZE,
     const bool has_value_norm_scales SPECIALIZE,
+    const bool block_mean SPECIALIZE,
+    const uint32_t compression_ratio SPECIALIZE,
+    threadgroup float block_mean_row OPTIONAL(block_mean)[HEAD_DIM],
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
@@ -88,6 +96,33 @@ PUBLIC KERNEL(AttentionPrepare)(
   const device float* norm_scales = nullptr;
   if (has_scales)
     norm_scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
+  if (block_mean) {
+    // Raw rows: the tokens after the last complete block, then one per suffix node.
+    const uint tail_rows = compression_ratio - 1;
+    const uint block_start = prefix_tokens - prefix_tokens % compression_ratio;
+    const uint position = prefix_tokens + pool_nodes[token_idx].height;
+    const bool completes_block = (position + 1) % compression_ratio == 0;
+    float sums[VALUES_PER_LANE] = {};
+    if (completes_block) {
+      METAL_PRAGMA_NO_UNROLL
+      for (uint i = 0; i < compression_ratio; ++i) {
+        const uint slot = uint(pool_windows[token_idx * compression_ratio + i]);
+        const device ElementT* row = slot >= prefix_tokens ? qkvg + size_t(slot - prefix_tokens) * input_row_stride
+                                                           : raw_keys + size_t(slot - block_start) * HEAD_DIM;
+        METAL_PRAGMA_UNROLL
+        for (ushort v = 0; v < VALUES_PER_LANE; ++v)
+          sums[v] += float(row[v * METAL_SIMD_SIZE + lane]);
+      }
+    }
+    METAL_PRAGMA_UNROLL
+    for (ushort v = 0; v < VALUES_PER_LANE; ++v) {
+      const uint channel = v * METAL_SIMD_SIZE + lane;
+      raw_keys[size_t(tail_rows + token_idx) * HEAD_DIM + channel] = head[channel];
+      block_mean_row[channel] = float(ElementT(sums[v] / compression_ratio));
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+  }
+  const auto input = [&](uint channel) { return block_mean ? ElementT(block_mean_row[channel]) : head[channel]; };
   float inverse_rms = 1.0f;
   if (norm_enabled) {
     float sum = 0.0f;
@@ -95,7 +130,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     for (uint base = lane * 4; base < HEAD_DIM; base += METAL_SIMD_SIZE * 4) {
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < 4; ++i) {
-        const float value = float(head[base + i]);
+        const float value = float(input(base + i));
         sum += value * value;
       }
     }
@@ -106,7 +141,7 @@ PUBLIC KERNEL(AttentionPrepare)(
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     const uint32_t channel = value_index * METAL_SIMD_SIZE + lane_index;
     ElementT element = prepare_norm(
-        head[channel],
+        input(channel),
         channel,
         inverse_rms,
         norm_scales,
@@ -119,7 +154,7 @@ PUBLIC KERNEL(AttentionPrepare)(
       const uint half_dim = rope_dim / 2;
       const uint paired_channel = channel < half_dim ? channel + half_dim : channel - half_dim;
       const float paired = float(prepare_norm(
-          head[paired_channel],
+          input(paired_channel),
           paired_channel,
           inverse_rms,
           norm_scales,

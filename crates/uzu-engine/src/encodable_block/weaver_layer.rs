@@ -103,6 +103,8 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             false,
             false,
+            false,
+            0,
         )
         .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
@@ -198,6 +200,9 @@ impl<B: Backend> WeaverLayer<B> {
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&mut B::GlobalGpuBuffer>,
             Default::default(),
             self.num_heads,
             Some(rope.dim),
@@ -205,6 +210,7 @@ impl<B: Backend> WeaverLayer<B> {
             3 * self.model_dim,
             token_count,
             token_count,
+            None,
             command_buffer,
         );
         Ok(PreparedPrefixAttention {

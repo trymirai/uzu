@@ -171,6 +171,8 @@ impl<B: Backend> Attention<B> {
             qkv_norm_scales[0].is_some(),
             qkv_norm_scales[1].is_some(),
             qkv_norm_scales[2].is_some(),
+            false,
+            0,
         )
         .map_err(AttentionNewError::Backend)?;
 
@@ -344,6 +346,9 @@ impl<B: Backend> Attention<B> {
             self.qkv_norm_scales[0].as_ref(),
             self.qkv_norm_scales[1].as_ref(),
             self.qkv_norm_scales[2].as_ref(),
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&mut B::GlobalGpuBuffer>,
             self.qkv_norm_params,
             num_q_heads,
             rope.map(|rope| rope.dim),
@@ -351,6 +356,7 @@ impl<B: Backend> Attention<B> {
             input_row_stride,
             suffix_length,
             num_q_heads / self.num_groups * suffix_length,
+            None,
             command_buffer,
         );
         Ok((query_codes, query_scales))
