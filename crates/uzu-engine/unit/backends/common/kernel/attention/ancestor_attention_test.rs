@@ -119,6 +119,8 @@ impl<B: Backend> Runner<B> {
                 false,
                 false,
                 false,
+                false,
+                0,
             )
             .unwrap();
             let data = create_buffer_with_data::<B, bf16>(&context, &values(length * kv_width, offset));
@@ -141,6 +143,9 @@ impl<B: Backend> Runner<B> {
                 None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                None::<&B::GlobalGpuBuffer>,
+                None::<&mut B::GlobalGpuBuffer>,
                 Default::default(),
                 0,
                 None,
@@ -148,6 +153,7 @@ impl<B: Backend> Runner<B> {
                 kv_width as u32,
                 length as u32,
                 0,
+                None,
                 &mut command,
             );
             block_on(command.end_encoding().submit().wait_until_completed()).unwrap();

@@ -56,6 +56,8 @@ fn run<B: Backend, T: DataTypeRepr>(
         false,
         false,
         false,
+        false,
+        0,
     )
     .unwrap();
     command.encode_fill(kv.k_codes.as_mut(), 0x7f);
@@ -86,6 +88,9 @@ fn run<B: Backend, T: DataTypeRepr>(
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&mut B::GlobalGpuBuffer>,
             Default::default(),
             heads,
             None,
@@ -93,6 +98,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             stride,
             length,
             heads / config.num_groups * length,
+            None,
             &mut command,
         );
     }
