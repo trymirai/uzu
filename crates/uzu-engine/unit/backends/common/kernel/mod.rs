@@ -10,6 +10,7 @@ mod linearize_tree_test;
 mod logit_transform_test;
 mod matmul;
 mod moe;
+mod ngram_injection_test;
 mod normalization_test;
 mod pooling;
 mod radix_top_k_small_test;
