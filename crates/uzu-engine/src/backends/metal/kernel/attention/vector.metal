@@ -192,7 +192,7 @@ KERNEL(AttentionVector)(
         const float4 values = simd_shuffle(result[q][i / 4], ushort((i % 4) * 8 + lane / 4));
         rotated[i] = values[lane % 4];
       }
-      simdgroup_hadamard_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane, rotated);
+      hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane, rotated);
       const uint q_head = (row + q) / params.q_len;
       const uint output_base = q_head * params.o_strides[1] + q_position[q] * params.o_strides[2];
       METAL_PRAGMA_UNROLL

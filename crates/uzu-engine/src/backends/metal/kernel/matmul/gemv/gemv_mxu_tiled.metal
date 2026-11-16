@@ -149,7 +149,7 @@ KERNEL(GemvMxuTiled)(
   }
   bfloat output = bfloat(value);
   if (fused_hadamard) {
-    output = simdgroup_output_random_hadamard_transform(ushort(lane), output, hadamard_factors[row]);
+    output = hadamard::simdgroup_output_transform(ushort(lane), output, hadamard_factors[row]);
     if (output_transform.contains(GemmDTransform::BIAS)) {
       output += output_bias[row];
     }

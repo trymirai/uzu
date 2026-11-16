@@ -176,7 +176,7 @@ PUBLIC KERNEL(AttentionPrepare)(
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     values[value_index] *= kv_layout::rotation_sign(value_index * METAL_SIMD_SIZE + lane_index);
   }
-  simdgroup_hadamard_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane_index, values);
+  hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane_index, values);
 
   int codes[VALUES_PER_LANE];
   const bfloat scale = kv_quantize_row<VALUES_PER_LANE>(values, codes);

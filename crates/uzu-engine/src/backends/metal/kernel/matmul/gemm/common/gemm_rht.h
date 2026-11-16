@@ -27,7 +27,7 @@ static METAL_FUNC void apply_output_random_hadamard_transform(
     const ushort row_local = ushort(cell / stripes_per_row);
     const ushort stripe = ushort(cell % stripes_per_row);
     const ushort col_local = stripe * ushort(HADAMARD_TRANSFORM_BLOCK_SIZE) + simd_lane;
-    T transformed = simdgroup_output_random_hadamard_transform(
+    T transformed = hadamard::simdgroup_output_transform(
         simd_lane,
         source[size_t(row_local) * size_t(source_stride) + size_t(col_local)],
         rht_factors_block[col_local]

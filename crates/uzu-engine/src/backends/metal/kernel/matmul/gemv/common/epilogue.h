@@ -44,7 +44,7 @@ struct Epilogue {
         const uint input_row = tile.input_row + input_index;
         const uint global_row = tile.tile_row + output_block * METAL_SIMD_SIZE + tile.simd_lane;
         if ((FULL_TILE || input_row < params.batch_size) && (FULL_TILE || global_row < params.out_vec_size)) {
-          DT value = simdgroup_output_random_hadamard_transform(
+          DT value = hadamard::simdgroup_output_transform(
               static_cast<ushort>(tile.simd_lane),
               static_cast<DT>(
                   shared_results[input_index * Tile::OUTPUT_ROWS + output_block * METAL_SIMD_SIZE + tile.simd_lane]

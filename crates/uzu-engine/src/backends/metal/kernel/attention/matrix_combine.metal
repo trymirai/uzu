@@ -91,7 +91,7 @@ KERNEL(AttentionMatrixCombine)(
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     rotated[value_index] = rotation[value_index * METAL_SIMD_SIZE + column];
   }
-  simdgroup_hadamard_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(ushort(column), rotated);
+  hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(ushort(column), rotated);
   device T* output_row = o + size_t(q_head_idx) * params.o_strides[1] + size_t(query_position) * params.o_strides[2];
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {

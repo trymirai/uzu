@@ -51,20 +51,20 @@ PUBLIC KERNEL(ActivationTransform)(
 
   const bool input_rht = ops != ActivationTransformOp::OutputRht;
   const ushort lane_index = thread_context.simd_lane_id;
-  const uint first_index = activation_tile_index * TILE_ELEMENTS + thread_index * HADAMARD_VECTOR_SIZE;
+  const uint first_index = activation_tile_index * TILE_ELEMENTS + thread_index * hadamard::VECTOR_SIZE;
   const bool in_bounds = first_index < element_count;
   const uint element_index = batch_index * element_count + first_index;
 
   float4 values = 0.0f;
   int4 factors = 0;
   if (in_bounds) {
-    values = float4(load_hadamard_vector(input + element_index));
-    factors = load_hadamard_vector(rht_factors + first_index);
+    values = float4(load_vec4(input + element_index));
+    factors = load_vec4(rht_factors + first_index);
     if (input_rht) {
       values *= float4(factors);
     }
   }
-  values = simdgroup_hadamard_transform_vector(lane_index, values);
+  values = hadamard::simdgroup_transform_vector(lane_index, values);
   if (!input_rht) {
     values *= float4(factors);
   }
@@ -73,11 +73,11 @@ PUBLIC KERNEL(ActivationTransform)(
     if (in_bounds) {
       if (has_bias) {
         if constexpr (metal::is_same_v<T, bfloat>) {
-          values = uzu::bfloat_to_float(vec<bfloat, HADAMARD_VECTOR_SIZE>(values));
+          values = uzu::bfloat_to_float(vec<bfloat, hadamard::VECTOR_SIZE>(values));
         }
-        values += float4(load_hadamard_vector(bias + first_index));
+        values += float4(load_vec4(bias + first_index));
       }
-      store_hadamard_vector(fp_out + element_index, values);
+      store_vec4(fp_out + element_index, values);
     }
     return;
   }

@@ -10,17 +10,7 @@ using namespace metal;
 #define BLOCK_SIZE 1024
 
 UZU_CONST uint VALUES_PER_THREAD = 4;
-static_assert(VALUES_PER_THREAD == HADAMARD_VECTOR_SIZE, "rotation operates on the same per-thread values");
-
-template <typename T>
-static METAL_FUNC vec<T, VALUES_PER_THREAD> load_values(const device T* source) {
-  return *reinterpret_cast<const device packed_vec<T, VALUES_PER_THREAD>*>(source);
-}
-
-template <typename T, typename SourceT>
-static METAL_FUNC void store_values(device T* destination, const vec<SourceT, VALUES_PER_THREAD> source) {
-  *reinterpret_cast<device packed_vec<T, VALUES_PER_THREAD>*>(destination) = vec<T, VALUES_PER_THREAD>(source);
-}
+static_assert(VALUES_PER_THREAD == hadamard::VECTOR_SIZE, "rotation needs 4 values per lane");
 
 // TODO: Are numerics of subtract_mean fine?
 
@@ -71,16 +61,16 @@ PUBLIC KERNEL(Normalization)(
   AccumT thread_sum_of_squares = static_cast<AccumT>(0.0f);
 
   for (uint first = thread_in_row * VALUES_PER_THREAD; first < element_count; first += BLOCK_SIZE * VALUES_PER_THREAD) {
-    vec<InputT, VALUES_PER_THREAD> vals = load_values(input + first);
+    vec<InputT, VALUES_PER_THREAD> vals = load_vec4(input + first);
     // We can also fuse:
     // - TensorCopy (copy_to_shortcut)
     // - TensorAddSwap (copy_to_shortcut + residual_add)
     // Normalization in TensorAddSwap fusion mode operates on input + shortcut
     if (copy_to_shortcut) {
       if (residual_add) {
-        vals += load_values(shortcut + first);
+        vals += load_vec4(shortcut + first);
       }
-      store_values(shortcut + first, vals);
+      store_vec4(shortcut + first, vals);
     }
     METAL_PRAGMA_UNROLL
     for (uint k = 0; k < VALUES_PER_THREAD; ++k) {
@@ -115,15 +105,15 @@ PUBLIC KERNEL(Normalization)(
   AccumT rms_inv = rsqrt(var + static_cast<AccumT>(epsilon));
 
   // Step 3 - elementwise normalization
-  for (uint round_start = 0; round_start < element_count; round_start += BLOCK_SIZE * VALUES_PER_THREAD) {
-    const uint first = round_start + thread_in_row * VALUES_PER_THREAD;
+  for (uint base = 0; base < element_count; base += BLOCK_SIZE * VALUES_PER_THREAD) {
+    const uint first = base + thread_in_row * VALUES_PER_THREAD;
     const bool in_bounds = first < element_count;
     float4 values = 0.0f;
     vec<OutputT, VALUES_PER_THREAD> outs = 0;
     if (in_bounds) {
       // If we fuse TensorAddSwap, read shortcut (that now has input + shortcut)
       // No need for memory barrier because each thread only reads what it wrote
-      vec<InputT, VALUES_PER_THREAD> xs = residual_add ? load_values(shortcut + first) : load_values(input + first);
+      vec<InputT, VALUES_PER_THREAD> xs = residual_add ? load_vec4(shortcut + first) : load_vec4(input + first);
       METAL_PRAGMA_UNROLL
       for (uint k = 0; k < VALUES_PER_THREAD; ++k) {
         const uint affine_index = affine_offset + first + k;
@@ -145,22 +135,17 @@ PUBLIC KERNEL(Normalization)(
         if (has_biases) {
           val = static_cast<OutputT>(static_cast<AccumT>(val) + static_cast<AccumT>(biases[affine_index]));
         }
-        values[k] = static_cast<float>(val);
         outs[k] = val;
       }
       if (use_hadamard) {
-        values *= float4(load_hadamard_vector(hadamard_factors + first));
+        values = float4(outs) * float4(load_vec4(hadamard_factors + first));
       }
     }
     if (use_hadamard) {
-      values = simdgroup_hadamard_transform_vector(thread_context.simd_lane_id, values);
+      outs = vec<OutputT, VALUES_PER_THREAD>(hadamard::simdgroup_transform_vector(thread_context.simd_lane_id, values));
     }
     if (in_bounds) {
-      if (use_hadamard) {
-        store_hadamard_vector(output + first, values);
-      } else {
-        store_values(output + first, outs);
-      }
+      store_vec4(output + first, outs);
     }
   }
 }
