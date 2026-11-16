@@ -7,8 +7,6 @@ use shader_slang::{
     reflection::{EntryPoint, Shader},
 };
 
-use crate::vulkan::{SlangFieldAbi, SlangPointeeAbi, SlangStructFieldAbi};
-
 #[derive(Debug)]
 pub struct SlangEntryPointAbi {
     pub name: String,
@@ -16,6 +14,38 @@ pub struct SlangEntryPointAbi {
     pub block_size: usize,
     pub fields: Vec<SlangFieldAbi>,
     pub specialization_ids: Vec<(String, u32)>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SlangFieldAbi {
+    pub name: String,
+    pub offset: usize,
+    pub size: usize,
+    pub layout: Option<SlangPointeeAbi>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SlangPointeeAbi {
+    pub name: String,
+    pub stride: usize,
+    pub alignment: usize,
+    pub fields: Vec<SlangStructFieldAbi>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SlangStructFieldAbi {
+    pub name: String,
+    pub offset: usize,
+    pub size: usize,
+    pub scalar: ScalarType,
+    pub array: Option<(usize, usize)>,
+}
+
+pub struct SlangEntryPointVariant {
+    pub types: Vec<String>,
+    pub abi: SlangEntryPointAbi,
+    pub spirv: String,
+    pub native_bf16: Option<(SlangEntryPointAbi, String)>,
 }
 
 impl SlangEntryPointAbi {
