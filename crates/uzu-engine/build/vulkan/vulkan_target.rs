@@ -13,6 +13,7 @@ use shader_slang::{
 };
 use spirv::{Capability, Op};
 use syn::{BinOp, Expr};
+use walkdir::WalkDir;
 
 use crate::{
     common::{codegen::write_tokens, identifiers::KernelName, kernel::Kernel, mangling::static_mangle},
@@ -20,7 +21,7 @@ use crate::{
         BlockingSlangCompiler, SlangArgumentType, SlangCompilerFields, SlangGpuTypes, SlangKernel, SlangParameterType,
         SlangTarget, kernel_wrappers, specialization_name,
     },
-    vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen, spirv_hash::export_spirv_hash},
+    vulkan::{SlangEntryPointAbi, SlangEntryPointVariant, bindgen},
 };
 
 const DEVICE_CAPABILITIES: [Capability; 15] = [
@@ -41,12 +42,9 @@ const DEVICE_CAPABILITIES: [Capability; 15] = [
     Capability::DotProduct,
 ];
 const GATED_CAPABILITIES: [(Capability, &[&str]); 4] = [
-    (
-        Capability::CooperativeMatrixKHR,
-        &["BF16_TENSOR_CORES", "INT8_TENSOR_CORES_K32", "INT8_TENSOR_CORES_K16", "float_tensor_cores"],
-    ),
-    (Capability::BFloat16TypeKHR, &["BF16_TENSOR_CORES", "float_tensor_cores"]),
-    (Capability::BFloat16CooperativeMatrixKHR, &["BF16_TENSOR_CORES", "float_tensor_cores"]),
+    (Capability::CooperativeMatrixKHR, &["BF16_TENSOR_CORES", "INT8_TENSOR_CORES_K32", "INT8_TENSOR_CORES_K16"]),
+    (Capability::BFloat16TypeKHR, &["BF16_TENSOR_CORES"]),
+    (Capability::BFloat16CooperativeMatrixKHR, &["BF16_TENSOR_CORES"]),
     (Capability::CooperativeMatrixPerElementOperationsNV, &["INT8_ELEMENT_FOLD"]),
 ];
 
@@ -224,21 +222,16 @@ impl SlangTarget for VulkanTarget {
         fields: &SlangCompilerFields<Self>,
         modules: &[(PathBuf, &[Kernel], &[KernelName])],
     ) -> anyhow::Result<TokenStream> {
-        export_spirv_hash(&fields.output_directory)?;
-        let mut bindings = Vec::new();
-        for (output_base, public, private) in modules {
-            let names =
-                public.iter().map(|kernel| (&kernel.name, true)).chain(private.iter().map(|name| (name, false)));
-            for (name, is_public) in names {
-                let file = bindgen::binding_file(output_base, name);
-                bindings.push((
-                    file.to_str().context("binding path is not UTF-8")?.to_owned(),
-                    name.to_string(),
-                    is_public,
-                ));
+        let mut spirv = blake3::Hasher::new();
+        let output_directory = &fields.output_directory;
+        for entry in WalkDir::new(output_directory).sort_by_file_name() {
+            let path = entry.with_context(|| format!("cannot walk {}", output_directory.display()))?.into_path();
+            if path.extension().is_some_and(|extension| extension == "spv") {
+                spirv.update(&fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?);
             }
         }
-        Ok(bindgen::bindgen_umbrella(&bindings))
+        println!("cargo::rustc-env=UZU_VULKAN_SPIRV_HASH={}", &spirv.finalize().to_hex()[..16]);
+        bindgen::bindgen_umbrella(modules)
     }
 }
 
@@ -280,13 +273,10 @@ fn required_capabilities(
             [&binary.left, &binary.right].into_iter().flat_map(|term| required_capabilities(term, flags)).collect()
         },
         Expr::Paren(paren) => required_capabilities(&paren.expr, flags),
-        Expr::MethodCall(call) if !flags && call.method == "float_tensor_cores" => vec![call.method.to_string()],
         Expr::MethodCall(call) if !flags && call.method == "contains" => {
             call.args.iter().flat_map(|flag| required_capabilities(flag, true)).collect()
         },
-        Expr::Path(path)
-            if flags && path.path.segments.len() == 2 && path.path.segments[0].ident == "VkDeviceCapabilities" =>
-        {
+        Expr::Path(path) if flags && bindgen::device_capability(&path.path) => {
             vec![path.path.segments[1].ident.to_string()]
         },
         _ => Vec::new(),
