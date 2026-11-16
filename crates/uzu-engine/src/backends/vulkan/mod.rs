@@ -8,7 +8,7 @@ mod vk_compute_pipeline;
 pub use buffer::{VkBuffer, VkBufferCpuGpu, VkSparseBuffer};
 pub use command_buffer::{
     VkCommandBuffer, VkCommandBufferCompleted, VkCommandBufferEncoding, VkCommandBufferExecutable,
-    VkCommandBufferPending, VkCommandBufferSubmission, VkCommandPool, VkCommandQueue, VkDebugGroupSpan,
+    VkCommandBufferPending, VkCommandPool, VkCommandQueue, VkDebugGroupSpan, failed_segment,
 };
 pub use device::{
     API_VERSION_1_4, VkCooperativeMatrix2Features, VkDevice, VkDeviceCapabilities, VkDeviceLimits, VkInstance,

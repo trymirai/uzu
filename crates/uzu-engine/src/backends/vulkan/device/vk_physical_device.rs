@@ -314,7 +314,8 @@ impl VkDeviceLimits {
             });
         }
         if let Some(subgroup_size) = subgroup_size
-            && (!size[0].is_multiple_of(subgroup_size) || invocations > subgroup_size * self.max_work_group_subgroups)
+            && (!size[0].is_multiple_of(subgroup_size)
+                || invocations.div_ceil(subgroup_size) > self.max_work_group_subgroups)
         {
             return Err(VkKernelError::KernelPrecondition {
                 kernel,

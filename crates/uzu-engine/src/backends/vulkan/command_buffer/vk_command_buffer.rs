@@ -1,17 +1,10 @@
-use std::{
-    mem::take,
-    sync::{Arc, atomic::Ordering},
-    time::Duration,
-};
+use std::{mem::take, sync::Arc, time::Duration};
 
 use futures::channel::oneshot;
 
 use crate::backends::{
     common::{CommandBuffer, CommandBufferCompleted, CommandBufferExecutable, CommandBufferPending, TimestampSpan},
-    vulkan::{
-        Error, VkCommandBufferEncoding, VkCommandBufferError, VkCommandBufferSubmission, VkCommandPool, VkContext,
-        Vulkan,
-    },
+    vulkan::{Error, VkCommandBufferEncoding, VkCommandBufferError, VkCommandPool, VkContext, Vulkan},
 };
 
 pub struct VkCommandBuffer;
@@ -30,37 +23,31 @@ pub struct VkCommandBufferExecutable {
     command_pool: Option<VkCommandPool>,
     retained: Vec<Arc<dyn Send + Sync>>,
     segments: Vec<oneshot::Receiver<Result<(), Error>>>,
-    failure: Option<Error>,
 }
 
 impl VkCommandBufferExecutable {
-    pub unsafe fn new(
+    pub fn new(
         context: Arc<VkContext>,
         command_pool: VkCommandPool,
         retained: Vec<Arc<dyn Send + Sync>>,
         segments: Vec<oneshot::Receiver<Result<(), Error>>>,
-        failure: Option<Error>,
     ) -> Self {
-        context.command_queue().unsubmitted.fetch_add(1, Ordering::Relaxed);
         Self {
             context,
             command_pool: Some(command_pool),
             retained,
             segments,
-            failure,
         }
     }
 
     pub fn try_submit(mut self) -> Result<VkCommandBufferPending, Error> {
-        if let Some(failure) = self.failure.take() {
-            return Err(failure);
-        }
         let command_pool = self.command_pool.take().expect("executable owns its command pool until submission");
-        let last =
-            unsafe { VkCommandBufferSubmission::submit(self.context.clone(), command_pool, take(&mut self.retained)) }?;
+        let last = self.context.command_queue().submit(self.context.clone(), command_pool, take(&mut self.retained))?;
         let mut segments = take(&mut self.segments);
         segments.push(last);
-        Ok(VkCommandBufferPending::new(segments))
+        Ok(VkCommandBufferPending {
+            segments,
+        })
     }
 }
 
@@ -68,10 +55,8 @@ impl CommandBufferExecutable for VkCommandBufferExecutable {
     type CommandBuffer = VkCommandBuffer;
 
     fn submit(self) -> VkCommandBufferPending {
-        self.try_submit().unwrap_or_else(|error| {
-            let (sender, receiver) = oneshot::channel();
-            let _ = sender.send(Err(error));
-            VkCommandBufferPending::new(vec![receiver])
+        self.try_submit().unwrap_or_else(|error| VkCommandBufferPending {
+            segments: vec![failed_segment(error)],
         })
     }
 }
@@ -81,7 +66,6 @@ impl Drop for VkCommandBufferExecutable {
         if let Some(command_pool) = self.command_pool.take() {
             self.context.command_queue().recycle(command_pool);
         }
-        self.context.command_queue().unsubmitted.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -103,14 +87,6 @@ pub struct VkCommandBufferPending {
     segments: Vec<oneshot::Receiver<Result<(), Error>>>,
 }
 
-impl VkCommandBufferPending {
-    pub fn new(segments: Vec<oneshot::Receiver<Result<(), Error>>>) -> Self {
-        Self {
-            segments,
-        }
-    }
-}
-
 impl CommandBufferPending for VkCommandBufferPending {
     type CommandBuffer = VkCommandBuffer;
 
@@ -120,4 +96,11 @@ impl CommandBufferPending for VkCommandBufferPending {
         }
         Ok(VkCommandBufferCompleted)
     }
+}
+
+// A segment that could not be submitted, so waiting for its command buffer reports the error.
+pub fn failed_segment(error: Error) -> oneshot::Receiver<Result<(), Error>> {
+    let (sender, receiver) = oneshot::channel();
+    let _ = sender.send(Err(error));
+    receiver
 }
