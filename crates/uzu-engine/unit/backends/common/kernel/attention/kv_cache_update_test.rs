@@ -45,6 +45,8 @@ fn prepare_cache<B: Backend>(
         false,
         false,
         false,
+        false,
+        0,
     )
     .unwrap();
     prepare.encode(
@@ -60,6 +62,9 @@ fn prepare_cache<B: Backend>(
         None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
         Default::default(),
         0,
         None,
@@ -67,6 +72,7 @@ fn prepare_cache<B: Backend>(
         ROW_WIDTH as u32,
         KEYS,
         0,
+        None,
         &mut command,
     );
     submit_command_buffer(command);

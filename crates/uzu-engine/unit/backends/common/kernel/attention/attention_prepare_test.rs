@@ -32,10 +32,12 @@ fn run_prepare<B: Backend, const DIM: usize>(
     normalization: NormCase,
     fused: bool,
     rope: bool,
+    block_mean: bool,
 ) -> PrepareOutput {
     const CACHE_TOKENS: usize = 64;
     const SUFFIX: usize = 2;
     const ROW_PADDING: usize = 5;
+    const PREFIX: u32 = 3;
     let code_bytes = CACHE_TOKENS * DIM;
     let norm_params = QKVNormParams {
         enabled: normalization.enabled.map(u32::from),
@@ -102,8 +104,14 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[0],
         affine[1],
         affine[2],
+        block_mean,
+        4 * u32::from(block_mean),
     )
     .unwrap();
+    let nodes = create_buffer_with_data::<B, u32>(&context, &[0, 0, 0, 0, 0, 4]);
+    let windows = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 4, 4, 4, 4]);
+    let mut raw_keys =
+        create_buffer_with_data::<B, bf16>(&context, &[rows[..DIM].to_vec(), vec![bf16::ZERO; 5 * DIM]].concat());
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     kernel.encode(
         &qkvg,
@@ -118,6 +126,9 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[0].then_some(&norm_scales[0]),
         affine[1].then_some(&norm_scales[1]),
         affine[2].then_some(&norm_scales[2]),
+        block_mean.then_some(&nodes),
+        block_mean.then_some(&windows),
+        block_mean.then_some(&mut raw_keys),
         if fused {
             norm_params
         } else {
@@ -129,6 +140,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
         num_q_heads * SUFFIX as u32,
+        block_mean.then_some(PREFIX),
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -155,12 +167,19 @@ fn test_attention_prepare_fused_norm() {
                     };
                     for rope in [false, true] {
                         for_each_backend!(|B| {
-                            let separate = run_prepare::<B, DIM>(queries, case, false, rope);
-                            let fused = run_prepare::<B, DIM>(queries, case, true, rope);
+                            let separate = run_prepare::<B, DIM>(queries, case, false, rope, false);
+                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, false);
                             assert_eq!(
                                 separate, fused,
                                 "fused norm mismatch D{DIM} queries={queries} full_layer={full_layer} rope={rope}"
                             );
+                            if queries == 1 {
+                                let block_mean = run_prepare::<B, DIM>(queries, case, true, rope, true);
+                                assert_eq!(
+                                    (&block_mean.codes[0], &block_mean.scales[0]),
+                                    (&fused.codes[0], &fused.scales[0])
+                                );
+                            }
                         });
                     }
                 }
