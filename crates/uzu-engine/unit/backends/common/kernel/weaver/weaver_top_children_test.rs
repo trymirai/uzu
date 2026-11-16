@@ -50,6 +50,15 @@ fn run_top_children<B: Backend>(
     node_valid: &[u32; ROWS],
     tree_values: &[u32; TreeIdx::COUNT * TREE_SLOT_COUNT],
 ) -> Vec<u32> {
+    run_top_children_scaled::<B>(1.0, prune_noise_scale, node_valid, tree_values)
+}
+
+fn run_top_children_scaled<B: Backend>(
+    noise_scale: f32,
+    prune_noise_scale: Option<f32>,
+    node_valid: &[u32; ROWS],
+    tree_values: &[u32; TreeIdx::COUNT * TREE_SLOT_COUNT],
+) -> Vec<u32> {
     let (residual, candidate_logits, ids) = inputs();
     let context = create_context::<B>();
     let residual = create_buffer_with_data::<B, bf16>(&context, &residual);
@@ -96,6 +105,7 @@ fn run_top_children<B: Backend>(
         0,
         0,
         0,
+        noise_scale,
         prune_noise_scale,
         &mut command_buffer,
     );
@@ -214,4 +224,65 @@ fn weaver_top_children_prune_logprobs_match_reference() {
         }
     }
     assert!(prune.iter().zip(&model).any(|(prune, model)| (prune - model).abs() > 0.1));
+}
+
+/// Children are the `CHILDREN` best candidates by logits plus the sampler's noise scaled by the temperature
+/// (argmax(l / T + G) = argmax(l + T G)), ties to the smaller token; the model logprobs are the plain pool log-softmax
+/// at every scale. The reference ranks the inputs itself with `gumbel_float`, the sampler's noise, and recomputes the
+/// log-softmax in f64.
+#[uzu_test]
+fn weaver_top_children_rank_by_noise_scaled_by_temperature() {
+    let (residual, candidate_logits, ids) = inputs();
+    let empty_tree = [0u32; TreeIdx::COUNT * TREE_SLOT_COUNT];
+    let children_at = |frontier: &[u32]| {
+        frontier[FrontierIdx::TokenId as usize * FRONTIER_CAPACITY + CHILDREN
+            ..(FrontierIdx::TokenId as usize + 1) * FRONTIER_CAPACITY]
+            .to_vec()
+    };
+    let mut tokens_by_scale = Vec::new();
+    for noise_scale in [0.25f32, 0.6, 1.0, 1.7] {
+        let frontier = run_top_children_scaled::<Cpu>(noise_scale, None, &[1; ROWS], &empty_tree);
+        let tokens = children_at(&frontier);
+        for row in 0..ROWS {
+            let seed = DEPTH_SEEDS[DEPTHS[row] as usize];
+            let logit = |index: usize| {
+                let flat = row * CANDIDATES + index;
+                candidate_logits[flat] as f64 + residual[flat].to_f64()
+            };
+            let mut order = (0..CANDIDATES).collect::<Vec<_>>();
+            // The ranking in the kernel's f32 arithmetic: f64 sums could reorder near ties of l + T G.
+            let score = |index: usize| {
+                let flat = row * CANDIDATES + index;
+                (candidate_logits[flat] + residual[flat].to_f32())
+                    + noise_scale * gumbel_float(seed, revidx(ids[flat], VOCAB_SIZE))
+            };
+            order.sort_by(|&left, &right| {
+                score(right)
+                    .total_cmp(&score(left))
+                    .then_with(|| ids[row * CANDIDATES + left].cmp(&ids[row * CANDIDATES + right]))
+            });
+            let expected = order[..CHILDREN].iter().map(|&index| ids[row * CANDIDATES + index]).collect::<Vec<_>>();
+            assert_eq!(
+                &tokens[row * CHILDREN..(row + 1) * CHILDREN],
+                expected.as_slice(),
+                "scale {noise_scale}, row {row}"
+            );
+
+            let max = (0..CANDIDATES).map(logit).fold(f64::NEG_INFINITY, f64::max);
+            let log_sum = (0..CANDIDATES).map(|index| (logit(index) - max).exp()).sum::<f64>().ln() + max;
+            for (child, &index) in order[..CHILDREN].iter().enumerate() {
+                let slot = (row + 1) * CHILDREN + child;
+                let path = f32::from_bits(frontier[FrontierIdx::PathLogprobBits as usize * FRONTIER_CAPACITY + slot]);
+                // An f32 log-sum-exp over 512 values of magnitude below 20 keeps about 1e-4 of absolute accuracy.
+                assert!((path as f64 - (logit(index) - log_sum)).abs() < 1e-4);
+            }
+        }
+        for_each_non_cpu_backend!(|B| {
+            let actual = run_top_children_scaled::<B>(noise_scale, None, &[1; ROWS], &empty_tree);
+            assert_eq!(children_at(&actual), tokens, "scale {noise_scale}");
+        });
+        tokens_by_scale.push(tokens);
+    }
+    // The scale matters: a smaller temperature moves the children towards the top logits.
+    assert!(tokens_by_scale.windows(2).all(|pair| pair[0] != pair[1]));
 }

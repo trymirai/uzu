@@ -11,6 +11,8 @@ pub mod gated_act_mul;
 pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
+#[cfg(backend = "metal")]
+pub mod tree_verify_blocks;
 mod trellis;
 
 pub use activation_transform::{ActivationQuantization, ActivationTransform};

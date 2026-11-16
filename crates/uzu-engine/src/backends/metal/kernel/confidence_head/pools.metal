@@ -17,6 +17,7 @@ PUBLIC KERNEL(ConfidenceHeadPools)(
     device float* pool_features,
     const constant ConfidenceHeadParams& params,
     const constant uint& depths,
+    const constant float& noise_scale,
     threadgroup PoolsMemory& memory,
     const ThreadContext context,
     const uint depth GROUPS(depths),
@@ -34,7 +35,9 @@ PUBLIC KERNEL(ConfidenceHeadPools)(
     }
     device float* features = pool_features + depth * POOL_FEATURES * candidates;
     features[lid] = max(logit - log_sum, HEAD_LOG_PROB_FLOOR);
+    // The target's noise in units of the logits: the sampling temperature times G.
     features[candidates + lid] =
+        noise_scale *
         target_gumbel_noise(depth_seeds[depth], candidate_ids[depth * candidates + lid], params.vocab_size);
     features[2 * candidates + lid] = log(1.0f + rank);
   }

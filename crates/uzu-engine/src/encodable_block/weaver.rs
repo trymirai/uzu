@@ -40,6 +40,9 @@ pub struct WeaverTreeShape {
     pub rounds: u32,
     pub expand_per_round: u32,
     pub expand_width: u32,
+    /// The scale of the sampler's Gumbel noise in units of the logits: the sampling temperature. The sampler draws
+    /// argmax(l / T + G) = argmax(l + T G), so child selection, pruning and the confidence head see the noise as T G.
+    pub noise_scale: f32,
     pub prune_noise_scale: Option<f32>,
 }
 
@@ -494,6 +497,7 @@ impl<B: Backend> Weaver<B> {
                 ancestor_stride,
                 shape.max_depth - 1,
                 shape.dflash_depth - 1,
+                shape.noise_scale,
                 None,
                 command_buffer,
             );
@@ -613,6 +617,7 @@ impl<B: Backend> Weaver<B> {
             ancestor_stride,
             shape.max_depth - 1,
             shape.dflash_depth - 1,
+            shape.noise_scale,
             shape.prune_noise_scale,
             command_buffer,
         );
@@ -661,6 +666,7 @@ impl<B: Backend> Weaver<B> {
                 || shape.expand_width > self.candidate_pool_size
                 || tree_slot_count > FRONTIER_MAX_SLOTS / shape.expand_width
                 || depth_seeds.len() as u32 != self.max_depth
+                || !(shape.noise_scale > 0.0 && shape.noise_scale.is_finite())
                 || shape.prune_noise_scale.is_some_and(|scale| !(scale > 0.0 && scale.is_finite()))
             {
                 return Err(WeaverEncodeError::InvalidTreeInput);
@@ -778,6 +784,7 @@ impl<B: Backend> Weaver<B> {
                         tree_slot_count,
                         vocab_size,
                         shape.expand_per_round,
+                        shape.noise_scale,
                         command_buffer,
                     )
                 })
