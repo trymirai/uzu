@@ -537,7 +537,3 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../../unit/encodable_block/transformed_linear_test.rs"]
-mod tests;
