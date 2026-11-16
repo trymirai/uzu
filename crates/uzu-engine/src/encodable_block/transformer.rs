@@ -19,14 +19,18 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-enum TransformerLayerStateType<B: Backend> {
+enum LayerMixerState<B: Backend> {
     Owned(Box<dyn MixerState<B>>),
     Shared(u32),
 }
 
+struct TransformerLayerState<B: Backend> {
+    mixer: LayerMixerState<B>,
+    stream_ops: StreamOpStates<B>,
+}
+
 pub struct TransformerState<B: Backend> {
-    layer_states: Box<[TransformerLayerStateType<B>]>,
-    stream_op_states: Box<[StreamOpStates<B>]>,
+    layer_states: Box<[TransformerLayerState<B>]>,
     context_length: u32,
 }
 
@@ -46,11 +50,11 @@ impl<B: Backend> TransformerState<B> {
         suffix_length: u32,
     ) -> Result<(), B::Error> {
         for layer_state in &mut self.layer_states {
-            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+            let LayerMixerState::Owned(mixer_state) = &mut layer_state.mixer else {
                 continue;
             };
 
-            layer_state.prepare(context_length, suffix_length)?;
+            mixer_state.prepare(context_length, suffix_length)?;
         }
 
         Ok(())
@@ -66,15 +70,11 @@ impl<B: Backend> TransformerState<B> {
             let command_buffer = &mut *command_buffer.debug_group("transformer accept");
 
             for layer_state in &mut self.layer_states {
-                let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                    continue;
-                };
+                if let LayerMixerState::Owned(mixer_state) = &mut layer_state.mixer {
+                    mixer_state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
+                }
 
-                layer_state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
-            }
-
-            for stream_op_states in &mut self.stream_op_states {
-                stream_op_states.encode_accept(accepted_indices);
+                layer_state.stream_ops.encode_accept(accepted_indices);
             }
 
             self.context_length += accepted_indices.len() as u32;
@@ -214,13 +214,15 @@ impl<B: Backend> Transformer<B> {
 
     pub fn prefill_cache_layer_count(&self) -> usize {
         let num_layers = self.layers.len();
-        let Some(last_owned_kv_layer_index) =
-            self.layers.iter().rposition(|layer| layer.kv_source_layer_index.is_none())
+        let Some(last_stateful_layer_index) = self
+            .layers
+            .iter()
+            .rposition(|layer| layer.kv_source_layer_index.is_none() || layer.has_stateful_stream_ops())
         else {
             return num_layers;
         };
 
-        last_owned_kv_layer_index + 1
+        last_stateful_layer_index + 1
     }
 
     pub fn prefill_cache_skips_trailing_layers(&self) -> bool {
@@ -235,25 +237,22 @@ impl<B: Backend> Transformer<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|layer| match layer.kv_source_layer_index {
-                None => {
-                    layer.mixer.create_empty_state(max_context_length, context).map(TransformerLayerStateType::Owned)
-                },
-                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index)),
+            .map(|layer| {
+                let mixer = match layer.kv_source_layer_index {
+                    None => LayerMixerState::Owned(layer.mixer.create_empty_state(max_context_length, context)?),
+                    Some(kv_source_layer_index) => LayerMixerState::Shared(kv_source_layer_index),
+                };
+                Ok(TransformerLayerState {
+                    mixer,
+                    stream_ops: layer.create_stream_op_states(context)?,
+                })
             })
-            .collect::<Result<_, B::Error>>()?;
-
-        let stream_op_states = self
-            .layers
-            .iter()
-            .map(|layer| layer.create_stream_op_states(context))
             .collect::<Result<_, B::Error>>()?;
 
         let context_length = 0;
 
         Ok(TransformerState {
             layer_states,
-            stream_op_states,
             context_length,
         })
     }
@@ -287,23 +286,26 @@ impl<B: Backend> Transformer<B> {
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
         for layer in self.layers.iter().take(layer_count) {
-            let (layer_state, stream_op_states) = if let Some(state) = &mut state {
+            let layer_state = state.as_deref_mut().map(|state| {
                 let layer_index = layer.layer_index as usize;
-                let layer_state = match &mut state.layer_states[layer_index] {
-                    TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
-                    TransformerLayerStateType::Shared(owned_layer_index) => {
-                        let TransformerLayerStateType::Owned(owned_layer) =
-                            &state.layer_states[*owned_layer_index as usize]
-                        else {
-                            panic!("shared layer doesn't point to an owned layer");
-                        };
-                        MaybeMut::Const(owned_layer.as_ref())
-                    },
-                };
-                (Some(layer_state), Some(&mut state.stream_op_states[layer_index]))
-            } else {
-                (None, None)
-            };
+                if let LayerMixerState::Shared(owner_index) = state.layer_states[layer_index].mixer {
+                    let [layer_state, owner_state] =
+                        state.layer_states.get_disjoint_mut([layer_index, owner_index as usize]).unwrap();
+                    let LayerMixerState::Owned(owner_mixer_state) = &owner_state.mixer else {
+                        panic!("shared layer doesn't point to an owned layer");
+                    };
+                    (MaybeMut::Const(owner_mixer_state.as_ref()), Some(&mut layer_state.stream_ops))
+                } else {
+                    let TransformerLayerState {
+                        mixer: LayerMixerState::Owned(mixer_state),
+                        stream_ops,
+                    } = &mut state.layer_states[layer_index]
+                    else {
+                        unreachable!()
+                    };
+                    (MaybeMut::Mut(mixer_state.as_mut()), Some(stream_ops))
+                }
+            });
 
             stream = layer.encode(
                 stream,
@@ -311,7 +313,6 @@ impl<B: Backend> Transformer<B> {
                 per_layer_inputs,
                 batch_dim,
                 layer_state,
-                stream_op_states,
                 command_buffer,
             )?;
 

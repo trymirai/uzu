@@ -78,7 +78,6 @@ struct Sublayer<B: Backend> {
     connection: ResidualConnection<B>,
 }
 
-/// Per-op state for a layer's stream ops, `None` for stateless ops.
 pub struct StreamOpStates<B: Backend> {
     prologue: Box<[Option<StreamOpState<B>>]>,
     epilogue: Box<[Option<StreamOpState<B>>]>,
@@ -456,6 +455,10 @@ impl<B: Backend> TransformerLayer<B> {
         })
     }
 
+    pub fn has_stateful_stream_ops(&self) -> bool {
+        self.prologue.iter().chain(self.epilogue.iter()).any(StreamOp::is_stateful)
+    }
+
     pub fn speculation_supported(&self) -> bool {
         self.mixer.speculation_supported()
             && self.prologue.iter().chain(self.epilogue.iter()).all(StreamOp::speculation_supported)
@@ -467,12 +470,15 @@ impl<B: Backend> TransformerLayer<B> {
         token_ids: impl BufferRef<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
-        mut stream_op_states: Option<&mut StreamOpStates<B>>,
+        state: Option<(MaybeMut<dyn MixerState<B>>, Option<&mut StreamOpStates<B>>)>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
         let row_count = batch_dim.size();
+        let (state, mut stream_op_states) = match state {
+            Some((mixer_state, stream_op_states)) => (Some(mixer_state), stream_op_states),
+            None => (None, None),
+        };
 
         for (index, op) in self.prologue.iter().enumerate() {
             let op_state = stream_op_states.as_deref_mut().and_then(|states| states.prologue[index].as_mut());
