@@ -73,6 +73,12 @@ struct TensorInfo {
     read: AtomicBool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub struct TensorRegion {
+    pub file: std::fs::File,
+    pub range: std::range::Range<u64>,
+}
+
 pub struct ParameterLoader<'a, B: Backend> {
     file: File,
     context: &'a B::Context,
@@ -228,5 +234,25 @@ impl<B: Backend> ParameterTree<'_, B> {
         self.loader.file.read_exact_at(bytemuck::cast_slice_mut(&mut data), self.loader.data_offset + start).await?;
         tensor.read.store(true, Ordering::Relaxed);
         Ok(data.into_boxed_slice())
+    }
+
+    /// Like [`Self::read_buffer`], but just returns a handle to the file location.
+    ///
+    /// This is used to read the ngram embedding table from disk.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn claim(
+        &self,
+        name: &str,
+        shape: &[u32],
+        dtype: DataType,
+    ) -> Result<TensorRegion, ParameterLoaderError<B>> {
+        let tensor = self.tensor(name, shape, dtype)?;
+        let (start, end) = tensor.data_offsets;
+        let file = self.loader.file.to_sync().await?;
+        tensor.read.store(true, Ordering::Relaxed);
+        Ok(TensorRegion {
+            file,
+            range: (self.loader.data_offset + start..self.loader.data_offset + end).into(),
+        })
     }
 }

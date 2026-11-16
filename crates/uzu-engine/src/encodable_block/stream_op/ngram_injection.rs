@@ -1,4 +1,4 @@
-use std::{future::Future, mem};
+use std::{io, mem};
 
 use crate::{
     backends::common::{
@@ -13,7 +13,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        embedding_table::EmbeddingTable,
+        embedding_table_disk::EmbeddingTableDisk,
         linear::Linear,
         stream_op::{StreamOpEncodeError, StreamOpNewError},
     },
@@ -41,7 +41,6 @@ pub struct NGramInjectionState<B: Backend> {
     /// Embedding rows of the pending batch, `[tokens, embedding_dim]` in the model data type, until encoded.
     pending_rows: Vec<u8>,
     conv_state: B::GlobalGpuBuffer,
-    /// Where a flat batch leaves its conv state; swapped into `conv_state` on accept.
     pending_conv_state: B::GlobalGpuBuffer,
     suffix_status: Option<NGramSuffixStatus<B>>,
     is_empty: bool,
@@ -88,7 +87,7 @@ impl<B: Backend> NGramInjectionState<B> {
 }
 
 pub struct NGramInjection<B: Backend> {
-    ngram_embedding: EmbeddingTable<B>,
+    ngram_embedding: EmbeddingTableDisk,
     /// `embedding_dim -> stream_count * model_dim`
     key_projection: Box<dyn Linear<B>>,
     /// `embedding_dim -> model_dim`
@@ -167,12 +166,11 @@ impl<B: Backend> NGramInjection<B> {
 
         let num_rows = hash_config.head_vocab_sizes.iter().sum::<u32>();
 
-        let ngram_embedding = EmbeddingTable::load(
+        let ngram_embedding = EmbeddingTableDisk::load(
             num_rows,
             config.embedding_dim / num_heads,
             data_type,
             &parameter_tree.subtree("ngram_embedding"),
-            context,
         )
         .await?;
         let key_projection = <dyn Linear<B>>::new(
@@ -266,14 +264,14 @@ impl<B: Backend> NGramInjection<B> {
         state: &mut NGramInjectionState<B>,
         token_ids: &[u32],
         parents: Option<&[i32]>,
-    ) {
+    ) -> io::Result<()> {
         assert!(state.pending_tokens.is_empty(), "n-gram rows prepared with unaccepted tokens");
 
         let mut ngram_ids = vec![0u32; token_ids.len() * self.num_heads() as usize];
         hash(&self.hash_config, &state.history, token_ids, parents, &mut ngram_ids);
         state.pending_tokens = token_ids.to_vec();
 
-        todo!("read the n-gram embedding rows from the on-disk table")
+        self.ngram_embedding.lookup(&ngram_ids, &mut state.pending_rows)
     }
 
     // TODO(arch): use typestate with `Self::prepare`?

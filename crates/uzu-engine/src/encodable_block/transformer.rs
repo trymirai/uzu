@@ -377,14 +377,15 @@ impl<B: Backend> Transformer<B> {
         state: &mut TransformerState<B>,
         token_ids: &[u32],
         parents: Option<&[i32]>,
-    ) {
+    ) -> std::io::Result<()> {
         for (op, op_state) in self
             .layers
             .iter()
             .zip(state.layer_states.iter_mut())
             .flat_map(|(layer, layer_state)| layer.ngram_injections(&mut layer_state.stream_ops))
         {
-            op.prepare(op_state, token_ids, parents)
+            op.prepare(op_state, token_ids, parents)?;
         }
+        Ok(())
     }
 }

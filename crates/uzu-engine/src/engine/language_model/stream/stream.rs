@@ -297,7 +297,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             let batch_dim = BatchTopology::flat(input_chunk.len() as u32);
 
             if self.model.decoder.has_ngram_embeddings() {
-                self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &input_chunk_u32, None);
+                self.model
+                    .decoder
+                    .prepare_ngram_rows(&mut self.model_state.transformer_state, &input_chunk_u32, None)
+                    .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
             }
 
             let decoder_output = self.model.decoder.encode(
@@ -597,13 +600,15 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             // trim padding rows
             let real = nodes.iter().position(|node| node.trie_start == u32::MAX).unwrap_or(nodes.len());
             let parents = nodes[..real].iter().map(|node| node.parent).collect::<Box<[_]>>();
-            self.model.decoder.prepare_ngram_rows(
-                &mut self.model_state.transformer_state,
-                &tokens[..real],
-                Some(&parents),
-            );
+            self.model
+                .decoder
+                .prepare_ngram_rows(&mut self.model_state.transformer_state, &tokens[..real], Some(&parents))
+                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
         } else if let Some(token) = cpu_token {
-            self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None);
+            self.model
+                .decoder
+                .prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None)
+                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
         }
 
         let decoder_output = self.model.decoder.encode(
