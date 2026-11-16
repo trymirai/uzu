@@ -26,6 +26,7 @@ metal = [
     "dep:blake3",
     "dep:xxhash-rust",
     "dep:metal",
+    "dep:rangemap",
 ]
 
 webgpu = [
@@ -50,6 +51,7 @@ vulkan = [
     "dep:regex",
     "dep:rayon",
     "dep:spirv",
+    "dep:rangemap",
 ]
 
 cpu = [] # TODO: move libm here
@@ -93,7 +95,7 @@ thiserror.workspace = true
 tokenizers.workspace = true
 xgrammar.workspace = true
 schemars.workspace = true
-rangemap.workspace = true
+rangemap = { workspace = true, optional = true }
 bytemuck = { workspace = true, features = ["derive"] }
 num-traits.workspace = true
 libm.workspace = true
