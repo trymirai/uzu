@@ -8,6 +8,7 @@ mod matmul;
 mod transformed_linear;
 mod untied_readout;
 
+pub use input_rht::InputRhtParameters;
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use transformed_linear::TransformedLinear;
 pub use untied_readout::UntiedReadout;
@@ -63,7 +64,7 @@ pub trait Linear<B: Backend>: Send + Sync {
 pub type LinearInput<B> = MatmulA<<B as Backend>::ScratchBuffer>;
 
 pub struct LinearInputPreparation<B: Backend> {
-    pub rht_signs: B::GlobalGpuBuffer,
+    pub rht: InputRhtParameters<B>,
     pub activation_format: ActivationFormat,
 }
 
@@ -161,7 +162,7 @@ impl<B: Backend> dyn Linear<B> {
         has_biases: bool,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalGpuBuffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<InputRhtParameters<B>>), LinearBlockError<B>> {
         let (linear, preparation) = Self::new_with_input_preparation(
             input_dimension,
             output_dimension,
@@ -174,7 +175,7 @@ impl<B: Backend> dyn Linear<B> {
             context,
         )
         .await?;
-        Ok((linear, preparation.map(|preparation| preparation.rht_signs)))
+        Ok((linear, preparation.map(|preparation| preparation.rht)))
     }
 
     pub async fn new_for_fused_input(
@@ -206,7 +207,7 @@ impl<B: Backend> dyn Linear<B> {
         has_biases: bool,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::GlobalGpuBuffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<InputRhtParameters<B>>), LinearBlockError<B>> {
         Self::new_with_input_rht_mixed_precision(
             input_dimension,
             output_dimension,

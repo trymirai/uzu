@@ -15,7 +15,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError, LinearEncodeError},
+        linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{
             MixerState,
             attention::{
@@ -163,7 +163,7 @@ impl<B: Backend> DFlash<B> {
             config.model_dim,
             data_type,
             data_type,
-            readout_input_hadamard_factors,
+            readout_input_hadamard_factors.map(InputRhtParameters::h32),
             ShortcutMode::None,
             &config.output_norm_config,
             &parameter_tree.subtree("output_norm"),

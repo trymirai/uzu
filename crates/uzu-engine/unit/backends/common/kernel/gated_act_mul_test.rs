@@ -9,7 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::activation_type::ActivationType,
+            gpu_types::{activation_type::ActivationType, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
             kernel::{
                 ActivationFormat, ActivationQuantization, GatedActMul, GatedActMulSettings, matmul::Int8CodeLayout,
             },
@@ -54,9 +54,14 @@ fn run_interleaved<T: DataTypeRepr + Float, B: Backend>(
     use_hadamard: bool,
 ) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("create context");
-    let kernel =
-        GatedActMul::<B>::full_precision(&context, T::data_type(), true, use_hadamard, GatedActMulSettings::default())
-            .expect("create GatedActMul");
+    let kernel = GatedActMul::<B>::full_precision(
+        &context,
+        T::data_type(),
+        true,
+        use_hadamard.then_some(HADAMARD_TRANSFORM_BLOCK_SIZE),
+        GatedActMulSettings::default(),
+    )
+    .expect("create GatedActMul");
 
     let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
     let output_length = (input.batch_dim * input.gated_dim) as usize;
@@ -118,7 +123,10 @@ fn test_gated_act_mul_interleaved_silu_bf16() {
     interleaved_test::<bf16>(ActivationType::SILU);
 }
 
-fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (Vec<i8>, Vec<f32>) {
+fn run_nibble_grouped_quantized<B: Backend>(
+    input: &InterleavedInput<bf16>,
+    hadamard_size: u32,
+) -> (Vec<i8>, Vec<f32>) {
     let context = block_on(B::Context::new()).expect("create context");
     let act_operand = create_buffer_with_data::<B, bf16>(&context, &input.fused_up);
     let factors = create_buffer_with_data::<B, i32>(&context, &input.hadamard_factors);
@@ -127,6 +135,7 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     let kernel = GatedActMul::<B>::quantized(
         &context,
         DataType::BF16,
+        hadamard_size,
         ActivationFormat::Int8(
             ActivationQuantization::new(128, 128, false, Int8CodeLayout::GroupedByNibble)
                 .expect("supported activation quantization"),
@@ -150,12 +159,11 @@ fn run_nibble_grouped_quantized<B: Backend>(input: &InterleavedInput<bf16>) -> (
     (buffer_to_vec(&*context, &values), buffer_to_vec(&*context, &scales))
 }
 
-#[uzu_test]
-fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
+fn nibble_grouped_quantization_matches_cpu(hadamard_size: u32) {
     let input = interleaved_input::<bf16>(ActivationType::SILU);
-    let (expected_values, expected_scales) = run_nibble_grouped_quantized::<Cpu>(&input);
+    let (expected_values, expected_scales) = run_nibble_grouped_quantized::<Cpu>(&input, hadamard_size);
     for_each_non_cpu_backend!(|B| {
-        let (actual_values, actual_scales) = run_nibble_grouped_quantized::<B>(&input);
+        let (actual_values, actual_scales) = run_nibble_grouped_quantized::<B>(&input, hadamard_size);
         let group_size = input.gated_dim as usize;
         // Boundary rounding can shift one code; normalize dequantized error by group peak.
         for (index, (&actual, &expected)) in actual_values.iter().zip(&expected_values).enumerate() {
@@ -171,6 +179,13 @@ fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
             assert!(error <= 1e-2, "gated activation value {index}: {actual} != {expected} (error {error})");
         }
     });
+}
+
+#[uzu_test]
+fn test_gated_act_mul_nibble_grouped_quantization_matches_cpu() {
+    for hadamard_size in [HADAMARD_TRANSFORM_BLOCK_SIZE, 128] {
+        nibble_grouped_quantization_matches_cpu(hadamard_size);
+    }
 }
 
 #[uzu_test]
@@ -224,7 +239,7 @@ fn separate_input<T: DataTypeRepr + Float>() -> (SeparateInput<T>, Vec<T>) {
 fn run_separate<T: DataTypeRepr + Float, B: Backend>(input: &SeparateInput<T>) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("create context");
     let kernel =
-        GatedActMul::<B>::full_precision(&context, T::data_type(), false, false, GatedActMulSettings::default())
+        GatedActMul::<B>::full_precision(&context, T::data_type(), false, None, GatedActMulSettings::default())
             .expect("create GatedActMul");
 
     let gate_out = create_buffer_with_data::<B, T>(&context, &input.gate_out);
@@ -302,7 +317,7 @@ fn transformed_interleaved_test<T: DataTypeRepr + Float + Debug + Display>(
 
     for_each_backend!(|B| {
         let context = block_on(<B as Backend>::Context::new()).expect("create context");
-        let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, false, settings)
+        let kernel = GatedActMul::<B>::full_precision(&context, T::data_type(), true, None, settings)
             .expect("create transformed GatedActMul");
         let fused_up = create_buffer_with_data::<B, T>(&context, &fused_up);
         let mut output = create_buffer::<B, T>(&context, GATED_DIM as usize);

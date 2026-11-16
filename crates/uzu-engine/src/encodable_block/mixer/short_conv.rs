@@ -10,7 +10,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{Linear, LinearBlockError},
+        linear::{InputRhtParameters, Linear, LinearBlockError},
         mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::PrecalculatedRoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -106,7 +106,7 @@ impl<B: Backend> ShortConv<B> {
         config: &ShortConvConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<B::GlobalGpuBuffer>), ShortConvNewError<B>> {
+    ) -> Result<(Self, Option<InputRhtParameters<B>>), ShortConvNewError<B>> {
         let kernel_size = config.kernel_size;
         if kernel_size < 2 {
             return Err(ShortConvNewError::UnsupportedConfiguration(format!(

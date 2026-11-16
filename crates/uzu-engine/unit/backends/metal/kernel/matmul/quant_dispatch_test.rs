@@ -13,8 +13,8 @@ use crate::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{
-                activation_type::ActivationType, quantization::QuantizationMode,
-                quantization_method::QuantizationMethod,
+                activation_type::ActivationType, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
+                quantization::QuantizationMode, quantization_method::QuantizationMethod,
             },
             kernel::{
                 ActivationQuantization, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
@@ -844,33 +844,34 @@ fn run_packed_half_pipeline(
     let mut packed = create_buffer::<Metal, u32>(&context, packed_half_bytes(k, group_size, bits) / size_of::<u32>());
     let mut command_buffer = context.create_command_buffer(None, None).expect("Metal command buffer");
     if !gated {
-        ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, false).expect("RHT reference").encode_fp(
-            &source_buffer,
-            &mut reference_a,
-            &factors_buffer,
-            batch,
-            k,
-            &mut command_buffer,
-        );
-        ActivationTransform::<Metal>::quantize(&context, DataType::BF16, format)
+        ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, BLOCK_SIZE, false)
+            .expect("RHT reference")
+            .encode_fp(&source_buffer, &mut reference_a, &factors_buffer, batch, k, &mut command_buffer);
+        ActivationTransform::<Metal>::quantize(&context, DataType::BF16, BLOCK_SIZE, format)
             .expect("Metal RHT PackedHalf pack")
             .encode_pack_half(&source_buffer, &mut packed, &factors_buffer, batch, k, &mut command_buffer);
     } else {
-        GatedActMul::<Metal>::full_precision(&context, DataType::BF16, true, true, GatedActMulSettings::default())
-            .expect("gate reference")
-            .encode_fp(
-                &source_buffer,
-                None::<&<Metal as Backend>::GlobalGpuBuffer>,
-                &mut reference_a,
-                Some(&factors_buffer),
-                k,
-                batch,
-                0,
-                0,
-                ActivationType::SILU,
-                &mut command_buffer,
-            );
-        GatedActMul::<Metal>::quantized(&context, DataType::BF16, format, GatedActMulSettings::default())
+        GatedActMul::<Metal>::full_precision(
+            &context,
+            DataType::BF16,
+            true,
+            Some(BLOCK_SIZE),
+            GatedActMulSettings::default(),
+        )
+        .expect("gate reference")
+        .encode_fp(
+            &source_buffer,
+            None::<&<Metal as Backend>::GlobalGpuBuffer>,
+            &mut reference_a,
+            Some(&factors_buffer),
+            k,
+            batch,
+            0,
+            0,
+            ActivationType::SILU,
+            &mut command_buffer,
+        );
+        GatedActMul::<Metal>::quantized(&context, DataType::BF16, BLOCK_SIZE, format, GatedActMulSettings::default())
             .expect("Metal PackedHalf gated activation")
             .encode_pack_half(
                 &source_buffer,

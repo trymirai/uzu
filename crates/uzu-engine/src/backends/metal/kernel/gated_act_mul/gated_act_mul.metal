@@ -44,6 +44,7 @@ PUBLIC KERNEL(GatedActMul) (
     const bool grouped_by_weight_nibble SPECIALIZE,
     const bool interleaved SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
+    const uint hadamard_size SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
     const uint sum_group_size SPECIALIZE,
     const uint weight_bits SPECIALIZE,
@@ -91,8 +92,7 @@ PUBLIC KERNEL(GatedActMul) (
   }
 
   const bool hadamard = QUANTIZED || use_hadamard;
-  const bool block_in_bounds =
-      (first_index / HADAMARD_TRANSFORM_BLOCK_SIZE + 1) * HADAMARD_TRANSFORM_BLOCK_SIZE <= gated_dim;
+  const bool block_in_bounds = (first_index / hadamard_size + 1) * hadamard_size <= gated_dim;
   float4 results = 0.0f;
   METAL_PRAGMA_UNROLL
   for (uint index = 0; index < hadamard::VECTOR_SIZE; ++index) {
@@ -105,7 +105,7 @@ PUBLIC KERNEL(GatedActMul) (
     if (block_in_bounds) {
       results *= float4(load_vec4(hadamard_factors + first_index));
     }
-    results = hadamard::simdgroup_transform_vector(lane_index, results);
+    results = hadamard::simdgroup_transform_vector(lane_index, results, hadamard_size);
   }
 
   if (!QUANTIZED && !PACKED_HALF) {
