@@ -57,7 +57,7 @@ void gemv_body<X : IMatmulOperand, B : IStorageFloat, D : IStorageFloat, W : IMa
 [[Variants("B", "float, bf16")]]
 [[Variants("D", "float, bf16")]]
 [[Kernel]]
-[[Precondition("new", "b_prologue == GemmBPrologueKind::FullPrecision || (group_size > 0 && quantization_mode != QuantizationMode::I8)")]]
+[[Precondition("new", "b_prologue == GemmBPrologueKind::FullPrecision || (group_size > 0 && (quantization_mode == QuantizationMode::U4 || quantization_mode == QuantizationMode::U8))")]]
 [[Precondition("new", "LANE_LAYOUT || (b_prologue != GemmBPrologueKind::FullPrecision && OUTPUT_ROW_TILE == 8 && NUM_SIMDGROUPS == 8 && INPUT_ROW_TILE == 1)")]]
 [[Precondition("new", "!LANE_LAYOUT || b_prologue != GemmBPrologueKind::FullPrecision || (NUM_SIMDGROUPS == 8 && INPUT_ROW_TILE == 1 && GROUP_LANES == 1 && [8, 32].contains(&OUTPUT_ROW_TILE))")]]
 [[Precondition("new", "!LANE_LAYOUT || b_prologue == GemmBPrologueKind::FullPrecision || [16, 32, 64, 128].contains(&group_size)")]]
