@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
@@ -10,7 +12,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError, input_rht::InputRht,
+        InputRhtParameters, Linear, LinearEncodeError, LinearInputPreparation, LinearMatmul, LinearMatmulError,
+        input_rht::InputRht,
     },
     safetensors::ParameterTree,
 };
@@ -33,7 +36,7 @@ impl<B: Backend> UntiedReadout<B> {
             quantization_spec,
             incoherence_spec:
                 Some(AnyIncoherenceProcessorSpec::HadamardSpec(HadamardSpec {
-                    block_size: HADAMARD_TRANSFORM_BLOCK_SIZE,
+                    block_size: hadamard_size @ (HADAMARD_TRANSFORM_BLOCK_SIZE | 128),
                     processing_mode: IncoherenceProcessingMode::Input,
                     ..
                 })),
@@ -49,6 +52,11 @@ impl<B: Backend> UntiedReadout<B> {
             });
         };
 
+        if !model_dim.is_multiple_of(hadamard_size) {
+            return Err(LinearMatmulError::UnsupportedConfiguration(format!(
+                "Hadamard block size {hadamard_size} for input dimension {model_dim}"
+            )));
+        }
         let mut linear = LinearMatmul::load(
             model_dim,
             vocab_size,
@@ -62,11 +70,14 @@ impl<B: Backend> UntiedReadout<B> {
             context,
         )
         .await?;
-        let rht_signs =
-            tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32).await?;
+        let signs =
+            Arc::new(tree.subtree("incoherence_signs").read_buffer("input_signs", &[model_dim], DataType::I32).await?);
         let activation_format = linear.prepare_activation(context).map_err(LinearMatmulError::BackendError)?;
         let preparation = LinearInputPreparation {
-            rht_signs,
+            rht: InputRhtParameters {
+                hadamard_size,
+                signs,
+            },
             activation_format,
         };
         let input_rht = InputRht::new(data_type, preparation, /* in_place */ false, context)

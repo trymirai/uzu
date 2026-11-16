@@ -8,7 +8,9 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-            gpu_types::quantization_method::QuantizationMethod,
+            gpu_types::{
+                hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE, quantization_method::QuantizationMethod,
+            },
             kernel::{
                 ActivationTransform,
                 matmul::{ActivationFormat, MatmulA, MatmulKernel, MatmulShape, packed_half_bytes},
@@ -48,14 +50,9 @@ fn run(
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     if packed {
         let factors = create_buffer_with_data::<Metal, i32>(context, &vec![1; input.k as usize]);
-        ActivationTransform::<Metal>::quantize(context, DataType::BF16, format).expect("pack").encode_pack_half(
-            &buffers.x,
-            &mut packed_activations,
-            &factors,
-            input.m,
-            input.k,
-            &mut command_buffer,
-        );
+        ActivationTransform::<Metal>::quantize(context, DataType::BF16, BLOCK_SIZE, format)
+            .expect("pack")
+            .encode_pack_half(&buffers.x, &mut packed_activations, &factors, input.m, input.k, &mut command_buffer);
     }
     let mut arguments = quant_arguments(&mut buffers, input);
     if packed {

@@ -83,8 +83,13 @@ static METAL_FUNC T simdgroup_output_transform(ushort lane_index, T lane_value, 
 UZU_CONST ushort VECTOR_SIZE = HADAMARD_VECTOR_SIZE;
 UZU_CONST ushort LANES_PER_BLOCK = HADAMARD_TRANSFORM_BLOCK_SIZE / VECTOR_SIZE;
 
-static METAL_FUNC float4 simdgroup_transform_vector(ushort lane_index, float4 lane_values) {
-  simdgroup_transform<VECTOR_SIZE, LANES_PER_BLOCK>(lane_index, reinterpret_cast<thread float*>(&lane_values));
+static METAL_FUNC float4 simdgroup_transform_vector(ushort lane_index, float4 lane_values, uint hadamard_size) {
+  thread float* values = reinterpret_cast<thread float*>(&lane_values);
+  if (hadamard_size == METAL_SIMD_SIZE * VECTOR_SIZE) {
+    simdgroup_transform<VECTOR_SIZE, METAL_SIMD_SIZE>(lane_index, values);
+  } else {
+    simdgroup_transform<VECTOR_SIZE, LANES_PER_BLOCK>(lane_index, values);
+  }
   return lane_values;
 }
 

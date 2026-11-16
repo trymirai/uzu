@@ -8,7 +8,7 @@ use crate::{
     config::mlp::dense_mlp::DenseMLPConfig,
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearBlockError},
+        linear::{InputRhtParameters, Linear, LinearBlockError},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     safetensors::ParameterTree,
@@ -36,7 +36,7 @@ impl<B: Backend> DenseMlp<B> {
         config: &DenseMLPConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Self, Option<B::GlobalGpuBuffer>), DenseMlpNewError<B>> {
+    ) -> Result<(Self, Option<InputRhtParameters<B>>), DenseMlpNewError<B>> {
         let (up, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             model_dimension,
             2 * hidden_dimension,

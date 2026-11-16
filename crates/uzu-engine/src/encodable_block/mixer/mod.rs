@@ -9,7 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::LinearEncodeError,
+        linear::{InputRhtParameters, LinearEncodeError},
         mixer::{
             attention::{Attention, AttentionEncodeError, AttentionNewError, rope::PrecalculatedRoPE},
             delta_net::{DeltaNet, DeltaNetNewError},
@@ -96,7 +96,7 @@ impl<B: Backend> dyn Mixer<B> {
         config: &AnyTokenMixerConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Mixer<B>>, Option<B::GlobalGpuBuffer>), MixerNewError<B>> {
+    ) -> Result<(Box<dyn Mixer<B>>, Option<InputRhtParameters<B>>), MixerNewError<B>> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
                 let (attention, in_projection_input_hadamard_factors) =

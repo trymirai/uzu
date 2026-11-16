@@ -9,6 +9,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+            gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             kernel::{ActivationTransform, NormalizationKernel},
         },
         cpu::Cpu,
@@ -33,7 +34,7 @@ fn get_output<
     element_count: u32,
     epsilon: f32,
     full_layer: bool,
-    hadamard_factors: Option<&[i32]>,
+    rht: Option<(&[i32], u32)>,
 ) -> Vec<OutputT> {
     let context = block_on(B::Context::new()).expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::NormalizationKernel::new(
@@ -47,7 +48,8 @@ fn get_output<
         full_layer,
         false,
         false,
-        hadamard_factors.is_some(),
+        rht.is_some(),
+        rht.map_or(HADAMARD_TRANSFORM_BLOCK_SIZE, |(_, hadamard_size)| hadamard_size),
         false,
         scales.is_some(),
     )
@@ -55,8 +57,7 @@ fn get_output<
 
     let input_buffer = create_buffer_with_data::<B, InputT>(&context, input);
     let scales_buffer = scales.map(|scales| create_buffer_with_data::<B, AffineT>(&context, scales));
-    let hadamard_factors_buffer =
-        hadamard_factors.map(|hadamard_factors| create_buffer_with_data::<B, i32>(&context, hadamard_factors));
+    let hadamard_factors_buffer = rht.map(|(factors, _)| create_buffer_with_data::<B, i32>(&context, factors));
     let mut output_buffer = create_buffer_with_data::<B, OutputT>(&context, &vec![OutputT::zero(); input.len()]);
 
     let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
@@ -151,9 +152,11 @@ fn test_normalization<
 }
 
 // The fused transform has to match plain normalization followed by the standalone input RHT
-fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
+fn test_hadamard_block<T: DataTypeRepr + Float + Debug + Display>(
+    element_count: u32,
+    hadamard_size: u32,
+) {
     let batch_size = 2u32;
-    let element_count = 64u32;
     let epsilon = 1e-6f32;
 
     let input: Vec<T> =
@@ -172,7 +175,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
     let plain = get_output::<Cpu, T, T, T>(&input, Some(&scales), 1, batch_size, element_count, epsilon, true, None);
 
     let context = block_on(<Cpu as Backend>::Context::new()).expect("Failed to create Context");
-    let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), false)
+    let input_rht = ActivationTransform::<Cpu>::input_rht(context.as_ref(), T::data_type(), hadamard_size, false)
         .expect("Failed to create ActivationTransform");
     let plain_buffer = create_buffer_with_data::<Cpu, T>(&context, &plain);
     let hadamard_factors_buffer = create_buffer_with_data::<Cpu, i32>(&context, &hadamard_factors);
@@ -194,6 +197,7 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
     } else {
         1e-5
     };
+    let eps = eps * expected.iter().map(|value| value.to_f32().unwrap().abs()).fold(1.0, f32::max);
 
     for_each_backend!(|B| {
         let actual = get_output::<B, T, T, T>(
@@ -204,11 +208,17 @@ fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
             element_count,
             epsilon,
             true,
-            Some(&hadamard_factors),
+            Some((&hadamard_factors, hadamard_size)),
         );
         let message = format!("Normalization hadamard kernel test failed with backend={}", std::any::type_name::<B>());
         assert_eq_float::<T>(&expected, &actual, eps, &message);
     });
+}
+
+fn test_hadamard<T: DataTypeRepr + Float + Debug + Display>() {
+    for (element_count, hadamard_size) in [(128, HADAMARD_TRANSFORM_BLOCK_SIZE), (4480, 128)] {
+        test_hadamard_block::<T>(element_count, hadamard_size);
+    }
 }
 
 // Row `i` has to use the scales of mixture member `i % mixture_size`

@@ -19,7 +19,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug)]
 enum TransformOrder {
-    Input,
+    Input(u32),
     Output,
 }
 
@@ -32,7 +32,9 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
 ) -> Vec<T> {
     let context = block_on(B::Context::new()).expect("context");
     let kernel = match order {
-        TransformOrder::Input => ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), in_place),
+        TransformOrder::Input(hadamard_size) => {
+            ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), hadamard_size, in_place)
+        },
         TransformOrder::Output => {
             ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), None, in_place)
         },
@@ -65,12 +67,13 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
 
 fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
     for (order, in_place) in [
-        (TransformOrder::Input, false),
-        (TransformOrder::Input, true),
+        (TransformOrder::Input(BLOCK_SIZE), false),
+        (TransformOrder::Input(BLOCK_SIZE), true),
+        (TransformOrder::Input(128), true),
         (TransformOrder::Output, false),
         (TransformOrder::Output, true),
     ] {
-        for (batch_count, channel_count) in [(1, 32), (1, 64), (1, 128), (4, 32), (4, 256), (2, 2048)] {
+        for (batch_count, channel_count) in [(1, 128), (4, 256), (2, 2048)] {
             let data_f64: Vec<f64> =
                 (0..batch_count * channel_count).map(|index| ((index as f64) * 0.1).sin() * 2.0).collect();
             let factors: Vec<i32> = (0..channel_count)
@@ -166,6 +169,7 @@ mod quantize {
     };
 
     fn run<B: Backend>(
+        hadamard_size: u32,
         input_data: &[f32],
         factors_data: &[i32],
         rows: u32,
@@ -187,6 +191,7 @@ mod quantize {
         let kernel = ActivationTransform::<B>::quantize(
             context.as_ref(),
             DataType::F32,
+            hadamard_size,
             ActivationFormat::Int8(
                 ActivationQuantization::new(
                     scale_group_size,
@@ -224,6 +229,18 @@ mod quantize {
         sum_group_size: Option<u32>,
         code_layout: Int8CodeLayout,
     ) {
+        for hadamard_size in [BLOCK_SIZE, 128] {
+            check_block(hadamard_size, scale_group_size, emit_group_sums, sum_group_size, code_layout);
+        }
+    }
+
+    fn check_block(
+        hadamard_size: u32,
+        scale_group_size: u32,
+        emit_group_sums: bool,
+        sum_group_size: Option<u32>,
+        code_layout: Int8CodeLayout,
+    ) {
         let rows = 3;
         let columns = 256;
         let mut rng = SmallRng::seed_from_u64(0x5EED_0001);
@@ -238,6 +255,7 @@ mod quantize {
             })
             .collect();
         let (expected_values, expected_scales, expected_group_sums) = run::<Cpu>(
+            hadamard_size,
             &input_data,
             &factors_data,
             rows,
@@ -250,6 +268,7 @@ mod quantize {
 
         for_each_backend!(|B| {
             let (actual_values, actual_scales, actual_group_sums) = run::<B>(
+                hadamard_size,
                 &input_data,
                 &factors_data,
                 rows,

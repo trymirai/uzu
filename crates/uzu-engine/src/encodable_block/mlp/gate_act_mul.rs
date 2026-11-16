@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding,
@@ -17,7 +19,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     activation: AnyActivation,
     hidden_dim: u32,
     data_type: DataType,
-    hadamard_factors: Option<B::GlobalGpuBuffer>,
+    hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
     quantized_kernel: Option<GatedActMul<B>>,
 }
 
@@ -31,24 +33,26 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         input_preparation: Option<LinearInputPreparation<B>>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
-        let (hadamard_factors, format) = input_preparation.map_or((None, ActivationFormat::Bf16), |preparation| {
-            (Some(preparation.rht_signs), preparation.activation_format)
+        let (rht, format) = input_preparation.map_or((None, ActivationFormat::Bf16), |preparation| {
+            (Some(preparation.rht), preparation.activation_format)
         });
         let settings = GatedActMulSettings {
             activation_alpha: activation.custom_alpha(),
             gate_clipping,
             value_clipping,
         };
-        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_factors.is_some(), settings)?;
-        let quantized_kernel = (format != ActivationFormat::Bf16)
-            .then(|| GatedActMul::quantized(context, data_type, format, settings))
+        let hadamard_size = rht.as_ref().map(|rht| rht.hadamard_size);
+        let fp_kernel = GatedActMul::full_precision(context, data_type, true, hadamard_size, settings)?;
+        let quantized_kernel = hadamard_size
+            .filter(|_| format != ActivationFormat::Bf16)
+            .map(|hadamard_size| GatedActMul::quantized(context, data_type, hadamard_size, format, settings))
             .transpose()?;
         Ok(Self {
             fp_kernel,
             activation,
             hidden_dim,
             data_type,
-            hadamard_factors,
+            hadamard_factors: rht.map(|rht| rht.signs),
             quantized_kernel,
         })
     }
@@ -65,7 +69,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         }
 
         if let Some(kernel) = self.quantized_kernel.as_ref().filter(|kernel| kernel.format() == act_format) {
-            let hadamard_factors = self.hadamard_factors.as_ref().expect("quantized input requires RHT factors");
+            let hadamard_factors = self.hadamard_factors.as_deref().expect("quantized input requires RHT factors");
             if let ActivationFormat::PackedHalf {
                 block_k,
                 bits,
@@ -126,7 +130,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             fused_up,
             None::<&B::ScratchBuffer>,
             &mut hidden,
-            self.hadamard_factors.as_ref(),
+            self.hadamard_factors.as_deref(),
             self.hidden_dim,
             batch_dim,
             0,

@@ -9,7 +9,7 @@ use crate::{
     config::mlp::AnyMLPConfig,
     data_type::DataType,
     encodable_block::{
-        linear::LinearEncodeError,
+        linear::{InputRhtParameters, LinearEncodeError},
         mlp::dense::{DenseMlp, DenseMlpNewError},
     },
     safetensors::ParameterTree,
@@ -48,7 +48,7 @@ impl<B: Backend> dyn Mlp<B> {
         config: &AnyMLPConfig,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
-    ) -> Result<(Box<dyn Mlp<B>>, Option<B::GlobalGpuBuffer>), MlpBlockNewError<B>> {
+    ) -> Result<(Box<dyn Mlp<B>>, Option<InputRhtParameters<B>>), MlpBlockNewError<B>> {
         match config {
             AnyMLPConfig::DenseMLPConfig(config) => {
                 let (dense, up_input_hadamard_factors) =

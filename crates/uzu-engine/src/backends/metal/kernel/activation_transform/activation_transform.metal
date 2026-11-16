@@ -34,6 +34,7 @@ PUBLIC KERNEL(ActivationTransform)(
     constant uint& element_count,
     device uint* packed_half_out OPTIONAL(PACKED_HALF),
     const ActivationTransformOp ops SPECIALIZE,
+    const uint hadamard_size SPECIALIZE,
     const bool grouped_by_weight_nibble SPECIALIZE,
     const bool in_place SPECIALIZE,
     const uint activation_scale_group_size SPECIALIZE,
@@ -64,7 +65,7 @@ PUBLIC KERNEL(ActivationTransform)(
       values *= float4(factors);
     }
   }
-  values = hadamard::simdgroup_transform_vector(lane_index, values);
+  values = hadamard::simdgroup_transform_vector(lane_index, values, hadamard_size);
   if (!input_rht) {
     values *= float4(factors);
   }

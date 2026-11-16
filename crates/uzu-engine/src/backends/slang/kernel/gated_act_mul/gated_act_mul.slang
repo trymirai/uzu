@@ -27,6 +27,7 @@ import generated.gated_act_mul;
   [[Specialize]] bool grouped_by_weight_nibble,
   [[Specialize]] bool interleaved,
   [[Specialize]] bool use_hadamard,
+  [[Specialize]] uint32_t hadamard_size,
   [[Specialize]] uint32_t activation_scale_group_size,
   [[Specialize]] uint32_t sum_group_size,
   [[Specialize]] uint32_t weight_bits,

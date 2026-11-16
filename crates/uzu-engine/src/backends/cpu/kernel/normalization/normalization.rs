@@ -2,13 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::{
-    backends::{
-        common::gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
-        cpu::kernel::activation_transform::hadamard_transform,
-    },
-    data_type::DataTypeRepr,
-};
+use crate::{backends::cpu::kernel::activation_transform::hadamard_transform, data_type::DataTypeRepr};
 
 #[kernel(Normalization)]
 #[variants(InputT, f32, f16, bf16)]
@@ -38,6 +32,7 @@ pub fn normalization<
     #[specialize] copy_to_shortcut: bool,
     #[specialize] residual_add: bool,
     #[specialize] use_hadamard: bool,
+    #[specialize] hadamard_size: u32,
     #[specialize] has_biases: bool,
     #[specialize] has_scales: bool,
 ) {
@@ -46,7 +41,7 @@ pub fn normalization<
     assert_eq!(biases.is_some(), has_biases);
     assert_eq!(scales.is_some(), has_scales);
     assert!(copy_to_shortcut || !residual_add);
-    assert!(!use_hadamard || element_count.is_multiple_of(HADAMARD_TRANSFORM_BLOCK_SIZE));
+    assert!(!use_hadamard || element_count.is_multiple_of(hadamard_size));
 
     let input = match in_place {
         true => output as *const InputT,
@@ -58,6 +53,7 @@ pub fn normalization<
     let scale_offset = AccumT::from(scale_offset).unwrap();
     let element_count_accum = AccumT::from(element_count).unwrap();
     let mut row = vec![AccumT::zero(); element_count];
+    let mut block = vec![0.0f32; hadamard_size as usize];
 
     for batch in 0..(batch_size as usize) {
         let batch_offset = batch * element_count;
@@ -119,13 +115,13 @@ pub fn normalization<
 
         // Input RHT like the Metal kernel: apply the factors, then transform each block
         if let Some(factors) = hadamard_factors {
-            for block_start in (0..element_count).step_by(HADAMARD_TRANSFORM_BLOCK_SIZE as usize) {
-                let mut block: [f32; HADAMARD_TRANSFORM_BLOCK_SIZE as usize] = std::array::from_fn(|lane| {
+            for block_start in (0..element_count).step_by(hadamard_size as usize) {
+                for (lane, value) in block.iter_mut().enumerate() {
                     let factor = unsafe { *factors.add(block_start + lane) } as f32;
-                    row[block_start + lane].to_f32().unwrap() * factor
-                });
+                    *value = row[block_start + lane].to_f32().unwrap() * factor;
+                }
                 hadamard_transform(&mut block);
-                for (lane, value) in block.into_iter().enumerate() {
+                for (lane, &value) in block.iter().enumerate() {
                     row[block_start + lane] = AccumT::from(value).unwrap();
                 }
             }
