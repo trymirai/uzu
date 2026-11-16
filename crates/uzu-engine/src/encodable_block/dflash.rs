@@ -76,6 +76,10 @@ pub enum DFlashNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("invalid DFlash attention config: {0}")]
     InvalidAttentionConfig(&'static str),
+    #[error("DFlash draft layer {layer_index} has a stateful stream op, which DFlash doesn't support")]
+    StatefulStreamOp {
+        layer_index: u32,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -143,20 +147,24 @@ impl<B: Backend> DFlash<B> {
             if layer_config.rope_config.as_ref() != Some(&config.rope_config) {
                 return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use the draft RoPE config"));
             }
-            layers.push(
-                TransformerLayer::new(
-                    config.model_dim,
-                    config.hidden_dim,
-                    num_layers,
-                    index,
-                    data_type,
-                    layer_config,
-                    &residual_config,
-                    &layers_tree.subtree(&index.to_string()),
-                    context,
-                )
-                .await?,
-            );
+            let layer = TransformerLayer::new(
+                config.model_dim,
+                config.hidden_dim,
+                num_layers,
+                index,
+                data_type,
+                layer_config,
+                &residual_config,
+                &layers_tree.subtree(&index.to_string()),
+                context,
+            )
+            .await?;
+            if layer.has_stateful_stream_ops() {
+                return Err(DFlashNewError::StatefulStreamOp {
+                    layer_index: index,
+                });
+            }
+            layers.push(layer);
         }
         let output_norm = Normalization::new(
             config.model_dim,
@@ -324,8 +332,7 @@ impl<B: Backend> DFlash<B> {
                 &token_ids,
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
-                Some(MaybeMut::Mut(mixer_state.as_mut())),
-                None,
+                Some((MaybeMut::Mut(mixer_state.as_mut()), None)),
                 command_buffer,
             )?;
         }

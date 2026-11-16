@@ -134,6 +134,13 @@ impl<B: Backend> StreamOp<B> {
         }
     }
 
+    pub fn is_stateful(&self) -> bool {
+        match self {
+            Self::NGramInjection(_) => true,
+            Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => false,
+        }
+    }
+
     pub fn speculation_supported(&self) -> bool {
         match self {
             Self::NGramInjection(_) => false,
@@ -154,6 +161,8 @@ impl<B: Backend> StreamOp<B> {
         match self {
             Self::NGramInjection(op) => {
                 let Some(StreamOpState::NGramInjection(state)) = state else {
+                    // technically, lalamo supports stateless ngram embeddings
+                    // by essentially throwing out its work each time
                     return Err(StreamOpEncodeError::MissingState);
                 };
                 op.encode(stream, token_ids, batch_dim, state, command_buffer)
