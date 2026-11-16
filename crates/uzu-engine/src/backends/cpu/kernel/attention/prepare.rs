@@ -97,7 +97,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
                 unsafe { std::ptr::copy_nonoverlapping(source, raw_row(ratio - 1 + token), head_dim) };
                 values.fill(0.0);
                 let height = unsafe { (*pool_nodes.unwrap().add(token)).height } as usize;
-                if (prefix + height + 1) % ratio == 0 {
+                if (prefix + height + 1).is_multiple_of(ratio) {
                     for i in 0..ratio {
                         let slot = unsafe { *pool_windows.unwrap().add(token * ratio + i) } as usize;
                         let row = match slot.checked_sub(prefix) {
