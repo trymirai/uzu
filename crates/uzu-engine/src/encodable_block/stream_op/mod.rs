@@ -6,7 +6,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        embedding_table::EmbeddingTableError,
+        embedding_table_disk::EmbeddingTableDiskError,
         linear::{LinearBlockError, LinearEncodeError},
         normalization::NormalizationNewError,
         stream_op::{
@@ -33,7 +33,7 @@ pub enum StreamOpNewError<B: Backend> {
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Embedding table error: {0}")]
-    EmbeddingTable(#[from] EmbeddingTableError<B>),
+    EmbeddingTable(#[from] EmbeddingTableDiskError<B>),
     #[error("N-gram injection requires a gated residual")]
     NGramInjectionRequiresGatedResidual,
     #[error("{0} requires an additive residual")]

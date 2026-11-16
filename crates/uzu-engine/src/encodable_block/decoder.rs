@@ -219,7 +219,7 @@ impl<B: Backend> Decoder<B> {
         state: &mut TransformerState<B>,
         token_ids: &[u32],
         parents: Option<&[i32]>,
-    ) {
-        self.transformer.prepare_ngram_rows(state, token_ids, parents);
+    ) -> std::io::Result<()> {
+        self.transformer.prepare_ngram_rows(state, token_ids, parents)
     }
 }

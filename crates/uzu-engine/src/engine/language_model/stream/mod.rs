@@ -39,6 +39,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     Capture(#[from] CaptureError<B>),
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
+    #[error("N-gram embedding read error: {0}")]
+    NGramEmbeddingRead(#[source] std::io::Error),
     #[error("Grammar error: {0}")]
     Grammar(#[from] GrammarError),
     #[error("Trie accept error: {0}")]

@@ -615,13 +615,15 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             // trim padding rows
             let real = nodes.iter().position(|node| node.trie_start == u32::MAX).unwrap_or(nodes.len());
             let parents = nodes[..real].iter().map(|node| node.parent).collect::<Box<[_]>>();
-            self.model.decoder.prepare_ngram_rows(
-                &mut self.model_state.transformer_state,
-                &tokens[..real],
-                Some(&parents),
-            );
+            self.model
+                .decoder
+                .prepare_ngram_rows(&mut self.model_state.transformer_state, &tokens[..real], Some(&parents))
+                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
         } else if let Some(token) = cpu_token {
-            self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None);
+            self.model
+                .decoder
+                .prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None)
+                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
         }
 
         let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
@@ -850,7 +852,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let tokens_u32 = tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>();
 
         if model.decoder.has_ngram_embeddings() {
-            model.decoder.prepare_ngram_rows(&mut model_state.transformer_state, &tokens_u32, None);
+            model
+                .decoder
+                .prepare_ngram_rows(&mut model_state.transformer_state, &tokens_u32, None)
+                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
         }
 
         let encode_span = CpuSpan::start(options.timestamps.as_ref(), "encode layers");

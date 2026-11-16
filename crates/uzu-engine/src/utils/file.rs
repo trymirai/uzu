@@ -1,4 +1,4 @@
-use std::{io, path::Path};
+use std::{io, os::fd::AsFd, path::Path};
 
 pub use async_fs::read;
 use futures::{
@@ -21,6 +21,12 @@ impl File {
         let mut file = self.0.lock().await;
         file.seek(SeekFrom::Start(offset)).await?;
         file.read_exact(buffer).await
+    }
+
+    /// Unsupported on WASM.
+    pub async fn to_sync(&self) -> io::Result<std::fs::File> {
+        let file = self.0.lock().await;
+        Ok(file.as_fd().try_clone_to_owned()?.into())
     }
 }
 
