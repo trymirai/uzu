@@ -1,0 +1,10 @@
+#![allow(dead_code, reason = "Used by Vulkan shaders.")]
+
+pub mod attention_gemm;
+pub mod attention_two_pass;
+pub mod delta_net;
+pub mod gemm;
+pub mod gemm_b_layout;
+pub mod gemm_tiling;
+pub mod radix_top_k;
+pub mod weaver;
