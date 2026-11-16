@@ -1,3 +1,1 @@
-mod check_work_group;
 
-pub use check_work_group::check_work_group;

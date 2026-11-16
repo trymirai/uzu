@@ -1,60 +1,91 @@
-use std::{convert::Infallible, ops::Range, os::raw::c_void, ptr::NonNull, sync::Arc};
+use std::{ops::Range, os::raw::c_void, sync::Arc};
 
 use ash::vk;
+use vk_mem::Alloc;
 
 use crate::{
     backends::{
         common::{
-            Buffer, BufferRef, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu, GlobalGpuBuffer,
-            GpuBuffer, SparseBuffer,
+            Buffer, BufferRef, GlobalGpuBuffer, GpuBuffer,
             allocator::{bump::BumpAllocation, pool::PoolAllocation},
         },
-        vulkan::{Error, VkContext, VkDeviceCapabilities, Vulkan},
+        vulkan::{Error, VkBufferCpuGpu, VkBufferError, VkContext, VkDevice, Vulkan},
     },
     utils::downcast::downcast_ref,
 };
 
+const BUFFER_USAGE: vk::BufferUsageFlags = vk::BufferUsageFlags::from_raw(
+    vk::BufferUsageFlags::STORAGE_BUFFER.as_raw()
+        | vk::BufferUsageFlags::TRANSFER_SRC.as_raw()
+        | vk::BufferUsageFlags::TRANSFER_DST.as_raw()
+        | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS.as_raw(),
+);
+
 pub struct VkBuffer {
-    context: Arc<VkContext>,
+    device: Arc<VkDevice>,
     allocation: vk_mem::Allocation,
     buffer: vk::Buffer,
     device_address: vk::DeviceAddress,
-    size: vk::DeviceSize,
+    size: usize,
 }
 
+// The VMA allocation is an opaque handle that VMA synchronizes internally.
 unsafe impl Send for VkBuffer {}
 unsafe impl Sync for VkBuffer {}
 
 impl VkBuffer {
     pub fn new(
-        context: Arc<VkContext>,
+        context: &VkContext,
         size: usize,
     ) -> Result<Arc<Self>, Error> {
-        Ok(Self::allocate(context, size, VkBufferMemory::Device)?.0)
+        let allocation_info = if context.device().physical_device.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
+            // Fail instead of spilling into system memory, which a discrete GPU reads over PCIe.
+            vk_mem::AllocationCreateInfo {
+                usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                flags: vk_mem::AllocationCreateFlags::WITHIN_BUDGET,
+                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                ..Default::default()
+            }
+        } else {
+            vk_mem::AllocationCreateInfo {
+                usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                ..Default::default()
+            }
+        };
+        Ok(Self::allocate(context, size, &allocation_info)?.0)
     }
 
-    fn allocate(
-        context: Arc<VkContext>,
+    pub fn allocate(
+        context: &VkContext,
         size: usize,
-        memory: VkBufferMemory,
+        allocation_info: &vk_mem::AllocationCreateInfo,
     ) -> Result<(Arc<Self>, *mut c_void), Error> {
-        let size = size as u64;
-        let (buffer, allocation, info) = context.allocate_buffer(size, memory)?;
-        let device_address = unsafe {
-            context.device().get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
-        };
+        if size == 0 {
+            return Err(VkBufferError::Empty.into());
+        }
+        let device = context.device();
+        let buffer_info = vk::BufferCreateInfo::default().size(size as u64).usage(BUFFER_USAGE);
+        let create = || unsafe { device.memory_allocator.create_buffer(&buffer_info, allocation_info) };
+        let (buffer, allocation) = match create() {
+            // Work that is still executing may hold the memory this allocation needs.
+            Err(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY) => {
+                context.wait_for_submitted()?;
+                create()
+            },
+            created => created,
+        }
+        .map_err(VkBufferError::Allocation)?;
+        let mapped = device.memory_allocator.get_allocation_info(&allocation).mapped_data;
+        let device_address =
+            unsafe { device.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer)) };
         let buffer = Arc::new(Self {
-            context,
+            device: device.clone(),
             allocation,
             buffer,
             device_address,
             size,
         });
-        Ok((buffer, info.mapped_data))
-    }
-
-    pub fn context(&self) -> &Arc<VkContext> {
-        &self.context
+        Ok((buffer, mapped))
     }
 
     pub fn buffer(&self) -> vk::Buffer {
@@ -65,8 +96,11 @@ impl VkBuffer {
         self.device_address
     }
 
-    pub fn size(&self) -> vk::DeviceSize {
-        self.size
+    // Whether the GPU reads this buffer from its own memory.
+    pub fn device_local(&self) -> bool {
+        let memory_type = self.device.memory_allocator.get_allocation_info(&self.allocation).memory_type;
+        let memory = unsafe { self.device.memory_allocator.get_memory_properties() };
+        memory.memory_types[memory_type as usize].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
     }
 
     pub fn resolve(
@@ -76,9 +110,9 @@ impl VkBuffer {
         let (buffer, offset) = if let Some(buffer) = downcast_ref::<Arc<VkBuffer>>(buffer) {
             (buffer, 0)
         } else if let Some(buffer) = downcast_ref::<VkBufferCpuGpu>(buffer) {
-            (&buffer.buffer, 0)
+            (buffer.buffer(), 0)
         } else if let Some(allocation) = downcast_ref::<BumpAllocation<VkBufferCpuGpu>>(buffer) {
-            (&allocation.page().buffer, allocation.range().start)
+            (allocation.page().buffer(), allocation.range().start)
         } else if let Some(allocation) = downcast_ref::<PoolAllocation<Arc<VkBuffer>>>(buffer) {
             (allocation.page(), allocation.range().start)
         } else {
@@ -95,7 +129,7 @@ impl VkBuffer {
 
 impl Drop for VkBuffer {
     fn drop(&mut self) {
-        unsafe { self.context.free_buffer(self.buffer, &mut self.allocation) };
+        unsafe { self.device.memory_allocator.destroy_buffer(self.buffer, &mut self.allocation) };
     }
 }
 
@@ -103,128 +137,10 @@ impl Buffer for Arc<VkBuffer> {
     type Backend = Vulkan;
 
     fn size(&self) -> usize {
-        VkBuffer::size(self) as usize
+        self.size
     }
 }
 
 impl GpuBuffer for Arc<VkBuffer> {}
 
 impl GlobalGpuBuffer for Arc<VkBuffer> {}
-
-pub struct VkBufferCpuGpu {
-    buffer: Arc<VkBuffer>,
-    cpu_ptr: NonNull<c_void>,
-}
-
-unsafe impl Send for VkBufferCpuGpu {}
-unsafe impl Sync for VkBufferCpuGpu {}
-
-impl VkBufferCpuGpu {
-    pub fn new(
-        context: Arc<VkContext>,
-        size: usize,
-        memory: VkBufferMemory,
-    ) -> Result<Self, Error> {
-        let (buffer, mapped) = VkBuffer::allocate(context, size, memory)?;
-        Ok(Self {
-            buffer,
-            cpu_ptr: NonNull::new(mapped).expect("VMA maps host-visible MAPPED allocations"),
-        })
-    }
-
-    pub fn buffer(&self) -> &Arc<VkBuffer> {
-        &self.buffer
-    }
-}
-
-impl Buffer for VkBufferCpuGpu {
-    type Backend = Vulkan;
-
-    fn size(&self) -> usize {
-        Buffer::size(&self.buffer)
-    }
-}
-
-impl GpuBuffer for VkBufferCpuGpu {}
-
-impl CpuBuffer for VkBufferCpuGpu {
-    fn cpu_ptr(&self) -> NonNull<c_void> {
-        self.cpu_ptr
-    }
-}
-
-impl GlobalBufferCpuGpu for VkBufferCpuGpu {
-    fn handoff(self) -> Result<Arc<VkBuffer>, Error> {
-        let context = self.buffer.context();
-        if context.physical_device().capabilities.contains(VkDeviceCapabilities::UNIFIED_MEMORY) {
-            return Ok(self.buffer);
-        }
-        let mut device = VkBuffer::new(context.clone(), Buffer::size(&self))?;
-        let mut encoding = context.create_command_buffer(None, None)?;
-        encoding.encode_copy(&self, &mut device);
-        encoding.end_encoding().try_submit()?;
-        Ok(device)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VkBufferMemory {
-    Device,
-    Staging,
-    Readback,
-}
-
-impl VkBufferMemory {
-    pub fn allocation_create_info(
-        self,
-        discrete: bool,
-    ) -> vk_mem::AllocationCreateInfo {
-        let mapped = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
-        let write = vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE;
-        let (usage, flags, required_flags) = match self {
-            Self::Device if discrete => (
-                vk_mem::MemoryUsage::AutoPreferDevice,
-                vk_mem::AllocationCreateFlags::WITHIN_BUDGET,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            ),
-            Self::Device => {
-                (vk_mem::MemoryUsage::AutoPreferDevice, vk_mem::AllocationCreateFlags::empty(), Default::default())
-            },
-            Self::Staging => (vk_mem::MemoryUsage::AutoPreferHost, write, mapped),
-            Self::Readback => (
-                vk_mem::MemoryUsage::AutoPreferHost,
-                vk_mem::AllocationCreateFlags::MAPPED | vk_mem::AllocationCreateFlags::HOST_ACCESS_RANDOM,
-                mapped,
-            ),
-        };
-        vk_mem::AllocationCreateInfo {
-            usage,
-            flags,
-            required_flags,
-            ..Default::default()
-        }
-    }
-}
-
-pub struct VkSparseBuffer {
-    never: Infallible,
-}
-
-impl Buffer for VkSparseBuffer {
-    type Backend = Vulkan;
-
-    fn size(&self) -> usize {
-        match self.never {}
-    }
-}
-
-impl GpuBuffer for VkSparseBuffer {}
-
-impl SparseBuffer for VkSparseBuffer {
-    fn map(
-        &mut self,
-        _until: usize,
-    ) -> Result<(), Error> {
-        match self.never {}
-    }
-}
