@@ -2,6 +2,7 @@
 
 use schemars::JsonSchema;
 use serde::Serialize;
+use shoji::types::basic::{SamplingMethod, SamplingPolicy};
 use uzu::{
     engine::{Engine, EngineConfig},
     session::tool::{func_def::ToolDescriptor, uzu_tool_function},
@@ -138,7 +139,10 @@ async fn run_tool_calls_test(
         }
         messages.push(ChatMessage::user().with_text(case.prompt.to_string()));
 
-        let replies = session.reply(messages, ChatReplyConfig::default()).await.unwrap();
+        let reply_config = ChatReplyConfig::default().with_sampling_policy(SamplingPolicy::Custom {
+            method: SamplingMethod::Greedy {},
+        });
+        let replies = session.reply(messages, reply_config).await.unwrap();
         let final_reply = replies.last().expect("Expected at least one reply");
         assert_eq!(
             final_reply.finish_reason,
