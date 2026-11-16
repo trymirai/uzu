@@ -9,7 +9,8 @@ use crate::{
             Backend, Context, Kernels,
             gpu_types::trellis::TrellisCodebook,
             kernel::matmul::{
-                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput, MatmulShape, TrellisFormat,
+                MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulGather, MatmulKernel, MatmulOutput, MatmulShape,
+                TrellisFormat,
             },
         },
         metal::{
@@ -178,7 +179,7 @@ fn run_projection(
             row_stride: Some((n + PADDING) as u32),
             ops: MatmulDOps::none(),
         },
-        gather_indices: None::<&MetalBuffer>,
+        gather: None::<MatmulGather<&MetalBuffer>>,
         m: m as u32,
         n: n as u32,
         k: k as u32,

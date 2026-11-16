@@ -1,6 +1,9 @@
 use crate::{
     backends::{
-        common::{Backend, BufferMut, BufferRef, kernel::ActivationTransform},
+        common::{
+            Backend, BufferMut, BufferRef, gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            kernel::ActivationTransform,
+        },
         metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
     },
     data_type::DataType,
@@ -18,11 +21,18 @@ impl MatmulOutputWork {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         Ok(Self {
-            output_rht: ActivationTransform::output_rht(context, output_data_type, None, true)?,
+            output_rht: ActivationTransform::output_rht(
+                context,
+                output_data_type,
+                None,
+                HADAMARD_TRANSFORM_BLOCK_SIZE,
+                true,
+            )?,
             output_rht_with_bias: ActivationTransform::output_rht(
                 context,
                 output_data_type,
                 Some(weights_data_type),
+                HADAMARD_TRANSFORM_BLOCK_SIZE,
                 true,
             )?,
         })

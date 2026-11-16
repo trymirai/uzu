@@ -154,7 +154,7 @@ pub fn run<B: Backend, T: DataTypeRepr + Float>(
             b_leading_dimension: None,
             b_transpose: input.case.b_transpose,
             output: MatmulOutput::new(&mut d_buffer, d_transform),
-            gather_indices: None,
+            gather: None,
             m,
             n,
             k,

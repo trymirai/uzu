@@ -95,6 +95,7 @@ KERNEL(Gemv)(
     const device uint* gather_indices OPTIONAL(gathered),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
+    const constant uint& output_row_stride,
     const constant uint& batch_size,
     const constant float& ab_scale,
     const constant uint& group_count_x,
@@ -104,6 +105,8 @@ KERNEL(Gemv)(
     const constant uint& zero_point_group_stride,
     const constant float& soft_cap
         OPTIONAL(output_transform.contains(GemmDTransform::SOFT_CAP)),
+    const constant uint& gather_first_row OPTIONAL(gathered),
+    const constant uint& gather_row_count OPTIONAL(gathered),
     const GemmDTransform output_transform SPECIALIZE,
     const bool gathered SPECIALIZE,
     const bool signed_codes SPECIALIZE,
@@ -120,6 +123,7 @@ KERNEL(Gemv)(
   const GemvParams params = {
       in_vec_size,
       out_vec_size,
+      output_row_stride,
       scale_output_stride,
       scale_group_stride,
       zero_point_output_stride,
@@ -130,7 +134,9 @@ KERNEL(Gemv)(
       output_transform,
       gathered,
       signed_codes,
-      gemm_b_layout
+      gemm_b_layout,
+      gather_first_row,
+      gather_row_count
   };
   dispatch_bool(full_tile, [&](auto full_tile_constant) {
     constexpr bool FullTile = decltype(full_tile_constant)::value;

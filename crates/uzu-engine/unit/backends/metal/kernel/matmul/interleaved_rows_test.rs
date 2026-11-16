@@ -13,7 +13,7 @@ use crate::{
             },
             kernel::{
                 ActivationTransform,
-                matmul::{ActivationFormat, MatmulA, MatmulKernel, MatmulShape, packed_half_bytes},
+                matmul::{ActivationFormat, MatmulA, MatmulGather, MatmulKernel, MatmulShape, packed_half_bytes},
             },
         },
         metal::{Metal, context::MetalContext, gpu_types::gemm::GemmBLayout, kernel::matmul::MatmulMetalKernel},
@@ -62,7 +62,11 @@ fn run(
             bits: 4,
         };
     }
-    arguments.gather_indices = gather_indices;
+    arguments.gather = gather_indices.map(|indices| MatmulGather {
+        indices,
+        first_row: 0,
+        row_count: input.n,
+    });
     arguments.n = n;
     matmul.encode(arguments, &mut command_buffer).expect("matmul encode");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

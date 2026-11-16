@@ -58,6 +58,7 @@ KERNEL(GemvMxuTiled)(
   const GemvParams params = {
       in_vec_size,
       out_vec_size,
+      out_vec_size,
       scale_output_stride,
       scale_group_stride,
       0,

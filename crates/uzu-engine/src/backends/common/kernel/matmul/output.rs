@@ -1,15 +1,17 @@
 #[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
 use thiserror::Error;
 
+#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+use crate::backends::common::gpu_types::gemm::GemmDTransform;
 use crate::backends::common::{Backend, BufferMut, kernel::matmul::MatmulDOps};
 
 #[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
 #[derive(Debug, Error)]
-#[error("Unsupported output row stride {stride} for {columns} columns on path {path}")]
+#[error("Unsupported output row stride {stride} for {columns} columns with D ops {ops:?}")]
 pub struct MatmulOutputError {
-    path: &'static str,
     stride: u32,
     columns: u32,
+    ops: GemmDTransform,
 }
 
 pub struct MatmulOutput<'d, B: Backend, T: BufferMut<Backend = B>> {
@@ -32,19 +34,19 @@ impl<'d, B: Backend, T: BufferMut<Backend = B>> MatmulOutput<'d, B, T> {
     }
 
     #[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
-    pub(crate) fn into_contiguous(
-        self,
+    pub fn checked_row_stride(
+        &self,
         columns: u32,
-        path: &'static str,
-    ) -> Result<(T, MatmulDOps<'d, B>), MatmulOutputError> {
+    ) -> Result<u32, MatmulOutputError> {
         let stride = self.row_stride.unwrap_or(columns);
-        if stride != columns {
+        let ops = self.ops.mask();
+        if stride < columns || (stride != columns && !ops.is_empty()) {
             return Err(MatmulOutputError {
-                path,
                 stride,
                 columns,
+                ops,
             });
         }
-        Ok((self.values, self.ops))
+        Ok(stride)
     }
 }

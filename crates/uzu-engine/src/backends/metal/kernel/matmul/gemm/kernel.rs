@@ -12,6 +12,7 @@ use crate::{
         },
         metal::{
             Metal,
+            buffer::MetalBufferExt,
             command_buffer::MetalCommandBufferEncoding,
             context::MetalContext,
             error::MetalError,
@@ -153,7 +154,7 @@ impl GemmKernel {
     ) -> Result<(), MatmulMetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
         // TODO: remove after GatherGEMM is supported
-        if arguments.gather_indices.is_some() {
+        if arguments.gather.is_some() {
             return Err(MatmulMetalError::UnsupportedGather {
                 m: arguments.m,
                 n: arguments.n,
@@ -207,7 +208,12 @@ impl GemmKernel {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
-        let (mut d, d_transform) = output.into_contiguous(n, "Gemm")?;
+        let output_row_stride = output.checked_row_stride(n)?;
+        let MatmulOutput {
+            values: mut d,
+            ops: d_transform,
+            ..
+        } = output;
         let ab_scale = d_transform.ab_scale;
         let output_bias = d_transform.bias;
         let soft_cap = d_transform.soft_cap;
@@ -311,6 +317,7 @@ impl GemmKernel {
                 biases,
                 zero_points,
                 d.reborrow(),
+                output_row_stride,
                 ab_scale,
                 scale_strides,
                 zero_point_strides,
@@ -337,6 +344,7 @@ impl GemmKernel {
         };
         let alignment = GemmAlignment::new(m % alignment_m == 0, n % alignment_n == 0, k % tiling.block_k() == 0);
         let mut params = gemm_params(shape, plan, ab_scale, scale_strides, zero_point_strides);
+        params.leading_dimension_d = output_row_stride;
         let threadgroups_per_row = n.div_ceil(tiling.block_n());
         let threadgroups_per_column = m.div_ceil(tiling.block_m());
         let (use_morton, group_count_x, group_count_y) = if !is_quant && use_mxu {
@@ -406,6 +414,7 @@ impl GemmKernel {
         biases: Option<impl BufferRef<Backend = Metal>>,
         zero_points: Option<impl BufferRef<Backend = Metal>>,
         mut d: impl BufferMut<Backend = Metal>,
+        output_row_stride: u32,
         ab_scale: f32,
         scale_strides: QuantParamsStrides,
         zero_point_strides: QuantParamsStrides,
@@ -419,6 +428,19 @@ impl GemmKernel {
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<(), MatmulMetalError> {
         let (m, n, k) = (shape.m, shape.n, shape.k);
+        let (output_buffer, output_range) = d.reborrow().parts();
+        if output_row_stride != n
+            && !(n.is_multiple_of(4)
+                && output_row_stride.is_multiple_of(4)
+                && output_buffer
+                    .gpu_address_subrange(output_range)
+                    .start
+                    .is_multiple_of(4 * self.output_data_type.size_in_bytes() as u64))
+        {
+            return Err(MatmulMetalError::UnsupportedLayout {
+                path: "GemmSplitKReduce",
+            });
+        }
         let (a_full_precision, a_packed_half, a_int8, a_scales, a_group_sums, a_prologue, a_group_size) = match a {
             MatmulA::FullPrecision {
                 values,
@@ -527,6 +549,7 @@ impl GemmKernel {
             split_k,
             group_count,
             n,
+            output_row_stride,
             scale_arg,
             soft_cap,
             command_buffer,

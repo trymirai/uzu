@@ -20,7 +20,7 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 enum TransformOrder {
     Input(u32),
-    Output,
+    Output(u32),
 }
 
 fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
@@ -35,8 +35,8 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
         TransformOrder::Input(hadamard_size) => {
             ActivationTransform::<B>::input_rht(context.as_ref(), T::data_type(), hadamard_size, in_place)
         },
-        TransformOrder::Output => {
-            ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), None, in_place)
+        TransformOrder::Output(hadamard_size) => {
+            ActivationTransform::<B>::output_rht(context.as_ref(), T::data_type(), None, hadamard_size, in_place)
         },
     }
     .expect("activation transform");
@@ -70,8 +70,9 @@ fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
         (TransformOrder::Input(BLOCK_SIZE), false),
         (TransformOrder::Input(BLOCK_SIZE), true),
         (TransformOrder::Input(128), true),
-        (TransformOrder::Output, false),
-        (TransformOrder::Output, true),
+        (TransformOrder::Output(BLOCK_SIZE), false),
+        (TransformOrder::Output(BLOCK_SIZE), true),
+        (TransformOrder::Output(128), true),
     ] {
         for (batch_count, channel_count) in [(1, 128), (4, 256), (2, 2048)] {
             let data_f64: Vec<f64> =
@@ -131,7 +132,7 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
                 }
             })
             .collect();
-        let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output, true)
+        let expected: Vec<_> = run::<bf16, B>(&data, &factors_data, channels, TransformOrder::Output(BLOCK_SIZE), true)
             .into_iter()
             .enumerate()
             .map(|(i, value)| bf16::from_f32(value.to_f32() + bias_data[i % channels]))
@@ -141,9 +142,15 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
         let factors = create_buffer_with_data::<B, i32>(context.as_ref(), &factors_data);
 
         let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
-        ActivationTransform::<B>::output_rht(context.as_ref(), bf16::data_type(), Some(f32::data_type()), true)
-            .expect("fused transform")
-            .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
+        ActivationTransform::<B>::output_rht(
+            context.as_ref(),
+            bf16::data_type(),
+            Some(f32::data_type()),
+            BLOCK_SIZE,
+            true,
+        )
+        .expect("fused transform")
+        .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         assert_eq!(buffer_to_vec::<B, bf16>(&context, &fused), expected);
     });

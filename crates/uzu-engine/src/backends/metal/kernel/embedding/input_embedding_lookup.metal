@@ -27,6 +27,7 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     device T* output,
     constant uint& batch_size,
     constant uint& vocab_size,
+    constant uint& first_row,
     constant uint& model_dim,
     constant float& input_scale,
     const EmbeddingTableKind table_kind SPECIALIZE,
@@ -38,7 +39,10 @@ PUBLIC KERNEL(InputEmbeddingLookup)(
     const uint batch_idx AXIS(batch_size, 1)
 ) {
   const uint output_idx = batch_idx * model_dim + dim_idx;
-  const uint token_id = token_ids[batch_idx];
+  if (token_ids[batch_idx] < first_row) {
+    return;
+  }
+  const uint token_id = token_ids[batch_idx] - first_row;
   if (token_id >= vocab_size) {
     output[output_idx] = T(0);
     return;

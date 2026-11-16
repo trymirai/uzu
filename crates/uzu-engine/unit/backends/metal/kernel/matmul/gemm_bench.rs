@@ -8,7 +8,7 @@ use crate::{
             Backend,
             kernel::{
                 Kernels,
-                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulOutput},
+                matmul::{MatmulA, MatmulArguments, MatmulB, MatmulDOps, MatmulGather, MatmulKernel, MatmulOutput},
             },
         },
         metal::{Metal, kernel::matmul::gemm::GemmEngine},
@@ -62,7 +62,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 b_leading_dimension: None,
                                 b_transpose: true,
                                 output: MatmulOutput::new(&mut d, MatmulDOps::none()),
-                                gather_indices: None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                                gather: None::<MatmulGather<&<Metal as Backend>::GlobalGpuBuffer>>,
                                 m,
                                 n,
                                 k,

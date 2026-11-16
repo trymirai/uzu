@@ -487,7 +487,7 @@ pub fn quant_arguments<'a, B: Backend, T: DataTypeRepr + Float>(
                 soft_cap: input.soft_cap,
             },
         ),
-        gather_indices: None,
+        gather: None,
         m: input.m,
         n: input.n,
         k: input.k,

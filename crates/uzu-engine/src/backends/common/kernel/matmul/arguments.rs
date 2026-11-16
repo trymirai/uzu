@@ -14,8 +14,15 @@ pub struct MatmulArguments<
     pub b_leading_dimension: Option<u32>,
     pub b_transpose: bool,
     pub output: MatmulOutput<'d, B, TD>,
-    pub gather_indices: Option<TI>,
+    pub gather: Option<MatmulGather<TI>>,
     pub m: u32,
     pub n: u32,
     pub k: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct MatmulGather<TI> {
+    pub indices: TI,
+    pub first_row: u32,
+    pub row_count: u32,
 }

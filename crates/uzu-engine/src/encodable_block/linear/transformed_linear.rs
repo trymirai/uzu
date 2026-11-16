@@ -7,7 +7,11 @@ use crate::{
             hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             trellis::{COLUMN_GROUP_COUNT, MAX_DIMENSION, MAX_HADAMARD_SIZE, MIN_HADAMARD_SIZE},
         },
-        kernel::{ActivationFormat, TrellisTransformKernel, matmul::MatmulA, mixing_dimension},
+        kernel::{
+            ActivationFormat, ActivationTransform, TrellisTransformKernel,
+            matmul::{MatmulA, MatmulGather},
+            mixing_dimension,
+        },
     },
     config::weight_matrix::{
         AnyWeightMatrixSpec,
@@ -15,6 +19,7 @@ use crate::{
             AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec,
             IncoherenceProcessingMode::{Input, InputOutput},
         },
+        output_stack::OutputStackSpec,
     },
     data_type::DataType,
     encodable_block::linear::{
@@ -28,6 +33,12 @@ pub enum TransformedLinear<B: Backend> {
     Hadamard {
         input_rht: InputRht<B>,
         matrix: LinearMatmul<B>,
+    },
+    HadamardStack {
+        parts: Box<[(InputRht<B>, LinearMatmul<B>)]>,
+        output_rht: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
+        output_dimension: u32,
+        output_data_type: DataType,
     },
     Kronecker {
         kernel: <B::Kernels as Kernels>::TrellisTransformKernel,
@@ -63,6 +74,22 @@ impl<B: Backend> TransformedLinear<B> {
             Some(AnyIncoherenceProcessorSpec::HadamardSpec(hadamard))
                 if matches!(hadamard.processing_mode, Input | InputOutput) =>
             {
+                if let AnyWeightMatrixSpec::OutputStackSpec(stack) = *spec.quantization_spec {
+                    let linear = Self::load_hadamard_stack(
+                        input_dimension,
+                        output_dimension,
+                        weights_data_type,
+                        input_data_type,
+                        output_data_type,
+                        hadamard,
+                        stack,
+                        weights_tree,
+                        bias_tree,
+                        context,
+                    )
+                    .await?;
+                    return Ok((Box::new(linear), None));
+                }
                 let (preparation, matrix) = Self::load_hadamard(
                     input_dimension,
                     output_dimension,
@@ -283,6 +310,73 @@ impl<B: Backend> TransformedLinear<B> {
         ))
     }
 
+    async fn load_hadamard_stack(
+        input_dimension: u32,
+        output_dimension: u32,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        spec: HadamardSpec,
+        stack: OutputStackSpec,
+        weights_tree: &ParameterTree<'_, B>,
+        bias_tree: Option<&ParameterTree<'_, B>>,
+        context: &B::Context,
+    ) -> Result<Self, LinearBlockError<B>> {
+        if spec.block_size != HADAMARD_TRANSFORM_BLOCK_SIZE {
+            return Err(LinearBlockError::UnsupportedConfiguration(format!("Hadamard block size {}", spec.block_size)));
+        }
+        if bias_tree.is_some() {
+            return Err(LinearBlockError::UnsupportedConfiguration("stacked Hadamard linear biases".into()));
+        }
+        let stack_rows = stack.parts.iter().map(|part| part.rows).sum::<u32>();
+        if stack_rows != output_dimension {
+            return Err(LinearBlockError::UnsupportedConfiguration(format!(
+                "stacked linear has {stack_rows} rows, expected {output_dimension}"
+            )));
+        }
+        let signs = Arc::new(
+            weights_tree.read_buffer("incoherence_signs.input_signs", &[input_dimension], DataType::I32).await?,
+        );
+        let mut parts = Vec::with_capacity(stack.parts.len());
+        for (index, part) in stack.parts.into_iter().enumerate() {
+            let mut matrix = LinearMatmul::load(
+                input_dimension,
+                part.rows,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+                part.spec,
+                None,
+                &weights_tree.subtree(&format!("quantized.parts.{index}")),
+                None,
+                context,
+            )
+            .await?;
+            let preparation = LinearInputPreparation {
+                rht: InputRhtParameters::h32(signs.clone()),
+                activation_format: matrix.prepare_activation(context).map_err(LinearBlockError::Backend)?,
+            };
+            let input_rht =
+                InputRht::new(input_data_type, preparation, false, context).map_err(LinearBlockError::Backend)?;
+            parts.push((input_rht, matrix));
+        }
+        let output_rht = if spec.processing_mode == InputOutput {
+            Some((
+                ActivationTransform::output_rht(context, output_data_type, None, HADAMARD_TRANSFORM_BLOCK_SIZE, true)
+                    .map_err(LinearBlockError::Backend)?,
+                weights_tree.read_buffer("incoherence_signs.output_signs", &[output_dimension], DataType::I32).await?,
+            ))
+        } else {
+            None
+        };
+        Ok(Self::HadamardStack {
+            parts: parts.into_boxed_slice(),
+            output_rht,
+            output_dimension,
+            output_data_type,
+        })
+    }
+
     fn build_self_contained(
         input_data_type: DataType,
         input_preparation: LinearInputPreparation<B>,
@@ -325,6 +419,61 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
                     prepared => prepared,
                 };
                 matrix.encode_input(input, batch_dim, command_buffer)
+            },
+            Self::HadamardStack {
+                parts,
+                output_rht,
+                output_dimension,
+                output_data_type,
+            } => {
+                let MatmulA::FullPrecision {
+                    values,
+                    offset,
+                } = input
+                else {
+                    unreachable!("stacked Hadamard linears prepare their own input")
+                };
+                let mut output = command_buffer
+                    .allocate_scratch_for_shape(&[batch_dim, *output_dimension], *output_data_type)
+                    .map_err(LinearEncodeError::Backend)?;
+                let mut prepared_inputs: Vec<(ActivationFormat, LinearInput<B>)> = Vec::new();
+                let mut column = 0;
+                for (input_rht, matrix) in parts {
+                    let format = matrix.select_activation_format(batch_dim, None, command_buffer.context());
+                    let prepared_index =
+                        match prepared_inputs.iter().position(|(prepared_format, _)| *prepared_format == format) {
+                            Some(index) => index,
+                            None => {
+                                let prepared = input_rht
+                                    .prepare((&values).subrange(offset..), batch_dim, format, command_buffer)
+                                    .map_err(LinearEncodeError::Backend)?;
+                                prepared_inputs.push((format, prepared));
+                                prepared_inputs.len() - 1
+                            },
+                        };
+                    matrix.encode_columns(
+                        prepared_inputs[prepared_index].1.as_ref(),
+                        batch_dim,
+                        &mut output,
+                        column,
+                        matrix.output_dim(),
+                        *output_dimension,
+                        None::<MatmulGather<&B::ScratchBuffer>>,
+                        command_buffer,
+                    )?;
+                    column += matrix.output_dim();
+                }
+                if let Some((transform, signs)) = output_rht {
+                    transform.encode_fp_in_place(
+                        &mut output,
+                        signs,
+                        None,
+                        batch_dim,
+                        *output_dimension,
+                        command_buffer,
+                    );
+                }
+                Ok(output)
             },
             Self::Kronecker {
                 kernel,
@@ -376,7 +525,9 @@ impl<B: Backend> Linear<B> for TransformedLinear<B> {
                         batch_dim,
                         &mut output,
                         column,
+                        matrix.output_dim(),
                         *output_dimension,
+                        None::<MatmulGather<&B::ScratchBuffer>>,
                         command_buffer,
                     )?;
                     column += matrix.output_dim();
