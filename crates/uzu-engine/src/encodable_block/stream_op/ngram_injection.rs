@@ -19,9 +19,11 @@ use crate::{
 };
 
 pub struct NGramInjectionState<B: Backend> {
-    /// last `ngram_size - 1` token ids
+    /// last `ngram_size - 1` accepted token ids
     token_history: B::GlobalGpuBuffer,
     conv_state: B::GlobalGpuBuffer,
+    pending_token_history: B::GlobalGpuBuffer,
+    pending_conv_state: B::GlobalGpuBuffer,
     pending_suffix_length: Option<u32>,
     is_empty: bool,
 }
@@ -36,6 +38,10 @@ impl<B: Backend> NGramInjectionState<B> {
         };
         let accepted_index = *accepted_indices.last().expect("n-gram injection state attempted to accept zero indices");
         assert!(accepted_index == suffix_length - 1, "attempted a partial n-gram injection accept");
+
+        std::mem::swap(&mut self.token_history, &mut self.pending_token_history);
+        std::mem::swap(&mut self.conv_state, &mut self.pending_conv_state);
+        self.is_empty = false;
     }
 }
 
@@ -216,12 +222,13 @@ impl<B: Backend> NGramInjection<B> {
         &self,
         context: &B::Context,
     ) -> Result<NGramInjectionState<B>, B::Error> {
-        let token_history = context.create_buffer_gpu(size_for_shape(&[self.ngram_size - 1], DataType::U32))?;
-        let conv_state =
-            context.create_buffer_gpu(size_for_shape(&[self.conv_kernel_size - 1, self.channels()], self.data_type))?;
+        let token_history_size = size_for_shape(&[self.ngram_size - 1], DataType::U32);
+        let conv_state_size = size_for_shape(&[self.conv_kernel_size - 1, self.channels()], self.data_type);
         Ok(NGramInjectionState {
-            token_history,
-            conv_state,
+            token_history: context.create_buffer_gpu(token_history_size)?,
+            conv_state: context.create_buffer_gpu(conv_state_size)?,
+            pending_token_history: context.create_buffer_gpu(token_history_size)?,
+            pending_conv_state: context.create_buffer_gpu(conv_state_size)?,
             pending_suffix_length: None,
             is_empty: true,
         })
@@ -255,7 +262,6 @@ impl<B: Backend> NGramInjection<B> {
                 .map_err(StreamOpEncodeError::Backend)?;
             command_buffer.encode_copy(&eos_history, &mut state.token_history);
             command_buffer.encode_fill(&mut state.conv_state, 0);
-            state.is_empty = false;
         }
 
         let mut tokens_with_history = command_buffer
@@ -266,7 +272,7 @@ impl<B: Backend> NGramInjection<B> {
             .encode_copy(token_ids.subrange(..tokens_bytes), (&mut tokens_with_history).subrange_mut(history_bytes..));
         command_buffer.encode_copy(
             (&tokens_with_history).subrange(tokens_bytes..tokens_bytes + history_bytes),
-            &mut state.token_history,
+            &mut state.pending_token_history,
         );
 
         let num_heads = self.num_heads();
@@ -291,6 +297,9 @@ impl<B: Backend> NGramInjection<B> {
             .map_err(StreamOpEncodeError::Backend)?;
         self.ngram_embedding.encode_lookup(&ngram_ids, &mut embeddings, num_tokens * num_heads, 1.0, command_buffer);
 
+        // TODO: this copy could be avoided if `Linear::encode` borrowed its
+        // input (or if the key and value projections were fused into one linear
+        // whose output is split afterwards).
         let mut key_input = command_buffer.allocate_scratch(embeddings.size()).map_err(StreamOpEncodeError::Backend)?;
         command_buffer.encode_copy(&embeddings, &mut key_input);
         let keys = self.key_projection.encode(key_input, num_tokens, command_buffer)?;
@@ -320,21 +329,18 @@ impl<B: Backend> NGramInjection<B> {
             command_buffer,
         );
 
-        let mut next_conv_state =
-            command_buffer.allocate_scratch(state.conv_state.size()).map_err(StreamOpEncodeError::Backend)?;
         self.conv_kernel.encode(
             &conv_input,
             &state.conv_state,
             &self.conv_weights,
             &gated,
             &mut stream,
-            &mut next_conv_state,
+            &mut state.pending_conv_state,
             num_tokens,
             self.channels(),
             self.conv_kernel_size,
             command_buffer,
         );
-        command_buffer.encode_copy(&next_conv_state, &mut state.conv_state);
 
         state.pending_suffix_length = Some(num_tokens);
         Ok(stream)
