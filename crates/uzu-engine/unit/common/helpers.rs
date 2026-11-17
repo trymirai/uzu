@@ -1,7 +1,6 @@
-use std::{mem::size_of, path::Path, sync::Arc};
+use std::{mem::size_of, sync::Arc};
 
 use futures::executor::block_on;
-use serde_json::{Map, Value, json};
 
 use crate::{
     backends::common::{
@@ -102,43 +101,4 @@ pub fn buffer_readback<B: Backend>(
     submit_command_buffer(command_buffer);
 
     output_buffer
-}
-
-#[derive(Default)]
-pub struct SafetensorsWriter {
-    metadata: Map<String, Value>,
-    tensors: Map<String, Value>,
-    data: Vec<u8>,
-}
-
-impl SafetensorsWriter {
-    pub fn add_metadata(
-        &mut self,
-        key: String,
-        value: &Value,
-    ) {
-        self.metadata.insert(key, value.to_string().into());
-    }
-
-    pub fn add_tensor(
-        &mut self,
-        name: String,
-        dtype: &str,
-        shape: &[u32],
-        bytes: &[u8],
-    ) {
-        let data_offsets = [self.data.len(), self.data.len() + bytes.len()];
-        self.tensors.insert(name, json!({"dtype": dtype, "shape": shape, "data_offsets": data_offsets}));
-        self.data.extend_from_slice(bytes);
-    }
-
-    pub fn write(
-        mut self,
-        path: &Path,
-    ) {
-        self.tensors.insert("__metadata__".into(), self.metadata.into());
-        let header = serde_json::to_vec(&self.tensors).expect("safetensors header");
-        std::fs::write(path, [&(header.len() as u64).to_le_bytes()[..], &header, &self.data].concat())
-            .expect("write safetensors");
-    }
 }

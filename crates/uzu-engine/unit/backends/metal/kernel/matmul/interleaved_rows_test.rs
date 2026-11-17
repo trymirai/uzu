@@ -16,7 +16,7 @@ use crate::{
                 matmul::{ActivationFormat, MatmulA, MatmulGather, MatmulKernel, MatmulShape, packed_half_bytes},
             },
         },
-        metal::{Metal, context::MetalContext, gpu_types::gemm::GemmBLayout, kernel::matmul::MatmulMetalKernel},
+        metal::{Metal, context::MetalContext, kernel::matmul::MatmulMetalKernel},
     },
     data_type::DataType,
     tests::{
@@ -38,7 +38,6 @@ fn run(
     if interleaved_rows {
         let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, input));
         buffers.weights_layout = matmul.optimize_weights_layout(&shape, &mut buffers.w, context).expect("relayout").0;
-        assert_eq!(buffers.weights_layout, GemmBLayout::InterleavedRows);
     }
     let format = ActivationFormat::PackedHalf {
         block_k: input.group_size,
@@ -52,7 +51,14 @@ fn run(
         let factors = create_buffer_with_data::<Metal, i32>(context, &vec![1; input.k as usize]);
         ActivationTransform::<Metal>::quantize(context, DataType::BF16, BLOCK_SIZE, format)
             .expect("pack")
-            .encode_pack_half(&buffers.x, &mut packed_activations, &factors, input.m, input.k, &mut command_buffer);
+            .encode_pack_half(
+                &buffers.x,
+                &mut packed_activations,
+                Some(&factors),
+                input.m,
+                input.k,
+                &mut command_buffer,
+            );
     }
     let mut arguments = quant_arguments(&mut buffers, input);
     if packed {

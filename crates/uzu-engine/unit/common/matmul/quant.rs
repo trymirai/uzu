@@ -285,7 +285,7 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             &mut values,
             &mut scales,
             group_sums.as_mut(),
-            &factors,
+            Some(&factors),
             rows,
             columns,
             &mut command_buffer,

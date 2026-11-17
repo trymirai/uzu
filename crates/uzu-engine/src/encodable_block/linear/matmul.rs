@@ -68,10 +68,6 @@ async fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
-    pub(super) fn output_dim(&self) -> u32 {
-        self.output_dim
-    }
-
     pub async fn load(
         input_dim: u32,
         output_dim: u32,
@@ -163,6 +159,9 @@ impl<B: Backend> LinearMatmul<B> {
         output: MatmulOutput<'_, B, impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), LinearEncodeError<B>> {
+        if self.matmul_b().is_trellis() && !matches!(a, MatmulA::Trellis { .. }) {
+            return Err(LinearEncodeError::UnsupportedInput("Trellis weights require Kronecker-prepared input"));
+        }
         self.kernel
             .lock()
             .encode(

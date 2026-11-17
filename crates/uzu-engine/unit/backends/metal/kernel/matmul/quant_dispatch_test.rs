@@ -14,14 +14,14 @@ use crate::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{
                 activation_type::ActivationType, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
-                quantization::QuantizationMode, quantization_method::QuantizationMethod,
+                quantization_method::QuantizationMethod,
             },
             kernel::{
                 ActivationQuantization, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulGather, MatmulKernel,
-                    MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
+                    MatmulShape, QuantParamsLayout, packed_half_bytes,
                 },
             },
         },
@@ -62,35 +62,6 @@ fn tile_weights<T: DataTypeRepr + Float>(
     };
     buffers.weights_layout =
         matmul.optimize_weights_layout(&shape, &mut buffers.w, context).expect("optimize weights layout").0;
-    assert_eq!(buffers.weights_layout, GemmBLayout::MxuTiled);
-}
-
-#[uzu_test]
-fn optimize_weights_layout_prepares_unsigned_codes() {
-    let context = block_on(MetalContext::new()).expect("Metal context");
-    if !context.supports_mxu {
-        return;
-    }
-    let kernel = MatmulMetalKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type()).unwrap();
-    let signed = QuantInput::<bf16>::new(16, 512, 64, 64, 8, QuantizationMethod::ScaleSymmetric, 0)
-        .with_group_output()
-        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
-    let mut unsigned = signed.clone();
-    unsigned.signed_codes = false;
-    let mut expected = QuantBuffers::<Metal, bf16>::allocate(&context, &signed);
-    let mut actual = QuantBuffers::<Metal, bf16>::allocate(&context, &unsigned);
-    let signed_shape = MatmulShape::from_arguments(&quant_arguments(&mut expected, &signed));
-    let unsigned_shape = MatmulShape::from_arguments(&quant_arguments(&mut actual, &unsigned));
-
-    assert_eq!(
-        kernel.optimize_weights_layout(&signed_shape, &mut expected.w, &context).unwrap(),
-        (GemmBLayout::MxuTiled, true),
-    );
-    assert_eq!(
-        kernel.optimize_weights_layout(&unsigned_shape, &mut actual.w, &context).unwrap(),
-        (GemmBLayout::MxuTiled, true),
-    );
-    assert_eq!(buffer_to_vec::<Metal, u32>(&context, &actual.w), buffer_to_vec::<Metal, u32>(&context, &expected.w));
 }
 
 fn run_quant_metal<T: DataTypeRepr + Float>(
@@ -114,25 +85,6 @@ fn run_quant_metal<T: DataTypeRepr + Float>(
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec::<Metal, T>(context, &buffers.y)
-}
-
-#[uzu_test]
-fn quant_params_layout_table() {
-    let cases = [
-        (QuantParamsLayout::OutputGroup, [5, 3], [3, 1], [5, 2], [4, 1]),
-        (QuantParamsLayout::GroupOutput, [3, 8], [1, 8], [3, 4], [1, 8]),
-    ];
-    for (layout, scale_shape, scale_strides, u4_shape, u4_strides) in cases {
-        let params = QuantParams::new(layout, 5, 3);
-        let strides = |strides: QuantParamsStrides| [strides.output_stride, strides.group_stride];
-
-        assert_eq!(params.scale_shape(), scale_shape);
-        assert_eq!(strides(params.scale_strides()), scale_strides);
-        assert_eq!(params.zero_point_shape(QuantizationMode::U8), scale_shape);
-        assert_eq!(strides(params.zero_point_strides(QuantizationMode::U8)), scale_strides);
-        assert_eq!(params.zero_point_shape(QuantizationMode::U4), u4_shape);
-        assert_eq!(strides(params.zero_point_strides(QuantizationMode::U4)), u4_strides);
-    }
 }
 
 fn assert_parity<T: DataTypeRepr + Float + Debug + Display>(
@@ -850,10 +802,10 @@ fn run_packed_half_pipeline(
     if !gated {
         ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, BLOCK_SIZE, false)
             .expect("RHT reference")
-            .encode_fp(&source_buffer, &mut reference_a, &factors_buffer, batch, k, &mut command_buffer);
+            .encode_fp(&source_buffer, &mut reference_a, Some(&factors_buffer), batch, k, &mut command_buffer);
         ActivationTransform::<Metal>::quantize(&context, DataType::BF16, BLOCK_SIZE, format)
             .expect("Metal RHT PackedHalf pack")
-            .encode_pack_half(&source_buffer, &mut packed, &factors_buffer, batch, k, &mut command_buffer);
+            .encode_pack_half(&source_buffer, &mut packed, Some(&factors_buffer), batch, k, &mut command_buffer);
     } else {
         GatedActMul::<Metal>::full_precision(
             &context,

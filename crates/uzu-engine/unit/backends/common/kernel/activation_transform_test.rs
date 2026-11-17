@@ -43,13 +43,23 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
 
     let mut input = create_buffer_with_data::<B, T>(context.as_ref(), data);
     let mut output = create_buffer::<B, T>(context.as_ref(), data.len());
-    let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors);
+    let hadamard_size = match order {
+        TransformOrder::Input(size) | TransformOrder::Output(size) => size,
+    };
+    let factors = (hadamard_size != 0).then(|| create_buffer_with_data::<B, i32>(context.as_ref(), factors));
     let batch_count = (data.len() / channel_count) as u32;
     let mut command_buffer = context.create_command_buffer(None, None).expect("command buffer");
     if in_place {
-        kernel.encode_fp_in_place(&mut input, &factors, None, batch_count, channel_count as u32, &mut command_buffer);
+        kernel.encode_fp_in_place(
+            &mut input,
+            factors.as_ref(),
+            None,
+            batch_count,
+            channel_count as u32,
+            &mut command_buffer,
+        );
     } else {
-        kernel.encode_fp(&input, &mut output, &factors, batch_count, channel_count as u32, &mut command_buffer);
+        kernel.encode_fp(&input, &mut output, factors.as_ref(), batch_count, channel_count as u32, &mut command_buffer);
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     if !in_place {
@@ -67,6 +77,10 @@ fn run<T: DataTypeRepr + Float + Debug, B: Backend>(
 
 fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
     for (order, in_place) in [
+        (TransformOrder::Input(0), false),
+        (TransformOrder::Input(0), true),
+        (TransformOrder::Output(0), false),
+        (TransformOrder::Output(0), true),
         (TransformOrder::Input(BLOCK_SIZE), false),
         (TransformOrder::Input(BLOCK_SIZE), true),
         (TransformOrder::Input(128), true),
@@ -87,10 +101,16 @@ fn check<T: DataTypeRepr + Float + Debug>(tolerance: f64) {
                 })
                 .collect();
             let data: Vec<T> = data_f64.iter().map(|&value| T::from(value).unwrap()).collect();
-            let expected = run::<T, Cpu>(&data, &factors, channel_count, order, in_place);
+            let expected = match order {
+                TransformOrder::Input(0) | TransformOrder::Output(0) => data.clone(),
+                _ => run::<T, Cpu>(&data, &factors, channel_count, order, in_place),
+            };
 
             for_each_backend!(|B| {
                 let actual = run::<T, B>(&data, &factors, channel_count, order, in_place);
+                if matches!(order, TransformOrder::Input(0) | TransformOrder::Output(0)) {
+                    assert_eq!(actual, expected, "identity transform must preserve input");
+                }
                 for (index, (actual_value, expected_value)) in actual.iter().zip(&expected).enumerate() {
                     let actual_value = actual_value.to_f64().unwrap();
                     let expected_value = expected_value.to_f64().unwrap();
@@ -150,7 +170,7 @@ fn output_rht_fused_bias_matches_separate_mixed_dtype() {
             true,
         )
         .expect("fused transform")
-        .encode_fp_in_place(&mut fused, &factors, Some(&bias), 2, channels as u32, &mut command_buffer);
+        .encode_fp_in_place(&mut fused, Some(&factors), Some(&bias), 2, channels as u32, &mut command_buffer);
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
         assert_eq!(buffer_to_vec::<B, bf16>(&context, &fused), expected);
     });
@@ -167,7 +187,10 @@ mod quantize {
         backends::{
             common::{
                 Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
-                kernel::{ActivationFormat, ActivationQuantization, ActivationTransform, matmul::Int8CodeLayout},
+                kernel::{
+                    ActivationFormat, ActivationQuantization, ActivationTransform,
+                    matmul::{Int8CodeLayout, MatmulA},
+                },
             },
             cpu::Cpu,
         },
@@ -186,15 +209,9 @@ mod quantize {
         sum_group_size: Option<u32>,
         code_layout: Int8CodeLayout,
     ) -> (Vec<i8>, Vec<f32>, Option<Vec<i32>>) {
-        let scale_groups = columns / scale_group_size;
-        let sum_groups = sum_group_size.map_or(0, |group_size| columns / group_size);
         let context = block_on(B::Context::new()).expect("context");
         let input = create_buffer_with_data::<B, f32>(context.as_ref(), input_data);
-        let factors = create_buffer_with_data::<B, i32>(context.as_ref(), factors_data);
-        let mut values = create_buffer::<B, i8>(context.as_ref(), (rows * columns) as usize);
-        let mut scales = create_buffer::<B, f32>(context.as_ref(), (rows * scale_groups) as usize);
-        let mut group_sums =
-            emit_group_sums.then(|| create_buffer::<B, i32>(context.as_ref(), (rows * sum_groups) as usize));
+        let factors = (hadamard_size != 0).then(|| create_buffer_with_data::<B, i32>(context.as_ref(), factors_data));
         let kernel = ActivationTransform::<B>::quantize(
             context.as_ref(),
             DataType::F32,
@@ -211,16 +228,28 @@ mod quantize {
         )
         .expect("quantize transform");
         let mut command_buffer = context.as_ref().create_command_buffer(None, None).expect("command buffer");
-        kernel.encode_quantize(
-            &input,
-            &mut values,
-            &mut scales,
-            group_sums.as_mut(),
-            &factors,
-            rows,
-            columns,
-            &mut command_buffer,
-        );
+        let prepared = kernel
+            .prepare_quantized(&input, factors.as_ref(), rows, columns, &mut command_buffer)
+            .expect("prepare quantized activations");
+        let MatmulA::Int8Symmetric {
+            values: prepared_values,
+            scales: prepared_scales,
+            group_sums: prepared_sums,
+            ..
+        } = prepared
+        else {
+            panic!("expected Int8 activations")
+        };
+        let mut values = create_buffer::<B, i8>(&context, (rows * columns) as usize);
+        let mut scales = create_buffer::<B, f32>(&context, (rows * columns / scale_group_size) as usize);
+        let mut group_sums = sum_group_size
+            .filter(|_| emit_group_sums)
+            .map(|size| create_buffer::<B, i32>(&context, (rows * columns / size) as usize));
+        command_buffer.encode_copy(&prepared_values, &mut values);
+        command_buffer.encode_copy(&prepared_scales, &mut scales);
+        if let (Some(source), Some(target)) = (prepared_sums.as_ref(), group_sums.as_mut()) {
+            command_buffer.encode_copy(source, target);
+        }
         block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
 
         (
@@ -236,7 +265,7 @@ mod quantize {
         sum_group_size: Option<u32>,
         code_layout: Int8CodeLayout,
     ) {
-        for hadamard_size in [BLOCK_SIZE, 128] {
+        for hadamard_size in [0, BLOCK_SIZE, 128] {
             check_block(hadamard_size, scale_group_size, emit_group_sums, sum_group_size, code_layout);
         }
     }
@@ -251,7 +280,8 @@ mod quantize {
         let rows = 3;
         let columns = 256;
         let mut rng = SmallRng::seed_from_u64(0x5EED_0001);
-        let input_data: Vec<f32> = (0..rows * columns).map(|_| rng.random_range(-1.0f32..1.0f32)).collect();
+        let mut input_data: Vec<f32> = (0..rows * columns).map(|_| rng.random_range(-1.0f32..1.0f32)).collect();
+        input_data[columns as usize..2 * columns as usize].fill(0.0);
         let factors_data: Vec<i32> = (0..columns)
             .map(|i| {
                 if i % 3 == 0 {
@@ -261,17 +291,51 @@ mod quantize {
                 }
             })
             .collect();
-        let (expected_values, expected_scales, expected_group_sums) = run::<Cpu>(
-            hadamard_size,
-            &input_data,
-            &factors_data,
-            rows,
-            columns,
-            scale_group_size,
-            emit_group_sums,
-            sum_group_size,
-            code_layout,
-        );
+        let (expected_values, expected_scales, expected_group_sums) = if hadamard_size == 0 {
+            let scales: Vec<f32> = input_data
+                .chunks_exact(scale_group_size as usize)
+                .map(|group| {
+                    let maximum = group.iter().map(|value| value.abs()).fold(0.0f32, f32::max);
+                    if maximum == 0.0 {
+                        1.0
+                    } else {
+                        maximum / 127.0
+                    }
+                })
+                .collect();
+            let codes: Vec<i8> = input_data
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    (value / scales[index / scale_group_size as usize]).round().clamp(-127.0, 127.0) as i8
+                })
+                .collect();
+            let sums = emit_group_sums.then(|| {
+                codes
+                    .chunks_exact(sum_group_size.expect("sum group") as usize)
+                    .map(|group| group.iter().copied().map(i32::from).sum())
+                    .collect::<Vec<i32>>()
+            });
+            let mut values = codes.clone();
+            if code_layout == Int8CodeLayout::GroupedByNibble {
+                for (index, &code) in codes.iter().enumerate() {
+                    values[index / 8 * 8 + [0, 4, 1, 5, 2, 6, 3, 7][index % 8]] = code;
+                }
+            }
+            (values, scales, sums)
+        } else {
+            run::<Cpu>(
+                hadamard_size,
+                &input_data,
+                &factors_data,
+                rows,
+                columns,
+                scale_group_size,
+                emit_group_sums,
+                sum_group_size,
+                code_layout,
+            )
+        };
 
         for_each_backend!(|B| {
             let (actual_values, actual_scales, actual_group_sums) = run::<B>(
@@ -317,7 +381,9 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_with_group_sums_matches_cpu() {
-        check_quantize(128, true, Some(BLOCK_SIZE), Int8CodeLayout::Sequential);
+        for group_size in [BLOCK_SIZE, 128] {
+            check_quantize(128, true, Some(group_size), Int8CodeLayout::Sequential);
+        }
     }
 
     #[uzu_test]
@@ -332,6 +398,8 @@ mod quantize {
 
     #[uzu_test]
     fn quantize_nibble_grouped_matches_cpu() {
-        check_quantize(128, false, None, Int8CodeLayout::GroupedByNibble);
+        for group_size in [None, Some(BLOCK_SIZE), Some(64), Some(128)] {
+            check_quantize(128, group_size.is_some(), group_size, Int8CodeLayout::GroupedByNibble);
+        }
     }
 }
