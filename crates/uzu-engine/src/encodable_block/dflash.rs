@@ -159,7 +159,7 @@ impl<B: Backend> DFlash<B> {
                 context,
             )
             .await?;
-            if layer.has_stateful_stream_ops() {
+            if layer.has_ngram_embeddings() {
                 return Err(DFlashNewError::StatefulStreamOp {
                     layer_index: index,
                 });
@@ -329,7 +329,6 @@ impl<B: Backend> DFlash<B> {
             mixer_state.prepare(state.context_length, batch_size).map_err(DFlashEncodeError::Backend)?;
             stream = layer.encode(
                 stream,
-                &token_ids,
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
                 Some((MaybeMut::Mut(mixer_state.as_mut()), None)),

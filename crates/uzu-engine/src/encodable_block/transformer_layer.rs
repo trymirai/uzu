@@ -19,7 +19,10 @@ use crate::{
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
-        stream_op::{StreamOp, StreamOpEncodeError, StreamOpNewError, StreamOpState},
+        stream_op::{
+            StreamOp, StreamOpEncodeError, StreamOpNewError, StreamOpState,
+            ngram_injection::{NGramInjection, NGramInjectionState},
+        },
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::{maybe_mut::MaybeMut, maybe_owned::MaybeOwned},
@@ -455,8 +458,19 @@ impl<B: Backend> TransformerLayer<B> {
         })
     }
 
-    pub fn has_stateful_stream_ops(&self) -> bool {
-        self.prologue.iter().chain(self.epilogue.iter()).any(StreamOp::is_stateful)
+    pub fn has_ngram_embeddings(&self) -> bool {
+        self.prologue.iter().chain(self.epilogue.iter()).any(|op| op.as_ngram_injection().is_some())
+    }
+
+    pub fn ngram_injections<'a>(
+        &'a self,
+        states: &'a mut StreamOpStates<B>,
+    ) -> impl Iterator<Item = (&'a NGramInjection<B>, &'a mut NGramInjectionState<B>)> {
+        self.prologue
+            .iter()
+            .zip(states.prologue.iter_mut())
+            .chain(self.epilogue.iter().zip(states.epilogue.iter_mut()))
+            .filter_map(|(op, state)| Some((op.as_ngram_injection()?, state.as_mut()?.as_ngram_injection_mut()?)))
     }
 
     pub fn speculation_supported(&self) -> bool {
@@ -467,7 +481,6 @@ impl<B: Backend> TransformerLayer<B> {
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        token_ids: impl BufferRef<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<(MaybeMut<dyn MixerState<B>>, Option<&mut StreamOpStates<B>>)>,
@@ -482,7 +495,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         for (index, op) in self.prologue.iter().enumerate() {
             let op_state = stream_op_states.as_deref_mut().and_then(|states| states.prologue[index].as_mut());
-            stream = op.encode(stream, batch_dim, token_ids, per_layer_inputs, op_state, command_buffer)?;
+            stream = op.encode(stream, batch_dim, per_layer_inputs, op_state, command_buffer)?;
         }
 
         stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
@@ -495,7 +508,7 @@ impl<B: Backend> TransformerLayer<B> {
 
         for (index, op) in self.epilogue.iter().enumerate() {
             let op_state = stream_op_states.as_deref_mut().and_then(|states| states.epilogue[index].as_mut());
-            stream = op.encode(stream, batch_dim, token_ids, per_layer_inputs, op_state, command_buffer)?;
+            stream = op.encode(stream, batch_dim, per_layer_inputs, op_state, command_buffer)?;
         }
 
         Ok(stream)

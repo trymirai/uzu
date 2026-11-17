@@ -175,7 +175,6 @@ impl<B: Backend> Decoder<B> {
 
         let transformer_output = self.transformer.encode(
             embedded,
-            token_ids,
             per_layer_inputs.as_ref(),
             batch_dim,
             output_range,
@@ -208,5 +207,19 @@ impl<B: Backend> Decoder<B> {
             hidden_features: transformer_output.hidden_features,
             final_hidden,
         })
+    }
+
+    pub fn has_ngram_embeddings(&self) -> bool {
+        self.transformer.has_ngram_embeddings()
+    }
+
+    /// See [`Transformer::prepare_ngram_rows`].
+    pub fn prepare_ngram_rows(
+        &self,
+        state: &mut TransformerState<B>,
+        token_ids: &[u32],
+        parents: Option<&[i32]>,
+    ) {
+        self.transformer.prepare_ngram_rows(state, token_ids, parents);
     }
 }

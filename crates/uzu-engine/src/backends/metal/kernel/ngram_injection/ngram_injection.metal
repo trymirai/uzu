@@ -8,33 +8,6 @@ using namespace metal;
 
 #define NGRAM_GATE_BLOCK_SIZE 256
 
-PUBLIC KERNEL(NGramHash)(
-    const device uint* tokens_with_history,
-    const constant uint64_t* multipliers,
-    const constant uint* head_vocab_sizes,
-    const constant uint* head_offsets,
-    device uint* ngram_ids,
-    constant uint& num_tokens,
-    constant uint& ngram_size,
-    constant uint& heads_per_ngram,
-    constant uint& eos_token_id,
-    const uint head AXIS((ngram_size - 1) * heads_per_ngram, 32),
-    const uint token AXIS(num_tokens, 1)
-) {
-  const uint num_heads = (ngram_size - 1) * heads_per_ngram;
-  const uint position = ngram_size - 1 + token;
-  const uint order = head / heads_per_ngram + 2;
-
-  uint64_t hash = uint64_t(tokens_with_history[position]) * multipliers[0];
-  bool crossed_eos = false;
-  for (uint shift = 1; shift < order; ++shift) {
-    const uint shifted_token = crossed_eos ? eos_token_id : tokens_with_history[position - shift];
-    crossed_eos = crossed_eos || shifted_token == eos_token_id;
-    hash ^= uint64_t(shifted_token) * multipliers[shift];
-  }
-  ngram_ids[token * num_heads + head] = uint(hash % uint64_t(head_vocab_sizes[head])) + head_offsets[head];
-}
-
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(NGramGate)(

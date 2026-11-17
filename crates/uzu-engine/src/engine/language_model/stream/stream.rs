@@ -456,6 +456,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
+        let mut cpu_token = None;
         let (batch_dim, token_ids, trie_seeds, mut speculator_pendings) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
@@ -546,11 +547,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let token_range = if last_job.batch_dim().full_accept() {
+            let token_range = if last_job.batch_dim().full_accept() && !self.model.decoder.has_ngram_embeddings() {
                 0..token_word_bytes
             } else {
-                // Technically a bubble, but only hit if at the very end of
-                // context window.
+                // TODO(perf): CPU-bubble. We could be running the first couple
+                // layers that don't need ngram embeddings while waiting to get
+                // the tokens on the CPU.
                 let resolved = last_job
                     .resolve(
                         &self.model.engine.context,
@@ -558,8 +560,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         self.options.timestamps.as_ref(),
                     )
                     .await?;
-                let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
-                let row = (*accepted_indices.last().unwrap()) as usize;
+                let (row, token) = match resolved.accepted_indices_and_input_tokens.as_ref() {
+                    Some((accepted_indices, _)) => {
+                        (*accepted_indices.last().unwrap() as usize, *resolved.output_tokens.last().unwrap())
+                    },
+                    None => (0, resolved.output_tokens[0]),
+                };
+                cpu_token = Some(token as u32);
                 row * token_word_bytes..(row + 1) * token_word_bytes
             };
 
@@ -583,6 +590,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+
+        // XXX: Also accept speculators
+        if let Some(token) = cpu_token {
+            self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None);
+        }
 
         let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
         let decoder_output = self.model.decoder.encode(
@@ -829,11 +841,15 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(DecoderEncodeOutput<B>, B::ConstantBuffer), LanguageModelStreamError<B>> {
         let row_count = tokens.len() as u32;
+        let tokens_u32 = tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>();
+
+        if model.decoder.has_ngram_embeddings() {
+            model.decoder.prepare_ngram_rows(&mut model_state.transformer_state, &tokens_u32, None);
+        }
 
         let encode_span = CpuSpan::start(options.timestamps.as_ref(), "encode layers");
-        let token_ids = command_buffer
-            .allocate_constant_from_slice(&tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>())
-            .map_err(LanguageModelStreamError::Backend)?;
+        let token_ids =
+            command_buffer.allocate_constant_from_slice(&tokens_u32).map_err(LanguageModelStreamError::Backend)?;
         let batch_dim = BatchTopology::flat(row_count);
         let output = model.decoder.encode(
             &token_ids,
@@ -882,15 +898,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 &mut embedded,
             );
             let batch_dim = BatchTopology::image(image.grid, start..start + length);
-            let token_ids = command_buffer
-                .allocate_constant_from_slice(&vec![0u32; length as usize])
-                .map_err(LanguageModelStreamError::Backend)?;
             let output = model
                 .decoder
                 .transformer()
                 .encode(
                     embedded,
-                    &token_ids,
                     None::<&B::ScratchBuffer>,
                     &batch_dim,
                     None,
