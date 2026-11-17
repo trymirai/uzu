@@ -119,7 +119,8 @@ impl<B: Backend> OutputStack<B> {
                         );
                     }
                 }
-                shared_rotation = Some(InputRhtParameters::load(input_dim, size, tree, &mut loaded_rotations).await?);
+                shared_rotation =
+                    Some(InputRhtParameters::load(input_dim, size, tree, &mut loaded_rotations, context).await?);
                 quantized_tree = Some(tree.subtree("quantized"));
                 *quantization_spec
             },
@@ -179,7 +180,7 @@ impl<B: Backend> OutputStack<B> {
                         "part input Hadamard cannot be combined with shared rotation".into(),
                     ));
                 }
-                Some(InputRhtParameters::load(input_dim, size, tree, &mut loaded_rotations).await?)
+                Some(InputRhtParameters::load(input_dim, size, tree, &mut loaded_rotations, context).await?)
             } else {
                 shared_rotation
             };

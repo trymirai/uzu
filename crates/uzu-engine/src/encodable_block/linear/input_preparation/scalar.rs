@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{mem::size_of_val, sync::Arc};
 
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu,
         gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform,
@@ -26,6 +26,7 @@ impl<B: Backend> InputRhtParameters<B> {
         size: u32,
         tree: &ParameterTree<'_, B>,
         loaded: &mut Vec<(Self, Box<[i32]>)>,
+        context: &B::Context,
     ) -> Result<usize, LinearBlockError<B>> {
         if !SUPPORTED_HADAMARD_BLOCK_SIZES.contains(&size) || !input_dim.is_multiple_of(size) {
             return Err(LinearBlockError::UnsupportedConfiguration(format!(
@@ -33,12 +34,16 @@ impl<B: Backend> InputRhtParameters<B> {
             )));
         }
         let signs = tree.read_slice::<i32>("incoherence_signs.input_signs", &[input_dim]).await?;
+        // TODO(lalamo): Export shared rotations around the stack so content deduplication can be removed.
         if let Some(index) = loaded.iter().position(|(rht, values)| rht.hadamard_size == size && *values == signs) {
             return Ok(index);
         }
+        let mut buffer =
+            context.create_buffer_cpu_gpu(size_of_val(signs.as_ref())).map_err(LinearBlockError::Backend)?;
+        buffer.copyin(signs.as_ref());
         let rht = Self {
             hadamard_size: size,
-            signs: Arc::new(tree.read_buffer("incoherence_signs.input_signs", &[input_dim], DataType::I32).await?),
+            signs: Arc::new(buffer.handoff().map_err(LinearBlockError::Backend)?),
         };
         let index = loaded.len();
         loaded.push((rht, signs));
