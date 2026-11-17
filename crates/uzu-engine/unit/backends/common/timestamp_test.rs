@@ -1,14 +1,18 @@
+// Only the Metal backend records timestamps.
+#![cfg(backend = "metal")]
+
 use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
-#[cfg(backend = "metal")]
-use crate::backends::metal::Metal;
 use crate::{
-    backends::common::{
-        Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferPending, Context, TimestampSpan,
+    backends::{
+        common::{
+            Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferPending, Context, TimestampSpan,
+        },
+        metal::Metal,
     },
-    tests::helpers::{create_context, for_each_non_cpu_backend},
+    tests::helpers::create_context,
 };
 
 const GROUPS: [&str; 3] = ["decoder", "decoder/layer 0", "decoder/layer 1"];
@@ -29,7 +33,6 @@ fn record<B: Backend>(mut command_buffer: <B::CommandBuffer as CommandBuffer>::E
 }
 
 // Metal's generated kernels and its fill are debug groups too, so its spans reach each kernel.
-#[cfg(backend = "metal")]
 #[uzu_test]
 fn debug_groups_time_their_full_path_down_to_kernels() {
     let context = create_context::<Metal>();
@@ -49,19 +52,16 @@ fn debug_groups_time_their_full_path_down_to_kernels() {
 
 #[uzu_test]
 fn only_command_buffers_asked_for_timestamps_record_them() {
-    for_each_non_cpu_backend!(|B| {
-        let context = create_context::<B>();
-        let spans = record::<B>(context.create_command_buffer(None, None).unwrap().with_timestamps());
-        let groups =
-            spans.iter().map(|span| span.name.as_str()).filter(|name| GROUPS.contains(name)).collect::<Vec<_>>();
-        assert_eq!(groups, GROUPS);
-        for span in &spans {
-            assert!(span.start <= span.end, "{} ends before it starts", span.name);
-            if let Some((parent_name, _)) = span.name.rsplit_once('/') {
-                let parent = spans.iter().find(|parent| parent.name == parent_name).unwrap();
-                assert!(parent.start <= span.start && span.end <= parent.end, "{} is outside {parent_name}", span.name);
-            }
+    let context = create_context::<Metal>();
+    let spans = record::<Metal>(context.create_command_buffer(None, None).unwrap().with_timestamps());
+    let groups = spans.iter().map(|span| span.name.as_str()).filter(|name| GROUPS.contains(name)).collect::<Vec<_>>();
+    assert_eq!(groups, GROUPS);
+    for span in &spans {
+        assert!(span.start <= span.end, "{} ends before it starts", span.name);
+        if let Some((parent_name, _)) = span.name.rsplit_once('/') {
+            let parent = spans.iter().find(|parent| parent.name == parent_name).unwrap();
+            assert!(parent.start <= span.start && span.end <= parent.end, "{} is outside {parent_name}", span.name);
         }
-        assert!(record::<B>(context.create_command_buffer(None, None).unwrap()).is_empty());
-    });
+    }
+    assert!(record::<Metal>(context.create_command_buffer(None, None).unwrap()).is_empty());
 }
