@@ -258,6 +258,7 @@ impl<B: Backend> OutputStack<B> {
         rows: OutputRows<impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("linear projection");
         let output_dim = match rows {
             OutputRows::Prefix(count)
             | OutputRows::Gather {
@@ -372,6 +373,7 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
         if let [part] = &*self.parts
             && part.preparation.supports_owned_input()
         {
+            let command_buffer = &mut *command_buffer.debug_group("linear projection");
             let input = match input {
                 MatmulA::FullPrecision {
                     values,
