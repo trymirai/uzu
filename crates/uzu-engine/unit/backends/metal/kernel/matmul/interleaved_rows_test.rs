@@ -16,7 +16,7 @@ use crate::{
                 matmul::{ActivationFormat, MatmulA, MatmulGather, MatmulKernel, MatmulShape, packed_half_bytes},
             },
         },
-        metal::{Metal, context::MetalContext, kernel::matmul::MatmulMetalKernel},
+        metal::{Metal, context::MetalContext, gpu_types::gemm::GemmBLayout, kernel::matmul::MatmulMetalKernel},
     },
     data_type::DataType,
     tests::{
@@ -38,6 +38,7 @@ fn run(
     if interleaved_rows {
         let shape = MatmulShape::from_arguments(&quant_arguments(&mut buffers, input));
         buffers.weights_layout = matmul.optimize_weights_layout(&shape, &mut buffers.w, context).expect("relayout").0;
+        assert_eq!(buffers.weights_layout, GemmBLayout::InterleavedRows);
     }
     let format = ActivationFormat::PackedHalf {
         block_k: input.group_size,

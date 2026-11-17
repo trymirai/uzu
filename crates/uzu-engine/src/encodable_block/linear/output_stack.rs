@@ -261,6 +261,9 @@ impl<B: Backend> OutputStack<B> {
         rows: OutputRows<impl BufferRef<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        if self.output_rotation.is_some() && !matches!(rows, OutputRows::Prefix(count) if count == self.output_dim) {
+            return Err(LinearEncodeError::UnsupportedInput("output rotation requires full, ordered output"));
+        }
         let command_buffer = &mut *command_buffer.debug_group("linear projection");
         let output_dim = match rows {
             OutputRows::Prefix(count)

@@ -63,6 +63,7 @@ fn tile_weights<T: DataTypeRepr + Float>(
     };
     buffers.weights_layout =
         matmul.optimize_weights_layout(&shape, &mut buffers.w, context).expect("optimize weights layout").0;
+    assert_eq!(buffers.weights_layout, GemmBLayout::MxuTiled);
 }
 
 fn run_quant_metal<T: DataTypeRepr + Float>(
@@ -436,7 +437,25 @@ fn a8w_mxu_parity_bf16(
         ACTIVATION_SCALE_GROUP_SIZE,
         (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
     );
-    let actual = run_quant_metal(&context, &input.with_group_output(), gemm_b_layout, Some(GemmEngine::Mxu));
+    let input = input.with_group_output();
+    if bits == 8 && gemm_b_layout == GemmBLayout::MxuTiled {
+        let kernel = MatmulMetalKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type()).unwrap();
+        let mut unsigned = input.clone();
+        unsigned.signed_codes = false;
+        let mut expected = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        let mut actual = QuantBuffers::<Metal, bf16>::allocate(&context, &unsigned);
+        tile_weights(&kernel, &mut expected, &input, &context);
+        let shape = MatmulShape::from_arguments(&quant_arguments(&mut actual, &unsigned));
+        assert_eq!(
+            kernel.optimize_weights_layout(&shape, &mut actual.w, &context).unwrap(),
+            (GemmBLayout::MxuTiled, true)
+        );
+        assert_eq!(
+            buffer_to_vec::<Metal, u32>(&context, &actual.w),
+            buffer_to_vec::<Metal, u32>(&context, &expected.w)
+        );
+    }
+    let actual = run_quant_metal(&context, &input, gemm_b_layout, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
         &format!(

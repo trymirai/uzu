@@ -21,9 +21,13 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataTypeRepr,
+    encodable_block::linear::{InputAccess, InputPreparationMode, OutputBasis, OutputRows, OutputStack},
+    safetensors::ParameterLoader,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend},
+        helpers::{
+            buffer_readback, buffer_to_vec, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend,
+        },
         matmul::{QuantBuffers, QuantInput, run_quant_cpu},
     },
 };
@@ -243,6 +247,61 @@ fn fp_gather_case<T: DataTypeRepr + Float + Debug + Display>(
     for_each_backend!(|B| {
         let gather = get_output::<T, B>(&input);
         assert_gather(&dense, &gather, &ids, m, vocab, ids_per_row, first_row, eps, std::any::type_name::<B>());
+        if soft_cap.is_none() && first_row == 0 {
+            let bytes = bytemuck::cast_slice(input.b.as_ref());
+            let header = serde_json::to_vec(&serde_json::json!({
+                "parts.0.weights": {"dtype": T::data_type(), "shape": [vocab / 2, k], "data_offsets": [0, bytes.len() / 2]},
+                "parts.1.weights": {"dtype": T::data_type(), "shape": [vocab / 2, k], "data_offsets": [bytes.len() / 2, bytes.len()]}
+            })).unwrap();
+            let path = std::env::temp_dir().join(format!("uzu-readout-{}.safetensors", std::process::id()));
+            std::fs::write(&path, [(header.len() as u64).to_le_bytes().as_slice(), &header, bytes].concat()).unwrap();
+            let context = block_on(<B as Backend>::Context::new()).unwrap();
+            let loader = block_on(ParameterLoader::<B>::new(&path, &context)).unwrap();
+            let part =
+                serde_json::json!({"rows": vocab / 2, "spec": {"type": "FullPrecisionSpec", "layout": "output_input"}});
+            let spec =
+                serde_json::from_value(serde_json::json!({"type": "OutputStackSpec", "parts": [part, part]})).unwrap();
+            let (stack, _) = block_on(OutputStack::load(
+                k as u32,
+                vocab as u32,
+                T::data_type(),
+                T::data_type(),
+                T::data_type(),
+                spec,
+                &loader.tree(),
+                None,
+                InputPreparationMode::InLinear,
+                InputAccess::Preserve,
+                OutputBasis::Original,
+                &context,
+            ))
+            .unwrap();
+            std::fs::remove_file(path).unwrap();
+            let source = create_buffer_with_data::<B, T>(&context, &input.a);
+            let indices = create_buffer_with_data::<B, u32>(&context, &ids);
+            for count in [ids_per_row, vocab * 3 / 4, vocab] {
+                let rows = if count == ids_per_row {
+                    OutputRows::Gather {
+                        indices: &indices,
+                        count: count as u32,
+                    }
+                } else {
+                    OutputRows::Prefix(count as u32)
+                };
+                let mut command = context.create_command_buffer(None, None).unwrap();
+                let output =
+                    stack.encode_input(MatmulA::full_precision(&source), m as u32, rows, &mut command).unwrap();
+                block_on(command.end_encoding().submit().wait_until_completed()).unwrap();
+                let actual = buffer_to_vec::<B, T>(&context, &buffer_readback::<B>(&context, &output));
+                let selected = if count == ids_per_row {
+                    ids.clone()
+                } else {
+                    (0..m).flat_map(|_| 0..count as u32).collect()
+                };
+                assert_gather(&dense, &actual, &selected, m, vocab, count, 0, eps, "stacked readout");
+                assert_eq!(buffer_to_vec::<B, T>(&context, &source).as_slice(), input.a.as_ref());
+            }
+        }
     });
 }
 
