@@ -35,7 +35,7 @@ fi
 
 for APP_PATH in "${{APP_CANDIDATES[@]}}"; do
   [ -d "${{APP_PATH}}" ] || continue
-  CLI="${{APP_PATH}}/Contents/Resources/cli/mirai"
+  CLI="${{APP_PATH}}/Contents/Resources/bin/mirai"
   if [ -x "${{CLI}}" ]; then
     exec "${{CLI}}" "$@"
   fi
@@ -59,7 +59,7 @@ exit 1
 fn available(app: &AppHandle) -> bool {
     !cfg!(debug_assertions)
         && app.config().identifier == BUNDLE_ID
-        && app.path().resource_dir().is_ok_and(|dir| dir.join("cli/mirai").is_file())
+        && app.path().resource_dir().is_ok_and(|dir| dir.join("bin/mirai").is_file())
 }
 
 #[derive(Debug, PartialEq)]
