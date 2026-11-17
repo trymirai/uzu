@@ -287,7 +287,7 @@ impl<B: Backend> OutputStack<B> {
                 },
                 OutputRows::Prefix(_) => break,
             };
-            let format = part.preparation.select_format(|| {
+            let format = part.preparation.select_format(ActivationFormat::Trellis, || {
                 if gather.is_none() && !part.preparation.is_identity() && matches!(input, MatmulA::FullPrecision { .. })
                 {
                     part.matrix.select_activation_format(batch_dim, Some(column_count), command_buffer.context())
@@ -376,7 +376,7 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
                     values,
                     offset,
                 } => {
-                    let format = part.preparation.select_format(|| {
+                    let format = part.preparation.select_format(ActivationFormat::Trellis, || {
                         part.matrix.select_activation_format(batch_dim, None, command_buffer.context())
                     });
                     part.preparation
@@ -406,9 +406,9 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
         context: &B::Context,
     ) -> ActivationFormat {
         match &*self.parts {
-            [part] => part
-                .preparation
-                .external_format(|| part.matrix.select_activation_format(batch_dim, output_dim, context)),
+            [part] => part.preparation.select_format(ActivationFormat::Bf16, || {
+                part.matrix.select_activation_format(batch_dim, output_dim, context)
+            }),
             _ => ActivationFormat::Bf16,
         }
     }

@@ -7,13 +7,12 @@ use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
         gpu_types::{
-            d4s4,
-            embedding::EmbeddingTableKind,
-            hadamard_order::{HADAMARD_TRANSFORM_BLOCK_SIZE, SUPPORTED_HADAMARD_BLOCK_SIZES},
+            d4s4, embedding::EmbeddingTableKind, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
             quantization_method::QuantizationMethod,
         },
         kernel::{
             InputEmbeddingLookupKernel,
+            activation_transform::SUPPORTED_HADAMARD_BLOCK_SIZES,
             matmul::{MatmulB, QuantizedCorrection},
         },
     },
@@ -59,6 +58,21 @@ struct Part<B: Backend> {
     kernel: LookupKernel<B>,
     rows: Range<u32>,
     rotation: Option<(u32, Arc<B::GlobalGpuBuffer>)>,
+}
+
+struct PendingPart<B: Backend> {
+    rows: Range<u32>,
+    spec: AnyWeightMatrixSpec,
+    path: String,
+    rotation: Option<(u32, Arc<B::GlobalGpuBuffer>)>,
+}
+
+struct LookupBindings<'a, B: Backend> {
+    values: &'a B::GlobalGpuBuffer,
+    scales: Option<&'a B::GlobalGpuBuffer>,
+    zero_points: Option<&'a B::GlobalGpuBuffer>,
+    biases: Option<&'a B::GlobalGpuBuffer>,
+    d4s4: Option<&'a D4S4Table<B>>,
 }
 
 pub struct EmbeddingTable<B: Backend> {
@@ -129,9 +143,20 @@ impl<B: Backend> EmbeddingTable<B> {
                 "input embedding lookup does not support {data_type:?}"
             )));
         }
-        let mut pending = vec![(0..vocab_size, spec, String::new(), None::<(u32, Arc<B::GlobalGpuBuffer>)>)];
+        let mut pending = vec![PendingPart::<B> {
+            rows: 0..vocab_size,
+            spec,
+            path: String::new(),
+            rotation: None,
+        }];
         let mut parts = Vec::new();
-        while let Some((range, spec, path, mut rotation)) = pending.pop() {
+        while let Some(PendingPart {
+            rows: range,
+            spec,
+            path,
+            mut rotation,
+        }) = pending.pop()
+        {
             let rows = range.end - range.start;
             let part_tree = (!path.is_empty()).then(|| tree.subtree(&path));
             let part_tree = part_tree.as_ref().unwrap_or(tree);
@@ -146,12 +171,12 @@ impl<B: Backend> EmbeddingTable<B> {
                 AnyWeightMatrixSpec::OutputStackSpec(stack) => {
                     let parts = stack.into_parts(rows).map_err(EmbeddingTableError::UnsupportedConfiguration)?;
                     for (index, (local, spec)) in parts.into_iter().enumerate().rev() {
-                        pending.push((
-                            range.start + local.start..range.start + local.end,
+                        pending.push(PendingPart {
+                            rows: range.start + local.start..range.start + local.end,
                             spec,
-                            child_path(&format!("parts.{index}")),
-                            rotation.clone(),
-                        ));
+                            path: child_path(&format!("parts.{index}")),
+                            rotation: rotation.clone(),
+                        });
                     }
                     continue;
                 },
@@ -173,7 +198,12 @@ impl<B: Backend> EmbeddingTable<B> {
                             .read_buffer("incoherence_signs.output_signs", &[embedding_dim], DataType::I32)
                             .await?,
                     );
-                    pending.push((range, *quantization_spec, child_path("quantized"), Some((block_size, factors))));
+                    pending.push(PendingPart {
+                        rows: range,
+                        spec: *quantization_spec,
+                        path: child_path("quantized"),
+                        rotation: Some((block_size, factors)),
+                    });
                     continue;
                 },
                 spec @ AnyWeightMatrixSpec::HybridSpec(_) => {
@@ -240,22 +270,32 @@ impl<B: Backend> EmbeddingTable<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         for part in &self.parts {
-            let (values, scales, zero_points, biases, d4s4) = match &part.storage {
-                Storage::Matrix(matrix) => {
-                    (matrix.values(), matrix.scales(), matrix.zero_points(), matrix.biases(), None)
+            let bindings = match &part.storage {
+                Storage::Matrix(matrix) => LookupBindings {
+                    values: matrix.values(),
+                    scales: matrix.scales(),
+                    zero_points: matrix.zero_points(),
+                    biases: matrix.biases(),
+                    d4s4: None,
                 },
-                Storage::D4S4(table) => (&table.codes, Some(&table.row_scales), None, None, Some(table)),
+                Storage::D4S4(table) => LookupBindings {
+                    values: &table.codes,
+                    scales: Some(&table.row_scales),
+                    zero_points: None,
+                    biases: None,
+                    d4s4: Some(table),
+                },
             };
             part.kernel.encode(
                 token_ids,
-                values,
-                scales,
-                zero_points,
-                biases,
+                bindings.values,
+                bindings.scales,
+                bindings.zero_points,
+                bindings.biases,
                 part.rotation.as_ref().map(|(_, factors)| &**factors),
-                d4s4.map(|table| &table.ladder_indices),
-                d4s4.map(|table| &table.ladder),
-                d4s4.map(|table| &table.codebook),
+                bindings.d4s4.map(|table| &table.ladder_indices),
+                bindings.d4s4.map(|table| &table.ladder),
+                bindings.d4s4.map(|table| &table.codebook),
                 output.reborrow(),
                 batch_dim,
                 part.rows.end - part.rows.start,

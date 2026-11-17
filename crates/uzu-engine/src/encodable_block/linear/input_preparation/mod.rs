@@ -16,37 +16,28 @@ pub enum InputPreparation<B: Backend> {
 
 impl<B: Backend> InputPreparation<B> {
     pub fn requires_full_precision(&self) -> bool {
-        matches!(self, Self::Scalar(p) if p.requires_full_precision())
+        matches!(self, Self::Scalar(preparation) if preparation.requires_full_precision())
     }
 
     pub fn supports_owned_input(&self) -> bool {
         match self {
-            Self::Scalar(p) => p.supports_owned_input(),
+            Self::Scalar(preparation) => preparation.supports_owned_input(),
             Self::Trellis(_) => true,
         }
     }
 
     pub fn is_identity(&self) -> bool {
-        matches!(self, Self::Scalar(p) if p.is_identity())
+        matches!(self, Self::Scalar(preparation) if preparation.is_identity())
     }
 
     pub fn select_format(
         &self,
-        fallback: impl FnOnce() -> ActivationFormat,
+        trellis_format: ActivationFormat,
+        scalar_format: impl FnOnce() -> ActivationFormat,
     ) -> ActivationFormat {
         match self {
-            Self::Scalar(_) => fallback(),
-            Self::Trellis(_) => ActivationFormat::Trellis,
-        }
-    }
-
-    pub fn external_format(
-        &self,
-        fallback: impl FnOnce() -> ActivationFormat,
-    ) -> ActivationFormat {
-        match self {
-            Self::Scalar(_) => fallback(),
-            Self::Trellis(_) => ActivationFormat::Bf16,
+            Self::Scalar(_) => scalar_format(),
+            Self::Trellis(_) => trellis_format,
         }
     }
 
@@ -58,8 +49,8 @@ impl<B: Backend> InputPreparation<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Option<LinearInput<B>>, B::Error> {
         match self {
-            Self::Scalar(p) => p.prepare(input, batch_dim, format, command_buffer),
-            Self::Trellis(p) => p.prepare(input, batch_dim, command_buffer).map(Some),
+            Self::Scalar(preparation) => preparation.prepare(input, batch_dim, format, command_buffer),
+            Self::Trellis(preparation) => preparation.prepare(input, batch_dim, command_buffer).map(Some),
         }
     }
 
@@ -72,8 +63,8 @@ impl<B: Backend> InputPreparation<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
         match self {
-            Self::Scalar(p) => p.prepare_owned(input, offset, batch_dim, format, command_buffer),
-            Self::Trellis(p) => p.prepare((&input).subrange(offset..), batch_dim, command_buffer),
+            Self::Scalar(preparation) => preparation.prepare_owned(input, offset, batch_dim, format, command_buffer),
+            Self::Trellis(preparation) => preparation.prepare((&input).subrange(offset..), batch_dim, command_buffer),
         }
     }
 }

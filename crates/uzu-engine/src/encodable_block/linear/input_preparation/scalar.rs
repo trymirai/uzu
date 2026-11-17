@@ -3,9 +3,10 @@ use std::sync::Arc;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
-        gpu_types::hadamard_order::{HADAMARD_TRANSFORM_BLOCK_SIZE, SUPPORTED_HADAMARD_BLOCK_SIZES},
+        gpu_types::hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
         kernel::{
             ActivationTransform,
+            activation_transform::SUPPORTED_HADAMARD_BLOCK_SIZES,
             matmul::{ActivationFormat, MatmulA},
         },
     },

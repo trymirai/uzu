@@ -17,6 +17,7 @@ fn assert_row_width(element_count: u32) {
     );
 }
 
+pub const SUPPORTED_HADAMARD_BLOCK_SIZES: [u32; 2] = [HADAMARD_TRANSFORM_BLOCK_SIZE, 128];
 pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
