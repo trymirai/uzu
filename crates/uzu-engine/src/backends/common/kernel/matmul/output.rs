@@ -1,11 +1,11 @@
-#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+#[cfg(any(backend = "cpu", backend = "metal", backend = "vulkan"))] // TODO: webgpu
 use thiserror::Error;
 
-#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+#[cfg(any(backend = "cpu", backend = "metal", backend = "vulkan"))] // TODO: webgpu
 use crate::backends::common::gpu_types::gemm::GemmDTransform;
 use crate::backends::common::{Backend, BufferMut, kernel::matmul::MatmulDOps};
 
-#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+#[cfg(any(backend = "cpu", backend = "metal", backend = "vulkan"))] // TODO: webgpu
 #[derive(Debug, Error)]
 #[error("Unsupported output row stride {stride} for {columns} columns with D ops {ops:?}")]
 pub struct MatmulOutputError {
@@ -33,7 +33,7 @@ impl<'d, B: Backend, T: BufferMut<Backend = B>> MatmulOutput<'d, B, T> {
         }
     }
 
-    #[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+    #[cfg(any(backend = "cpu", backend = "metal", backend = "vulkan"))] // TODO: webgpu
     pub fn checked_row_stride(
         &self,
         columns: u32,
