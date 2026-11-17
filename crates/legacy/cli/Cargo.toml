@@ -21,7 +21,7 @@ webgpu = ["uzu/webgpu"]
 [dependencies]
 anyhow.workspace = true
 uzu-engine.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
 confy.workspace = true
