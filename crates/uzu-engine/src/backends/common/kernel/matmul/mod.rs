@@ -12,7 +12,7 @@ pub use kernel::MatmulKernel;
 pub use matmul_a::{Int8CodeLayout, MatmulA, packed_half_bytes};
 pub use matmul_b::{MatmulB, QuantizedB, QuantizedCorrection, TrellisFormat};
 pub use output::MatmulOutput;
-#[cfg(any(backend = "cpu", backend = "metal"))] // TODO: webgpu
+#[cfg(any(backend = "cpu", backend = "metal", backend = "vulkan"))] // TODO: webgpu
 pub use output::MatmulOutputError;
 pub use routing::{ActivationFormat, MatmulShape};
 
