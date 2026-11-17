@@ -38,8 +38,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
     navigate({ to: "/local-models" });
   };
 
-  // Opens on hover, like a tooltip, with the models to regenerate with: names only, three at a time
-  // with the rest scrolling, and "Download models" fixed under them. Above the button: the answer's
+  // Opens on hover, like a tooltip, with the models to regenerate with: names only, up to eight at a
+  // time with the rest scrolling, and "Download models" fixed under them. Above the button: the answer's
   // actions sit near the composer and the window's bottom, where a long list would run off. Keyboard: Enter or ↓ opens
   // it, Esc closes it (handled by HoverPopover).
   const items: PopoverItem[] = loadingModels
@@ -101,7 +101,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onM
       trigger={button}
       items={items}
       footerItems={footerItems}
-      maxVisibleItems={3}
+      maxVisibleItems={8}
       side="top"
       align="start"
     />
