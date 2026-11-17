@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use super::super::{LinearBlockError, LinearInput};
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding,
@@ -11,6 +10,7 @@ use crate::{
         },
     },
     data_type::DataType,
+    encodable_block::linear::{LinearBlockError, LinearInput},
     safetensors::ParameterTree,
 };
 

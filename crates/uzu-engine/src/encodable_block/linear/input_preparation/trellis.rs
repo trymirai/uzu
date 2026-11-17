@@ -1,4 +1,3 @@
-use super::super::{LinearBlockError, LinearInput};
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
@@ -7,6 +6,7 @@ use crate::{
     },
     config::weight_matrix::AnyWeightMatrixSpec,
     data_type::DataType,
+    encodable_block::linear::{LinearBlockError, LinearInput},
     safetensors::ParameterTree,
 };
 

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use super::LinearInput;
-use crate::backends::common::{Backend, BufferRef, CommandBuffer, kernel::ActivationFormat};
+use crate::{
+    backends::common::{Backend, BufferRef, CommandBuffer, kernel::ActivationFormat},
+    encodable_block::linear::LinearInput,
+};
 mod scalar;
 mod trellis;
 pub use scalar::{InputRhtParameters, ScalarPreparation};
