@@ -2,10 +2,11 @@ mod binaries;
 mod platform;
 mod version;
 
-use std::{fs, path::Path};
+use std::{cmp::Ordering, fs, path::Path};
 
 use anyhow::{Result, anyhow};
-pub use version::bump_workspace_version;
+use semver::Version;
+pub use version::{bump_published_version, bump_workspace_version};
 
 use crate::{
     configs::{Paths, PlatformsConfig, WorkspaceManifest},
@@ -17,24 +18,42 @@ use crate::{
     types::{Command, Language},
 };
 
-pub fn run_release(
-    version: &str,
-    release_path: &Path,
-) -> Result<()> {
+pub fn run_version(version: &str) -> Result<()> {
     let paths = Paths::new()?;
+
+    let workspace_version = WorkspaceManifest::load()?.workspace.package.version;
+    match Version::parse(version)?.cmp(&Version::parse(&workspace_version)?) {
+        Ordering::Less => return Err(anyhow!("The workspace is already at version {workspace_version}")),
+        Ordering::Equal => return Ok(()),
+        Ordering::Greater => {},
+    }
 
     bump_workspace_version(version)?;
     run_sync(false)?;
     Command::new("cargo")
         .with_arguments(["update", "--workspace", "--manifest-path"].map(String::from).to_vec())
         .with_argument(&paths.workspace_manifest_path().to_string_lossy())
-        .run()?;
+        .run()
+}
+
+pub fn run_release(
+    version: &str,
+    release_path: &Path,
+) -> Result<()> {
+    let paths = Paths::new()?;
+
+    let workspace_version = WorkspaceManifest::load()?.workspace.package.version;
+    if workspace_version != version {
+        return Err(anyhow!(
+            "The workspace is at version {workspace_version}: run `cargo tools version {version}` first"
+        ));
+    }
+
+    // Before the build, which packs the READMEs into the packages.
+    bump_published_version(version)?;
+    run_sync(false)?;
 
     let platforms = PlatformsConfig::load()?;
-    let workspace = WorkspaceManifest::load()?;
-    if workspace.workspace.package.version != version {
-        return Err(anyhow!("Workspace version mismatch after sync"));
-    }
 
     fs::create_dir_all(release_path)?;
 
