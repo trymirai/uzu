@@ -35,7 +35,7 @@ fn quant_matmul_bf16(
             for (bits, method) in SCHEMES {
                 let input = QuantInput::<bf16>::new(m, k, n, group_size, bits, method, 0);
                 let expected = run_quant_cpu(&input);
-                let (rel_tol, abs_tol) = quant_tolerance(ActivationFormat::Bf16, bits, k, &expected);
+                let (rel_tol, abs_tol) = quant_tolerance(ActivationFormat::Bf16, &expected);
                 let mut buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
                 let actual = run_quant_with::<B, bf16>(&context, &mut buffers, &input);
                 let backend = std::any::type_name::<B>();
@@ -89,7 +89,7 @@ fn quant_matmul_a8_bf16_impl<B: Backend>(
             };
             let (input, format, mut buffers) = production_quant_input::<B, bf16>(&context, &matmul, input);
             let expected = run_quant_cpu(&input);
-            let (rel_tol, abs_tol) = quant_tolerance(format, bits, k, &expected);
+            let (rel_tol, abs_tol) = quant_tolerance(format, &expected);
             let actual = run_quant_with::<B, bf16>(&context, &mut buffers, &input);
             let backend = std::any::type_name::<B>();
             let label = format!("{format:?} {backend} m={m} k={k} n={n} gs={group_size} bits={bits} {method:?}");
