@@ -8,7 +8,7 @@ use crate::{
     backends::{
         common::{
             Backend, Context, Kernels,
-            kernel::{NGramConvInjectKernel, NGramGateKernel, NGramHashKernel},
+            kernel::{NGramConvInjectKernel, NGramGateKernel},
         },
         cpu::Cpu,
     },
@@ -16,87 +16,11 @@ use crate::{
     tests::{
         assert::assert_eq_float,
         helpers::{
-            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_backend,
-            for_each_non_cpu_backend, submit_command_buffer,
+            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
+            submit_command_buffer,
         },
     },
 };
-
-const EOS: u32 = 7;
-const NGRAM_SIZE: u32 = 3;
-const HEADS_PER_NGRAM: u32 = 2;
-const MULTIPLIERS: [u64; 3] = [27696880803969, 9426225827651, 20661530663711];
-const HEAD_VOCAB_SIZES: [u32; 4] = [1031, 1033, 1039, 1049];
-const TOKENS: [u32; 11] = [151935, 42, 9001, EOS, 5, 151000, 77, 3, EOS, EOS, 1234];
-// lalamo `NGramHashConfig.ngram_ids` with an all-EOS history, vocab 151936, PLE layer 1, seed 1234.
-const EXPECTED_IDS: [[u32; 4]; 11] = [
-    [802, 1111, 2883, 3854],
-    [900, 1477, 3035, 3350],
-    [356, 1160, 2207, 3447],
-    [902, 1892, 2187, 3904],
-    [388, 1383, 2988, 3696],
-    [217, 1520, 2805, 3272],
-    [607, 1929, 2852, 3738],
-    [331, 1469, 2076, 3870],
-    [974, 1253, 2177, 3660],
-    [625, 1870, 2996, 4100],
-    [612, 1931, 2251, 3353],
-];
-
-fn run_hash<B: Backend>(tokens_with_history: &[u32]) -> Vec<u32> {
-    let context = create_context::<B>();
-    let kernel = <B::Kernels as Kernels>::NGramHashKernel::new(&context).expect("Failed to create NGramHashKernel");
-    let num_tokens = tokens_with_history.len() as u32 - (NGRAM_SIZE - 1);
-    let num_heads = HEAD_VOCAB_SIZES.len();
-    let head_offsets = HEAD_VOCAB_SIZES
-        .iter()
-        .scan(0, |offset, &size| {
-            let head_offset = *offset;
-            *offset += size;
-            Some(head_offset)
-        })
-        .collect::<Vec<u32>>();
-
-    let tokens_buffer = create_buffer_with_data::<B, u32>(&context, tokens_with_history);
-    let mut ids_buffer = create_buffer::<B, u32>(&context, num_tokens as usize * num_heads);
-
-    let mut command_buffer = context.create_command_buffer(None, None).expect("Failed to create command buffer");
-    kernel.encode(
-        &tokens_buffer,
-        &MULTIPLIERS,
-        &HEAD_VOCAB_SIZES,
-        &head_offsets,
-        &mut ids_buffer,
-        num_tokens,
-        NGRAM_SIZE,
-        HEADS_PER_NGRAM,
-        EOS,
-        &mut command_buffer,
-    );
-    submit_command_buffer(command_buffer);
-    buffer_to_vec::<B, u32>(&context, &ids_buffer)
-}
-
-#[uzu_test]
-fn test_ngram_hash_matches_lalamo() {
-    let tokens_with_history = [EOS, EOS].into_iter().chain(TOKENS).collect::<Vec<_>>();
-    let expected = EXPECTED_IDS.iter().flatten().copied().collect::<Vec<_>>();
-    for_each_backend!(|B| {
-        let message = format!("NGramHash failed with backend={}", std::any::type_name::<B>());
-        assert_eq!(run_hash::<B>(&tokens_with_history), expected, "{message}");
-    });
-}
-
-#[uzu_test]
-fn test_ngram_hash_with_history_matches_full_sequence() {
-    let full = [EOS, EOS].into_iter().chain(TOKENS).collect::<Vec<_>>();
-    let split = 5;
-    let expected = EXPECTED_IDS[split..].iter().flatten().copied().collect::<Vec<_>>();
-    for_each_backend!(|B| {
-        let message = format!("NGramHash failed with backend={}", std::any::type_name::<B>());
-        assert_eq!(run_hash::<B>(&full[split..]), expected, "{message}");
-    });
-}
 
 fn values<T: DataTypeRepr + Float>(
     count: usize,

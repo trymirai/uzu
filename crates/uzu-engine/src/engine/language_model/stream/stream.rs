@@ -295,13 +295,16 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
+            let input_chunk_u32 = input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>();
             let token_ids = command_buffer
-                .allocate_constant_from_slice(
-                    &input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
-                )
+                .allocate_constant_from_slice(&input_chunk_u32)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let batch_dim = BatchTopology::flat(input_chunk.len() as u32);
+
+            if self.model.decoder.has_ngram_embeddings() {
+                self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &input_chunk_u32, None);
+            }
 
             let decoder_output = self.model.decoder.encode(
                 &token_ids,
@@ -457,6 +460,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
+        let mut cpu_token = None;
         let (batch_dim, token_ids, trie_seeds, mut speculator_pendings) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
@@ -541,14 +545,20 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let token_range = if last_job.batch_dim().full_accept() {
+            let token_range = if last_job.batch_dim().full_accept() && !self.model.decoder.has_ngram_embeddings() {
                 0..token_word_bytes
             } else {
-                // Technically a bubble, but only hit if at the very end of
-                // context window.
+                // TODO(perf): CPU-bubble. We could be running the first couple
+                // layers that don't need ngram embeddings while waiting to get
+                // the tokens on the CPU.
                 let resolved = self.resolve(&mut last_job).await?;
-                let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
-                let row = (*accepted_indices.last().unwrap()) as usize;
+                let (row, token) = match resolved.accepted_indices_and_input_tokens.as_ref() {
+                    Some((accepted_indices, _)) => {
+                        (*accepted_indices.last().unwrap() as usize, *resolved.output_tokens.last().unwrap())
+                    },
+                    None => (0, resolved.output_tokens[0]),
+                };
+                cpu_token = Some(token as u32);
                 row * token_word_bytes..(row + 1) * token_word_bytes
             };
 
@@ -572,6 +582,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+
+        // XXX: Also accept speculators
+        if let Some(token) = cpu_token {
+            self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None);
+        }
 
         let decoder_output = self.model.decoder.encode(
             &token_ids,

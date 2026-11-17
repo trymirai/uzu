@@ -137,7 +137,6 @@ impl<B: Backend> Classifier<B> {
             .transformer
             .encode(
                 hidden,
-                token_ids,
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
                 Some((0..batch_dim).into()),

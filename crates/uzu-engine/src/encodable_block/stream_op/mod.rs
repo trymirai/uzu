@@ -69,6 +69,12 @@ impl<B: Backend> StreamOpState<B> {
             Self::NGramInjection(state) => state.encode_accept(accepted_indices),
         }
     }
+
+    pub fn as_ngram_injection_mut(&mut self) -> Option<&mut NGramInjectionState<B>> {
+        match self {
+            Self::NGramInjection(state) => Some(state),
+        }
+    }
 }
 
 pub enum StreamOp<B: Backend> {
@@ -134,10 +140,10 @@ impl<B: Backend> StreamOp<B> {
         }
     }
 
-    pub fn is_stateful(&self) -> bool {
+    pub fn as_ngram_injection(&self) -> Option<&NGramInjection<B>> {
         match self {
-            Self::NGramInjection(_) => true,
-            Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => false,
+            Self::NGramInjection(op) => Some(op),
+            Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => None,
         }
     }
 
@@ -152,7 +158,6 @@ impl<B: Backend> StreamOp<B> {
         &self,
         stream: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
-        token_ids: impl BufferRef<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         state: Option<&mut StreamOpState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -165,7 +170,7 @@ impl<B: Backend> StreamOp<B> {
                     // by essentially throwing out its work each time
                     return Err(StreamOpEncodeError::MissingState);
                 };
-                op.encode(stream, token_ids, batch_dim, state, command_buffer)
+                op.encode(stream, batch_dim, state, command_buffer)
             },
             Self::PerLayerEmbeddingInjection(op) => {
                 let per_layer_inputs = per_layer_inputs.ok_or(StreamOpEncodeError::MissingPerLayerInputs)?;

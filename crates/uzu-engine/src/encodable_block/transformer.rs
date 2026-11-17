@@ -1,6 +1,7 @@
 use std::{range::Range, sync::Arc};
 
 use derive_more::Debug;
+use futures::future::join_all;
 use thiserror::Error;
 
 use crate::{
@@ -216,7 +217,7 @@ impl<B: Backend> Transformer<B> {
         let Some(last_stateful_layer_index) = self
             .layers
             .iter()
-            .rposition(|layer| layer.kv_source_layer_index.is_none() || layer.has_stateful_stream_ops())
+            .rposition(|layer| layer.kv_source_layer_index.is_none() || layer.has_ngram_embeddings())
         else {
             return num_layers;
         };
@@ -259,7 +260,6 @@ impl<B: Backend> Transformer<B> {
     pub fn encode(
         &self,
         input: B::ScratchBuffer,
-        token_ids: impl BufferRef<Backend = B>,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
@@ -306,14 +306,7 @@ impl<B: Backend> Transformer<B> {
                 }
             });
 
-            stream = layer.encode(
-                stream,
-                token_ids,
-                per_layer_inputs,
-                batch_dim,
-                layer_state,
-                command_buffer,
-            )?;
+            stream = layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
@@ -374,5 +367,25 @@ impl<B: Backend> Transformer<B> {
             output: Some(output),
             hidden_features,
         })
+    }
+
+    pub fn has_ngram_embeddings(&self) -> bool {
+        self.layers.iter().any(|layer| layer.has_ngram_embeddings())
+    }
+
+    pub fn prepare_ngram_rows(
+        &self,
+        state: &mut TransformerState<B>,
+        token_ids: &[u32],
+        parents: Option<&[i32]>,
+    ) {
+        for (op, op_state) in self
+            .layers
+            .iter()
+            .zip(state.layer_states.iter_mut())
+            .flat_map(|(layer, layer_state)| layer.ngram_injections(&mut layer_state.stream_ops))
+        {
+            op.prepare(op_state, token_ids, parents)
+        }
     }
 }

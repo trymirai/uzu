@@ -1,11 +1,14 @@
+use std::{future::Future, mem};
+
 use crate::{
     backends::common::{
-        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
-        kernel::{NGramConvInjectKernel, NGramGateKernel, NGramHashKernel},
+        Backend, Buffer, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        kernel::{NGramConvInjectKernel, NGramGateKernel},
     },
     config::{
-        normalization::NormalizationConfig, residual::gated::GatedResidualConfig,
-        stream_op::ngram_injection::NGramInjectionConfig,
+        normalization::NormalizationConfig,
+        residual::gated::GatedResidualConfig,
+        stream_op::ngram_injection::{NGramHashConfig, NGramInjectionConfig},
     },
     data_type::DataType,
     encodable_block::{
@@ -19,10 +22,14 @@ use crate::{
 };
 
 pub struct NGramInjectionState<B: Backend> {
-    /// last `ngram_size - 1` accepted token ids
-    token_history: B::GlobalGpuBuffer,
+    /// Up to the last `ngram_size - 1` accepted token ids, most recent last.
+    history: Vec<u32>,
+    history_length: usize,
+    /// Token ids of the batch whose rows were prepared and not yet accepted.
+    pending_tokens: Vec<u32>,
+    /// Embedding rows of the pending batch, `[tokens, embedding_dim]` in the model data type, until encoded.
+    pending_rows: Vec<u8>,
     conv_state: B::GlobalGpuBuffer,
-    pending_token_history: B::GlobalGpuBuffer,
     pending_conv_state: B::GlobalGpuBuffer,
     pending_suffix_length: Option<u32>,
     is_empty: bool,
@@ -33,14 +40,21 @@ impl<B: Backend> NGramInjectionState<B> {
         &mut self,
         accepted_indices: &[u32],
     ) {
+        let pending_tokens = mem::take(&mut self.pending_tokens);
+        self.pending_rows.clear();
+        if !pending_tokens.is_empty() {
+            self.history.extend(accepted_indices.iter().map(|&index| pending_tokens[index as usize]));
+            let excess = self.history.len().saturating_sub(self.history_length);
+            self.history.drain(..excess);
+        }
+
         let Some(suffix_length) = self.pending_suffix_length.take() else {
             return;
         };
         let accepted_index = *accepted_indices.last().expect("n-gram injection state attempted to accept zero indices");
         assert!(accepted_index == suffix_length - 1, "attempted a partial n-gram injection accept");
 
-        std::mem::swap(&mut self.token_history, &mut self.pending_token_history);
-        std::mem::swap(&mut self.conv_state, &mut self.pending_conv_state);
+        mem::swap(&mut self.conv_state, &mut self.pending_conv_state);
         self.is_empty = false;
     }
 }
@@ -59,18 +73,12 @@ pub struct NGramInjection<B: Backend> {
     conv_scales: B::GlobalGpuBuffer,
     /// `[stream_count * model_dim, conv_kernel_size]`, `f32`
     conv_weights: B::GlobalGpuBuffer,
-    multipliers: Box<[u64]>,
-    head_vocab_sizes: Box<[u32]>,
-    head_offsets: Box<[u32]>,
-    hash_kernel: <B::Kernels as Kernels>::NGramHashKernel,
+    hash_config: NGramHashConfig,
     gate_kernel: <B::Kernels as Kernels>::NGramGateKernel,
     conv_kernel: <B::Kernels as Kernels>::NGramConvInjectKernel,
     model_dim: u32,
     stream_count: u32,
     embedding_dim: u32,
-    ngram_size: u32,
-    heads_per_ngram: u32,
-    eos_token_id: u32,
     conv_kernel_size: u32,
     norm_epsilon: f32,
     norm_scale_offset: f32,
@@ -128,15 +136,6 @@ impl<B: Backend> NGramInjection<B> {
             return unsupported(format!("normalization {:?}", config.norm_config));
         };
 
-        let head_offsets = hash_config
-            .head_vocab_sizes
-            .iter()
-            .scan(0u32, |offset, &size| {
-                let head_offset = *offset;
-                *offset += size;
-                Some(head_offset)
-            })
-            .collect::<Box<[u32]>>();
         let num_rows = hash_config.head_vocab_sizes.iter().sum::<u32>();
 
         let ngram_embedding = EmbeddingTable::load(
@@ -177,7 +176,6 @@ impl<B: Backend> NGramInjection<B> {
             .read_buffer("weights", &[stream_count * model_dim, config.conv_kernel_size], DataType::F32)
             .await?;
 
-        let hash_kernel = <B::Kernels as Kernels>::NGramHashKernel::new(context).map_err(StreamOpNewError::Backend)?;
         let gate_kernel =
             <B::Kernels as Kernels>::NGramGateKernel::new(context, data_type).map_err(StreamOpNewError::Backend)?;
         let conv_kernel = <B::Kernels as Kernels>::NGramConvInjectKernel::new(context, data_type)
@@ -191,18 +189,12 @@ impl<B: Backend> NGramInjection<B> {
             query_scales,
             conv_scales,
             conv_weights,
-            multipliers: hash_config.multipliers.clone(),
-            head_vocab_sizes: hash_config.head_vocab_sizes.clone(),
-            head_offsets,
-            hash_kernel,
+            hash_config: hash_config.clone(),
             gate_kernel,
             conv_kernel,
             model_dim,
             stream_count,
             embedding_dim: config.embedding_dim,
-            ngram_size: hash_config.ngram_size,
-            heads_per_ngram: hash_config.heads_per_ngram,
-            eos_token_id: hash_config.eos_token_id,
             conv_kernel_size: config.conv_kernel_size,
             norm_epsilon: epsilon,
             norm_scale_offset: scale_offset.unwrap_or(0.0),
@@ -211,7 +203,7 @@ impl<B: Backend> NGramInjection<B> {
     }
 
     fn num_heads(&self) -> u32 {
-        (self.ngram_size - 1) * self.heads_per_ngram
+        num_heads(&self.hash_config)
     }
 
     fn channels(&self) -> u32 {
@@ -222,23 +214,40 @@ impl<B: Backend> NGramInjection<B> {
         &self,
         context: &B::Context,
     ) -> Result<NGramInjectionState<B>, B::Error> {
-        let token_history_size = size_for_shape(&[self.ngram_size - 1], DataType::U32);
         let conv_state_size = size_for_shape(&[self.conv_kernel_size - 1, self.channels()], self.data_type);
         Ok(NGramInjectionState {
-            token_history: context.create_buffer_gpu(token_history_size)?,
+            history: Vec::new(),
+            history_length: self.hash_config.ngram_size as usize - 1,
+            pending_tokens: Vec::new(),
+            pending_rows: Vec::new(),
             conv_state: context.create_buffer_gpu(conv_state_size)?,
-            pending_token_history: context.create_buffer_gpu(token_history_size)?,
             pending_conv_state: context.create_buffer_gpu(conv_state_size)?,
             pending_suffix_length: None,
             is_empty: true,
         })
     }
 
-    /// Takes and returns a gated stream, `[tokens, stream_count, model_dim]`.
+    /// Needs to be called before [`Self::encode`]
+    // TODO(arch): use typestate?
+    pub fn prepare(
+        &self,
+        state: &mut NGramInjectionState<B>,
+        token_ids: &[u32],
+        parents: Option<&[i32]>,
+    ) {
+        assert!(state.pending_tokens.is_empty(), "n-gram rows prepared with unaccepted tokens");
+
+        let mut ngram_ids = vec![0u32; token_ids.len() * self.num_heads() as usize];
+        hash(&self.hash_config, &state.history, token_ids, parents, &mut ngram_ids);
+        state.pending_tokens = token_ids.to_vec();
+
+        todo!("read the n-gram embedding rows from the on-disk table")
+    }
+
+    // TODO(arch): use typestate with `Self::prepare`?
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        token_ids: impl BufferRef<Backend = B>,
         batch_dim: &BatchTopology<B>,
         state: &mut NGramInjectionState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -251,51 +260,22 @@ impl<B: Backend> NGramInjection<B> {
         assert!(state.pending_suffix_length.is_none(), "n-gram injection called with state with unaccepted tokens");
 
         let num_tokens = batch_dim.size();
-        let history_length = self.ngram_size - 1;
-        let token_bytes = size_for_shape(&[1], DataType::U32);
-        let history_bytes = history_length as usize * token_bytes;
-        let tokens_bytes = num_tokens as usize * token_bytes;
+        if state.pending_tokens.is_empty() {
+            panic!("Should have prepared ngram rows earlier");
+        }
+        assert_eq!(state.pending_tokens.len(), num_tokens as usize, "n-gram rows were prepared for another batch");
+        let rows = mem::take(&mut state.pending_rows);
+        assert_eq!(rows.len(), size_for_shape(&[num_tokens, self.embedding_dim], self.data_type), "wrong rows size");
 
         if state.is_empty {
-            let eos_history = command_buffer
-                .allocate_constant_from_slice(&vec![self.eos_token_id; history_length as usize])
-                .map_err(StreamOpEncodeError::Backend)?;
-            command_buffer.encode_copy(&eos_history, &mut state.token_history);
             command_buffer.encode_fill(&mut state.conv_state, 0);
         }
 
-        let mut tokens_with_history = command_buffer
-            .allocate_scratch_for_shape(&[history_length + num_tokens], DataType::U32)
-            .map_err(StreamOpEncodeError::Backend)?;
-        command_buffer.encode_copy(&state.token_history, (&mut tokens_with_history).subrange_mut(..history_bytes));
-        command_buffer
-            .encode_copy(token_ids.subrange(..tokens_bytes), (&mut tokens_with_history).subrange_mut(history_bytes..));
-        command_buffer.encode_copy(
-            (&tokens_with_history).subrange(tokens_bytes..tokens_bytes + history_bytes),
-            &mut state.pending_token_history,
-        );
-
-        let num_heads = self.num_heads();
-        let mut ngram_ids = command_buffer
-            .allocate_scratch_for_shape(&[num_tokens, num_heads], DataType::U32)
-            .map_err(StreamOpEncodeError::Backend)?;
-        self.hash_kernel.encode(
-            &tokens_with_history,
-            &self.multipliers,
-            &self.head_vocab_sizes,
-            &self.head_offsets,
-            &mut ngram_ids,
-            num_tokens,
-            self.ngram_size,
-            self.heads_per_ngram,
-            self.eos_token_id,
-            command_buffer,
-        );
-
+        let rows = command_buffer.allocate_constant_from_slice(&rows).map_err(StreamOpEncodeError::Backend)?;
         let mut embeddings = command_buffer
             .allocate_scratch_for_shape(&[num_tokens, self.embedding_dim], self.data_type)
             .map_err(StreamOpEncodeError::Backend)?;
-        self.ngram_embedding.encode_lookup(&ngram_ids, &mut embeddings, num_tokens * num_heads, 1.0, command_buffer);
+        command_buffer.encode_copy(&rows, &mut embeddings);
 
         // TODO: this copy could be avoided if `Linear::encode` borrowed its
         // input (or if the key and value projections were fused into one linear
@@ -346,3 +326,74 @@ impl<B: Backend> NGramInjection<B> {
         Ok(stream)
     }
 }
+
+fn num_heads(config: &NGramHashConfig) -> u32 {
+    (config.ngram_size - 1) * config.heads_per_ngram
+}
+
+fn hash(
+    config: &NGramHashConfig,
+    history: &[u32],
+    tokens: &[u32],
+    parents: Option<&[i32]>,
+    ngram_ids: &mut [u32],
+) {
+    let num_heads = num_heads(config) as usize;
+    let eos_token_id = config.eos_token_id as u64;
+    assert_eq!(ngram_ids.len(), tokens.len() * num_heads, "n-gram ids must have one row per token and head");
+    if let Some(parents) = parents {
+        assert_eq!(parents.len(), tokens.len(), "n-gram parents must have one entry per token");
+    }
+
+    let parent = |index: usize| -> Option<usize> {
+        let parent = parents.map(|parents| parents[index]).unwrap_or(index as i32 - 1);
+        usize::try_from(parent).ok()
+    };
+
+    enum Cursor {
+        Batch(usize),
+        History(usize),
+    }
+
+    // Tokens preceding the current one, nearest first.
+    let mut context = vec![0u32; config.ngram_size as usize - 1];
+    for (token_index, &token) in tokens.iter().enumerate() {
+        let mut cursor = Cursor::Batch(token_index);
+        for slot in &mut context {
+            cursor = match cursor {
+                Cursor::Batch(index) => parent(index).map(Cursor::Batch).unwrap_or(Cursor::History(1)),
+                Cursor::History(steps_back) => Cursor::History(steps_back + 1),
+            };
+            *slot = match cursor {
+                Cursor::Batch(index) => tokens[index],
+                Cursor::History(steps_back) => {
+                    history.len().checked_sub(steps_back).map(|index| history[index]).unwrap_or(config.eos_token_id)
+                },
+            };
+        }
+
+        let mut head_offset = 0u64;
+        for head in 0..num_heads {
+            let order = head / config.heads_per_ngram as usize + 2;
+            let mut hash = (token as u64).wrapping_mul(config.multipliers[0]);
+            // Everything before history start is EOS
+            let mut crossed_eos = false;
+            for shift in 1..order {
+                let shifted_token = if crossed_eos {
+                    eos_token_id
+                } else {
+                    context[shift - 1] as u64
+                };
+                crossed_eos |= shifted_token == eos_token_id;
+                hash ^= shifted_token.wrapping_mul(config.multipliers[shift]);
+            }
+            let head_vocab_size = config.head_vocab_sizes[head] as u64;
+            ngram_ids[token_index * num_heads + head] = (hash % head_vocab_size + head_offset) as u32;
+            head_offset += head_vocab_size;
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../unit/encodable_block/stream_op/ngram_injection.rs"]
+mod tests;

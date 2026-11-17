@@ -4,44 +4,6 @@ use uzu_engine_macros::kernel;
 
 use crate::data_type::DataTypeRepr;
 
-#[kernel(NGramHash)]
-pub fn ngram_hash(
-    tokens_with_history: *const u32,
-    multipliers: &[u64],
-    head_vocab_sizes: &[u32],
-    head_offsets: &[u32],
-    ngram_ids: *mut u32,
-    num_tokens: u32,
-    ngram_size: u32,
-    heads_per_ngram: u32,
-    eos_token_id: u32,
-) {
-    let history_length = ngram_size as usize - 1;
-    let num_heads = history_length * heads_per_ngram as usize;
-    let eos_token_id = eos_token_id as u64;
-
-    for token in 0..num_tokens as usize {
-        let position = history_length + token;
-        for head in 0..num_heads {
-            let order = head / heads_per_ngram as usize + 2;
-            unsafe {
-                let mut hash = *tokens_with_history.add(position) as u64 * multipliers[0];
-                let mut crossed_eos = false;
-                for shift in 1..order {
-                    let shifted_token = match crossed_eos {
-                        true => eos_token_id,
-                        false => *tokens_with_history.add(position - shift) as u64,
-                    };
-                    crossed_eos |= shifted_token == eos_token_id;
-                    hash ^= shifted_token * multipliers[shift];
-                }
-                let row = hash % head_vocab_sizes[head] as u64 + head_offsets[head] as u64;
-                *ngram_ids.add(token * num_heads + head) = row as u32;
-            }
-        }
-    }
-}
-
 #[kernel(NGramGate)]
 #[variants(T, f32, f16, bf16)]
 pub fn ngram_gate<T: DataTypeRepr + Float>(
