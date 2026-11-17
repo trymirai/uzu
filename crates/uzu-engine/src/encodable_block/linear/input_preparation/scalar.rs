@@ -128,10 +128,10 @@ impl<B: Backend> ScalarPreparation<B> {
         format: ActivationFormat,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<LinearInput<B>, B::Error> {
-        if self.quantizer.as_ref().is_some_and(|kernel| kernel.format() == format) {
-            if let Some(prepared) = self.prepare((&input).subrange(offset..), batch_dim, format, command_buffer)? {
-                return Ok(prepared);
-            }
+        if self.quantizer.as_ref().is_some_and(|kernel| kernel.format() == format)
+            && let Some(prepared) = self.prepare((&input).subrange(offset..), batch_dim, format, command_buffer)?
+        {
+            return Ok(prepared);
         }
         if let Some((signs, rht)) = &self.rotation {
             rht.encode_fp_in_place(
