@@ -185,11 +185,11 @@ async fn create_session(
 /// Returns the current date and time in UTC and the device's local time, with explicit UTC offsets.
 #[uzu_tool_function]
 fn get_current_date_time() -> String {
-    let now = chrono::Local::now();
+    let now = jiff::Zoned::now();
     format!(
         "Current UTC date and time: {}.\nDevice local date and time: {}.",
-        now.with_timezone(&chrono::Utc).format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
-        now.format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+        now.timestamp().strftime("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+        now.strftime("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
     )
 }
 
@@ -229,20 +229,20 @@ mod tests {
     async fn date_time_tool_returns_the_same_current_instant_in_utc_and_local_time() {
         let tool: ToolDescriptor = get_current_date_time.into();
         assert_eq!(tool.name, "get_current_date_time");
-        let before = chrono::Local::now();
+        let before = jiff::Zoned::now();
         let result = tool.execute(serde_json::json!({}).into()).await.unwrap();
-        let after = chrono::Local::now();
+        let after = jiff::Zoned::now();
         let value: serde_json::Value = result.try_into().unwrap();
         let (utc, local) = value.as_str().unwrap().split_once('\n').unwrap();
-        let utc =
-            chrono::DateTime::parse_from_str(utc, "Current UTC date and time: %A, %-d %B %Y at %H:%M:%S (UTC%:z).")
-                .unwrap();
+        let utc = jiff::Zoned::strptime("Current UTC date and time: %A, %-d %B %Y at %H:%M:%S (UTC%:z).", utc).unwrap();
         let local =
-            chrono::DateTime::parse_from_str(local, "Device local date and time: %A, %-d %B %Y at %H:%M:%S (UTC%:z).")
-                .unwrap();
-        assert_eq!(utc, local);
-        assert!(utc.timestamp() >= before.timestamp() && utc.timestamp() <= after.timestamp());
-        assert_eq!(utc.offset().local_minus_utc(), 0);
-        assert_eq!(local.offset(), local.with_timezone(&chrono::Local).offset());
+            jiff::Zoned::strptime("Device local date and time: %A, %-d %B %Y at %H:%M:%S (UTC%:z).", local).unwrap();
+        assert_eq!(utc.timestamp(), local.timestamp());
+        assert!(
+            utc.timestamp().as_second() >= before.timestamp().as_second()
+                && utc.timestamp().as_second() <= after.timestamp().as_second()
+        );
+        assert_eq!(utc.offset(), jiff::tz::Offset::UTC);
+        assert_eq!(local.offset(), local.with_time_zone(jiff::tz::TimeZone::system()).offset());
     }
 }
