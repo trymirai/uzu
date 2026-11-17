@@ -44,7 +44,7 @@ pub(crate) fn write_line(
         let _ = std::fs::create_dir_all(parent);
     }
     rotate_if_needed(&path);
-    let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ");
+    let ts = jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ");
     let suffix = data.map(|d| format!(" {d}")).unwrap_or_default();
     let line = format!("{ts} [{level}] {message}{suffix}\n");
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {

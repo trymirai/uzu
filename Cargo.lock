@@ -1301,7 +1301,6 @@ name = "cli"
 version = "0.7.1"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "comfy-table",
  "confy",
@@ -1314,6 +1313,7 @@ dependencies = [
  "indicatif",
  "indoc",
  "iocraft",
+ "jiff",
  "jsonschema",
  "nagare",
  "ratatui",
@@ -3298,8 +3298,8 @@ dependencies = [
 name = "hanashi"
 version = "0.7.1"
 dependencies = [
- "chrono",
  "indexmap 2.14.2",
+ "jiff",
  "minijinja",
  "minijinja-contrib",
  "openai-harmony",
@@ -3984,10 +3984,12 @@ dependencies = [
  "jiff-core",
  "jiff-static",
  "jiff-tzdb-platform",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -4761,9 +4763,9 @@ dependencies = [
 name = "mirai-gui"
 version = "0.7.1"
 dependencies = [
- "chrono",
  "futures",
  "hanashi",
+ "jiff",
  "plist",
  "schemars 1.2.3",
  "serde",

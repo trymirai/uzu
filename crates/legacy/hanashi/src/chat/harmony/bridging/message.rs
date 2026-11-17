@@ -297,7 +297,7 @@ pub fn bridge_messages_to_harmony(
 fn system_message(mut content: ExternalSystemContent) -> ExternalMessage {
     // Match the reference template's current-date fallback.
     if content.conversation_start_date.is_none() {
-        content.conversation_start_date = Some(chrono::Local::now().date_naive().to_string());
+        content.conversation_start_date = Some(jiff::Zoned::now().date().to_string());
     }
     ExternalMessage {
         author: ExternalAuthor::from(ExternalRole::System),

@@ -1,7 +1,7 @@
 use std::any::Any;
 
-use chrono::Local;
 use iocraft::prelude::*;
+use jiff::Zoned;
 use nagare::{
     chat::{ChatSession, ChatSessionStreamChunk},
     tool::uzu_tool_function,
@@ -335,11 +335,11 @@ fn chat_state_mut(state: &mut ApplicationState) -> Option<&mut ChatSessionState>
 /// Returns the current date and time in UTC and the device's local time, with explicit UTC offsets.
 #[uzu_tool_function]
 fn get_current_date_time() -> String {
-    let now = Local::now();
+    let now = Zoned::now();
     format!(
         "Current UTC date and time: {}.\nDevice local date and time: {}.",
-        now.with_timezone(&chrono::Utc).format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
-        now.format("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+        now.timestamp().strftime("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
+        now.strftime("%A, %-d %B %Y at %H:%M:%S (UTC%:z)"),
     )
 }
 
