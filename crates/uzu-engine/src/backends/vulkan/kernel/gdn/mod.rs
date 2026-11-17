@@ -1,3 +1,5 @@
 mod vk_delta_net_chunked_prefill;
+mod vk_delta_net_update_kernel;
 
 pub use vk_delta_net_chunked_prefill::VkDeltaNetChunkedPrefill;
+pub use vk_delta_net_update_kernel::VkDeltaNetUpdateKernel;
