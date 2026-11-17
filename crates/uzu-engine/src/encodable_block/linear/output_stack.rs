@@ -174,6 +174,11 @@ impl<B: Backend> OutputStack<B> {
                 },
                 spec => (spec, None),
             };
+            if matches!(spec, AnyWeightMatrixSpec::QtipGaussianSpec(_)) && kronecker.is_none() {
+                return Err(LinearBlockError::UnsupportedConfiguration(
+                    "Trellis weights require Kronecker input preparation".into(),
+                ));
+            }
             let rotation = if let Some(size) = hadamard_size {
                 if shared_rotation.is_some() {
                     return Err(LinearBlockError::UnsupportedConfiguration(
@@ -378,7 +383,7 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
                 MatmulA::FullPrecision {
                     values,
                     offset,
-                } => {
+                } if !part.preparation.is_identity() => {
                     let format = part.preparation.select_format(ActivationFormat::Trellis, || {
                         part.matrix.select_activation_format(batch_dim, None, command_buffer.context())
                     });
@@ -386,7 +391,7 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
                         .prepare_owned(values, offset, batch_dim, format, command_buffer)
                         .map_err(LinearEncodeError::Backend)?
                 },
-                prepared => prepared,
+                input => input,
             };
             let mut output = part.matrix.encode_input(input, batch_dim, command_buffer)?;
             self.rotate_output(&mut output, batch_dim, command_buffer);
