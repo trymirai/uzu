@@ -553,17 +553,15 @@ pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
 
 pub fn quant_tolerance(
     format: ActivationFormat,
-    bits: u32,
     k: u32,
     expected: &[bf16],
 ) -> (f64, f64) {
-    let floor = match format {
-        ActivationFormat::Bf16 => 0.4 * (k as f32 / 6144.0).sqrt().max(1.0),
+    let abs_tol = match format {
+        // A reordered bf16 sum errs relative to the scale of the outputs, not to each element.
+        ActivationFormat::Bf16 => expected
+            .iter()
+            .fold(0.4 * (k as f32 / 6144.0).sqrt().max(1.0), |tol, value| tol.max(0.02 * value.to_f32().abs())),
         _ => 0.4,
-    };
-    let abs_tol = match (format, bits) {
-        (ActivationFormat::Bf16, 8) => expected.iter().fold(floor, |tol, value| tol.max(0.02 * value.to_f32().abs())),
-        _ => floor,
     };
     (0.05, f64::from(abs_tol))
 }
