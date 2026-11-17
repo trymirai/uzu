@@ -19,22 +19,27 @@ static METAL_FUNC void apply_output_random_hadamard_transform(
     ushort simdgroup_count,
     const thread ThreadContext& thread_context
 ) {
-  const ushort stripes_per_row = tile_block_cols / HADAMARD_TRANSFORM_BLOCK_SIZE;
+  constexpr ushort ROWS_PER_PASS = METAL_SIMD_SIZE / hadamard::LANES_PER_BLOCK;
   const ushort simd_lane = thread_context.simd_lane_id;
-  const uint total_work = uint(tile_block_rows) * uint(stripes_per_row);
-  for (uint cell = SINGLE_SIMDGROUP ? 0 : thread_context.simdgroup_index; cell < total_work;
-       cell += SINGLE_SIMDGROUP ? 1 : simdgroup_count) {
-    const ushort row_local = ushort(cell / stripes_per_row);
-    const ushort stripe = ushort(cell % stripes_per_row);
-    const ushort col_local = stripe * ushort(HADAMARD_TRANSFORM_BLOCK_SIZE) + simd_lane;
-    T transformed = hadamard::simdgroup_output_transform(
-        simd_lane,
-        source[size_t(row_local) * size_t(source_stride) + size_t(col_local)],
-        rht_factors_block[col_local]
-    );
-    if (apply_bias) {
-      transformed = T(float(transformed) + float(bias_block[col_local]));
+  const ushort lane_row = simd_lane / hadamard::LANES_PER_BLOCK;
+  const ushort lane_column = simd_lane % hadamard::LANES_PER_BLOCK * hadamard::VECTOR_SIZE;
+  for (ushort first_row = (SINGLE_SIMDGROUP ? 0 : thread_context.simdgroup_index) * ROWS_PER_PASS;
+       first_row < tile_block_rows;
+       first_row += (SINGLE_SIMDGROUP ? 1 : simdgroup_count) * ROWS_PER_PASS) {
+    const ushort row = first_row + lane_row;
+    const bool active = row < tile_block_rows;
+    const auto source_row = source + size_t(row) * source_stride;
+    device T* output_row = output_block + size_t(row) * leading_dimension_d;
+    for (ushort column = lane_column; column < tile_block_cols; column += HADAMARD_TRANSFORM_BLOCK_SIZE) {
+      const float4 values = active ? float4(load_vec4(source_row + column)) : 0.0f;
+      const float4 rotated = hadamard::simdgroup_transform_vector(simd_lane, values, HADAMARD_TRANSFORM_BLOCK_SIZE);
+      if (active) {
+        auto result = vec<T, hadamard::VECTOR_SIZE>(rotated * float4(load_vec4(rht_factors_block + column)));
+        if (apply_bias) {
+          result = vec<T, hadamard::VECTOR_SIZE>(float4(result) + float4(load_vec4(bias_block + column)));
+        }
+        store_vec4(output_row + column, result);
+      }
     }
-    output_block[size_t(row_local) * size_t(leading_dimension_d) + size_t(col_local)] = transformed;
   }
 }

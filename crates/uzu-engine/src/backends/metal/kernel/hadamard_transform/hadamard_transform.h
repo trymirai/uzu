@@ -18,6 +18,11 @@ static METAL_FUNC vec<T, 4> load_vec4(const device T* source) {
   return *reinterpret_cast<const device packed_vec<T, 4>*>(source);
 }
 
+template <typename T>
+static METAL_FUNC vec<T, 4> load_vec4(const threadgroup T* source) {
+  return *reinterpret_cast<const threadgroup packed_vec<T, 4>*>(source);
+}
+
 template <typename T, typename SourceT>
 static METAL_FUNC void store_vec4(device T* destination, const vec<SourceT, 4> source) {
   *reinterpret_cast<device packed_vec<T, 4>*>(destination) = vec<T, 4>(source);
@@ -67,16 +72,6 @@ static METAL_FUNC void simdgroup_transform(ushort lane_index, thread float* valu
   for (ushort index = 0; index < VALUES_PER_LANE; ++index) {
     values[index] /= sqrt(static_cast<float>(SIZE));
   }
-}
-
-static METAL_FUNC float simdgroup_transform(ushort lane_index, float lane_value) {
-  simdgroup_transform<1, HADAMARD_TRANSFORM_BLOCK_SIZE>(lane_index, &lane_value);
-  return lane_value;
-}
-
-template <typename T>
-static METAL_FUNC T simdgroup_output_transform(ushort lane_index, T lane_value, int32_t lane_factor) {
-  return T(simdgroup_transform(lane_index, float(lane_value)) * float(lane_factor));
 }
 
 // Each thread owns VECTOR_SIZE consecutive elements.
