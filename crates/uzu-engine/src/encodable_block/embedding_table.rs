@@ -19,6 +19,7 @@ use crate::{
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         hybrid_spec::{AnyIncoherenceProcessorSpec, HadamardSpec, HybridSpec, IncoherenceProcessingMode},
+        output_stack::OutputStackError,
     },
     data_type::DataType,
     encodable_block::weight_matrix::{WeightMatrix, WeightMatrixError},
@@ -29,6 +30,8 @@ type LookupKernel<B> = <<B as Backend>::Kernels as Kernels>::InputEmbeddingLooku
 
 #[derive(Debug, Error)]
 pub enum EmbeddingTableError<B: Backend> {
+    #[error(transparent)]
+    OutputStack(#[from] OutputStackError),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
@@ -169,7 +172,7 @@ impl<B: Backend> EmbeddingTable<B> {
             };
             let storage = match spec {
                 AnyWeightMatrixSpec::OutputStackSpec(stack) => {
-                    let parts = stack.into_parts(rows).map_err(EmbeddingTableError::UnsupportedConfiguration)?;
+                    let parts = stack.into_parts(rows)?;
                     for (index, (local, spec)) in parts.into_iter().enumerate().rev() {
                         pending.push(PendingPart {
                             rows: range.start + local.start..range.start + local.end,

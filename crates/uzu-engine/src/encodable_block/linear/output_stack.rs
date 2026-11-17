@@ -127,9 +127,7 @@ impl<B: Backend> OutputStack<B> {
             spec => spec,
         };
         let (specs, stacked) = match spec {
-            AnyWeightMatrixSpec::OutputStackSpec(stack) => {
-                (stack.into_parts(output_dim).map_err(LinearBlockError::UnsupportedConfiguration)?, true)
-            },
+            AnyWeightMatrixSpec::OutputStackSpec(stack) => (stack.into_parts(output_dim)?, true),
             spec => (vec![(0..output_dim, spec)], false),
         };
         if stacked && bias_tree.is_some() {

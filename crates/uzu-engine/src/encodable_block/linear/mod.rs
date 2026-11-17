@@ -17,7 +17,7 @@ use crate::{
             matmul::{MatmulA, MatmulKernel},
         },
     },
-    config::weight_matrix::AnyWeightMatrixSpec,
+    config::weight_matrix::{AnyWeightMatrixSpec, output_stack::OutputStackError},
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -85,6 +85,8 @@ pub struct LinearInputPreparation<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum LinearBlockError<B: Backend> {
+    #[error(transparent)]
+    OutputStack(#[from] OutputStackError),
     #[error("LinearMatmul error: {0}")]
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Backend error: {0}")]
