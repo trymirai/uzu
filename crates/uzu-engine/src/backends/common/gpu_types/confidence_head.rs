@@ -1,3 +1,5 @@
+use bytemuck::NoUninit;
+
 pub const MODEL_MAX: u32 = 64;
 pub const POOL_HIDDEN_MAX: u32 = 16;
 pub const EDGE_HIDDEN_MAX: u32 = 128;
@@ -8,7 +10,7 @@ pub const POOL_INPUTS: u32 = 3;
 pub const RELATIONS: u32 = 6;
 pub const TREE_ROWS_MAX: u32 = 1024;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, NoUninit)]
 #[repr(C)]
 pub struct ConfidenceHeadParams {
     pub candidates: u32,
