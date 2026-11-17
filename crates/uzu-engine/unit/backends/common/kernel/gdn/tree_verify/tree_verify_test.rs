@@ -1,5 +1,3 @@
-#![cfg(backend = "metal")]
-
 use futures::executor::block_on;
 use half::bf16;
 use num_traits::Float;
@@ -12,12 +10,11 @@ use crate::{
             gpu_types::activation_type::ActivationType, kernel::TreeVerifyKernel,
         },
         cpu::Cpu,
-        metal::Metal,
     },
     data_type::DataTypeRepr,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer_with_data},
+        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
     },
 };
 
@@ -90,8 +87,10 @@ fn run<B: Backend, T: DataTypeRepr + Float>(
 fn test_tree_verify() {
     for act_type in [ActivationType::SILU, ActivationType::SIGMOID] {
         for n in [1, 16, 17, 32] {
-            assert_eq_float(&run::<Cpu, f32>(n, act_type), &run::<Metal, f32>(n, act_type), 5e-4, "f32");
-            assert_eq_float(&run::<Cpu, bf16>(n, act_type), &run::<Metal, bf16>(n, act_type), 1.6e-2, "bf16");
+            for_each_non_cpu_backend!(|B| {
+                assert_eq_float(&run::<Cpu, f32>(n, act_type), &run::<B, f32>(n, act_type), 5e-4, "f32");
+                assert_eq_float(&run::<Cpu, bf16>(n, act_type), &run::<B, bf16>(n, act_type), 1.6e-2, "bf16");
+            });
         }
     }
 }
