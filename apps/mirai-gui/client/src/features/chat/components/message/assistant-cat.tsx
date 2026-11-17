@@ -70,7 +70,7 @@ export function PendingStatus({ phase }: { phase: AssistantPhase }) {
     <span key={phase} className="flex h-7 items-center animate-uzu-swap">
       <TextShimmer
         duration={1.6}
-        className="text-[15px] font-[400] leading-[1.3] [--base-color:var(--color-label-muted)]"
+        className="text-[length:var(--chat-text,15px)] font-[400] leading-[1.3] [--base-color:var(--color-label-muted)]"
       >
         {label}
       </TextShimmer>

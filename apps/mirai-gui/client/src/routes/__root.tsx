@@ -12,6 +12,8 @@ import { ToastProvider } from "@/components/ui/toast/toast-provider";
 import { TooltipProvider } from "@/components/ui/tooltip/provider";
 import { HoverPopoverProvider } from "@/components/ui/popover/hover-popover/provider";
 import { useAppInitialization } from "@/hooks/use-app-initialization";
+import { useWindowJumpMorph } from "@/hooks/use-window-jump-morph";
+import { ZoomBadge } from "@/components/zoom-badge";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -28,6 +30,7 @@ function RootComponent() {
   useGlobalDownloadToasts();
   useAppNavigationEvents();
   useSaveFailureToast();
+  useWindowJumpMorph();
 
   useEffect(() => {
     setMobile(isMobile);
@@ -42,6 +45,7 @@ function RootComponent() {
             <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
             <Outlet />
             <ToastProvider />
+            <ZoomBadge />
           </div>
         </HoverPopoverProvider>
       </TooltipProvider>
@@ -64,11 +68,12 @@ function RootComponent() {
               isSidebarOpen && !isMobile ? "pl-0" : "pl-2",
             )}
           >
-            <main className="flex-1 min-h-0 overflow-clip rounded-[12px] border-[0.5px] border-border-default bg-background shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
+            <main className="@container flex-1 min-h-0 overflow-clip rounded-[12px] border-[0.5px] border-border-default bg-background shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
               <Outlet />
             </main>
           </div>
           <ToastProvider />
+          <ZoomBadge />
         </div>
       </HoverPopoverProvider>
     </TooltipProvider>

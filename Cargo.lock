@@ -4760,9 +4760,13 @@ dependencies = [
 name = "mirai-gui"
 version = "0.6.17"
 dependencies = [
+ "block2",
  "chrono",
  "futures",
  "hanashi",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "plist",
  "schemars 1.2.3",
  "serde",

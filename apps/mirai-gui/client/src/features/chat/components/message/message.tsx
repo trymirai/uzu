@@ -252,7 +252,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
       >
         <AssistantCat phase={phase} live={!!isLast} />
       </div>
-      <div className="text-label-title relative min-w-0 flex-1 rounded-[5px] text-[15px] leading-[1.6]">
+      <div className="text-label-title relative min-w-0 flex-1 rounded-[5px] text-[length:var(--chat-text,15px)] leading-[1.6]">
         {pendingPhase ? <PendingStatus phase={pendingPhase} /> : null}
         {isLast ? <UzuBirdAnswerSync answerReady={phase === "done"} /> : null}
         <div

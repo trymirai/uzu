@@ -6,6 +6,30 @@ import { persist } from "zustand/middleware";
 export type ChatWidth = 768 | 1000 | 1200;
 export const DEFAULT_CHAT_WIDTH: ChatWidth = 1000;
 
+/*
+ * Each chat width setting is a range, not a fixed number. Up to a content panel about 1500px wide
+ * (any laptop) a setting is its plain width: Narrow 768, Medium 1000, Wide 1200. On bigger screens it
+ * grows with the panel (cqw: the panel is a size container, see routes/__root.tsx) until its cap, so
+ * a 32" monitor isn't mostly empty: there Narrow lands near the old Wide and Medium above it.
+ */
+const FLUID_CHAT_WIDTH: Record<ChatWidth, { share: number; max: number }> = {
+  768: { share: 51.2, max: 1200 },
+  1000: { share: 66.7, max: 1600 },
+  1200: { share: 80, max: 2000 },
+};
+
+/** The chat column's width for a setting, as CSS: its base width, growing on large panels. */
+export const chatWidthCss = (width: ChatWidth): string => {
+  const { share, max } = FLUID_CHAT_WIDTH[width];
+  return `clamp(${width}px, ${share}cqw, ${max}px)`;
+};
+
+/**
+ * Message text grows a little on very wide panels, so the wider column doesn't turn into very long
+ * lines of small text: 15px up to a 1500px panel, rising to 16.5px at 2250px and beyond.
+ */
+export const CHAT_TEXT_SIZE_CSS = "clamp(15px, calc(15px + (100cqw - 1500px) * 0.002), 16.5px)";
+
 export type ThemeMode = "system" | "light" | "dark";
 
 const resolveTheme = (stored: { theme?: unknown; isDarkMode?: unknown }): ThemeMode =>
