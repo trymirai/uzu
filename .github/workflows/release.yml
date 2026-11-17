@@ -206,6 +206,36 @@ jobs:
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
+      # ---------------------------------------------------------------
+      # The version bump goes to main before the build, so nothing
+      # merged during the build can collide with it.
+      # ---------------------------------------------------------------
+      - name: "Version: Generate GitHub App token"
+        id: version-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: trymirai
+          repositories: uzu
+
+      - name: "Version: Bump and push"
+        env:
+          GH_TOKEN: ${{ steps.version-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          cargo tools version "${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "main is already at ${VERSION}"
+            exit 0
+          fi
+          git commit -m "Bump version to ${VERSION}"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/trymirai/uzu.git"
+          git push origin HEAD:main
+
       - name: "Release: Install tools"
         run: |
           cargo tools install python
@@ -226,9 +256,6 @@ jobs:
       #            "https://github.com/shader-slang/slang/releases/download/v${slang_version}/slang-${slang_version}-macos-aarch64.tar.gz" |
       #            tar -xz -C "$slang_dir"
       #          echo "SLANG_DIR=$slang_dir" >> "$GITHUB_ENV"
-
-      - name: "Release: Sync"
-        run: cargo tools sync
 
       - name: "Release: Create staging directory"
         run: |
@@ -327,20 +354,14 @@ jobs:
           fi
 
       # ---------------------------------------------------------------
-      # Commit + tag locally now that sync/build output is in the tree.
-      # The push happens at the very end, after every publish step has
-      # succeeded.
+      # Commit + tag locally what points users at this release. The push
+      # happens at the very end, after every publish step has succeeded.
       # ---------------------------------------------------------------
       - name: "Release: Commit and tag"
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
           git add -A
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Release ${VERSION}"
-          fi
+          git commit -m "Release ${VERSION}"
           git tag "${VERSION}"
 
       # ---------------------------------------------------------------
@@ -423,8 +444,17 @@ jobs:
         run: |
           set -euo pipefail
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/trymirai/uzu.git"
-          git push origin HEAD:main
           git push origin "${VERSION}"
+          # The tag stays on what was built; main gets the commit replayed on whatever was merged meanwhile.
+          until git push origin HEAD:main; do
+            rejected_at="$(git rev-parse origin/main)"
+            git fetch origin main
+            if [ "$(git rev-parse origin/main)" = "$rejected_at" ]; then
+              echo "main rejected the push without having moved" >&2
+              exit 1
+            fi
+            git rebase origin/main
+          done
 
       - name: "Release: Attach binaries"
         uses: softprops/action-gh-release@v3

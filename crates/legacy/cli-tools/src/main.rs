@@ -7,7 +7,7 @@ use cli_tools::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
         WasmLanguageBackend,
     },
-    release::run_release,
+    release::{run_release, run_version},
     sync::run_sync,
     types::{Command, Configuration, Language},
 };
@@ -60,7 +60,11 @@ enum Commands {
     },
     /// Verify that the working tree has no uncommitted changes after building each language
     Verify,
-    /// Bump version, sync, build all languages, and stage release artifacts
+    /// Bump the version of everything inside the monorepo, none of which needs a build; nothing to do at that version
+    Version {
+        version: String,
+    },
+    /// Build all languages at the workspace version, stage release artifacts, and point the READMEs and Package.swift at them
     Release {
         version: String,
         /// Directory to stage release artifacts into
@@ -167,6 +171,9 @@ async fn main() -> Result<()> {
             check,
         }) => run_sync(check)?,
         Some(Commands::Verify) => run_verify(&config)?,
+        Some(Commands::Version {
+            version,
+        }) => run_version(&version)?,
         Some(Commands::Release {
             version,
             path,
