@@ -13,7 +13,6 @@ use crate::{
     data_type::DataTypeRepr,
     tests::{
         cold_pool::ColdPool,
-        helpers::for_each_backend,
         matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop_named, quant_arguments},
         util::type_short_name,
     },
@@ -54,14 +53,19 @@ fn bench_gemv_typed<B: Backend, T: DataTypeRepr + Float>(
     }
 }
 
+fn bench_backend<B: Backend>(c: &mut Criterion) {
+    let context = block_on(<B as Backend>::Context::new()).unwrap();
+    bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs32", 32, 4, QuantizationMethod::ScaleBias);
+    bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::ScaleZeroPoint);
+    bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
+    bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
+    bench_gemv_typed::<B, bf16>(c, &context, "Sym_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleSymmetric);
+}
+
+// Not Vulkan: the benchmark loop reads GPU execution time, which the Vulkan backend does not report.
 #[uzu_bench]
 fn bench_gemv(c: &mut Criterion) {
-    for_each_backend!(|B| {
-        let context = block_on(<B as Backend>::Context::new()).unwrap();
-        bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs32", 32, 4, QuantizationMethod::ScaleBias);
-        bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
-        bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_gemv_typed::<B, bf16>(c, &context, "Sym_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleSymmetric);
-    });
+    #[cfg(backend = "metal")]
+    bench_backend::<crate::backends::metal::Metal>(c);
+    bench_backend::<crate::backends::cpu::Cpu>(c);
 }

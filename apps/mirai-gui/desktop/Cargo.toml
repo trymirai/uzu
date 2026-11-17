@@ -24,7 +24,7 @@ schemars.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 futures.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, features = ["metal"] }
 hanashi.workspace = true

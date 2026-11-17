@@ -6,6 +6,7 @@ mod gpu_types;
 mod kernel;
 mod vk_compute_pipeline;
 mod vk_context;
+mod vulkan;
 
 pub use buffer::{VkBuffer, VkBufferCpuGpu, VkSparseBuffer};
 pub use command_buffer::{
@@ -20,3 +21,4 @@ pub use error::{Error, VkBufferError, VkCommandBufferError, VkContextError, VkKe
 pub use kernel::*;
 pub use vk_compute_pipeline::{VkComputePipeline, VkComputePipelineKey, VkPipelines};
 pub use vk_context::VkContext;
+pub use vulkan::Vulkan;
