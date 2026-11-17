@@ -11,7 +11,7 @@ import generated.activation_transform;
   [[Optional("(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<int8_t> q_out,
   [[Optional("(ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<float> scales_out,
   [[Optional("(ops == ActivationTransformOp::QuantizeWithGroupSums)")]] RWStructuredBuffer<int32_t> group_sums_out,
-  StructuredBuffer<int32_t> rht_factors,
+  [[Optional("hadamard_size != 0")]] StructuredBuffer<int32_t> rht_factors,
   uint32_t batch_size,
   uint32_t element_count,
   [[Optional("(ops == ActivationTransformOp::PackHalf)")]] RWStructuredBuffer<uint32_t> packed_half_out,

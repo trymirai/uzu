@@ -52,7 +52,14 @@ fn run(
         let factors = create_buffer_with_data::<Metal, i32>(context, &vec![1; input.k as usize]);
         ActivationTransform::<Metal>::quantize(context, DataType::BF16, BLOCK_SIZE, format)
             .expect("pack")
-            .encode_pack_half(&buffers.x, &mut packed_activations, &factors, input.m, input.k, &mut command_buffer);
+            .encode_pack_half(
+                &buffers.x,
+                &mut packed_activations,
+                Some(&factors),
+                input.m,
+                input.k,
+                &mut command_buffer,
+            );
     }
     let mut arguments = quant_arguments(&mut buffers, input);
     if packed {

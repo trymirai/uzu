@@ -52,6 +52,6 @@ impl MatmulOutputWork {
         } else {
             &self.output_rht
         };
-        transform.encode_fp_in_place(output, factors, bias, m, n, command_buffer);
+        transform.encode_fp_in_place(output, Some(factors), bias, m, n, command_buffer);
     }
 }

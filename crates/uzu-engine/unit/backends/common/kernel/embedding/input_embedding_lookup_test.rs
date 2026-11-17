@@ -13,7 +13,7 @@ use crate::{
             gpu_types::{
                 d4s4,
                 embedding::EmbeddingTableKind::{self, D4S4, Dense, Quantized},
-                quantization::QuantizationMode::{self, I8, U4, U8},
+                quantization::QuantizationMode::{self, I8, U2, U4, U8},
                 quantization_method::QuantizationMethod::{self, ScaleBias, ScaleSymmetric, ScaleZeroPoint},
             },
             kernel::InputEmbeddingLookupKernel,
@@ -53,7 +53,7 @@ fn floats<T: DataTypeRepr + Float>(
 fn lookup<B: Backend, T: DataTypeRepr + Float>(
     table_kind: EmbeddingTableKind,
     quantization: Option<Quantization>,
-    use_hadamard: bool,
+    hadamard_size: u32,
 ) -> Vec<T> {
     let context = block_on(<B as Backend>::Context::new()).unwrap();
     let context = context.as_ref();
@@ -90,7 +90,7 @@ fn lookup<B: Backend, T: DataTypeRepr + Float>(
             bytes(&pattern(VOCAB_SIZE * MODEL_DIM / d4s4::VALUES_PER_CODE, 37))
         },
     };
-    let hadamard_factors = if use_hadamard {
+    let hadamard_factors = if hadamard_size != 0 {
         let signs: Vec<i32> = (0..MODEL_DIM)
             .map(|index| {
                 if index % 3 == 0 {
@@ -114,7 +114,7 @@ fn lookup<B: Backend, T: DataTypeRepr + Float>(
         group_size,
         mode,
         method,
-        use_hadamard,
+        hadamard_size,
     )
     .unwrap();
     let token_ids = create_buffer_with_data::<B, u32>(context, &TOKEN_IDS);
@@ -145,50 +145,96 @@ fn lookup<B: Backend, T: DataTypeRepr + Float>(
 fn check<T: DataTypeRepr + Float + Display>(
     table_kind: EmbeddingTableKind,
     quantization: Option<Quantization>,
-    use_hadamard: bool,
+    hadamard_size: u32,
 ) {
-    let expected = lookup::<Cpu, T>(table_kind, quantization, use_hadamard);
+    let expected = lookup::<Cpu, T>(table_kind, quantization, hadamard_size);
+    if let Some((U2, method, group_size)) = quantization {
+        let groups = MODEL_DIM.div_ceil(group_size);
+        let codes = pattern(VOCAB_SIZE * MODEL_DIM / 4, 37);
+        let zero_points = pattern(VOCAB_SIZE * groups.div_ceil(4), 53);
+        let reference = TOKEN_IDS
+            .into_iter()
+            .flat_map(|token| {
+                let codes = &codes;
+                let zero_points = &zero_points;
+                (0..MODEL_DIM).map(move |column| {
+                    if token >= VOCAB_SIZE {
+                        return T::zero();
+                    }
+                    let group = column / group_size;
+                    let parameter = token * groups + group;
+                    let scale = T::from(0.02 + (parameter % 5) as f32 * 0.01).unwrap().to_f32().unwrap();
+                    let index = token * MODEL_DIM + column;
+                    let code = (codes[index as usize / 4] >> (2 * (index % 4))) & 3;
+                    let bias = match method {
+                        ScaleBias => T::from(-0.1 + parameter as f32 * 0.03).unwrap().to_f32().unwrap(),
+                        ScaleZeroPoint => {
+                            -scale
+                                * ((zero_points[(token * groups.div_ceil(4) + group / 4) as usize]
+                                    >> (2 * (group % 4)))
+                                    & 3) as f32
+                        },
+                        _ => -scale * 2.0,
+                    };
+                    T::from((scale * code as f32 + bias) * 1.5).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq_float(&reference, &expected, 1e-6, "independent U2 decoding");
+    }
     let in_vocab = 2 * MODEL_DIM as usize;
     assert!(expected[..in_vocab].iter().any(|value| *value != T::zero()), "in-vocab rows are empty");
     assert!(expected[in_vocab..].iter().all(|value| *value == T::zero()), "out-of-vocab row is not zero");
     for_each_non_cpu_backend!(|B| {
-        let actual = lookup::<B, T>(table_kind, quantization, use_hadamard);
-        assert_eq_float(&expected, &actual, 0.02, std::any::type_name::<B>());
+        let actual = lookup::<B, T>(table_kind, quantization, hadamard_size);
+        assert!(actual[in_vocab..].iter().all(|value| *value == T::zero()), "out-of-vocab row is not zero");
+        let tolerance = if hadamard_size != 0 && table_kind == Quantized {
+            1e-6
+        } else {
+            0.02
+        };
+        assert_eq_float(&expected, &actual, tolerance, std::any::type_name::<B>());
     });
 }
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::dense(Dense, None, false)]
-#[case::dense_hadamard(Dense, None, true)]
-#[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), false)]
-#[case::u4_zero_point_odd_group(Quantized, Some((U4, ScaleZeroPoint, 48)), false)]
-#[case::u4_symmetric(Quantized, Some((U4, ScaleSymmetric, 32)), false)]
-#[case::u8_bias(Quantized, Some((U8, ScaleBias, 32)), false)]
-#[case::u8_zero_point(Quantized, Some((U8, ScaleZeroPoint, 32)), false)]
-#[case::u8_symmetric(Quantized, Some((U8, ScaleSymmetric, 32)), false)]
-#[case::i8_symmetric(Quantized, Some((I8, ScaleSymmetric, 32)), false)]
-#[case::u4_bias_hadamard(Quantized, Some((U4, ScaleBias, 32)), true)]
-#[case::d4s4(D4S4, None, true)]
+#[case::dense(Dense, None, 0)]
+#[case::dense_hadamard(Dense, None, 32)]
+#[case::dense_hadamard128(Dense, None, 128)]
+#[case::u2_bias(Quantized, Some((U2, ScaleBias, 128)), 0)]
+#[case::u2_zero_point(Quantized, Some((U2, ScaleZeroPoint, 48)), 0)]
+#[case::u2_symmetric(Quantized, Some((U2, ScaleSymmetric, 128)), 0)]
+#[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), 0)]
+#[case::u4_zero_point_odd_group(Quantized, Some((U4, ScaleZeroPoint, 48)), 0)]
+#[case::u4_symmetric(Quantized, Some((U4, ScaleSymmetric, 32)), 0)]
+#[case::u8_bias(Quantized, Some((U8, ScaleBias, 32)), 0)]
+#[case::u8_zero_point(Quantized, Some((U8, ScaleZeroPoint, 32)), 0)]
+#[case::u8_symmetric(Quantized, Some((U8, ScaleSymmetric, 32)), 0)]
+#[case::i8_symmetric(Quantized, Some((I8, ScaleSymmetric, 32)), 0)]
+#[case::i8_hadamard128(Quantized, Some((I8, ScaleSymmetric, 64)), 128)]
+#[case::u4_bias_hadamard(Quantized, Some((U4, ScaleBias, 32)), 32)]
+#[case::d4s4(D4S4, None, 32)]
 fn input_embedding_lookup_bf16(
     #[case] table_kind: EmbeddingTableKind,
     #[case] quantization: Option<Quantization>,
-    #[case] use_hadamard: bool,
+    #[case] hadamard_size: u32,
 ) {
-    check::<bf16>(table_kind, quantization, use_hadamard);
+    check::<bf16>(table_kind, quantization, hadamard_size);
 }
 
 #[rstest]
 #[test_attr(uzu_test)]
-#[case::dense(Dense, None, false)]
-#[case::dense_hadamard(Dense, None, true)]
-#[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), false)]
+#[case::dense(Dense, None, 0)]
+#[case::dense_hadamard(Dense, None, 32)]
+#[case::u2_bias(Quantized, Some((U2, ScaleBias, 128)), 0)]
+#[case::u4_bias(Quantized, Some((U4, ScaleBias, 32)), 0)]
 fn input_embedding_lookup_f32(
     #[case] table_kind: EmbeddingTableKind,
     #[case] quantization: Option<Quantization>,
-    #[case] use_hadamard: bool,
+    #[case] hadamard_size: u32,
 ) {
-    check::<f32>(table_kind, quantization, use_hadamard);
+    check::<f32>(table_kind, quantization, hadamard_size);
 }
 
 #[uzu_test]
@@ -230,7 +276,7 @@ fn input_embedding_lookup_first_row() {
                 Some(group_size),
                 Some(mode),
                 Some(method),
-                false,
+                0,
             )
             .unwrap()
         };
