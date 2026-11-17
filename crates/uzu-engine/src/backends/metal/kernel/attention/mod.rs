@@ -201,10 +201,9 @@ impl AttentionKernel for AttentionMetalKernel {
                 None => (split_rows.div_ceil(4 * vector_queries), 4),
                 Some(tile) => (num_groups * (padded_rows / tile.rows), 8_u32.div_ceil(tile.simdgroups).max(2)),
             };
-            let occupancy = (!self.use_mxu).then(|| {
-                (command_buffer.context().gpu_core_count.max(1) * groups_per_core).div_ceil(threadgroups.max(1))
-            });
-            policy::splits(&params, head_dim, split_rows, occupancy)
+            let fill_splits =
+                (command_buffer.context().gpu_core_count.max(1) * groups_per_core).div_ceil(threadgroups.max(1));
+            policy::splits(&params, head_dim, split_rows, fill_splits, self.use_mxu)
         };
 
         let rows = split_rows * num_splits;
