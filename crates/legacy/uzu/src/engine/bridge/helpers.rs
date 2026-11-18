@@ -38,6 +38,7 @@ pub fn stream_error_to_backend_error<B: Backend>(error: LanguageModelStreamError
         LanguageModelStreamError::Grammar(error) => BackendError::Grammar {
             message: error.to_string(),
         },
+        LanguageModelStreamError::Images(error) => BackendError::other(error),
         LanguageModelStreamError::TrieAccept(error) => BackendError::TrieAccept {
             message: error.to_string(),
         },

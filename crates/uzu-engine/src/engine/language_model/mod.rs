@@ -176,10 +176,6 @@ impl<B: Backend> LanguageModel<B> {
         &self.tokenizer
     }
 
-    pub fn vision_supported(&self) -> bool {
-        self.vision.is_some()
-    }
-
     pub fn vision_config(&self) -> Option<&VisionConfig> {
         self.vision.as_ref().map(VisionModel::config)
     }

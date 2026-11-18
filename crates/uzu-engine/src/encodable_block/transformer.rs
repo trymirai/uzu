@@ -45,12 +45,10 @@ impl<B: Backend> TransformerState<B> {
         self.context_length
     }
 
-    /// RoPE position of the next token.
     pub fn rope_position(&self) -> u32 {
         self.context_length.checked_add_signed(self.rope_position_offset).expect("RoPE position is negative")
     }
 
-    /// Sets the RoPE position of the next token, e.g. after tokens with multimodal RoPE positions.
     pub fn set_rope_position(
         &mut self,
         rope_position: u32,

@@ -12,7 +12,7 @@ use crate::{
 
 /// An image in the prefill input: its pad tokens are already in the input from `start`, and the vision encoder output replaces their embeddings.
 pub struct VisionModelInputImage<'a> {
-    /// Index in the input of the image's first pad token
+    /// Index of the image's first pad token in the prefill `input` tokens (the tokens of this call only, not counting the context already in the state)
     pub start: u32,
     /// Preprocessed patches of a single frame: `[h * w, channels * temporal_patch_size * patch_size * patch_size]`
     pub pixel_values: &'a [f32],
@@ -36,7 +36,7 @@ pub struct VisionModelPrefilledImages<B: Backend> {
     /// RoPE positions `[t, h, w]` of every input token
     rope_positions: Box<[[u32; 3]]>,
     /// RoPE position of the token after the input
-    next_rope_position: u32,
+    pub next_rope_position: u32,
 }
 
 impl<B: Backend> VisionModelPrefilledImages<B> {
@@ -49,11 +49,6 @@ impl<B: Backend> VisionModelPrefilledImages<B> {
             sections: [11, 11, 10],
             positions: &self.rope_positions[chunk.start..chunk.end],
         }
-    }
-
-    /// RoPE position of the token after the prefill input.
-    pub fn next_rope_position(&self) -> u32 {
-        self.next_rope_position
     }
 
     /// Replacements of the image pad token embeddings in the prefill chunk at `chunk` of the input.
@@ -141,8 +136,8 @@ impl<B: Backend> VisionModel<B> {
     }
 
     /// RoPE positions `[t, h, w]` of an `input_length`-token input from `first_position`, as HF `get_rope_index` does:
-    /// a text token takes the next position on all axes, and an image starting at position `p` gets
-    /// `[p, p + row, p + column]`, with the text after it continuing from `p + max(height, width)`.
+    /// a text token takes the next position on all axes, and an image starting at position `p` gets `[p, p + row, p + column]`,
+    /// with the text after it continuing from `p + max(height, width)`.
     /// Also returns the position after the input.
     fn rope_positions(
         images: &[VisionModelEncodedImage<B>],

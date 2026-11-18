@@ -107,8 +107,6 @@ impl<B: Backend> Attention<B> {
         Ok((attention, in_projection_input_hadamard_factors))
     }
 
-    /// `new` with the qkv(g) and out projections already built; the rest is still read from `parameter_tree`.
-    /// With `has_rope`, `encode` takes precalculated RoPE tables; `max_rope_length` bounds the context, if any.
     pub async fn with_projections(
         data_type: DataType,
         has_rope: bool,

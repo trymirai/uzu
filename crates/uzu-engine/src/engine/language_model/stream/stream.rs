@@ -363,7 +363,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         };
 
         if let Some(images) = &prefilled_images {
-            self.model_state.transformer_state.set_rope_position(images.next_rope_position());
+            self.model_state.transformer_state.set_rope_position(images.next_rope_position);
         }
 
         let logits = decoder_output.logits.unwrap();

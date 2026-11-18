@@ -10,8 +10,10 @@ pub struct PrecalculatedRoPE<B: Backend> {
 }
 
 /// Interleaved multimodal RoPE (Qwen3-VL style): each token has `[temporal, height, width]` positions.
-/// RoPE pair `i` rotates by the height position if `i % 3 == 1 && i < 3 * sections[1]`,
-/// by the width position if `i % 3 == 2 && i < 3 * sections[2]`, and by the temporal position otherwise.
+/// RoPE pair `i` rotates:
+///  - by the height position if `i % 3 == 1 && i < 3 * sections[1]`,
+///  - by the width position if `i % 3 == 2 && i < 3 * sections[2]`,
+///  - by the temporal position otherwise.
 pub struct MultimodalRoPEPositions<'a> {
     pub sections: [u32; 3],
     pub positions: &'a [[u32; 3]],
