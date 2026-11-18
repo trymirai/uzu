@@ -1,2 +1,7 @@
 [bindings.swift]
 generate_codable_conformance = true
+
+[bindings.kotlin]
+package_name = "com.trymirai.uzu.downloadmanager"
+android = true
+generate_immutable_records = true

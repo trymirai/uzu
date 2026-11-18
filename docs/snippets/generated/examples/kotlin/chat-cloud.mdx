@@ -1,0 +1,34 @@
+```kotlin
+package com.trymirai.uzu.examples
+
+import android.content.Context
+import com.trymirai.uzu.Engine
+import com.trymirai.uzu.EngineConfig
+import com.trymirai.uzu.Uzu
+import com.trymirai.uzu.create
+import com.trymirai.uzu.shoji.ChatConfig
+import com.trymirai.uzu.shoji.ChatMessage
+import com.trymirai.uzu.shoji.ChatReplyConfig
+import com.trymirai.uzu.shoji.ReasoningEffort
+import com.trymirai.uzu.system
+import com.trymirai.uzu.user
+
+suspend fun runChatCloud(context: Context) {
+    Uzu.initialize(context)
+    val engineConfig = EngineConfig.create().withOpenaiApiKey("OPENAI_API_KEY")
+    val engine = Engine.create(engineConfig)
+
+    val model = engine.model("gpt-5") ?: return
+
+    val messages = listOf(
+        ChatMessage.system().withReasoningEffort(ReasoningEffort.LOW),
+        ChatMessage.user().withText("How LLMs work"),
+    )
+
+    val session = engine.chat(model, ChatConfig.create())
+    val message = session.reply(messages, ChatReplyConfig.create()).lastOrNull()?.message ?: return
+
+    println("Reasoning: ${message.reasoning() ?: "empty"}")
+    println("Text: ${message.text() ?: "empty"}")
+}
+```

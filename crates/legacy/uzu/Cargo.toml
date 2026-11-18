@@ -119,6 +119,11 @@ fancy-regex.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))'.dependencies]
 uzu-engine = { workspace = true, features = ["vulkan"] }
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk-context.workspace = true
+rustls-platform-verifier.workspace = true
+
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
