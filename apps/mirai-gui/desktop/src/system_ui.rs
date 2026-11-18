@@ -5,6 +5,9 @@ use tauri::{
 
 const MENU_NEW_CHAT_ID: &str = "menu:new-chat";
 const MENU_SETTINGS_ID: &str = "menu:settings";
+const MENU_ZOOM_IN_ID: &str = "menu:zoom-in";
+const MENU_ZOOM_OUT_ID: &str = "menu:zoom-out";
+const MENU_ZOOM_RESET_ID: &str = "menu:zoom-reset";
 
 // Before the startup setting was removed, tauri-plugin-autostart used the
 // product name (Mirai) and LaunchAgent mode. Retire only that registration for
@@ -87,7 +90,13 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
         .build()?;
     let edit_menu =
         SubmenuBuilder::new(app, "Edit").undo().redo().separator().cut().copy().paste().select_all().build()?;
-    let view_menu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+    let view_menu = SubmenuBuilder::new(app, "View")
+        .item(&MenuItem::with_id(app, MENU_ZOOM_RESET_ID, "Actual Size", true, Some("CmdOrCtrl+0"))?)
+        .item(&MenuItem::with_id(app, MENU_ZOOM_IN_ID, "Zoom In", true, Some("CmdOrCtrl+="))?)
+        .item(&MenuItem::with_id(app, MENU_ZOOM_OUT_ID, "Zoom Out", true, Some("CmdOrCtrl+-"))?)
+        .separator()
+        .fullscreen()
+        .build()?;
     let window_menu = SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, "Window")
         .minimize()
         .maximize()
@@ -107,6 +116,15 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
         MENU_SETTINGS_ID => {
             show_and_focus_main(app);
             let _ = app.emit("app:open-preferences", ());
+        },
+        MENU_ZOOM_IN_ID => {
+            crate::zoom::step(app, crate::zoom::Step::In);
+        },
+        MENU_ZOOM_OUT_ID => {
+            crate::zoom::step(app, crate::zoom::Step::Out);
+        },
+        MENU_ZOOM_RESET_ID => {
+            crate::zoom::step(app, crate::zoom::Step::Reset);
         },
         _ => {},
     });

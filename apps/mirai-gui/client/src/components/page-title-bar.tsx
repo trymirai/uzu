@@ -22,7 +22,7 @@ export function PageTitleBar({ children, className }: { children: ReactNode; cla
       />
       <div
         className={twMerge(
-          "pointer-events-auto flex min-h-[72px] items-center gap-3 px-5 pt-7 pb-3 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto min-w-0",
+          "follows-window pointer-events-auto flex min-h-[72px] items-center gap-3 px-5 pt-7 pb-3 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto min-w-0",
           narrow && "pt-14",
           className,
         )}

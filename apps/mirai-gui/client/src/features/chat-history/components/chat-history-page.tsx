@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { SearchInput } from "@/components/ui/search-input";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatStore } from "@/stores/use-chat-store";
-import { useAppStore } from "@/stores/use-app-store";
+import { chatWidthCss, useAppStore } from "@/stores/use-app-store";
 
 export function ChatHistoryPage() {
   const navigate = useNavigate();
@@ -94,7 +94,7 @@ export function ChatHistoryPage() {
   const labelText = isAllSelected ? "All selected" : selectedCount === 0 ? "Select all" : `${selectedCount} selected`;
 
   return (
-    <div className="flex h-full min-h-0 flex-col" style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}>
+    <div className="flex h-full min-h-0 flex-col" style={{ "--chat-width": chatWidthCss(chatWidth) } as CSSProperties}>
       <PageScroller
         className="bg-background"
         header={
@@ -156,7 +156,7 @@ export function ChatHistoryPage() {
           </PageTitleBar>
         }
       >
-        <div className="px-5 overflow-visible w-full min-h-full flex flex-col max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
+        <div className="follows-window px-5 overflow-visible w-full min-h-full flex flex-col max-w-[calc(var(--chat-width)+2.5rem)] mx-auto">
           {filteredChats.length === 0 && !searchQuery ? (
             <div className="flex flex-1 flex-col items-center justify-center pb-16 text-center animate-uzu-in">
               <div className="mb-1">

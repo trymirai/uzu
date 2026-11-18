@@ -28,6 +28,10 @@ jiff.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, features = ["metal"] }
 hanashi.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+block2.workspace = true
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
 
 [lints]
 workspace = true
