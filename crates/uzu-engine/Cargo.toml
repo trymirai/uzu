@@ -13,7 +13,7 @@ build = "build/main.rs"
 workspace = true
 
 [features]
-default = ["metal", "cpu"]
+default = ["metal", "vulkan", "cpu"]
 
 metal = [
     "dep:rayon",
@@ -34,10 +34,8 @@ vulkan = [
     "dep:ash",
     "dep:vk-mem",
     "dep:dirs",
-    "dep:shader-slang",
     "dep:blake3",
     "dep:serde_json",
-    "dep:regex",
     "dep:rayon",
     "dep:spirv",
     "dep:rangemap",
@@ -71,10 +69,14 @@ shader-slang = { workspace = true, optional = true }
 shader-slang-sys = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 naga = { workspace = true, optional = true, features = ["wgsl-in"] }
-spirv = { workspace = true, optional = true }
 blake3 = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["unbounded_depth"], optional = true }
 rayon = { workspace = true, optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.build-dependencies]
+shader-slang.workspace = true
+regex.workspace = true
+spirv = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }

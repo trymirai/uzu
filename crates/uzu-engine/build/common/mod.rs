@@ -3,7 +3,10 @@ pub mod codegen;
 pub mod compiler;
 pub mod constraints;
 pub mod envs;
-#[cfg(any(all(feature = "metal", target_os = "macos"), feature = "vulkan"))]
+#[cfg(any(
+    all(feature = "metal", target_os = "macos"),
+    all(feature = "vulkan", any(target_os = "linux", target_os = "windows"))
+))]
 pub mod expr_rewrite;
 pub mod gpu_type_paths;
 pub mod gpu_types;

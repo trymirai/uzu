@@ -8,10 +8,10 @@ use common::{compiler::Compiler, envs, gpu_type_paths::GpuTypePaths, gpu_types::
 #[cfg(all(feature = "metal", target_os = "macos"))]
 mod metal;
 
-#[cfg(any(feature = "vulkan", feature = "webgpu"))]
+#[cfg(any(all(feature = "vulkan", any(target_os = "linux", target_os = "windows")), feature = "webgpu"))]
 mod slang;
 
-#[cfg(feature = "vulkan")]
+#[cfg(all(feature = "vulkan", any(target_os = "linux", target_os = "windows")))]
 mod vulkan;
 
 #[cfg(feature = "webgpu")]
@@ -73,7 +73,7 @@ fn main() -> anyhow::Result<ExitCode> {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(all(feature = "vulkan", any(target_os = "linux", target_os = "windows")))]
     if backend_vulkan {
         compilers.push(Box::new(slang::SlangCompiler::<vulkan::VulkanTarget>::new()?));
     }

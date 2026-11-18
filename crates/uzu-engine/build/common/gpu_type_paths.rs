@@ -62,7 +62,10 @@ impl GpuTypePaths {
         Ok(())
     }
 
-    #[cfg_attr(not(any(feature = "vulkan", feature = "webgpu")), allow(dead_code))]
+    #[cfg_attr(
+        not(any(all(feature = "vulkan", any(target_os = "linux", target_os = "windows")), feature = "webgpu")),
+        allow(dead_code)
+    )]
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str)> {
         self.short_name_to_entry.iter().map(|(name, entry)| (&**name, &*entry.path))
     }

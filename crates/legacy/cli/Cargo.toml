@@ -13,8 +13,9 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["metal", "cpu"]
+default = ["metal", "vulkan", "cpu"]
 metal = ["uzu/metal"]
+vulkan = ["uzu/vulkan"]
 webgpu = ["uzu/webgpu"]
 cpu = ["uzu/cpu"]
 
