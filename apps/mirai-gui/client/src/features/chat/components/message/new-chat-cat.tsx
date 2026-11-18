@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { UzuCat } from "@/components/uzu-cat";
 import { chooseGreeting, rememberGreeting } from "./new-chat-greeting";
+import { CatHeart, PET_CURSOR, useCatPetting } from "./pet-cat";
 
 const COMPOSER_SELECTOR = "textarea[data-composer-input]";
 
@@ -62,7 +63,8 @@ function gazeToward(target: DOMRect, face: DOMRect): { x: number; y: number } {
 
 /**
  * The empty state of a new chat: the cat says something (see new-chat-greeting), waits for you
- * glancing at the box, and while you type it watches the caret move along the line.
+ * glancing at the box, and while you type it watches the caret move along the line. It can be
+ * petted, too (see pet-cat).
  */
 export function NewChatCat({ draft, missingModelAt = 0 }: { draft: string; missingModelAt?: number }) {
   const catRef = useRef<HTMLSpanElement>(null);
@@ -92,20 +94,50 @@ export function NewChatCat({ draft, missingModelAt = 0 }: { draft: string; missi
     setLookAt(gazeToward(new DOMRect(caret.x, caret.y, 0, 0), cat.getBoundingClientRect()));
   }, [draft]);
 
+  // Pet it: stroke across its head or click it (see pet-cat).
+  const faceRef = useRef<HTMLSpanElement>(null);
+  const petting = useCatPetting(catRef, faceRef);
+
   return (
     <div className="flex flex-col items-center animate-uzu-in">
-      <span ref={catRef} className="mb-1 flex text-text-primary">
-        <UzuCat
-          state={grumpy ? "grumpy" : draft ? "watch" : "ready"}
-          lookAt={grumpy ? glareAt : lookAt}
-          anchorRef={catRef}
-          size={112}
-          label={grumpy ? "uzu, waiting for a model" : draft ? "uzu, watching you type" : "uzu, ready"}
-        />
+      <span
+        ref={catRef}
+        role="button"
+        tabIndex={0}
+        aria-label="Pet uzu"
+        {...petting.handlers}
+        style={{ cursor: PET_CURSOR }}
+        className="relative mb-1 flex rounded-2xl text-text-primary outline-hidden focus-visible:shadow-focus"
+      >
+        <span ref={faceRef} className="flex will-change-transform">
+          <UzuCat
+            state={petting.petting ? "done" : grumpy ? "grumpy" : draft ? "watch" : "ready"}
+            lookAt={grumpy ? glareAt : lookAt}
+            anchorRef={catRef}
+            size={112}
+            label={
+              petting.petting
+                ? "uzu, purring"
+                : grumpy
+                  ? "uzu, waiting for a model"
+                  : draft
+                    ? "uzu, watching you type"
+                    : "uzu, ready"
+            }
+          />
+        </span>
+        <span aria-hidden className="pointer-events-none absolute inset-0">
+          {petting.hearts.map((heart) => (
+            <CatHeart key={heart.id} heart={heart} />
+          ))}
+        </span>
       </span>
       <div className="flex flex-col gap-1 text-center">
         <h2 className="text-[15px] font-[500] leading-[1.35] text-label-title text-balance">{choice.greeting.title}</h2>
-        <p className="text-[13px] leading-[1.45] text-label-muted text-pretty">{choice.greeting.subtitle}</p>
+        {/* While petted, uzu purrs here instead (aria-live, so it's heard as well as seen). */}
+        <p aria-live="polite" className="text-[13px] leading-[1.45] text-label-muted text-pretty">
+          {petting.line ?? choice.greeting.subtitle}
+        </p>
       </div>
     </div>
   );
