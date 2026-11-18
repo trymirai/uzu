@@ -52,6 +52,7 @@ enum GenerationJob<B: Backend> {
         output_tokens: B::GlobalGpuBuffer,
         batch_dim: BatchTopology<B>,
         input_token_ids: Option<B::GlobalGpuBuffer>,
+        trie_cpu: Option<(Vec<TrieNodeGpu>, Vec<u32>)>,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
         capture_span: Option<CaptureMatcherSpan>,
         pendings: Box<[<<B as Backend>::CommandBuffer as CommandBuffer>::Pending]>,
@@ -174,6 +175,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 output_tokens: output_tokens_buffer,
                 batch_dim,
                 input_token_ids,
+                trie_cpu,
                 hidden_features,
                 capture_span,
                 pendings,
@@ -199,21 +201,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     }
                     None
                 } else {
-                    let input_tokens = self
-                        .model
-                        .engine
-                        .context
-                        .copyout::<u32>(input_token_ids.as_ref().expect("trie batch carries token ids"))
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
-
-                    let trie_nodes = self
-                        .model
-                        .engine
-                        .context
-                        .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie batch carries trie nodes"))
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
+                    let (trie_nodes, input_tokens) = match trie_cpu {
+                        Some(copied) => copied,
+                        None => {
+                            let input_token_ids = input_token_ids.as_ref().expect("trie batch carries token ids");
+                            copyout_trie(&*self.model.engine.context, &batch_dim, input_token_ids).await?
+                        },
+                    };
 
                     let (accepted_token_indicies, accepted_input_token_ids, accepted_output_token_ids) =
                         trie::accept(&trie_nodes, &output_tokens, &input_tokens, self.options.grammar.as_mut())?;
@@ -434,6 +428,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             output_tokens: output_token,
             batch_dim,
             input_token_ids: None,
+            trie_cpu: None,
             hidden_features: decoder_output.hidden_features,
             capture_span: None,
             pendings: Box::new([command_buffer.end_encoding().submit()]),
@@ -461,7 +456,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
         let mut cpu_token = None;
-        let (batch_dim, token_ids, trie_seeds, mut speculator_pendings, mut trie_cpu) = if self.propose_trie
+        let (batch_dim, token_ids, trie_seeds, speculator_pendings, trie_cpu) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -537,9 +532,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             );
 
             // TODO(perf): CPU bubble for finding what rows we have to read from
-            // disk. we can overlap this with the first couple of layers of the
-            // transformer, that don't use ngrams.
-            let (speculator_pendings, trie_cpu) = if self.model.decoder.has_ngram_embeddings() {
+            // disk for ngrams. we can overlap this with the first couple of
+            // layers of the transformer, that don't use ngrams.
+            let (speculator_pendings, trie_cpu) = if self.model.decoder.has_ngram_embeddings()
+                || self.options.grammar.is_some()
+            {
                 for pending in [draft_pending, trie_pending] {
                     wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
                 }
@@ -648,23 +645,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let was_filled = if batch_dim.nodes().is_some() {
-                let (trie_nodes, trie_tokens) = match trie_cpu.take() {
-                    Some(copied) => copied,
-                    None => {
-                        let speculator_pendings =
-                            speculator_pendings.take().expect("trie decode carries its proposal's pendings");
-                        for pending in speculator_pendings {
-                            wait(pending, self.options.timestamps.as_ref())
-                                .await
-                                .map_err(LanguageModelStreamError::Backend)?;
-                        }
-                        copyout_trie(&*self.model.engine.context, &batch_dim, &token_ids).await?
-                    },
-                };
+                let (trie_nodes, trie_tokens) =
+                    trie_cpu.as_ref().expect("a grammar copies the trie out before the pass");
+                let trie_tokens = trie_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
 
-                let trie_tokens = trie_tokens.into_iter().map(|t| t as u64).collect::<Box<[_]>>();
-
-                trie::fill_bitmasks(&trie_nodes, &trie_tokens, bitmask.as_slice_mut(), self.model.vocab_size, grammar)
+                trie::fill_bitmasks(trie_nodes, &trie_tokens, bitmask.as_slice_mut(), self.model.vocab_size, grammar)
             } else {
                 grammar.next_bitmask(bitmask.as_slice_mut())
             };
@@ -754,6 +739,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             output_tokens,
             batch_dim,
             input_token_ids: Some(token_ids),
+            trie_cpu,
             hidden_features: decoder_output.hidden_features,
             capture_span,
             pendings: pendings.into_boxed_slice(),
