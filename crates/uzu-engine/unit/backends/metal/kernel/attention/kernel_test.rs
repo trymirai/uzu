@@ -58,7 +58,7 @@ fn attention_matches_cpu() {
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareKernel;
     const NAN: u16 = bf16::NAN.to_bits();
     const DENORMAL: u16 = 1; // 1 / scale overflows to inf
-    for (use_mxu, sparse) in [(false, false), (false, true), (true, false)]
+    for (use_mxu, sparse) in [(false, false), (false, true), (true, false), (true, true)]
         .into_iter()
         .filter(|&(use_mxu, _)| !use_mxu || metal.supports_mxu)
     {

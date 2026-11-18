@@ -25,8 +25,6 @@ static constant constexpr uint32_t TILE_QUERIES = 16;
 
 static constant constexpr uint32_t TILE_DIMS = 16;
 
-static constant constexpr uint32_t FRAGMENT_BYTES = TILE_KEYS * TILE_DIMS;
-
 static constant constexpr uint32_t SLICE_DIMS = 64;
 
 static constant constexpr uint32_t GROUP_ROWS = 8;

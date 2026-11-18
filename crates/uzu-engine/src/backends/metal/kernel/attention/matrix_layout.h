@@ -39,7 +39,9 @@ struct AttentionMatrixScratch {
   UZU_CONST int SIMD_KEYS = IS_SPARSE || HEAD_DIM == 512 ? 16 : 32;
   UZU_CONST int CHUNK_KEYS = 128;
   UZU_CONST int CHUNK_TABLE_WORDS = CHUNK_KEYS * int(sizeof(int) + 2 * sizeof(float)) / int(sizeof(ulong));
-  UZU_CONST int ROW_MASKS = USE_MXU ? Layout::BLOCK_ROWS : CHUNK_TABLE_WORDS;
+  UZU_CONST int ROW_MASKS =
+      USE_MXU ? (IS_SPARSE ? uzu::kv_layout::TILE_KEYS * HEAD_DIM / uzu::kv_layout::SLICE_DIMS : Layout::BLOCK_ROWS)
+              : CHUNK_TABLE_WORDS;
 
   UZU_CONST int QUERY_VECTORS_PER_BAND = int(HEAD_DIM) / (2 * uzu::kv_layout::TILE_DIMS) * METAL_SIMD_SIZE;
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;

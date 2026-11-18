@@ -18,7 +18,7 @@ VARIANTS(IS_SPARSE, false, true)
 CONSTRAINT(!USE_MXU || NUM_SIMDGROUPS % (HEAD_DIM / 64) == 0)
 CONSTRAINT(HEAD_DIM != 256 || NUM_SIMDGROUPS % 2 == 0)
 CONSTRAINT(HEAD_DIM != 512 || NUM_SIMDGROUPS % 4 == 0)
-CONSTRAINT(!IS_SPARSE || (!USE_MXU && HEAD_DIM == 256 && NUM_SIMDGROUPS == HEAD_DIM / 64))
+CONSTRAINT(!IS_SPARSE || (HEAD_DIM == 256 && NUM_SIMDGROUPS == HEAD_DIM / 64))
 KERNEL(AttentionMatrix)(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
@@ -55,7 +55,7 @@ KERNEL(AttentionMatrix)(
     const uint thread_index THREADS(NUM_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
   if constexpr (USE_MXU) {
-    attention_matrix_mxu<ScaleType, HEAD_DIM, NUM_SIMDGROUPS>(
+    attention_matrix_mxu<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE>(
         query_codes,
         query_scales,
         key_codes,
@@ -78,6 +78,8 @@ KERNEL(AttentionMatrix)(
         trie_nodes,
         mask_free,
         is_trie,
+        query_slots,
+        slots_per_query,
         num_kv_heads,
         probability_exchange,
         row_masks,
