@@ -1,6 +1,4 @@
-use std::io;
-#[cfg(not(target_arch = "wasm32"))]
-use std::os::unix::fs::FileExt;
+use std::{io, os::unix::fs::FileExt};
 
 use thiserror::Error;
 
@@ -86,3 +84,7 @@ impl EmbeddingTableDisk {
         Ok(())
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../../unit/encodable_block/embedding_table_disk_test.rs"]
+mod tests;
