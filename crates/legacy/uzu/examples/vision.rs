@@ -35,7 +35,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .with_text("What's on the image?".to_string()),
     ];
-    let reply_start = std::time::Instant::now();
     let replies = session
         .reply(
             messages,
@@ -45,14 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         )
         .await?;
-    let reply_time = reply_start.elapsed();
     if let Some(reply) = replies.last() {
-        println!(
-            "E2E: reply {:.3} s, time to first token {:.3} s, output tokens {:?}",
-            reply_time.as_secs_f64(),
-            reply.stats.time_to_first_token.unwrap_or(f64::NAN),
-            reply.stats.tokens_count_output,
-        );
         println!("Input tokens: {:?}", reply.stats.tokens_count_input);
         println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
         println!("Text: {}", reply.message.text().unwrap_or_default());

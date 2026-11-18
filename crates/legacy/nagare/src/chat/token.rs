@@ -1,4 +1,4 @@
-use std::{iter, pin::Pin, sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use futures::{Stream, StreamExt, stream};
 use hanashi::{
@@ -15,8 +15,8 @@ use shoji::{
             Error,
             chat_message::{Output, ToolCallState},
             chat_token::{
-                Backend, ImageHash, Instance as ChatTokenBackendInstance, StreamConfig, StreamImage, StreamInput,
-                StreamOutput, TokenStreamMetrics,
+                Backend, Instance as ChatTokenBackendInstance, StreamConfig, StreamImage, StreamInput, StreamOutput,
+                TokenStreamMetrics,
             },
         },
     },
@@ -34,6 +34,9 @@ use tokio_util::sync::CancellationToken;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::util::power::{EnergyRecorder, Error as EnergyError};
 use crate::{chat::ChatSessionError, util::helpers::error_stream};
+
+/// Content hash of an image: equal content gives an equal hash.
+type ImageHash = [u8; 32];
 
 pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
@@ -229,7 +232,7 @@ impl Session {
         if cached_images_match
             && let Some(suffix) = self.encoding.try_append(messages).map_err(ChatSessionError::backend)?
         {
-            self.input = self.expand_images(messages, suffix.into_iter().map(u64::from).collect())?;
+            self.input = self.attach_images(messages, suffix.into_iter().map(u64::from).collect())?;
             self.cached_image_ids = image_hashes;
             return Ok(cached.len());
         }
@@ -239,7 +242,7 @@ impl Session {
         // Without an append operation preserving the sampled encoding, the newly
         // built encoding can describe the live backend only if token IDs match.
         if cached_images_match && rendered_ids.starts_with(&cached_ids) {
-            self.input = self.expand_images(messages, rendered_ids[cached_ids.len()..].to_vec())?;
+            self.input = self.attach_images(messages, rendered_ids[cached_ids.len()..].to_vec())?;
             self.cached_image_ids = image_hashes;
             return Ok(cached_ids.len());
         }
@@ -255,7 +258,7 @@ impl Session {
         } else {
             tracing::warn!("Reprefill: an image in the cached prompt changed");
         }
-        self.input = self.expand_images(messages, rendered_ids)?;
+        self.input = self.attach_images(messages, rendered_ids)?;
         self.cached_image_ids = image_hashes;
         Ok(0)
     }
@@ -270,9 +273,9 @@ impl Session {
         Ok(all_tokens)
     }
 
-    /// Replaces each image pad token the template rendered with `token_count` pads of its prepared image.
+    /// Pairs each image pad token the template rendered with its image URL.
     /// `tokens` is a suffix of the whole prompt, so its pads belong to the last images in `messages`.
-    fn expand_images(
+    fn attach_images(
         &self,
         messages: &[ChatMessage],
         tokens: Vec<u64>,
@@ -284,40 +287,26 @@ impl Session {
             });
         };
 
-        let pad_count = tokens.iter().filter(|&&token| token == pad).count();
+        let starts = tokens.iter().enumerate().filter(|&(_, &token)| token == pad).map(|(index, _)| index);
         let urls = image_urls(messages).collect::<Vec<_>>();
+        let pad_count = starts.clone().count();
         let first = urls.len().checked_sub(pad_count).ok_or_else(|| {
             ChatSessionError::backend(format!(
                 "prompt has {pad_count} image pad tokens, but messages have {} images",
                 urls.len()
             ))
         })?;
-        let mut images = urls[first..]
-            .iter()
-            .map(|url| self.instance.prepare_image(url))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(ChatSessionError::from)?
-            .into_iter();
-
-        let mut expanded = Vec::with_capacity(tokens.len());
-        let mut stream_images = Vec::with_capacity(pad_count);
-        for token in tokens {
-            if token != pad {
-                expanded.push(token);
-                continue;
-            }
-            let image = images.next().expect("one prepared image per pad token");
-            let start = expanded.len();
-            expanded.extend(iter::repeat_n(pad, image.token_count));
-            stream_images.push(StreamImage {
+        let images = starts
+            .zip(&urls[first..])
+            .map(|(start, url)| StreamImage {
                 start,
-                image,
-            });
-        }
+                url: url.to_string(),
+            })
+            .collect();
 
         Ok(StreamInput {
-            tokens: expanded,
-            images: stream_images,
+            tokens,
+            images,
         })
     }
 
@@ -330,7 +319,7 @@ impl Session {
             return Ok(Vec::new());
         }
 
-        image_urls(messages).map(|url| self.instance.image_id(url).map_err(ChatSessionError::from)).collect()
+        image_urls(messages).map(image_hash).collect()
     }
 
     fn build_output(
@@ -430,6 +419,11 @@ impl Session {
     pub fn sampling_defaults(&self) -> SamplingParameters {
         self.instance.sampling_defaults()
     }
+}
+
+fn image_hash(url: &str) -> Result<ImageHash, ChatSessionError> {
+    let bytes = std::fs::read(url).map_err(ChatSessionError::backend)?;
+    Ok(*blake3::hash(&bytes).as_bytes())
 }
 
 fn image_urls(messages: &[ChatMessage]) -> impl Iterator<Item = &str> {
