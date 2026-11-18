@@ -597,8 +597,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
         if let Some((nodes, tokens)) = &trie_cpu {
-            let parents = nodes.iter().map(|node| node.parent).collect::<Box<[_]>>();
-            self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, tokens, Some(&parents));
+            // trim padding rows
+            let real = nodes.iter().position(|node| node.trie_start == u32::MAX).unwrap_or(nodes.len());
+            let parents = nodes[..real].iter().map(|node| node.parent).collect::<Box<[_]>>();
+            self.model.decoder.prepare_ngram_rows(
+                &mut self.model_state.transformer_state,
+                &tokens[..real],
+                Some(&parents),
+            );
         } else if let Some(token) = cpu_token {
             self.model.decoder.prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None);
         }
