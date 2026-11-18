@@ -10,14 +10,14 @@ static const uint INPUT_EMBEDDING_LOOKUP_TILE = 256;
 
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
-[[Precondition("encode", "quantization_mode != QuantizationMode::U4.into() || model_dim.is_multiple_of(2)")]]
+[[Precondition("encode", "quantization_mode.is_none_or(|mode| model_dim.is_multiple_of(mode.packing_divisor()))")]]
 func InputEmbeddingLookup<T: IStorageFloat>(
   Ptr<uint, Access.Read> token_ids,
   Ptr<uint8_t, Access.Read> values,
   [[Optional("table_kind != EmbeddingTableKind::Dense")]] Ptr<T, Access.Read> scales,
   [[Optional("quantization_method == Some(QuantizationMethod::ScaleZeroPoint)")]] Ptr<uint8_t, Access.Read> zero_points,
   [[Optional("quantization_method == Some(QuantizationMethod::ScaleBias)")]] Ptr<T, Access.Read> biases,
-  [[Optional("use_hadamard")]] Ptr<int, Access.Read> hadamard_factors,
+  [[Optional("hadamard_size != 0")]] Ptr<int, Access.Read> hadamard_factors,
   [[Optional("table_kind == EmbeddingTableKind::D4S4")]] Ptr<uint8_t, Access.Read> ladder_indices,
   [[Optional("table_kind == EmbeddingTableKind::D4S4")]] Ptr<half, Access.Read> ladder,
   [[Optional("table_kind == EmbeddingTableKind::D4S4")]] Ptr<int8_t, Access.Read> codebook,
@@ -34,7 +34,7 @@ func InputEmbeddingLookup<T: IStorageFloat>(
   [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] uint group_size,
   [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] QuantizationMode quantization_mode,
   [[Specialize]] [[Optional("table_kind == EmbeddingTableKind::Quantized")]] QuantizationMethod quantization_method,
-  [[Specialize]] bool use_hadamard,
+  [[Specialize]] uint hadamard_size,
 ) {
   static_assert(INPUT_EMBEDDING_LOOKUP_TILE == 256, "one tile of Threads(256) per workgroup, Groups(div_ceil(256))");
   static_assert(COLUMNS_PER_LADDER_SCALE % VALUES_PER_CODE == 0, "D4S4 rows hold whole codes");
@@ -60,13 +60,16 @@ func InputEmbeddingLookup<T: IStorageFloat>(
       value = T.fromFloat(table[token * model_dim + column].toFloat() * scale).toFloat();
     } else if (table_kind == EmbeddingTableKind.Quantized) {
       let u4 = quantization_mode == QuantizationMode.U4;
+      let u2 = quantization_mode == QuantizationMode.U2;
       let group = column / group_size;
       let groups = (model_dim - 1) / group_size + 1;
       let scale_index = token * groups + group;
       let scale = scales[scale_index].toFloat();
-      let row = token * (u4 ? model_dim / 2 : model_dim);
+      let row = token * (u2 ? model_dim / 4 : u4 ? model_dim / 2 : model_dim);
       int code;
-      if (u4) {
+      if (u2) {
+        code = int((uint(values[row + column / 4]) >> (2 * (column % 4))) & 3u);
+      } else if (u4) {
         code = int(read_nibble(values, 2 * row + column));
       } else if (quantization_mode == QuantizationMode.I8) {
         code = int(int8_t(values[row + column]));
@@ -79,9 +82,10 @@ func InputEmbeddingLookup<T: IStorageFloat>(
         correction = biases[scale_index].toFloat();
       } else {
         correction = quantization_method == QuantizationMethod.ScaleZeroPoint
-                       ? float(u4 ? read_nibble(zero_points, 2 * token * ((groups + 1) / 2) + group)
-                                  : uint(zero_points[scale_index]))
-                       : (u4 ? 8.0 : 128.0);
+                       ? float(u2 ? ((uint(zero_points[token * ((groups + 3) / 4) + group / 4]) >> (2 * (group % 4))) & 3u)
+                                  : u4 ? read_nibble(zero_points, 2 * token * ((groups + 1) / 2) + group)
+                                       : uint(zero_points[scale_index]))
+                       : (u2 ? 2.0 : u4 ? 8.0 : 128.0);
       }
       value = T.fromFloat(quantized_value(scale, code, scale_bias, correction) * input_scale).toFloat();
     } else {
@@ -92,8 +96,8 @@ func InputEmbeddingLookup<T: IStorageFloat>(
       value = scales[token].toFloat() * ladder[ladder_index].toFloat() * point * input_scale;
     }
   }
-  if (use_hadamard) {
-    value = hadamard_transform<INPUT_EMBEDDING_LOOKUP_TILE>(value);
+  if (hadamard_size != 0) {
+    value = hadamard_transform<INPUT_EMBEDDING_LOOKUP_TILE>(value, hadamard_size, hadamard_size);
     if (active) {
       value = value * float(hadamard_factors[column]);
     }

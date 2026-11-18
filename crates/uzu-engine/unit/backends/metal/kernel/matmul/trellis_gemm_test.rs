@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rstest::rstest;
@@ -92,7 +94,6 @@ fn decode_level(
     (8 * field_sum + ((3 * (hash_byte & 15)) & 15)) as i32 - 54
 }
 
-type MetalBuffer = <Metal as Backend>::GlobalGpuBuffer;
 type MetalMatmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
 const CODEBOOK: TrellisCodebook = TrellisCodebook {
@@ -128,11 +129,24 @@ fn run_projection(
     dimensions: (usize, usize, usize),
     forced_plan: Option<(GemmTiling, u32)>,
 ) {
+    run_matmul(context, format, dimensions, None, forced_plan);
+}
+
+/// With `gathered_rows`, the weights hold only that window of rows and every output element gathers a random row
+/// from in and around it.
+fn run_matmul(
+    context: &MetalContext,
+    format: TrellisFormat,
+    dimensions: (usize, usize, usize),
+    gathered_rows: Option<Range<u32>>,
+    forced_plan: Option<(GemmTiling, u32)>,
+) {
     let (m, n, k) = dimensions;
+    let weight_rows = gathered_rows.as_ref().map_or(n, |rows| rows.len());
     let mut rng = SmallRng::seed_from_u64((m * k + n) as u64);
     let row_bytes = format.code_row_bytes(k as u32) as usize;
-    let stored: Vec<u8> = (0..n * row_bytes).map(|_| rng.random()).collect();
-    let row_scales: Vec<f32> = (0..n).map(|_| rng.random_range(0.001..0.01)).collect();
+    let stored: Vec<u8> = (0..weight_rows * row_bytes).map(|_| rng.random()).collect();
+    let row_scales: Vec<f32> = (0..weight_rows).map(|_| rng.random_range(0.001..0.01)).collect();
     let mut values: Vec<i8> = (0..m * k).map(|_| rng.random_range(-127..=127)).collect();
     if m > 1 {
         // Exercise the zero-activation path in the epilogue.
@@ -154,6 +168,10 @@ fn run_projection(
         })
         .collect();
     let activation_scales_host: Vec<f32> = (0..m).map(|_| rng.random_range(0.001..0.01)).collect();
+    let gather = gathered_rows.map(|rows| {
+        let indices: Vec<u32> = (0..m * n).map(|_| rng.random_range(0..rows.end + rows.start)).collect();
+        (create_buffer_with_data::<Metal, u32>(context, &indices), indices, rows)
+    });
     let activations = create_buffer_with_data::<Metal, i8>(context, &values);
     let group_sums = create_buffer_with_data::<Metal, f32>(context, &group_sums_host);
     let activation_scales = create_buffer_with_data::<Metal, f32>(context, &activation_scales_host);
@@ -179,7 +197,11 @@ fn run_projection(
             row_stride: Some((n + PADDING) as u32),
             ops: MatmulDOps::none(),
         },
-        gather: None::<MatmulGather<&MetalBuffer>>,
+        gather: gather.as_ref().map(|(indices, _, rows)| MatmulGather {
+            indices,
+            first_row: rows.start,
+            row_count: rows.len() as u32,
+        }),
         m: m as u32,
         n: n as u32,
         k: k as u32,
@@ -212,8 +234,15 @@ fn run_projection(
     let stride = n + PADDING;
     for (index, &got) in actual.iter().enumerate() {
         let token = index / stride;
-        let row = index % stride;
-        if row < n {
+        let column = index % stride;
+        let row = match &gather {
+            _ if column >= n => None,
+            Some((_, indices, rows)) => Some(indices[token * n + column])
+                .filter(|row| rows.contains(row))
+                .map(|row| (row - rows.start) as usize),
+            None => Some(column),
+        };
+        if let Some(row) = row {
             let row_values = &values[token * k..(token + 1) * k];
             let levels = &decoded_levels[row * k..(row + 1) * k];
             let level_dot: i32 = levels.iter().zip(row_values).map(|(&level, &value)| level * i32::from(value)).sum();
@@ -227,10 +256,10 @@ fn run_projection(
             let got = bf16::from_bits(got).to_f32();
             assert!(
                 (got - want).abs() <= RELATIVE_TOLERANCE * want.abs(),
-                "{format:?} ({m}, {n}, {k}) token {token} row {row}: got {got}, want {want}"
+                "{format:?} ({m}, {n}, {k}) token {token} column {column} row {row}: got {got}, want {want}"
             );
         } else {
-            assert_eq!(got, SENTINEL, "{format:?} M {m} N {n} K {k}, token {token}, row {row}");
+            assert_eq!(got, SENTINEL, "{format:?} M {m} N {n} K {k}, token {token}, column {column}");
         }
     }
 }
@@ -257,6 +286,10 @@ fn trellis_projection_matches_cpu_reference(#[case] format: TrellisFormat) {
     // Simdgroup plans with m up to 8 run the decode kernel. K fits every restart size.
     for m in 1..=8 {
         run_projection(&context, format, (m, 37, 4160), Some((GemmTiling::Tile16x32x32_Simdgroups2x1, 1)));
+    }
+    // Gathered rows are decoded per output element. K fits every restart size.
+    for (m, n) in [(1, 512), (4, 512), (3, 37)] {
+        run_matmul(&context, format, (m, n, 4160), Some(24..88), None);
     }
     // The forced plans' K are whole 64-column blocks.
     if whole_blocks(64) {

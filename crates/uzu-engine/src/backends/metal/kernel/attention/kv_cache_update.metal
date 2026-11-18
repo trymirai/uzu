@@ -22,22 +22,46 @@ PUBLIC KERNEL(KVCacheUpdate)(
   const kv_layout::KVShape shape{head_dim, num_kv_heads, static_cast<kv_layout::KVLayout>(backend_opaque_layout)};
   const uint kv_head = element / head_dim;
   const uint channel = element % head_dim;
-  for (uint i = 0; i < copy_count; ++i) {
-    const uint source = copies[i].source;
-    const uint destination = copies[i].destination;
-    in_place_k_codes[shape.k_code_index(destination, kv_head, channel)] =
-        in_place_k_codes[shape.k_code_index(source, kv_head, channel)];
-    if (!keys_only) {
-      in_place_v_codes[shape.v_code_index(destination, kv_head, channel)] =
-          in_place_v_codes[shape.v_code_index(source, kv_head, channel)];
-    }
-    if (channel == 0) {
-      const size_t source_scale = shape.scale_index(source, kv_head);
-      const size_t destination_scale = shape.scale_index(destination, kv_head);
-      in_place_k_scales[destination_scale] = in_place_k_scales[source_scale];
+  // Tiles load before storing; encode_accept asserts this is safe.
+  constexpr uint TILE = 2;
+  for (uint first = 0; first < copy_count; first += TILE) {
+    int8_t k_codes[TILE];
+    uchar v_codes[TILE];
+    bfloat k_scales[TILE];
+    bfloat v_scales[TILE];
+    const auto load = [&](uint i) {
+      const uint source = copies[first + i].source;
+      k_codes[i] = in_place_k_codes[shape.k_code_index(source, kv_head, channel)];
       if (!keys_only) {
-        in_place_v_scales[destination_scale] = in_place_v_scales[source_scale];
+        v_codes[i] = in_place_v_codes[shape.v_code_index(source, kv_head, channel)];
       }
+      if (channel == 0) {
+        k_scales[i] = in_place_k_scales[shape.scale_index(source, kv_head)];
+        if (!keys_only) {
+          v_scales[i] = in_place_v_scales[shape.scale_index(source, kv_head)];
+        }
+      }
+    };
+    const auto store = [&](uint i) {
+      const uint destination = copies[first + i].destination;
+      in_place_k_codes[shape.k_code_index(destination, kv_head, channel)] = k_codes[i];
+      if (!keys_only) {
+        in_place_v_codes[shape.v_code_index(destination, kv_head, channel)] = v_codes[i];
+      }
+      if (channel == 0) {
+        in_place_k_scales[shape.scale_index(destination, kv_head)] = k_scales[i];
+        if (!keys_only) {
+          in_place_v_scales[shape.scale_index(destination, kv_head)] = v_scales[i];
+        }
+      }
+    };
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < TILE && first + i < copy_count; ++i) {
+      load(i);
+    }
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < TILE && first + i < copy_count; ++i) {
+      store(i);
     }
   }
 }

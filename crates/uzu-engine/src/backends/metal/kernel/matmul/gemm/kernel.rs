@@ -154,7 +154,7 @@ impl GemmKernel {
     ) -> Result<(), MatmulMetalError> {
         let shape = MatmulShape::from_arguments(&arguments);
         // TODO: remove after GatherGEMM is supported
-        if arguments.gather.is_some() {
+        if arguments.gather.is_some() && !arguments.b.is_trellis() {
             return Err(MatmulMetalError::UnsupportedGather {
                 m: arguments.m,
                 n: arguments.n,

@@ -308,7 +308,7 @@ impl<T: DataTypeRepr + Float> QuantInput<T> {
             &mut values,
             &mut scales,
             group_sums.as_mut(),
-            &factors,
+            Some(&factors),
             rows,
             columns,
             &mut command_buffer,
@@ -553,19 +553,16 @@ pub fn production_quant_input<B: Backend, T: DataTypeRepr + Float>(
 
 pub fn quant_tolerance(
     format: ActivationFormat,
-    bits: u32,
-    k: u32,
     expected: &[bf16],
 ) -> (f64, f64) {
-    let floor = match format {
-        ActivationFormat::Bf16 => 0.4 * (k as f32 / 6144.0).sqrt().max(1.0),
+    let abs_tol = match format {
+        ActivationFormat::Bf16 => {
+            let mean_square = expected.iter().map(|value| value.to_f64().powi(2)).sum::<f64>() / expected.len() as f64;
+            (0.04 * mean_square.sqrt()).max(0.4)
+        },
         _ => 0.4,
     };
-    let abs_tol = match (format, bits) {
-        (ActivationFormat::Bf16, 8) => expected.iter().fold(floor, |tol, value| tol.max(0.02 * value.to_f32().abs())),
-        _ => floor,
-    };
-    (0.05, f64::from(abs_tol))
+    (0.05, abs_tol)
 }
 
 pub fn run_quant_cpu<T: DataTypeRepr + Float>(input: &QuantInput<T>) -> Vec<T> {

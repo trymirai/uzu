@@ -596,7 +596,7 @@ impl MatmulKernel for VkMatmulKernel {
                     true,
                 )
             })?;
-            transform.encode_fp_in_place(d, factors, ops.bias, m, n, command_buffer);
+            transform.encode_fp_in_place(d, Some(factors), ops.bias, m, n, command_buffer);
         }
         Ok(())
     }
