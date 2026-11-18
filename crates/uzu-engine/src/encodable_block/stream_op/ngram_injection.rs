@@ -78,7 +78,8 @@ impl<B: Backend> NGramInjectionState<B> {
             } => {
                 let slot_size = self.conv_state.size();
                 let slot_offset = accepted_index as usize * slot_size;
-                command_buffer.encode_copy(conv_states.subrange(slot_offset..slot_offset + slot_size), &mut self.conv_state);
+                command_buffer
+                    .encode_copy(conv_states.subrange(slot_offset..slot_offset + slot_size), &mut self.conv_state);
             },
         }
         self.is_empty = false;
@@ -292,9 +293,17 @@ impl<B: Backend> NGramInjection<B> {
         if state.pending_tokens.is_empty() {
             panic!("Should have prepared ngram rows earlier");
         }
-        assert_eq!(state.pending_tokens.len(), num_tokens as usize, "n-gram rows were prepared for another batch");
-        let rows = mem::take(&mut state.pending_rows);
-        assert_eq!(rows.len(), size_for_shape(&[num_tokens, self.embedding_dim], self.data_type), "wrong rows size");
+        let prepared = state.pending_tokens.len();
+        if batch_dim.full_accept() {
+            assert_eq!(prepared, num_tokens as usize, "n-gram rows were prepared for another batch");
+        } else {
+            assert!(prepared <= num_tokens as usize, "n-gram rows were prepared for more nodes than the trie has");
+        }
+        let mut rows = mem::take(&mut state.pending_rows);
+        let row_size = size_for_shape(&[1, self.embedding_dim], self.data_type);
+        assert_eq!(rows.len(), prepared * row_size, "wrong rows size");
+        // pad back trie
+        rows.resize(num_tokens as usize * row_size, 0);
 
         if state.is_empty {
             command_buffer.encode_fill(&mut state.conv_state, 0);
