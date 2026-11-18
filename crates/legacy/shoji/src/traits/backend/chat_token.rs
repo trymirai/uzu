@@ -23,6 +23,8 @@ pub struct TokenStreamMetrics {
     pub num_tokens_proposed: usize,
     pub num_tokens_accepted: usize,
     pub num_tokens_returned: usize,
+    /// Full uncached input length after image expansion, available before polling.
+    pub expanded_input_tokens: Option<usize>,
 }
 
 pub struct StreamConfig {

@@ -45,6 +45,8 @@ pub struct Session {
     input: StreamInput,
     /// Content identities of the images in `state`, in prompt order
     cached_image_ids: Vec<ImageHash>,
+    image_expansion_tokens: usize,
+    cache_invalid: bool,
     stop_token_ids: Box<[u64]>,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     energy_recorder: EnergyRecorder,
@@ -111,6 +113,8 @@ impl Session {
             encoding,
             input: StreamInput::default(),
             cached_image_ids: Vec::new(),
+            image_expansion_tokens: 0,
+            cache_invalid: false,
             stop_token_ids,
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             energy_recorder: EnergyRecorder::new(),
@@ -120,6 +124,7 @@ impl Session {
     pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
         self.encoding.reset().map_err(ChatSessionError::backend)?;
         self.state_reset().await?;
+        self.cache_invalid = false;
         Ok(())
     }
 
@@ -129,8 +134,15 @@ impl Session {
         config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
-        let time_start = Instant::now();
+        if self.cache_invalid
+            && let Err(error) = self.reset().await
+        {
+            return error_stream(error);
+        }
 
+        let time_start = Instant::now();
+        // Preparation mutates the encoding before the backend has populated its cache.
+        self.cache_invalid = true;
         let cached_tokens_input = match self.prepare_input(input).await {
             Ok(cached_tokens) => cached_tokens,
             Err(error) => return error_stream(error),
@@ -150,12 +162,17 @@ impl Session {
             grammar_trigger: self.encoding.grammar_trigger().map(str::to_owned),
         };
         let stream = instance.stream(&self.input, self.state.as_mut(), stream_config, cancel_token.clone());
+        let total_tokens_input =
+            stream.metrics().and_then(|metrics| metrics.expanded_input_tokens).unwrap_or(self.input.tokens.len());
+        let cached_tokens_input = cached_tokens_input + self.image_expansion_tokens;
+        self.image_expansion_tokens += total_tokens_input.saturating_sub(self.input.tokens.len());
         let output_tokens_start = self.encoding.state().tokens.len();
 
         let stream_state = StreamingState {
             config: config.clone(),
             cancel_token,
             encoding: &mut self.encoding,
+            cache_invalid: &mut self.cache_invalid,
             output_tokens_start,
             max_context_length: self.instance.max_context_length(),
             stop_token_ids: self.stop_token_ids.clone(),
@@ -167,7 +184,7 @@ impl Session {
             time_prefill_start,
             time_first_token: None,
             input_energy: None,
-            total_tokens_input: self.input.tokens.len(),
+            total_tokens_input,
             cached_tokens_input,
             total_tokens_output: 0,
             memory_usage: None,
@@ -187,8 +204,15 @@ impl Session {
                     }
                     state.metrics = inner.metrics();
                     state.memory_usage = instance.peak_memory_usage();
+                    if matches!(&event, Ok(StreamOutput::Token(_))) {
+                        *state.cache_invalid = false;
+                    }
                     let output = Self::build_output(event, &mut state);
-                    let terminated = terminated || matches!(&output, Ok(out) if out.finish_reason.is_some());
+                    if output.is_err() {
+                        *state.cache_invalid = true;
+                    }
+                    let terminated =
+                        terminated || output.is_err() || matches!(&output, Ok(out) if out.finish_reason.is_some());
                     if terminated {
                         state.cancel_token.cancel();
                     }
@@ -217,6 +241,7 @@ impl Session {
     async fn state_reset(&mut self) -> Result<(), ChatSessionError> {
         self.state = self.instance.state().await.map_err(ChatSessionError::from)?;
         self.cached_image_ids.clear();
+        self.image_expansion_tokens = 0;
         Ok(())
     }
 
@@ -485,6 +510,7 @@ struct StreamingState<'a> {
     config: ChatReplyConfig,
     cancel_token: CancellationToken,
     encoding: &'a mut Encoding,
+    cache_invalid: &'a mut bool,
     output_tokens_start: usize,
     max_context_length: Option<usize>,
     stop_token_ids: Box<[u64]>,
@@ -518,7 +544,7 @@ impl StreamingState<'_> {
         &self,
         token: u64,
     ) -> Option<ChatReplyFinishReason> {
-        let tokens_count = self.encoding.state().tokens.len();
+        let tokens_count = self.cached_tokens_input + self.total_tokens_input + self.total_tokens_output;
         if self.cancel_token.is_cancelled() {
             Some(ChatReplyFinishReason::Cancelled)
         } else if self.stop_token_ids.contains(&token) {
@@ -617,6 +643,48 @@ fn calculate_rate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expanded_counts_drive_stats_and_context_limit() {
+        use hanashi::chat::hanashi::config::HanashiConfig;
+        let mut encoding = Encoding::Hanashi(
+            HanashiEncodingImpl::new(
+                HanashiConfig::Qwen35,
+                Arc::new(tokenizers::Tokenizer::new(tokenizers::models::bpe::BPE::default())),
+            )
+            .unwrap(),
+        );
+        let mut cache_invalid = false;
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let mut energy_recorder = EnergyRecorder::new();
+        let now = Instant::now();
+        let mut state = StreamingState {
+            config: ChatReplyConfig::default(),
+            cancel_token: CancellationToken::new(),
+            encoding: &mut encoding,
+            cache_invalid: &mut cache_invalid,
+            output_tokens_start: 0,
+            max_context_length: Some(6145),
+            stop_token_ids: Box::new([]),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            energy_recorder: &mut energy_recorder,
+            time_start: now,
+            time_last_token: Some(now + Duration::from_secs(2)),
+            time_prefill_start: now,
+            time_first_token: Some(now + Duration::from_secs(2)),
+            input_energy: None,
+            total_tokens_input: 2048,
+            cached_tokens_input: 4096,
+            total_tokens_output: 1,
+            memory_usage: None,
+            metrics: None,
+        };
+        assert!(matches!(state.get_finish_reason(42), Some(ChatReplyFinishReason::ContextLimitReached)));
+        let stats = state.get_stats(false).unwrap();
+        assert_eq!(stats.tokens_count_input, Some(2048));
+        assert_eq!(stats.tokens_count_input_cached, Some(4096));
+        assert_eq!(stats.prefill_tokens_per_second, Some(1024.0));
+    }
 
     #[test]
     fn acceptance_is_reported_only_after_speculative_proposals() {

@@ -222,6 +222,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         Box::pin(UzuChatTokenStream {
             inner: Box::pin(inner),
             metrics,
+            expanded_input_tokens: tokens.len(),
         })
     }
 
@@ -262,6 +263,7 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
 struct UzuChatTokenStream<S> {
     inner: Pin<Box<S>>,
     metrics: TokenStreamMetrics,
+    expanded_input_tokens: usize,
 }
 
 impl<S> Stream for UzuChatTokenStream<S>
@@ -291,6 +293,9 @@ where
     type Metrics = ChatTokenStreamMetrics;
 
     fn metrics(&self) -> Self::Metrics {
-        Some(self.metrics.clone())
+        Some(TokenStreamMetrics {
+            expanded_input_tokens: Some(self.expanded_input_tokens),
+            ..self.metrics.clone()
+        })
     }
 }
