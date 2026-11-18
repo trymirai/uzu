@@ -50,5 +50,7 @@ pub mod logs;
 pub mod player;
 pub mod registry;
 pub mod storage;
+pub mod vision;
+
 pub use nagare as session;
 pub use shoji::*;

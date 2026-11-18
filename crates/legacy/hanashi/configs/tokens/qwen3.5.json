@@ -4,5 +4,6 @@
     "stop_token_ids": [
         248046
     ],
-    "banned_token_ids": []
+    "banned_token_ids": [],
+    "image_pad_token_id": 248056
 }

@@ -13,7 +13,7 @@ use shoji::{
         backend::{
             Error as ShojiBackendError, Instance as BackendInstance, InstanceStream, NoMetricsStream,
             chat_token::{
-                Instance as ChatTokenBackendInstance, StreamConfig as ChatTokenStreamConfig,
+                ImageHash, Instance as ChatTokenBackendInstance, PreparedImage, StreamConfig as ChatTokenStreamConfig,
                 StreamInput as ChatTokenStreamInput, StreamMetrics as ChatTokenStreamMetrics,
                 StreamOutput as ChatTokenStreamOutput, TokenStreamMetrics, TokenStreamOutput,
             },
@@ -28,15 +28,21 @@ use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 use uzu_engine::{
     backends::Backend,
-    engine::{Engine, language_model::LanguageModel},
+    engine::{
+        Engine,
+        language_model::{LanguageModel, stream::VisionModelInputImage},
+    },
 };
 
-use crate::engine::bridge::{
-    chat_token_state::UzuChatTokenBackendInstanceState,
-    helpers::{
-        error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
-        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
+use crate::{
+    engine::bridge::{
+        chat_token_state::UzuChatTokenBackendInstanceState,
+        helpers::{
+            error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
+            grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
+        },
     },
+    vision::{VisionPreprocessingConfig, preprocess},
 };
 
 #[derive(Clone)]
@@ -128,7 +134,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 grammar_trigger_token_sequence(grammar_trigger.as_deref(), self.model.tokenizer());
             let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
                 trigger_token_sequence.as_deref(),
-                input,
+                &input.tokens,
                 self.model.tokenizer(),
             );
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
@@ -162,7 +168,16 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-        let stream = match self.model.stream(input, &[], model_state, options) {
+        let images = input
+            .images
+            .iter()
+            .map(|image| VisionModelInputImage {
+                start: image.start as u32,
+                pixel_values: &image.image.pixel_values,
+                grid_thw: image.image.grid_thw.map(|size| size as u32),
+            })
+            .collect::<Box<[_]>>();
+        let stream = match self.model.stream(&input.tokens, &images, model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));
@@ -243,6 +258,39 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
 
     fn sampling_defaults(&self) -> SamplingParameters {
         self.sampling_defaults
+    }
+
+    fn prepare_image(
+        &self,
+        url: &str,
+    ) -> Result<PreparedImage, ShojiBackendError> {
+        let vision_config = self.model.vision_config().ok_or("model doesn't support image input")?;
+        let encoder_config = &vision_config.encoder_config;
+        let config = VisionPreprocessingConfig {
+            patch_size: encoder_config.patch_size as usize,
+            merge_size: encoder_config.spatial_merge_size as usize,
+            temporal_patch_size: encoder_config.temporal_patch_size as usize,
+            shortest_edge: vision_config.preprocessing_config.min_pixels as usize,
+            longest_edge: vision_config.preprocessing_config.max_pixels as usize,
+            image_mean: vision_config.preprocessing_config.image_mean,
+            image_std: vision_config.preprocessing_config.image_std,
+        };
+
+        let bytes = std::fs::read(url)?;
+        let output = preprocess(&bytes, &config)?;
+        let token_count = vision_config.image_token_count(output.image_grid_thw.map(|size| size as u32)) as usize;
+        Ok(PreparedImage {
+            pixel_values: output.pixel_values,
+            grid_thw: output.image_grid_thw,
+            token_count,
+        })
+    }
+
+    fn image_id(
+        &self,
+        url: &str,
+    ) -> Result<ImageHash, ShojiBackendError> {
+        Ok(*blake3::hash(&std::fs::read(url)?).as_bytes())
     }
 }
 

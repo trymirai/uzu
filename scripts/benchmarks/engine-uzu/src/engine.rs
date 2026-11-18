@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use uzu::{
     engine::{Engine, EngineConfig},
     session::chat::ChatInstanceKind,
-    traits::backend::chat_token::{Instance, StreamConfig, TokenStreamOutput},
+    traits::backend::chat_token::{Instance, StreamConfig, StreamInput, TokenStreamOutput},
     types::{
         basic::{SamplingMethod, ToolCall, ToolDescription, ToolFunction, ToolNamespace},
         session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatRole},
@@ -87,13 +87,17 @@ impl UzuEngine {
         let mut tokens_generated = 0;
         let mut forward_passes = 0;
         let mut first_token = None;
+        let input = StreamInput {
+            tokens: tokens.clone(),
+            images: Vec::new(),
+        };
 
         let started = Instant::now();
         let config = StreamConfig {
             reply: config,
             grammar_trigger: None,
         };
-        let mut stream = self.instance.stream(tokens, state.as_mut(), config, CancellationToken::new());
+        let mut stream = self.instance.stream(&input, state.as_mut(), config, CancellationToken::new());
         loop {
             let Some(event) = stream.next().await else {
                 break;

@@ -68,6 +68,7 @@ uzu-engine.workspace = true
 kiban.workspace = true
 shoji.workspace = true
 anyhow.workspace = true
+blake3.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -90,6 +91,8 @@ tokio-stream.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+image.workspace = true
+zune-heic.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 parking_lot = { workspace = true, features = ["send_guard"] }

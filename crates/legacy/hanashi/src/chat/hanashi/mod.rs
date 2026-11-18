@@ -50,6 +50,10 @@ impl HanashiEncodingImpl {
         self.config.rendering.grammar_trigger(&self.state.messages)
     }
 
+    pub fn image_pad_token_id(&self) -> Option<TokenId> {
+        self.config.tokens.image_pad_token_id
+    }
+
     pub fn new(
         config: HanashiConfig,
         tokenizer: Arc<Tokenizer>,

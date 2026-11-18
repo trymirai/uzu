@@ -7,4 +7,7 @@ pub struct TokensConfig {
     pub eos_token_id: Option<TokenId>,
     pub stop_token_ids: Vec<TokenId>,
     pub banned_token_ids: Vec<TokenId>,
+    /// Token the template renders once per image; the session expands it to the image's token count
+    #[serde(default)]
+    pub image_pad_token_id: Option<TokenId>,
 }

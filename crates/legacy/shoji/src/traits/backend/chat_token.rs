@@ -31,7 +31,29 @@ pub struct StreamConfig {
     pub grammar_trigger: Option<String>,
 }
 
-pub type StreamInput = Vec<u64>;
+/// Content hash of an image: equal content gives an equal identity.
+pub type ImageHash = [u8; 32];
+
+pub struct PreparedImage {
+    /// `[t * h * w, channels * temporal_patch_size * patch_size * patch_size]`, flattened
+    pub pixel_values: Vec<f32>,
+    /// Patch grid `[t, h, w]` before merging
+    pub grid_thw: [usize; 3],
+    /// Number of image pad tokens the image takes in the prompt
+    pub token_count: usize,
+}
+
+pub struct StreamImage {
+    /// Index in `StreamInput::tokens` of the image's first pad token
+    pub start: usize,
+    pub image: PreparedImage,
+}
+
+#[derive(Default)]
+pub struct StreamInput {
+    pub tokens: Vec<u64>,
+    pub images: Vec<StreamImage>,
+}
 pub type StreamOutput = TokenStreamOutput;
 pub type StreamMetrics = Option<TokenStreamMetrics>;
 
@@ -63,4 +85,20 @@ pub trait Instance:
     fn stop_token_ids(&self) -> Option<Box<[u64]>>;
 
     fn sampling_defaults(&self) -> SamplingParameters;
+
+    fn prepare_image(
+        &self,
+        url: &str,
+    ) -> Result<PreparedImage, Error> {
+        let _ = url;
+        Err("image input is not supported".into())
+    }
+
+    fn image_id(
+        &self,
+        url: &str,
+    ) -> Result<ImageHash, Error> {
+        let _ = url;
+        Err("image input is not supported".into())
+    }
 }
