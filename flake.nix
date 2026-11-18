@@ -95,7 +95,7 @@
         hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
         nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_26]);
 
-        hostToolchainNativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config]);
+        hostToolchainNativeBuildInputs = with pkgs; [cmake shader-slang-env] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config bindgen-env]);
         nixToolchainNativeBuildInputs = hostToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [metal-toolchain]);
 
         benchmarkDevshellPackages = with pkgs;
@@ -112,7 +112,6 @@
         commonDevshellPackages = with pkgs;
           [
             nil
-            shader-slang-env
             playwright-env
             uv
             maturin
@@ -131,7 +130,7 @@
             cargo-show-asm
             critcmp
           ]
-          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [bindgen-env vulkan-env vulkan-tools shaderc spirv-tools lldb])
+          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [vulkan-env vulkan-tools shaderc spirv-tools lldb])
           ++ (with pkgs;
             lib.optionals stdenv.hostPlatform.isDarwin [
               (pkgs.callPackage ./scripts/cargo-instruments.nix {})
@@ -152,7 +151,8 @@
           '';
 
           buildInputs = nixToolchainBuildInputs;
-          nativeBuildInputs = nixToolchainNativeBuildInputs;
+          nativeBuildInputs = nixToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [autoPatchelfHook]);
+          runtimeDependencies = with pkgs; lib.optionals stdenv.hostPlatform.isLinux [vulkan-loader];
 
           doCheck = false;
         };

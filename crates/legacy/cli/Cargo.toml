@@ -13,10 +13,10 @@ name = "cli"
 path = "src/main.rs"
 
 [features]
-default = ["cpu", "metal"]
-cpu = ["uzu/cpu"]
+default = ["metal", "cpu"]
 metal = ["uzu/metal"]
 webgpu = ["uzu/webgpu"]
+cpu = ["uzu/cpu"]
 
 [dependencies]
 anyhow.workspace = true

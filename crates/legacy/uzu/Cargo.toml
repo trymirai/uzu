@@ -15,10 +15,10 @@ keywords.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
-default = ["cpu", "metal"]
-cpu = ["uzu-engine/cpu"]
+default = ["metal", "cpu"]
 metal = ["uzu-engine/metal"]
 webgpu = ["uzu-engine/webgpu"]
+cpu = ["uzu-engine/cpu"]
 bindings = [
     "bindings-uniffi",
     "bindings-napi",
@@ -115,6 +115,9 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 async-openai.workspace = true
 fancy-regex.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))'.dependencies]
+uzu-engine = { workspace = true, features = ["vulkan"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
