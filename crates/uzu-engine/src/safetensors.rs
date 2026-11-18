@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -73,13 +73,13 @@ struct TensorInfo {
     read: AtomicBool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub struct TensorRegion {
-    pub file: std::fs::File,
+    pub path: PathBuf,
     pub range: std::range::Range<u64>,
 }
 
 pub struct ParameterLoader<'a, B: Backend> {
+    path: PathBuf,
     file: File,
     context: &'a B::Context,
     header: Header,
@@ -91,7 +91,8 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         path: impl AsRef<Path>,
         context: &'a B::Context,
     ) -> Result<Self, ParameterLoaderError<B>> {
-        let file = File::open(path).await?;
+        let path = path.as_ref().to_path_buf();
+        let file = File::open(&path).await?;
         let mut header_size = [0; 8];
         file.read_exact_at(&mut header_size, 0).await?;
         let header_size = u64::from_le_bytes(header_size);
@@ -99,6 +100,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         file.read_exact_at(&mut header, 8).await?;
         let header: Header = serde_json::from_slice(&header)?;
         Ok(Self {
+            path,
             file,
             context,
             header,
@@ -239,8 +241,7 @@ impl<B: Backend> ParameterTree<'_, B> {
     /// Like [`Self::read_buffer`], but just returns a handle to the file location.
     ///
     /// This is used to read the ngram embedding table from disk.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub async fn claim(
+    pub fn claim(
         &self,
         name: &str,
         shape: &[u32],
@@ -248,10 +249,9 @@ impl<B: Backend> ParameterTree<'_, B> {
     ) -> Result<TensorRegion, ParameterLoaderError<B>> {
         let tensor = self.tensor(name, shape, dtype)?;
         let (start, end) = tensor.data_offsets;
-        let file = self.loader.file.to_sync().await?;
         tensor.read.store(true, Ordering::Relaxed);
         Ok(TensorRegion {
-            file,
+            path: self.loader.path.clone(),
             range: (self.loader.data_offset + start..self.loader.data_offset + end).into(),
         })
     }

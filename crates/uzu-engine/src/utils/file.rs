@@ -22,21 +22,38 @@ impl File {
         file.seek(SeekFrom::Start(offset)).await?;
         file.read_exact(buffer).await
     }
+}
 
-    /// Unsupported on WASM.
-    pub async fn to_sync(&self) -> io::Result<std::fs::File> {
-        let file = self.0.lock().await;
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsFd;
-            Ok(file.as_fd().try_clone_to_owned()?.into())
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::AsHandle;
-            Ok(file.as_handle().try_clone_to_owned()?.into())
+/// Tell the OS to avoid caching as much as possible while opening the file.
+pub fn open_random_access(path: impl AsRef<Path>) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // This is hard-coded FILE_FLAG_RANDOM_ACCESS from the Win32 headers.
+        // I feel it's not worth it to pull a crate for this.
+        options.custom_flags(0x1000_0000);
+    }
+    let file = options.open(path)?;
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::fd::AsRawFd;
+        for (command, value) in [(libc::F_RDAHEAD, 0), (libc::F_NOCACHE, 1)] {
+            if unsafe { libc::fcntl(file.as_raw_fd(), command, value) } == -1 {
+                return Err(io::Error::last_os_error());
+            }
         }
     }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        use std::os::fd::AsRawFd;
+        let errno = unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_RANDOM) };
+        if errno != 0 {
+            return Err(io::Error::from_raw_os_error(errno));
+        }
+    }
+    Ok(file)
 }
 
 pub fn read_exact_at(

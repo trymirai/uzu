@@ -2,20 +2,24 @@ use std::io;
 
 use thiserror::Error;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utils::{
+    file::{open_random_access, read_exact_at},
+    size_for_shape::size_for_shape,
+};
 use crate::{
     backends::Backend,
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{safetensors::TensorRegion, utils::file::read_exact_at, utils::size_for_shape::size_for_shape};
 
 /// Like [`EmbeddingTable`](super::embedding_table::EmbeddingTable), but stored on disk.
 ///
 /// Used in ngram embeddings (e.g., Qwen3.8-Flash-Next's has a ~100GB table)
 #[cfg(not(target_arch = "wasm32"))]
 pub struct EmbeddingTableDisk {
-    tensor: TensorRegion,
+    file: std::fs::File,
+    range: std::range::Range<u64>,
     num_rows: u32,
     row_size: usize,
 }
@@ -30,6 +34,8 @@ pub enum EmbeddingTableDiskError<B: Backend> {
     UnsupportedPlatform,
     #[error("ParameterLoader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
+    #[error("Failed to open table: {0}")]
+    Open(#[source] io::Error),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -60,12 +66,12 @@ impl EmbeddingTableDisk {
         data_type: DataType,
         subtree: &ParameterTree<'_, B>,
     ) -> Result<Self, EmbeddingTableDiskError<B>> {
-        let tensor = subtree.claim("weights", &[num_rows, row_dim], data_type).await?;
-
-        // TODO(perf): We should tell the os to avoid any caching, since every hit is almost 100% going to be a cache miss.
+        let region = subtree.claim("weights", &[num_rows, row_dim], data_type)?;
+        let file = open_random_access(&region.path).map_err(EmbeddingTableDiskError::Open)?;
 
         Ok(Self {
-            tensor,
+            file,
+            range: region.range,
             num_rows,
             row_size: size_for_shape(&[1, row_dim], data_type),
         })
@@ -80,8 +86,8 @@ impl EmbeddingTableDisk {
         rows.resize(ngram_ids.len() * self.row_size, 0);
         for (&id, row) in ngram_ids.iter().zip(rows.chunks_exact_mut(self.row_size)) {
             assert!(id < self.num_rows, "n-gram id {id} out of range for a table with {} rows", self.num_rows);
-            let offset = self.tensor.range.start + id as u64 * self.row_size as u64;
-            read_exact_at(&self.tensor.file, row, offset)?;
+            let offset = self.range.start + id as u64 * self.row_size as u64;
+            read_exact_at(&self.file, row, offset)?;
         }
         Ok(())
     }
