@@ -13,7 +13,8 @@ use crate::backends::{
             matmul::GemmParams,
         },
         kernel::{
-            GemmTrellisDecodeMetalKernel, GemmTrellisMetalKernel, GemmTrellisReduceMetalKernel,
+            GemmTrellisDecodeMetalKernel, GemmTrellisGatherMetalKernel, GemmTrellisMetalKernel,
+            GemmTrellisReduceMetalKernel,
             matmul::{
                 MatmulMetalError,
                 gemm::{GemmEngine, GemmPlan, selection::TRELLIS_K_STEP as K_STEP},
@@ -32,6 +33,7 @@ const DECODE_MAX_EXACT_K: u32 =
 pub(super) struct TrellisGemm {
     kernels: HashMap<(GemmTiling, TrellisFormat, GemmAlignment), GemmTrellisMetalKernel>,
     decode_kernels: HashMap<(u32, TrellisFormat), GemmTrellisDecodeMetalKernel>,
+    gather_kernels: HashMap<TrellisFormat, GemmTrellisGatherMetalKernel>,
     reduce_kernel: Option<GemmTrellisReduceMetalKernel>,
 }
 
@@ -71,14 +73,49 @@ impl TrellisGemm {
         let (m, n, k) = (arguments.m, arguments.n, arguments.k);
         let output_stride = arguments.output.row_stride.unwrap_or(n);
         let (tiling, split_k) = (plan.tiling, plan.split_k);
+        let weight_rows = arguments.gather.as_ref().map_or(n, |gather| gather.row_count);
         if !arguments.output.ops.mask().is_empty()
             || !arguments.b_transpose
             || arguments.b_leading_dimension.is_some()
             || output_stride < n
             || (split_k > 1 && !n.is_multiple_of(4))
-            || codes.size() < n as usize * format.code_row_bytes(k) as usize
+            || codes.size() < weight_rows as usize * format.code_row_bytes(k) as usize
         {
             return Err(unsupported());
+        }
+
+        // Gathered rows are decoded per output element, so the plan's tiling does not apply.
+        if let Some(gather) = arguments.gather {
+            if k > DECODE_MAX_EXACT_K {
+                return Err(unsupported());
+            }
+            let kernel = match self.gather_kernels.entry(format) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(GemmTrellisGatherMetalKernel::new(
+                    command_buffer.context(),
+                    format.vector_width,
+                    format.transition_bits,
+                    format.restart_columns.unwrap_or(0),
+                )?),
+            };
+            kernel.encode(
+                activations,
+                column_group_sums,
+                activation_scales,
+                codes,
+                row_scales,
+                codebook,
+                gather.indices,
+                arguments.output.values,
+                m,
+                n,
+                k,
+                output_stride,
+                gather.first_row,
+                gather.row_count,
+                command_buffer,
+            );
+            return Ok(());
         }
 
         if plan.engine == GemmEngine::Simdgroup

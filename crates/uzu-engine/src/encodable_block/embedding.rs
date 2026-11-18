@@ -129,11 +129,6 @@ impl<B: Backend> Embedding<B> {
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
                 if let AnyWeightMatrixSpec::HybridSpec(hybrid) = &output_embedding_spec {
                     let unsupported = match &hybrid.incoherence_spec {
-                        Some(AnyIncoherenceProcessorSpec::KroneckerSpec(p))
-                            if p.processing_mode == IncoherenceProcessingMode::Input =>
-                        {
-                            Some("Kronecker preparation requires a linear input")
-                        },
                         Some(AnyIncoherenceProcessorSpec::HadamardSpec(p))
                             if p.processing_mode == IncoherenceProcessingMode::InputOutput =>
                         {
