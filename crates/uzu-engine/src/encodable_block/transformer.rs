@@ -1,7 +1,6 @@
 use std::{range::Range, sync::Arc};
 
 use derive_more::Debug;
-use futures::future::join_all;
 use thiserror::Error;
 
 use crate::{
@@ -74,7 +73,7 @@ impl<B: Backend> TransformerState<B> {
                     mixer_state.encode_accept(accepted_indices, command_buffer)?;
                 }
 
-                layer_state.stream_ops.encode_accept(accepted_indices);
+                layer_state.stream_ops.encode_accept(accepted_indices, command_buffer)?;
             }
 
             self.context_length += accepted_indices.len() as u32;

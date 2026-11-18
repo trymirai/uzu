@@ -2,8 +2,8 @@ use std::{future::Future, mem};
 
 use crate::{
     backends::common::{
-        Backend, Buffer, CommandBuffer, CommandBufferEncoding, Context, Kernels,
-        kernel::{NGramConvInjectKernel, NGramGateKernel},
+        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        kernel::{NGramConvInjectKernel, NGramConvInjectTrieKernel, NGramGateKernel},
     },
     config::{
         normalization::NormalizationConfig,
@@ -21,6 +21,17 @@ use crate::{
     utils::size_for_shape::size_for_shape,
 };
 
+// TODO(arch): this is essentially ctrl+c ctrl+v `ShortConvStateSuffixStatus`.
+// We should probably merge both.
+enum NGramSuffixStatus<B: Backend> {
+    Flat {
+        suffix_length: u32,
+    },
+    Trie {
+        conv_states: B::ScratchBuffer,
+    },
+}
+
 pub struct NGramInjectionState<B: Backend> {
     /// Up to the last `ngram_size - 1` accepted token ids, most recent last.
     history: Vec<u32>,
@@ -30,8 +41,9 @@ pub struct NGramInjectionState<B: Backend> {
     /// Embedding rows of the pending batch, `[tokens, embedding_dim]` in the model data type, until encoded.
     pending_rows: Vec<u8>,
     conv_state: B::GlobalGpuBuffer,
+    /// Where a flat batch leaves its conv state; swapped into `conv_state` on accept.
     pending_conv_state: B::GlobalGpuBuffer,
-    pending_suffix_length: Option<u32>,
+    suffix_status: Option<NGramSuffixStatus<B>>,
     is_empty: bool,
 }
 
@@ -39,7 +51,8 @@ impl<B: Backend> NGramInjectionState<B> {
     pub fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-    ) {
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         let pending_tokens = mem::take(&mut self.pending_tokens);
         self.pending_rows.clear();
         if !pending_tokens.is_empty() {
@@ -48,14 +61,28 @@ impl<B: Backend> NGramInjectionState<B> {
             self.history.drain(..excess);
         }
 
-        let Some(suffix_length) = self.pending_suffix_length.take() else {
-            return;
+        let Some(suffix_status) = self.suffix_status.take() else {
+            return Ok(());
         };
         let accepted_index = *accepted_indices.last().expect("n-gram injection state attempted to accept zero indices");
-        assert!(accepted_index == suffix_length - 1, "attempted a partial n-gram injection accept");
 
-        mem::swap(&mut self.conv_state, &mut self.pending_conv_state);
+        match suffix_status {
+            NGramSuffixStatus::Flat {
+                suffix_length,
+            } => {
+                assert!(accepted_index == suffix_length - 1, "attempted a partial flat n-gram injection accept");
+                mem::swap(&mut self.conv_state, &mut self.pending_conv_state);
+            },
+            NGramSuffixStatus::Trie {
+                conv_states,
+            } => {
+                let slot_size = self.conv_state.size();
+                let slot_offset = accepted_index as usize * slot_size;
+                command_buffer.encode_copy(conv_states.subrange(slot_offset..slot_offset + slot_size), &mut self.conv_state);
+            },
+        }
         self.is_empty = false;
+        Ok(())
     }
 }
 
@@ -76,6 +103,7 @@ pub struct NGramInjection<B: Backend> {
     hash_config: NGramHashConfig,
     gate_kernel: <B::Kernels as Kernels>::NGramGateKernel,
     conv_kernel: <B::Kernels as Kernels>::NGramConvInjectKernel,
+    conv_trie_kernel: <B::Kernels as Kernels>::NGramConvInjectTrieKernel,
     model_dim: u32,
     stream_count: u32,
     embedding_dim: u32,
@@ -180,6 +208,8 @@ impl<B: Backend> NGramInjection<B> {
             <B::Kernels as Kernels>::NGramGateKernel::new(context, data_type).map_err(StreamOpNewError::Backend)?;
         let conv_kernel = <B::Kernels as Kernels>::NGramConvInjectKernel::new(context, data_type)
             .map_err(StreamOpNewError::Backend)?;
+        let conv_trie_kernel = <B::Kernels as Kernels>::NGramConvInjectTrieKernel::new(context, data_type)
+            .map_err(StreamOpNewError::Backend)?;
 
         Ok(Self {
             ngram_embedding,
@@ -192,6 +222,7 @@ impl<B: Backend> NGramInjection<B> {
             hash_config: hash_config.clone(),
             gate_kernel,
             conv_kernel,
+            conv_trie_kernel,
             model_dim,
             stream_count,
             embedding_dim: config.embedding_dim,
@@ -222,7 +253,7 @@ impl<B: Backend> NGramInjection<B> {
             pending_rows: Vec::new(),
             conv_state: context.create_buffer_gpu(conv_state_size)?,
             pending_conv_state: context.create_buffer_gpu(conv_state_size)?,
-            pending_suffix_length: None,
+            suffix_status: None,
             is_empty: true,
         })
     }
@@ -254,10 +285,7 @@ impl<B: Backend> NGramInjection<B> {
     ) -> Result<B::ScratchBuffer, StreamOpEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("n-gram injection");
 
-        if !batch_dim.full_accept() {
-            return Err(StreamOpEncodeError::SpeculationNotSupported);
-        }
-        assert!(state.pending_suffix_length.is_none(), "n-gram injection called with state with unaccepted tokens");
+        assert!(state.suffix_status.is_none(), "n-gram injection called with state with unaccepted tokens");
 
         let num_tokens = batch_dim.size();
         if state.pending_tokens.is_empty() {
@@ -309,20 +337,44 @@ impl<B: Backend> NGramInjection<B> {
             command_buffer,
         );
 
-        self.conv_kernel.encode(
-            &conv_input,
-            &state.conv_state,
-            &self.conv_weights,
-            &gated,
-            &mut stream,
-            &mut state.pending_conv_state,
-            num_tokens,
-            self.channels(),
-            self.conv_kernel_size,
-            command_buffer,
-        );
-
-        state.pending_suffix_length = Some(num_tokens);
+        state.suffix_status = Some(if batch_dim.full_accept() {
+            self.conv_kernel.encode(
+                &conv_input,
+                &state.conv_state,
+                &self.conv_weights,
+                &gated,
+                &mut stream,
+                &mut state.pending_conv_state,
+                num_tokens,
+                self.channels(),
+                self.conv_kernel_size,
+                command_buffer,
+            );
+            NGramSuffixStatus::Flat {
+                suffix_length: num_tokens,
+            }
+        } else {
+            let nodes = batch_dim.nodes().expect("trie n-gram injection requires trie nodes");
+            let mut conv_states = command_buffer
+                .allocate_scratch_for_shape(&[num_tokens, self.conv_kernel_size - 1, self.channels()], self.data_type)
+                .map_err(StreamOpEncodeError::Backend)?;
+            self.conv_trie_kernel.encode(
+                &conv_input,
+                &state.conv_state,
+                nodes,
+                &self.conv_weights,
+                &gated,
+                &mut stream,
+                &mut conv_states,
+                num_tokens,
+                self.channels(),
+                self.conv_kernel_size,
+                command_buffer,
+            );
+            NGramSuffixStatus::Trie {
+                conv_states,
+            }
+        });
         Ok(stream)
     }
 }

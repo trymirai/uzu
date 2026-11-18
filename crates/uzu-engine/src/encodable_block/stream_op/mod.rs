@@ -52,8 +52,6 @@ pub enum StreamOpEncodeError<B: Backend> {
     MissingPerLayerInputs,
     #[error("Stateful stream op requires state")]
     MissingState,
-    #[error("N-gram injection does not support speculation")]
-    SpeculationNotSupported,
 }
 
 pub enum StreamOpState<B: Backend> {
@@ -64,9 +62,10 @@ impl<B: Backend> StreamOpState<B> {
     pub fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-    ) {
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         match self {
-            Self::NGramInjection(state) => state.encode_accept(accepted_indices),
+            Self::NGramInjection(state) => state.encode_accept(accepted_indices, command_buffer),
         }
     }
 
@@ -149,8 +148,7 @@ impl<B: Backend> StreamOp<B> {
 
     pub fn speculation_supported(&self) -> bool {
         match self {
-            Self::NGramInjection(_) => false,
-            Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => true,
+            Self::NGramInjection(_) | Self::PerLayerEmbeddingInjection(_) | Self::ResidualScale(_) => true,
         }
     }
 
