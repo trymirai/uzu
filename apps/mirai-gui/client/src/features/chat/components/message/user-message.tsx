@@ -87,7 +87,7 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
             disabled={saving}
             rows={1}
             maxHeightPx={320}
-            className="bg-transparent text-[length:var(--chat-text,15px)] leading-[1.5]"
+            className="bg-transparent text-[15px] leading-[1.5]"
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing) return;
               if (event.key === "Escape") {
@@ -130,7 +130,7 @@ export const UserMessage = ({ id, text, attachmentIds, canEdit = false, onEdit }
         </div>
       ) : (
         <>
-          <div className="font-[400] text-user-bubble-text relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[18px] text-[length:var(--chat-text,15px)] leading-[1.5] px-3.5 py-2 bg-user-bubble ml-auto">
+          <div className="font-[400] text-user-bubble-text relative w-fit max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[18px] text-[15px] leading-[1.5] px-3.5 py-2 bg-user-bubble ml-auto">
             {text}
           </div>
           {/* Floats under the bubble on hover rather than holding an empty row open below it. */}

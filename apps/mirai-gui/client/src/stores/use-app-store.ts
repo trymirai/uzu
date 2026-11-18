@@ -24,12 +24,6 @@ export const chatWidthCss = (width: ChatWidth): string => {
   return `clamp(${width}px, ${share}cqw, ${max}px)`;
 };
 
-/**
- * Message text grows a little on very wide panels, so the wider column doesn't turn into very long
- * lines of small text: 15px up to a 1500px panel, rising to 16.5px at 2250px and beyond.
- */
-export const CHAT_TEXT_SIZE_CSS = "clamp(15px, calc(15px + (100cqw - 1500px) * 0.002), 16.5px)";
-
 export type ThemeMode = "system" | "light" | "dark";
 
 const resolveTheme = (stored: { theme?: unknown; isDarkMode?: unknown }): ThemeMode =>

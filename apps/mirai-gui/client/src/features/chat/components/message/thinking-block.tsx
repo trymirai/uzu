@@ -115,7 +115,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
       // A line of text, not a box: the cat beside the answer already shows that it is thinking.
       className="group mb-1 block w-full text-left [--fade:var(--color-background)] outline-hidden data-[focus]:shadow-focus rounded-md"
     >
-      <span className="flex h-7 items-center gap-1 text-[length:var(--chat-text,15px)] font-[400] leading-[1.3] text-label-muted transition-colors duration-150 ease-out group-hover:text-label-title">
+      <span className="flex h-7 items-center gap-1 text-[15px] font-[400] leading-[1.3] text-label-muted transition-colors duration-150 ease-out group-hover:text-label-title">
         {isThinking ? (
           <TextShimmer duration={1.6} className="[--base-color:var(--color-label-muted)]">
             Thinking…
@@ -158,7 +158,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
                 <MarkdownRenderer
                   content={text || ""}
                   useOneFontSize={true}
-                  className="text-[length:var(--chat-text,15px)] leading-[1.6] text-label-muted [&_p]:mb-2 [&_p]:mt-0"
+                  className="text-[15px] leading-[1.6] text-label-muted [&_p]:mb-2 [&_p]:mt-0"
                 />
               </div>
               <div

@@ -141,7 +141,8 @@ function LeftBar() {
       style={{ width: !floating && isSidebarOpen ? sidebarWidth : 0 }}
     >
       {toggleSidebarButton}
-      {!floating && <SidebarResizer onDraggingChange={setResizing} />}
+      {/* Only while the sidebar is out: closed, there is no edge to drag (the button brings it back). */}
+      {!floating && isSidebarOpen && <SidebarResizer onDraggingChange={setResizing} />}
 
       {/* Opened with a click: clicking anywhere else puts it away. No dimming, as in Claude. */}
       {floating && isSidebarOpen && <div className="fixed inset-0 z-40" onClick={closeOnMobile} aria-hidden />}

@@ -5,7 +5,7 @@ import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useModelsStore } from "@/stores/use-models-store";
-import { CHAT_TEXT_SIZE_CSS, chatWidthCss, useAppStore } from "@/stores/use-app-store";
+import { chatWidthCss, useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 import { isChatGenerating } from "@/features/runtime/runtime-busy";
 import { useChatModelSelector } from "../hooks/use-chat-model-selector";
@@ -219,7 +219,6 @@ export function ChatPage() {
       style={
         {
           "--chat-width": chatWidthCss(chatWidth),
-          "--chat-text": CHAT_TEXT_SIZE_CSS,
           "--composer-h": `${composerHeight}px`,
           // Room for the top fade, so the first message starts below it.
           "--chat-list-top": chromeOverChat ? "3.5rem" : "2rem",

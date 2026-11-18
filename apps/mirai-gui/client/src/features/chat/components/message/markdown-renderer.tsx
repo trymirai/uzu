@@ -115,13 +115,13 @@ const CustomComponents = {
     </h6>
   ),
   p: ({ children, ...props }: MarkdownComponentProps<"p">) => (
-    <p className="mb-3 mt-2 text-[length:var(--chat-text,15px)] font-[400] leading-[1.6]" {...props}>
+    <p className="mb-3 mt-2 text-[15px] font-[400] leading-[1.6]" {...props}>
       {children}
     </p>
   ),
   ul: ({ children, ...props }: MarkdownComponentProps<"ul">) => (
     <ul
-      className="mb-3 ml-[9px] list-disc text-[length:var(--chat-text,15px)] font-[400] leading-[1.6] text-label-title space-y-3 mt-3 pl-[10px]"
+      className="mb-3 ml-[9px] list-disc text-[15px] font-[400] leading-[1.6] text-label-title space-y-3 mt-3 pl-[10px]"
       {...props}
     >
       {children}
@@ -129,7 +129,7 @@ const CustomComponents = {
   ),
   ol: ({ children, ...props }: MarkdownComponentProps<"ol">) => (
     <ol
-      className="mb-3 list-decimal list-inside text-[length:var(--chat-text,15px)] font-[400] leading-[1.6] text-label-title space-y-3 mt-3 tabular-nums marker:[font-variant-numeric:tabular-nums]"
+      className="mb-3 list-decimal list-inside text-[15px] font-[400] leading-[1.6] text-label-title space-y-3 mt-3 tabular-nums marker:[font-variant-numeric:tabular-nums]"
       {...props}
     >
       {children}
@@ -137,7 +137,7 @@ const CustomComponents = {
   ),
   li: ({ children, ...props }: MarkdownComponentProps<"li">) => (
     <li
-      className="text-[length:var(--chat-text,15px)] font-[400] leading-[1.6] text-label-title mb-3 last:mb-0 tabular-nums [&>p:first-child]:inline [&>p:first-child]:m-0"
+      className="text-[15px] font-[400] leading-[1.6] text-label-title mb-3 last:mb-0 tabular-nums [&>p:first-child]:inline [&>p:first-child]:m-0"
       {...props}
     >
       {children}
@@ -145,7 +145,7 @@ const CustomComponents = {
   ),
   blockquote: ({ children, ...props }: MarkdownComponentProps<"blockquote">) => (
     <blockquote
-      className="border-l-[4px] border-button-border pl-3 text-[length:var(--chat-text,15px)] font-[400] leading-[1.6] text-label-title my-3"
+      className="border-l-[4px] border-button-border pl-3 text-[15px] font-[400] leading-[1.6] text-label-title my-3"
       {...props}
     >
       {children}
@@ -165,17 +165,14 @@ const CustomComponents = {
   ),
   th: ({ children, ...props }: MarkdownComponentProps<"th">) => (
     <th
-      className="px-2 py-3 first:pl-0 last:pr-0 text-left text-[length:var(--chat-text,15px)] font-[400] leading-[1.6] text-label-title"
+      className="px-2 py-3 first:pl-0 last:pr-0 text-left text-[15px] font-[400] leading-[1.6] text-label-title"
       {...props}
     >
       {children}
     </th>
   ),
   td: ({ children, ...props }: MarkdownComponentProps<"td">) => (
-    <td
-      className="px-2 py-3 first:pl-0 last:pr-0 text-[length:var(--chat-text,15px)] font-[400] leading-[1.6] text-label-title"
-      {...props}
-    >
+    <td className="px-2 py-3 first:pl-0 last:pr-0 text-[15px] font-[400] leading-[1.6] text-label-title" {...props}>
       {children}
     </td>
   ),
@@ -194,15 +191,12 @@ const CustomComponents = {
     return <input type={type} {...props} />;
   },
   strong: ({ children, ...props }: MarkdownComponentProps<"strong">) => (
-    <strong
-      className="text-[length:var(--chat-text,15px)] font-medium leading-[1.6] tracking-[0.2px] text-label-title"
-      {...props}
-    >
+    <strong className="text-[15px] font-medium leading-[1.6] tracking-[0.2px] text-label-title" {...props}>
       {children}
     </strong>
   ),
   em: ({ children, ...props }: MarkdownComponentProps<"em">) => (
-    <em className="text-[length:var(--chat-text,15px)] italic font-normal leading-[1.6] text-label-title" {...props}>
+    <em className="text-[15px] italic font-normal leading-[1.6] text-label-title" {...props}>
       {children}
     </em>
   ),

@@ -1,15 +1,14 @@
-import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { twMerge } from "tailwind-merge";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, useSidebarStore, useSidebarWidth } from "@/stores/use-sidebar-store";
 
-// Dragged this far past the minimum width, the sidebar lets go and hides; dragged back out from the
-// edge, it opens again. As in Claude and Codex.
+// Dragged this far past the minimum width, the sidebar lets go and hides. As in Claude and Codex.
 const COLLAPSE_BELOW = SIDEBAR_MIN_WIDTH - 60;
 const KEY_STEP = 16;
 
 /**
- * The sidebar's right edge, as a handle: drag to resize, drag fully left to hide, drag out from the
- * window edge to bring it back, double-click to go back to the automatic width (it follows the
+ * The sidebar's right edge, as a handle (only while the sidebar is out): drag to resize, drag fully
+ * left to hide, double-click to go back to the automatic width (it follows the
  * window). Also a focusable separator: the
  * arrow keys resize it. A thin line shows where it is while hovered or held.
  */
@@ -20,6 +19,20 @@ export function SidebarResizer({ onDraggingChange }: { onDraggingChange: (draggi
   const setWidth = useSidebarStore((s) => s.setWidth);
   const drag = useRef<{ startX: number; startWidth: number } | null>(null);
   const [active, setActive] = useState(false);
+
+  // Dragging past the collapse point hides the sidebar, and this handle with it, mid-drag: finish the
+  // drag on the way out, or the page keeps the resize cursor and the sidebar its no-animation state.
+  const onDraggingChangeRef = useRef(onDraggingChange);
+  onDraggingChangeRef.current = onDraggingChange;
+  useEffect(
+    () => () => {
+      if (!drag.current) return;
+      drag.current = null;
+      document.body.style.cursor = "";
+      onDraggingChangeRef.current(false);
+    },
+    [],
+  );
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
