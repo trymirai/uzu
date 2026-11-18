@@ -1,17 +1,13 @@
 use derive_more::Debug;
 use thiserror::Error;
 
-use self::transformed_linear::InputPreparationMode;
-
-mod input_rht;
+mod input_preparation;
 mod matmul;
-mod transformed_linear;
-mod untied_readout;
+mod output_stack;
 
-pub use input_rht::InputRhtParameters;
+pub use input_preparation::InputRhtParameters;
 pub use matmul::{LinearMatmul, LinearMatmulError};
-pub use transformed_linear::TransformedLinear;
-pub use untied_readout::UntiedReadout;
+pub use output_stack::{OutputRows, OutputStack};
 
 use crate::{
     backends::common::{
@@ -21,7 +17,7 @@ use crate::{
             matmul::{MatmulA, MatmulKernel},
         },
     },
-    config::weight_matrix::AnyWeightMatrixSpec,
+    config::weight_matrix::{AnyWeightMatrixSpec, output_stack::OutputStackError},
     data_type::DataType,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -32,6 +28,8 @@ pub enum LinearEncodeError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Matmul error: {0}")]
     Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
+    #[error("Unsupported linear input: {0}")]
+    UnsupportedInput(&'static str),
 }
 
 pub trait Linear<B: Backend>: Send + Sync {
@@ -63,6 +61,23 @@ pub trait Linear<B: Backend>: Send + Sync {
 
 pub type LinearInput<B> = MatmulA<<B as Backend>::ScratchBuffer>;
 
+pub enum InputPreparationMode {
+    InLinear,
+    AllowExternal {
+        allow_quantized_activations: bool,
+    },
+}
+
+pub enum InputAccess {
+    MayOverwrite,
+    Preserve,
+}
+
+pub enum OutputBasis {
+    Original,
+    Rotated,
+}
+
 pub struct LinearInputPreparation<B: Backend> {
     pub rht: InputRhtParameters<B>,
     pub activation_format: ActivationFormat,
@@ -70,6 +85,8 @@ pub struct LinearInputPreparation<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum LinearBlockError<B: Backend> {
+    #[error(transparent)]
+    OutputStack(#[from] OutputStackError),
     #[error("LinearMatmul error: {0}")]
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Backend error: {0}")]
@@ -88,48 +105,24 @@ impl<B: Backend> dyn Linear<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
+        output_basis: OutputBasis,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-        let weights_tree = parameter_tree.subtree("weights");
-        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
-        match spec {
-            spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
-            | AnyWeightMatrixSpec::MLXSpec(_)
-            | AnyWeightMatrixSpec::IntSpec(_)) => {
-                let matrix = LinearMatmul::load(
-                    input_dimension,
-                    output_dimension,
-                    weights_data_type,
-                    input_data_type,
-                    output_data_type,
-                    spec,
-                    None,
-                    &weights_tree,
-                    has_biases.then_some(parameter_tree),
-                    context,
-                )
-                .await?;
-                Ok(Box::new(matrix))
-            },
-            AnyWeightMatrixSpec::HybridSpec(spec) => {
-                let (linear, _) = TransformedLinear::load(
-                    input_dimension,
-                    output_dimension,
-                    weights_data_type,
-                    input_data_type,
-                    output_data_type,
-                    has_biases.then_some(parameter_tree),
-                    spec,
-                    &weights_tree,
-                    InputPreparationMode::InLinear,
-                    context,
-                )
-                .await?;
-                Ok(linear)
-            },
-            spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
-        }
+        let (linear, _) = Self::new_with_input_preparation(
+            input_dimension,
+            output_dimension,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            has_biases,
+            InputPreparationMode::InLinear,
+            output_basis,
+            parameter_tree,
+            context,
+        )
+        .await?;
+        Ok(linear)
     }
 
     pub async fn new(
@@ -147,6 +140,7 @@ impl<B: Backend> dyn Linear<B> {
             data_type,
             data_type,
             has_biases,
+            OutputBasis::Original,
             parameter_tree,
             context,
         )
@@ -170,7 +164,10 @@ impl<B: Backend> dyn Linear<B> {
             input_data_type,
             output_data_type,
             has_biases,
-            false,
+            InputPreparationMode::AllowExternal {
+                allow_quantized_activations: false,
+            },
+            OutputBasis::Original,
             parameter_tree,
             context,
         )
@@ -193,7 +190,10 @@ impl<B: Backend> dyn Linear<B> {
             data_type,
             data_type,
             has_biases,
-            true,
+            InputPreparationMode::AllowExternal {
+                allow_quantized_activations: true,
+            },
+            OutputBasis::Original,
             parameter_tree,
             context,
         )
@@ -228,44 +228,54 @@ impl<B: Backend> dyn Linear<B> {
         input_data_type: DataType,
         output_data_type: DataType,
         has_biases: bool,
-        allow_quantized_activations: bool,
+        input_preparation_mode: InputPreparationMode,
+        output_basis: OutputBasis,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Box<dyn Linear<B>>, Option<LinearInputPreparation<B>>), LinearBlockError<B>> {
         let weights_tree = parameter_tree.subtree("weights");
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        if matches!(output_basis, OutputBasis::Rotated) && !matches!(spec, AnyWeightMatrixSpec::HybridSpec(_)) {
+            return Err(LinearBlockError::UnsupportedConfiguration("expected input-output Hadamard transform".into()));
+        }
         match spec {
-            AnyWeightMatrixSpec::HybridSpec(spec) => {
-                TransformedLinear::load(
+            spec @ (AnyWeightMatrixSpec::FullPrecisionSpec(_)
+            | AnyWeightMatrixSpec::MLXSpec(_)
+            | AnyWeightMatrixSpec::IntSpec(_)) => {
+                let matrix = LinearMatmul::load(
                     input_dimension,
                     output_dimension,
                     weights_data_type,
                     input_data_type,
                     output_data_type,
-                    has_biases.then_some(parameter_tree),
                     spec,
+                    None,
                     &weights_tree,
-                    InputPreparationMode::AllowExternal {
-                        allow_quantized_activations,
-                    },
-                    context,
-                )
-                .await
-            },
-            _ => {
-                let linear = Self::new_mixed_precision(
-                    input_dimension,
-                    output_dimension,
-                    weights_data_type,
-                    input_data_type,
-                    output_data_type,
-                    has_biases,
-                    parameter_tree,
+                    has_biases.then_some(parameter_tree),
                     context,
                 )
                 .await?;
-                Ok((linear, None))
+                Ok((Box::new(matrix), None))
             },
+            spec @ (AnyWeightMatrixSpec::OutputStackSpec(_) | AnyWeightMatrixSpec::HybridSpec(_)) => {
+                let (linear, preparation) = OutputStack::load(
+                    input_dimension,
+                    output_dimension,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    spec,
+                    &weights_tree,
+                    has_biases.then_some(parameter_tree),
+                    input_preparation_mode,
+                    InputAccess::MayOverwrite,
+                    output_basis,
+                    context,
+                )
+                .await?;
+                Ok((Box::new(linear), preparation))
+            },
+            spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
 }

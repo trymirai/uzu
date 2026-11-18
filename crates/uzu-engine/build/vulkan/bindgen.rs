@@ -16,6 +16,7 @@ use crate::{
         expr_rewrite::{qualify_enum_path, rewrite_paths_with},
         gpu_type_paths::{GpuTypeKind, GpuTypePaths},
         gpu_types::{GpuType, GpuTypeEnum, GpuTypeStructFieldType, GpuTypes},
+        identifiers::KernelName,
         kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
     },
     slang::{SlangArgumentType, SlangKernel, slang2rust, specialization_name},
@@ -29,30 +30,36 @@ pub fn binding_file(
     output_base.with_file_name(binding_module(kernel_name).to_string()).with_extension("rs")
 }
 
-pub fn bindgen_umbrella(bindings: &[(String, String, bool)]) -> TokenStream {
-    let modules = bindings.iter().map(|(file, kernel_name, _)| {
-        let module = binding_module(kernel_name);
-        let ty = format_ident!("{kernel_name}VulkanKernel");
-        quote! {
-            #[path = #file]
-            mod #module;
-            pub use #module::#ty;
+pub fn bindgen_umbrella(modules: &[(PathBuf, &[Kernel], &[KernelName])]) -> anyhow::Result<TokenStream> {
+    let mut bindings = Vec::new();
+    let mut kernel_types = Vec::new();
+    for (output_base, public, private) in modules {
+        let names = public.iter().map(|kernel| (&kernel.name, true)).chain(private.iter().map(|name| (name, false)));
+        for (kernel_name, is_public) in names {
+            let file = binding_file(output_base, kernel_name);
+            let file = file.to_str().context("binding path is not UTF-8")?;
+            let module = binding_module(kernel_name);
+            let ty = format_ident!("{kernel_name}VulkanKernel");
+            bindings.push(quote! {
+                #[path = #file]
+                mod #module;
+                pub use #module::#ty;
+            });
+            if is_public {
+                let kernel_trait = format_ident!("{kernel_name}Kernel");
+                kernel_types.push(quote! { type #kernel_trait = crate::backends::vulkan::#ty; });
+            }
         }
-    });
-    let kernel_types = bindings.iter().filter(|(.., public)| *public).map(|(_, kernel_name, _)| {
-        let kernel_trait = format_ident!("{kernel_name}Kernel");
-        let ty = format_ident!("{kernel_name}VulkanKernel");
-        quote! { type #kernel_trait = crate::backends::vulkan::#ty; }
-    });
-    quote! {
-        #(#modules)*
+    }
+    Ok(quote! {
+        #(#bindings)*
 
         macro_rules! autogen_kernels {
             () => {
                 #(#kernel_types)*
             }
         }
-    }
+    })
 }
 
 pub fn bindgen(
@@ -103,27 +110,24 @@ pub fn bindgen(
         gpu_types,
         gpu_type_paths,
         &mut layout_checks,
+        info.public,
     )?;
     let (conditions, specialization_conditions) = presence_checks(kernel_name, info, gpu_type_paths)?;
-    let (new_preconditions, encode_preconditions) =
-        preconditions(kernel_name, kernel, info, gpu_types, gpu_type_paths)?;
+    let (new_preconditions, encode_preconditions) = preconditions(kernel_name, info, gpu_type_paths)?;
     let Dispatch {
         grid,
         group_sizes,
-        axis_sizes,
         dimensions,
     } = dispatch_plan(kernel_name, info, abi, gpu_type_paths)?;
     let grid_count = grid.len();
 
-    let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* #axis_sizes };
+    let host_expressions = quote! { #(#conditions)* #(#encode_preconditions)* #(#grid)* #dimensions };
     let references = |name: &Ident| find_ident(host_expressions.clone(), &|ident| ident == name).is_some();
     let (referenced, referenced_types): (Vec<_>, Vec<_>) = specializations
         .iter()
         .filter(|specialization| references(&specialization.name))
         .map(|specialization| (&specialization.name, &specialization.ty))
         .unzip();
-    let (specialization_names, specialization_types): (Vec<_>, Vec<_>) =
-        specializations.iter().map(|specialization| (&specialization.name, &specialization.ty)).unzip();
 
     let required_subgroup_size = match info
         .required_subgroup_size
@@ -149,36 +153,29 @@ pub fn bindgen(
     let read_count = reads.len();
     let write_count = writes.len();
 
-    let new_fn = if info.public {
-        format_ident!("create")
-    } else {
-        format_ident!("new")
-    };
-    let encode_fn = if info.public {
-        format_ident!("encode_ranges")
-    } else {
-        format_ident!("encode")
-    };
     let entry_selection = select_entry(kernel_name, &type_parameters, first, variants)?;
-    let trait_impl = if info.public {
-        public_trait_impl(
-            kernel_name,
-            kernel,
-            gpu_type_paths,
-            &struct_name,
-            &type_parameters,
-            &specializations,
-            &new_fn,
-            &encode_fn,
-        )?
-    } else {
-        quote! {}
-    };
+    let new_parameters = kernel
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let name = format_ident!("{}", parameter.name.as_ref());
+            Ok(match &parameter.ty {
+                KernelParameterType::Type => quote! { #name: crate::data_type::DataType },
+                KernelParameterType::Value(text) => {
+                    let ty: Type = gpu_type_paths.resolve_type(text)?;
+                    quote! { #name: #ty }
+                },
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let kernel_trait = format_ident!("{kernel_name}Kernel");
+    let trait_for = info.public.then(|| quote! { crate::backends::common::kernel::#kernel_trait for });
+    let backend = info.public.then(|| quote! { type Backend = crate::backends::vulkan::Vulkan; });
+    let visibility = (!info.public).then(|| quote! { pub });
 
     Ok(quote! {
         use crate::backends::vulkan::{
             Error, VkBuffer, VkCommandBufferEncoding, VkComputePipeline, VkComputePipelineKey, VkContext,
-            check_work_group,
         };
 
 
@@ -190,18 +187,15 @@ pub fn bindgen(
             #(#referenced: #referenced_types,)*
         }
 
-        impl #struct_name {
-            #[allow(non_snake_case, clippy::too_many_arguments)]
-            pub fn #new_fn(
-                context: &std::sync::Arc<VkContext>
-                #(, #type_parameters: crate::data_type::DataType)*
-                #(, #specialization_names: #specialization_types)*
-            ) -> Result<Self, Error> {
+        #[allow(non_snake_case)]
+        impl #trait_for #struct_name {
+            #backend
+
+            #visibility fn new(context: &VkContext #(, #new_parameters)*) -> Result<Self, Error> {
                 let (entry_point, spirv) = #entry_selection;
                 #(#specialization_conditions)*
                 #(#new_preconditions)*
-                check_work_group(
-                    context.physical_device(),
+                context.device().physical_device.limits.check_work_group(
                     #kernel_name,
                     [#(#group_sizes),*],
                     #required_subgroup_size,
@@ -209,8 +203,7 @@ pub fn bindgen(
                 #construction
             }
 
-            #[allow(non_snake_case, clippy::too_many_arguments)]
-            pub unsafe fn #encode_fn(
+            #visibility fn encode(
                 &self,
                 #(#parameters,)*
                 command_buffer: &mut VkCommandBufferEncoding,
@@ -226,20 +219,16 @@ pub fn bindgen(
                 #(#packing)*
                 let __dsl_reads: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #read_count] = [#(#reads),*];
                 let __dsl_writes: [Option<(&std::sync::Arc<VkBuffer>, std::ops::Range<u64>)>; #write_count] = [#(#writes),*];
-                unsafe {
-                    command_buffer.encode_dispatch(
-                        #kernel_name,
-                        #pipeline,
-                        &__dsl_block,
-                        #dimensions,
-                        __dsl_reads.into_iter().flatten(),
-                        __dsl_writes.into_iter().flatten(),
-                    )
-                }
+                command_buffer.encode_dispatch(
+                    #kernel_name,
+                    #pipeline,
+                    &__dsl_block,
+                    #dimensions,
+                    __dsl_reads.into_iter().flatten(),
+                    __dsl_writes.into_iter().flatten(),
+                )
             }
         }
-
-        #trait_impl
     })
 }
 
@@ -266,7 +255,6 @@ struct ArgumentEncoding {
 struct Dispatch {
     grid: Vec<Expr>,
     group_sizes: Vec<Expr>,
-    axis_sizes: Option<TokenStream>,
     dimensions: TokenStream,
 }
 
@@ -469,6 +457,7 @@ fn encode_arguments(
     gpu_types: &[&GpuTypes],
     gpu_type_paths: &GpuTypePaths,
     layout_checks: &mut Vec<TokenStream>,
+    public: bool,
 ) -> anyhow::Result<ArgumentEncoding> {
     let mut parameters = Vec::new();
     let mut packing = Vec::new();
@@ -503,16 +492,36 @@ fn encode_arguments(
                 } else {
                     quote! { Some(#name.clone()) }
                 };
-                match access {
-                    KernelBufferAccess::Read => reads.push(declared),
-                    KernelBufferAccess::ReadWrite => writes.push(declared),
-                }
+                let reference = match access {
+                    KernelBufferAccess::Read => {
+                        reads.push(declared);
+                        quote! { crate::backends::common::BufferRef }
+                    },
+                    KernelBufferAccess::ReadWrite => {
+                        writes.push(declared);
+                        quote! { crate::backends::common::BufferMut }
+                    },
+                };
+                let argument_type = if public {
+                    let resolve = quote! {{
+                        let (buffer, range) = #reference::parts(#name);
+                        VkBuffer::resolve(buffer, range)
+                    }};
+                    packing.push(if argument.conditional {
+                        quote! { let #name = #name.map(|#name| #resolve); }
+                    } else {
+                        quote! { let #name = #resolve; }
+                    });
+                    quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
+                } else {
+                    quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }
+                };
                 let address = if argument.conditional {
                     quote! { #name.as_ref().map_or(0, |(buffer, range)| buffer.device_address() + range.start) }
                 } else {
                     quote! { (#name.0.device_address() + #name.1.start) }
                 };
-                (quote! { (&std::sync::Arc<VkBuffer>, std::ops::Range<u64>) }, quote! { #address.to_ne_bytes() })
+                (argument_type, quote! { #address.to_ne_bytes() })
             },
             (KernelArgumentType::Value(text), Some((path, ty, stride, _)))
                 if gpu_type_paths.full_path_for(text) == Some(path) =>
@@ -608,66 +617,17 @@ fn presence_checks(
 
 fn preconditions(
     kernel_name: &str,
-    kernel: &Kernel,
     info: &SlangKernel,
-    gpu_types: &[&GpuTypes],
     gpu_type_paths: &GpuTypePaths,
 ) -> anyhow::Result<(Vec<TokenStream>, Vec<TokenStream>)> {
-    let names = |constants: bool| {
-        let parameters = kernel.parameters.iter().filter(|parameter| match parameter.ty {
-            KernelParameterType::Value(_) => true,
-            KernelParameterType::Type => !constants,
-        });
-        let parameters = parameters.map(|parameter| parameter.name.as_ref());
-        let uniforms =
-            kernel.arguments.iter().filter(|argument| constants && matches!(argument.ty, KernelArgumentType::Value(_)));
-        parameters.chain(uniforms.map(|argument| argument.name.as_ref())).map(str::to_string).collect::<BTreeSet<_>>()
-    };
-    let is_variant = |path: &syn::Path| {
-        let segments = path.segments.iter().map(|segment| segment.ident.to_string());
-        segments.collect_tuple().is_some_and(|(head, variant): (String, String)| {
-            canonical_enum(gpu_types, &head)
-                .is_some_and(|candidate| candidate.variants.iter().any(|known| *known.name == *variant))
-        })
-    };
-    let capability = |path: &syn::Path| path.segments.len() == 2 && path.segments[0].ident == "VkDeviceCapabilities";
-    let is_constant = |path: &syn::Path| {
-        let text = path.to_token_stream().to_string().replace(' ', "");
-        gpu_types.iter().any(|types| {
-            types.files.iter().any(|file| {
-                file.types.iter().any(|ty| {
-                    matches!(ty, GpuType::Constant(constant)
-                        if text == format!("{}::{}::{}", types.module_path, file.name, constant.name))
-                })
-            })
-        })
-    };
     let mut new_preconditions = Vec::new();
     let mut encode_preconditions = Vec::new();
     for (phase, text) in &info.preconditions {
-        let phase = phase.as_str();
-        let text = text.as_str();
-        let construction = phase == "new";
-        let mut known = names(!construction);
-        if construction {
-            known.insert("context".to_owned());
-        }
-        let mut unknown = Vec::new();
-        let mut parsed = syn::parse_str::<Expr>(text)
-            .with_context(|| format!("{kernel_name}: malformed {phase} Precondition '{text}'"))?;
-        rewrite_paths_with(&mut parsed, |path| {
-            let single = path.get_ident().is_some_and(|ident| known.contains(&ident.to_string()));
-            if !single && !is_variant(path) && !is_constant(path) && !(construction && capability(path)) {
-                unknown.push(path.to_token_stream().to_string());
-            }
-            None
-        });
-        ensure!(unknown.is_empty(), "{kernel_name}: {phase} Precondition '{text}' names unknown {unknown:?}");
         let mut condition = host_expression(kernel_name, gpu_type_paths, text)?;
         rewrite_paths_with(&mut condition, |path| {
-            capability(path).then(|| parse_quote! { crate::backends::vulkan::#path })
+            device_capability(path).then(|| parse_quote! { crate::backends::vulkan::#path })
         });
-        match phase {
+        match phase.as_str() {
             "new" => new_preconditions.push(quote! {
                 if !(#condition) {
                     return Err(crate::backends::vulkan::VkKernelError::KernelPrecondition {
@@ -752,11 +712,9 @@ fn dispatch_plan(
     } else {
         quote! { [#(#counts),*] }
     };
-    let axis_sizes = axis.then(|| quote! { #(#group_sizes)* });
     Ok(Dispatch {
         grid,
         group_sizes,
-        axis_sizes,
         dimensions,
     })
 }
@@ -794,7 +752,7 @@ fn pipeline_code(
             PipelineCode {
                 field: quote! { pipeline: std::sync::Arc<VkComputePipeline> },
                 construction: quote! {
-                    let pipeline = context.compute_pipeline(#key)?;
+                    let pipeline = context.pipelines().get(#key)?;
                     Ok(Self {
                         pipeline,
                         #(#referenced,)*
@@ -814,7 +772,7 @@ fn pipeline_code(
             PipelineCode {
                 field: quote! { pipelines: [std::sync::Arc<VkComputePipeline>; #count] },
                 construction: quote! {
-                    let pipelines = [#(context.compute_pipeline(#keys)?),*];
+                    let pipelines = [#(context.pipelines().get(#keys)?),*];
                     Ok(Self {
                         pipelines,
                         #(#referenced,)*
@@ -857,84 +815,6 @@ fn select_entry(
     })
 }
 
-fn public_trait_impl(
-    kernel_name: &str,
-    kernel: &Kernel,
-    gpu_type_paths: &GpuTypePaths,
-    struct_name: &Ident,
-    type_parameters: &[Ident],
-    specializations: &[Specialization],
-    new_fn: &Ident,
-    encode_fn: &Ident,
-) -> anyhow::Result<TokenStream> {
-    let kernel_trait = format_ident!("{kernel_name}Kernel");
-    let new_parameters = kernel
-        .parameters
-        .iter()
-        .map(|parameter| {
-            let name = format_ident!("{}", parameter.name.as_ref());
-            Ok(match &parameter.ty {
-                KernelParameterType::Type => quote! { #name: crate::data_type::DataType },
-                KernelParameterType::Value(text) => {
-                    let ty: Type = gpu_type_paths.resolve_type(text)?;
-                    quote! { #name: #ty }
-                },
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut trait_arguments = Vec::new();
-    let mut conversions = Vec::new();
-    let mut call_arguments = Vec::new();
-    for argument in &kernel.arguments {
-        let name = format_ident!("{}", argument.name.as_ref());
-        let ty = match &argument.ty {
-            KernelArgumentType::Buffer(access) => {
-                let reference = match access {
-                    KernelBufferAccess::Read => quote! { crate::backends::common::BufferRef },
-                    KernelBufferAccess::ReadWrite => quote! { crate::backends::common::BufferMut },
-                };
-                let resolve = quote! {{
-                    let (buffer, range) = #reference::parts(#name);
-                    VkBuffer::resolve(buffer, range)
-                }};
-                conversions.push(if argument.conditional {
-                    quote! { let #name = #name.map(|#name| #resolve); }
-                } else {
-                    quote! { let #name = #resolve; }
-                });
-                quote! { impl #reference<Backend = crate::backends::vulkan::Vulkan> }
-            },
-            KernelArgumentType::Value(text) => {
-                let ty: Type = gpu_type_paths.resolve_type(text)?;
-                quote! { #ty }
-            },
-        };
-        trait_arguments.push(if argument.conditional {
-            quote! { #name: Option<#ty> }
-        } else {
-            quote! { #name: #ty }
-        });
-        call_arguments.push(name);
-    }
-    let specialization_names = specializations.iter().map(|specialization| &specialization.name);
-    Ok(quote! {
-        #[allow(clippy::style, clippy::complexity, clippy::perf)]
-        impl crate::backends::common::kernel::#kernel_trait for #struct_name {
-            type Backend = crate::backends::vulkan::Vulkan;
-
-            #[allow(non_snake_case)]
-            fn new(context: &VkContext #(, #new_parameters)*) -> Result<Self, Error> {
-                #struct_name::#new_fn(&context.arc() #(, #type_parameters)* #(, #specialization_names)*)
-            }
-
-            fn encode(&self, #(#trait_arguments,)* command_buffer: &mut VkCommandBufferEncoding) {
-                #(#conversions)*
-                unsafe { #struct_name::#encode_fn(self, #(#call_arguments,)* command_buffer) }
-            }
-        }
-    })
-}
-
 fn canonical_types<'a>(gpu_types: &[&'a GpuTypes]) -> impl Iterator<Item = &'a GpuType> {
     gpu_types.iter().flat_map(|types| types.files.iter()).flat_map(|file| &file.types)
 }
@@ -963,6 +843,10 @@ fn specialization_id(
         .iter()
         .find_map(|(name, id)| (*name == constant).then_some(*id))
         .with_context(|| format!("{kernel_name}: no specialization constant '{constant}'"))
+}
+
+pub fn device_capability(path: &syn::Path) -> bool {
+    path.segments.len() == 2 && path.segments[0].ident == "VkDeviceCapabilities"
 }
 
 fn host_expression(
@@ -998,7 +882,7 @@ fn entry_spirv(
 ) -> TokenStream {
     match native {
         Some((_, native)) => quote! {
-            if context.physical_device().capabilities.contains(crate::backends::vulkan::VkDeviceCapabilities::BF16_TYPE) {
+            if context.device().physical_device.capabilities.contains(crate::backends::vulkan::VkDeviceCapabilities::BF16_TYPE) {
                 include_bytes!(#native) as &[u8]
             } else {
                 include_bytes!(#object) as &[u8]

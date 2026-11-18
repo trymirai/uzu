@@ -9,14 +9,24 @@ use crate::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             LogitTransformKernel,
-            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulKernel, MatmulOutput},
+            matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulGather, MatmulKernel, MatmulOutput},
         },
     },
-    config::{embedding::AnyEmbeddingConfig, weight_matrix::AnyWeightMatrixSpec},
+    config::{
+        embedding::AnyEmbeddingConfig,
+        weight_matrix::{
+            AnyWeightMatrixSpec,
+            hybrid_spec::{AnyIncoherenceProcessorSpec, IncoherenceProcessingMode},
+        },
+    },
     data_type::DataType,
     encodable_block::{
-        embedding_table::{EmbeddingTable, EmbeddingTableError, read_output_signs},
-        linear::{LinearEncodeError, LinearMatmulError, UntiedReadout},
+        embedding_table::{EmbeddingTable, EmbeddingTableError},
+        linear::{
+            InputAccess, InputPreparationMode, LinearBlockError, LinearEncodeError, OutputBasis, OutputRows,
+            OutputStack,
+        },
+        weight_matrix::WeightMatrix,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
 };
@@ -29,12 +39,10 @@ pub enum EmbeddingError<B: Backend> {
     Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
-    #[error("Unsupported configuration: {0}")]
-    UnsupportedConfiguration(String),
     #[error("Embedding table error: {0}")]
     EmbeddingTable(#[from] EmbeddingTableError<B>),
     #[error(transparent)]
-    LinearMatmul(#[from] LinearMatmulError<B>),
+    LinearBlock(#[from] LinearBlockError<B>),
     #[error("Linear encoding error: {0}")]
     LinearEncode(#[from] LinearEncodeError<B>),
 }
@@ -42,17 +50,17 @@ pub enum EmbeddingError<B: Backend> {
 enum EmbeddingTying<B: Backend> {
     Tied {
         table: EmbeddingTable<B>,
+        matrix: Arc<WeightMatrix<B>>,
         readout: Mutex<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Untied {
         input_table: EmbeddingTable<B>,
-        output: UntiedReadout<B>,
+        output: OutputStack<B>,
     },
 }
 
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
-    readout_input_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
     input_scale: f32,
     data_type: DataType,
     logit_transform: Option<LogitTransform<B>>,
@@ -76,7 +84,15 @@ impl<B: Backend> Embedding<B> {
     }
 
     pub fn readout_input_hadamard_factors(&self) -> Option<Arc<B::GlobalGpuBuffer>> {
-        self.readout_input_hadamard_factors.clone()
+        match &self.tying {
+            EmbeddingTying::Tied {
+                table,
+                ..
+            } => table.readout_input_hadamard_factors(),
+            EmbeddingTying::Untied {
+                ..
+            } => None,
+        }
     }
 
     pub async fn new(
@@ -91,26 +107,19 @@ impl<B: Backend> Embedding<B> {
             parameter_tree.ignore("index_permutation", &[vocab_size], DataType::I32)?;
         }
 
-        let (tying, readout_input_hadamard_factors) = match embedding_config {
+        let tying = match embedding_config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
                 let embedding_tree = parameter_tree.subtree("embedding");
-                let table = EmbeddingTable::load(vocab_size, model_dim, data_type, &embedding_tree, context).await?;
-                if table.as_matrix().is_none() {
-                    return Err(EmbeddingError::UnsupportedConfiguration("tied embeddings need a matrix table".into()));
+                let (table, matrix) =
+                    EmbeddingTable::load_tied(vocab_size, model_dim, data_type, &embedding_tree, context).await?;
+                EmbeddingTying::Tied {
+                    table,
+                    matrix,
+                    readout: Mutex::new(
+                        <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+                            .map_err(EmbeddingError::Matmul)?,
+                    ),
                 }
-                let spec = embedding_tree.metadata("spec")?;
-                let readout_input_hadamard_factors = if let AnyWeightMatrixSpec::HybridSpec(_) = spec {
-                    Some(Arc::new(read_output_signs(&embedding_tree, model_dim).await?))
-                } else {
-                    None
-                };
-                (
-                    EmbeddingTying::Tied {
-                        table,
-                        readout: readout_kernel(context, data_type)?,
-                    },
-                    readout_input_hadamard_factors,
-                )
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
                 let input_embedding_tree = parameter_tree.subtree("input_embedding");
@@ -118,22 +127,38 @@ impl<B: Backend> Embedding<B> {
                     EmbeddingTable::load(vocab_size, model_dim, data_type, &input_embedding_tree, context).await?;
                 let output_embedding_tree = parameter_tree.subtree("output_embedding");
                 let output_embedding_spec = output_embedding_tree.metadata("spec")?;
-                let output = UntiedReadout::load(
-                    vocab_size,
+                if let AnyWeightMatrixSpec::HybridSpec(hybrid) = &output_embedding_spec {
+                    let unsupported = match &hybrid.incoherence_spec {
+                        Some(AnyIncoherenceProcessorSpec::HadamardSpec(p))
+                            if p.processing_mode == IncoherenceProcessingMode::InputOutput =>
+                        {
+                            Some("readout supports input-only Hadamard transforms")
+                        },
+                        _ => None,
+                    };
+                    if let Some(message) = unsupported {
+                        return Err(LinearBlockError::UnsupportedConfiguration(message.into()).into());
+                    }
+                }
+                let (output, _) = OutputStack::load(
                     model_dim,
+                    vocab_size,
+                    data_type,
+                    data_type,
                     data_type,
                     output_embedding_spec,
                     &output_embedding_tree,
+                    None,
+                    InputPreparationMode::InLinear,
+                    InputAccess::Preserve,
+                    OutputBasis::Original,
                     context,
                 )
                 .await?;
-                (
-                    EmbeddingTying::Untied {
-                        input_table,
-                        output,
-                    },
-                    None,
-                )
+                EmbeddingTying::Untied {
+                    input_table,
+                    output,
+                }
             },
         };
 
@@ -153,18 +178,16 @@ impl<B: Backend> Embedding<B> {
             None
         };
 
-        Ok((
-            Self {
-                tying,
-                readout_input_hadamard_factors: readout_input_hadamard_factors.clone(),
-                input_scale,
-                data_type,
-                logit_transform,
-                vocab_size,
-                model_dim,
-            },
-            readout_input_hadamard_factors,
-        ))
+        let embedding = Self {
+            tying,
+            input_scale,
+            data_type,
+            logit_transform,
+            vocab_size,
+            model_dim,
+        };
+        let signs = embedding.readout_input_hadamard_factors();
+        Ok((embedding, signs))
     }
 
     pub fn encode_lookup(
@@ -211,10 +234,20 @@ impl<B: Backend> Embedding<B> {
             EmbeddingTying::Untied {
                 output,
                 ..
-            } => output.encode(input_buffer, batch_dim, output_dim, gather_indices, command_buffer)?,
+            } => {
+                let rows = match gather_indices {
+                    Some(indices) => OutputRows::Gather {
+                        indices,
+                        count: output_dim,
+                    },
+                    None => OutputRows::Prefix(output_dim),
+                };
+                output.encode_input(MatmulA::full_precision(input_buffer), batch_dim, rows, command_buffer)?
+            },
             EmbeddingTying::Tied {
-                table,
+                matrix,
                 readout,
+                ..
             } => {
                 let mut output = command_buffer
                     .allocate_scratch_for_shape(&[batch_dim, output_dim], self.data_type)
@@ -224,11 +257,15 @@ impl<B: Backend> Embedding<B> {
                         values: input_buffer,
                         offset: 0,
                     },
-                    b: table.as_matrix().expect("tied embedding tables are matrices").matmul_b(),
+                    b: matrix.matmul_b(),
                     b_leading_dimension: None,
                     b_transpose: true,
                     output: MatmulOutput::new(&mut output, MatmulDOps::none()),
-                    gather_indices,
+                    gather: gather_indices.map(|indices| MatmulGather {
+                        indices,
+                        first_row: 0,
+                        row_count: self.vocab_size,
+                    }),
                     m: batch_dim,
                     n: output_dim,
                     k: self.model_dim,
@@ -251,12 +288,4 @@ impl<B: Backend> Embedding<B> {
 
         Ok(output_buffer)
     }
-}
-fn readout_kernel<B: Backend>(
-    context: &B::Context,
-    data_type: DataType,
-) -> Result<Mutex<<B::Kernels as Kernels>::MatmulKernel>, EmbeddingError<B>> {
-    let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
-        .map_err(EmbeddingError::Matmul)?;
-    Ok(Mutex::new(kernel))
 }

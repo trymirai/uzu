@@ -1,10 +1,10 @@
 use crate::{
     backends::common::{
-        Backend, BufferMut, BufferRef, CommandBuffer, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::{activation_transform::ActivationTransformOp, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE},
         kernel::{
             ActivationTransformKernel,
-            matmul::{ActivationFormat, Int8CodeLayout},
+            matmul::{ActivationFormat, Int8CodeLayout, MatmulA, packed_half_bytes},
         },
     },
     data_type::DataType,
@@ -17,6 +17,7 @@ fn assert_row_width(element_count: u32) {
     );
 }
 
+pub const SUPPORTED_HADAMARD_BLOCK_SIZES: [u32; 2] = [HADAMARD_TRANSFORM_BLOCK_SIZE, 128];
 pub const ACTIVATION_SCALE_GROUP_SIZE: u32 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +131,7 @@ impl<B: Backend> ActivationTransform<B> {
         context: &B::Context,
         data_type: DataType,
         bias_data_type: Option<DataType>,
+        hadamard_size: u32,
         in_place: bool,
     ) -> Result<Self, B::Error> {
         Self::new(
@@ -137,7 +139,7 @@ impl<B: Backend> ActivationTransform<B> {
             data_type,
             bias_data_type,
             ActivationTransformOp::OutputRht,
-            HADAMARD_TRANSFORM_BLOCK_SIZE,
+            hadamard_size,
             in_place,
             ActivationFormat::Bf16,
         )
@@ -160,6 +162,61 @@ impl<B: Backend> ActivationTransform<B> {
         Self::new(context, data_type, None, op, hadamard_size, false, quantization)
     }
 
+    pub fn prepare_quantized(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        rht_factors: Option<impl BufferRef<Backend = B>>,
+        batch_dim: u32,
+        input_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<MatmulA<B::ScratchBuffer>, B::Error> {
+        if let ActivationFormat::PackedHalf {
+            block_k,
+            bits,
+        } = self.format
+        {
+            let mut values = command_buffer.allocate_scratch(packed_half_bytes(input_dim, block_k, bits))?;
+            self.encode_pack_half(input, &mut values, rht_factors, batch_dim, input_dim, command_buffer);
+            return Ok(MatmulA::PackedHalf {
+                values,
+                block_k,
+                bits,
+            });
+        }
+        let ActivationFormat::Int8(quantization) = self.format else {
+            panic!("quantized activation transform required")
+        };
+        let groups_per_row = input_dim.div_ceil(quantization.scale_group_size());
+        let mut values = command_buffer.allocate_scratch_for_shape(&[batch_dim, input_dim], DataType::I8)?;
+        let mut scales = command_buffer.allocate_scratch_for_shape(&[batch_dim, groups_per_row], DataType::F32)?;
+        let mut group_sums = quantization
+            .sum_group_size()
+            .map(|group_size| {
+                command_buffer.allocate_scratch_for_shape(&[batch_dim, input_dim.div_ceil(group_size)], DataType::I32)
+            })
+            .transpose()?;
+        self.encode_quantize(
+            input,
+            &mut values,
+            &mut scales,
+            group_sums.as_mut(),
+            rht_factors,
+            batch_dim,
+            input_dim,
+            command_buffer,
+        );
+        Ok(MatmulA::Int8Symmetric {
+            values,
+            scales,
+            group_sums,
+            quantization,
+        })
+    }
+
+    pub fn is_in_place(&self) -> bool {
+        self.in_place
+    }
+
     pub fn format(&self) -> ActivationFormat {
         self.format
     }
@@ -169,7 +226,7 @@ impl<B: Backend> ActivationTransform<B> {
         &self,
         input: impl BufferRef<Backend = B>,
         output: impl BufferMut<Backend = B>,
-        rht_factors: impl BufferRef<Backend = B>,
+        rht_factors: Option<impl BufferRef<Backend = B>>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -194,7 +251,7 @@ impl<B: Backend> ActivationTransform<B> {
     pub fn encode_fp_in_place(
         &self,
         data: impl BufferMut<Backend = B>,
-        rht_factors: impl BufferRef<Backend = B>,
+        rht_factors: Option<impl BufferRef<Backend = B>>,
         bias: Option<&B::GlobalGpuBuffer>,
         batch_size: u32,
         element_count: u32,
@@ -223,7 +280,7 @@ impl<B: Backend> ActivationTransform<B> {
         q_out: impl BufferMut<Backend = B>,
         scales_out: impl BufferMut<Backend = B>,
         group_sums_out: Option<impl BufferMut<Backend = B>>,
-        rht_factors: impl BufferRef<Backend = B>,
+        rht_factors: Option<impl BufferRef<Backend = B>>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -259,7 +316,7 @@ impl<B: Backend> ActivationTransform<B> {
         &self,
         input: impl BufferRef<Backend = B>,
         output: impl BufferMut<Backend = B>,
-        rht_factors: impl BufferRef<Backend = B>,
+        rht_factors: Option<impl BufferRef<Backend = B>>,
         batch_size: u32,
         element_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,

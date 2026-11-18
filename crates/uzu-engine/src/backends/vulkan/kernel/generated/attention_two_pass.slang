@@ -1,0 +1,1 @@
+static const uint ATTENTION_TWO_PASS_SIMDGROUPS = 8;

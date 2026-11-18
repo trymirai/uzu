@@ -278,6 +278,13 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let copies = self.cache.accept(accepted_indices);
+        assert!(
+            copies
+                .iter()
+                .try_fold(0, |written, copy| (copy.source >= written).then(|| written.max(copy.destination + 1)))
+                .is_some(),
+            "copy reads a row an earlier copy wrote"
+        );
 
         if !copies.is_empty() {
             self.kv_cache_update.encode(

@@ -11,7 +11,7 @@ pub mod gated_act_mul;
 pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
-#[cfg(backend = "metal")]
+#[cfg(any(backend = "metal", backend = "vulkan"))]
 pub mod tree_verify_blocks;
 mod trellis;
 

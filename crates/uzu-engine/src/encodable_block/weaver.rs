@@ -6,9 +6,12 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
-        gpu_types::weaver::{
-            CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
-            WeaverSelectionMode::{Children, Frontier, Fused},
+        gpu_types::{
+            hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE,
+            weaver::{
+                CANDIDATES_MAX, FRONTIER_MAX_SLOTS, FRONTIER_MAX_WIDTH, FrontierIdx, MetadataIdx, TreeIdx,
+                WeaverSelectionMode::{Children, Frontier, Fused},
+            },
         },
         kernel::{
             ActivationTransform, AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel,
@@ -20,7 +23,7 @@ use crate::{
     encodable_block::{
         confidence_head::{ConfidenceHead, ConfidenceHeadError, ConfidenceHeadStep},
         embedding::{Embedding, EmbeddingError},
-        linear::{Linear, LinearBlockError, LinearEncodeError, TransformedLinear},
+        linear::{Linear, LinearBlockError, LinearEncodeError, OutputBasis},
         mixer::attention::{KVCache, KVCacheView, rope::PrecalculatedRoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -291,35 +294,35 @@ impl<B: Backend> Weaver<B> {
         )
         .await?;
         let query_projection_tree = parameter_tree.subtree("query_projection");
-        let readout_query_projection: Box<dyn Linear<B>> = if readout_input_hadamard_factors.is_some() {
-            // NOTE: We assume the query projection's output Hadamard signs match the tied
-            // readout's input signs, so its output can stay in the readout's rotated basis.
-            Box::new(
-                TransformedLinear::new_with_rotated_output(
-                    config.model_dim,
-                    config.target_model_dim,
-                    DATA_TYPE,
-                    &query_projection_tree,
-                    context,
-                )
-                .await?,
-            )
+        // The query output signs must match the tied readout's input signs.
+        let output_basis = if readout_input_hadamard_factors.is_some() {
+            OutputBasis::Rotated
         } else {
-            <dyn Linear<B>>::new(
-                config.model_dim,
-                config.target_model_dim,
-                DATA_TYPE,
-                false,
-                &query_projection_tree,
-                context,
-            )
-            .await?
+            OutputBasis::Original
         };
+        let readout_query_projection = <dyn Linear<B>>::new_mixed_precision(
+            config.model_dim,
+            config.target_model_dim,
+            DATA_TYPE,
+            DATA_TYPE,
+            DATA_TYPE,
+            false,
+            output_basis,
+            &query_projection_tree,
+            context,
+        )
+        .await?;
         let prefix_unrotation = readout_input_hadamard_factors
             .map(|factors| {
                 Ok(PrefixUnrotation {
                     factors,
-                    transform: ActivationTransform::output_rht(context, DATA_TYPE, None, true)?,
+                    transform: ActivationTransform::output_rht(
+                        context,
+                        DATA_TYPE,
+                        None,
+                        HADAMARD_TRANSFORM_BLOCK_SIZE,
+                        true,
+                    )?,
                 })
             })
             .transpose()
@@ -384,7 +387,7 @@ impl<B: Backend> Weaver<B> {
         if let Some(unrotation) = &self.prefix_unrotation {
             unrotation.transform.encode_fp_in_place(
                 &mut prefix_hidden,
-                &*unrotation.factors,
+                Some(&*unrotation.factors),
                 None,
                 depth,
                 self.target_model_dim,

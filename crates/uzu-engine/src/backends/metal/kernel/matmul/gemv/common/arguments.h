@@ -26,6 +26,7 @@ struct GemvOperands {
 struct GemvParams {
   uint in_vec_size;
   uint out_vec_size;
+  uint output_row_stride;
   uint scale_output_stride;
   uint scale_group_stride;
   uint zero_point_output_stride;
@@ -37,6 +38,14 @@ struct GemvParams {
   bool gathered;
   bool signed_codes;
   GemmBLayout gemm_b_layout;
+  uint gather_first_row;
+  uint gather_row_count;
+
+  METAL_FUNC bool gathers(uint gather_index) const thread { return gather_index - gather_first_row < gather_row_count; }
+
+  METAL_FUNC uint gathered_row(uint gather_index) const thread {
+    return gathers(gather_index) ? gather_index - gather_first_row : 0;
+  }
 
   METAL_FUNC uint output_row(uint row) const thread {
     if (gemm_b_layout != GemmBLayout::MxuTiled || gathered) {

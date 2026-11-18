@@ -78,6 +78,7 @@
           (writeText "vulkan-env.sh" ''
             addToSearchPath LD_LIBRARY_PATH "${lib.getLib vulkan-loader}/lib"
             export VK_ADD_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+            export VK_ADD_DRIVER_FILES="${mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
           '');
 
         playwright-env = with pkgs;

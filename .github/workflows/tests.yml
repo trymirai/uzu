@@ -81,6 +81,12 @@ jobs:
             no-default-features: true
             features: ['uzu-engine/webgpu', 'uzu-engine/cpu']
           - host: 'linux'
+            backend: 'vulkan'
+            tests: true
+            crates: ['uzu-engine']
+            no-default-features: true
+            features: ['uzu-engine/vulkan', 'uzu-engine/cpu']
+          - host: 'linux'
             crates: ['cli']
           - host: 'linux'
             target: 'wasm32-unknown-unknown'
@@ -103,6 +109,15 @@ jobs:
       - name: Download test data
         if: ${{ matrix.tests == true }}
         run: cargo tools hanashi-tokenizers
+
+      - name: Lint with clippy
+        if: ${{ matrix.backend == 'vulkan' }}
+        run: |
+          cargo +nightly clippy --all-targets --locked \
+            ${{ matrix.no-default-features && '--no-default-features' || '' }} \
+            ${{ matrix.features && format('--features {0}', join(matrix.features, ',')) || '' }} \
+            ${{ matrix.crates && format('-p {0}', join(matrix.crates, ' -p ')) || '' }} \
+            -- -D warnings
 
       - name: Build crates
         run: |

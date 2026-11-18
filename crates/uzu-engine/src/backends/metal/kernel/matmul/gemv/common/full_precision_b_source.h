@@ -35,7 +35,8 @@ struct FullPrecisionBSource {
       const uint global_row = tile.row0 + output_index;
       const uint lookup_row = FULL_TILE ? global_row : min(global_row, last_row);
       const uint weight_row =
-          params.gathered ? ops.gather_indices[input_row * params.out_vec_size + lookup_row] : lookup_row;
+          params.gathered ? params.gathered_row(ops.gather_indices[input_row * params.out_vec_size + lookup_row])
+                          : lookup_row;
       weight_rows[output_index] =
           reinterpret_cast<const device BT*>(ops.b) + weight_row * weights_row_stride + thread_k;
     }

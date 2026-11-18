@@ -37,24 +37,31 @@ struct Epilogue {
     if constexpr (Tile::OUTPUT_ROWS >= METAL_SIMD_SIZE) {
       static_assert(Tile::K_SPLIT == 1 || Tile::INPUT_ROWS == 1, "RHT reuses shared results after Reduce");
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      constexpr uint OUTPUT_BLOCKS = Tile::OUTPUT_ROWS / METAL_SIMD_SIZE;
-      for (uint job = tile.simd_group; job < Tile::INPUT_ROWS * OUTPUT_BLOCKS; job += Tile::NUM_SIMDGROUPS) {
-        const uint input_index = job / OUTPUT_BLOCKS;
-        const uint output_block = job % OUTPUT_BLOCKS;
+      constexpr uint VECTORS_PER_INPUT = Tile::OUTPUT_ROWS / hadamard::VECTOR_SIZE;
+      constexpr uint VECTORS = Tile::INPUT_ROWS * VECTORS_PER_INPUT;
+      using Rounded = vec<DT, hadamard::VECTOR_SIZE>;
+      for (uint first = tile.simd_group * METAL_SIMD_SIZE; first < VECTORS;
+           first += Tile::NUM_SIMDGROUPS * METAL_SIMD_SIZE) {
+        const uint vector_index = first + tile.simd_lane;
+        const uint input_index = vector_index / VECTORS_PER_INPUT;
+        const uint local_row = vector_index % VECTORS_PER_INPUT * hadamard::VECTOR_SIZE;
         const uint input_row = tile.input_row + input_index;
-        const uint global_row = tile.tile_row + output_block * METAL_SIMD_SIZE + tile.simd_lane;
-        if ((FULL_TILE || input_row < params.batch_size) && (FULL_TILE || global_row < params.out_vec_size)) {
-          DT value = hadamard::simdgroup_output_transform(
-              static_cast<ushort>(tile.simd_lane),
-              static_cast<DT>(
-                  shared_results[input_index * Tile::OUTPUT_ROWS + output_block * METAL_SIMD_SIZE + tile.simd_lane]
-              ),
-              ops.hadamard_factors[global_row]
-          );
+        const uint global_row = tile.tile_row + local_row;
+        const bool active = vector_index < VECTORS &&
+                            (FULL_TILE || (input_row < params.batch_size && global_row < params.out_vec_size));
+        const float4 values =
+            active ? float4(Rounded(load_vec4(shared_results + input_index * Tile::OUTPUT_ROWS + local_row))) : 0.0f;
+        const float4 rotated = hadamard::simdgroup_transform_vector(
+            static_cast<ushort>(tile.simd_lane),
+            values,
+            HADAMARD_TRANSFORM_BLOCK_SIZE
+        );
+        if (active) {
+          auto result = Rounded(rotated * float4(load_vec4(ops.hadamard_factors + global_row)));
           if (params.output_transform.contains(GemmDTransform::BIAS)) {
-            value += static_cast<DT>(ops.output_bias[global_row]);
+            result = Rounded(float4(result) + float4(load_vec4(ops.output_bias + global_row)));
           }
-          ops.d[input_row * params.out_vec_size + global_row] = value;
+          store_vec4(ops.d + input_row * params.output_row_stride + global_row, result);
         }
       }
     }
@@ -75,11 +82,14 @@ private:
       if (!(FULL_TILE || input_row < params.batch_size)) {
         return;
       }
-      device DT* output = ops.d + input_row * params.out_vec_size;
+      device DT* output = ops.d + input_row * params.output_row_stride;
       Tile::for_each_output_row([&](auto output_index) UZU_ALWAYS_INLINE {
         constexpr uint R = decltype(output_index)::value;
         const uint global_row = params.output_row(tile.row0 + R);
         if (!OutputTile<Tile, FULL_TILE>::row_in_range(global_row, params.out_vec_size)) {
+          return;
+        }
+        if (params.gathered && !params.gathers(ops.gather_indices[input_row * params.out_vec_size + global_row])) {
           return;
         }
         if constexpr (STAGE_HADAMARD) {

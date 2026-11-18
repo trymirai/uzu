@@ -233,8 +233,8 @@ jobs:
             exit 1
           fi
           # Installed /usr/local/bin wrappers point at this path.
-          if [ ! -x "${APP_PATH}/Contents/Resources/cli/mirai" ]; then
-            echo "CLI missing from bundle at ${APP_PATH}/Contents/Resources/cli/mirai" >&2
+          if [ ! -x "${APP_PATH}/Contents/Resources/bin/mirai" ]; then
+            echo "CLI missing from bundle at ${APP_PATH}/Contents/Resources/bin/mirai" >&2
             exit 1
           fi
 

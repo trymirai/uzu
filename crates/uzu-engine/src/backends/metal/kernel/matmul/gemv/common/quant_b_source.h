@@ -37,7 +37,8 @@ struct QuantBSource {
       constexpr uint R = decltype(output_index)::value;
       const uint output_row = params.output_row(tile.row0 + R);
       weight_row_indices[R] =
-          params.gathered ? ops.gather_indices[tile.input_row * params.out_vec_size + output_row] : output_row;
+          params.gathered ? params.gathered_row(ops.gather_indices[tile.input_row * params.out_vec_size + output_row])
+                          : output_row;
     });
 
     const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(ops.b);

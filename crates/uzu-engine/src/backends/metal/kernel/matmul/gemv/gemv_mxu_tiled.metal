@@ -58,6 +58,7 @@ KERNEL(GemvMxuTiled)(
   const GemvParams params = {
       in_vec_size,
       out_vec_size,
+      out_vec_size,
       scale_output_stride,
       scale_group_stride,
       0,
@@ -147,12 +148,24 @@ KERNEL(GemvMxuTiled)(
   if (output_transform.contains(GemmDTransform::SOFT_CAP)) {
     value = apply_soft_cap(value, soft_cap);
   }
-  bfloat output = bfloat(value);
+  const bfloat output = bfloat(value);
   if (fused_hadamard) {
-    output = hadamard::simdgroup_output_transform(ushort(lane), output, hadamard_factors[row]);
-    if (output_transform.contains(GemmDTransform::BIAS)) {
-      output += output_bias[row];
+    const uint lane_column = lane % hadamard::LANES_PER_BLOCK * hadamard::VECTOR_SIZE;
+    float4 values;
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < hadamard::VECTOR_SIZE; ++i) {
+      values[i] = simd_shuffle(float(output), lane_column + i);
     }
+    const uint first_row = block * HADAMARD_TRANSFORM_BLOCK_SIZE + lane_column;
+    const float4 rotated = hadamard::simdgroup_transform_vector(ushort(lane), values, HADAMARD_TRANSFORM_BLOCK_SIZE);
+    if (lane < hadamard::LANES_PER_BLOCK) {
+      auto result = vec<bfloat, hadamard::VECTOR_SIZE>(rotated * float4(load_vec4(hadamard_factors + first_row)));
+      if (output_transform.contains(GemmDTransform::BIAS)) {
+        result = vec<bfloat, hadamard::VECTOR_SIZE>(float4(result) + float4(load_vec4(output_bias + first_row)));
+      }
+      store_vec4(d + first_row, result);
+    }
+    return;
   }
   d[row] = output;
 }

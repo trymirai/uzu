@@ -1,6 +1,6 @@
 use ash::vk;
 
-use crate::data_type::DataType;
+use crate::{backends::common::kernel::matmul::MatmulOutputError, data_type::DataType};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -16,6 +16,8 @@ pub enum Error {
     CommandBuffer(#[from] VkCommandBufferError),
     #[error(transparent)]
     Kernel(#[from] VkKernelError),
+    #[error(transparent)]
+    MatmulOutput(#[from] MatmulOutputError),
 }
 
 #[derive(Debug, thiserror::Error)]

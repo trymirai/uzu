@@ -184,7 +184,7 @@ fn test_hadamard_block<T: DataTypeRepr + Float + Debug + Display>(
     input_rht.encode_fp(
         &plain_buffer,
         &mut expected_buffer,
-        &hadamard_factors_buffer,
+        Some(&hadamard_factors_buffer),
         batch_size,
         element_count,
         &mut command_buffer,

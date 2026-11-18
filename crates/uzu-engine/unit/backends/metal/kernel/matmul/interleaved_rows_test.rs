@@ -13,7 +13,7 @@ use crate::{
             },
             kernel::{
                 ActivationTransform,
-                matmul::{ActivationFormat, MatmulA, MatmulKernel, MatmulShape, packed_half_bytes},
+                matmul::{ActivationFormat, MatmulA, MatmulGather, MatmulKernel, MatmulShape, packed_half_bytes},
             },
         },
         metal::{Metal, context::MetalContext, gpu_types::gemm::GemmBLayout, kernel::matmul::MatmulMetalKernel},
@@ -52,7 +52,14 @@ fn run(
         let factors = create_buffer_with_data::<Metal, i32>(context, &vec![1; input.k as usize]);
         ActivationTransform::<Metal>::quantize(context, DataType::BF16, BLOCK_SIZE, format)
             .expect("pack")
-            .encode_pack_half(&buffers.x, &mut packed_activations, &factors, input.m, input.k, &mut command_buffer);
+            .encode_pack_half(
+                &buffers.x,
+                &mut packed_activations,
+                Some(&factors),
+                input.m,
+                input.k,
+                &mut command_buffer,
+            );
     }
     let mut arguments = quant_arguments(&mut buffers, input);
     if packed {
@@ -62,7 +69,11 @@ fn run(
             bits: 4,
         };
     }
-    arguments.gather_indices = gather_indices;
+    arguments.gather = gather_indices.map(|indices| MatmulGather {
+        indices,
+        first_row: 0,
+        row_count: input.n,
+    });
     arguments.n = n;
     matmul.encode(arguments, &mut command_buffer).expect("matmul encode");
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

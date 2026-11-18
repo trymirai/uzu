@@ -59,7 +59,7 @@ impl SyncTask for ReadmeSyncTask {
             .metadata
             .clone()
             .with_context(|| format!("Missing [languages.{}].metadata", primary_language.name()))?;
-        let badges = resolve_badges(platforms, &metadata.badges, &workspace.workspace.package.version)?;
+        let badges = resolve_badges(platforms, &metadata.badges, &workspace.workspace.metadata.published.version)?;
 
         let template_body = fs::read_to_string(paths.readme_template_path())?;
         let mut environment = Environment::new();
@@ -86,7 +86,7 @@ impl SyncTask for ReadmeSyncTask {
 
         let rendered = template.render(context! {
             title => "uzu",
-            version => &workspace.workspace.package.version,
+            version => &workspace.workspace.metadata.published.version,
             image_url => metadata.image_url,
             badges => badges,
             has_multiple_languages => self.languages.len() > 1,
@@ -127,7 +127,8 @@ fn language_context(
 ) -> Result<LanguageContext> {
     let fragments_root = paths.readme_fragments_path().join(language.name());
 
-    let dependency = render_fragment(&fragments_root.join("dependency.md"), &workspace.workspace.package.version)?;
+    let dependency =
+        render_fragment(&fragments_root.join("dependency.md"), &workspace.workspace.metadata.published.version)?;
 
     let examples_root = platforms.examples_path_for_language(language)?;
     let mut examples = BTreeMap::new();

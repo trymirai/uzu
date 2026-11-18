@@ -31,7 +31,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.98"
-version = "0.6.17"
+version = "0.7.1"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -101,6 +101,7 @@ getrandom = "0.4"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 itertools = "0.15.0"
 schemars = { version = "1.2.3", features = ["derive", "preserve_order"] }
+semver = "1.0.28"
 is_close = "0.1.3"
 anyhow = "1.0.104"
 async-trait = "0.1.92"
@@ -157,7 +158,7 @@ crc32c = "0.6.8"
 base64 = "0.23.1"
 bitflags = "2.13.2"
 bon = "3.10.2"
-chrono = { version = "0.4.45", features = ["serde"] }
+jiff = { version = "0.2.38", features = ["js"] }
 jsonschema = "0.59.0"
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
 # See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
@@ -232,6 +233,9 @@ new_without_default = "allow"
 too_many_arguments = "allow"
 needless_range_loop = "allow" # TODO: remove
 missing_safety_doc = "allow" # TODO: maybe remove?
+
+[workspace.metadata.published]
+version = "0.7.1"
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["backend"]

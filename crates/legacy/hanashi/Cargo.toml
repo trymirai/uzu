@@ -20,7 +20,7 @@ minijinja-contrib.workspace = true
 regex.workspace = true
 indexmap.workspace = true
 tracing.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 openai-harmony.workspace = true

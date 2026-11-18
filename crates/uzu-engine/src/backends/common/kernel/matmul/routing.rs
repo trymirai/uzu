@@ -76,7 +76,7 @@ impl MatmulShape {
                     ..
                 } => ActivationFormat::Trellis,
             },
-            gathered: arguments.gather_indices.is_some(),
+            gathered: arguments.gather.is_some(),
             params_layout: arguments.b.quant_params_layout(),
             d_transform: arguments.output.ops.mask(),
         }

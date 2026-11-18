@@ -18,6 +18,11 @@ macro_rules! for_each_backend {
             type $B = crate::backends::metal::Metal;
             $body
         }
+        #[cfg(backend = "vulkan")]
+        {
+            type $B = crate::backends::vulkan::Vulkan;
+            $body
+        }
         {
             type $B = crate::backends::cpu::Cpu;
             $body
@@ -31,6 +36,11 @@ macro_rules! for_each_non_cpu_backend {
         #[cfg(backend = "metal")]
         {
             type $B = crate::backends::metal::Metal;
+            $body
+        }
+        #[cfg(backend = "vulkan")]
+        {
+            type $B = crate::backends::vulkan::Vulkan;
             $body
         }
         {

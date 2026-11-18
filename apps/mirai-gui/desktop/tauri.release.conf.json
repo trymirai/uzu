@@ -2,6 +2,6 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "createUpdaterArtifacts": true,
-    "resources": { "resources/cli/mirai": "cli/mirai" }
+    "resources": { "resources/cli/mirai": "bin/mirai" }
   }
 }
