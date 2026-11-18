@@ -1,4 +1,4 @@
-use std::{io, os::unix::fs::FileExt};
+use std::io;
 
 use thiserror::Error;
 
@@ -8,7 +8,7 @@ use crate::{
     safetensors::{ParameterLoaderError, ParameterTree},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{safetensors::TensorRegion, utils::size_for_shape::size_for_shape};
+use crate::{safetensors::TensorRegion, utils::file::read_exact_at, utils::size_for_shape::size_for_shape};
 
 /// Like [`EmbeddingTable`](super::embedding_table::EmbeddingTable), but stored on disk.
 ///
@@ -62,6 +62,8 @@ impl EmbeddingTableDisk {
     ) -> Result<Self, EmbeddingTableDiskError<B>> {
         let tensor = subtree.claim("weights", &[num_rows, row_dim], data_type).await?;
 
+        // TODO(perf): We should tell the os to avoid any caching, since every hit is almost 100% going to be a cache miss.
+
         Ok(Self {
             tensor,
             num_rows,
@@ -79,7 +81,7 @@ impl EmbeddingTableDisk {
         for (&id, row) in ngram_ids.iter().zip(rows.chunks_exact_mut(self.row_size)) {
             assert!(id < self.num_rows, "n-gram id {id} out of range for a table with {} rows", self.num_rows);
             let offset = self.tensor.range.start + id as u64 * self.row_size as u64;
-            self.tensor.file.read_exact_at(row, offset)?;
+            read_exact_at(&self.tensor.file, row, offset)?;
         }
         Ok(())
     }

@@ -214,10 +214,8 @@ impl<B: Backend> Transformer<B> {
 
     pub fn prefill_cache_layer_count(&self) -> usize {
         let num_layers = self.layers.len();
-        let Some(last_stateful_layer_index) = self
-            .layers
-            .iter()
-            .rposition(|layer| layer.kv_source_layer_index.is_none() || layer.has_ngram_embeddings())
+        let Some(last_stateful_layer_index) =
+            self.layers.iter().rposition(|layer| layer.kv_source_layer_index.is_none() || layer.has_ngram_embeddings())
         else {
             return num_layers;
         };
