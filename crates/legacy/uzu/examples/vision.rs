@@ -8,11 +8,15 @@ use uzu::engine::{Engine, EngineConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let image_paths = vec!["/Users/glk/Downloads/cat.jpg".to_string(), "/Users/glk/Downloads/dog.jpg".to_string()];
+    let image_path = "".to_string();
+    if image_path.is_empty() {
+        eprintln!("Empty image_path");
+        return Ok(());
+    }
 
     let engine = Engine::new(EngineConfig::default()).await?;
-    let mut model = engine.model("/Users/glk/.cache/huggingface/hub/models--trymirai--Qwen3.5-9B-M-Vision/snapshots/6d3ea8cd5e0c00afca77554ab02c8381ed7f59fc".to_string()).await?.ok_or("Model not found")?;
-    model.encoding = Some(serde_json::json!({"type": "hanashi", "name": "qwen3.5"}).into());
+    let model = engine.model("trymirai/Qwen3.5-9B-M-Vision".to_string()).await?.ok_or("Model not found")?;
+
     let downloader = engine.download(&model).await?;
     while let Some(update) = downloader.next().await {
         print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
@@ -21,20 +25,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let session = engine.chat(model, ChatConfig::default()).await?;
-
-    let mut user_message = ChatMessage::user();
-    for path in image_paths {
-        user_message = user_message.with_block(ChatContentBlock::Image {
-            url: path,
-        });
-    }
-    user_message = user_message.with_text("What's on the images?".to_string());
-
     let messages = vec![
         ChatMessage::system()
             .with_text("You are a helpful assistant".to_string())
             .with_reasoning_effort(ReasoningEffort::Disabled),
-        user_message,
+        ChatMessage::user()
+            .with_block(ChatContentBlock::Image {
+                url: image_path,
+            })
+            .with_text("What's on the image?".to_string()),
     ];
     let reply_start = std::time::Instant::now();
     let replies = session
