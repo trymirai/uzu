@@ -68,6 +68,31 @@ async fn load_biases<B: Backend>(
 }
 
 impl<B: Backend> LinearMatmul<B> {
+    pub fn from_dense(
+        input_dim: u32,
+        output_dim: u32,
+        data_type: DataType,
+        weights: B::GlobalGpuBuffer,
+        biases: Option<B::GlobalGpuBuffer>,
+        context: &B::Context,
+    ) -> Result<Self, LinearMatmulError<B>> {
+        if !matches!(data_type, DataType::BF16 | DataType::F32) {
+            return Err(LinearMatmulError::UnsupportedDataType(data_type));
+        }
+        let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+            .map_err(LinearMatmulError::Matmul)?;
+        Ok(Self {
+            kernel: Mutex::new(kernel),
+            matrix: WeightMatrix::dense(weights),
+            biases,
+            output_hadamard_factors: None,
+            input_dim,
+            output_dim,
+            output_data_type: data_type,
+            prepared_activation_format: ActivationFormat::Bf16,
+        })
+    }
+
     pub async fn load(
         input_dim: u32,
         output_dim: u32,

@@ -48,6 +48,13 @@ enum WeightEncoding<B: Backend> {
 }
 
 impl<B: Backend> WeightMatrix<B> {
+    pub fn dense(values: B::GlobalGpuBuffer) -> Self {
+        Self {
+            values,
+            encoding: WeightEncoding::Dense,
+        }
+    }
+
     pub async fn load(
         output_dim: u32,
         input_dim: u32,

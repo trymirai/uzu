@@ -12,22 +12,30 @@ use crate::{
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
     },
-    engine::Engine,
+    engine::{
+        Engine,
+        language_model::vision::{VisionModel, VisionModelLoadError},
+    },
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
     utils::file,
 };
-pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
+pub use crate::{
+    config::{model::generation::GenerationConfig, vision::VisionConfig},
+    utils::strict_serde::Unsupported,
+};
 
 pub mod state;
 pub mod stream;
 
 pub mod grammar;
+mod vision;
 
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
     decoder: Decoder<B>,
     speculator: Option<DFlashTfmSpeculator<B>>,
+    vision: Option<VisionModel<B>>,
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
@@ -51,6 +59,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Speculator(#[from] DFlashSpeculatorLoadError<B>),
     #[error("Tokenizer error: {0}")]
     Tokenizer(#[from] tokenizers::Error),
+    #[error("Vision error: {0}")]
+    Vision(#[from] VisionModelLoadError<B>),
 }
 
 impl<B: Backend> Engine<B> {
@@ -61,10 +71,6 @@ impl<B: Backend> Engine<B> {
         let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;
-
-        // TODO
-        let speculator_path = model_path.join("speculator");
-        let speculator_path = file::exists(&speculator_path).await.then_some(speculator_path);
 
         let tokenizer = Arc::new(Tokenizer::from_bytes(file::read(model_path.join("tokenizer.json")).await?)?);
 
@@ -78,11 +84,12 @@ impl<B: Backend> Engine<B> {
         )
         .await?;
 
+        let speculator_path = model_path.join("speculator");
+        let speculator_path = file::exists(&speculator_path).await.then_some(speculator_path);
         assert!(
             speculator_path.is_none() || decoder.speculation_supported(),
             "attempted to load speculator for a model that doesn't support one"
         );
-
         let speculator = if let Some(speculator_path) = speculator_path.as_deref() {
             DFlashTfmSpeculator::new(speculator_path, decoder.embedding(), self.context.clone()).await?
         } else {
@@ -94,6 +101,14 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
+        let vision_path = model_path.join("vision");
+        let vision_path = file::exists(&vision_path).await.then_some(vision_path);
+        let vision = if let Some(path) = vision_path.as_deref() {
+            Some(VisionModel::new(path, data_type, self.context.as_ref()).await?)
+        } else {
+            None
+        };
+
         weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
@@ -103,6 +118,7 @@ impl<B: Backend> Engine<B> {
             engine: self.clone(),
             decoder,
             speculator,
+            vision,
             sampling,
             context_ring_update,
             generation_config,
@@ -158,5 +174,13 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn tokenizer(&self) -> &Arc<Tokenizer> {
         &self.tokenizer
+    }
+
+    pub fn vision_supported(&self) -> bool {
+        self.vision.is_some()
+    }
+
+    pub fn vision_config(&self) -> Option<&VisionConfig> {
+        self.vision.as_ref().map(VisionModel::config)
     }
 }

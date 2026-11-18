@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         kernel::{
             LogitTransformKernel,
             matmul::{MatmulA, MatmulArguments, MatmulDOps, MatmulGather, MatmulKernel, MatmulOutput},
@@ -29,7 +29,16 @@ use crate::{
         weight_matrix::WeightMatrix,
     },
     safetensors::{ParameterLoaderError, ParameterTree},
+    utils::size_for_shape::size_for_shape,
 };
+
+/// `rows` rows of `source` from `source_row` that replace the rows from `row` of an `encode_lookup` output.
+pub struct EmbeddingReplacement<'a, B: Backend> {
+    pub source: &'a B::ScratchBuffer,
+    pub source_row: u32,
+    pub row: u32,
+    pub rows: u32,
+}
 
 #[derive(Debug, Error)]
 pub enum EmbeddingError<B: Backend> {
@@ -213,6 +222,24 @@ impl<B: Backend> Embedding<B> {
         table.encode_lookup(token_ids, &mut output, batch_dim, self.input_scale, command_buffer);
 
         Ok(output)
+    }
+
+    /// Overwrites rows of an `encode_lookup` output, e.g. the rows of image pad tokens with vision encoder rows.
+    pub fn encode_replace_rows(
+        &self,
+        lookup_output: &mut B::ScratchBuffer,
+        replacements: &[EmbeddingReplacement<B>],
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        let row_size = size_for_shape(&[self.model_dim], self.data_type);
+        for replacement in replacements {
+            let rows =
+                |first_row: u32| first_row as usize * row_size..(first_row + replacement.rows) as usize * row_size;
+            command_buffer.encode_copy(
+                replacement.source.subrange(rows(replacement.source_row)),
+                (&mut *lookup_output).subrange_mut(rows(replacement.row)),
+            );
+        }
     }
 
     pub fn encode_readout(

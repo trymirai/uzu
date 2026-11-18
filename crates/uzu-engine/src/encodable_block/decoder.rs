@@ -9,7 +9,8 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        embedding::{Embedding, EmbeddingError},
+        embedding::{Embedding, EmbeddingError, EmbeddingReplacement},
+        mixer::attention::rope::MultimodalRoPEPositions,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
         transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
@@ -149,12 +150,15 @@ impl<B: Backend> Decoder<B> {
         batch_dim: &BatchTopology,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
+        emb_replacements: &[EmbeddingReplacement<B>],
+        multimodal_rope: Option<&MultimodalRoPEPositions>,
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("decoder");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
+        let mut embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
+        self.embedding.encode_replace_rows(&mut embedded, emb_replacements, command_buffer);
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
             embedding_norm
                 .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
@@ -175,6 +179,7 @@ impl<B: Backend> Decoder<B> {
             batch_dim,
             output_range,
             hidden_feature_layer_indices,
+            multimodal_rope,
             Some(state),
             command_buffer,
         )?;

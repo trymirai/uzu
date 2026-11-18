@@ -10,11 +10,13 @@ use crate::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
+        vision::VisionModelPrefillError,
     },
     speculators::dflash_tfm::DFlashTreeError,
 };
 pub use crate::{
-    encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,
+    encodable_block::sampling::SamplingMethod,
+    engine::language_model::{stream::stream::LanguageModelStream, vision::VisionModelInputImage},
 };
 
 mod stream;
@@ -31,18 +33,20 @@ pub enum LanguageModelStreamError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Capture error: {0}")]
     Capture(#[from] CaptureError<B>),
+    #[error("Context overflow")]
+    ContextOverflow,
     #[error("Decoder error: {0}")]
     Decoder(#[from] DecoderError<B>),
     #[error("Grammar error: {0}")]
     Grammar(#[from] GrammarError),
+    #[error("Image error: {0}")]
+    Images(#[from] VisionModelPrefillError<B>),
+    #[error("No seed token (both state and input are empty)")]
+    NoSeedToken,
     #[error("Trie accept error: {0}")]
     TrieAccept(#[from] crate::trie::TrieAcceptError),
     #[error("Speculator error: {0}")]
     Speculator(#[from] DFlashTreeError<B>),
-    #[error("No seed token (both state and input are empty)")]
-    NoSeedToken,
-    #[error("Context overflow")]
-    ContextOverflow,
 }
 
 impl<B: Backend> LanguageModel<B> {
@@ -57,9 +61,10 @@ impl<B: Backend> LanguageModel<B> {
     pub fn stream<'a>(
         &'a self,
         input: &[u64],
+        images: &[VisionModelInputImage],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<LanguageModelStream<'a, B>, LanguageModelStreamError<B>> {
-        LanguageModelStream::new(self, input, state, options)
+        LanguageModelStream::new(self, input, images, state, options)
     }
 }

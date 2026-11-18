@@ -10,7 +10,10 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::InputRhtParameters,
-        mixer::{MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            MixerState,
+            attention::rope::{MultimodalRoPEPositions, PrecalculatedRoPE},
+        },
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
@@ -27,6 +30,9 @@ enum TransformerLayerStateType<B: Backend> {
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
+    /// RoPE position of the next token minus `context_length`.
+    /// Negative after images, which take fewer RoPE positions than tokens.
+    rope_position_offset: i32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -37,6 +43,21 @@ pub struct TransformerEncodeOutput<B: Backend> {
 impl<B: Backend> TransformerState<B> {
     pub fn context_length(&self) -> u32 {
         self.context_length
+    }
+
+    /// RoPE position of the next token.
+    pub fn rope_position(&self) -> u32 {
+        self.context_length.checked_add_signed(self.rope_position_offset).expect("RoPE position is negative")
+    }
+
+    /// Sets the RoPE position of the next token, e.g. after tokens with multimodal RoPE positions.
+    pub fn set_rope_position(
+        &mut self,
+        rope_position: u32,
+    ) {
+        self.rope_position_offset = (i64::from(rope_position) - i64::from(self.context_length))
+            .try_into()
+            .expect("RoPE position offset overflows");
     }
 
     pub fn prepare(
@@ -255,6 +276,7 @@ impl<B: Backend> Transformer<B> {
         Ok(TransformerState {
             layer_states,
             context_length,
+            rope_position_offset: 0,
         })
     }
 
@@ -265,6 +287,7 @@ impl<B: Backend> Transformer<B> {
         batch_dim: &BatchTopology,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
+        multimodal_rope: Option<&MultimodalRoPEPositions>,
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
@@ -285,13 +308,25 @@ impl<B: Backend> Transformer<B> {
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
-        let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
+        let rope_position = state.as_ref().map(|state| state.rope_position()).unwrap_or(0);
+        let token_positions = batch_dim.heights().map(|rel_pos| rope_position + rel_pos).collect::<Box<[u32]>>();
 
+        if let Some(multimodal_rope) = multimodal_rope {
+            assert_eq!(
+                multimodal_rope.positions.len(),
+                batch_dim.size() as usize,
+                "multimodal RoPE needs one position per batch row"
+            );
+        }
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
+            .map(|rope_config| match multimodal_rope {
+                Some(multimodal_rope) => {
+                    PrecalculatedRoPE::precalculate_multimodal(rope_config, multimodal_rope, command_buffer)
+                },
+                None => PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer),
+            })
             .collect::<Result<Box<[_]>, B::Error>>()
             .map_err(TransformerEncodeError::Backend)?;
 

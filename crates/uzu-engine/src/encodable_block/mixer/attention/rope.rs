@@ -9,10 +9,59 @@ pub struct PrecalculatedRoPE<B: Backend> {
     pub dim: u32,
 }
 
+/// Interleaved multimodal RoPE (Qwen3-VL style): each token has `[temporal, height, width]` positions.
+/// RoPE pair `i` rotates by the height position if `i % 3 == 1 && i < 3 * sections[1]`,
+/// by the width position if `i % 3 == 2 && i < 3 * sections[2]`, and by the temporal position otherwise.
+pub struct MultimodalRoPEPositions<'a> {
+    pub sections: [u32; 3],
+    pub positions: &'a [[u32; 3]],
+}
+
 impl<B: Backend> PrecalculatedRoPE<B> {
     pub fn precalculate(
         rope_config: &AnyRoPEConfig,
         token_positions: &[u32],
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, B::Error> {
+        Self::precalculate_with(
+            rope_config,
+            token_positions.len(),
+            |token_index, _pair_index| token_positions[token_index],
+            command_buffer,
+        )
+    }
+
+    pub fn precalculate_multimodal(
+        rope_config: &AnyRoPEConfig,
+        multimodal_rope: &MultimodalRoPEPositions,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, B::Error> {
+        let [_, height_section, width_section] = multimodal_rope.sections;
+        assert_eq!(
+            multimodal_rope.sections.iter().sum::<u32>(),
+            *rope_config.head_dim() / 2,
+            "multimodal RoPE sections must cover every RoPE pair"
+        );
+        Self::precalculate_with(
+            rope_config,
+            multimodal_rope.positions.len(),
+            |token_index, pair_index| {
+                let axis = match pair_index % 3 {
+                    1 if pair_index < 3 * height_section => 1,
+                    2 if pair_index < 3 * width_section => 2,
+                    _ => 0,
+                };
+                multimodal_rope.positions[token_index][axis]
+            },
+            command_buffer,
+        )
+    }
+
+    /// `position(token_index, pair_index)` is the position RoPE pair `pair_index` of token `token_index` rotates by.
+    fn precalculate_with(
+        rope_config: &AnyRoPEConfig,
+        token_count: usize,
+        position: impl Fn(usize, u32) -> u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, B::Error> {
         let head_dim = *rope_config.head_dim();
@@ -26,7 +75,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             _ => 1.0,
         };
 
-        let element_count = token_positions.len() * head_dim as usize;
+        let element_count = token_count * head_dim as usize;
         let half_offset = half_dim as usize;
         let mut sines = vec![0.0; element_count];
         let mut cosines = vec![0.0; element_count];
@@ -89,8 +138,8 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                 },
             };
 
-            for (token_index, token_position) in token_positions.iter().enumerate() {
-                let embedding = *token_position as f32 * inverse_frequency;
+            for token_index in 0..token_count {
+                let embedding = position(token_index, pair_index) as f32 * inverse_frequency;
                 let sine = embedding.sin() * attention_scaling_factor;
                 let cosine = embedding.cos() * attention_scaling_factor;
                 let pair_offset = token_index * head_dim as usize + pair_index as usize;

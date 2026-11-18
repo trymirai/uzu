@@ -123,6 +123,7 @@ impl<B: Backend> Decision<B> {
                 Some((token_count - 1..token_count).into()),
                 None,
                 None,
+                None,
                 command_buffer,
             )?
             .output

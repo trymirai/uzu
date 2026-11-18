@@ -1,8 +1,10 @@
 mod dense;
 mod gate_act_mul;
+mod ungated;
 
 use derive_more::Debug;
 use thiserror::Error;
+pub use ungated::{UngatedMlp, UngatedMlpNewError};
 
 use crate::{
     backends::common::{Backend, CommandBuffer},
@@ -36,6 +38,8 @@ pub trait Mlp<B: Backend>: Send + Sync {
 pub enum MlpBlockNewError<B: Backend> {
     #[error("Dense MLP error: {0}")]
     Dense(#[from] DenseMlpNewError<B>),
+    #[error("Ungated MLP error: {0}")]
+    Ungated(#[from] UngatedMlpNewError<B>),
     #[error("Mixture of experts is not supported")]
     UnsupportedMixtureOfExperts,
 }
@@ -58,6 +62,20 @@ impl<B: Backend> dyn Mlp<B> {
                 Ok((Box::new(dense), up_input_hadamard_factors))
             },
             AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockNewError::UnsupportedMixtureOfExperts),
+            AnyMLPConfig::UngatedMLPConfig(config) => {
+                let ungated = UngatedMlp::new(
+                    model_dimension,
+                    hidden_dimension,
+                    model_dimension,
+                    data_type,
+                    config,
+                    parameter_tree,
+                    context,
+                )
+                .await?;
+
+                Ok((Box::new(ungated), None))
+            },
         }
     }
 }
