@@ -57,6 +57,7 @@ impl CliApplication {
             )
         }
         .render_loop()
+        .ignore_ctrl_c()
         .await
         .map_err(|error| CliError::RenderingError {
             message: error.to_string(),

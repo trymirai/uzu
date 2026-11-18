@@ -1,29 +1,37 @@
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx2
 import typer
-from mach import AppleTempSensors, get_temp_sensors
 
 MAX_TEMP = 60.0
 
 
-def needs_cooldown(temp: AppleTempSensors) -> bool:
-    return temp.cpu_avg > MAX_TEMP or temp.gpu_avg > MAX_TEMP
+def read_temperatures() -> dict[str, float]:
+    """Average CPU and GPU temperatures from Apple's sensors on macOS; elsewhere the hottest NVIDIA GPU, as nvidia-smi
+    reports it, since Windows exposes CPU sensors only to administrators."""
+    if sys.platform == "darwin":
+        from mach import get_temp_sensors
+
+        temp = get_temp_sensors()
+        return {"CPU": temp.cpu_avg, "GPU": temp.gpu_avg}
+    query = ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"]
+    output = subprocess.run(query, capture_output=True, text=True, check=True).stdout
+    return {"GPU": max(float(value) for value in output.split())}
 
 
 def await_cooldown():
-    temp: AppleTempSensors = get_temp_sensors()
-    if needs_cooldown(temp):
-        typer.echo(
-            f"Waiting for cooldown: CPU {temp.cpu_avg:.1f}°C, GPU {temp.gpu_avg:.1f}°C (target <= {MAX_TEMP:.0f}°C).",
-            err=True,
-        )
-    while needs_cooldown(temp):
+    temperatures = read_temperatures()
+    if max(temperatures.values()) > MAX_TEMP:
+        readings = ", ".join(f"{name} {value:.1f}°C" for name, value in temperatures.items())
+        typer.echo(f"Waiting for cooldown: {readings} (target <= {MAX_TEMP:.0f}°C).", err=True)
+    while max(temperatures.values()) > MAX_TEMP:
         time.sleep(1.0)
-        temp = get_temp_sensors()
+        temperatures = read_temperatures()
 
 
 def get_openai_base_url(host: str, port: int) -> httpx2.URL:

@@ -19,6 +19,7 @@ use crate::{
         helpers::SYMBOL_COMMAND,
         keyboard_enhancement::KeyboardEnhancement,
         sessions::{self, SessionState},
+        util::types_text,
     },
 };
 
@@ -80,6 +81,18 @@ impl ApplicationState {
 
     pub fn theme(&self) -> &Theme {
         &self.preferences.theme
+    }
+
+    /// The model ctrl+d offers to delete: one with downloaded files that no session holds.
+    pub fn deletable_model(&self) -> Option<&Model> {
+        self.model_state
+            .as_ref()
+            .filter(|model_state| {
+                model_state.model.is_downloadable()
+                    && model_state.session_state.is_none()
+                    && model_state.download_state.can_delete()
+            })
+            .map(|model_state| &model_state.model)
     }
 
     pub fn set_preferences(
@@ -290,24 +303,28 @@ pub fn Application(
         else {
             return;
         };
-        if kind == KeyEventKind::Release {
+        // A held key repeats, which must not count as pressing Ctrl+C again.
+        if kind != KeyEventKind::Press {
             return;
         }
 
         let is_escape = matches!(code, KeyCode::Esc);
-        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL);
+        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && !types_text(modifiers);
         if !is_escape && !is_ctrl_c {
             return;
         }
 
         let mut state = state;
         let mut state = state.write();
+        // Reborrowed mutably so the guard redraws: an interrupt changes the session's status through a shared reference.
+        let state = &mut *state;
 
         let consumed_by_session = if let Some(session_state) = state.session_state() {
             if is_escape {
                 session_state.interrupt() || session_state.is_busy()
             } else {
-                session_state.is_busy()
+                // Ctrl+C stops a reply, and otherwise quits, also while a model loads.
+                session_state.interrupt()
             }
         } else {
             false
@@ -316,23 +333,23 @@ pub fn Application(
             return;
         }
 
+        if is_ctrl_c {
+            state.flow = Some(Box::new(ExitFlow));
+            return;
+        }
+
+        // Esc closes a flow but never quits, unlike Ctrl+C and /exit; the input clears the command list itself.
         if state.flow.is_some() {
-            if is_escape {
-                if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
-                    state.history.push(HistoryCellType::CommandResult {
-                        result: "Cancelled".to_string(),
-                    });
-                }
-                state.flow = None;
+            if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
+                state.history.push(HistoryCellType::CommandResult {
+                    result: "Cancelled".to_string(),
+                });
             }
+            state.flow = None;
             return;
         }
 
-        if is_escape && sessions::decision::leave_question_mode(&mut state) {
-            return;
-        }
-
-        state.flow = Some(Box::new(ExitFlow));
+        sessions::decision::leave_question_mode(state);
     });
 
     let on_flow_event: Handler<FlowEvent> = Handler::from(move |event: FlowEvent| {

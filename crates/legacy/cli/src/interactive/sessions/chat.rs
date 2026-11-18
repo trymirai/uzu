@@ -71,7 +71,7 @@ impl SessionState for ChatSessionState {
     }
 
     fn interrupt(&self) -> bool {
-        let Some(cancel_token) = self.cancel_token.as_ref() else {
+        let Some(cancel_token) = self.cancel_token.as_ref().filter(|cancel_token| !cancel_token.is_cancelled()) else {
             return false;
         };
         cancel_token.cancel();
@@ -82,6 +82,10 @@ impl SessionState for ChatSessionState {
         let status = match self.status {
             ChatSessionStatus::Idle => "loaded".to_string(),
             ChatSessionStatus::Loading => "loading".to_string(),
+            // The engine checks for a stop between tokens, so one asked for during prefill waits for the first token.
+            ChatSessionStatus::Generating if self.cancel_token.as_ref().is_some_and(CancelToken::is_cancelled) => {
+                "stopping".to_string()
+            },
             ChatSessionStatus::Generating => format!("generating ({})", HINT_SESSION_INTERRUPT),
         };
         Some(status)

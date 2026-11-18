@@ -41,6 +41,7 @@ web-sys = { workspace = true, features = [
 web-time.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+dunce.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lints]

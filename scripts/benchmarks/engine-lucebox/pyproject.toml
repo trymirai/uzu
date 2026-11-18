@@ -1,0 +1,22 @@
+[project]
+name = "benchmarks-lucebox"
+version = "0.0.1"
+requires-python = ">=3.13.7"
+dependencies = ["benchmarks-common", "typer>=0.27.2"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+bench-lucebox = "bench_lucebox:main"
+
+[tool.setuptools]
+py-modules = ["bench_lucebox"]
+
+[tool.uv]
+# luce_server builds with CUDA on Linux; on Windows it runs inside WSL.
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+benchmarks-common = { path = "../common-py", editable = true }

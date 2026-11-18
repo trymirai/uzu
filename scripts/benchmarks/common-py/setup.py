@@ -1,5 +1,8 @@
+import sys
+
 from setuptools import Extension, setup
 
+# The memory counters read mach task info and IOKit sensors, which exist on macOS only.
 setup(
     ext_modules=[
         Extension(
@@ -14,4 +17,6 @@ setup(
             extra_link_args=["-framework", "IOKit"],
         )
     ]
+    if sys.platform == "darwin"
+    else []
 )

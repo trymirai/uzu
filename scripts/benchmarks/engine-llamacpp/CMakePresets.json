@@ -37,6 +37,20 @@
         "GGML_LTO": true,
         "GGML_METAL_NDEBUG": true
       }
+    },
+    {
+      "name": "release-cuda",
+      "description": "Linux with NVIDIA CUDA",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/build/${presetName}/bin",
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": false,
+        "GGML_NATIVE": true,
+        "GGML_CUDA": true,
+        "CMAKE_CUDA_ARCHITECTURES": "native"
+      }
     }
   ],
   "buildPresets": [
@@ -52,6 +66,15 @@
     {
       "name": "release",
       "configurePreset": "release",
+      "configuration": "Release",
+      "targets": [
+        "engine-llamacpp"
+      ],
+      "jobs": 8
+    },
+    {
+      "name": "release-cuda",
+      "configurePreset": "release-cuda",
       "configuration": "Release",
       "targets": [
         "engine-llamacpp"

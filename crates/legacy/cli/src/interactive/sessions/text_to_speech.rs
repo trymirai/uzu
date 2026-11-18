@@ -66,7 +66,7 @@ impl SessionState for TextToSpeechSessionState {
     }
 
     fn interrupt(&self) -> bool {
-        let Some(cancel_token) = self.cancel_token.as_ref() else {
+        let Some(cancel_token) = self.cancel_token.as_ref().filter(|cancel_token| !cancel_token.is_cancelled()) else {
             return false;
         };
         cancel_token.cancel();

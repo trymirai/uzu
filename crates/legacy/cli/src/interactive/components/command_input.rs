@@ -5,13 +5,14 @@ use uzu::storage::DownloadPhase;
 
 use crate::interactive::{
     components::{ApplicationState, InputType, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
-    flows::Command,
+    flows::{Command, DeleteModelFlow},
     helpers::{
         HINT_COMMANDS, HINT_DECISION_QUESTION_EXAMPLES, HINT_DECISION_QUESTION_NOTES, HINT_DECISION_QUESTION_TITLE,
         HINT_DECISION_STATE_EXAMPLES, HINT_DECISION_STATE_NOTES, HINT_DECISION_STATE_TITLE, HINT_SEND,
         HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, HintExample, SYMBOL_COMMAND, SYMBOL_INPUT,
     },
     sessions::decision::is_question_mode,
+    util::types_text,
 };
 
 const SAFE_PADDING: u16 = 1;
@@ -34,8 +35,30 @@ pub fn CommandInput(
     let mut input = hooks.use_state(String::new);
     let (width, _) = hooks.use_terminal_size();
 
+    // Ctrl+D offers to delete the model only on an empty prompt, as it ends input in a shell, so it never drops a draft.
+    hooks.use_terminal_events(move |event| {
+        if let TerminalEvent::Key(KeyEvent {
+            code: KeyCode::Char('d'),
+            kind: KeyEventKind::Press,
+            modifiers,
+            ..
+        }) = event
+            && !types_text(modifiers)
+            && input.read().is_empty()
+        {
+            let model = state.read().deletable_model().cloned();
+            if let Some(model) = model {
+                let mut state = state;
+                state.write().flow = Some(Box::new(DeleteModelFlow {
+                    model,
+                }));
+            }
+        }
+    });
+
     let input_text = input.read().clone();
     let valid = valid_commands(&input_text, state);
+    let can_delete_model = input_text.is_empty() && state.read().deletable_model().is_some();
     let focus = if disabled {
         TextInputFocus::Disabled
     } else if valid.is_empty() {
@@ -76,7 +99,7 @@ pub fn CommandInput(
                     on_submit: on_submit.clone(),
                 )
             }
-            #(hint_component(valid, state, on_submit))
+            #(hint_component(valid, can_delete_model, state, on_submit))
         }
     }
 }
@@ -101,6 +124,7 @@ fn valid_commands(
 
 fn hint_component(
     commands: Vec<Command>,
+    can_delete_model: bool,
     state: State<ApplicationState>,
     on_submit: Handler<String>,
 ) -> AnyElement<'static> {
@@ -112,7 +136,9 @@ fn hint_component(
             } else {
                 hints.push(HINT_SEND.to_string());
             }
-            hints.push(HINT_STORAGE_DELETE.to_string());
+            if can_delete_model {
+                hints.push(HINT_STORAGE_DELETE.to_string());
+            }
         },
         _ => {
             hints.push(HINT_SEND.to_string());

@@ -1,6 +1,11 @@
-use std::{
-    io::{self, BufRead, Write},
-    os::fd::{AsFd, AsRawFd, OwnedFd, RawFd},
+use std::io::{self, BufRead, Write};
+#[cfg(unix)]
+use std::os::fd::{AsFd, AsRawFd, OwnedFd, RawFd};
+
+#[cfg(windows)]
+use windows::Win32::{
+    Foundation::HANDLE,
+    System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle},
 };
 
 use crate::{
@@ -50,11 +55,16 @@ pub async fn run_loop(engine: &mut UzuEngine) -> anyhow::Result<()> {
     Ok(())
 }
 
-// Redirect the file descriptor so engine output cannot corrupt the JSON protocol.
+// Redirect stdout so engine output cannot corrupt the JSON protocol: its file descriptor on Unix, and on Windows the
+// standard handle that Rust's stdout writes through.
 pub(crate) struct StdoutRedirect {
+    #[cfg(unix)]
     original: Option<OwnedFd>,
+    #[cfg(windows)]
+    original: Option<HANDLE>,
 }
 
+#[cfg(unix)]
 impl StdoutRedirect {
     pub(crate) fn to_stderr() -> io::Result<Self> {
         io::stdout().flush()?;
@@ -84,6 +94,30 @@ impl StdoutRedirect {
             let flushed = io::stdout().flush();
             Self::redirect_to(original.as_raw_fd())?;
             self.original = None;
+            flushed?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl StdoutRedirect {
+    pub fn to_stderr() -> io::Result<Self> {
+        io::stdout().flush()?;
+        // SAFETY: the process's own standard handles.
+        let original = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }?;
+        unsafe { SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE)?) }?;
+        Ok(Self {
+            original: Some(original),
+        })
+    }
+
+    pub fn restore(&mut self) -> io::Result<()> {
+        if let Some(original) = self.original.take() {
+            // Restore stdout even if flushing engine output fails.
+            let flushed = io::stdout().flush();
+            // SAFETY: `original` is the standard output handle this redirect replaced.
+            unsafe { SetStdHandle(STD_OUTPUT_HANDLE, original) }?;
             flushed?;
         }
         Ok(())

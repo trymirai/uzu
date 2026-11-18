@@ -10,8 +10,9 @@ pub async fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> 
     #[cfg(target_family = "wasm")]
     return crate::fs::asyn_opfs::canonicalize(path.as_ref().to_str().unwrap()).await;
 
+    // Windows canonical paths start with `\\?\`; drop it where the path means the same without, as other paths do.
     #[cfg(not(target_family = "wasm"))]
-    tokio::fs::canonicalize(path).await
+    tokio::fs::canonicalize(path).await.map(|path| dunce::simplified(&path).to_path_buf())
 }
 
 pub async fn is_dir(path: impl AsRef<Path>) -> bool {

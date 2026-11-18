@@ -1,3 +1,8 @@
+import { isMacPlatform } from "@/utils/platform";
+
+// The desktop app's macOS-only parts: its CLI installer and its title bar.
+const isMacApp = __PLATFORM__ === "tauri" && isMacPlatform();
+
 export const platformInfo = {
   isWeb: __PLATFORM__ === "web",
   isTauri: __PLATFORM__ === "tauri",
@@ -9,9 +14,9 @@ export const platformInfo = {
     logExport: __PLATFORM__ === "tauri",
     localModelDownloads: __PLATFORM__ === "tauri" || __PLATFORM__ === "demo",
     autoEject: __PLATFORM__ === "tauri",
-    cliInstall: __PLATFORM__ === "tauri",
+    cliInstall: isMacApp,
     // Overlay title bar with in-content macOS traffic lights: UI must reserve
     // space on the top-left so controls don't sit under the traffic lights.
-    nativeTitleBar: __PLATFORM__ === "tauri",
+    nativeTitleBar: isMacApp,
   },
 } as const;

@@ -29,6 +29,7 @@ pub struct BenchRequest {
     pub speculative_depth: Option<usize>,
     pub sampling: Option<BenchSampling>,
     pub num_runs: Option<usize>,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
