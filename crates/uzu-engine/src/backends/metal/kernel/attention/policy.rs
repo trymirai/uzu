@@ -8,6 +8,15 @@ const SHORT_SUFFIX_MAX: u32 = 4;
 const PREFILL_SPLIT_KEYS: u32 = 2048;
 const PREFILL_SPLIT_MIN_KV: u32 = 16384;
 const PREFILL_SPLIT_SCRATCH_BYTES: u64 = 256 << 20;
+const SPARSE_THREADGROUPS_PER_CORE: u32 = 4;
+
+pub fn sparse_splits(
+    gpu_cores: u32,
+    rows: u32,
+    slots_per_query: u32,
+) -> u32 {
+    (SPARSE_THREADGROUPS_PER_CORE * gpu_cores).div_ceil(rows).min(slots_per_query.div_ceil(kv_layout::TILE_KEYS)).max(1)
+}
 
 pub fn splits(
     params: &AttnParams,

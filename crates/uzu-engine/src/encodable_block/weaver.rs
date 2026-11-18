@@ -430,6 +430,7 @@ impl<B: Backend> Weaver<B> {
                     AttentionArguments {
                         suffix_length: depth,
                         trie: None::<&B::ConstantBuffer>,
+                        key_slots: None,
                         sinks: None,
                         cache,
                         gate: None::<&B::ConstantBuffer>,

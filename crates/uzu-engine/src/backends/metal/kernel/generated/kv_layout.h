@@ -12,6 +12,8 @@ static constant constexpr uint32_t WORD_BITS = 32;
 static constant constexpr uint32_t ROTATION_SIGN_BITS[8] =
     {2654435769, 2246822507, 3266489909, 668265263, 374761393, 3210233709, 2496678331, 3605593784};
 
+static constant constexpr int32_t NO_KEY_SLOT = -1;
+
 enum class KVLayout : uint32_t {
   RowMajor = 0,
   MxuTiled = 1,

@@ -46,14 +46,21 @@ pub struct AttentionKernelConfig {
     pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
+    pub sparse: bool,
 }
 
 pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
     pub suffix_length: u32,
     pub trie: Option<TT>,
+    pub key_slots: Option<KeySlots<'a, B>>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
+}
+
+pub struct KeySlots<'a, B: Backend> {
+    pub query_slots: &'a B::ScratchBuffer,
+    pub slots_per_query: u32,
 }
 
 #[derive(Clone, Copy)]

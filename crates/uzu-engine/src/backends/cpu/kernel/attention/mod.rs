@@ -47,6 +47,7 @@ impl AttentionKernel for AttentionCpuKernel {
         arguments: AttentionArguments<'_, Cpu, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
+        assert!(arguments.key_slots.is_none(), "the CPU attention has no sparse core");
         compute::encode(input, arguments, self.config, command_buffer)
     }
 }

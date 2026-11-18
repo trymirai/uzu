@@ -156,6 +156,7 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
+                sparse: false,
             },
         )
         .map_err(AttentionNewError::Kernel)?;
@@ -270,6 +271,7 @@ impl<B: Backend> Attention<B> {
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
                         trie: trie.as_ref(),
+                        key_slots: None,
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,

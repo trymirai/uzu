@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../generated/kv_layout.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 
@@ -72,4 +73,13 @@ static inline bool should_use_key(
   }
 
   return use_key;
+}
+
+METAL_FUNC int key_slot(
+    const device int* query_slots,
+    const uint slots_per_query,
+    const uint query_position,
+    const uint key
+) {
+  return key < slots_per_query ? query_slots[query_position * slots_per_query + key] : uzu::kv_layout::NO_KEY_SLOT;
 }
