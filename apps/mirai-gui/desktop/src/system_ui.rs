@@ -1,6 +1,6 @@
 use tauri::{
     AppHandle, Emitter, Manager,
-    menu::{AboutMetadata, HELP_SUBMENU_ID, MenuBuilder, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID},
+    menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID},
 };
 
 const MENU_NEW_CHAT_ID: &str = "menu:new-chat";
@@ -74,15 +74,11 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
         }))
         .separator()
         .item(&MenuItem::with_id(app, MENU_SETTINGS_ID, "Settings…", true, Some("CmdOrCtrl+,"))?)
-        .separator()
-        .services()
-        .separator()
-        .hide()
-        .hide_others()
-        .show_all()
-        .separator()
-        .quit()
-        .build()?;
+        .separator();
+    // Elsewhere these items do nothing, and Hide leaves no way back to the only window.
+    #[cfg(target_os = "macos")]
+    let app_menu = app_menu.services().separator().hide().hide_others().show_all().separator();
+    let app_menu = app_menu.quit().build()?;
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&MenuItem::with_id(app, MENU_NEW_CHAT_ID, "New Chat", true, Some("CmdOrCtrl+N"))?)
         .separator()
@@ -93,20 +89,19 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&MenuItem::with_id(app, MENU_ZOOM_RESET_ID, "Actual Size", true, Some("CmdOrCtrl+0"))?)
         .item(&MenuItem::with_id(app, MENU_ZOOM_IN_ID, "Zoom In", true, Some("CmdOrCtrl+="))?)
-        .item(&MenuItem::with_id(app, MENU_ZOOM_OUT_ID, "Zoom Out", true, Some("CmdOrCtrl+-"))?)
-        .separator()
-        .fullscreen()
-        .build()?;
-    let window_menu = SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, "Window")
-        .minimize()
-        .maximize()
-        .separator()
-        .bring_all_to_front()
-        .build()?;
-    let help_menu = SubmenuBuilder::with_id(app, HELP_SUBMENU_ID, "Help").build()?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu, &help_menu])
-        .build()?;
+        .item(&MenuItem::with_id(app, MENU_ZOOM_OUT_ID, "Zoom Out", true, Some("CmdOrCtrl+-"))?);
+    #[cfg(target_os = "macos")]
+    let view_menu = view_menu.separator().fullscreen();
+    let view_menu = view_menu.build()?;
+    let window_menu = SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, "Window").minimize().maximize();
+    #[cfg(target_os = "macos")]
+    let window_menu = window_menu.separator().bring_all_to_front();
+    let window_menu = window_menu.build()?;
+    let menu = MenuBuilder::new(app).items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu]);
+    // macOS fills the Help menu with its search field.
+    #[cfg(target_os = "macos")]
+    let menu = menu.item(&SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help").build()?);
+    let menu = menu.build()?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| match event.id().as_ref() {
         MENU_NEW_CHAT_ID => {

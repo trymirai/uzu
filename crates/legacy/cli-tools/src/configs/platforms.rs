@@ -81,8 +81,8 @@ impl PlatformsConfig {
             .filter(|(name, config)| {
                 requested_targets.contains(name)
                     || config.aliases.iter().any(|alias| requested_targets.contains(alias))
-                    || (requested_targets.contains(&HOST_TARGET.to_string()) && (*name == &host_target))
-                    || requested_targets.contains(&ALL_TARGET.to_string())
+                    || (requested_targets.iter().any(|target| target == HOST_TARGET) && (*name == &host_target))
+                    || requested_targets.iter().any(|target| target == ALL_TARGET)
             })
             .map(|(name, _)| (*name).clone())
             .collect::<Vec<_>>();

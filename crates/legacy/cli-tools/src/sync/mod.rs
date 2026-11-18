@@ -66,12 +66,14 @@ pub fn run_sync(check: bool) -> Result<()> {
     let root_path = &paths.root_path;
 
     ToolchainsSyncTask.run(&platforms, &workspace, &root_path.join("rust-toolchain.toml"), check)?;
-    ReadmeSyncTask::new(vec![Language::Rust, Language::Python, Language::Swift, Language::TypeScript]).run(
-        &platforms,
-        &workspace,
-        &root_path.join("README.md"),
-        check,
-    )?;
+    ReadmeSyncTask::new(vec![
+        Language::Rust,
+        Language::Python,
+        Language::Swift,
+        Language::TypeScript,
+        Language::Kotlin,
+    ])
+    .run(&platforms, &workspace, &root_path.join("README.md"), check)?;
 
     let python_bindings_path = paths.bindings_for_language_path(Language::Python);
     PyprojectSyncTask.run(&platforms, &workspace, &python_bindings_path.join("pyproject.toml"), check)?;
@@ -134,6 +136,15 @@ pub fn run_sync(check: bool) -> Result<()> {
         &platforms,
         &workspace,
         &wasm_bindings_path.join("src/tool.ts"),
+        check,
+    )?;
+
+    let kotlin_bindings_path = paths.bindings_for_language_path(Language::Kotlin);
+    LicenseSyncTask.run(&platforms, &workspace, &kotlin_bindings_path.join("LICENSE"), check)?;
+    ReadmeSyncTask::new(vec![Language::Kotlin]).run(
+        &platforms,
+        &workspace,
+        &kotlin_bindings_path.join("README.md"),
         check,
     )?;
 

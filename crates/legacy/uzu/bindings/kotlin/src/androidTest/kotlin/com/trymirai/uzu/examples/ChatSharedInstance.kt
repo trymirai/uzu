@@ -1,0 +1,46 @@
+package com.trymirai.uzu.examples
+
+import android.content.Context
+import com.trymirai.uzu.Engine
+import com.trymirai.uzu.EngineConfig
+import com.trymirai.uzu.Uzu
+import com.trymirai.uzu.asFlow
+import com.trymirai.uzu.create
+import com.trymirai.uzu.shoji.ChatConfig
+import com.trymirai.uzu.shoji.ChatMessage
+import com.trymirai.uzu.shoji.ChatReplyConfig
+import com.trymirai.uzu.user
+
+suspend fun runChatSharedInstance(context: Context) {
+    Uzu.initialize(context)
+    val engine = Engine.create(EngineConfig.create())
+
+    val model = engine.model("alibaba:qwen3.5:0.8b:mirai:mirai-m:4") ?: return
+    engine.download(model).asFlow().collect { update ->
+        println("Download progress: %.2f%%".format(update.progress() * 100))
+    }
+
+    // The chatInstance owns the loaded model and can be shared between sessions.
+    val chatInstance = engine.chatInstance(model, ChatConfig.create())
+
+    val firstSession = engine.chatWithInstance(chatInstance)
+    val replies = firstSession.reply(
+        listOf(ChatMessage.user().withText("Tell me a short, funny story about a robot")),
+        ChatReplyConfig.create(),
+    )
+    replies.lastOrNull()?.message?.let { message ->
+        println("First session reasoning: ${message.reasoning().orEmpty()}")
+        println("First session text: ${message.text().orEmpty()}")
+    }
+
+    // The second session reuses the already-loaded weights instead of loading the model again.
+    val secondSession = engine.chatWithInstance(chatInstance)
+    val secondReplies = secondSession.reply(
+        listOf(ChatMessage.user().withText("What is the capital of France?")),
+        ChatReplyConfig.create(),
+    )
+    secondReplies.lastOrNull()?.message?.let { message ->
+        println("\nSecond session reasoning: ${message.reasoning().orEmpty()}")
+        println("Second session text: ${message.text().orEmpty()}")
+    }
+}
