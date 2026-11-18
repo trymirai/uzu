@@ -90,10 +90,12 @@ impl<B: Backend> StreamOpStates<B> {
     pub fn encode_accept(
         &mut self,
         accepted_indices: &[u32],
-    ) {
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
         for state in self.prologue.iter_mut().chain(self.epilogue.iter_mut()).flatten() {
-            state.encode_accept(accepted_indices);
+            state.encode_accept(accepted_indices, command_buffer)?;
         }
+        Ok(())
     }
 }
 

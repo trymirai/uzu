@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use uzu_engine_macros::kernel;
 
-use crate::data_type::DataTypeRepr;
+use crate::{backends::common::gpu_types::trie::TrieNode, data_type::DataTypeRepr};
 
 #[kernel(NGramGate)]
 #[variants(T, f32, f16, bf16)]
@@ -115,6 +115,66 @@ pub fn ngram_conv_inject<T: DataTypeRepr + Float>(
         }
         for row in 0..state_rows {
             unsafe { *next_state.add(row * channels + channel) = T::from(sample(num_tokens + row, channel)).unwrap() };
+        }
+    }
+}
+
+// Note that the most natural layout for `state` (which is used here) is not the
+// same as in short-conv. relevant for when we unify them.
+#[kernel(NGramConvInjectTrie)]
+#[variants(T, f32, f16, bf16)]
+pub fn ngram_conv_inject_trie<T: DataTypeRepr + Float>(
+    conv_input: *const T,
+    state: *const T,
+    trie: *const TrieNode,
+    weights: *const f32,
+    gated: *const T,
+    stream: *mut T,
+    node_states: *mut T,
+    num_tokens: u32,
+    channels: u32,
+    kernel_size: u32,
+) {
+    let num_tokens = num_tokens as usize;
+    let channels = channels as usize;
+    let kernel_size = kernel_size as usize;
+    let state_rows = kernel_size - 1;
+
+    // Nodes come in DFS order, so a parent's slot is complete before any child reads it.
+    for channel in 0..channels {
+        for node in 0..num_tokens {
+            let parent = unsafe { (*trie.add(node)).parent };
+            let parent_state = if parent < 0 {
+                state
+            } else {
+                unsafe { node_states.add(parent as usize * state_rows * channels) as *const T }
+            };
+            let parent_row =
+                |row: usize| -> f32 { unsafe { (*parent_state.add(row * channels + channel)).to_f32().unwrap() } };
+            let own = unsafe { (*conv_input.add(node * channels + channel)).to_f32().unwrap() };
+
+            let weight = |tap: usize| -> f32 { unsafe { *weights.add(channel * kernel_size + tap) } };
+            let mut accumulator = weight(state_rows) * own;
+            for tap in 0..state_rows {
+                accumulator += weight(tap) * parent_row(tap);
+            }
+            let activated = accumulator / (1.0 + (-accumulator).exp());
+            let index = node * channels + channel;
+            unsafe {
+                let updated =
+                    (*stream.add(index)).to_f32().unwrap() + (*gated.add(index)).to_f32().unwrap() + activated;
+                *stream.add(index) = T::from(updated).unwrap();
+            }
+
+            let own_state = unsafe { node_states.add(node * state_rows * channels) };
+            for row in 0..state_rows {
+                let value = if row + 1 < state_rows {
+                    parent_row(row + 1)
+                } else {
+                    own
+                };
+                unsafe { *own_state.add(row * channels + channel) = T::from(value).unwrap() };
+            }
         }
     }
 }

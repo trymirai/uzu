@@ -3,6 +3,7 @@
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
 #include "../common/threadgroup_reduce.h"
+#include "../generated/trie.h"
 
 using namespace metal;
 
@@ -128,5 +129,46 @@ PUBLIC KERNEL(NGramConvInject)(
     const uint state_row = row - num_tokens;
     next_state[state_row * channels + channel] =
         T(ngram_conv_sample(conv_input, state, num_tokens + state_row, state_rows, channels, channel));
+  }
+}
+
+// One thread per channel walking the nodes in order: a child's slot is only ever read by the
+// thread that wrote its parent's, so DFS order alone sequences the dependency.
+template <typename T>
+VARIANTS(T, float, half, bfloat)
+PUBLIC KERNEL(NGramConvInjectTrie)(
+    const device T* conv_input,
+    const device T* state,
+    const device uzu::trie::TrieNode* trie,
+    const device float* weights,
+    const device T* gated,
+    device T* stream,
+    device T* node_states,
+    constant uint& num_tokens,
+    constant uint& channels,
+    constant uint& kernel_size,
+    const uint channel AXIS(channels, 256)
+) {
+  const uint state_rows = kernel_size - 1;
+  const device float* weight = weights + channel * kernel_size;
+
+  for (uint node = 0; node < num_tokens; ++node) {
+    const int parent = trie[node].parent;
+    const device T* parent_state = parent < 0 ? state : node_states + uint(parent) * state_rows * channels;
+    const float own = float(conv_input[node * channels + channel]);
+
+    float accumulator = weight[state_rows] * own;
+    for (uint tap = 0; tap < state_rows; ++tap) {
+      accumulator += weight[tap] * float(parent_state[tap * channels + channel]);
+    }
+    const float activated = accumulator / (1.0f + exp(-accumulator));
+    const uint index = node * channels + channel;
+    stream[index] = T(float(stream[index]) + float(gated[index]) + activated);
+
+    device T* own_state = node_states + node * state_rows * channels;
+    for (uint row = 0; row < state_rows; ++row) {
+      own_state[row * channels + channel] =
+          row + 1 < state_rows ? parent_state[(row + 1) * channels + channel] : T(own);
+    }
   }
 }
