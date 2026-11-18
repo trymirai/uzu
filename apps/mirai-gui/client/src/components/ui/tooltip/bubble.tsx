@@ -12,6 +12,8 @@ type TooltipBubbleProps = {
   floatingStyles: CSSProperties;
   positioned: boolean;
   setFloating: (node: HTMLDivElement | null) => void;
+  onPointerEnter: () => void;
+  onPointerLeave: (event: React.PointerEvent) => void;
 };
 
 export function TooltipBubble({
@@ -24,13 +26,18 @@ export function TooltipBubble({
   floatingStyles,
   positioned,
   setFloating,
+  onPointerEnter,
+  onPointerLeave,
 }: TooltipBubbleProps) {
   return (
     <div
       ref={setFloating}
       id={tooltipId}
       role="tooltip"
-      className="pointer-events-none fixed z-50"
+      // A label tip lets the pointer through; a panel can be hovered, and its figures selected.
+      className={twMerge("fixed z-50", variant === "panel" ? "select-text" : "pointer-events-none")}
+      onPointerEnter={variant === "panel" ? onPointerEnter : undefined}
+      onPointerLeave={variant === "panel" ? onPointerLeave : undefined}
       style={{
         ...floatingStyles,
         // Hidden until it has been placed against its trigger, so it can't flash somewhere else.

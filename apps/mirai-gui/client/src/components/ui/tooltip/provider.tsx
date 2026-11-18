@@ -10,6 +10,9 @@ import { TooltipBubble } from "./bubble";
 // neighbours open at once and without an entrance, until the pointer has been away a moment.
 const OPEN_DELAY_MS = 400;
 const WARM_FOR_MS = 300;
+// A panel waits this long after the pointer leaves its trigger, so the pointer can cross the gap and
+// rest on it (to read or copy the figures); it closes once the pointer has left both.
+const PANEL_CLOSE_DELAY_MS = 150;
 export const PANEL_GAP_PX = 6;
 
 export function TooltipProvider({ children }: TooltipProviderProps) {
@@ -17,6 +20,8 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
   const [instant, setInstant] = useState(false);
   const tooltipId = useId();
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeRef = useRef<TooltipPayload | null>(null);
   const warmUntilRef = useRef(0);
   const visibleRef = useRef(false);
 
@@ -50,11 +55,19 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
 
   useEffect(() => {
     visibleRef.current = activeTooltip !== null;
+    activeRef.current = activeTooltip;
   }, [activeTooltip]);
-  useEffect(() => () => clearTimeout(openTimerRef.current ?? undefined), []);
+  useEffect(
+    () => () => {
+      clearTimeout(openTimerRef.current ?? undefined);
+      clearTimeout(closeTimerRef.current ?? undefined);
+    },
+    [],
+  );
 
   const show = useCallback((payload: TooltipPayload) => {
     clearTimeout(openTimerRef.current ?? undefined);
+    clearTimeout(closeTimerRef.current ?? undefined);
     const warm = visibleRef.current || performance.now() < warmUntilRef.current;
     if (warm) {
       setInstant(true);
@@ -67,14 +80,50 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
     }, payload.delay ?? OPEN_DELAY_MS);
   }, []);
 
-  const hide = useCallback((id: string) => {
+  const close = useCallback((id: string) => {
     clearTimeout(openTimerRef.current ?? undefined);
+    clearTimeout(closeTimerRef.current ?? undefined);
     setActiveTooltip((current) => {
       if (current?.id !== id) return current;
       warmUntilRef.current = performance.now() + WARM_FOR_MS;
       return null;
     });
   }, []);
+
+  const hide = useCallback(
+    (id: string) => {
+      const current = activeRef.current;
+      if (current?.id !== id || current.variant !== "panel") {
+        close(id);
+        return;
+      }
+      clearTimeout(openTimerRef.current ?? undefined);
+      clearTimeout(closeTimerRef.current ?? undefined);
+      closeTimerRef.current = setTimeout(() => close(id), PANEL_CLOSE_DELAY_MS);
+    },
+    [close],
+  );
+
+  // The pointer on a panel keeps it open; leaving it starts the same short close as leaving the
+  // trigger. While a selection is being dragged out past its edge it stays, and closes on release
+  // unless the pointer came back.
+  const holdPanel = useCallback(() => clearTimeout(closeTimerRef.current ?? undefined), []);
+  const releasePanel = useCallback(
+    (event: React.PointerEvent) => {
+      const current = activeRef.current;
+      if (!current) return;
+      if (event.buttons > 0) {
+        const bubble = event.currentTarget;
+        const onUp = (up: PointerEvent) => {
+          if (!(up.target instanceof Node && bubble.contains(up.target))) hide(current.id);
+        };
+        document.addEventListener("pointerup", onUp, { once: true });
+        return;
+      }
+      hide(current.id);
+    },
+    [hide],
+  );
 
   const contextValue = useMemo<TooltipContextValue>(
     () => ({
@@ -101,6 +150,8 @@ export function TooltipProvider({ children }: TooltipProviderProps) {
           floatingStyles={floatingStyles}
           positioned={isPositioned}
           setFloating={refs.setFloating}
+          onPointerEnter={holdPanel}
+          onPointerLeave={releasePanel}
         />
       )}
     </TooltipContext.Provider>

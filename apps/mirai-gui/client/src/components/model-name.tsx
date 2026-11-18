@@ -4,10 +4,17 @@ import { twMerge } from "tailwind-merge";
 // The model is the first part; the variant is shortened to "Mirai M" and set quietly after it.
 const VARIANT_SUFFIX = /^(.+?)\s+Mirai\s+(\S+)(?:\s+Quantization)?$/i;
 
+/** "Medium" → "M", "Extra-Small" → "XS", "Extra-Large" → "XL": the sizes as the website writes them. */
+function shortSize(size: string): string {
+  const [first, second] = size.split("-");
+  if (second && first?.toLowerCase() === "extra") return `X${second.charAt(0).toUpperCase()}`;
+  return size.charAt(0).toUpperCase();
+}
+
 export function splitModelName(name: string): { base: string; variant: string | null } {
   const match = VARIANT_SUFFIX.exec(name.trim());
   return match?.[1] && match[2]
-    ? { base: match[1], variant: `Mirai ${match[2].charAt(0).toUpperCase()}` }
+    ? { base: match[1], variant: `Mirai ${shortSize(match[2])}` }
     : { base: name, variant: null };
 }
 

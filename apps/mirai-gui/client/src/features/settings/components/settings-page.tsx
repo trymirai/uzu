@@ -4,7 +4,7 @@ import GeneralTab from "./general-tab";
 import AboutTab from "./about-tab";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { PageScroller, PageTitleBar } from "@/components/page-title-bar";
-import { useAppStore } from "@/stores/use-app-store";
+import { chatWidthCss, useAppStore } from "@/stores/use-app-store";
 
 export type SettingsTab = "general" | "about";
 
@@ -22,7 +22,7 @@ export function SettingsPage() {
   return (
     <div
       className="h-full min-h-0 w-full bg-background text-label-title"
-      style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
+      style={{ "--chat-width": chatWidthCss(chatWidth) } as CSSProperties}
     >
       <PageScroller
         header={
@@ -37,7 +37,10 @@ export function SettingsPage() {
           </PageTitleBar>
         }
       >
-        <section key={tab} className="px-5 pt-4 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto animate-uzu-in">
+        <section
+          key={tab}
+          className="follows-window px-5 pt-4 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto animate-uzu-in"
+        >
           {tab === "about" ? <AboutTab /> : <GeneralTab />}
         </section>
       </PageScroller>

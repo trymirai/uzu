@@ -5,7 +5,7 @@ import { useToast } from "@/components/ui/toast/use-toast";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useModelsStore } from "@/stores/use-models-store";
-import { useAppStore } from "@/stores/use-app-store";
+import { chatWidthCss, useAppStore } from "@/stores/use-app-store";
 import { useGlobalInstructionsStore } from "@/stores/use-global-instructions-store";
 import { isChatGenerating } from "@/features/runtime/runtime-busy";
 import { useChatModelSelector } from "../hooks/use-chat-model-selector";
@@ -218,7 +218,7 @@ export function ChatPage() {
       className="flex flex-col h-full min-h-0 bg-background px-5 pb-5"
       style={
         {
-          "--chat-width": `${chatWidth}px`,
+          "--chat-width": chatWidthCss(chatWidth),
           "--composer-h": `${composerHeight}px`,
           // Room for the top fade, so the first message starts below it.
           "--chat-list-top": chromeOverChat ? "3.5rem" : "2rem",
@@ -281,7 +281,7 @@ export function ChatPage() {
         {/* 8px wider than the text column on each side. */}
         <div
           ref={composerRef}
-          className="relative z-10 flex-shrink-0 self-center w-[calc(100%+1rem)] max-w-[calc(var(--chat-width)+1rem)]"
+          className="follows-window relative z-10 flex-shrink-0 self-center w-[calc(100%+1rem)] max-w-[calc(var(--chat-width)+1rem)]"
         >
           <ChatComposer
             chatId={chatId}
