@@ -59,8 +59,8 @@ fn lookup_reads_rows_after_loader_and_file_are_gone() {
     let mut rows = vec![0xAB; 3];
     table.lookup(&ids, &mut rows).expect("lookup");
     assert_eq!(rows.len(), ids.len() * ROW_SIZE);
-    for (&id, actual) in ids.iter().zip(&*rows.as_chunks::<ROW_SIZE>().0) {
-        assert_eq!(&*actual, row(id).as_slice(), "row {id}");
+    for (&id, actual) in ids.iter().zip(rows.as_chunks::<ROW_SIZE>().0) {
+        assert_eq!(actual, row(id).as_slice(), "row {id}");
     }
 
     table.lookup(&[3], &mut rows).expect("lookup");
