@@ -14,6 +14,8 @@ static constant constexpr uint32_t ROTATION_SIGN_BITS[8] =
 
 static constant constexpr int32_t NO_KEY_SLOT = -1;
 
+static constant constexpr uint32_t COMPRESSION_RATIO = 4;
+
 enum class KVLayout : uint32_t {
   RowMajor = 0,
   MxuTiled = 1,
