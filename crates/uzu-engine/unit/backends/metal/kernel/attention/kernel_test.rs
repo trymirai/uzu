@@ -85,13 +85,13 @@ fn attention_matches_cpu() {
             (24, 64, 0, true, false, NAN),
         ] {
             let (head_dim, kv_heads) = match q_heads {
+                24 | 32 if sparse => (256, 2),
                 8 => (64, 2),
                 32 => (128, 2),
                 64 => (512, 4),
-                24 if sparse => (256, 2),
                 _ => (256, 4),
             };
-            if sparse && (head_dim, q_heads / kv_heads) != (256, 12) {
+            if sparse && head_dim != 256 {
                 continue;
             }
             let tokens: Vec<u64> = (0..suffix as u64).collect();
