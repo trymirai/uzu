@@ -32,6 +32,9 @@ impl AttentionKernel for VkAttentionKernel {
         context: &VkContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, Error> {
+        if config.sparse {
+            return Err(Error::NotSupported);
+        }
         macro_rules! by_trie {
             ($kernel:ident) => {{
                 let new = |is_trie| {
@@ -87,7 +90,6 @@ impl AttentionKernel for VkAttentionKernel {
         >,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<<Vulkan as Backend>::ScratchBuffer, Error> {
-        assert!(arguments.key_slots.is_none(), "the Vulkan attention has no sparse core");
         let config = self.config;
         let suffix_length = arguments.suffix_length;
         let sequence_length = arguments.cache.prefix_len() + suffix_length;

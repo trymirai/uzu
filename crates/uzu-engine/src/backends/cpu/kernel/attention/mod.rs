@@ -28,6 +28,9 @@ impl AttentionKernel for AttentionCpuKernel {
         _context: &CpuContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, CpuError> {
+        if config.sparse {
+            return Err(CpuError::NotSupported);
+        }
         Ok(Self {
             config,
         })
@@ -53,7 +56,6 @@ impl AttentionKernel for AttentionCpuKernel {
         >,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
-        assert!(arguments.key_slots.is_none(), "the CPU attention has no sparse core");
         compute::encode(input, arguments, self.config, command_buffer)
     }
 }
