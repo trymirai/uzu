@@ -27,7 +27,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
-    sparse: Option<AttentionMatrixMetalKernel>,
+    sparse: Option<(u32, AttentionMatrixMetalKernel)>,
 }
 
 struct KernelTile {
@@ -51,6 +51,7 @@ impl AttentionMetalKernel {
                 128
             })
         .max(1);
+        let simd_rows = |simdgroups| simdgroups * 8 / slices;
         let mut tiles = Vec::new();
         for simdgroups in [1, 2, 4, 6, 8] {
             if simdgroups % slices != 0 {
@@ -77,7 +78,7 @@ impl AttentionMetalKernel {
                 rows: if use_mxu {
                     simdgroups * kv_layout::TILE_QUERIES / (config.head_dim / kv_layout::SLICE_DIMS)
                 } else {
-                    simdgroups * 8 / slices
+                    simd_rows(simdgroups)
                 },
                 prefix: (use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none())
                     .then(|| kernel(true, false))
@@ -132,10 +133,11 @@ impl AttentionMetalKernel {
                             "sparse attention is causal without window or ring".to_string(),
                         ));
                     }
-                    if config.num_q_heads / config.num_groups > kv_layout::TILE_QUERIES {
+                    let simdgroups = config.head_dim / kv_layout::SLICE_DIMS;
+                    let rows = simd_rows(simdgroups);
+                    if config.num_q_heads / config.num_groups > rows {
                         return Err(MetalError::CannotCreateFunction(format!(
-                            "sparse attention covers at most {} GQA rows",
-                            kv_layout::TILE_QUERIES
+                            "sparse attention covers at most {rows} GQA rows"
                         )));
                     }
                     AttentionMatrixMetalKernel::new(
@@ -143,7 +145,7 @@ impl AttentionMetalKernel {
                         DataType::BF16,
                         config.head_dim,
                         use_mxu,
-                        config.head_dim / kv_layout::SLICE_DIMS,
+                        simdgroups,
                         true,
                         false,
                         false,
@@ -152,6 +154,7 @@ impl AttentionMetalKernel {
                         false,
                         config.num_groups,
                     )
+                    .map(|core| (rows, core))
                 })
                 .transpose()?,
         })
@@ -227,7 +230,7 @@ impl AttentionKernel for AttentionMetalKernel {
         };
         let (trie, sparse) = match (keys, &self.sparse) {
             (KeyArguments::Dense(trie), None) => (trie, None),
-            (KeyArguments::Sparse(key_slots), Some(core)) => (None, Some((key_slots, core))),
+            (KeyArguments::Sparse(key_slots), Some((rows, core))) => (None, Some((key_slots, core, *rows))),
             _ => panic!("attention arguments do not match AttentionKernelConfig::sparse"),
         };
         let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
@@ -242,16 +245,16 @@ impl AttentionKernel for AttentionMetalKernel {
                 .min_by_key(|tile| (grouped_rows.div_ceil(tile.rows) * tile.rows, std::cmp::Reverse(tile.rows)))
                 .unwrap()
         });
-        // Sparse: every query is padded to one TILE_QUERIES-row tile.
-        let padded_rows = if sparse.is_some() {
-            kv_layout::TILE_QUERIES * suffix_length
+        // Sparse: every query is padded to one tile of rows.
+        let padded_rows = if let Some((.., rows)) = &sparse {
+            rows * suffix_length
         } else {
             tile.map_or(grouped_rows, |tile| grouped_rows.next_multiple_of(tile.rows))
         };
         let split_rows = num_groups * padded_rows;
         let num_splits = if direct {
             1
-        } else if let Some((key_slots, _)) = &sparse {
+        } else if let Some((key_slots, ..)) = &sparse {
             policy::sparse_splits(
                 command_buffer.context().gpu_core_count.max(1),
                 suffix_length * num_groups,
@@ -283,7 +286,7 @@ impl AttentionKernel for AttentionMetalKernel {
             ))
         };
         let (maxima, sums) = statistics.as_mut().map_or((None, None), |(maxima, sums)| (Some(maxima), Some(sums)));
-        if let Some((key_slots, core)) = sparse {
+        if let Some((key_slots, core, _)) = sparse {
             core.encode(
                 input.query_codes,
                 input.query_scales,
