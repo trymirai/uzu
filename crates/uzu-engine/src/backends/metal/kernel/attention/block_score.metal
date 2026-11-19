@@ -14,8 +14,6 @@ namespace kv_layout = uzu::kv_layout;
 #define THREADS_PER_TG 256
 
 UZU_CONST uint NUM_SIMDGROUPS = THREADS_PER_TG / METAL_SIMD_SIZE;
-UZU_CONST uint MAX_GROUP_ROWS = 64;
-UZU_CONST uint MAX_QUERY_BANDS = MAX_GROUP_ROWS / kv_layout::TILE_QUERIES;
 
 template <uint NUM_HEADS, uint HEAD_DIM, bool USE_MXU>
 VARIANTS(NUM_HEADS, 4)
@@ -35,7 +33,6 @@ KERNEL(AttentionBlockScore)(
     const constant uint& rows_per_group,
     const constant uint& blocks_per_group,
     const constant uint& candidate_blocks,
-    threadgroup uint4 query_stage[USE_MXU ? MAX_QUERY_BANDS * NUM_HEADS * (HEAD_DIM / kv_layout::TILE_DIMS) * METAL_SIMD_SIZE / 2 : 1],
     const ThreadContext thread_context,
     const uint row_group_index GROUPS(row_count.div_ceil(rows_per_group)),
     const uint block_group_index GROUPS(candidate_blocks.div_ceil(blocks_per_group)),
@@ -47,7 +44,6 @@ KERNEL(AttentionBlockScore)(
   constexpr uint KEY_TILE = KEY_FRAGMENTS * Ops::FRAGMENT_COLS;
   constexpr int SLICE_FRAGMENTS = kv_layout::SLICE_DIMS / Ops::FRAGMENT_COLS;
   constexpr int DEPTH_SLICES = HEAD_DIM / kv_layout::SLICE_DIMS;
-  constexpr int VECTOR_FRAGMENTS = sizeof(uint4) / sizeof(uint2);
   constexpr ushort LANE_ROWS = 2;
   using Code = typename Ops::template ThreadVector<int8_t>;
   using Queries =
@@ -70,8 +66,7 @@ KERNEL(AttentionBlockScore)(
   const uint simdgroup_in_band = thread_context.simdgroup_index / query_bands;
   const uint simdgroups_per_band = NUM_SIMDGROUPS / query_bands;
   const uint query_row_base = row_group_index * rows_per_group + query_band * Ops::FRAGMENT_ROWS;
-  const bool has_rows = query_row_base < row_count;
-  if (!USE_MXU && !has_rows)
+  if (query_row_base >= row_count)
     return;
 
   const short2 position = Ops::get_position(thread_context.simd_lane_id);
@@ -96,41 +91,39 @@ KERNEL(AttentionBlockScore)(
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < LANE_ROWS; ++i)
     lane_rows[i] = query_row_base + (USE_MXU ? position.y + i * Ops::THREAD_ELEMENT_ROW_STRIDE : position.x + i);
-  Queries queries[USE_MXU ? 1 : NUM_HEADS];
-  float query_scale_values[NUM_HEADS][LANE_ROWS];
-  // Load queries: MXU stages them, simd keeps registers.
-  METAL_PRAGMA_UNROLL
-  for (ushort head = 0; head < NUM_HEADS; ++head) {
+  const auto load_head = [&](ushort head,
+                             thread Queries& queries,
+                             thread float (&scales)[LANE_ROWS]) UZU_ALWAYS_INLINE {
     const size_t head_rows = size_t(head) * query_rows + first_row;
     const device int8_t* first_row_codes = query_codes + (head_rows + min(lane_rows[0], row_count - 1)) * HEAD_DIM;
     const device int8_t* second_row_codes = query_codes + (head_rows + min(lane_rows[1], row_count - 1)) * HEAD_DIM;
     if constexpr (USE_MXU) {
-      for (ushort slice = simdgroup_in_band; slice < DEPTH_SLICES; slice += simdgroups_per_band) {
+      METAL_PRAGMA_UNROLL
+      for (ushort slice = 0; slice < DEPTH_SLICES; ++slice) {
         uint2 fragments[SLICE_FRAGMENTS];
         load_slice_fragments(first_row_codes, second_row_codes, slice, fragments);
-        for (ushort stage_vector = 0; stage_vector < SLICE_FRAGMENTS / VECTOR_FRAGMENTS; ++stage_vector)
-          query_stage
-              [((query_band * NUM_HEADS + head) * (DEPTH_FRAGMENTS / VECTOR_FRAGMENTS) +
-                slice * (SLICE_FRAGMENTS / VECTOR_FRAGMENTS) + stage_vector) *
-                   METAL_SIMD_SIZE +
-               thread_context.simd_lane_id] =
-                  uint4(fragments[VECTOR_FRAGMENTS * stage_vector], fragments[VECTOR_FRAGMENTS * stage_vector + 1]);
+        METAL_PRAGMA_UNROLL
+        for (ushort slice_fragment = 0; slice_fragment < SLICE_FRAGMENTS; ++slice_fragment)
+          queries.fragment_data[slice * SLICE_FRAGMENTS + slice_fragment] = as_type<Code>(fragments[slice_fragment]);
       }
     } else {
       METAL_PRAGMA_UNROLL
       for (ushort depth = 0; depth < DEPTH_FRAGMENTS; ++depth) {
         const int offset = depth * Ops::FRAGMENT_ROWS + position.y;
-        queries[head].fragment_data[depth] = half2(half(first_row_codes[offset]), half(second_row_codes[offset]));
+        queries.fragment_data[depth] = half2(half(first_row_codes[offset]), half(second_row_codes[offset]));
       }
     }
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < LANE_ROWS; ++i)
-      query_scale_values[head][i] = float(query_scales[head_rows + min(lane_rows[i], row_count - 1)]);
-  }
-  if constexpr (USE_MXU) {
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!has_rows)
-      return;
+      scales[i] = float(query_scales[head_rows + min(lane_rows[i], row_count - 1)]);
+  };
+  // MXU reloads one head at a time to stay in registers; simd keeps all heads resident.
+  Queries resident_queries[USE_MXU ? 1 : NUM_HEADS];
+  float resident_scales[USE_MXU ? 1 : NUM_HEADS][LANE_ROWS];
+  if constexpr (!USE_MXU) {
+    METAL_PRAGMA_UNROLL
+    for (ushort head = 0; head < NUM_HEADS; ++head)
+      load_head(head, resident_queries[head], resident_scales[head]);
   }
 
   const uint tile_end = min((block_group_index + 1) * blocks_per_group, candidate_blocks + KEY_TILE - 1) / KEY_TILE;
@@ -168,33 +161,34 @@ KERNEL(AttentionBlockScore)(
     }
     Fragment<float, Dots::ROW_FRAGMENTS, Dots::COL_FRAGMENTS, Ops> head_sums;
     head_sums.clear();
-    METAL_PRAGMA_UNROLL
-    for (ushort head = 0; head < NUM_HEADS; ++head) {
+    const auto add_head = [&](thread Queries& queries, thread float (&scales)[LANE_ROWS]) UZU_ALWAYS_INLINE {
       Dots dots;
       dots.clear();
-      if constexpr (USE_MXU) {
-        Queries head_queries;
-        METAL_PRAGMA_UNROLL
-        for (ushort stage_vector = 0; stage_vector < DEPTH_FRAGMENTS / VECTOR_FRAGMENTS; ++stage_vector) {
-          const uint4 words = query_stage
-              [((query_band * NUM_HEADS + head) * (DEPTH_FRAGMENTS / VECTOR_FRAGMENTS) + stage_vector) *
-                   METAL_SIMD_SIZE +
-               thread_context.simd_lane_id];
-          head_queries.fragment_data[VECTOR_FRAGMENTS * stage_vector] = as_type<Code>(words.xy);
-          head_queries.fragment_data[VECTOR_FRAGMENTS * stage_vector + 1] = as_type<Code>(words.zw);
-        }
-        fragment_mma(dots, head_queries, keys);
-      } else {
-        fragment_mma(dots, keys, queries[head]);
-      }
+      if constexpr (USE_MXU)
+        fragment_mma(dots, queries, keys);
+      else
+        fragment_mma(dots, keys, queries);
       head_sums.for_each_lane(
           [&](ushort row, ushort column, thread float& head_sum, thread auto& dot) UZU_ALWAYS_INLINE {
-            const float factor = query_scale_values[head][USE_MXU ? row : column];
+            const float factor = scales[USE_MXU ? row : column];
             // factor > 0, so factor * relu(dot) = relu(factor * dot).
             head_sum = fma(factor, max(float(dot), 0.0f), head_sum);
           },
           dots
       );
+    };
+    if constexpr (USE_MXU) {
+      METAL_PRAGMA_NO_UNROLL
+      for (ushort head = 0; head < NUM_HEADS; ++head) {
+        Queries queries;
+        float scales[LANE_ROWS];
+        load_head(head, queries, scales);
+        add_head(queries, scales);
+      }
+    } else {
+      METAL_PRAGMA_UNROLL
+      for (ushort head = 0; head < NUM_HEADS; ++head)
+        add_head(resident_queries[head], resident_scales[head]);
     }
     if constexpr (USE_MXU) {
       if (key_base + KEY_TILE <= cached_blocks) {
