@@ -24,14 +24,6 @@ const model: PlatformModel = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
   useModelParamsStore.setState(paramsDefaults, true);
   useModelsStore.setState({ ...modelsDefaults, models: [model] }, true);
 });
@@ -40,7 +32,6 @@ afterEach(async () => {
   cleanup();
   await vi.runAllTimersAsync();
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 it.each<ReasoningSupport>([

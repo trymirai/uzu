@@ -38,6 +38,7 @@ export default defineConfig(({ mode }) => {
         forks: { execArgv: ["--no-experimental-webstorage"] },
       },
       include: ["src/**/*.test.{ts,tsx}"],
+      setupFiles: ["src/test-setup.ts"],
       css: false,
     },
   };
