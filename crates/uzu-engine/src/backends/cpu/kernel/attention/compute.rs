@@ -6,7 +6,7 @@ use crate::{
         common::{
             BufferRef, CommandBufferEncoding,
             gpu_types::{kv_layout, trie::TrieNode},
-            kernel::{AttentionArguments, AttentionInput, AttentionKernelConfig},
+            kernel::{AttentionArguments, AttentionInput, AttentionKernelConfig, attention::KeyArguments},
         },
         cpu::{
             Cpu,
@@ -122,7 +122,10 @@ pub(super) fn encode(
     let k_scales = ptr(input.k_scales);
     let v_codes = ptr(input.v_codes);
     let v_scales = ptr(input.v_scales);
-    let trie = arguments.trie.map(ptr);
+    let KeyArguments::Dense(trie) = arguments.keys else {
+        unreachable!("cpu attention rejects sparse keys");
+    };
+    let trie = trie.map(ptr);
     let sinks = arguments.sinks.map(ptr);
     let gate = arguments.gate.map(ptr);
     let prefix = arguments.cache.prefix_len();

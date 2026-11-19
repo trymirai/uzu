@@ -2,7 +2,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, kv_layout::KVLayout},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, attention::KeyArguments,
+                kv_layout::KVLayout,
+            },
         },
         vulkan::{
             AttentionGemmVulkanKernel, AttentionTwoPass1VulkanKernel, AttentionTwoPass2VulkanKernel, Error, VkBuffer,
@@ -122,8 +125,11 @@ impl AttentionKernel for VkAttentionKernel {
         let partials_ref = VkBuffer::resolve_ref(&partials);
         let sums_ref = VkBuffer::resolve_ref(&sums);
         let maxs_ref = VkBuffer::resolve_ref(&maxs);
-        let is_trie = usize::from(arguments.trie.is_some());
-        let trie = arguments.trie.map(VkBuffer::resolve_ref);
+        let KeyArguments::Dense(trie) = arguments.keys else {
+            unreachable!("vulkan attention rejects sparse keys");
+        };
+        let is_trie = usize::from(trie.is_some());
+        let trie = trie.map(VkBuffer::resolve_ref);
         let ring_params = arguments.cache.ring_params();
         let scale = config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt());
         let command_buffer = &mut *command_buffer.debug_group("attention core");

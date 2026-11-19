@@ -10,7 +10,7 @@ use crate::{
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-                attention::KeySlots,
+                attention::{KeyArguments, KeySlots},
             },
         },
         metal::{Metal, kernel::attention::AttentionMetalKernel},
@@ -242,12 +242,13 @@ fn attention_matches_cpu() {
                     let arguments = AttentionArguments {
                         sinks: None,
                         suffix_length: suffix as u32,
-                        trie: trie.as_ref(),
                         cache: KVCacheView::full(prefix as u32),
                         gate: gate.as_ref(),
-                        key_slots: key_slots.as_ref().map(|slots| KeySlots {
-                            query_slots: slots,
-                            slots_per_query: (prefix + suffix) as u32,
+                        keys: key_slots.as_ref().map_or(KeyArguments::Dense(trie.as_ref()), |query_slots| {
+                            KeyArguments::Sparse(KeySlots {
+                                query_slots,
+                                slots_per_query: (prefix + suffix) as u32,
+                            })
                         }),
                     };
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();

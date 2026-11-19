@@ -58,11 +58,15 @@ pub struct AttentionArguments<
     ST: BufferRef<Backend = B>,
 > {
     pub suffix_length: u32,
-    pub trie: Option<TT>,
-    pub key_slots: Option<KeySlots<ST>>,
+    pub keys: KeyArguments<TT, ST>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
+}
+
+pub enum KeyArguments<TT: BufferRef, ST: BufferRef> {
+    Dense(Option<TT>),
+    Sparse(KeySlots<ST>),
 }
 
 pub struct KeySlots<ST: BufferRef> {

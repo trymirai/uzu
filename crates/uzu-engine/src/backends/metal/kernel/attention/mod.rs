@@ -4,7 +4,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, kv_layout::KVLayout},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, attention::KeyArguments,
+                kv_layout::KVLayout,
+            },
         },
         metal::{
             Metal,
@@ -124,6 +127,11 @@ impl AttentionMetalKernel {
             sparse: config
                 .sparse
                 .then(|| {
+                    if config.is_kv_cache_ring || config.sliding_window_size.is_some() || !config.is_causal {
+                        return Err(MetalError::CannotCreateFunction(
+                            "sparse attention is causal without window or ring".to_string(),
+                        ));
+                    }
                     if config.num_q_heads / config.num_groups > kv_layout::TILE_QUERIES {
                         return Err(MetalError::CannotCreateFunction(format!(
                             "sparse attention covers at most {} GQA rows",
@@ -193,8 +201,7 @@ impl AttentionKernel for AttentionMetalKernel {
         let command_buffer = &mut *command_buffer.debug_group("attention core");
         let AttentionArguments {
             suffix_length,
-            trie,
-            key_slots,
+            keys,
             cache,
             gate,
             sinks,
@@ -218,14 +225,11 @@ impl AttentionKernel for AttentionMetalKernel {
             q_off: prefix_len,
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
-        let sparse = key_slots
-            .as_ref()
-            .map(|key_slots| {
-                self.sparse.as_ref().map(|core| (key_slots, core)).ok_or_else(|| {
-                    MetalError::CannotCreateFunction("key_slots need AttentionKernelConfig::sparse".to_string())
-                })
-            })
-            .transpose()?;
+        let (trie, sparse) = match (keys, &self.sparse) {
+            (KeyArguments::Dense(trie), None) => (trie, None),
+            (KeyArguments::Sparse(key_slots), Some(core)) => (None, Some((key_slots, core))),
+            _ => panic!("attention arguments do not match AttentionKernelConfig::sparse"),
+        };
         let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {
             2
@@ -247,7 +251,7 @@ impl AttentionKernel for AttentionMetalKernel {
         let split_rows = num_groups * padded_rows;
         let num_splits = if direct {
             1
-        } else if let Some((key_slots, _)) = sparse {
+        } else if let Some((key_slots, _)) = &sparse {
             policy::sparse_splits(
                 command_buffer.context().gpu_core_count.max(1),
                 suffix_length * num_groups,
