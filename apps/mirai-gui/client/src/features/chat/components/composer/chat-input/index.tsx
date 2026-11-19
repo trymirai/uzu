@@ -8,6 +8,7 @@ import { FileChip } from "./file-chip";
 import { ModelPicker } from "./model-picker";
 import { ReasoningSelector } from "./reasoning-selector";
 import { SendButton } from "./send-button";
+import { WebSearchSelector } from "./web-search-selector";
 import { CHAT_INPUT_TEXTAREA_CLASSNAME, CHAT_INPUT_TEXTAREA_STYLE } from "./constants";
 import type { ChatInputProps } from "./types";
 import { useChatInputController } from "./use-chat-input-controller";
@@ -33,6 +34,7 @@ export function ChatInput({
   onStop,
   settingsModified = false,
   settingsDisabled = false,
+  webSearch,
 }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasFiles = files && files.length > 0;
@@ -87,7 +89,10 @@ export function ChatInput({
       />
 
       <div className="flex items-center justify-between gap-2 mt-4">
-        <AttachMenu onSelectFile={handleFileSelect} />
+        <div className="flex items-center gap-2">
+          <AttachMenu onSelectFile={handleFileSelect} />
+          {webSearch ? <WebSearchSelector {...webSearch} /> : null}
+        </div>
 
         <div className="flex items-center gap-2 min-w-0">
           <ModelPicker

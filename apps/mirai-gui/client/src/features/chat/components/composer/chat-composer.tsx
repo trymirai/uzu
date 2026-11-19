@@ -6,6 +6,10 @@ import { isOtherChatGenerating } from "@/features/runtime/runtime-busy";
 import type { AttachedFile } from "@/types/files";
 import { MAX_FILES_PER_MESSAGE, SUPPORTED_FILE_TYPES } from "@/constants/attachments";
 import { isValidFileSize, isValidFileType, processFile } from "../../services/attachment-files";
+import { platformInfo } from "@/platform/platform-info";
+import { modelSupportsTools, useModelsStore } from "@/stores/use-models-store";
+import { useWebSearchStore, webSearchModeOf } from "@/stores/use-web-search-store";
+import type { WebSearchMode } from "@/types/web-search";
 import { ChatInput } from "./chat-input";
 
 const UNLOCK_HOLD_MS = 300;
@@ -60,13 +64,20 @@ export const ChatComposer = ({
 
   const isEjecting = useChatSessionStore((s) => s.isEjecting);
   const otherChatGenerating = useChatSessionStore((s) => isOtherChatGenerating(s, chatId));
+  const otherChatAsking = useChatSessionStore(
+    (s) => s.searchPermission !== null && s.searchPermission.chatId !== chatId,
+  );
   const installedModels = useInstalledPickerModels();
+  const webSearchMode = useWebSearchStore((s) => webSearchModeOf(s, chatId));
+  const supportsTools = useModelsStore((s) => modelSupportsTools(s, selectedModelId));
 
   const blockedMessage =
     !selectedModelId || autoSelectSuppressed
       ? "Select a model to continue"
       : otherChatGenerating
-        ? "A response is already generating in another chat."
+        ? otherChatAsking
+          ? "Another chat is waiting for your answer about a web search."
+          : "A response is already generating in another chat."
         : undefined;
 
   // After an answer the chat is named, but only once the answer has fully finished; for a frame or
@@ -132,6 +143,16 @@ export const ChatComposer = ({
       {...(selectedModelId ? { onModelSettingsClick: onOpenModelParams } : {})}
       settingsModified={modelParamsModified}
       settingsDisabled={busy}
+      {...(selectedModelId && platformInfo.features.webSearch
+        ? {
+            webSearch: {
+              mode: webSearchMode,
+              onChange: (mode: WebSearchMode) => useWebSearchStore.getState().setMode(chatId, mode),
+              available: supportsTools,
+              disabled: busy,
+            },
+          }
+        : {})}
     />
   );
 };
