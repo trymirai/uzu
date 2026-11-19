@@ -6,6 +6,8 @@
 
 using namespace uzu::ring;
 using namespace uzu::trie;
+using uzu::kv_layout::COMPRESSION_RATIO;
+using uzu::kv_layout::NO_KEY_SLOT;
 
 static inline bool should_use_key(
     const constant RingParams& ring_params,
@@ -75,11 +77,51 @@ static inline bool should_use_key(
   return use_key;
 }
 
-METAL_FUNC int key_slot(
-    const device int* query_slots,
-    const uint slots_per_query,
-    const uint query_position,
-    const uint key
-) {
-  return key < slots_per_query ? query_slots[query_position * slots_per_query + key] : uzu::kv_layout::NO_KEY_SLOT;
-}
+struct SparseKeys {
+  const device int* blocks;
+  const device TrieNode* trie;
+  uint block_keys;
+  uint selectable_blocks;
+  uint prefix_length;
+  uint key_end;
+  uint query_position;
+  bool is_trie;
+
+  METAL_FUNC SparseKeys(
+      const device int* query_blocks,
+      const uint blocks_per_query,
+      const device TrieNode* trie,
+      const uint trie_nodes,
+      const uint prefix_length,
+      const uint query_position,
+      const bool is_trie
+  )
+      : blocks(query_blocks + query_position * blocks_per_query), trie(trie),
+        block_keys(blocks_per_query * COMPRESSION_RATIO), prefix_length(prefix_length),
+        key_end(is_trie ? prefix_length + trie_nodes : prefix_length + query_position + 1u),
+        query_position(query_position), is_trie(is_trie) {
+    selectable_blocks = (is_trie ? prefix_length : key_end) / COMPRESSION_RATIO;
+  }
+
+  METAL_FUNC uint key_count() const { return block_keys + key_end - selectable_blocks * COMPRESSION_RATIO; }
+
+  METAL_FUNC uint slot(const uint key) const {
+    if (key < block_keys) {
+      const uint block = uint(blocks[key / COMPRESSION_RATIO]);
+      return block < selectable_blocks ? block * COMPRESSION_RATIO + key % COMPRESSION_RATIO : uint(NO_KEY_SLOT);
+    }
+    const uint tail_slot = selectable_blocks * COMPRESSION_RATIO + key - block_keys;
+    if (tail_slot >= key_end) {
+      return uint(NO_KEY_SLOT);
+    }
+    if (is_trie && tail_slot >= prefix_length) {
+      const TrieNode node = trie[tail_slot - prefix_length];
+      if (query_position < node.trie_start || query_position > node.trie_end) {
+        return ~tail_slot;
+      }
+    }
+    return tail_slot;
+  }
+};
+
+METAL_FUNC uint slot_address(const uint slot) { return min(slot, ~slot); }

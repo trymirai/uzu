@@ -4,10 +4,7 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            kernel::{
-                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, attention::KeyArguments,
-                kv_layout::KVLayout,
-            },
+            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, kv_layout::KVLayout},
         },
         metal::{
             Metal,
@@ -27,7 +24,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
-    sparse: Option<(u32, AttentionMatrixMetalKernel)>,
+    sparse: Option<(u32, [AttentionMatrixMetalKernel; 2])>,
 }
 
 struct KernelTile {
@@ -144,21 +141,23 @@ impl AttentionMetalKernel {
                             "sparse attention covers at most {rows} GQA rows"
                         )));
                     }
-                    AttentionMatrixMetalKernel::new(
-                        context,
-                        DataType::BF16,
-                        config.head_dim,
-                        use_mxu,
-                        simdgroups,
-                        true,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        config.num_groups,
-                    )
-                    .map(|core| (rows, core))
+                    let kernel = |is_trie| {
+                        AttentionMatrixMetalKernel::new(
+                            context,
+                            DataType::BF16,
+                            config.head_dim,
+                            use_mxu,
+                            simdgroups,
+                            true,
+                            false,
+                            false,
+                            false,
+                            false,
+                            is_trie,
+                            config.num_groups,
+                        )
+                    };
+                    Ok((rows, [kernel(false)?, kernel(true)?]))
                 })
                 .transpose()?,
         })
@@ -204,7 +203,8 @@ impl AttentionKernel for AttentionMetalKernel {
         let command_buffer = &mut *command_buffer.debug_group("attention core");
         let AttentionArguments {
             suffix_length,
-            keys,
+            trie,
+            key_slots,
             cache,
             gate,
             sinks,
@@ -232,10 +232,10 @@ impl AttentionKernel for AttentionMetalKernel {
             q_off: prefix_len,
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
-        let (trie, sparse) = match (keys, &self.sparse) {
-            (KeyArguments::Dense(trie), None) => (trie, None),
-            (KeyArguments::Sparse(key_slots), Some((rows, core))) => (None, Some((key_slots, core, *rows))),
-            _ => panic!("attention arguments do not match AttentionKernelConfig::sparse"),
+        let sparse = match (key_slots, &self.sparse) {
+            (None, None) => None,
+            (Some(key_slots), Some((rows, cores))) => Some((key_slots, &cores[usize::from(trie.is_some())], *rows)),
+            _ => panic!("key_slots must match AttentionKernelConfig::sparse"),
         };
         let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {
@@ -262,7 +262,7 @@ impl AttentionKernel for AttentionMetalKernel {
             policy::sparse_splits(
                 command_buffer.context().gpu_core_count.max(1),
                 suffix_length * num_groups,
-                key_slots.slots_per_query,
+                key_slots.blocks_per_query,
             )
         } else {
             let (threadgroups, groups_per_core) = match tile {
@@ -298,7 +298,7 @@ impl AttentionKernel for AttentionMetalKernel {
                 input.k_scales,
                 input.v_codes,
                 input.v_scales,
-                None::<&<Metal as Backend>::ConstantBuffer>,
+                trie,
                 cache.ring_params(),
                 config.sliding_window_size,
                 &mut values,
@@ -310,8 +310,8 @@ impl AttentionKernel for AttentionMetalKernel {
                 0,
                 num_splits,
                 suffix_length,
-                Some(key_slots.query_slots),
-                Some(key_slots.slots_per_query),
+                Some(key_slots.query_blocks),
+                Some(key_slots.blocks_per_query),
                 command_buffer,
             );
         } else if let Some(tile) = tile {
