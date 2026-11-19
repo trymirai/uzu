@@ -413,8 +413,9 @@ METAL_FUNC void attention_matrix_mxu(
                     (!is_kv_cache_ring || key >= prefix_length ||
                      (prefix_length + key - ring_params.ring_offset) % prefix_length < ring_params.ring_length);
           }
-          // Unlisted slots read the last key's scale and are masked.
-          key_scale_values[lane_col] = AccumType(key_scales[scale_index]);
+          // Zero so masked scores stay -inf.
+          key_scale_values[lane_col] =
+              metal::select(AccumType(0), AccumType(key_scales[scale_index]), !IS_SPARSE || valid);
           const float value_scale = float(value_scales[scale_index]);
           log2_value_scales[lane_col] = valid ? metal::precise::log2(value_scale) : (IS_SPARSE ? -INFINITY : 0.0f);
           inverse_value_scales[lane_col] = valid ? metal::precise::divide(1.0f, value_scale) : 0.0f;
