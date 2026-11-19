@@ -12,7 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
+        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerPass, TransformerState},
     },
     safetensors::ParameterTree,
 };
@@ -44,6 +44,12 @@ pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<B::ScratchBuffer>,
     pub hidden_features: Option<Box<[B::ScratchBuffer]>>,
     pub final_hidden: Option<B::ScratchBuffer>,
+}
+
+/// See [`Decoder::begin`].
+pub struct DecoderPass<B: Backend> {
+    transformer: TransformerPass<B>,
+    per_layer_inputs: Option<B::ScratchBuffer>,
 }
 
 impl<B: Backend> Decoder<B> {
@@ -158,6 +164,18 @@ impl<B: Backend> Decoder<B> {
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("decoder");
 
+        let pass = self.begin(token_ids, batch_dim, output_range, hidden_feature_layer_indices, command_buffer)?;
+        self.finish(pass, batch_dim, state, command_buffer)
+    }
+
+    pub fn begin(
+        &self,
+        token_ids: impl BufferRef<Backend = B>,
+        batch_dim: &BatchTopology<B>,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<DecoderPass<B>, DecoderError<B>> {
         let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
             embedding_norm
@@ -173,15 +191,56 @@ impl<B: Backend> Decoder<B> {
             None
         };
 
-        let transformer_output = self.transformer.encode(
-            embedded,
+        let transformer =
+            self.transformer.begin(embedded, batch_dim, output_range, hidden_feature_layer_indices, command_buffer)?;
+
+        Ok(DecoderPass {
+            transformer,
+            per_layer_inputs,
+        })
+    }
+
+    pub fn encode_layers(
+        &self,
+        pass: DecoderPass<B>,
+        until: usize,
+        batch_dim: &BatchTopology<B>,
+        state: &mut TransformerState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<DecoderPass<B>, DecoderError<B>> {
+        let DecoderPass {
+            transformer,
+            per_layer_inputs,
+        } = pass;
+        let transformer = self.transformer.encode_layers(
+            transformer,
+            until,
             per_layer_inputs.as_ref(),
             batch_dim,
-            output_range,
-            hidden_feature_layer_indices,
             Some(state),
             command_buffer,
         )?;
+
+        Ok(DecoderPass {
+            transformer,
+            per_layer_inputs,
+        })
+    }
+
+    pub fn finish(
+        &self,
+        pass: DecoderPass<B>,
+        batch_dim: &BatchTopology<B>,
+        state: &mut TransformerState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
+        let DecoderPass {
+            transformer,
+            per_layer_inputs,
+        } = pass;
+        let output_range = transformer.output_range();
+        let transformer_output =
+            self.transformer.finish(transformer, per_layer_inputs.as_ref(), batch_dim, Some(state), command_buffer)?;
 
         let logits = if let Some(output_range) = output_range {
             let output = transformer_output.output.as_ref().expect("decoder output range requires transformer output");
@@ -196,16 +255,11 @@ impl<B: Backend> Decoder<B> {
         } else {
             None
         };
-        let final_hidden = if hidden_feature_layer_indices.is_none() {
-            None
-        } else {
-            transformer_output.output
-        };
 
         Ok(DecoderEncodeOutput {
             logits,
+            final_hidden: transformer_output.hidden_features.as_ref().and(transformer_output.output),
             hidden_features: transformer_output.hidden_features,
-            final_hidden,
         })
     }
 
@@ -213,7 +267,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.has_ngram_embeddings()
     }
 
-    /// See [`Transformer::prepare_ngram_rows`].
+    pub fn first_ngram_layer_index(&self) -> Option<usize> {
+        self.transformer.first_ngram_layer_index()
+    }
+
     pub fn prepare_ngram_rows(
         &self,
         state: &mut TransformerState<B>,
