@@ -51,7 +51,15 @@ impl AttentionMetalKernel {
                 128
             })
         .max(1);
-        let simd_rows = |simdgroups| simdgroups * 8 / slices;
+        let tile_rows = |simdgroups| {
+            simdgroups
+                * if use_mxu {
+                    kv_layout::TILE_QUERIES
+                } else {
+                    8
+                }
+                / slices
+        };
         let mut tiles = Vec::new();
         for simdgroups in [1, 2, 4, 6, 8] {
             if simdgroups % slices != 0 {
@@ -75,11 +83,7 @@ impl AttentionMetalKernel {
             };
             tiles.push(KernelTile {
                 simdgroups,
-                rows: if use_mxu {
-                    simdgroups * kv_layout::TILE_QUERIES / (config.head_dim / kv_layout::SLICE_DIMS)
-                } else {
-                    simd_rows(simdgroups)
-                },
+                rows: tile_rows(simdgroups),
                 prefix: (use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none())
                     .then(|| kernel(true, false))
                     .transpose()?,
@@ -134,7 +138,7 @@ impl AttentionMetalKernel {
                         ));
                     }
                     let simdgroups = config.head_dim / kv_layout::SLICE_DIMS;
-                    let rows = simd_rows(simdgroups);
+                    let rows = tile_rows(simdgroups);
                     if config.num_q_heads / config.num_groups > rows {
                         return Err(MetalError::CannotCreateFunction(format!(
                             "sparse attention covers at most {rows} GQA rows"
@@ -178,11 +182,7 @@ impl AttentionKernel for AttentionMetalKernel {
         context: &MetalContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, MetalError> {
-        Self::new_with_mxu(
-            context,
-            &config,
-            context.supports_mxu && config.data_type == DataType::BF16 && !config.sparse,
-        )
+        Self::new_with_mxu(context, &config, context.supports_mxu && config.data_type == DataType::BF16)
     }
 
     fn encode(
@@ -215,6 +215,10 @@ impl AttentionKernel for AttentionMetalKernel {
         let kv_length = prefix_len + suffix_length;
 
         let gqa_factor = num_q_heads / num_groups;
+        assert!(
+            !self.use_mxu || input.k_codes.size().max(input.v_codes.size()) as u64 <= u64::from(u32::MAX),
+            "the MXU core addresses its K and V cache with 32-bit byte offsets"
+        );
         let grouped_rows = gqa_factor * suffix_length;
         let params = AttnParams {
             q_strides: [0, grouped_rows * head_dim, head_dim],

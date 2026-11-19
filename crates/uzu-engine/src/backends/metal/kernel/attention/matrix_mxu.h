@@ -16,6 +16,7 @@ METAL_FUNC void prepare_queries(
     const device int8_t* query_codes,
     threadgroup uint4* staged_query,
     uint query_row_base,
+    uint query_row_step,
     uint num_query_rows,
     uint query_row_stride,
     uint lane,
@@ -23,12 +24,14 @@ METAL_FUNC void prepare_queries(
 ) {
   // Padding rows reread the last real row.
   const short2 query_position = Ops::get_position(lane);
-  const uint query_row = query_row_base + uint(query_position.y);
+  const uint query_row = query_row_base + uint(query_position.y) * query_row_step;
   const uint last_query_row = num_query_rows - 1u;
   const device int8_t* query_row0 =
       query_codes + size_t(min(query_row, last_query_row)) * query_row_stride + uint(query_position.x);
   const device int8_t* query_row1 =
-      query_codes + size_t(min(query_row + uint(Ops::THREAD_ELEMENT_ROW_STRIDE), last_query_row)) * query_row_stride +
+      query_codes +
+      size_t(min(query_row + uint(Ops::THREAD_ELEMENT_ROW_STRIDE) * query_row_step, last_query_row)) *
+          query_row_stride +
       uint(query_position.x);
   constexpr int SLICE_PAIRS = DEPTH_FRAGMENTS / 2;
   METAL_PRAGMA_UNROLL
@@ -98,7 +101,7 @@ struct AttentionMatrixSoftmax {
   }
 };
 
-template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS>
+template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE>
 METAL_FUNC void attention_matrix_mxu(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
@@ -122,6 +125,8 @@ METAL_FUNC void attention_matrix_mxu(
     uint trie_nodes,
     bool mask_free,
     bool is_trie,
+    const device int* query_slots,
+    uint slots_per_query,
     uint num_kv_heads,
     threadgroup float* probability_exchange,
     threadgroup ulong* row_masks,
@@ -167,19 +172,17 @@ METAL_FUNC void attention_matrix_mxu(
   const uint query_tile_index = tile_split_index % query_tiles;
   const uint split_index = split_base + tile_split_index / query_tiles;
 
-  const uint num_query_rows = params.gqa_factor * params.q_len;
-  const uint query_row_base = query_tile_index * uint(Layout::BLOCK_ROWS) + uint(query_band) * uint(Layout::TILE_ROWS);
+  const uint query_row_step = IS_SPARSE ? params.q_len : 1u;
+  const uint num_query_rows =
+      IS_SPARSE ? (params.gqa_factor - 1u) * params.q_len + query_tile_index + 1u : params.gqa_factor * params.q_len;
+  const uint query_row_base =
+      IS_SPARSE ? query_tile_index
+                : query_tile_index * uint(Layout::BLOCK_ROWS) + uint(query_band) * uint(Layout::TILE_ROWS);
 
   const uint channel_offset = uint(channel_slice) * uint(Layout::SLICE_COLS);
 
   const size_t query_group_offset = size_t(kv_head_index) * params.q_strides[1];
   query_codes += query_group_offset;
-  key_codes += uint(uzu::kv_layout::TILE_KEYS) * size_t(kv_head_index) * params.k_strides[1];
-  key_codes += int(lane) * uzu::kv_layout::LANE_BYTES;
-  const device uchar* value_tiles =
-      value_codes +
-      (size_t(uzu::kv_layout::TILE_KEYS) * (size_t(kv_head_index) * params.v_strides[1] + channel_offset)) +
-      size_t(lane) * uzu::kv_layout::LANE_BYTES;
 
   AttentionMatrixSoftmax<Fragment<AccumType, 1, VALUE_FRAGMENTS, Ops>> softmax;
 
@@ -187,8 +190,14 @@ METAL_FUNC void attention_matrix_mxu(
   const uint key_length = params.k_len;
   const short2 score_position = ScoreFragment::get_position(lane);
   const uint lane_rows[ROWS_PER_LANE] = {
-      uint(score_position.y),
-      uint(score_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE)
+      uint(score_position.y) * query_row_step,
+      (uint(score_position.y) + uint(Ops::THREAD_ELEMENT_ROW_STRIDE)) * query_row_step
+  };
+  const uint lane_key = uzu::kv_layout::column_key(uint(score_position.x));
+  auto lane_column_key = [&](uint lane_col) UZU_ALWAYS_INLINE {
+    return lane_key + uzu::kv_layout::column_key(
+                          lane_col / Ops::THREAD_ELEMENT_COLS * Ops::FRAGMENT_COLS + lane_col % Ops::THREAD_ELEMENT_COLS
+                      );
   };
   const uint query_band_offset = uint(query_band) * uint(Layout::TILE_ROWS);
   const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
@@ -225,33 +234,27 @@ METAL_FUNC void attention_matrix_mxu(
     }
   }
 
-  const uint key_block_stride = uint(uzu::kv_layout::TILE_KEYS) * params.k_strides[2];
-  const uint value_block_stride = uint(uzu::kv_layout::TILE_KEYS) * params.v_strides[2];
-
-  const uint first_block = (split_index * params.nk) / num_splits;
+  const uint key_tiles =
+      IS_SPARSE ? (slots_per_query + uint(uzu::kv_layout::TILE_KEYS) - 1u) / uint(uzu::kv_layout::TILE_KEYS)
+                : params.nk;
+  const uint first_block = (split_index * key_tiles) / num_splits;
   const uint tile_first_row = query_tile_index * uint(Layout::BLOCK_ROWS);
   const uint tile_last_row = min(tile_first_row + uint(Layout::BLOCK_ROWS) - 1u, num_query_rows - 1u);
   const uint last_query_position = (tile_first_row / params.q_len == tile_last_row / params.q_len)
                                        ? (tile_last_row % params.q_len)
                                        : (params.q_len - 1u);
-  const uint split_end = ((split_index + 1u) * params.nk) / num_splits;
+  const uint split_end = ((split_index + 1u) * key_tiles) / num_splits;
   const uint end_block = is_causal ? min(split_end,
                                          (prefix_length + last_query_position + uint(uzu::kv_layout::TILE_KEYS)) /
                                              uint(uzu::kv_layout::TILE_KEYS))
                                    : split_end;
   const uint block_count = end_block > first_block ? end_block - first_block : 0u;
 
-  key_codes += size_t(first_block) * key_block_stride;
-  value_tiles += size_t(first_block) * value_block_stride;
   const uint first_key = first_block * uint(uzu::kv_layout::TILE_KEYS);
 
   const AccumType log2_attention_scale = AccumType(params.scale) * AccumType(M_LOG2E_F);
 
-  const uint scales_per_block = uint(uzu::kv_layout::TILE_KEYS) * num_kv_heads;
-  const size_t first_scale_index = uzu::kv_layout::KVShape{HEAD_DIM, num_kv_heads, uzu::kv_layout::KVLayout::MxuTiled}
-                                       .scale_index(first_key, kv_head_index);
-  const device ScaleType* block_key_scales = key_scales + first_scale_index;
-  const device ScaleType* block_value_scales = value_scales + first_scale_index;
+  const uzu::kv_layout::KVShape shape{HEAD_DIM, num_kv_heads, uzu::kv_layout::KVLayout::MxuTiled};
 
   AccumType query_score_scales[ROWS_PER_LANE];
   METAL_PRAGMA_UNROLL
@@ -272,26 +275,53 @@ METAL_FUNC void attention_matrix_mxu(
       reinterpret_cast<threadgroup float2*>(probability_exchange + Scratch::SUMS_OFFSET) +
       uint(band_first_simdgroup) * STAT_ROWS + uint(score_position.y);
   uint slot_offset = 0u;
-  uint block_scale_offset = uint(channel_slice) * scales_per_block + uint(score_position.x);
 
   threadgroup uint4* const staged_query =
       query_stage + uint(query_band) * uint(Scratch::QUERY_VECTORS_PER_BAND) + uint(lane);
+  threadgroup int* const slot_lists = reinterpret_cast<threadgroup int*>(row_masks);
+  constexpr int LANE_KEYS = int(uzu::kv_layout::LANE_KEYS);
+  constexpr int KEY_PAIRS = LANE_KEYS / int(uzu::kv_layout::PAIR_KEYS);
+  const uint lane_first_key = uzu::kv_layout::lane_first_key(lane);
+  const uint lane_channel = uzu::kv_layout::lane_channel(lane);
+  const uint first_key_offset = (uint)shape.k_code_index(first_key + lane_first_key, kv_head_index, lane_channel);
+  uint first_value_offsets[KEY_PAIRS];
+  METAL_PRAGMA_UNROLL
+  for (int pair = 0; pair < KEY_PAIRS; ++pair) {
+    first_value_offsets[pair] = (uint)shape.v_code_index(
+        first_key + lane_first_key + uint(pair) * uzu::kv_layout::PAIR_KEYS,
+        kv_head_index,
+        channel_offset + lane_channel
+    );
+  }
+  const uint first_scale_index = shape.scale_index(first_key, kv_head_index);
   auto compute_probabilities = [&](uint block_index,
                                    uint channel_slice,
                                    threadgroup float4* slot_stats,
                                    threadgroup float2* slot_sums,
-                                   threadgroup uchar* slot_codes) UZU_ALWAYS_INLINE {
+                                   threadgroup uchar* slot_codes,
+                                   threadgroup int* step_slots) UZU_ALWAYS_INLINE {
     const uint key_block = block_index + uint(channel_slice);
     const uint key_base = first_key + key_block * uint(uzu::kv_layout::TILE_KEYS);
-    const device int8_t* block_keys = key_codes + key_block * key_block_stride;
+
+    int lane_slot = uzu::kv_layout::NO_KEY_SLOT;
+    uint key_offsets[LANE_KEYS] = {};
+    if constexpr (IS_SPARSE) {
+      lane_slot = key_slot(query_slots, slots_per_query, query_tile_index, key_base + uint(lane));
+      step_slots[uint(channel_slice) * uint(uzu::kv_layout::TILE_KEYS) + uint(lane)] = lane_slot;
+      METAL_PRAGMA_UNROLL
+      for (int key = 0; key < LANE_KEYS; ++key) {
+        const int slot = simd_shuffle(lane_slot, ushort(lane_first_key + uint(key)));
+        key_offsets[key] = (uint)shape.k_code_index(min(uint(slot), params.k_len - 1u), kv_head_index, lane_channel);
+      }
+    } else {
+      key_offsets[0] = first_key_offset + key_block * shape.block_stride();
+    }
 
     ScoreFragment scores;
-    if (is_kv_cache_ring || is_sliding_window) {
+    if (!IS_SPARSE && (is_kv_cache_ring || is_sliding_window)) {
       bool any_visible = false;
       scores.for_each_lane([&](ushort row, ushort column, thread AccumType& value) UZU_ALWAYS_INLINE {
-        const uint key = key_base + uint(score_position.x) +
-                         uint(column / Ops::THREAD_ELEMENT_COLS) * Ops::FRAGMENT_COLS +
-                         uint(column % Ops::THREAD_ELEMENT_COLS);
+        const uint key = key_base + lane_column_key(column);
         const bool visible = key < key_length && should_use_key(
                                                      ring_params,
                                                      trie,
@@ -340,9 +370,16 @@ METAL_FUNC void attention_matrix_mxu(
         OperandFragment<int8_t, 2, 2, Ops, ReadTranspose> key_fragments;
         METAL_PRAGMA_UNROLL
         for (int pair_index = 0; pair_index < 2; ++pair_index) {
-          const uint4 packed_keys = *reinterpret_cast<const device uint4*>(
-              block_keys + (depth_fragment + pair_index) * int(uzu::kv_layout::FRAGMENT_BYTES)
-          );
+          const int fragment_offset = (depth_fragment + pair_index) * int(uzu::kv_layout::BLOCK_FRAGMENT_BYTES);
+          uint4 packed_keys;
+          if constexpr (IS_SPARSE) {
+            METAL_PRAGMA_UNROLL
+            for (int key = 0; key < LANE_KEYS; ++key) {
+              packed_keys[key] = *reinterpret_cast<const device uint*>(key_codes + key_offsets[key] + fragment_offset);
+            }
+          } else {
+            packed_keys = *reinterpret_cast<const device uint4*>(key_codes + key_offsets[0] + fragment_offset);
+          }
           key_fragments.fragment_data[pair_index] = as_type<CodeVector>(uint2(packed_keys.x, packed_keys.y));
           key_fragments.fragment_data[2 + pair_index] = as_type<CodeVector>(uint2(packed_keys.z, packed_keys.w));
         }
@@ -356,22 +393,31 @@ METAL_FUNC void attention_matrix_mxu(
     AccumType log2_value_scales[KEYS_PER_LANE];
     AccumType inverse_value_scales[KEYS_PER_LANE];
     {
-      const device ScaleType* lane_key_scales = block_key_scales + block_scale_offset;
-      const device ScaleType* lane_value_scales = block_value_scales + block_scale_offset;
       METAL_PRAGMA_UNROLL
       for (int fragment_col = 0; fragment_col < KEY_FRAGMENTS; ++fragment_col) {
         METAL_PRAGMA_UNROLL
         for (int column = 0; column < Ops::THREAD_ELEMENT_COLS; ++column) {
           const int lane_col = fragment_col * Ops::THREAD_ELEMENT_COLS + column;
           const int scale_col = fragment_col * Ops::FRAGMENT_COLS + column;
-          const uint key = key_base + uint(score_position.x) + uint(scale_col);
-          const bool valid =
-              (mask_free || key < key_length) &&
-              (!is_kv_cache_ring || key >= prefix_length ||
-               (prefix_length + key - ring_params.ring_offset) % prefix_length < ring_params.ring_length);
-          key_scale_values[lane_col] = AccumType(lane_key_scales[scale_col]);
-          const float value_scale = float(lane_value_scales[scale_col]);
-          log2_value_scales[lane_col] = valid ? metal::precise::log2(value_scale) : 0.0f;
+          uint scale_index;
+          bool valid;
+          if constexpr (IS_SPARSE) {
+            const int column_slot = simd_shuffle(lane_slot, ushort(lane_column_key(lane_col)));
+            scale_index = shape.scale_index(min(uint(column_slot), params.k_len - 1u), kv_head_index);
+            valid = uint(column_slot) < params.k_len;
+          } else {
+            const uint key = key_base + lane_column_key(lane_col);
+            scale_index =
+                first_scale_index + key_block * shape.scale_block_stride() + uint(score_position.x) + uint(scale_col);
+            valid = (mask_free || key < key_length) &&
+                    (!is_kv_cache_ring || key >= prefix_length ||
+                     (prefix_length + key - ring_params.ring_offset) % prefix_length < ring_params.ring_length);
+          }
+          // Zero so masked scores stay -inf.
+          key_scale_values[lane_col] =
+              metal::select(AccumType(0), AccumType(key_scales[scale_index]), !IS_SPARSE || valid);
+          const float value_scale = float(value_scales[scale_index]);
+          log2_value_scales[lane_col] = valid ? metal::precise::log2(value_scale) : (IS_SPARSE ? -INFINITY : 0.0f);
           inverse_value_scales[lane_col] = valid ? metal::precise::divide(1.0f, value_scale) : 0.0f;
         }
       }
@@ -389,10 +435,10 @@ METAL_FUNC void attention_matrix_mxu(
         score
     );
 
-    if (!mask_free && !is_kv_cache_ring && !is_sliding_window &&
+    if (!IS_SPARSE && !mask_free && !is_kv_cache_ring && !is_sliding_window &&
         key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length) {
       scores.map_coords(lane, [&](short row, short column, AccumType value) UZU_ALWAYS_INLINE {
-        const uint key = key_base + uint(column);
+        const uint key = key_base + lane_key + uzu::kv_layout::column_key(uint(column) - uint(score_position.x));
         bool visible = key < key_length;
         if (is_causal) {
           const ulong row_mask = row_masks[query_band_offset + uint(row)];
@@ -452,7 +498,8 @@ METAL_FUNC void attention_matrix_mxu(
                                uint blocks_in_step,
                                threadgroup float4* slot_stats,
                                threadgroup float2* slot_sums,
-                               threadgroup uchar* slot_codes) UZU_ALWAYS_INLINE {
+                               threadgroup uchar* slot_codes,
+                               threadgroup int* step_slots) UZU_ALWAYS_INLINE {
     // P x V over the published blocks.
     for (uint published_block = 0; published_block < blocks_in_step; ++published_block) {
       const float4 block_stats = slot_stats[published_block * STAT_ROWS];
@@ -479,19 +526,44 @@ METAL_FUNC void attention_matrix_mxu(
       probability_codes.fragment_data[0] = as_type<typename ProbabilityFragment::ThreadVectorType>(packed_codes.xy);
       probability_codes.fragment_data[1] = as_type<typename ProbabilityFragment::ThreadVectorType>(packed_codes.zw);
 
-      const uint value_block_index = block_index + published_block;
+      uint value_offsets[LANE_KEYS] = {};
+      if constexpr (IS_SPARSE) {
+        METAL_PRAGMA_UNROLL
+        for (int key = 0; key < LANE_KEYS; ++key) {
+          const int slot = step_slots[published_block * uint(uzu::kv_layout::TILE_KEYS) + lane_first_key + uint(key)];
+          value_offsets[key] =
+              (uint)
+                  shape.v_code_index(min(uint(slot), params.k_len - 1u), kv_head_index, channel_offset + lane_channel);
+        }
+      } else {
+        METAL_PRAGMA_UNROLL
+        for (int pair = 0; pair < KEY_PAIRS; ++pair) {
+          value_offsets[uzu::kv_layout::PAIR_KEYS * pair] =
+              first_value_offsets[pair] + (block_index + published_block) * shape.block_stride();
+        }
+      }
       thread AccumType* output_elements = softmax.output.elements();
       // Accumulate V panels directly into their output columns.
       using ValueVector = typename Ops::template ThreadVector<uchar>;
-      const device uchar* block_values = value_tiles + value_block_index * value_block_stride;
       METAL_PRAGMA_UNROLL
       for (int panel = 0; panel < VALUE_PANELS; ++panel) {
         OperandFragment<uchar, KEY_FRAGMENTS, FRAGMENTS_PER_PANEL, Ops> value_fragments;
         METAL_PRAGMA_UNROLL
         for (int key_fragment = 0; key_fragment < KEY_FRAGMENTS; ++key_fragment) {
-          const uint4 packed_values = *reinterpret_cast<const device uint4*>(
-              block_values + (key_fragment * VALUE_PANELS + panel) * uzu::kv_layout::FRAGMENT_BYTES
-          );
+          const device uchar* panel_values = value_codes + panel * uzu::kv_layout::BLOCK_FRAGMENT_BYTES;
+          const uint first_offset = value_offsets[uzu::kv_layout::PAIR_KEYS * key_fragment];
+          const uint second_offset = value_offsets[uzu::kv_layout::PAIR_KEYS * key_fragment + 1];
+          uint4 packed_values;
+          if constexpr (IS_SPARSE) {
+            packed_values = uint4(
+                *reinterpret_cast<const device uint*>(panel_values + first_offset),
+                *reinterpret_cast<const device uint*>(panel_values + second_offset),
+                *reinterpret_cast<const device uint*>(panel_values + first_offset + uzu::kv_layout::TILE_LANE_BYTES),
+                *reinterpret_cast<const device uint*>(panel_values + second_offset + uzu::kv_layout::TILE_LANE_BYTES)
+            );
+          } else {
+            packed_values = *reinterpret_cast<const device uint4*>(panel_values + first_offset);
+          }
           value_fragments.fragment_data[key_fragment * FRAGMENTS_PER_PANEL] = as_type<ValueVector>(packed_values.xy);
           value_fragments.fragment_data[key_fragment * FRAGMENTS_PER_PANEL + 1] =
               as_type<ValueVector>(packed_values.zw);
@@ -527,6 +599,7 @@ METAL_FUNC void attention_matrix_mxu(
       query_codes,
       staged_query,
       query_row_base,
+      query_row_step,
       num_query_rows,
       params.q_strides[2],
       lane,
@@ -541,37 +614,37 @@ METAL_FUNC void attention_matrix_mxu(
     threadgroup float4* slot_stats = lane_stats + slot_offset / 4u;
     threadgroup float2* slot_sums = lane_sums + slot_offset / 2u;
     threadgroup uchar* slot_codes = lane_codes + 4u * slot_offset;
+    threadgroup int* step_slots =
+        slot_lists + (slot_offset != 0u ? DEPTH_SLICES * uint(uzu::kv_layout::TILE_KEYS) : 0u);
 
     if (uint(channel_slice) < blocks_in_step) {
-      compute_probabilities(block_index, channel_slice, slot_stats, slot_sums, slot_codes);
+      compute_probabilities(block_index, channel_slice, slot_stats, slot_sums, slot_codes, step_slots);
     }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     softmax.rescale(slot_stats, blocks_in_step, STAT_ROWS);
 
-    accumulate_output(block_index, blocks_in_step, slot_stats, slot_sums, slot_codes);
+    accumulate_output(block_index, blocks_in_step, slot_stats, slot_sums, slot_codes, step_slots);
 
     // Alternate slots to avoid a second barrier.
     slot_offset = uint(Scratch::SLOT_FLOATS) - slot_offset;
     block_index += blocks_in_step;
-    block_scale_offset += blocks_in_step * scales_per_block;
   }
 
   softmax.normalize();
 
-  const uint partial_tile_index =
-      ((split_index - split_base) * num_kv_heads + kv_head_index) * query_tiles + query_tile_index;
-  const size_t partial_offset = size_t(partial_tile_index) * Layout::BLOCK_ROWS * HEAD_DIM +
-                                size_t(query_band) * Layout::TILE_ROWS * HEAD_DIM + channel_offset;
-  softmax.output.store(lane, partial_values + partial_offset, int(HEAD_DIM));
+  const uint row_base = IS_SPARSE ? query_tile_index : query_tile_index * uint(Layout::BLOCK_ROWS) + query_band_offset;
+  const uint output_row =
+      ((split_index - split_base) * num_kv_heads + kv_head_index) * query_tiles * uint(Layout::BLOCK_ROWS) + row_base;
+  softmax.output
+      .store(lane, partial_values + size_t(output_row) * HEAD_DIM + channel_offset, int(query_row_step * HEAD_DIM));
 
   if (channel_slice == 0 && score_position.x == 0) {
     METAL_PRAGMA_UNROLL
     for (int row = 0; row < ROWS_PER_LANE; ++row) {
-      const uint row_index = partial_tile_index * uint(Layout::BLOCK_ROWS) + query_band_offset + lane_rows[row];
-      partial_maxima[row_index] = softmax.running_max[row];
-      partial_denominators[row_index] = softmax.denominator[row];
+      partial_maxima[output_row + lane_rows[row]] = softmax.running_max[row];
+      partial_denominators[output_row + lane_rows[row]] = softmax.denominator[row];
     }
   }
 }
