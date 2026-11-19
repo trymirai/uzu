@@ -9,6 +9,9 @@ shift
 if (($# == 0)); then
     set -- -h macs-fleet/bench-m{4,5}max -m Qwen3.8-27B-M Qwen3.5-9B-Dash Qwen3.5-4B-M Qwen3.5-2B-M \
         -d spec:mirai-mixture-fast^2 '!spec:oneoff/london-summary^2'
+elif printf '%s\n' "$@" | grep -qxE -- '-o|--outputs?'; then
+    echo "Error: the arguments can't give outputs, which are the runs that this saves to compare" >&2
+    exit 2
 elif ! printf '%s\n' "$@" | grep -qxE -- '-h|--hosts?'; then
     # benchman's own default is this machine, which is not what a merge is compared on.
     echo "Error: the arguments have to give the hosts, as in -h macs-fleet/bench-m5max" >&2
