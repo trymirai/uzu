@@ -11,7 +11,7 @@ mod transcript;
 use std::collections::HashMap;
 
 use payloads::{MsgIn, RunEvent, RunStreamPayload, SamplingDefaults, TitleGenPayload};
-use session::arm_idle_timer;
+use session::{EnabledTools, arm_idle_timer};
 use session_events::emit_session_state;
 use stream::run_stream_inner;
 use tauri::{AppHandle, Manager, ipc::Channel};
@@ -46,9 +46,7 @@ struct ResidentSession {
     identifier: String,
     session: ChatSession,
     instance: ChatInstance,
-    model_chat_naming_enabled: bool,
-    date_time_tool_enabled: bool,
-    chart_tool_enabled: bool,
+    tools: EnabledTools,
     naming: Option<naming::ChatNaming>,
     support: ReasoningSupport,
 }

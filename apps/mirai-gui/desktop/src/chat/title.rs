@@ -12,7 +12,7 @@ use super::{
     messages::{build_messages, sanitize},
     naming::{TITLE_STYLE_INSTRUCTION, TITLE_TARGET_LENGTH, normalize_name},
     payloads::{MsgIn, TitleGenPayload},
-    session::ensure_session,
+    session::{ReadySession, RequestedTools, ensure_session},
 };
 use crate::{error::AppResult, models::ReasoningSupport};
 
@@ -25,8 +25,11 @@ pub(super) async fn title_gen_inner(
     payload: &TitleGenPayload,
 ) -> AppResult<String> {
     let _run_guard = state.run_lock.lock().await;
-    let (session, support, _) =
-        ensure_session(app, state, &payload.repo_id, Some(false), Some(false), Some(false)).await?;
+    let ReadySession {
+        session,
+        support,
+        ..
+    } = ensure_session(app, state, &payload.repo_id, RequestedTools::ALL_OFF).await?;
     if state.cancel_requested(TITLE_GEN_RUN_ID) {
         return Ok(String::new());
     }

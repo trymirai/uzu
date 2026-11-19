@@ -6,7 +6,7 @@ use uzu::{
         func_def::{ErrorFuture, ToolDescriptor},
         uzu_tool_closure,
     },
-    types::session::chat::{ChatMessage, ChatRole},
+    types::session::chat::ChatMessage,
 };
 
 use super::payloads::RunEvent;
@@ -94,7 +94,7 @@ impl Drop for NamingRun {
 }
 
 pub(super) fn normalize_name(title: &str) -> Result<String, ErrorFuture> {
-    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = super::messages::collapse_whitespace(title);
     let title = title.trim_matches(['"', '\'', '`']).trim();
     if title.is_empty() || title.chars().any(char::is_control) {
         return Err("Chat names must not be empty or contain control characters".into());
@@ -115,12 +115,7 @@ fn title_length_warning(title: &str) -> Option<String> {
 }
 
 pub(super) fn add_naming_instruction(messages: &mut Vec<ChatMessage>) {
-    let instruction = naming_instruction();
-    if let Some(system) = messages.iter_mut().find(|message| message.role == (ChatRole::System {})) {
-        *system = system.with_text(format!("\n\n{instruction}"));
-    } else {
-        messages.insert(0, ChatMessage::system().with_text(instruction));
-    }
+    super::messages::append_system_instruction(messages, naming_instruction());
 }
 
 #[cfg(test)]

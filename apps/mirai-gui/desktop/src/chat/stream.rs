@@ -12,7 +12,7 @@ use super::{
     messages::{assistant_history_message, build_messages, build_tail_messages, parsed_from, sanitize},
     naming::add_naming_instruction,
     payloads::{Parsed, RunEvent, RunStreamPayload, map_reply_stats, sampling_policy},
-    session::ensure_session,
+    session::{ReadySession, ensure_session},
     transcript::Transcript,
 };
 use crate::{
@@ -104,15 +104,13 @@ pub(super) async fn run_stream_inner(
     on_event: &Channel<RunEvent>,
 ) -> AppResult<()> {
     let _run_guard = state.run_lock.lock().await;
-    let (session, support, naming) = ensure_session(
-        app,
-        state,
-        &payload.repo_id,
-        payload.model_chat_naming_enabled,
-        payload.date_time_tool_enabled,
-        payload.chart_tool_enabled,
-    )
-    .await?;
+    let ReadySession {
+        session,
+        support,
+        naming,
+        tools,
+        identifier: model_id,
+    } = ensure_session(app, state, &payload.repo_id, payload.into()).await?;
     if state.cancel_requested(&payload.run_id) {
         crate::logger::info("chat:run:cancelled-before-start", Some(serde_json::json!({ "runId": payload.run_id })));
         let _ = on_event.send(RunEvent::Done {
@@ -129,6 +127,7 @@ pub(super) async fn run_stream_inner(
 
     let reply_config = ChatReplyConfig::create().with_sampling_policy(sampling_policy(&payload.sampling_policy));
 
+    let supports_tools = session.supports_tool_calls().await;
     let plan = state.plan_run(&payload.repo_id, &payload.messages, effort);
     crate::logger::info(
         "chat:run:start",
@@ -161,24 +160,10 @@ pub(super) async fn run_stream_inner(
     };
     state.forget_history();
     let naming_run = naming.as_ref().map(|naming| naming.begin(on_event.clone()));
-    let (model_id, tools_enabled) = state
-        .session
-        .lock()
-        .await
-        .as_ref()
-        .map(|resident| {
-            (
-                Some(resident.identifier.clone()),
-                resident.model_chat_naming_enabled || resident.date_time_tool_enabled || resident.chart_tool_enabled,
-            )
-        })
-        .unwrap_or_default();
-    let tools_enabled = tools_enabled && session.supports_tool_calls().await;
-    if let Some(model_id) = &model_id {
-        app.state::<AnalyticsState>().report(|| Event::InferenceStarted {
-            model_id: model_id.clone(),
-        });
-    }
+    let tools_enabled = tools.any() && supports_tools;
+    app.state::<AnalyticsState>().report(|| Event::InferenceStarted {
+        model_id: model_id.clone(),
+    });
     let stream = session.reply_with_stream(messages, reply_config).await;
     state.attach_cancel_token(&payload.run_id, stream.cancel_token());
 
@@ -274,7 +259,7 @@ pub(super) async fn run_stream_inner(
     );
 
     transcript.set_reasoning_promotion(promoted_reasoning);
-    if let (Some(model_id), Some(reply)) = (model_id, &output) {
+    if let Some(reply) = &output {
         app.state::<AnalyticsState>().report(|| Event::InferenceFinished {
             model_id,
             stats: Box::new(reply.stats.clone().into()),

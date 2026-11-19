@@ -5,6 +5,10 @@ use uzu::types::{
 
 use super::payloads::{MsgIn, Parsed};
 
+pub(super) fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 // Engine output only: U+FFFD shows up as "�" when the decoder splits a multi-byte
 // character across tokens. Joiners and variation selectors hold composite emoji together.
 pub(super) fn sanitize(s: &str) -> String {
@@ -52,6 +56,17 @@ pub(super) fn build_messages(
         }
     }
     messages
+}
+
+pub(super) fn append_system_instruction(
+    messages: &mut Vec<ChatMessage>,
+    instruction: String,
+) {
+    if let Some(system) = messages.iter_mut().find(|message| message.role == (ChatRole::System {})) {
+        *system = system.with_text(format!("\n\n{instruction}"));
+    } else {
+        messages.insert(0, ChatMessage::system().with_text(instruction));
+    }
 }
 
 // uzu rejects another system message in an accumulated session.
@@ -137,5 +152,22 @@ mod tests {
         let message = assistant_history_message("answer", "reasoning", false).expect("history message");
         assert_eq!(message.content, "answer");
         assert_eq!(message.reasoning_content.as_deref(), Some("reasoning"));
+    }
+
+    #[test]
+    fn an_instruction_joins_the_system_message_or_opens_one() {
+        let mut with_system = vec![
+            ChatMessage::system().with_text("Be helpful.".to_string()),
+            ChatMessage::user().with_text("Hi".to_string()),
+        ];
+        append_system_instruction(&mut with_system, "Be brief.".to_string());
+        assert_eq!(with_system.len(), 2);
+        assert_eq!(with_system[0].text().unwrap(), "Be helpful.\n\nBe brief.");
+
+        let mut without_system = vec![ChatMessage::user().with_text("Hi".to_string())];
+        append_system_instruction(&mut without_system, "Be brief.".to_string());
+        assert_eq!(without_system.len(), 2);
+        assert_eq!(without_system[0].role, ChatRole::System {});
+        assert_eq!(without_system[0].text().unwrap(), "Be brief.");
     }
 }
