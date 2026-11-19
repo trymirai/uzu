@@ -7,4 +7,6 @@ pub struct TokensConfig {
     pub eos_token_id: Option<TokenId>,
     pub stop_token_ids: Vec<TokenId>,
     pub banned_token_ids: Vec<TokenId>,
+    #[serde(default)]
+    pub image_pad_token_id: Option<TokenId>,
 }
