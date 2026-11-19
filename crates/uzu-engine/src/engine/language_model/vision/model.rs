@@ -5,7 +5,10 @@ use thiserror::Error;
 use crate::{
     backends::{
         Backend,
-        common::{Kernels, kernel::TensorAddScaleKernel},
+        common::{
+            Context, Kernels,
+            kernel::{TensorAddScaleKernel, VisionPatchifyKernel},
+        },
     },
     config::vision::VisionConfig,
     data_type::DataType,
@@ -17,7 +20,7 @@ use crate::{
         vision_layer::{VisionLayer, VisionLayerNewError},
     },
     safetensors::{ParameterLoader, ParameterLoaderError},
-    utils::file,
+    utils::{buffer::create_buffer_with_data, file},
 };
 
 #[derive(Debug, Error)]
@@ -40,17 +43,22 @@ pub enum VisionLoadError<B: Backend> {
     UngatedMlp(#[from] UngatedMlpNewError<B>),
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
+    #[error("Unsupported input channel count: {0}, expected RGB")]
+    UnsupportedInChannels(u32),
 }
 
 pub struct VisionModel<B: Backend> {
     pub config: VisionConfig,
-    data_type: DataType,
-    patch_emb: Box<dyn Linear<B>>,
-    pos_emb: InterpolatedPositionEmbedding<B>,
-    pos_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
-    layers: Box<[VisionLayer<B>]>,
-    merger_norm: Normalization<B>,
-    merger_mlp: UngatedMlp<B>,
+    pub(super) data_type: DataType,
+    pub(super) image_mean: B::GlobalGpuBuffer,
+    pub(super) image_std: B::GlobalGpuBuffer,
+    pub(super) patchify: <B::Kernels as Kernels>::VisionPatchifyKernel,
+    pub(super) patch_emb: Box<dyn Linear<B>>,
+    pub(super) pos_emb: InterpolatedPositionEmbedding<B>,
+    pub(super) pos_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
+    pub(super) layers: Box<[VisionLayer<B>]>,
+    pub(super) merger_norm: Normalization<B>,
+    pub(super) merger_mlp: UngatedMlp<B>,
 }
 
 impl<B: Backend> VisionModel<B> {
@@ -65,9 +73,16 @@ impl<B: Backend> VisionModel<B> {
 
         let config_file_content = &file::read(vision_path.join("config.json")).await?;
         let config = serde_json::from_slice::<VisionConfig>(config_file_content)?;
+        // The patchify kernels take RGB pixels
+        if config.encoder_config.in_channels != 3 {
+            return Err(VisionLoadError::UnsupportedInChannels(config.encoder_config.in_channels));
+        }
 
         let loader = ParameterLoader::new(vision_path.join("model.safetensors"), context).await?;
         let encoder_tree = loader.tree().subtree("encoder");
+
+        let patchify =
+            <B::Kernels as Kernels>::VisionPatchifyKernel::new(context, data_type).map_err(VisionLoadError::Backend)?;
 
         let patch_dim = config.encoder_config.in_channels
             * config.encoder_config.temporal_patch_size
@@ -136,9 +151,17 @@ impl<B: Backend> VisionModel<B> {
 
         loader.assert_all_tensors_read()?;
 
+        let image_mean = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_mean)
+            .map_err(VisionLoadError::Backend)?;
+        let image_std = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_std)
+            .map_err(VisionLoadError::Backend)?;
+
         Ok(Self {
             config,
             data_type,
+            image_mean,
+            image_std,
+            patchify,
             patch_emb,
             pos_emb,
             pos_add,

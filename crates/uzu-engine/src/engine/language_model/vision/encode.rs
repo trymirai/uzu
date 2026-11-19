@@ -1,12 +1,10 @@
-use std::range::Range;
-
 use shoji::types::session::vision::VisionImageInput;
 use thiserror::Error;
 
 use crate::{
     backends::{
         Backend,
-        common::{CommandBuffer, CommandBufferEncoding},
+        common::{CommandBuffer, CommandBufferEncoding, kernel::VisionPatchifyKernel},
     },
     encodable_block::{linear::LinearEncodeError, mlp::MlpEncodeError, vision_layer::VisionLayerEncodeError},
     engine::language_model::vision::model::VisionModel,
@@ -38,15 +36,8 @@ pub enum VisionEncodeError<B: Backend> {
 pub enum VisionPrefillError<B: Backend> {
     #[error("Vision encoder error: {0}")]
     Encode(#[from] VisionEncodeError<B>),
-    #[error("Image tokens {tokens:?} overlap the previous image or exceed the input of {input_length} tokens")]
-    InvalidTokens {
-        tokens: Range<usize>,
-        input_length: usize,
-    },
     #[error("Model has no vision encoder")]
     NoVisionEncoder,
-    #[error("Unsupported patch grid {0:?}")]
-    UnsupportedGrid([u32; 3]),
 }
 
 impl<B: Backend> VisionModel<B> {
@@ -58,9 +49,19 @@ impl<B: Backend> VisionModel<B> {
         let patch_size = self.config.encoder_config.patch_size;
         let merge_size = self.config.encoder_config.spatial_merge_size;
 
-        let mut images = Vec::<VisionPrefilledImage<B>>::with_capacity(images.len());
+        let mut prefilled_images = Vec::<VisionPrefilledImage<B>>::with_capacity(images.len());
+        for image in images {
+            let embeddings = self.encode(image, command_buffer)?;
+            let prefilled_image = VisionPrefilledImage {
+                embeddings,
+                width: image.width / patch_size / merge_size,
+                height: image.height / patch_size / merge_size,
+            };
+            prefilled_images.push(prefilled_image);
+        }
+
         let result = VisionPrefillResult {
-            images: images.into_boxed_slice(),
+            images: prefilled_images.into_boxed_slice(),
         };
         Ok(result)
     }
@@ -71,7 +72,29 @@ impl<B: Backend> VisionModel<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, VisionEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("vision encode");
-        let result = command_buffer.allocate_scratch(0).map_err(VisionEncodeError::Backend)?;
-        Ok(result)
+
+        let encoder_config = &self.config.encoder_config;
+        let patch_size = encoder_config.patch_size;
+        let rows = (image.height / patch_size) * (image.width / patch_size);
+        let patch_dim = encoder_config.in_channels * encoder_config.temporal_patch_size * patch_size * patch_size;
+
+        let pixels = command_buffer.allocate_constant_from_slice(&image.pixels).map_err(VisionEncodeError::Backend)?;
+        let mut patches = command_buffer
+            .allocate_scratch_for_shape(&[rows, patch_dim], self.data_type)
+            .map_err(VisionEncodeError::Backend)?;
+        self.patchify.encode(
+            &pixels,
+            &mut patches,
+            &self.image_mean,
+            &self.image_std,
+            image.width,
+            patch_size,
+            encoder_config.spatial_merge_size,
+            encoder_config.temporal_patch_size,
+            rows * patch_dim,
+            command_buffer,
+        );
+        let stream = self.patch_emb.encode(patches, rows, command_buffer)?;
+        Ok(stream)
     }
 }
