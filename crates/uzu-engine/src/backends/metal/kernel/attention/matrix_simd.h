@@ -301,7 +301,6 @@ METAL_FUNC void attention_matrix_simd(
 
     METAL_PRAGMA_UNROLL
     for (ushort key_fragment = 0; key_fragment < KEY_FRAGMENTS; ++key_fragment) {
-      const half2 probabilities = half2(scores.fragment_at(0, key_fragment));
       METAL_PRAGMA_UNROLL
       for (ushort col = 0; col < VALUE_FRAGMENTS; ++col) {
         Value value;
@@ -312,9 +311,9 @@ METAL_FUNC void attention_matrix_simd(
                 int(HEAD_DIM + 8)
             )
         );
-        SimdgroupMMA<float, 8, 8, half, half>::mma(
+        SimdgroupMMA<float, 8, 8, float, half>::mma(
             output.fragment_at(0, col),
-            probabilities,
+            scores.fragment_at(0, key_fragment),
             value.fragment_at(0, 0),
             output.fragment_at(0, col)
         );
