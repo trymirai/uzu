@@ -51,7 +51,7 @@ impl SessionState for ClassificationSessionState {
         matches!(self.status, ClassificationSessionStatus::Loading | ClassificationSessionStatus::Classifying)
     }
 
-    fn interrupt(&self) -> bool {
+    fn interrupt(&mut self) -> bool {
         false
     }
 

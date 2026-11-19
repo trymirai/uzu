@@ -8,11 +8,7 @@ use std::{io, sync::Arc};
 
 use anyhow::Result;
 use clap::ValueEnum;
-use crossterm::{
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::Terminal;
 use uzu::{
     engine::{Engine, EngineConfig},
     storage::DownloadManagerType,
@@ -60,11 +56,7 @@ pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> 
     let engine = Arc::new(Engine::new(config).await?);
 
     // Setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = ratatui::try_init()?;
 
     // Create app and event handler
     let app = App::new(engine.clone(), runtime).await;
@@ -73,10 +65,7 @@ pub(crate) async fn run(download_manager: DownloadManagerCliType) -> Result<()> 
     // Run app
     let res = run_app(&mut terminal, app, event_handler).await;
 
-    // Cleanup
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    ratatui::try_restore()?;
 
     if let Err(error) = res {
         tracing::error!("Application error: {error:?}");

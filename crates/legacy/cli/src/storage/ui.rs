@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::Frame,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph},
 };
 use shoji::types::model::ModelIdentifier;
 use uzu::storage::DownloadPhase;
@@ -94,19 +94,8 @@ fn render_section(
         )
         .highlight_style(highlight_style);
 
-    // Update list state
     let state = app.list_states.get_mut(&section).unwrap();
-
-    if section_models.is_empty() {
-        state.select(None);
-    } else if state.selected().is_none() {
-        state.select(Some(0));
-    } else if let Some(selected) = state.selected()
-        && selected >= section_models.len()
-    {
-        state.select(Some(section_models.len().saturating_sub(1)));
-    }
-
+    update_list_window(state, section_models.len(), area.height.saturating_sub(2) as usize);
     frame.render_stateful_widget(list, area, state);
 }
 
@@ -137,14 +126,9 @@ fn render_downloading_section(
     let visible_count = (available_height / model_height).min(section_models.len());
 
     let state = app.list_states.get_mut(&Section::Downloading).unwrap();
-    let selected = state.selected().unwrap_or(0);
-
-    // Scroll to keep selection visible
-    let scroll_offset = if selected >= visible_count {
-        selected - visible_count + 1
-    } else {
-        0
-    };
+    update_list_window(state, section_models.len(), visible_count);
+    let selected = state.selected();
+    let scroll_offset = state.offset();
 
     let constraints: Vec<Constraint> = (0..visible_count).map(|_| Constraint::Length(model_height as u16)).collect();
 
@@ -162,7 +146,7 @@ fn render_downloading_section(
         }
 
         let (id, model_with_state) = &section_models[model_idx];
-        let is_selected = model_idx == selected;
+        let is_selected = selected == Some(model_idx);
 
         render_downloading_model(frame, *chunk, id, model_with_state, is_selected);
     }
@@ -245,6 +229,21 @@ fn render_help(
     frame.render_widget(help, area);
 }
 
+fn update_list_window(
+    state: &mut ListState,
+    count: usize,
+    visible: usize,
+) {
+    let Some(last) = count.checked_sub(1) else {
+        state.select(None);
+        return;
+    };
+    let selected = state.selected().unwrap_or(0).min(last);
+    *state.offset_mut() =
+        state.offset().min(selected).max((selected + 1).saturating_sub(visible)).min(count.saturating_sub(visible));
+    state.select(Some(selected));
+}
+
 /// Truncate name to fit with progress info
 fn truncate_name_for_label(
     name: &str,
@@ -283,3 +282,7 @@ fn truncate_text(
     let truncate_at = max_len.saturating_sub(3);
     format!("{}...", text.chars().take(truncate_at).collect::<String>())
 }
+
+#[cfg(test)]
+#[path = "../../unit/storage/ui_test.rs"]
+mod tests;
