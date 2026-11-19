@@ -14,11 +14,15 @@ use super::{
     payloads::{Parsed, RunEvent, RunStreamPayload, map_reply_stats, sampling_policy},
     session::{ReadySession, ensure_session},
     transcript::Transcript,
+    web_instruction::add_web_instruction,
+    web_search,
 };
 use crate::{
     analytics::{AnalyticsState, Event},
     error::{AppError, AppResult},
 };
+
+const WEB_RESULTS_KEPT_IN_SESSION_CHARS: usize = super::web_fetch::TEXT_MAX_CHARS;
 
 #[derive(Default)]
 struct ReplyText {
@@ -109,6 +113,7 @@ pub(super) async fn run_stream_inner(
         support,
         naming,
         tools,
+        web_tools,
         identifier: model_id,
     } = ensure_session(app, state, &payload.repo_id, payload.into()).await?;
     if state.cancel_requested(&payload.run_id) {
@@ -128,7 +133,7 @@ pub(super) async fn run_stream_inner(
     let reply_config = ChatReplyConfig::create().with_sampling_policy(sampling_policy(&payload.sampling_policy));
 
     let supports_tools = session.supports_tool_calls().await;
-    let plan = state.plan_run(&payload.repo_id, &payload.messages, effort);
+    let plan = state.plan_run(&payload.repo_id, &payload.chat_id, &payload.messages, effort);
     crate::logger::info(
         "chat:run:start",
         Some(serde_json::json!({
@@ -144,8 +149,16 @@ pub(super) async fn run_stream_inner(
     let messages = match plan {
         RunPlan::Continue {
             tail,
-        } => build_tail_messages(&tail),
+        } => {
+            if let Some(web_tools) = &web_tools {
+                web_tools.remember_messages(&tail, false);
+            }
+            build_tail_messages(&tail)
+        },
         RunPlan::Replay => {
+            if let Some(web_tools) = &web_tools {
+                web_tools.remember_messages(&payload.messages, true);
+            }
             // Full replay requires resetting uzu's accumulated role validator.
             if let Err(error) = session.reset().await {
                 state.evict(app, &payload.repo_id).await;
@@ -155,10 +168,22 @@ pub(super) async fn run_stream_inner(
             if naming.is_some() {
                 add_naming_instruction(&mut messages);
             }
+            if web_tools.is_some() {
+                add_web_instruction(&mut messages, jiff::Zoned::now().date());
+            }
             messages
         },
     };
     state.forget_history();
+    let _web_reply = web_tools.as_ref().map(|web_tools| {
+        let on_event = on_event.clone();
+        web_tools.begin_reply(
+            &payload.run_id,
+            web_search::Provider::selected(),
+            payload.asks_before_searching(),
+            Box::new(move |request| on_event.send(RunEvent::SearchPermission(request)).is_ok()),
+        )
+    });
     let naming_run = naming.as_ref().map(|naming| naming.begin(on_event.clone()));
     let tools_enabled = tools.any() && supports_tools;
     app.state::<AnalyticsState>().report(|| Event::InferenceStarted {
@@ -236,9 +261,22 @@ pub(super) async fn run_stream_inner(
         && let (Some(ChatReplyFinishReason::Stop), Some(assistant)) =
             (finish_reason, assistant_history_message(&raw_text, &raw_reasoning, promoted_reasoning))
     {
-        let mut history = payload.messages.clone();
-        history.push(assistant);
-        state.remember_history(&payload.repo_id, history, effort);
+        let web_result_chars =
+            web_tools.as_ref().and_then(|web_tools| web_tools.reply_result_chars()).unwrap_or_default();
+        if web_result_chars > WEB_RESULTS_KEPT_IN_SESSION_CHARS {
+            crate::logger::info(
+                "chat:history:dropped",
+                Some(serde_json::json!({
+                    "runId": payload.run_id,
+                    "reason": "webResults",
+                    "resultChars": web_result_chars,
+                })),
+            );
+        } else {
+            let mut history = payload.messages.clone();
+            history.push(assistant);
+            state.remember_history(&payload.repo_id, &payload.chat_id, history, effort);
+        }
     }
     // Cancellation between a tool result and the next token has no assistant
     // snapshot of its own; the last reply still says ToolCalls.

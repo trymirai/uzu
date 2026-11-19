@@ -5,6 +5,19 @@ use uzu::types::{
 
 use super::payloads::{MsgIn, Parsed};
 
+pub(super) fn clip_chars(
+    text: &str,
+    max: usize,
+) -> String {
+    match text.char_indices().nth(max) {
+        Some(_) => {
+            let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+            format!("{}…", kept.trim_end())
+        },
+        None => text.to_string(),
+    }
+}
+
 pub(super) fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -90,6 +103,7 @@ pub(super) fn assistant_history_message(
         role: ChatRole::Assistant {},
         content,
         reasoning_content: (!reasoning_content.is_empty()).then_some(reasoning_content),
+        openable_urls: Vec::new(),
     })
 }
 
@@ -169,5 +183,13 @@ mod tests {
         assert_eq!(without_system.len(), 2);
         assert_eq!(without_system[0].role, ChatRole::System {});
         assert_eq!(without_system[0].text().unwrap(), "Be brief.");
+    }
+
+    #[test]
+    fn clipped_text_never_exceeds_the_limit_and_ends_with_an_ellipsis() {
+        assert_eq!(clip_chars("naïve café", 20), "naïve café");
+        assert_eq!(clip_chars("abc", 3), "abc");
+        assert_eq!(clip_chars("één twee drie", 9), "één twee…");
+        assert_eq!(clip_chars("één twee drie", 5), "één…");
     }
 }

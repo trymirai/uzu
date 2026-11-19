@@ -46,6 +46,7 @@ pub(super) async fn title_gen_inner(
             role: uzu::types::session::chat::ChatRole::User {},
             content: title_prompt(&payload.user_text),
             reasoning_content: None,
+            openable_urls: Vec::new(),
         }],
         support.cheapest(),
     );
