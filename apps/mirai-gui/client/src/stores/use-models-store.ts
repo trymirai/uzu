@@ -39,6 +39,9 @@ type ModelsState = {
 let fetchInFlight: Promise<void> | null = null;
 let fetchAgain = false;
 
+export const modelSupportsTools = (state: Pick<ModelsState, "models">, repoId: string | null | undefined): boolean =>
+  state.models.find((model) => model.repoId === repoId)?.supportsTools === true;
+
 export const useModelsStore = create<ModelsState>()(
   persist(
     (set, get) => ({

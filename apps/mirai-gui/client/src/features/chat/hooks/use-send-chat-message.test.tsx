@@ -5,6 +5,7 @@ import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
+import { useWebSearchStore } from "@/stores/use-web-search-store";
 import { ModelKind } from "@/types/models";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
 import { Roles } from "@/types/chat";
@@ -102,6 +103,7 @@ beforeEach(() => {
   useRuntimeSessionStore.setState(runtimeDefaults, true);
   useModelParamsStore.setState(paramsDefaults, true);
   useModelsStore.setState({ models: [] });
+  useWebSearchStore.setState({ chats: {}, last: "off" });
   useChatStore.getState().createNewChat(CHAT_A);
   useChatStore.getState().setChatModel(CHAT_A, "model", "Model");
   chats = new Map<string, ChatData>();
@@ -139,7 +141,7 @@ beforeEach(() => {
       }),
     },
     chat: { generateTitle, cancelTitleGen },
-    settings: { getModelChatNamingEnabled },
+    settings: { getModelChatNamingEnabled, setWebSearchModes: vi.fn(async () => undefined) },
     session: { ejectSession },
   };
 });
@@ -370,6 +372,36 @@ it("clears the composer with the sent text once the message is accepted", async 
 
   expect(composer.clear).toHaveBeenCalledWith("prompt A");
   await waitFor(() => expect(startStream).toHaveBeenCalled());
+});
+
+it.each([
+  ["off", false, true],
+  ["ask", true, true],
+  ["auto", true, false],
+] as const)(
+  "sends a chat whose web search mode is %s with search on=%s and asking=%s",
+  async (mode, webSearchEnabled, webSearchAsk) => {
+    useWebSearchStore.setState({ chats: { [CHAT_A]: mode }, last: "off" });
+    const hook = renderSend();
+
+    await act(async () => void (await hook.result.current.send("prompt A")));
+
+    await waitFor(() => expect(startStream).toHaveBeenCalled());
+    expect(startStream.mock.calls[0]?.[0]).toMatchObject({ webSearchEnabled, webSearchAsk });
+  },
+);
+
+it("keeps the mode a chat first sent with when the mode is changed in another chat", async () => {
+  useWebSearchStore.setState({ chats: {}, last: "ask" });
+  const hook = renderSend();
+  await act(async () => void (await hook.result.current.send("prompt A")));
+  await waitFor(() => expect(startStream).toHaveBeenCalled());
+
+  useWebSearchStore.getState().setMode("another chat", "off");
+  expect(useWebSearchStore.getState()).toMatchObject({
+    chats: { [CHAT_A]: "ask", "another chat": "off" },
+    last: "off",
+  });
 });
 
 it("stores a new chat's first exchange without duplicates", async () => {

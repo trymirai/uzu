@@ -21,3 +21,20 @@ it("drops empty assistant turns and keeps alternation", () => {
 
   expect(out.map((m) => m.role)).toEqual([Roles.User, Roles.Assistant, Roles.User]);
 });
+
+it("keeps the addresses of both answers when two assistant turns are joined", () => {
+  const out = normalizeMessagesForRun([
+    { role: Roles.User, content: "q" },
+    { role: Roles.Assistant, content: "first", openableUrls: ["https://example.com/a"] },
+    { role: Roles.Assistant, content: "second", openableUrls: ["https://example.com/b"] },
+    { role: Roles.User, content: "one" },
+    { role: Roles.User, content: "two" },
+  ]);
+
+  expect(out[1]).toEqual({
+    role: Roles.Assistant,
+    content: "first\n\nsecond",
+    openableUrls: ["https://example.com/a", "https://example.com/b"],
+  });
+  expect(out[2]).toEqual({ role: Roles.User, content: "one\n\ntwo" });
+});

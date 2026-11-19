@@ -1,6 +1,7 @@
 import { useChatSessionStore } from "./use-chat-session-store";
 import { resolveModelTools, useModelParamsStore } from "./use-model-params-store";
 import { useModelsStore } from "./use-models-store";
+import { useWebSearchStore } from "./use-web-search-store";
 import type { Message, PerfStats } from "@/types/message";
 import type { ChatMetadata } from "@/platform/services/storage";
 import { v4 as uuidv4 } from "uuid";
@@ -240,6 +241,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { savedChats } = get();
     const updatedChats = savedChats.filter((chat) => chat.id !== chatId);
     set({ savedChats: updatedChats });
+    useWebSearchStore.getState().forgetChat(chatId);
 
     if (get().currentChatId === chatId) {
       set({ messages: [], currentChatId: null });
@@ -307,13 +309,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   runChatStream: (params: LlmRunParams) => {
     const { getParams, globalModelChatNamingEnabled } = useModelParamsStore.getState();
     const modelParams = getParams(params.repoId);
-    const paramSize = useModelsStore.getState().models.find((model) => model.repoId === params.repoId)?.paramSize;
-    const tools = resolveModelTools(modelParams, globalModelChatNamingEnabled, paramSize);
+    const model = useModelsStore.getState().models.find((model) => model.repoId === params.repoId);
+    const tools = resolveModelTools(modelParams, globalModelChatNamingEnabled, model?.paramSize);
     return getPlatform().chat.runStream({
       ...params,
       modelChatNamingEnabled: tools.modelChatNamingEnabled && params.modelChatNamingEnabled !== false,
       dateTimeToolEnabled: params.dateTimeToolEnabled ?? tools.dateTimeToolEnabled,
       chartToolEnabled: params.chartToolEnabled ?? tools.chartToolEnabled,
+      webSearchEnabled: params.webSearchEnabled === true && model?.supportsTools === true,
       samplingPolicy: modelParams.sampling,
       reasoningEffort: modelParams.reasoningEffort ?? "default",
     });

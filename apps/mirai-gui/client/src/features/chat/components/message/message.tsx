@@ -330,6 +330,9 @@ const AssistantMessage: React.FC<MessageProps> = ({
                       <ChartMessage chart={item.chart} />
                     </Suspense>
                   );
+                case "webSearch":
+                case "webPage":
+                  return null;
               }
             })
           ) : (

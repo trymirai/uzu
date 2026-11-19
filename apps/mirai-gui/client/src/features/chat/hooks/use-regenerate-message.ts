@@ -3,6 +3,7 @@ import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { resolveModelTools, useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
+import { useWebSearchStore, webSearchModeOf } from "@/stores/use-web-search-store";
 import { getPlatform } from "@/platform/platform-singleton";
 import type { LlmRunResult } from "@/types/llm-stream";
 import { Roles } from "../types";
@@ -106,6 +107,7 @@ export const useRegenerateMessage = ({
           };
 
           try {
+            const webSearchMode = webSearchModeOf(useWebSearchStore.getState(), chatId);
             const tools = resolveModelTools(
               useModelParamsStore.getState().getParams(modelId),
               await getPlatform().settings.getModelChatNamingEnabled(),
@@ -119,6 +121,8 @@ export const useRegenerateMessage = ({
               messageId,
               chatId,
               ...tools,
+              webSearchEnabled: webSearchMode !== "off",
+              webSearchAsk: webSearchMode !== "auto",
               onDone: () => setLoadingMessage(chatId, null),
               updateText,
               onError: (_id, errorText) => failVersion(errorText),

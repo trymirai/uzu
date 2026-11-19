@@ -11,6 +11,7 @@ export type ChatRunMessage = {
   role: ChatRole;
   content: string;
   reasoningContent?: string;
+  openableUrls?: string[];
 };
 
 export const normalizeMessagesForRun = (messages: ChatRunMessage[]): ChatRunMessage[] => {
@@ -28,9 +29,12 @@ export const normalizeMessagesForRun = (messages: ChatRunMessage[]): ChatRunMess
       return m.role === Roles.User ? [m] : acc;
     }
     // Two user turns in a row follow a stopped reply; dropping either would lose text.
-    return prev.role === m.role
-      ? [...acc.slice(0, -1), { ...prev, content: `${prev.content}\n\n${m.content}` }]
-      : [...acc, m];
+    if (prev.role !== m.role) return [...acc, m];
+    const openableUrls = [...(prev.openableUrls ?? []), ...(m.openableUrls ?? [])];
+    return [
+      ...acc.slice(0, -1),
+      { ...prev, content: `${prev.content}\n\n${m.content}`, ...(openableUrls.length ? { openableUrls } : {}) },
+    ];
   }, []);
 
   return system.concat(alternated);

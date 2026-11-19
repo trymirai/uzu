@@ -1,8 +1,7 @@
 import type { Message, PerfStats, MessageVersion as StoreMessageVersion } from "@/types/message";
 import { parse } from "date-fns";
 import type { ChatMetadata } from "..";
-import type { TranscriptItem } from "@/types/llm-stream";
-import { isChartSpec } from "@/types/chart";
+import { isTranscript, type TranscriptItem } from "@/types/llm-stream";
 import { transcriptMetadata } from "./transcript-metadata";
 
 const extractTranscript = (text: string): TranscriptItem[] | undefined => {
@@ -10,27 +9,7 @@ const extractTranscript = (text: string): TranscriptItem[] | undefined => {
   if (json === undefined) return undefined;
   try {
     const items: unknown = JSON.parse(json);
-    if (
-      !Array.isArray(items) ||
-      !items.every((item) => {
-        if (!item || typeof item !== "object") return false;
-        if (item.type === "toolCall")
-          return (
-            typeof item.name === "string" &&
-            typeof item.called === "boolean" &&
-            (item.failed === undefined || typeof item.failed === "boolean")
-          );
-        if (item.type === "text") return typeof item.text === "string";
-        if (item.type === "chart") return isChartSpec(item.chart);
-        return (
-          item.type === "thinking" &&
-          typeof item.text === "string" &&
-          (item.completed === undefined || typeof item.completed === "boolean")
-        );
-      })
-    )
-      return undefined;
-    return items;
+    return isTranscript(items) ? items : undefined;
   } catch {
     return undefined;
   }

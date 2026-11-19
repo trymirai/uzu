@@ -1,6 +1,7 @@
 import { useRuntimeSessionStore } from "./use-runtime-session-store";
 import type { RuntimeSessionRef, RuntimeSessionEjectReason } from "@/types/session";
 import type { OutputShape } from "@/types/llm-stream";
+import type { SearchPermissionDecision, SearchPermissionRequest } from "@/types/web-search";
 import { v4 as uuidv4 } from "uuid";
 import { create } from "zustand";
 import { getPlatform } from "@/platform/platform-singleton";
@@ -36,7 +37,10 @@ type SessionStoreState = {
   // exists before the run does (title generation runs in between).
   loadingMessage: ChatMessageRef | null;
   canceledMessage: ChatMessageRef | null;
+  searchPermission: (SearchPermissionRequest & ChatMessageRef & { answering: boolean }) | null;
 
+  setSearchPermission: (request: SearchPermissionRequest & ChatMessageRef) => void;
+  answerSearchPermission: (decision: SearchPermissionDecision) => Promise<boolean>;
   setLoadingMessage: (chatId: string, messageId: string | null) => void;
   setCanceledMessage: (chatId: string, messageId: string | null) => void;
   setGenerating: (running: boolean) => void;
@@ -86,6 +90,31 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
   activeAssistantMessageOutput: null,
   loadingMessage: null,
   canceledMessage: null,
+  searchPermission: null,
+
+  setSearchPermission: (request) =>
+    set((s) => {
+      const answering = s.searchPermission?.requestId === request.requestId && s.searchPermission.answering;
+      return { searchPermission: { ...request, answering } };
+    }),
+  answerSearchPermission: async (decision) => {
+    const request = get().searchPermission;
+    if (!request || request.answering) return false;
+    set({ searchPermission: { ...request, answering: true } });
+    // Not taken: a tool call joined the request after it was shown, or the answer
+    // failed. The card stays, with what the store holds by then.
+    const taken = await getPlatform()
+      .chat.answerSearchPermission(request.requestId, request.queries.length + request.pages.length, decision)
+      .catch((error: unknown) => {
+        console.error("[chat] failed to answer the search permission request", { decision }, error);
+        return false;
+      });
+    set((s) => {
+      if (s.searchPermission?.requestId !== request.requestId) return {};
+      return { searchPermission: taken ? null : { ...s.searchPermission, answering: false } };
+    });
+    return taken;
+  },
 
   setLoadingMessage: (chatId, messageId) =>
     set((s) => {
@@ -134,6 +163,7 @@ export const useChatSessionStore = create<SessionStoreState>((set, get) => ({
       activeAssistantMessageText: null,
       activeAssistantMessageOutput: null,
       activeRunId: null,
+      searchPermission: null,
     }),
   setActiveAssistantMessageText: (text) => set({ activeAssistantMessageText: text }),
 

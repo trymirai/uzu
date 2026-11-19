@@ -6,6 +6,7 @@ import { formatBytes, formatModelSize } from "@/utils/format";
 import { useCleanupStore } from "@/stores/use-cleanup-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
+import { useWebSearchStore } from "@/stores/use-web-search-store";
 
 type CleanupCategory = "dialogs" | "models" | "logs";
 type Step = "select" | "confirm" | "result";
@@ -104,6 +105,7 @@ export function ClearDataDialog({ open, onClose }: Props) {
       await useChatStore.getState().loadSavedChats();
       useChatStore.getState().clearChat();
       useChatStore.getState().setCurrentChatId(null);
+      useWebSearchStore.getState().forgetAll();
     }
     setStep("result");
   };

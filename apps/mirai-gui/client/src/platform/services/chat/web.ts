@@ -23,9 +23,11 @@ export const webChat: ChatService = {
       onParsed: noopUnsubscribe,
       onChatName: noopUnsubscribe,
       onTranscript: noopUnsubscribe,
+      onSearchPermission: noopUnsubscribe,
     };
   },
   cancelRun: () => Promise.resolve(),
+  answerSearchPermission: () => Promise.resolve(false),
   generateTitle: () => Promise.reject(new Error("Not available on web")),
   cancelTitleGen: () => Promise.resolve(),
   getSamplingDefaults: () => Promise.resolve(null),

@@ -1,4 +1,5 @@
 import type { ModelParams } from "@/types/sampling";
+import { DEFAULT_WEB_SEARCH_PROVIDER } from "@/constants/web-search-providers";
 import { DEFAULT_AUTO_EJECT_MINUTES, type SettingsService } from ".";
 import { readJson, writeJson } from "../shared/browser-store";
 
@@ -38,4 +39,12 @@ export const webSettings: SettingsService = {
   setAutoEjectEnabled: async (enabled) => enabled,
   getAutoEjectMinutes: async () => DEFAULT_AUTO_EJECT_MINUTES,
   setAutoEjectMinutes: async () => true,
+
+  getWebSearchProvider: async () => DEFAULT_WEB_SEARCH_PROVIDER,
+  setWebSearchProvider: async () => undefined,
+  getWebSearchModes: async () => ({ chats: {}, last: "off" }),
+  setWebSearchModes: async () => undefined,
+  getWebSearchKeys: async () => [],
+  saveWebSearchKey: () => Promise.reject(new Error("Not available on web")),
+  removeWebSearchKey: async () => [],
 };

@@ -147,3 +147,35 @@ it.each(["response", "reasoning", "error"] as const)(
     expect(markdown.match(/\*\*Budget/g)).toHaveLength(1);
   },
 );
+
+it("lists the pages an answer found or read after it, each once", async () => {
+  const found = { title: "Rust [stable] <!-- x -->", url: "https://releases.rs/" };
+  const read = { title: "Release notes", url: "https://doc.rust-lang.org/releases_(all).html" };
+  const searched: ChatData = {
+    ...chat,
+    messages: [
+      chat.messages[0]!,
+      {
+        id: "a",
+        sender: "assistant",
+        text: "Rust is stable.",
+        timestamp,
+        output: {
+          transcript: [
+            { type: "webSearch", query: "rust stable", called: true, sources: [found] },
+            { type: "webPage", url: found.url, called: true, source: found },
+            { type: "webPage", url: read.url, called: true, source: read },
+            { type: "text", text: "Rust is stable." },
+          ],
+        },
+      },
+    ],
+  };
+  const markdown = await exported(serializeToMarkdown(searched));
+  expect(markdown).toContain(
+    "Sources:\n\n- [Rust \\[stable\\] &lt;!-- x -->](https://releases.rs/)\n" +
+      "- [Release notes](https://doc.rust-lang.org/releases_%28all%29.html)\n",
+  );
+  expect(markdown.indexOf("Rust is stable.")).toBeLessThan(markdown.indexOf("Sources:"));
+  expect(markdown).not.toContain("<!--");
+});

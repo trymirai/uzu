@@ -3,6 +3,7 @@ import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useChatStore } from "@/stores/use-chat-store";
 import { resolveModelTools, useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
+import { useWebSearchStore, webSearchModeOf } from "@/stores/use-web-search-store";
 import { getPlatform } from "@/platform/platform-singleton";
 import type { LlmRunResult } from "@/types/llm-stream";
 import type { AttachedFile } from "@/types/files";
@@ -60,6 +61,10 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
         return;
       }
 
+      // Read now: the mode the message was sent with holds even if it is changed while the model loads.
+      const webSearch = useWebSearchStore.getState();
+      const webSearchMode = webSearchModeOf(webSearch, chatId);
+      if (!(chatId in webSearch.chats)) webSearch.setChatMode(chatId, webSearchMode);
       const target = { repoId: modelId } as const;
       const ready = await prepareChatModelForRun({ chatId, modelId }, target, {
         onEjectStart: () => toast.info("Ejecting previous model…"),
@@ -177,6 +182,8 @@ export const useSendChatMessage = (params: UseSendChatMessageParams) => {
               modelChatNamingEnabled,
               dateTimeToolEnabled,
               chartToolEnabled,
+              webSearchEnabled: webSearchMode !== "off",
+              webSearchAsk: webSearchMode !== "auto",
               messageId: placeholder.id,
               chatId,
               updateText: (id: string, updatedText: string) => {

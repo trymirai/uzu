@@ -11,6 +11,7 @@ beforeEach(() => vi.clearAllMocks());
 it.each([true, false])("sends chartToolEnabled=%s through the native run payload", async (chartToolEnabled) => {
   const params: LlmRunParams = {
     repoId: "model",
+    chatId: "chat",
     messages: [{ role: "user", content: "Draw a chart" }],
     chartToolEnabled,
   };
