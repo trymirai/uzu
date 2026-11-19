@@ -1,5 +1,8 @@
 use crate::{
-    backends::metal::gpu_types::{attention::AttnParams, kv_layout},
+    backends::{
+        common::gpu_types::kv_layout::COMPRESSION_RATIO,
+        metal::gpu_types::{attention::AttnParams, kv_layout},
+    },
     data_type::DataType,
 };
 
@@ -19,7 +22,7 @@ pub fn sparse_splits(
 ) -> u32 {
     (SPARSE_THREADGROUPS_PER_CORE * gpu_cores)
         .div_ceil(rows)
-        .min((blocks_per_query * kv_layout::COMPRESSION_RATIO).div_ceil(kv_layout::TILE_KEYS))
+        .min((blocks_per_query * COMPRESSION_RATIO).div_ceil(kv_layout::TILE_KEYS))
         .max(1)
 }
 
