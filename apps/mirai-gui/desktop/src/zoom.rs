@@ -59,6 +59,7 @@ fn apply(
     if let Err(error) = window.set_zoom(level) {
         crate::logger::warn("zoom:apply", Some(serde_json::json!({ "error": error.to_string() })));
     }
+    #[cfg(target_os = "macos")]
     crate::traffic_lights::place(&window);
 }
 
