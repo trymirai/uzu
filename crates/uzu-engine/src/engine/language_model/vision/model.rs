@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum VisionModelLoadError<B: Backend> {
+pub enum VisionLoadError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
     #[error("I/O error: {0}")]
@@ -43,7 +43,7 @@ pub enum VisionModelLoadError<B: Backend> {
 }
 
 pub struct VisionModel<B: Backend> {
-    config: VisionConfig,
+    pub config: VisionConfig,
     data_type: DataType,
     patch_emb: Box<dyn Linear<B>>,
     pos_emb: InterpolatedPositionEmbedding<B>,
@@ -58,9 +58,9 @@ impl<B: Backend> VisionModel<B> {
         vision_path: &Path,
         data_type: DataType,
         context: &B::Context,
-    ) -> Result<Self, VisionModelLoadError<B>> {
+    ) -> Result<Self, VisionLoadError<B>> {
         if data_type != DataType::BF16 {
-            return Err(VisionModelLoadError::UnsupportedDataType(data_type));
+            return Err(VisionLoadError::UnsupportedDataType(data_type));
         };
 
         let config_file_content = &file::read(vision_path.join("config.json")).await?;
@@ -93,7 +93,7 @@ impl<B: Backend> VisionModel<B> {
         .await?;
 
         let pos_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true, true)
-            .map_err(VisionModelLoadError::Backend)?;
+            .map_err(VisionLoadError::Backend)?;
 
         let mut layers = Vec::with_capacity(config.encoder_config.layer_configs.len());
         for (index, layer_config) in config.encoder_config.layer_configs.iter().enumerate() {

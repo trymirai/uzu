@@ -77,7 +77,7 @@ impl<B: Backend> UngatedMlp<B> {
         })
     }
 
-    fn encode(
+    pub fn encode(
         &self,
         input: B::ScratchBuffer,
         batch_dim: u32,

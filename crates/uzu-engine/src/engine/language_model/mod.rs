@@ -14,7 +14,7 @@ use crate::{
     },
     engine::{
         Engine,
-        language_model::vision::model::{VisionModel, VisionModelLoadError},
+        language_model::vision::model::{VisionLoadError, VisionModel},
     },
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
@@ -56,7 +56,7 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     #[error("Tokenizer error: {0}")]
     Tokenizer(#[from] tokenizers::Error),
     #[error("Vision error: {0}")]
-    Vision(#[from] VisionModelLoadError<B>),
+    Vision(#[from] VisionLoadError<B>),
 }
 
 impl<B: Backend> Engine<B> {

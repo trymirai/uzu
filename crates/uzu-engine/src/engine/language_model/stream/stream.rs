@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::executor::block_on;
-use shoji::traits::backend::chat_token::TokenStreamMetrics;
+use shoji::{traits::backend::chat_token::TokenStreamMetrics, types::session::vision::VisionImageInput};
 
 use crate::{
     backends::common::{
@@ -237,6 +237,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     pub fn prefill(
         &mut self,
         input: &[u64],
+        images: &[VisionImageInput],
     ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
         let _capture_span = CAPTURE_MATCHER.capture::<B>(&self.model.engine.context, "prefill")?;
 
@@ -743,11 +744,12 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     pub fn new(
         model: &'a LanguageModel<B>,
         input: &[u64],
+        images: &[VisionImageInput],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
         let mut submitter = StreamEnqueuer::new(model, input, model_state, options)?;
-        let job = submitter.prefill(input)?;
+        let job = submitter.prefill(input, images)?;
 
         Ok(Self {
             submitter,

@@ -4,14 +4,21 @@ use thiserror::Error;
 use crate::{
     backends::{
         Backend,
-        common::{Context, CpuBuffer, GlobalBufferCpuGpu, Kernels, kernel::TensorAddScaleKernel},
+        common::{
+            CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
+            kernel::TensorAddScaleKernel,
+        },
     },
     config::{token_mixer::attention::AttentionConfig, vision::VisionLayerConfig},
     data_type::{DataType, DataTypeRepr},
     encodable_block::{
+        batch_topology::BatchTopology,
         linear::{LinearMatmul, LinearMatmulError},
-        mixer::attention::{Attention, AttentionNewError},
-        mlp::{UngatedMlp, UngatedMlpNewError},
+        mixer::{
+            Mixer, MixerEncodeError,
+            attention::{Attention, AttentionNewError, rope::PrecalculatedRoPE},
+        },
+        mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -33,12 +40,23 @@ pub enum VisionLayerNewError<B: Backend> {
     UngatedMlp(#[from] UngatedMlpNewError<B>),
 }
 
+#[derive(Debug, Error)]
+pub enum VisionLayerEncodeError<B: Backend> {
+    #[error("Attention error: {0}")]
+    Attention(#[from] MixerEncodeError<B>),
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("MLP error: {0}")]
+    Mlp(#[from] MlpEncodeError<B>),
+}
+
 pub struct VisionLayer<B: Backend> {
     pre_attention_norm: Normalization<B>,
     attention: Attention<B>,
     pre_mlp_norm: Normalization<B>,
     mlp: UngatedMlp<B>,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
+    model_dim: u32,
 }
 
 impl<B: Backend> VisionLayer<B> {
@@ -105,7 +123,56 @@ impl<B: Backend> VisionLayer<B> {
             pre_mlp_norm,
             mlp,
             residual_add,
+            model_dim,
         })
+    }
+
+    pub fn encode(
+        &self,
+        mut stream: B::ScratchBuffer,
+        rope: &PrecalculatedRoPE<B>,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, VisionLayerEncodeError<B>> {
+        let command_buffer = &mut *command_buffer.debug_group("vision layer");
+        let elements = row_count * self.model_dim;
+
+        let hidden = self
+            .pre_attention_norm
+            .encode(&stream, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(VisionLayerEncodeError::Backend)?;
+
+        let attention =
+            self.attention.encode(hidden, Some(rope), &BatchTopology::flat(row_count, true), None, command_buffer)?;
+
+        self.residual_add.encode(
+            None::<&B::ScratchBuffer>,
+            Some(&attention),
+            &mut stream,
+            elements,
+            elements,
+            1.0,
+            command_buffer,
+        );
+
+        let hidden = self
+            .pre_mlp_norm
+            .encode(&stream, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(VisionLayerEncodeError::Backend)?;
+
+        let mlp = self.mlp.encode(hidden, row_count, command_buffer)?;
+
+        self.residual_add.encode(
+            None::<&B::ScratchBuffer>,
+            Some(&mlp),
+            &mut stream,
+            elements,
+            elements,
+            1.0,
+            command_buffer,
+        );
+
+        Ok(stream)
     }
 
     async fn load_padded_attention<T: DataTypeRepr>(
