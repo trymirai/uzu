@@ -77,6 +77,39 @@ impl<B: Backend> Attention<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
+        let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+            hidden_dim,
+            Self::get_projection_dim(config),
+            data_type,
+            config.has_qkvg_biases,
+            &parameter_tree.subtree("qkvg_projection"),
+            context,
+        )
+        .await?;
+        let out_projection = <dyn Linear<B>>::new(
+            config.num_heads * config.head_dim,
+            hidden_dim,
+            data_type,
+            config.has_out_biases,
+            &parameter_tree.subtree("out_projection"),
+            context,
+        )
+        .await?;
+        let attention =
+            Self::with_projections(data_type, rope_config, config, projection, out_projection, parameter_tree, context)
+                .await?;
+        Ok((attention, in_projection_input_hadamard_factors))
+    }
+
+    pub async fn with_projections(
+        data_type: DataType,
+        rope_config: Option<&AnyRoPEConfig>,
+        config: &AttentionConfig,
+        projection: Box<dyn Linear<B>>,
+        out_projection: Box<dyn Linear<B>>,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, AttentionNewError<B>> {
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;
@@ -86,31 +119,6 @@ impl<B: Backend> Attention<B> {
 
         let is_causal = config.is_causal;
         let sliding_window_size = config.sliding_window_size;
-        let max_rope_length = rope_config.map(|rope_config| *rope_config.max_sequence_length());
-
-        let q_dim = num_q_heads * head_dim;
-
-        let projection_tree = parameter_tree.subtree("qkvg_projection");
-        let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
-            let kv_dim = num_kv_heads * head_dim;
-            q_dim + kv_dim + kv_dim
-        } else {
-            q_dim
-        };
-        let projection_dim = if config.has_gate {
-            qkv_dim + q_dim
-        } else {
-            qkv_dim
-        };
-        let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
-            hidden_dim,
-            projection_dim,
-            data_type,
-            config.has_qkvg_biases,
-            &projection_tree,
-            context,
-        )
-        .await?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
@@ -146,6 +154,7 @@ impl<B: Backend> Attention<B> {
         let ring_capacity = sliding_window_size;
         let is_kv_cache_ring = ring_capacity.is_some();
 
+        let projection_dim = Self::get_projection_dim(config);
         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
             AttentionKernelConfig {
@@ -163,6 +172,7 @@ impl<B: Backend> Attention<B> {
             },
         )
         .map_err(AttentionNewError::Kernel)?;
+
         let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
             data_type,
@@ -180,37 +190,25 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Backend)?;
 
-        let out_projection = <dyn Linear<B>>::new(
-            q_dim,
-            hidden_dim,
+        let max_rope_length = rope_config.map(|config| *config.max_sequence_length());
+        Ok(Self {
+            head_dim,
+            num_q_heads,
+            num_groups,
+            num_kv_heads,
+            ring_capacity,
+            max_rope_length,
             data_type,
-            config.has_out_biases,
-            &parameter_tree.subtree("out_projection"),
-            context,
-        )
-        .await?;
-
-        Ok((
-            Self {
-                head_dim,
-                num_q_heads,
-                num_groups,
-                num_kv_heads,
-                ring_capacity,
-                max_rope_length,
-                data_type,
-                has_gate: config.has_gate,
-                projection_dim,
-                projection,
-                qkv_norm_params,
-                qkv_norm_scales,
-                prepare,
-                sinks,
-                kernel,
-                out_projection,
-            },
-            in_projection_input_hadamard_factors,
-        ))
+            has_gate: config.has_gate,
+            projection_dim,
+            projection,
+            qkv_norm_params,
+            qkv_norm_scales,
+            prepare,
+            sinks,
+            kernel,
+            out_projection,
+        })
     }
 
     fn attend(
@@ -365,6 +363,23 @@ impl<B: Backend> Attention<B> {
             command_buffer,
         );
         Ok((query_codes, query_scales))
+    }
+
+    fn get_projection_dim(config: &AttentionConfig) -> u32 {
+        let q_dim = config.num_heads * config.head_dim;
+        let kv_dim = if config.is_kv_sharing {
+            0
+        } else {
+            2 * config.num_groups * config.head_dim
+        };
+
+        let gate_dim = if config.has_gate {
+            q_dim
+        } else {
+            0
+        };
+
+        q_dim + kv_dim + gate_dim
     }
 }
 

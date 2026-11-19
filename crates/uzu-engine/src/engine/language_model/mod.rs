@@ -12,17 +12,20 @@ use crate::{
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
     },
-    engine::Engine,
+    engine::{
+        Engine,
+        language_model::vision::model::{VisionModel, VisionModelLoadError},
+    },
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
     utils::file,
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
+pub mod grammar;
 pub mod state;
 pub mod stream;
-
-pub mod grammar;
+pub mod vision;
 
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
@@ -32,6 +35,7 @@ pub struct LanguageModel<B: Backend> {
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
     tokenizer: Arc<Tokenizer>,
+    vision_model: Option<VisionModel<B>>,
     vocab_size: usize,
 }
 
@@ -51,6 +55,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Speculator(#[from] DFlashSpeculatorLoadError<B>),
     #[error("Tokenizer error: {0}")]
     Tokenizer(#[from] tokenizers::Error),
+    #[error("Vision error: {0}")]
+    Vision(#[from] VisionModelLoadError<B>),
 }
 
 impl<B: Backend> Engine<B> {
@@ -94,6 +100,14 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
+        let vision_path = model_path.join("vision");
+        let vision_path = file::exists(&vision_path).await.then_some(vision_path);
+        let vision_model = if let Some(path) = vision_path.as_deref() {
+            Some(VisionModel::new(path, data_type, self.context.as_ref()).await?)
+        } else {
+            None
+        };
+
         weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
@@ -107,6 +121,7 @@ impl<B: Backend> Engine<B> {
             context_ring_update,
             generation_config,
             tokenizer,
+            vision_model,
             vocab_size,
         })
     }
