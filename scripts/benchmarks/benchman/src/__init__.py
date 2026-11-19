@@ -1,0 +1,3 @@
+from benchman.prefect_local_server_hack import forbid_local_server
+
+forbid_local_server()

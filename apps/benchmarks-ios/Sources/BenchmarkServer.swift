@@ -7,7 +7,7 @@ final class BenchmarkServer {
     private struct Command: Decodable {
         let command: String
         let engine: Engine?
-        let arguments: [String]?
+        let configuration: String?
         let path: String?
     }
 
@@ -68,7 +68,7 @@ final class BenchmarkServer {
         }
         do {
             let command = try JSONDecoder().decode(Command.self, from: line)
-            switch (command.command, command.engine, command.arguments, command.path) {
+            switch (command.command, command.engine, command.configuration, command.path) {
             case ("models", _, _, _):
                 benchmarks.refresh()
                 send(1, try JSONEncoder().encode(benchmarks.models) + Data("\n".utf8))
@@ -77,8 +77,8 @@ final class BenchmarkServer {
                 send(1, try JSONEncoder().encode(device) + Data("\n".utf8))
             case ("delete", _, _, let path?):
                 try benchmarks.delete(path: path)
-            case ("run", let engine?, let arguments?, _):
-                let job = { engine.run(arguments: arguments) }
+            case ("run", let engine?, let configuration?, _):
+                let job = { engine.run(configuration: configuration) }
                 let input = { (handle: FileHandle) in
                     DispatchQueue.global().async { self.forward(connection, rest, to: handle) }
                 }

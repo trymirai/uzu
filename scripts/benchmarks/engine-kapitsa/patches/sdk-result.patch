@@ -1,0 +1,15 @@
+diff --git a/sdk/c/kapitsa.cpp b/sdk/c/kapitsa.cpp
+index 2fefb12..6817d19 100644
+--- a/sdk/c/kapitsa.cpp
++++ b/sdk/c/kapitsa.cpp
+@@ -117,7 +117,9 @@ kapitsa_status kapitsa_generate(kapitsa_request* r, kapitsa_delta_callback callb
+       {"tool_calls", kapitsa_sdk::calls(response.tool_calls)}, {"finish_reason", response.finish_reason},
+       {"error", response.error}, {"prompt_tokens", response.prompt_tokens},
+       {"cached_tokens", response.cached_tokens}, {"completion_tokens", response.completion_tokens},
+-      {"prefill_ms", response.prefill_ms}, {"decode_ms", response.decode_ms}}));
++      {"prefill_ms", response.prefill_ms}, {"decode_ms", response.decode_ms},
++      {"thinking_level", response.thinking_level}, {"kflash_source", response.kflash_source},
++      {"kflash_cycles", response.kflash_cycles}}));
+     if (response.finish_reason == "error")
+       return fail(error, response.busy ? KAPITSA_BUSY : response.invalid_request ? KAPITSA_INVALID_ARGUMENT : KAPITSA_ERROR,
+                   response.error.c_str());

@@ -22,10 +22,10 @@ requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-bench-splash = "bench_splash:main"
+engine-splash = "bench_splash:main"
 
 [tool.setuptools]
-py-modules = ["bench_splash"]
+py-modules = ["bench_splash", "splash_bindings"]
 
 [tool.uv.sources]
 benchmarks-common = { path = "../common-py", editable = true }

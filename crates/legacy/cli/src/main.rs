@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use shoji::types::basic::ReasoningEffort;
 
-mod bench;
 mod common;
 mod interactive;
 mod server;
@@ -33,11 +32,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Bench {
-        model_path: String,
-        task_path: String,
-        output_path: String,
-    },
     ListCheckpoints {
         /// Model ID shown by `list-models`.
         #[arg(value_name = "MODEL_ID")]
@@ -73,11 +67,6 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Bench {
-            model_path,
-            task_path,
-            output_path,
-        }) => bench::run_bench(model_path, task_path, output_path).await?,
         Some(Commands::ListCheckpoints {
             model_id,
         }) => interactive::run_list_checkpoints(model_id).await?,

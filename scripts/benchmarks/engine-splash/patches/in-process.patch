@@ -1,9 +1,9 @@
 diff --git a/install/inprocess.py b/install/inprocess.py
 new file mode 100644
-index 0000000..bb863e7
+index 0000000..f059c8d
 --- /dev/null
 +++ b/install/inprocess.py
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,93 @@
 +"""The engine's commands inside this process, where none can be started (iOS),
 +with the subset of subprocess.run and subprocess.Popen that Splash uses."""
 +
@@ -11,29 +11,19 @@ index 0000000..bb863e7
 +import os
 +import subprocess
 +import threading
-+from functools import cache
-+
-+from . import paths
 +
 +
-+@cache
 +def _engine():
-+    engine = ctypes.CDLL(str(paths.BINARY))
-+    engine.benchmarks_splash_main.argtypes = [
-+        ctypes.c_int,
-+        ctypes.POINTER(ctypes.c_char_p),
-+        ctypes.c_int,
-+        ctypes.c_int,
-+    ]
-+    engine.benchmarks_splash_terminate.argtypes = []
-+    return engine
++    import splash_bindings
++
++    return splash_bindings
 +
 +
 +def _main(args, input, output):
-+    argv = (ctypes.c_char_p * (len(args) + 1))(*(str(arg).encode() for arg in args), None)
-+    returncode = _engine().benchmarks_splash_main(len(args), argv, input, output)
-+    ctypes.CDLL(None).fflush(None)
-+    return returncode
++    argv = (ctypes.POINTER(ctypes.c_char) * (len(args) + 1))(
++        *(ctypes.create_string_buffer(str(arg).encode()) for arg in args), None
++    )
++    return _engine().benchmarks_splash_main(len(args), argv, input, output)
 +
 +
 +def _drain(descriptor, chunks):
@@ -108,7 +98,7 @@ index 0000000..bb863e7
 +
 +    kill = terminate
 diff --git a/install/models.py b/install/models.py
-index cb6033c..593ee13 100644
+index a39003e..ccda474 100644
 --- a/install/models.py
 +++ b/install/models.py
 @@ -41,9 +41,11 @@ if __name__ == "__main__" and not __package__:
@@ -124,7 +114,7 @@ index cb6033c..593ee13 100644
  # The bound on one JSON metadata file the installer reads, a larger one being
  # refused unread: configs are kilobytes, and a shard index names every tensor,
  # 14 MB for a checkpoint that stores each routed expert's tensors of its own
-@@ -89,7 +91,7 @@ def run_engine(arguments, check):
+@@ -105,7 +107,7 @@ def run_engine(arguments, check):
      engine = paths.BINARY
      replace = "reinstall Splash" if paths.PACKAGED else "rebuild it with make"
      try:
@@ -134,10 +124,10 @@ index cb6033c..593ee13 100644
          )
      except OSError as error:
 diff --git a/install/paths.py b/install/paths.py
-index 4509cc6..5c2eff8 100644
+index 4509cc6..89cc969 100644
 --- a/install/paths.py
 +++ b/install/paths.py
-@@ -1,11 +1,18 @@
+@@ -1,11 +1,17 @@
  """Immutable program files and writable per-user data, for source or release."""
  
 +import sys
@@ -149,10 +139,9 @@ index 4509cc6..5c2eff8 100644
 -MODELS = DATA / "models" if PACKAGED else ROOT / "install/models"
 -RUNTIME = DATA / "runtime" if PACKAGED else ROOT / "build/runtime"
 +SANDBOXED = sys.platform == "ios"
-+PER_USER = PACKAGED or SANDBOXED
-+DATA = Path.home() / "Library/Application Support/Splash" if PER_USER else ROOT
-+MODELS = DATA / "models" if PER_USER else ROOT / "install/models"
-+RUNTIME = DATA / "runtime" if PER_USER else ROOT / "build/runtime"
++DATA = Path.home() / "Library/Application Support/Splash"
++MODELS = DATA / "models"
++RUNTIME = DATA / "runtime"
  PYTHON = ROOT / ("python/bin/python3" if PACKAGED else ".venv/bin/python")
 -BINARY = ROOT / ("engine/splash" if PACKAGED else "build/splash")
 +BINARY = (
@@ -161,7 +150,7 @@ index 4509cc6..5c2eff8 100644
 +    else ROOT / ("engine/splash" if PACKAGED else "build/splash")
 +)
 diff --git a/runtime/ane/Program.mm b/runtime/ane/Program.mm
-index 3840533..90e30a7 100644
+index 887241d..1cd6e9a 100644
 --- a/runtime/ane/Program.mm
 +++ b/runtime/ane/Program.mm
 @@ -6,7 +6,7 @@
@@ -173,14 +162,34 @@ index 3840533..90e30a7 100644
  
  #include <dispatch/dispatch.h>
  #include <dlfcn.h>
+diff --git a/runtime/benchmarks.h b/runtime/benchmarks.h
+new file mode 100644
+index 0000000..1d64a26
+--- /dev/null
++++ b/runtime/benchmarks.h
+@@ -0,0 +1,12 @@
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++int benchmarks_splash_main(int argc, char **argv, int input, int output);
++void benchmarks_splash_terminate(void);
++
++#ifdef __cplusplus
++}
++#endif
 diff --git a/runtime/main.mm b/runtime/main.mm
-index 3e157b1..67363f4 100644
+index 27c5deb..3f18426 100644
 --- a/runtime/main.mm
 +++ b/runtime/main.mm
-@@ -7,9 +7,12 @@
- #include "engine/Status.hpp"
+@@ -8,9 +8,14 @@
+ #include "engine/NativeArguments.hpp"
  #include "model/ModelDescriptor.hpp"
  
++#include "benchmarks.h"
++#include <cstdio>
 +#include <TargetConditionals.h>
 +#if TARGET_OS_OSX
  #include <IOKit/pwr_mgt/IOPMLib.h>
@@ -191,7 +200,7 @@ index 3e157b1..67363f4 100644
  #include <mach/mach_error.h>
  #include <sysexits.h>
  #include <unistd.h>
-@@ -22,7 +25,6 @@
+@@ -23,7 +28,6 @@
  #include <cstdint>
  #include <cstdlib>
  #include <filesystem>
@@ -199,7 +208,7 @@ index 3e157b1..67363f4 100644
  #include <memory>
  #include <optional>
  #include <stdexcept>
-@@ -31,7 +33,6 @@
+@@ -32,7 +36,6 @@
  #include <system_error>
  #include <thread>
  #include <utility>
@@ -207,7 +216,7 @@ index 3e157b1..67363f4 100644
  
  #ifndef SPLASH_BUILD_ID
  #error "production build requires the generated BuildIdentity.hpp"
-@@ -108,6 +109,7 @@ private:
+@@ -109,6 +112,7 @@ private:
  // does: the display may still sleep, and the lid, the Sleep command or a low
  // battery still sleep the Mac; requests continue when it wakes. Without the
  // assertion the engine serves on and says so once.
@@ -215,7 +224,7 @@ index 3e157b1..67363f4 100644
  class IdleSleepAssertion final {
  public:
    IdleSleepAssertion() = default;
-@@ -140,6 +142,7 @@ private:
+@@ -141,6 +145,7 @@ private:
    IOPMAssertionID assertion_ = kIOPMNullAssertionID;
    bool reported_ = false;
  };
@@ -223,7 +232,7 @@ index 3e157b1..67363f4 100644
  
  void printUsage(std::string_view executable) {
    const std::string command(executable);
-@@ -159,16 +162,11 @@ void printUsage(std::string_view executable) {
+@@ -185,16 +190,11 @@ int reportFailure(std::string_view executable) {
  }
  
  std::filesystem::path executablePath() {
@@ -244,7 +253,7 @@ index 3e157b1..67363f4 100644
    if (error) {
      throw std::runtime_error("could not canonicalize executable path: " +
                               error.message());
-@@ -242,20 +240,27 @@ public:
+@@ -269,20 +269,27 @@ public:
      action.sa_handler = requestShutdownFromSignal;
      sigemptyset(&action.sa_mask);
      action.sa_flags = 0;
@@ -277,60 +286,66 @@ index 3e157b1..67363f4 100644
 +  struct sigaction inherited_[std::size(kSignals)] {};
  };
  
- // The time a clean stop gives the newest restore points of a persistent
-@@ -302,13 +307,15 @@ void reportStartFailure(engine::FdTransport &transport,
-   }
- }
- 
--int runNative(const engine::NativeArguments &arguments) {
-+int runNative(const engine::NativeArguments &arguments, int input, int output) {
+ // The time the newest restore points of a persistent cache get to reach the
+@@ -345,13 +352,15 @@ int refuseStart(engine::FdTransport &transport, std::string_view executable) {
+ // line is read, so that every start that fails before Ready tells the server
+ // why (refuseStart), and a start whose server has gone stops: the input's end
+ // before run() requests a shutdown (FdTransport).
+-int serveNative(int argc, char **argv) {
++int serveNative(int argc, char **argv, int input, int output) {
    if (const std::filesystem::path caches = splashCaches(); !caches.empty())
      reportLegacyWeightCache(caches / "weights");
 -  engine::FdTransport transport(STDIN_FILENO, STDOUT_FILENO);
 +  engine::FdTransport transport(input, output);
    ShutdownSignals signals(transport);
-   MemoryPressureMonitor pressureMonitor(transport.controlNotifier());
+   std::optional<MemoryPressureMonitor> pressureMonitor;
 +#if TARGET_OS_OSX
    IdleSleepAssertion idleSleep;
 +#endif
-   engine::RuntimeMetrics metrics;
-   engine::RuntimeBootstrap *published = nullptr;
-   auto statusProvider = [&] {
-@@ -327,8 +334,10 @@ int runNative(const engine::NativeArguments &arguments) {
-     config.resources.memoryPressure = [&] { return pressureMonitor.pressure(); };
-     config.resources.cancelled = [&] { return transport.shutdownRequested(); };
-     config.nativeLoop.metrics = &metrics;
+ 
+   std::unique_ptr<engine::ServingRuntime> runtime;
+   try {
+@@ -365,8 +374,10 @@ int serveNative(int argc, char **argv) {
+       engine::RuntimeBootstrapConfig config = bootstrapConfig(arguments);
+       config.resources.memoryPressure = [&] { return pressureMonitor->pressure(); };
+       config.resources.cancelled = [&] { return transport.shutdownRequested(); };
 +#if TARGET_OS_OSX
-     if (arguments.preventIdleSleep)
-       config.nativeLoop.holdingRequests = [&](bool held) { idleSleep.hold(held); };
+       if (arguments.preventIdleSleep)
+         config.nativeLoop.holdingRequests = [&](bool held) { idleSleep.hold(held); };
 +#endif
-     try {
-       bootstrap = engine::RuntimeBootstrap::start(
-           std::move(config), transport.outputSink(), statusProvider);
-@@ -427,7 +436,9 @@ int checkModel(int argc, char **argv) {
+       try {
+         runtime = engine::ServingRuntime::start(std::move(config), transport.outputSink(),
+                                                 [&transport] { return transport.maxTickMilliseconds(); });
+@@ -502,7 +513,9 @@ int printFamilies(int argc) {
  } // namespace
  } // namespace splash
  
 -int main(int argc, char **argv) {
 +extern "C" void benchmarks_splash_terminate() { splash::requestShutdownFromSignal(SIGTERM); }
 +
-+extern "C" int benchmarks_splash_main(int argc, char **argv, int input, int output) {
++static int splashMain(int argc, char **argv, int input, int output) {
    @autoreleasepool {
      try {
-       if (argc == 2 && std::string_view(argv[1]) == "device-check")
-@@ -436,7 +447,7 @@ int main(int argc, char **argv) {
-         return splash::checkModel(argc, argv);
-       const splash::engine::NativeArguments arguments =
-           splash::engine::parseNativeArguments(argc, argv);
--      return splash::runNative(arguments);
-+      return splash::runNative(arguments, input, output);
-     } catch (const splash::engine::UsageError &error) {
-       splash::writeStderrLine(std::string("error: ") + error.what());
-       splash::printUsage(argc > 0 ? argv[0] : "splash");
-@@ -452,3 +463,7 @@ int main(int argc, char **argv) {
+       const std::string_view command = argc > 1 ? argv[1] : "";
+@@ -513,7 +526,7 @@ int main(int argc, char **argv) {
+       if (command == "families")
+         return splash::printFamilies(argc);
+       if (command == "serve-native")
+-        return splash::serveNative(argc, argv);
++        return splash::serveNative(argc, argv, input, output);
+       throw splash::engine::UsageError(command.empty() ? std::string("expected a command")
+                                                        : "unknown command " + std::string(command));
+     } catch (const std::exception &) {
+@@ -521,3 +534,13 @@ int main(int argc, char **argv) {
      }
    }
  }
++
++int benchmarks_splash_main(int argc, char **argv, int input, int output) {
++  const int result = splashMain(argc, argv, input, output);
++  std::fflush(nullptr);
++  return result;
++}
 +
 +int main(int argc, char **argv) {
 +  return benchmarks_splash_main(argc, argv, STDIN_FILENO, STDOUT_FILENO);

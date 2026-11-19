@@ -14,7 +14,3 @@ def add_options(parser: pytest.Parser) -> None:
 
 class TestMLX(EngineTests):
     engine_name = "mlx"
-
-    @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "--project", "engine-mlx", "bench-mlx", "--model", config.getoption("mlx_model")]
