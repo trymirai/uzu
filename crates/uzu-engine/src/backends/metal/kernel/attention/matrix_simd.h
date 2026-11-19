@@ -191,9 +191,10 @@ METAL_FUNC void attention_matrix_simd(
     const uint chunk_offset = (block - block_begin) % (Scratch::CHUNK_KEYS / BK) * BK;
     if (chunk_offset == 0) {
       for (uint k = thread_index; k < Scratch::CHUNK_KEYS; k += THREADS) {
-        const int slot = IS_SPARSE ? key_slot(query_slots, slots_per_query, query_tile, key_base + k)
-                                   : (key_base + k < params.k_len ? int(key_base + k) : uzu::kv_layout::NO_KEY_SLOT);
-        const int row = slot >= 0 ? int(shape.scale_index(uint(slot), kv_head_index)) : uzu::kv_layout::NO_KEY_SLOT;
+        const int slot =
+            IS_SPARSE ? key_slot(query_slots, slots_per_query, query_tile, key_base + k) : int(key_base + k);
+        const int row =
+            uint(slot) < params.k_len ? int(shape.scale_index(uint(slot), kv_head_index)) : uzu::kv_layout::NO_KEY_SLOT;
         chunk_rows[k] = row;
         chunk_key_scales[k] = row >= 0 ? float(key_scales[row]) : 0.0f;
         chunk_value_scales[k] = row >= 0 ? float(value_scales[row]) : 0.0f;
