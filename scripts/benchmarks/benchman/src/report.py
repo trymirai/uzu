@@ -78,8 +78,8 @@ class Run:
         return Text(f"{self.host} {self.engine} {self.model}", style=f"link {self.url}" if self.url else "")
 
     def measured(self) -> str:
-        """How many of the tasks have results, once any has."""
-        return f"{len(self.responses)}/{len(self.tasks)}" if self.responses else ""
+        """How many of the tasks have results, if only some have."""
+        return f"{len(self.responses)}/{len(self.tasks)}" if 0 < len(self.responses) < len(self.tasks) else ""
 
     def progress(self) -> Spinner:
         step = f"{self.step} {(datetime.now(UTC) - self.since).total_seconds():.1f} s" if self.since else ""
@@ -90,8 +90,8 @@ class Run:
     def announce(self) -> None:
         """Prints how the run ended; above the progress, if that is shown."""
         style = {True: "bold green", False: "bold red", None: "bold yellow"}[self.completed]
-        measured = f" {self.measured()}" if self.responses and not self.completed else ""
-        console.print(Text.assemble((f"{self.state:>9} ", style), self.name(), measured), highlight=False)
+        line = Text.assemble((f"{self.state:>9} ", style), self.name(), f" {self.measured()}".rstrip())
+        console.print(line, highlight=False)
 
 
 RUNS = TypeAdapter(list[Run])

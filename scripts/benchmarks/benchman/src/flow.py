@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from functools import cache
+from threading import Lock
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
@@ -289,6 +290,7 @@ class Dispatch:
             for run, claimable in unclaimed.items()
         }
 
+        bundling = Lock()
         with get_client(sync_client=True) as client, ThreadPoolExecutor(THREADS) as pool:
             steps = {}
             for work_pool, source in {(run.work_pool, run.source) for run in unclaimed}:
@@ -323,7 +325,10 @@ class Dispatch:
             def schedule(run: Run) -> None:
                 storage = pool_storage(run.work_pool)
                 remote = benchmark.with_options(result_storage=storage.block)
-                bundle = create_bundle_for_flow_run(flow=remote, flow_run=flow_runs[run])["bundle"]
+                # One at a time: Prefect has the flow's modules pickled by value only while it makes a bundle,
+                # so the end of one would leave another with modules that the workers don't have.
+                with bundling:
+                    bundle = create_bundle_for_flow_run(flow=remote, flow_run=flow_runs[run])["bundle"]
                 # Where the work pool's upload step would store it, without starting that step's process.
                 (step,) = steps[run.work_pool].bundle_upload_step.values()
                 storage.write_bundle(step["bucket"], bundle_keys[run], bundle)
