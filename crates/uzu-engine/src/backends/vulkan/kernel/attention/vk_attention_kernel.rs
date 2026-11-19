@@ -78,7 +78,13 @@ impl AttentionKernel for VkAttentionKernel {
             impl BufferRef<Backend = Vulkan>,
             impl BufferRef<Backend = Vulkan>,
         >,
-        arguments: AttentionArguments<'_, Vulkan, impl BufferRef<Backend = Vulkan>, impl BufferRef<Backend = Vulkan>>,
+        arguments: AttentionArguments<
+            '_,
+            Vulkan,
+            impl BufferRef<Backend = Vulkan>,
+            impl BufferRef<Backend = Vulkan>,
+            impl BufferRef<Backend = Vulkan>,
+        >,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<<Vulkan as Backend>::ScratchBuffer, Error> {
         assert!(arguments.key_slots.is_none(), "the Vulkan attention has no sparse core");

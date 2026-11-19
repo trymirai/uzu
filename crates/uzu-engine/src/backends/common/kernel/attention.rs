@@ -29,6 +29,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
             Self::Backend,
             impl BufferRef<Backend = Self::Backend>,
             impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
         >,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
@@ -49,17 +50,23 @@ pub struct AttentionKernelConfig {
     pub sparse: bool,
 }
 
-pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
+pub struct AttentionArguments<
+    'a,
+    B: Backend,
+    TT: BufferRef<Backend = B>,
+    GT: BufferRef<Backend = B>,
+    ST: BufferRef<Backend = B>,
+> {
     pub suffix_length: u32,
     pub trie: Option<TT>,
-    pub key_slots: Option<KeySlots<'a, B>>,
+    pub key_slots: Option<KeySlots<ST>>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
 }
 
-pub struct KeySlots<'a, B: Backend> {
-    pub query_slots: &'a B::ScratchBuffer,
+pub struct KeySlots<ST: BufferRef> {
+    pub query_slots: ST,
     pub slots_per_query: u32,
 }
 

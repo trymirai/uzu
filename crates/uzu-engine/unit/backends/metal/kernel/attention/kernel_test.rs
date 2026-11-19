@@ -199,12 +199,8 @@ fn attention_matches_cpu() {
                     let mut query_scales = create_buffer::<Metal, bf16>(&metal, kv_heads * query_rows);
                     let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
                     let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
-                    let key_slots = (sparse && attend).then(|| {
-                        let source = command_buffer.allocate_constant_from_slice(&slot_list).unwrap();
-                        let mut slots = command_buffer.allocate_scratch(size_of_val(slot_list.as_slice())).unwrap();
-                        command_buffer.encode_copy(&source, &mut slots);
-                        slots
-                    });
+                    let key_slots =
+                        (sparse && attend).then(|| command_buffer.allocate_constant_from_slice(&slot_list).unwrap());
                     prepare.encode(
                         &create_buffer_with_data::<Metal, bf16>(&metal, rows),
                         &mut query_codes,
@@ -257,7 +253,7 @@ fn attention_matches_cpu() {
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
                     let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * head_dim);
                     command_buffer.encode_copy(&pooled, &mut output);
-                    drop((pooled, trie));
+                    drop((pooled, trie, key_slots));
                     submit_command_buffer(command_buffer);
                     buffer_to_vec::<Metal, bf16>(&metal, &output)
                 };

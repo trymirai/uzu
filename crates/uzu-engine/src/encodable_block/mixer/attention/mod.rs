@@ -5,7 +5,10 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::qkv_norm::QKVNormParams,
-        kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
+        kernel::{
+            AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+            attention::KeySlots,
+        },
     },
     config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
@@ -271,7 +274,7 @@ impl<B: Backend> Attention<B> {
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
                         trie: trie.as_ref(),
-                        key_slots: None,
+                        key_slots: None::<KeySlots<&B::ConstantBuffer>>,
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,

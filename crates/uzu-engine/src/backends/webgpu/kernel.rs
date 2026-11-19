@@ -52,7 +52,13 @@ impl AttentionKernel for Unsupported<WebGPU> {
             impl BufferRef<Backend = WebGPU>,
             impl BufferRef<Backend = WebGPU>,
         >,
-        _arguments: AttentionArguments<'_, WebGPU, impl BufferRef<Backend = WebGPU>, impl BufferRef<Backend = WebGPU>>,
+        _arguments: AttentionArguments<
+            '_,
+            WebGPU,
+            impl BufferRef<Backend = WebGPU>,
+            impl BufferRef<Backend = WebGPU>,
+            impl BufferRef<Backend = WebGPU>,
+        >,
         _command_buffer: &mut WebGPUCommandBufferEncoding,
     ) -> Result<<WebGPU as Backend>::ScratchBuffer, WebGPUError> {
         Err(WebGPUError::NotSupported)
