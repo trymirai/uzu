@@ -15,7 +15,7 @@ use shoji::{
             Error,
             chat_message::{Output, ToolCallState},
             chat_token::{
-                Backend, Instance as ChatTokenBackendInstance, StreamConfig, StreamInput, StreamOutput,
+                Backend, Instance as ChatTokenBackendInstance, StreamConfig, StreamImage, StreamInput, StreamOutput,
                 TokenStreamMetrics,
             },
         },
@@ -33,16 +33,23 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use crate::util::power::{EnergyRecorder, Error as EnergyError};
-use crate::{chat::ChatSessionError, util::helpers::error_stream};
+use crate::{
+    chat::{
+        ChatSessionError,
+        image::{ImageHash, get_image_hashes, get_image_urls},
+    },
+    util::helpers::error_stream,
+};
 
 pub struct Session {
     instance: Arc<dyn ChatTokenBackendInstance>,
     state: Box<dyn State>,
     encoding: Encoding,
-    input_tokens: Vec<u64>,
+    input: StreamInput,
     stop_token_ids: Box<[u64]>,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     energy_recorder: EnergyRecorder,
+    cached_image_ids: Vec<ImageHash>,
 }
 
 impl Session {
@@ -104,10 +111,11 @@ impl Session {
             instance,
             state,
             encoding,
-            input_tokens: Vec::new(),
+            input: StreamInput::default(),
             stop_token_ids,
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             energy_recorder: EnergyRecorder::new(),
+            cached_image_ids: Vec::new(),
         })
     }
 
@@ -143,7 +151,7 @@ impl Session {
             reply: config.clone(),
             grammar_trigger: self.encoding.grammar_trigger().map(str::to_owned),
         };
-        let stream = instance.stream(&self.input_tokens, self.state.as_mut(), stream_config, cancel_token.clone());
+        let stream = instance.stream(&self.input, self.state.as_mut(), stream_config, cancel_token.clone());
         let output_tokens_start = self.encoding.state().tokens.len();
 
         let stream_state = StreamingState {
@@ -161,7 +169,7 @@ impl Session {
             time_prefill_start,
             time_first_token: None,
             input_energy: None,
-            total_tokens_input: self.input_tokens.len(),
+            total_tokens_input: self.input.tokens.len(),
             cached_tokens_input,
             total_tokens_output: 0,
             memory_usage: None,
@@ -217,40 +225,90 @@ impl Session {
         &mut self,
         messages: &[ChatMessage],
     ) -> Result<usize, ChatSessionError> {
+        // Every image renders to the same tokens, so the cached prefix is reusable only if its images are the same too
+        let image_hashes = if self.encoding.image_pad_token_id().is_some() {
+            get_image_hashes(messages)?
+        } else {
+            Vec::new()
+        };
+        let cached_images_match = image_hashes.starts_with(&self.cached_image_ids);
+
         let cached = self.encoding.state().tokens.clone();
-        if let Some(suffix) = self.encoding.try_append(messages).map_err(ChatSessionError::backend)? {
-            self.input_tokens = suffix.into_iter().map(u64::from).collect();
+        if cached_images_match
+            && let Some(suffix) = self.encoding.try_append(messages).map_err(ChatSessionError::backend)?
+        {
+            self.input = self.attach_images(messages, suffix.into_iter().map(u64::from).collect())?;
+            self.cached_image_ids = image_hashes;
             return Ok(cached.len());
         }
 
         let rendered_ids = self.build_input(messages)?;
         let cached_ids: Vec<_> = cached.iter().map(|token| u64::from(token.id)).collect();
-        // Without an append operation preserving the sampled encoding, the newly
-        // built encoding can describe the live backend only if token IDs match.
-        if rendered_ids.starts_with(&cached_ids) {
-            self.input_tokens = rendered_ids[cached_ids.len()..].to_vec();
+        if cached_images_match && rendered_ids.starts_with(&cached_ids) {
+            self.input = self.attach_images(messages, rendered_ids[cached_ids.len()..].to_vec())?;
+            self.cached_image_ids = image_hashes;
             return Ok(cached_ids.len());
         }
 
         self.state_reset().await?;
-        let cached_text: String = cached.iter().map(|token| token.value.as_str()).collect();
-        let rendered_text = self.encoding.state().text();
-        tracing::warn!(
-            "Reprefill: {}",
-            describe_reprefill(&cached, &self.encoding.state().tokens, &cached_text, &rendered_text)
-        );
-        self.input_tokens = rendered_ids;
+        if cached_images_match {
+            let cached_text: String = cached.iter().map(|token| token.value.as_str()).collect();
+            let rendered_text = self.encoding.state().text();
+            tracing::warn!(
+                "Reprefill: {}",
+                describe_reprefill(&cached, &self.encoding.state().tokens, &cached_text, &rendered_text)
+            );
+        } else {
+            tracing::warn!("Reprefill: an image in the cached prompt changed");
+        }
+        self.input = self.attach_images(messages, rendered_ids)?;
+        self.cached_image_ids = image_hashes;
         Ok(0)
     }
 
     fn build_input(
         &mut self,
         all_messages: &[ChatMessage],
-    ) -> Result<StreamInput, ChatSessionError> {
+    ) -> Result<Vec<u64>, ChatSessionError> {
         self.encoding.reset().map_err(ChatSessionError::backend)?;
         self.encoding.encode(all_messages.to_vec()).map_err(ChatSessionError::backend)?;
         let all_tokens = self.encoding.state().tokens.iter().map(|token| token.id as u64).collect::<Vec<u64>>();
         Ok(all_tokens)
+    }
+
+    fn attach_images(
+        &self,
+        messages: &[ChatMessage],
+        tokens: Vec<u64>,
+    ) -> Result<StreamInput, ChatSessionError> {
+        let Some(pad) = self.encoding.image_pad_token_id().map(u64::from) else {
+            return Ok(StreamInput {
+                tokens,
+                images: Vec::new(),
+            });
+        };
+
+        let starts = tokens.iter().enumerate().filter(|&(_, &token)| token == pad).map(|(index, _)| index);
+        let urls = get_image_urls(messages).collect::<Vec<_>>();
+        let pad_count = starts.clone().count();
+        let first = urls.len().checked_sub(pad_count).ok_or_else(|| {
+            ChatSessionError::backend(format!(
+                "prompt has {pad_count} image pad tokens, but messages have {} images",
+                urls.len()
+            ))
+        })?;
+        let images = starts
+            .zip(&urls[first..])
+            .map(|(start, url)| StreamImage {
+                start,
+                url: url.to_string(),
+            })
+            .collect();
+
+        Ok(StreamInput {
+            tokens,
+            images,
+        })
     }
 
     fn build_output(

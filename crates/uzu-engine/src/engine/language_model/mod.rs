@@ -6,7 +6,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::model::language_model::LanguageModelConfig,
+    config::{model::language_model::LanguageModelConfig, vision::VisionConfig},
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
@@ -173,5 +173,9 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn tokenizer(&self) -> &Arc<Tokenizer> {
         &self.tokenizer
+    }
+
+    pub fn vision_config(&self) -> Option<&VisionConfig> {
+        self.vision_model.as_ref().map(|vision_model| &vision_model.config)
     }
 }

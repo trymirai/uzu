@@ -52,7 +52,7 @@ impl BackendInstance for FunctionGemma {
     ) -> Pin<Box<dyn InstanceStream<Item = Result<StreamOutput, Error>, Metrics = Self::StreamMetrics> + Send + 'a>>
     {
         let mut cached = self.cached_tokens.lock().unwrap();
-        cached.extend(input.iter().map(|id| *id as u32));
+        cached.extend(input.tokens.iter().map(|id| *id as u32));
         let prompt = self.tokenizer.decode(&cached, false).unwrap();
         let output = if prompt.contains("Follow up") {
             "Answer<end_of_turn>"

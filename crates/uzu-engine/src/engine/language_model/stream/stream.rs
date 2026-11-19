@@ -21,6 +21,7 @@ use crate::{
         LanguageModel,
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
+        vision::encode::{VisionPrefillError, VisionPrefillResult},
     },
     trie::TrieNode,
     utils::{
@@ -272,6 +273,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+
+        let mut prefilled_images: Option<VisionPrefillResult<B>> = None;
+        if !images.is_empty() {
+            let vision_model = self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+            let images = vision_model.prefill(images, &mut command_buffer)?;
+            prefilled_images = Some(images)
+        }
 
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
             let token_ids = command_buffer

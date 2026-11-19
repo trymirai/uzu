@@ -55,6 +55,9 @@ impl<B: Backend> VisionModel<B> {
         images: &[VisionImageInput],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<VisionPrefillResult<B>, VisionPrefillError<B>> {
+        let patch_size = self.config.encoder_config.patch_size;
+        let merge_size = self.config.encoder_config.spatial_merge_size;
+
         let mut images = Vec::<VisionPrefilledImage<B>>::with_capacity(images.len());
         let result = VisionPrefillResult {
             images: images.into_boxed_slice(),

@@ -11,6 +11,7 @@ use crate::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
+        vision::encode::VisionPrefillError,
     },
     speculators::dflash_tfm::DFlashTreeError,
 };
@@ -44,6 +45,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     NoSeedToken,
     #[error("Context overflow")]
     ContextOverflow,
+    #[error("Image error: {0}")]
+    Vision(#[from] VisionPrefillError<B>),
 }
 
 impl<B: Backend> LanguageModel<B> {

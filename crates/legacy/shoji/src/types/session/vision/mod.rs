@@ -1,5 +1,5 @@
 pub struct VisionImageInput {
-    pixels: Box<[u8]>,
-    width: u32,
-    height: u32,
+    pub pixels: Box<[u8]>,
+    pub width: u32,
+    pub height: u32,
 }

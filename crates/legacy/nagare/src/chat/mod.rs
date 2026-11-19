@@ -6,6 +6,7 @@ mod bindings_pyo3;
 mod bindings_wasm;
 mod chat_instance;
 mod error;
+mod image;
 pub mod message;
 pub mod token;
 pub mod tool_call;

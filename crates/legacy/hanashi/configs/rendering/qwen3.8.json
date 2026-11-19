@@ -58,7 +58,8 @@
     "content": {
      "required": true,
      "blocks": [
-      "text"
+      "text",
+      "image"
      ]
     }
    }
