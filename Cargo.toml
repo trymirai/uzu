@@ -31,7 +31,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.98"
-version = "0.7.1"
+version = "0.7.2"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -235,7 +235,7 @@ needless_range_loop = "allow" # TODO: remove
 missing_safety_doc = "allow" # TODO: maybe remove?
 
 [workspace.metadata.published]
-version = "0.7.1"
+version = "0.7.2"
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["backend"]

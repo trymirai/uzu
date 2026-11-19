@@ -197,6 +197,14 @@ export function PlusIcon(props: IconProps) {
 }
 
 /** Copy: a square over the corner of the one behind it (the Figma copy icon, scaled from its 32px grid). */
+export function MinusIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M5.5 12H18.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function CopyIcon(props: IconProps) {
   return (
     <Svg {...props}>
