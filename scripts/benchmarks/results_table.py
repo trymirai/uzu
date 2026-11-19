@@ -44,12 +44,14 @@ def main(
     engines = len({run.engine for run in measured}) > 1
     speculative = any(run.ready is not None and run.ready.specdec for run in measured)
     metrics = [metric for metric in SHOWN if speculative or metric.name not in SPECULATIVE]
-    names = ["Host", *(["Engine"] if engines else []), "Model"]
+    partial = any(run.measured() for run in measured)
+    names = ["Host", *(["Engine"] if engines else []), "Model", *(["Tasks"] if partial else [])]
     rows = [
         [
             run.host.rpartition("/")[2],
             *([run.engine] if engines else []),
             run.model.removeprefix("trymirai/"),
+            *([run.measured()] if partial else []),
             *results(run, bases.get((run.host, run.engine, run.model)), base is not None, metrics),
         ]
         for run in measured
