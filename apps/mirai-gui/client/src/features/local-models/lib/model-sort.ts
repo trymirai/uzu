@@ -1,17 +1,6 @@
 import type { PlatformModel } from "@/types/models";
 import { formatModelName } from "@/utils/format";
 
-export type SizeAccessor = (model: PlatformModel) => number;
-
-export function createSizeAccessor(getModelState: (id: string) => { totalKbytes?: number } | undefined): SizeAccessor {
-  return (m: PlatformModel): number => {
-    const id = m.repoId;
-    const fromState = getModelState(id)?.totalKbytes ?? 0;
-    const fromModel = typeof m.size === "number" ? m.size / 1000 : 0;
-    return fromState > 0 ? fromState : fromModel > 0 ? fromModel : 0;
-  };
-}
-
 const collator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
