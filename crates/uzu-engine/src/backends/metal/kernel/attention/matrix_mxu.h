@@ -311,7 +311,7 @@ METAL_FUNC void attention_matrix_mxu(
       METAL_PRAGMA_UNROLL
       for (int key = 0; key < LANE_KEYS; ++key) {
         const int slot = simd_shuffle(lane_slot, ushort(lane_first_key + uint(key)));
-        key_offsets[key] = (uint)shape.k_code_index(uint(max(slot, 0)), kv_head_index, lane_channel);
+        key_offsets[key] = (uint)shape.k_code_index(min(uint(slot), params.k_len - 1u), kv_head_index, lane_channel);
       }
     } else {
       key_offsets[0] = first_key_offset + key_block * shape.block_stride();
@@ -403,8 +403,8 @@ METAL_FUNC void attention_matrix_mxu(
           bool valid;
           if constexpr (IS_SPARSE) {
             const int column_slot = simd_shuffle(lane_slot, ushort(lane_column_key(lane_col)));
-            scale_index = shape.scale_index(uint(max(column_slot, 0)), kv_head_index);
-            valid = column_slot >= 0;
+            scale_index = shape.scale_index(min(uint(column_slot), params.k_len - 1u), kv_head_index);
+            valid = uint(column_slot) < params.k_len;
           } else {
             const uint key = key_base + lane_column_key(lane_col);
             scale_index =
@@ -413,7 +413,7 @@ METAL_FUNC void attention_matrix_mxu(
                     (!is_kv_cache_ring || key >= prefix_length ||
                      (prefix_length + key - ring_params.ring_offset) % prefix_length < ring_params.ring_length);
           }
-          // Unlisted slots read row 0's scale and are masked.
+          // Unlisted slots read the last key's scale and are masked.
           key_scale_values[lane_col] = AccumType(key_scales[scale_index]);
           const float value_scale = float(value_scales[scale_index]);
           log2_value_scales[lane_col] = valid ? metal::precise::log2(value_scale) : (IS_SPARSE ? -INFINITY : 0.0f);
@@ -531,7 +531,8 @@ METAL_FUNC void attention_matrix_mxu(
         for (int key = 0; key < LANE_KEYS; ++key) {
           const int slot = step_slots[published_block * uint(uzu::kv_layout::TILE_KEYS) + lane_first_key + uint(key)];
           value_offsets[key] =
-              (uint)shape.v_code_index(uint(max(slot, 0)), kv_head_index, channel_offset + lane_channel);
+              (uint)
+                  shape.v_code_index(min(uint(slot), params.k_len - 1u), kv_head_index, channel_offset + lane_channel);
         }
       } else {
         METAL_PRAGMA_UNROLL

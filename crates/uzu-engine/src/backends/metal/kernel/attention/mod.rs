@@ -51,7 +51,15 @@ impl AttentionMetalKernel {
                 128
             })
         .max(1);
-        let simd_rows = |simdgroups| simdgroups * 8 / slices;
+        let tile_rows = |simdgroups| {
+            simdgroups
+                * if use_mxu {
+                    kv_layout::TILE_QUERIES
+                } else {
+                    8
+                }
+                / slices
+        };
         let mut tiles = Vec::new();
         for simdgroups in [1, 2, 4, 6, 8] {
             if simdgroups % slices != 0 {
@@ -75,11 +83,7 @@ impl AttentionMetalKernel {
             };
             tiles.push(KernelTile {
                 simdgroups,
-                rows: if use_mxu {
-                    simdgroups * kv_layout::TILE_QUERIES / (config.head_dim / kv_layout::SLICE_DIMS)
-                } else {
-                    simd_rows(simdgroups)
-                },
+                rows: tile_rows(simdgroups),
                 prefix: (use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none())
                     .then(|| kernel(true, false))
                     .transpose()?,
@@ -134,7 +138,7 @@ impl AttentionMetalKernel {
                         ));
                     }
                     let simdgroups = config.head_dim / kv_layout::SLICE_DIMS;
-                    let rows = simd_rows(simdgroups);
+                    let rows = tile_rows(simdgroups);
                     if config.num_q_heads / config.num_groups > rows {
                         return Err(MetalError::CannotCreateFunction(format!(
                             "sparse attention covers at most {rows} GQA rows"
