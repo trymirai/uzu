@@ -1,6 +1,6 @@
 use futures::executor::block_on;
 use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use rand::{RngExt, SeedableRng, rngs::SmallRng, seq::SliceRandom};
 use uzu_engine_macros::uzu_test;
 
 use crate::{
@@ -10,6 +10,7 @@ use crate::{
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+                attention::{KeyArguments, KeySlots},
             },
         },
         metal::{Metal, kernel::attention::AttentionMetalKernel},
@@ -57,7 +58,10 @@ fn attention_matches_cpu() {
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareKernel;
     const NAN: u16 = bf16::NAN.to_bits();
     const DENORMAL: u16 = 1; // 1 / scale overflows to inf
-    for use_mxu in [false, true].into_iter().filter(|&use_mxu| !use_mxu || metal.supports_mxu) {
+    for (use_mxu, sparse) in [(false, false), (false, true), (true, false)]
+        .into_iter()
+        .filter(|&(use_mxu, _)| !use_mxu || metal.supports_mxu)
+    {
         // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)
         for (q_heads, suffix, prefix, use_trie, reader, poison) in [
             (8, 80, 16, false, false, NAN),
@@ -81,11 +85,15 @@ fn attention_matches_cpu() {
             (24, 64, 0, true, false, NAN),
         ] {
             let (head_dim, kv_heads) = match q_heads {
+                24 | 32 if sparse => (256, 2),
                 8 => (64, 2),
                 32 => (128, 2),
                 64 => (512, 4),
                 _ => (256, 4),
             };
+            if sparse && head_dim != 256 {
+                continue;
+            }
             let tokens: Vec<u64> = (0..suffix as u64).collect();
             let trie: Vec<GpuTrieNode> = if suffix == 8 {
                 // (start, end, height) per token
@@ -118,6 +126,7 @@ fn attention_matches_cpu() {
                 sliding_window_size: None,
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
+                sparse,
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
@@ -136,6 +145,23 @@ fn attention_matches_cpu() {
                 rows[(prefix + index % suffix) * stride + index / suffix * head_dim..][..head_dim]
                     .copy_from_slice(query);
             }
+            let mut rng = SmallRng::seed_from_u64(7);
+            let slot_list: Vec<i32> = (0..suffix * usize::from(sparse))
+                .flat_map(|node| {
+                    let visible = |key: &usize| {
+                        nodes.map_or(*key <= node, |nodes| {
+                            (nodes[*key].trie_start as usize..=nodes[*key].trie_end as usize).contains(&node)
+                        })
+                    };
+                    let mut row: Vec<i32> = (0..prefix)
+                        .chain((0..suffix).filter(visible).map(|key| prefix + key))
+                        .map(|slot| slot as i32)
+                        .collect();
+                    row.resize(prefix + suffix, kv_layout::NO_KEY_SLOT);
+                    row.shuffle(&mut rng);
+                    row
+                })
+                .collect();
             let mut fill = metal.create_command_buffer(None, None).unwrap();
             let mut kv =
                 KVCache::<Metal>::allocate_scratch(kernel.kv_layout(), (prefix + suffix).max(2048) as u32, &mut fill)
@@ -173,6 +199,8 @@ fn attention_matches_cpu() {
                     let mut query_scales = create_buffer::<Metal, bf16>(&metal, kv_heads * query_rows);
                     let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
                     let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
+                    let key_slots =
+                        (sparse && attend).then(|| command_buffer.allocate_constant_from_slice(&slot_list).unwrap());
                     prepare.encode(
                         &create_buffer_with_data::<Metal, bf16>(&metal, rows),
                         &mut query_codes,
@@ -214,14 +242,19 @@ fn attention_matches_cpu() {
                     let arguments = AttentionArguments {
                         sinks: None,
                         suffix_length: suffix as u32,
-                        trie: trie.as_ref(),
                         cache: KVCacheView::full(prefix as u32),
                         gate: gate.as_ref(),
+                        keys: key_slots.as_ref().map_or(KeyArguments::Dense(trie.as_ref()), |query_slots| {
+                            KeyArguments::Sparse(KeySlots {
+                                query_slots,
+                                slots_per_query: (prefix + suffix) as u32,
+                            })
+                        }),
                     };
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
                     let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * head_dim);
                     command_buffer.encode_copy(&pooled, &mut output);
-                    drop((pooled, trie));
+                    drop((pooled, trie, key_slots));
                     submit_command_buffer(command_buffer);
                     buffer_to_vec::<Metal, bf16>(&metal, &output)
                 };
@@ -234,8 +267,9 @@ fn attention_matches_cpu() {
                 rows[prefix * stride..].chunks_mut(stride).for_each(|row| row[q_heads * head_dim..].fill(bf16::ONE));
                 actual = step(&rows[prefix * stride..], prefix, nodes, false, true);
             }
-            let label =
-                format!("int8 attention mxu={use_mxu} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}");
+            let label = format!(
+                "int8 attention mxu={use_mxu} sparse={sparse} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}"
+            );
             let mut expected = quantized_attention_reference(shape, nodes);
             if let Some(gates) = &gates {
                 for (token, row) in expected.chunks_exact_mut(q_heads * head_dim).enumerate() {

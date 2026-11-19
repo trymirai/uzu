@@ -4,7 +4,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, kv_layout::KVLayout},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, attention::KeyArguments,
+                kv_layout::KVLayout,
+            },
         },
         metal::{
             Metal,
@@ -24,6 +27,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
+    sparse: Option<(u32, AttentionMatrixMetalKernel)>,
 }
 
 struct KernelTile {
@@ -47,6 +51,7 @@ impl AttentionMetalKernel {
                 128
             })
         .max(1);
+        let simd_rows = |simdgroups| simdgroups * 8 / slices;
         let mut tiles = Vec::new();
         for simdgroups in [1, 2, 4, 6, 8] {
             if simdgroups % slices != 0 {
@@ -59,6 +64,7 @@ impl AttentionMetalKernel {
                     config.head_dim,
                     use_mxu,
                     simdgroups,
+                    false,
                     config.is_causal,
                     config.is_kv_cache_ring,
                     config.sliding_window_size.is_some(),
@@ -72,7 +78,7 @@ impl AttentionMetalKernel {
                 rows: if use_mxu {
                     simdgroups * kv_layout::TILE_QUERIES / (config.head_dim / kv_layout::SLICE_DIMS)
                 } else {
-                    simdgroups * 8 / slices
+                    simd_rows(simdgroups)
                 },
                 prefix: (use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none())
                     .then(|| kernel(true, false))
@@ -119,6 +125,38 @@ impl AttentionMetalKernel {
                 config.gate_row_stride.is_some(),
                 config.has_sinks,
             )?,
+            sparse: config
+                .sparse
+                .then(|| {
+                    if config.is_kv_cache_ring || config.sliding_window_size.is_some() || !config.is_causal {
+                        return Err(MetalError::CannotCreateFunction(
+                            "sparse attention is causal without window or ring".to_string(),
+                        ));
+                    }
+                    let simdgroups = config.head_dim / kv_layout::SLICE_DIMS;
+                    let rows = simd_rows(simdgroups);
+                    if config.num_q_heads / config.num_groups > rows {
+                        return Err(MetalError::CannotCreateFunction(format!(
+                            "sparse attention covers at most {rows} GQA rows"
+                        )));
+                    }
+                    AttentionMatrixMetalKernel::new(
+                        context,
+                        DataType::BF16,
+                        config.head_dim,
+                        use_mxu,
+                        simdgroups,
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        config.num_groups,
+                    )
+                    .map(|core| (rows, core))
+                })
+                .transpose()?,
         })
     }
 }
@@ -140,7 +178,11 @@ impl AttentionKernel for AttentionMetalKernel {
         context: &MetalContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, MetalError> {
-        Self::new_with_mxu(context, &config, context.supports_mxu && config.data_type == DataType::BF16)
+        Self::new_with_mxu(
+            context,
+            &config,
+            context.supports_mxu && config.data_type == DataType::BF16 && !config.sparse,
+        )
     }
 
     fn encode(
@@ -150,13 +192,19 @@ impl AttentionKernel for AttentionMetalKernel {
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
-        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
+        arguments: AttentionArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let command_buffer = &mut *command_buffer.debug_group("attention core");
         let AttentionArguments {
             suffix_length,
-            trie,
+            keys,
             cache,
             gate,
             sinks,
@@ -180,7 +228,12 @@ impl AttentionKernel for AttentionMetalKernel {
             q_off: prefix_len,
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
-        let direct = !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
+        let (trie, sparse) = match (keys, &self.sparse) {
+            (KeyArguments::Dense(trie), None) => (trie, None),
+            (KeyArguments::Sparse(key_slots), Some((rows, core))) => (None, Some((key_slots, core, *rows))),
+            _ => panic!("attention arguments do not match AttentionKernelConfig::sparse"),
+        };
+        let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {
             2
         } else {
@@ -192,10 +245,21 @@ impl AttentionKernel for AttentionMetalKernel {
                 .min_by_key(|tile| (grouped_rows.div_ceil(tile.rows) * tile.rows, std::cmp::Reverse(tile.rows)))
                 .unwrap()
         });
-        let padded_rows = tile.map_or(grouped_rows, |tile| grouped_rows.next_multiple_of(tile.rows));
+        // Sparse: every query is padded to one tile of rows.
+        let padded_rows = if let Some((.., rows)) = &sparse {
+            rows * suffix_length
+        } else {
+            tile.map_or(grouped_rows, |tile| grouped_rows.next_multiple_of(tile.rows))
+        };
         let split_rows = num_groups * padded_rows;
         let num_splits = if direct {
             1
+        } else if let Some((key_slots, ..)) = &sparse {
+            policy::sparse_splits(
+                command_buffer.context().gpu_core_count.max(1),
+                suffix_length * num_groups,
+                key_slots.slots_per_query,
+            )
         } else {
             let (threadgroups, groups_per_core) = match tile {
                 None => (split_rows.div_ceil(4 * vector_queries), 4),
@@ -222,7 +286,31 @@ impl AttentionKernel for AttentionMetalKernel {
             ))
         };
         let (maxima, sums) = statistics.as_mut().map_or((None, None), |(maxima, sums)| (Some(maxima), Some(sums)));
-        if let Some(tile) = tile {
+        if let Some((key_slots, core, _)) = sparse {
+            core.encode(
+                input.query_codes,
+                input.query_scales,
+                input.k_codes,
+                input.k_scales,
+                input.v_codes,
+                input.v_scales,
+                None::<&<Metal as Backend>::ConstantBuffer>,
+                cache.ring_params(),
+                config.sliding_window_size,
+                &mut values,
+                maxima.unwrap(),
+                sums.unwrap(),
+                params,
+                suffix_length,
+                num_splits,
+                0,
+                num_splits,
+                suffix_length,
+                Some(key_slots.query_slots),
+                Some(key_slots.slots_per_query),
+                command_buffer,
+            );
+        } else if let Some(tile) = tile {
             let query_tiles = padded_rows / tile.rows;
             let prefix_splits = tile.prefix.as_ref().map_or(0, |_| {
                 (0..num_splits)
@@ -261,6 +349,8 @@ impl AttentionKernel for AttentionMetalKernel {
                     split_base,
                     split_count,
                     suffix_length,
+                    None::<&<Metal as Backend>::ConstantBuffer>,
+                    None,
                     command_buffer,
                 );
             }

@@ -26,6 +26,10 @@ struct KVShape {
     return (key / kv_layout::TILE_KEYS * num_kv_heads + kv_head) * kv_layout::TILE_KEYS + key % kv_layout::TILE_KEYS;
   }
 
+  METAL_FUNC size_t row_code_index(const uint row, const uint channel) const {
+    return size_t(row) * head_dim + channel;
+  }
+
   METAL_FUNC size_t k_code_index(const uint key, const uint kv_head, const uint channel) const {
     if (layout == KVLayout::RowMajor)
       return size_t(scale_index(key, kv_head)) * head_dim + channel;

@@ -9,14 +9,16 @@
 
 using namespace metal;
 
-template <typename ScaleType, uint HEAD_DIM, bool USE_MXU, uint NUM_SIMDGROUPS>
+template <typename ScaleType, uint HEAD_DIM, bool USE_MXU, uint NUM_SIMDGROUPS, bool IS_SPARSE>
 VARIANTS(ScaleType, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256, 512)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(NUM_SIMDGROUPS, 1, 2, 4, 6, 8)
+VARIANTS(IS_SPARSE, false, true)
 CONSTRAINT(!USE_MXU || NUM_SIMDGROUPS % (HEAD_DIM / 64) == 0)
 CONSTRAINT(HEAD_DIM != 256 || NUM_SIMDGROUPS % 2 == 0)
 CONSTRAINT(HEAD_DIM != 512 || NUM_SIMDGROUPS % 4 == 0)
+CONSTRAINT(!IS_SPARSE || (!USE_MXU && HEAD_DIM == 256 && NUM_SIMDGROUPS == HEAD_DIM / 64))
 KERNEL(AttentionMatrix)(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
@@ -36,15 +38,17 @@ KERNEL(AttentionMatrix)(
     const constant uint& split_base,
     const constant uint& split_count,
     const constant uint& trie_nodes,
+    const device int* query_slots OPTIONAL(IS_SPARSE),
+    const constant uint& slots_per_query OPTIONAL(IS_SPARSE),
     const bool is_causal SPECIALIZE,
     const bool is_kv_cache_ring SPECIALIZE,
     const bool is_sliding_window SPECIALIZE,
     const bool mask_free SPECIALIZE,
     const bool is_trie SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
-    threadgroup float probability_exchange[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS>::EXCHANGE_FLOATS],
-    threadgroup ulong row_masks[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS>::ROW_MASKS],
-    threadgroup uint4 query_stage[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS>::STAGING_VECTORS],
+    threadgroup float probability_exchange[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::EXCHANGE_FLOATS],
+    threadgroup ulong row_masks[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::ROW_MASKS],
+    threadgroup uint4 query_stage[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::STAGING_VECTORS],
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
     const uint kv_head_index GROUPS(num_kv_heads),
@@ -83,7 +87,7 @@ KERNEL(AttentionMatrix)(
         kv_head_index
     );
   } else {
-    attention_matrix_simd<ScaleType, HEAD_DIM, NUM_SIMDGROUPS>(
+    attention_matrix_simd<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE>(
         query_codes,
         query_scales,
         key_codes,
@@ -104,9 +108,12 @@ KERNEL(AttentionMatrix)(
         num_splits,
         trie_nodes,
         is_trie,
+        query_slots,
+        slots_per_query,
         num_kv_heads,
         probability_exchange,
         reinterpret_cast<threadgroup half*>(query_stage),
+        row_masks,
         thread_context,
         tile_split_index,
         kv_head_index

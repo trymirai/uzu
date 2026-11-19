@@ -88,6 +88,7 @@ impl<B: Backend> WeaverLayer<B> {
                 sliding_window_size: None,
                 scale: Some(attention_scale),
                 data_type: DATA_TYPE,
+                sparse: false,
             },
         )
         .map_err(WeaverNewError::Attention)?;

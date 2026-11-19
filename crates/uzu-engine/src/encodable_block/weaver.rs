@@ -15,7 +15,7 @@ use crate::{
         },
         kernel::{
             ActivationTransform, AncestorAttentionKernel, AttentionArguments, AttentionInput, AttentionKernel,
-            WeaverSelectKernel, radix_top_k_small::RadixTopKSmall,
+            WeaverSelectKernel, attention::KeyArguments, radix_top_k_small::RadixTopKSmall,
         },
     },
     config::{rope::AnyRoPEConfig, weaver::WeaverConfig},
@@ -423,7 +423,7 @@ impl<B: Backend> Weaver<B> {
                     },
                     AttentionArguments {
                         suffix_length: depth,
-                        trie: None::<&B::ConstantBuffer>,
+                        keys: KeyArguments::<&B::ConstantBuffer, &B::ConstantBuffer>::Dense(None),
                         sinks: None,
                         cache,
                         gate: None::<&B::ConstantBuffer>,

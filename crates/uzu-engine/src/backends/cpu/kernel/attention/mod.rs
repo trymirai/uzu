@@ -28,6 +28,9 @@ impl AttentionKernel for AttentionCpuKernel {
         _context: &CpuContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, CpuError> {
+        if config.sparse {
+            return Err(CpuError::NotSupported);
+        }
         Ok(Self {
             config,
         })
@@ -44,7 +47,13 @@ impl AttentionKernel for AttentionCpuKernel {
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
         >,
-        arguments: AttentionArguments<'_, Cpu, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
+        arguments: AttentionArguments<
+            '_,
+            Cpu,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
+        >,
         command_buffer: &mut CpuCommandBufferEncoding,
     ) -> Result<<Cpu as Backend>::ScratchBuffer, CpuError> {
         compute::encode(input, arguments, self.config, command_buffer)

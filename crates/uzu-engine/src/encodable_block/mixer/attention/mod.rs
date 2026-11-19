@@ -5,7 +5,10 @@ use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::qkv_norm::QKVNormParams,
-        kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
+        kernel::{
+            AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+            attention::KeyArguments,
+        },
     },
     config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
@@ -156,6 +159,7 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
+                sparse: false,
             },
         )
         .map_err(AttentionNewError::Kernel)?;
@@ -269,7 +273,7 @@ impl<B: Backend> Attention<B> {
                     input,
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
-                        trie: trie.as_ref(),
+                        keys: KeyArguments::<_, &B::ConstantBuffer>::Dense(trie.as_ref()),
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,
