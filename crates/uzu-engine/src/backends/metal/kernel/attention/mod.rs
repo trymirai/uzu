@@ -12,7 +12,10 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::{attention::AttnParams, kv_layout},
-            kernel::{AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel, AttentionVectorMetalKernel},
+            kernel::{
+                AttentionBlockScoreMetalKernel, AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel,
+                AttentionVectorMetalKernel,
+            },
         },
     },
     data_type::DataType,
@@ -425,3 +428,16 @@ impl AttentionKernel for AttentionMetalKernel {
 #[cfg(test)]
 #[path = "../../../../../unit/backends/metal/kernel/attention/mod.rs"]
 mod tests;
+
+// Keeps AttentionBlockScore compiled until the QSA indexer wiring calls it.
+#[allow(dead_code)]
+fn encode_block_score(
+    context: &MetalContext,
+    buffer: impl BufferRef<Backend = Metal>,
+    scores: impl BufferMut<Backend = Metal>,
+    encoder: &mut MetalCommandBufferEncoding,
+) -> Result<(), MetalError> {
+    AttentionBlockScoreMetalKernel::new(context, 4, 128, false, 4)?
+        .encode(buffer, buffer, buffer, buffer, scores, 0, 0, 0, 0, 0, 16, 32, 0, encoder);
+    Ok(())
+}

@@ -1,5 +1,5 @@
 use futures::executor::block_on;
-use half::bf16;
+use half::{bf16, f16};
 use rand::{RngExt, SeedableRng, rngs::SmallRng, seq::SliceRandom};
 use uzu_engine_macros::uzu_test;
 
@@ -13,7 +13,10 @@ use crate::{
                 attention::KeyBlocks,
             },
         },
-        metal::{Metal, kernel::attention::AttentionMetalKernel},
+        metal::{
+            Metal,
+            kernel::{AttentionBlockScoreMetalKernel, attention::AttentionMetalKernel},
+        },
     },
     data_type::DataType,
     encodable_block::{
@@ -21,7 +24,7 @@ use crate::{
         sampling::PRng,
     },
     tests::{
-        assert::assert_eq_float,
+        assert::{assert_eq_float, assert_parity},
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
     trie::TrieNode,
@@ -398,4 +401,75 @@ fn quantized_attention_reference(
         row.iter_mut().zip(&signs).for_each(|(value, sign)| *value *= sign);
     }
     result.into_iter().map(bf16::from_f32).collect()
+}
+
+#[uzu_test]
+fn block_score_matches_cpu() {
+    let (metal, mut rng) = (block_on(<Metal as Backend>::Context::new()).unwrap(), SmallRng::seed_from_u64(11));
+    let ratio = COMPRESSION_RATIO as u32;
+    for (suffix, chain, cached, open, first_row, row_count) in
+        [(4u32, 1, 3u32, 3, 0, 4), (8, 0, 5, 1, 0, 8), (21, 1, 40, 3, 0, 21), (33, 1, 70, 2, 8, 17)]
+    {
+        let prefix = cached * ratio + open;
+        let candidate_blocks =
+            cached + chain * (0..suffix).filter(|n| (prefix + n + 1).is_multiple_of(ratio)).count() as u32;
+        let (q, k) = ((0..4 * suffix * 128).map(|_| rng.random_range(-127..=127i8)), 64 + cached);
+        let (q, k) = (q.collect::<Vec<_>>(), (0..k * 128).map(|_| rng.random_range(-127..=127i8)).collect::<Vec<_>>());
+        let mut scales = |n: usize| (0..n).map(|_| bf16::from_f32(rng.random_range(0.001..0.02))).collect::<Vec<_>>();
+        let (qs, ks) = (scales(4 * suffix as usize), scales(k.len() / 128));
+        let mut expected = vec![f16::NEG_INFINITY; (row_count * candidate_blocks) as usize];
+        for (row, candidate) in (0..row_count).flat_map(|row| (0..candidate_blocks).map(move |c| (row, c))) {
+            if candidate < (prefix + first_row + row + 1) / ratio {
+                let key = if candidate < cached {
+                    64 + candidate
+                } else {
+                    (candidate + 1) * ratio - 1 - prefix
+                } as usize;
+                let relu_sum: f32 = (0..4)
+                    .map(|head| {
+                        let query = head * suffix as usize + (first_row + row) as usize;
+                        let dot: i32 =
+                            (0..128).map(|c| i32::from(q[query * 128 + c]) * i32::from(k[key * 128 + c])).sum();
+                        (qs[query].to_f32() * dot as f32).max(0.0)
+                    })
+                    .sum();
+                expected[(row * candidate_blocks + candidate) as usize] = f16::from_f32(relu_sum * ks[key].to_f32());
+            }
+        }
+        for (mxu, group_rows, blocks_per_group) in [(false, 16, 32), (false, 32, 256), (true, 64, 32)] {
+            if mxu && !metal.supports_mxu {
+                continue;
+            }
+            let kernel = AttentionBlockScoreMetalKernel::new(&metal, 4, 128, mxu, ratio).unwrap();
+            let buffer = |data: &[bf16]| create_buffer_with_data::<Metal, bf16>(&metal, data);
+            let mut scores = create_buffer::<Metal, f16>(&metal, expected.len());
+            let mut command = metal.create_command_buffer(None, None).unwrap();
+            kernel.encode(
+                &create_buffer_with_data::<Metal, i8>(&metal, &q),
+                &buffer(&qs),
+                &create_buffer_with_data::<Metal, i8>(&metal, &k),
+                &buffer(&ks),
+                &mut scores,
+                first_row,
+                row_count,
+                suffix,
+                prefix,
+                64,
+                group_rows,
+                blocks_per_group,
+                candidate_blocks,
+                &mut command,
+            );
+            submit_command_buffer(command);
+            let clamp = |x: &f16| x.max(f16::from_f32(-6e4)); // assert_parity cannot compare inf, so -inf must match exactly
+            let actual = buffer_to_vec::<Metal, f16>(&metal, &scores);
+            assert_parity(
+                "AttentionBlockScore",
+                &expected.iter().map(clamp).collect::<Vec<_>>(),
+                &actual.iter().map(clamp).collect::<Vec<_>>(),
+                6e-4,
+                0.0,
+            );
+        }
+    }
 }
