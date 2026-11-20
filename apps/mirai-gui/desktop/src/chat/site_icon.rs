@@ -22,6 +22,7 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .user_agent(BROWSER_USER_AGENT)
         .dns_resolver(Arc::new(PublicAddresses))
+        .no_proxy()
         .redirect(redirect::Policy::none())
         .timeout(REQUEST_TIMEOUT)
         .build()
@@ -79,7 +80,6 @@ fn read_cache(path: &PathBuf) -> Option<Vec<u8>> {
 async fn download(mut url: Url) -> Fetched {
     let mut redirects = 0;
     let mut response = loop {
-        // With a proxy in the way the client's own resolver never sees this name.
         let resolved = url.clone();
         match tokio::task::spawn_blocking(move || resolution(&resolved)).await {
             Ok(Resolution::Public) => {},

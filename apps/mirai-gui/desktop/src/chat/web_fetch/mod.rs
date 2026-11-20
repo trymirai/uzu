@@ -385,6 +385,7 @@ mod tests {
         let read_with = |provider: Provider| async move {
             let tools = WebTools::new(None);
             let _reply = tools.begin_reply("live", provider, true, Box::new(|_| true));
+            tools.with_reply(|reply| reply.search.without_stored_key()).unwrap();
             download::fetch(Url::parse(live::SCRIPT_DRAWN_PAGE).unwrap(), &tools).await.unwrap()
         };
         for provider in [Provider::Exa, Provider::Keenable] {
@@ -408,6 +409,7 @@ mod tests {
             let searches_without_asking = false;
             let show = Box::new(move |request| shown.send(request).is_ok());
             let _reply = tools.begin_reply("live", Provider::Exa, searches_without_asking, show);
+            tools.with_reply(|reply| reply.search.without_stored_key()).unwrap();
             let wrote = test_message(
                 uzu::types::session::chat::ChatRole::User {},
                 &format!("Read {}", live::SCRIPT_DRAWN_PAGE),

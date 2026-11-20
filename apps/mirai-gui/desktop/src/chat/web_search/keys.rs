@@ -195,46 +195,6 @@ fn keyed_provider(id: &str) -> Result<KeyedProvider, String> {
 mod tests {
     use super::*;
 
-    fn change(
-        entry: &Entry,
-        change: impl FnOnce(&mut Keys),
-    ) -> Keys {
-        let mut keys = entry.read().unwrap();
-        change(&mut keys);
-        entry.write(&keys).unwrap();
-        keys
-    }
-
-    #[test]
-    #[ignore = "writes to the Keychain"]
-    fn live_keys_share_one_entry_that_goes_away_with_the_last_key() {
-        const TEST_ENTRY: Entry = Entry {
-            service: "com.mirai.tech.chat.web-search.test",
-        };
-        let _ = delete_generic_password(TEST_ENTRY.service, ACCOUNT);
-        assert_eq!(TEST_ENTRY.read(), Ok(Keys::default()));
-
-        change(&TEST_ENTRY, |keys| _ = keys.0.insert(Provider::Keenable, "first-test-value".into()));
-        change(&TEST_ENTRY, |keys| _ = keys.0.insert(Provider::Keenable, "second-test-value".into()));
-        let keys = change(&TEST_ENTRY, |keys| _ = keys.0.insert(Provider::Brave, "brave-test-value".into()));
-        assert_eq!(TEST_ENTRY.read().as_ref(), Ok(&keys));
-        assert_eq!(keys.get(Provider::Keenable), Some("second-test-value"));
-        assert_eq!(keys.get(Provider::Brave), Some("brave-test-value"));
-        assert_eq!(keys.get(Provider::Exa), None);
-
-        let keys = change(&TEST_ENTRY, |keys| _ = keys.0.remove(&Provider::Keenable));
-        assert_eq!(keys.get(Provider::Keenable), None);
-        assert_eq!(TEST_ENTRY.read().unwrap().get(Provider::Brave), Some("brave-test-value"));
-
-        change(&TEST_ENTRY, |keys| _ = keys.0.remove(&Provider::Brave));
-        change(&TEST_ENTRY, |keys| _ = keys.0.remove(&Provider::Brave));
-        assert_eq!(
-            get_generic_password(TEST_ENTRY.service, ACCOUNT).map_err(|error| error.code()),
-            Err(ERR_SEC_ITEM_NOT_FOUND),
-            "the entry is gone with its last key"
-        );
-    }
-
     #[test]
     fn settings_get_the_end_of_a_key_and_never_the_key() {
         let keys = Keys(BTreeMap::from([

@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use super::{FetchError, extract::extract};
 use crate::chat::{
     messages::clip_chars,
-    web_address::{NotPublic, PublicAddresses, is_public_web, resolves_to_public},
+    web_address::{NotPublic, PublicAddresses, is_public_web},
     web_search,
     web_source::{PageContent, title_line},
     web_tools::WebTools,
@@ -78,6 +78,7 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .user_agent(BROWSER_USER_AGENT)
         .dns_resolver(Arc::new(PublicAddresses))
+        .no_proxy()
         .redirect(redirect::Policy::none())
         .build()
         .expect("web fetch HTTP client")
@@ -161,11 +162,6 @@ async fn load(mut url: Url) -> Result<ReadPage, FetchError> {
     let deadline = Instant::now() + REQUEST_TIMEOUT;
     let mut redirects = 0;
     let mut response = loop {
-        // With a proxy in the way the client's own resolver never sees this name.
-        let resolved = url.clone();
-        if !tokio::task::spawn_blocking(move || resolves_to_public(&resolved)).await.unwrap_or(false) {
-            return Err(FetchError::Address);
-        }
         // Some sites answer with a Markdown rendering, which is shorter and needs no extraction.
         let request = HTTP_CLIENT
             .get(url.clone())

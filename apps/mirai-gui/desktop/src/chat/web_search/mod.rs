@@ -250,6 +250,11 @@ impl ReplyState {
             result_chars: 0,
         }
     }
+
+    #[cfg(test)]
+    pub(in crate::chat) fn without_stored_key(&self) {
+        let _ = self.key.set(Ok(None));
+    }
 }
 
 async fn search(
