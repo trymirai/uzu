@@ -56,34 +56,33 @@ pub fn open_random_access(path: impl AsRef<Path>) -> io::Result<std::fs::File> {
     Ok(file)
 }
 
-pub fn read_exact_at(
-    file: &std::fs::File,
-    buffer: &mut [u8],
-    offset: u64,
-) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileExt;
-        file.read_exact_at(buffer, offset)
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::FileExt;
-        let mut buffer = buffer;
-        let mut offset = offset;
-        while !buffer.is_empty() {
-            match file.seek_read(buffer, offset) {
-                Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-                Ok(read) => {
-                    buffer = &mut buffer[read..];
-                    offset += read as u64;
-                },
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
-                Err(error) => return Err(error),
+// TODO(perf): issue the reads concurrently.
+pub fn read_exact_at(reads: Vec<(&std::fs::File, u64, &mut [u8])>) -> io::Result<()> {
+    for (file, offset, buffer) in reads {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            file.read_exact_at(buffer, offset)?;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            let mut buffer = buffer;
+            let mut offset = offset;
+            while !buffer.is_empty() {
+                match file.seek_read(buffer, offset) {
+                    Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                    Ok(read) => {
+                        buffer = &mut buffer[read..];
+                        offset += read as u64;
+                    },
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+                    Err(error) => return Err(error),
+                }
             }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 pub async fn exists(path: impl AsRef<Path>) -> bool {

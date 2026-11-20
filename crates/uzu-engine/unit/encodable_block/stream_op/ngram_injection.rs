@@ -17,6 +17,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        embedding_table_disk::{self, SharedFiles},
         stream_op::ngram_injection::{NGramInjection, NGramInjectionState, hash, num_heads},
     },
     safetensors::ParameterLoader,
@@ -179,10 +180,17 @@ impl Block {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         let block = runtime.block_on(async {
             let loader = ParameterLoader::<Cpu>::new(&path, &context).await.expect("parameter loader");
-            let block =
-                NGramInjection::new(MODEL_DIM, DataType::F32, &config, &residual_config, &loader.tree(), &context)
-                    .await
-                    .unwrap_or_else(|_| panic!("failed to load n-gram injection"));
+            let block = NGramInjection::new(
+                MODEL_DIM,
+                DataType::F32,
+                &config,
+                &residual_config,
+                &loader.tree(),
+                &mut SharedFiles::default(),
+                &context,
+            )
+            .await
+            .unwrap_or_else(|_| panic!("failed to load n-gram injection"));
             loader.assert_all_tensors_read().expect("every tensor is used");
             block
         });
@@ -203,7 +211,12 @@ impl Block {
         accepted: &[u32],
     ) -> Vec<f32> {
         let num_tokens = tokens.len() as u32;
-        self.block.prepare(state, tokens, parents).expect("prepare");
+        let ngram_ids = self.block.ngram_ids(state, tokens, parents);
+        let rows = embedding_table_disk::lookup(&[(self.block.ngram_embedding(), ngram_ids)])
+            .expect("lookup")
+            .pop()
+            .expect("one lookup, one result");
+        self.block.prepare(state, tokens, rows);
 
         let batch_dim = match parents {
             None => BatchTopology::flat(num_tokens),

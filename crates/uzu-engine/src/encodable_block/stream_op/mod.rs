@@ -6,7 +6,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        embedding_table_disk::EmbeddingTableDiskError,
+        embedding_table_disk::{EmbeddingTableDiskError, SharedFiles},
         linear::{LinearBlockError, LinearEncodeError},
         normalization::NormalizationNewError,
         stream_op::{
@@ -91,6 +91,7 @@ impl<B: Backend> StreamOp<B> {
         config: &AnyStreamOpConfig,
         residual_config: &AnyResidualConfig,
         parameter_tree: ParameterTree<'_, B>,
+        files: &mut SharedFiles,
         context: &B::Context,
     ) -> Result<Self, StreamOpNewError<B>> {
         match config {
@@ -99,7 +100,7 @@ impl<B: Backend> StreamOp<B> {
                     return Err(StreamOpNewError::NGramInjectionRequiresGatedResidual);
                 };
                 Ok(Self::NGramInjection(
-                    NGramInjection::new(model_dim, data_type, config, residual_config, &parameter_tree, context)
+                    NGramInjection::new(model_dim, data_type, config, residual_config, &parameter_tree, files, context)
                         .await?,
                 ))
             },

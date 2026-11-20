@@ -9,6 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        embedding_table_disk::{self, SharedFiles},
         linear::InputRhtParameters,
         mixer::MixerState,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -156,6 +157,7 @@ impl<B: Backend> Transformer<B> {
 
         let num_layers = transformer_config.layer_configs.len() as u32;
         let mut layers = Vec::with_capacity(num_layers as usize);
+        let mut files = SharedFiles::default();
         for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
             let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
@@ -168,6 +170,7 @@ impl<B: Backend> Transformer<B> {
                 layer_config,
                 &residual_config,
                 &layer_loader,
+                &mut files,
                 context,
             )
             .await?;
@@ -471,13 +474,22 @@ impl<B: Backend> Transformer<B> {
         token_ids: &[u32],
         parents: Option<&[i32]>,
     ) -> std::io::Result<()> {
-        for (op, op_state) in self
-            .layers
+        let mut injections = Vec::new();
+        for (layer, layer_state) in self.layers.iter().zip(&mut state.layer_states) {
+            injections.extend(layer.ngram_injections(&mut layer_state.stream_ops));
+        }
+
+        let lookups = injections
             .iter()
-            .zip(state.layer_states.iter_mut())
-            .flat_map(|(layer, layer_state)| layer.ngram_injections(&mut layer_state.stream_ops))
-        {
-            op.prepare(op_state, token_ids, parents)?;
+            .map(|(op, op_state)| (op.ngram_embedding(), op.ngram_ids(op_state, token_ids, parents)))
+            .collect::<Vec<_>>();
+
+        // TODO(perf): currently we have at most one ngam layer per model, but if we had more we should start
+        // working on earlier layers while waiting for the rest of the lookups to resolve.
+        let rows = embedding_table_disk::lookup(&lookups)?;
+
+        for ((op, op_state), row) in injections.into_iter().zip(rows) {
+            op.prepare(op_state, token_ids, row);
         }
         Ok(())
     }
