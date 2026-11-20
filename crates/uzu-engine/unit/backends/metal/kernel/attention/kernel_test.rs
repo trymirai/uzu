@@ -411,7 +411,8 @@ fn block_score_matches_cpu() {
         [(4u32, 1, 3u32, 3, 0, 4), (8, 0, 5, 1, 0, 8), (21, 1, 40, 3, 0, 21), (33, 1, 70, 2, 8, 17)]
     {
         let prefix = cached * ratio + open;
-        let candidate_blocks = cached + chain * (0..suffix).filter(|n| (prefix + n + 1) % ratio == 0).count() as u32;
+        let candidate_blocks =
+            cached + chain * (0..suffix).filter(|n| (prefix + n + 1).is_multiple_of(ratio)).count() as u32;
         let (q, k) = ((0..4 * suffix * 128).map(|_| rng.random_range(-127..=127i8)), 64 + cached);
         let (q, k) = (q.collect::<Vec<_>>(), (0..k * 128).map(|_| rng.random_range(-127..=127i8)).collect::<Vec<_>>());
         let mut scales = |n: usize| (0..n).map(|_| bf16::from_f32(rng.random_range(0.001..0.02))).collect::<Vec<_>>();
