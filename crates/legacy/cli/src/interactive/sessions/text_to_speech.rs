@@ -65,8 +65,8 @@ impl SessionState for TextToSpeechSessionState {
         matches!(self.status, TextToSpeechSessionStatus::Loading | TextToSpeechSessionStatus::Synthesizing)
     }
 
-    fn interrupt(&self) -> bool {
-        let Some(cancel_token) = self.cancel_token.as_ref() else {
+    fn interrupt(&mut self) -> bool {
+        let Some(cancel_token) = self.cancel_token.as_ref().filter(|cancel_token| !cancel_token.is_cancelled()) else {
             return false;
         };
         cancel_token.cancel();
@@ -77,6 +77,11 @@ impl SessionState for TextToSpeechSessionState {
         let status = match self.status {
             TextToSpeechSessionStatus::Idle => "loaded".to_string(),
             TextToSpeechSessionStatus::Loading => "loading".to_string(),
+            TextToSpeechSessionStatus::Synthesizing
+                if self.cancel_token.as_ref().is_some_and(CancelToken::is_cancelled) =>
+            {
+                "stopping".to_string()
+            },
             TextToSpeechSessionStatus::Synthesizing => format!("synthesizing ({})", HINT_SESSION_INTERRUPT),
         };
         Some(status)

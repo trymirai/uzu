@@ -6,7 +6,7 @@ use std::{
 use iocraft::prelude::*;
 use tokio::sync::watch;
 
-use crate::interactive::{components::RenderedText, helpers::SYMBOL_LINE_CONTINUATION};
+use crate::interactive::{components::RenderedText, helpers::SYMBOL_LINE_CONTINUATION, util::types_text};
 
 const ENTER_SUBMIT_DELAY: Duration = Duration::from_millis(50);
 
@@ -155,7 +155,7 @@ pub fn TextInput(
         }
 
         match code {
-            KeyCode::Char(character) if !modifiers.intersects(KeyModifiers::CONTROL) => {
+            KeyCode::Char(character) if types_text(modifiers) => {
                 state.write().add_character(character);
                 notify_change();
             },
@@ -164,9 +164,10 @@ pub fn TextInput(
                 notify_change();
             },
             KeyCode::Delete => {
-                if focus.is_minimal() {
-                    return;
-                }
+                state.write().remove_next_character();
+                notify_change();
+            },
+            KeyCode::Esc if focus.is_minimal() => {
                 state.write().reset();
                 notify_change();
             },

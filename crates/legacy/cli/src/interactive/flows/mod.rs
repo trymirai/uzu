@@ -1,3 +1,4 @@
+mod delete_model;
 mod exit;
 mod model_families;
 mod model_registries;
@@ -6,6 +7,7 @@ mod registry;
 mod settings;
 mod theme;
 
+pub use delete_model::DeleteModelFlow;
 pub use exit::ExitFlow;
 use iocraft::prelude::*;
 pub use model_families::ModelFamiliesFlow;
