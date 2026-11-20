@@ -4,7 +4,7 @@ uv run --project benchman python merge_report.py head.json --base base.json
 uv run --project benchman --group merge-report python merge_report.py head.json --base base.json --image table.png
 """
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Annotated, NamedTuple
 
@@ -71,9 +71,34 @@ BRIGHT, TEXT, DIM = "#ffffff", "#c7cad1", "#80848e"
 BETTER, WORSE, LACKING = "#57d38c", "#f47b7b", "#e5c453"
 # Pixels per point, for sharp text on dense screens.
 SCALE = 2
-# Percent: a change is grey up to the first, in full colour from the second, and between them the more coloured
-# the larger it is.
-NOISE, CLEAR = 0.2, 0.6
+# The size of Qwen3.8-27B-M.
+PREFILL_SIZE = 14.6 * 2**30
+
+
+def shade(percent: float, grey: float, full: float) -> float:
+    """How coloured a change is, from 0 to 1: not up to `grey`, fully from `full`, the more the larger between."""
+    return min(max((abs(percent) - grey) / (full - grey), 0), 1)
+
+
+def prefill_shade(run: Run, percent: float) -> float:
+    """Prefill speed varies more the smaller the model: the shades widen as many times as it is smaller, up to 6."""
+    # A model of an unknown size gets no allowance.
+    wider = min(max(PREFILL_SIZE / run.config.get("model_size", PREFILL_SIZE), 1), 6)
+    return shade(percent, 0.5 * wider, 1 * wider)
+
+
+def first_token_shade(run: Run, percent: float) -> float:
+    """That of the change of prefill speed that it would come from, were the first token all prefill."""
+    return prefill_shade(run, (1 / (1 + percent / 100) - 1) * 100)
+
+
+SHADES: dict[str, Callable[[Run, float], float]] = {
+    "Forwards": lambda run, percent: shade(percent, 0.5, 1),
+    "Accepted": lambda run, percent: shade(percent, 15, 30),
+    "Prefill": prefill_shade,
+    "First token": first_token_shade,
+    "Memory": lambda run, percent: shade(percent, 0.2, 0.6),
+}
 
 
 class Span(NamedTuple):
@@ -90,11 +115,11 @@ class Column(NamedTuple):
     parts: list[list[Span]]
 
 
-def change(cell: Cell, metric: Metric) -> Span:
+def change(cell: Cell, metric: Metric, run: Run) -> Span:
     if not cell.change:
         return Span()
     percent = float(cell.change.rstrip("%"))
-    share = min(max((abs(percent) - NOISE) / (CLEAR - NOISE), 0), 1)
+    share = SHADES[metric.name](run, percent)
     colour = BETTER if (percent > 0) == (metric.best is max) else WORSE
     mixed = (
         round(dim + (full - dim) * share) for dim, full in zip(*map(bytes.fromhex, (DIM[1:], colour[1:])), strict=True)
@@ -102,7 +127,7 @@ def change(cell: Cell, metric: Metric) -> Span:
     return Span(cell.change, f"#{bytes(mixed).hex()}")
 
 
-def image(path: Path, names: list[str], rows: list[list[str]], cells: list[list[Cell]]) -> None:
+def image(path: Path, runs: list[Run], names: list[str], rows: list[list[str]], cells: list[list[Cell]]) -> None:
     # Of the dependency group merge-report: benchman has no use for it.
     from PIL import Image, ImageDraw, ImageFont
 
@@ -117,11 +142,11 @@ def image(path: Path, names: list[str], rows: list[list[str]], cells: list[list[
                 else Span(forwards.value, WORSE if forwards.value == "failed" else LACKING)
                 for forwards, accepted, *_ in cells
             ],
-            [change(forwards, FORWARDS) for forwards, *_ in cells],
+            [change(line[0], FORWARDS, run) for run, line in zip(runs, cells, strict=True)],
             # Pillow's own font has no multiplication sign.
             [Span("x" if accepted.value else "", DIM) for _, accepted, *_ in cells],
             [Span(f"{accepted.value} tok/fwd" if accepted.value else "") for _, accepted, *_ in cells],
-            [change(accepted, ACCEPTED) for _, accepted, *_ in cells],
+            [change(line[1], ACCEPTED, run) for run, line in zip(runs, cells, strict=True)],
         ],
     )
     columns = [
@@ -132,7 +157,10 @@ def image(path: Path, names: list[str], rows: list[list[str]], cells: list[list[
                 metric.name,
                 metric.unit,
                 False,
-                [[Span(line[index].value, BRIGHT) for line in cells], [change(line[index], metric) for line in cells]],
+                [
+                    [Span(line[index].value, BRIGHT) for line in cells],
+                    [change(line[index], metric, run) for run, line in zip(runs, cells, strict=True)],
+                ],
             )
             for index, metric in enumerate(OTHERS, start=2)
         ),
@@ -196,7 +224,7 @@ def main(
     ]
     cells = [results(run, bases.get((run.host, run.engine, run.model))) for run in measured]
     if picture:
-        image(picture, names, rows, cells)
+        image(picture, measured, names, rows, cells)
     else:
         markdown(names, rows, cells)
         for run, row in zip(measured, rows, strict=True):
