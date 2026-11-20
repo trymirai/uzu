@@ -1,4 +1,5 @@
 import { Field, Label } from "@headlessui/react";
+import { isMacPlatform } from "@/utils/platform";
 import { InfoIcon } from "@/components/icons/app-icons";
 import { useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useState } from "react";
@@ -76,7 +77,7 @@ export function WelcomeScreen() {
           className="mt-3 text-[16px] leading-[1.5] text-text-secondary text-pretty animate-uzu-welcome"
           style={arrive(2)}
         >
-          Try the full private and local AI potential of your Mac
+          Try the full private and local AI potential of your {isMacPlatform() ? "Mac" : "computer"}
         </p>
 
         <button

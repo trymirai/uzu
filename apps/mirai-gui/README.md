@@ -5,8 +5,10 @@ Tauri v2, React, Rust.
 
 ## Requirements
 
-- macOS 26.4 or newer, Apple silicon
-- Xcode 26 with the Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`)
+- macOS 26.4 or newer on Apple silicon, with Xcode 26 and the Metal toolchain
+  (`xcodebuild -downloadComponent MetalToolchain`)
+- or Windows or Linux, with what the engine's Vulkan backend needs (see the
+  repository README) and, on Linux, [Tauri's system packages](https://v2.tauri.app/start/prerequisites/#linux)
 - rustup; the first `cargo` run installs the nightly toolchain pinned by
   `rust-toolchain.toml` at the repository root
 - Node.js 26 or newer and pnpm (`corepack enable` picks the version from `package.json`)
@@ -16,14 +18,14 @@ Tauri v2, React, Rust.
 ```bash
 pnpm install
 pnpm dev      # desktop app; the first build also compiles the engine and its Metal shaders, later builds are incremental
-pnpm build    # .app and .dmg in ../../target/aarch64-apple-darwin/release/bundle/, ad-hoc signed
+pnpm build    # in ../../target/release/bundle/: .app and .dmg (ad-hoc signed), NSIS installer or .deb
 pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 ```
 
 `pnpm check` runs typecheck, ESLint, client tests, clippy and Rust tests;
 `pnpm format` runs Prettier.
 
-## Preview a fresh start
+## Preview a fresh start on macOS
 
 Quit Mirai, the CLI, and other apps using the shared model cache. From the
 repository root, move the current state into a new backup directory:
