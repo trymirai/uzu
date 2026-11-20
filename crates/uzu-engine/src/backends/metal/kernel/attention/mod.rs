@@ -204,7 +204,7 @@ impl AttentionKernel for AttentionMetalKernel {
         let AttentionArguments {
             suffix_length,
             trie,
-            key_slots,
+            key_blocks,
             cache,
             gate,
             sinks,
@@ -232,10 +232,10 @@ impl AttentionKernel for AttentionMetalKernel {
             q_off: prefix_len,
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
-        let sparse = match (key_slots, &self.sparse) {
+        let sparse = match (key_blocks, &self.sparse) {
             (None, None) => None,
-            (Some(key_slots), Some((rows, cores))) => Some((key_slots, &cores[usize::from(trie.is_some())], *rows)),
-            _ => panic!("key_slots must match AttentionKernelConfig::sparse"),
+            (Some(key_blocks), Some((rows, cores))) => Some((key_blocks, &cores[usize::from(trie.is_some())], *rows)),
+            _ => panic!("key_blocks must match AttentionKernelConfig::sparse"),
         };
         let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {
@@ -258,11 +258,11 @@ impl AttentionKernel for AttentionMetalKernel {
         let split_rows = num_groups * padded_rows;
         let num_splits = if direct {
             1
-        } else if let Some((key_slots, ..)) = &sparse {
+        } else if let Some((key_blocks, ..)) = &sparse {
             policy::sparse_splits(
                 command_buffer.context().gpu_core_count.max(1),
                 suffix_length * num_groups,
-                key_slots.blocks_per_query,
+                key_blocks.blocks_per_query,
             )
         } else {
             let (threadgroups, groups_per_core) = match tile {
@@ -290,7 +290,7 @@ impl AttentionKernel for AttentionMetalKernel {
             ))
         };
         let (maxima, sums) = statistics.as_mut().map_or((None, None), |(maxima, sums)| (Some(maxima), Some(sums)));
-        if let Some((key_slots, core, _)) = sparse {
+        if let Some((key_blocks, core, _)) = sparse {
             core.encode(
                 input.query_codes,
                 input.query_scales,
@@ -310,8 +310,8 @@ impl AttentionKernel for AttentionMetalKernel {
                 0,
                 num_splits,
                 suffix_length,
-                Some(key_slots.query_blocks),
-                Some(key_slots.blocks_per_query),
+                Some(key_blocks.query_blocks),
+                Some(key_blocks.blocks_per_query),
                 command_buffer,
             );
         } else if let Some(tile) = tile {

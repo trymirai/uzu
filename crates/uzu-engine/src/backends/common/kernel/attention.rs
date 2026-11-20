@@ -59,13 +59,13 @@ pub struct AttentionArguments<
 > {
     pub suffix_length: u32,
     pub trie: Option<TT>,
-    pub key_slots: Option<KeySlots<ST>>,
+    pub key_blocks: Option<KeyBlocks<ST>>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
 }
 
-pub struct KeySlots<ST: BufferRef> {
+pub struct KeyBlocks<ST: BufferRef> {
     pub query_blocks: ST,
     pub blocks_per_query: u32,
 }

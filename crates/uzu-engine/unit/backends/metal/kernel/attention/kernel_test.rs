@@ -10,10 +10,10 @@ use crate::{
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-                attention::KeySlots,
+                attention::KeyBlocks,
             },
         },
-        metal::{Metal, gpu_types, kernel::attention::AttentionMetalKernel},
+        metal::{Metal, kernel::attention::AttentionMetalKernel},
     },
     data_type::DataType,
     encodable_block::{
@@ -27,7 +27,7 @@ use crate::{
     trie::TrieNode,
 };
 
-const COMPRESSION_RATIO: usize = gpu_types::kv_layout::COMPRESSION_RATIO as usize;
+const COMPRESSION_RATIO: usize = kv_layout::COMPRESSION_RATIO as usize;
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
@@ -201,7 +201,7 @@ fn attention_matches_cpu() {
                     let mut query_scales = create_buffer::<Metal, bf16>(&metal, kv_heads * query_rows);
                     let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
                     let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
-                    let key_slots =
+                    let key_blocks =
                         (sparse && attend).then(|| command_buffer.allocate_constant_from_slice(&block_list).unwrap());
                     prepare.encode(
                         &create_buffer_with_data::<Metal, bf16>(&metal, rows),
@@ -247,7 +247,7 @@ fn attention_matches_cpu() {
                         trie: trie.as_ref(),
                         cache: KVCacheView::full(prefix as u32),
                         gate: gate.as_ref(),
-                        key_slots: key_slots.as_ref().map(|query_blocks| KeySlots {
+                        key_blocks: key_blocks.as_ref().map(|query_blocks| KeyBlocks {
                             query_blocks,
                             blocks_per_query: blocks_per_query as u32,
                         }),
@@ -255,7 +255,7 @@ fn attention_matches_cpu() {
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
                     let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * head_dim);
                     command_buffer.encode_copy(&pooled, &mut output);
-                    drop((pooled, trie, key_slots));
+                    drop((pooled, trie, key_blocks));
                     submit_command_buffer(command_buffer);
                     buffer_to_vec::<Metal, bf16>(&metal, &output)
                 };

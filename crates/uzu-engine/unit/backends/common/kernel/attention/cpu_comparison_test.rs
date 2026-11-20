@@ -10,7 +10,7 @@ use crate::{
             gpu_types::trie::TrieNode,
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-                attention::KeySlots,
+                attention::KeyBlocks,
             },
         },
         cpu::Cpu,
@@ -126,7 +126,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             AttentionArguments {
                 suffix_length: suffix,
                 trie: is_trie.then_some(&trie),
-                key_slots: None::<KeySlots<&B::ConstantBuffer>>,
+                key_blocks: None::<KeyBlocks<&B::ConstantBuffer>>,
                 sinks: sinks.as_ref(),
                 cache,
                 gate: gate.as_ref(),

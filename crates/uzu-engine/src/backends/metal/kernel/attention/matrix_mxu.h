@@ -306,17 +306,17 @@ METAL_FUNC void attention_matrix_mxu(
     const uint key_base = first_key + key_block * uint(uzu::kv_layout::TILE_KEYS);
 
     uint lane_slot = uint(uzu::kv_layout::NO_KEY_SLOT);
-    uint key_offsets[LANE_KEYS] = {};
+    uint key_offset;
     if constexpr (IS_SPARSE) {
       lane_slot = sparse_keys.slot(key_base + uint(lane));
       step_slots[uint(channel_slice) * uint(uzu::kv_layout::TILE_KEYS) + uint(lane)] = lane_slot;
-      key_offsets[0] = (uint)shape.k_code_index(
+      key_offset = (uint)shape.k_code_index(
           slot_address(simd_shuffle(lane_slot, ushort(lane_first_key))),
           kv_head_index,
           lane_channel
       );
     } else {
-      key_offsets[0] = first_key_offset + key_block * shape.block_stride();
+      key_offset = first_key_offset + key_block * shape.block_stride();
     }
 
     ScoreFragment scores;
@@ -373,8 +373,7 @@ METAL_FUNC void attention_matrix_mxu(
         METAL_PRAGMA_UNROLL
         for (int pair_index = 0; pair_index < 2; ++pair_index) {
           const int fragment_offset = (depth_fragment + pair_index) * int(uzu::kv_layout::BLOCK_FRAGMENT_BYTES);
-          const uint4 packed_keys =
-              *reinterpret_cast<const device uint4*>(key_codes + key_offsets[0] + fragment_offset);
+          const uint4 packed_keys = *reinterpret_cast<const device uint4*>(key_codes + key_offset + fragment_offset);
           key_fragments.fragment_data[pair_index] = as_type<CodeVector>(uint2(packed_keys.x, packed_keys.y));
           key_fragments.fragment_data[2 + pair_index] = as_type<CodeVector>(uint2(packed_keys.z, packed_keys.w));
         }
