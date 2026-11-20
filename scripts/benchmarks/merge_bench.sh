@@ -7,8 +7,9 @@ set -euo pipefail
 destination="$1"
 shift
 if (($# == 0)); then
-    set -- -h macs-fleet/bench-m{4,5}max -m Qwen3.8-27B-M Qwen3.5-9B-Dash Qwen3.5-4B-M Qwen3.5-2B-M \
-        -d spec:mirai-mixture-fast^2 '!spec:oneoff/london-summary^2'
+    # Eight of the fast mixture's tasks, from its shortest context to its longest.
+    set -- -h macs-fleet/bench-m{4,5}max -m Qwen3.8-27B-M Qwen3.5-9B-Dash \
+        -d 'mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld,DeepSWE,UTILMEM}:*^2'
 elif printf '%s\n' "$@" | grep -qxE -- '-o|--outputs?'; then
     echo "Error: the arguments can't give outputs, which are the runs that this saves to compare" >&2
     exit 2

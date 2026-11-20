@@ -10,7 +10,6 @@ from benchman.report import METRICS, Metric, Run
 from benchman.run import load
 from benchman.task import summarize
 
-SHOWN = [metric for metric in METRICS if metric.name in ("Decode", "Accepted", "Forwards", "First token", "Memory")]
 # What only speculative decoding has.
 SPECULATIVE = ("Accepted", "Forwards")
 
@@ -37,18 +36,22 @@ def main(
     base: Annotated[
         str | None, typer.Option(metavar="FILE|tag:POOL/NAME", help="Show the change against these runs.")
     ] = None,
+    hide: Annotated[list[str] | None, typer.Option(metavar="METRIC", help="Leave the metric's column out.")] = None,
     text: Annotated[bool, typer.Option("--text", help="Plain text in aligned columns.")] = False,
 ) -> None:
+    if unknown := set(hide or []) - {metric.name for metric in METRICS}:
+        raise typer.BadParameter(f"There is no metric {', '.join(sorted(unknown))}", param_hint="--hide")
     measured = load(runs)
     bases = {(run.host, run.engine, run.model): run for run in load(base)} if base else {}
     engines = len({run.engine for run in measured}) > 1
     speculative = any(run.ready is not None and run.ready.specdec for run in measured)
-    metrics = [metric for metric in SHOWN if speculative or metric.name not in SPECULATIVE]
+    shown = [metric for metric in METRICS if metric.name not in (hide or [])]
+    metrics = [metric for metric in shown if speculative or metric.name not in SPECULATIVE]
     partial = any(run.measured() for run in measured)
     names = ["Host", *(["Engine"] if engines else []), "Model", *(["Tasks"] if partial else [])]
     rows = [
         [
-            run.host.rpartition("/")[2],
+            run.host.rpartition("/")[2].removeprefix("bench-"),
             *([run.engine] if engines else []),
             run.model.removeprefix("trymirai/"),
             *([run.measured()] if partial else []),
@@ -69,7 +72,7 @@ def main(
         typer.echo(f"| {' | '.join(heads)} |")
         typer.echo(f"|{':--|' * len(names)}{'--:|' * len(metrics)}")
         for cells in rows:
-            typer.echo(f"| {' | '.join(' '.join(cell.split()) for cell in cells)} |")
+            typer.echo(f"| {' | '.join('&nbsp;'.join(cell.split()) for cell in cells)} |")
         for run, cells in zip(measured, rows, strict=True):
             if run.failures:
                 typer.echo(f"\n{' '.join(cells[: len(names)])}: {' '.join(run.failure().split())}")

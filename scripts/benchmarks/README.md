@@ -173,7 +173,7 @@ A saved file or tag is loaded only by the version of `benchman` that saved it.
 ./merge_bench.sh main -h macs-fleet/bench-m5max -e uzu mlx -m Qwen3.5-2B-M
 ```
 
-Without arguments it measures Uzu with four models on the fleet's M5 Max and M4 Max, twice each and unseeded. A commit that was measured before, as the fork point usually was when it was merged, is not measured again. It measures nothing, and says so, if the fork point's `benchman` is of another version.
+Without arguments it measures Uzu with two models on the fleet's M5 Max and M4 Max: eight tasks of the fast mixture, from its shortest context to its longest, twice each and unseeded. A commit that was measured before, as the fork point usually was when it was merged, is not measured again. It measures nothing, and says so, if the fork point's `benchman` is of another version.
 
 The [merge benchmark workflow](../../.github/workflows/merge-bench.yml) runs it for each commit of `main` against its parent. On a pull request whose branch is in this repository, someone with write access can comment `!bench`, or `!bench` followed by the script's arguments, as in `!bench -h macs-fleet/bench-m{4,5}max -e uzu mlx -m Qwen3.5-2B-M`, to compare the branch against where it forked from the branch it merges into. The comparison goes to the workflow run's summary and `merge-bench` artifact, and into a comment on the pull request: the one commented on, or the one that the commit of `main` merged. For a commit of `main` it also goes to the benchmark channel on Discord. These are tables that [results_table.py](results_table.py) makes of the saved runs. A run that failed or is missing is a row that says so, and an error before any result is replied as text.
 
@@ -182,7 +182,7 @@ The [merge benchmark workflow](../../.github/workflows/merge-bench.yml) runs it 
 A release is a selection and a tag. This tags Uzu's release benchmark, submits what is missing of it and returns; the second command shows the tag, exiting with 75 until it has everything:
 
 ```bash
-uv run --project benchman benchman -h 'macs-fleet/bench-*' -e uzu -m '*' -d oneoff/london-summary^3 spec:mirai-mixture-slow -s 0 --filter-ram -o tag:macs-fleet/0.6.18 -b
+uv run --project benchman benchman -h 'macs-fleet/bench-*' -e uzu -m '*' -d oneoff/london-summary^3 spec:mirai-mixture-slow --filter-ram -o tag:macs-fleet/0.6.18 -b
 uv run --project benchman benchman -i tag:macs-fleet/0.6.18
 ```
 
@@ -194,6 +194,6 @@ The [release benchmark workflow](../../.github/workflows/release-bench.yml) does
 uv run --project benchman python release_summary.py tag:macs-fleet/0.6.18 summary.json
 ```
 
-It is where the rules of a release are: every run has to have the London summary three times with seed 0, and a model that decodes speculatively all 155 tasks of the slow mixture, or it fails. Input speed and memory are the London summary's; output speed is the mean over the mixture with speculative decoding, and the London summary's without.
+It is where the rules of a release are: every run has to have the London summary three times, and a model that decodes speculatively all 155 tasks of the slow mixture, or it fails. Input speed and memory are the London summary's; output speed is the mean over the mixture with speculative decoding, and the London summary's without.
 
 Both workflows take the variable `PREFECT_API_URL` and the secret `PREFECT_API_KEY` from the `prefect-benchmarks` environment, and the repository's secret `HF_TOKEN`, which has to have access to the mixture.

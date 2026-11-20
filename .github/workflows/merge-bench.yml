@@ -105,6 +105,7 @@ jobs:
       - name: Report
         if: ${{ !cancelled() && steps.benchmark.outcome != 'skipped' }}
         env:
+          COMMAND: ${{ github.event.comment.body }}
           COMMITS: ${{ github.server_url }}/${{ github.repository }}/commit
           DESTINATION: ${{ steps.revisions.outputs.destination }}
           MERGE_BENCH_RESULTS: ${{ runner.temp }}/merge-bench
@@ -113,13 +114,24 @@ jobs:
           WORKFLOW_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           fork_point="$(git merge-base "$DESTINATION" HEAD)"
+          # Of the set that is measured without arguments, these two vary too much between runs to compare.
+          arguments="${COMMAND#!bench}"
+          hidden=()
+          if [[ -z "${arguments//[[:space:]]/}" ]]; then
+            hidden=(--hide Decode --hide Accepted)
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            base="the commit before it on \`$TARGET\`"
+          else
+            base="where it forked from \`$TARGET\`"
+          fi
           {
             echo "Benchmark of [\`${SOURCE::8}\`]($COMMITS/$SOURCE) against [\`${fork_point::8}\`]($COMMITS/$fork_point)," \
-              "where it forked from \`$TARGET\` ([log]($WORKFLOW_RUN))"
+              "$base ([log]($WORKFLOW_RUN))"
             echo
             if [[ -f "$MERGE_BENCH_RESULTS/head.json" ]]; then
               uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/results_table.py \
-                "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json"
+                "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json" "${hidden[@]}"
             else
               # Not measured, or an error before any result: the end of the output says why.
               echo '```'
@@ -147,7 +159,8 @@ jobs:
           # Discord has no tables and 2000 characters for a message.
           if [[ -f "$MERGE_BENCH_RESULTS/head.json" ]]; then
             table="$(uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/results_table.py \
-              "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json" --text)"
+              "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json" --text \
+              --hide Decode --hide Accepted)"
           else
             table="$(tail -n 20 "$RUNNER_TEMP/merge-bench.txt" | tail -c 1500)"
           fi
