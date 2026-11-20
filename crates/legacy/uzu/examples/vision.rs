@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let engine = Engine::new(EngineConfig::default()).await?;
-    let mut model = engine.model("/Users/glk/.cache/huggingface/hub/models--trymirai--Qwen3.5-9B-M-Vision/snapshots/6d3ea8cd5e0c00afca77554ab02c8381ed7f59fc".to_string()).await?.ok_or("Model not found")?;
+    let mut model = engine.model("/Users/glk/.cache/huggingface/hub/models--trymirai--Qwen3.5-9B-M-Vision/snapshots/1565da232128f13e0debd694652d7157e95220cc".to_string()).await?.ok_or("Model not found")?;
     // TODO agolokoz: remove when model will appear in registry
     model.encoding = Some(serde_json::json!({"type": "hanashi", "name": "qwen3.5"}).into());
 

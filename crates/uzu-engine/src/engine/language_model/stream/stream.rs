@@ -16,7 +16,9 @@ use crate::{
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
+    encodable_block::{
+        batch_topology::BatchTopology, mixer::attention::mrope::MRoPEPositions, sampling::SamplingMethod,
+    },
     engine::language_model::{
         LanguageModel,
         state::LanguageModelState,
@@ -281,6 +283,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             prefilled_images = Some(images)
         }
 
+        // images take 2D MRoPE positions and shift the text after them
+        let mrope_positions = prefilled_images
+            .as_ref()
+            .map(|images| images.mrope_positions(self.model_state.transformer_state.rope_position, input.len()));
+
         let mut batch_start = 0;
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
             let token_ids = command_buffer
@@ -296,6 +303,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             batch_start += input_chunk.len();
             let embedding_overrides =
                 prefilled_images.as_ref().map(|images| images.embedding_overrides(batch_tokens)).unwrap_or_default();
+
+            // Every batch gets its positions: an image in an earlier batch shifts the text in later ones
+            if let Some((mrope_positions, _)) = &mrope_positions {
+                self.model_state.transformer_state.mrope_positions = Some(MRoPEPositions {
+                    positions: mrope_positions.positions[batch_tokens.start..batch_tokens.end].into(),
+                });
+            }
 
             let decoder_output = self.model.decoder.encode(
                 &token_ids,
@@ -353,6 +367,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         } else {
             encode_batch(final_chunk, true)?
         };
+
+        if let Some((_, next_position)) = mrope_positions {
+            self.model_state.transformer_state.rope_position = next_position;
+        }
 
         let logits = decoder_output.logits.unwrap();
 

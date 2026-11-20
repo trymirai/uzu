@@ -10,15 +10,17 @@ use crate::{
     },
     config::vision::VisionRoPEConfig,
     encodable_block::{
-        decoder::EmbeddingOverride, linear::LinearEncodeError, mixer::attention::rope::PrecalculatedRoPE,
-        mlp::MlpEncodeError, vision_layer::VisionLayerEncodeError,
+        decoder::EmbeddingOverride,
+        linear::LinearEncodeError,
+        mixer::attention::{mrope::MRoPEPositions, rope::PrecalculatedRoPE},
+        mlp::MlpEncodeError,
+        vision_layer::VisionLayerEncodeError,
     },
     engine::language_model::vision::{model::VisionModel, patch_grid::vision_patch_coordinates},
 };
 
 pub struct VisionPrefilledImage<B: Backend> {
     embeddings: B::ScratchBuffer,
-    /// Index of the image's first token in the expanded input tokens, see `VisionModel::expand_tokens`
     start: usize,
     width: u32,
     height: u32,
@@ -29,8 +31,6 @@ pub struct VisionPrefillResult<B: Backend> {
 }
 
 impl<B: Backend> VisionPrefillResult<B> {
-    /// Image embedding rows that replace pad token rows of a prefill batch,
-    /// `batch` is the batch's range in the expanded input tokens
     pub fn embedding_overrides(
         &self,
         batch: Range<usize>,
@@ -49,6 +49,36 @@ impl<B: Backend> VisionPrefillResult<B> {
             }
         }
         overrides
+    }
+
+    pub fn mrope_positions(
+        &self,
+        first_position: u32,
+        length: usize,
+    ) -> (MRoPEPositions, u32) {
+        let mut positions = Vec::with_capacity(length);
+        let mut position = first_position;
+        for image in self.images.iter() {
+            for _ in positions.len()..image.start {
+                positions.push([position; 3]);
+                position += 1;
+            }
+            for row in 0..image.height {
+                for column in 0..image.width {
+                    positions.push([position, position + row, position + column]);
+                }
+            }
+            position += image.width.max(image.height);
+        }
+        for _ in positions.len()..length {
+            positions.push([position; 3]);
+            position += 1;
+        }
+
+        let positions = MRoPEPositions {
+            positions: positions.into_boxed_slice(),
+        };
+        (positions, position)
     }
 }
 

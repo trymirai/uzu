@@ -25,6 +25,7 @@ mod state;
 
 pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheView};
 
+pub mod mrope;
 pub mod rope;
 
 pub struct Attention<B: Backend> {

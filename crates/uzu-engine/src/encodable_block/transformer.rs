@@ -10,7 +10,10 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::InputRhtParameters,
-        mixer::{MixerState, attention::rope::PrecalculatedRoPE},
+        mixer::{
+            MixerState,
+            attention::{mrope::MRoPEPositions, rope::PrecalculatedRoPE},
+        },
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
@@ -27,6 +30,8 @@ enum TransformerLayerStateType<B: Backend> {
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
+    pub rope_position: u32,
+    pub mrope_positions: Option<MRoPEPositions>,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -72,6 +77,7 @@ impl<B: Backend> TransformerState<B> {
             }
 
             self.context_length += accepted_indices.len() as u32;
+            self.rope_position += accepted_indices.len() as u32;
         }
 
         command_buffer.debug_point(&format!("accepted {} tokens", accepted_indices.len()));
@@ -255,6 +261,8 @@ impl<B: Backend> Transformer<B> {
         Ok(TransformerState {
             layer_states,
             context_length,
+            rope_position: 0,
+            mrope_positions: None,
         })
     }
 
@@ -285,13 +293,17 @@ impl<B: Backend> Transformer<B> {
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
-        let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
+        let mrope_positions = state.as_deref_mut().and_then(|state| state.mrope_positions.take());
+        let rope_position = state.as_ref().map(|state| state.rope_position).unwrap_or(0);
+        let token_positions = batch_dim.heights().map(|rel_pos| rope_position + rel_pos).collect::<Box<[u32]>>();
 
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
+            .map(|rope_config| match &mrope_positions {
+                Some(mrope_positions) => mrope_positions.precalculate(rope_config, command_buffer),
+                None => PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer),
+            })
             .collect::<Result<Box<[_]>, B::Error>>()
             .map_err(TransformerEncodeError::Backend)?;
 
