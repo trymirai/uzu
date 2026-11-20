@@ -30,7 +30,7 @@ use crate::{
     trie::TrieNode,
 };
 
-const COMPRESSION_RATIO: usize = kv_layout::COMPRESSION_RATIO as usize;
+const COMPRESSION_RATIO: usize = 4;
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
@@ -434,7 +434,7 @@ fn block_score_matches_cpu() {
             if mxu && !metal.supports_mxu {
                 continue;
             }
-            let kernel = AttentionBlockScoreMetalKernel::new(&metal, 4, 128, mxu).unwrap();
+            let kernel = AttentionBlockScoreMetalKernel::new(&metal, 4, 128, mxu, ratio).unwrap();
             let buffer = |data: &[bf16]| create_buffer_with_data::<Metal, bf16>(&metal, data);
             let mut scores = create_buffer::<Metal, f16>(&metal, expected.len());
             let mut command = metal.create_command_buffer(None, None).unwrap();
