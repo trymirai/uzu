@@ -94,8 +94,9 @@ METAL_FUNC void attention_matrix_simd(
     uint num_splits,
     uint trie_nodes,
     bool is_trie,
-    const device int* query_slots,
-    uint slots_per_query,
+    const device int* query_blocks,
+    uint blocks_per_query,
+    uint compression_ratio,
     uint num_kv_heads,
     threadgroup float* exchange,
     threadgroup half* kv_tile,
@@ -156,7 +157,7 @@ METAL_FUNC void attention_matrix_simd(
   }
 
   ulong trie_mask = 0ul;
-  if (is_trie) {
+  if (is_trie && !IS_SPARSE) {
     for (uint node_index = 0; node_index < min(trie_nodes, 64u); ++node_index) {
       const auto node = trie[node_index];
       if (query_position >= node.trie_start && query_position <= node.trie_end) {
@@ -165,7 +166,17 @@ METAL_FUNC void attention_matrix_simd(
     }
   }
 
-  const uint num_blocks = ((IS_SPARSE ? slots_per_query : params.k_len) + BK - 1) / BK;
+  const SparseKeys sparse_keys(
+      query_blocks,
+      blocks_per_query,
+      compression_ratio,
+      trie,
+      trie_nodes,
+      params.q_off,
+      query_tile,
+      is_trie
+  );
+  const uint num_blocks = ((IS_SPARSE ? sparse_keys.key_count() : params.k_len) + BK - 1) / BK;
   const uint block_begin = split * num_blocks / num_splits;
   const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : params.q_off;
   const uint logical_query = suffix_position + (is_trie ? trie[query_position].height : query_position);
@@ -191,10 +202,8 @@ METAL_FUNC void attention_matrix_simd(
     const uint chunk_offset = (block - block_begin) % (Scratch::CHUNK_KEYS / BK) * BK;
     if (chunk_offset == 0) {
       for (uint k = thread_index; k < Scratch::CHUNK_KEYS; k += THREADS) {
-        const int slot =
-            IS_SPARSE ? key_slot(query_slots, slots_per_query, query_tile, key_base + k) : int(key_base + k);
-        const int row =
-            uint(slot) < params.k_len ? int(shape.scale_index(uint(slot), kv_head_index)) : uzu::kv_layout::NO_KEY_SLOT;
+        const uint slot = IS_SPARSE ? sparse_keys.slot(key_base + k) : key_base + k;
+        const int row = slot < params.k_len ? int(shape.scale_index(slot, kv_head_index)) : uzu::kv_layout::NO_KEY_SLOT;
         chunk_rows[k] = row;
         chunk_key_scales[k] = row >= 0 ? float(key_scales[row]) : 0.0f;
         chunk_value_scales[k] = row >= 0 ? float(value_scales[row]) : 0.0f;

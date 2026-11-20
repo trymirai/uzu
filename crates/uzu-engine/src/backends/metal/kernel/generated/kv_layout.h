@@ -31,5 +31,7 @@ static constant constexpr uint32_t GROUP_ROWS = 8;
 
 static constant constexpr uint32_t LANE_COLS = 4;
 
-static constant constexpr uint32_t LANE_BYTES = TILE_KEYS / GROUP_ROWS * LANE_COLS;
+static constant constexpr uint32_t LANE_KEYS = TILE_KEYS / GROUP_ROWS;
+
+static constant constexpr uint32_t LANE_BYTES = LANE_KEYS * LANE_COLS;
 } // namespace uzu::kv_layout
