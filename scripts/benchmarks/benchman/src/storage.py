@@ -16,7 +16,6 @@ from pydantic import TypeAdapter
 from requests.adapters import HTTPAdapter
 
 TASKS = TypeAdapter(dict[str, TaskRequest])
-# How many threads read and write at once.
 THREADS = 32
 
 

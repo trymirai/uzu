@@ -14,9 +14,24 @@ from benchman.task import summarize
 from pydantic import BaseModel, TypeAdapter
 
 LONDON = "oneoff/london-summary"
-LONDON_REPEATS = 3
-MIXTURE = "mirai-mixture-slow"
-MIXTURE_TASKS = 155
+LONDON_WARMUPS, LONDON_REPEATS = 1, 3
+# The mixtures, with how many tasks the whole of each is.
+MIXTURES = {"mirai-mixture-fast": 21, "mirai-mixture-slow": 155}
+
+
+class Measured(BaseModel):
+    speculative: bool
+    # The mean over a mixture with speculative decoding, else of the London summary; and how many times that ran.
+    decode_dataset: str
+    decode_repeats: int
+    decode_tps: float
+    # Of the same, and only with speculative decoding.
+    tokens_per_forward_pass: float | None
+    forwards_per_second: float | None
+    # Of the London summary.
+    prefill_tps: float
+    time_to_first_token: float
+    memory_used: int
 
 
 class Result(BaseModel):
@@ -25,31 +40,51 @@ class Result(BaseModel):
     model: str
     source: str
     speculator: str | None
-    speculative: bool
-    # Over the mixture with speculative decoding, else of the London summary.
-    decode_tps: float
-    prefill_tps: float
-    memory_used: int
+    # One of the two: a failure is how a run ended, with no numbers to show.
+    measured: Measured | None
+    failure: str | None
+
+
+def measured(run: Run) -> Measured:
+    name = f"{run.host} {run.engine} {run.model}"
+    london = run.responses.get(LONDON)
+    if london is None or (run.tasks[LONDON].warmups, run.tasks[LONDON].repeats) != (LONDON_WARMUPS, LONDON_REPEATS):
+        raise typer.BadParameter(f"{name} has not run {LONDON}^{LONDON_WARMUPS}+{LONDON_REPEATS}")
+    dataset, repeats, decode = LONDON, LONDON_REPEATS, london
+    if run.ready.specdec:
+        ran = {mixture: [task for task in run.responses if task.startswith(f"{mixture}/")] for mixture in MIXTURES}
+        whole = [mixture for mixture, tasks in ran.items() if len(tasks) == MIXTURES[mixture]]
+        if len(whole) != 1:
+            has = ", ".join(f"{len(tasks)}/{MIXTURES[mixture]} of {mixture}" for mixture, tasks in ran.items())
+            raise typer.BadParameter(f"{name} has to have run the whole of one mixture, and has {has}")
+        (dataset,) = whole
+        counts = {run.tasks[task].repeats for task in ran[dataset]}
+        if len(counts) != 1:
+            raise typer.BadParameter(f"{name} has run the tasks of {dataset} different numbers of times")
+        (repeats,) = counts
+        decode = summarize(run.responses[task] for task in ran[dataset])
+    return Measured(
+        speculative=run.ready.specdec,
+        decode_dataset=dataset,
+        decode_repeats=repeats,
+        decode_tps=decode.decode_tps,
+        tokens_per_forward_pass=decode.tokens_per_forward_pass,
+        forwards_per_second=decode.forwards_per_second,
+        prefill_tps=london.prefill_tps,
+        time_to_first_token=london.time_to_first_token,
+        memory_used=london.memory_used,
+    )
 
 
 def result(run: Run) -> Result:
-    name = f"{run.host} {run.engine} {run.model}"
-    london = run.responses.get(LONDON)
-    if london is None or len(london.responses) != LONDON_REPEATS:
-        raise typer.BadParameter(f"{name} has not run {LONDON} {LONDON_REPEATS} times")
-    mixture = [task for task in run.responses if task.startswith(f"{MIXTURE}/")] if run.ready.specdec else []
-    if run.ready.specdec and len(mixture) != MIXTURE_TASKS:
-        raise typer.BadParameter(f"{name} has run {len(mixture)} of the {MIXTURE_TASKS} tasks of {MIXTURE}")
     return Result(
         device=run.device,
         engine=run.engine,
         model=run.model,
         source=run.config["model"],
         speculator=run.config.get("draft_model"),
-        speculative=run.ready.specdec,
-        decode_tps=summarize(run.responses[task] for task in mixture).decode_tps if mixture else london.decode_tps,
-        prefill_tps=london.prefill_tps,
-        memory_used=london.memory_used,
+        measured=None if run.failures else measured(run),
+        failure=run.failure() if run.failures else None,
     )
 
 

@@ -10,12 +10,15 @@ from reasoning import map_reasoning_efforts
 
 
 class TaskRequest(BenchRequest):
+    warmups: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
     repeats: int = Field(default=1, ge=1)
-    # Whether the engine has to decode speculatively to run it, where the catalog doesn't tell. None: either way.
-    specdec: bool | None = None
+    specdec_filter: bool | None = None
 
     def bench_request(self) -> BenchRequest:
-        return BenchRequest.model_validate(self.model_dump(exclude={"repeats", "specdec"}))
+        return BenchRequest.model_validate(self.model_dump(exclude={"warmups", "repeats", "specdec_filter"}))
+
+    def warmup_step(self, name: str, warmup: int) -> str:
+        return f"warmup {name}" + (f" {warmup + 1}/{self.warmups}" if self.warmups > 1 else "")
 
     def step(self, name: str, repeat: int) -> str:
         return f"run {name}" + (f" {repeat + 1}/{self.repeats}" if self.repeats > 1 else "")
@@ -28,7 +31,7 @@ def resolve_tasks(
     return {
         name: task.model_copy(update={"reasoning_effort": efforts[task.reasoning_effort]})
         for name, task in tasks.items()
-        if task.specdec in (None, ready.specdec)
+        if task.specdec_filter in (None, ready.specdec)
     }
 
 

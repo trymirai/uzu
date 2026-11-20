@@ -10,7 +10,6 @@ from benchman.report import METRICS, Metric, Run
 from benchman.run import load
 from benchman.task import summarize
 
-# What only speculative decoding has.
 SPECULATIVE = ("Accepted", "Forwards")
 
 

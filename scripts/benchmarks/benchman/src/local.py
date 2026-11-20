@@ -33,6 +33,9 @@ async def run_local(run: Run, root: Path, archive: bytes) -> None:
             run.start("warmup")
             await warm_up(process)
             for name, request in tasks.items():
+                for warmup in range(request.warmups):
+                    run.start(request.warmup_step(name, warmup))
+                    await run_task(process, request.bench_request())
                 responses = []
                 for repeat in range(request.repeats):
                     run.start("cooldown")

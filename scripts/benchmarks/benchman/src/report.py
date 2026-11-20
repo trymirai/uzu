@@ -44,8 +44,7 @@ class Run:
     message: str = Field(default="", exclude=True)
     step: str = Field(default="", exclude=True)
     since: datetime | None = Field(default=None, exclude=True)
-    # When its last result was stored, as the generation of that record.
-    ended: int = Field(default=0, exclude=True)
+    last_result_generation: int = Field(default=0, exclude=True)
     # How many of its tasks have no result and nothing that measures them. The state is of the others.
     missing: int = Field(default=0, exclude=True)
     spinner: Spinner = Field(default_factory=lambda: Spinner("dots", style="status.spinner"), exclude=True)
@@ -59,12 +58,12 @@ class Run:
 
     def loaded(self, ready: ReadyResponse) -> None:
         self.ready = ready
-        self.tasks = {name: task for name, task in self.tasks.items() if task.specdec in (None, ready.specdec)}
+        self.tasks = {name: task for name, task in self.tasks.items() if task.specdec_filter in (None, ready.specdec)}
 
     def stored(self, records: dict[str, TaskRecord]) -> None:
         """Takes what the records of its tasks hold."""
         outcomes = {name: record.outcome for name, record in records.items() if record.outcome is not None}
-        self.ended = max((records[name].generation for name in outcomes), default=0)
+        self.last_result_generation = max((records[name].generation for name in outcomes), default=0)
         results = {name: outcome.result for name, outcome in outcomes.items()}
         self.responses = {name: result for name, result in results.items() if isinstance(result, TaskResponse)}
         self.failures = {name: result.message for name, result in results.items() if isinstance(result, Failure)}
@@ -141,7 +140,6 @@ class Progress:
 
             done = [run for run in self.runs if run.completed]
             states = Counter(run.state for run in sorted(self.runs, key=stage) if not run.completed)
-            # Also of the runs whose other tasks are being measured.
             states["Missing"] += sum(1 for run in self.runs if run.missing and run.state != "Missing")
             states = +states
             hosts = Counter(run.host for run in waiting)
@@ -166,12 +164,20 @@ class Metric(NamedTuple):
     best: Callable[..., float]
     format: str
     value: Callable[[Summary], float | None]
+    nonspec_placeholder: Callable[[Summary], float] | None = None
 
 
 METRICS = [
     Metric("Decode", "tokens/s", max, ".1f", lambda summary: summary.decode_tps),
-    Metric("Accepted", "tokens", max, ".2f", lambda summary: summary.tokens_per_forward_pass),
-    Metric("Forwards", "passes/s", max, ".2f", lambda summary: summary.forwards_per_second),
+    Metric("Accepted", "tokens", max, ".2f", lambda summary: summary.tokens_per_forward_pass, lambda summary: 1),
+    Metric(
+        "Forwards",
+        "passes/s",
+        max,
+        ".2f",
+        lambda summary: summary.forwards_per_second,
+        lambda summary: summary.decode_tps,
+    ),
     Metric("Prefill", "tokens/s", max, ".0f", lambda summary: summary.prefill_tps),
     Metric("First token", "s", min, ".2f", lambda summary: summary.time_to_first_token),
     Metric("Memory", "GiB", min, ".2f", lambda summary: summary.memory_used / 2**30),
@@ -240,6 +246,9 @@ def report(runs: list[Run], baseline: str | None) -> int:
             cells = []
             for (engine, _), run in lines.items():
                 cell = Text(shown.get(run, ""), style="underline" if run in shown and float(shown[run]) == best else "")
+                if run not in shown and metric.nonspec_placeholder and run.responses:
+                    placeholder = metric.nonspec_placeholder(summarize(run.responses.values()))
+                    cell = Text(format(placeholder, metric.format), style="bright_black")
                 base = lines.get((engine, baseline))
                 if base is not None and base is not run:
                     shared = run.responses.keys() & base.responses.keys()

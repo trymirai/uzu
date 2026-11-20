@@ -8,7 +8,7 @@ on:
     inputs:
       arguments:
         description: "What benchman measures"
-        default: "-h macs-fleet/bench-* -e uzu -m * -d oneoff/london-summary^3 spec:mirai-mixture-fast --filter-ram"
+        default: "-h macs-fleet/bench-* -e uzu -m * -d oneoff/london-summary^+3 spec:mirai-mixture-fast --filter-ram"
       tag:
         description: "Name the results are saved under (the commit by default)"
 
@@ -38,7 +38,7 @@ jobs:
           COLUMNS: 200
           ARGUMENTS: >-
             ${{ inputs.arguments ||
-            '-h macs-fleet/bench-* -e uzu -m * -d oneoff/london-summary^3 spec:mirai-mixture-slow --filter-ram' }}
+            '-h macs-fleet/bench-* -e uzu -m * -d oneoff/london-summary^+3 spec:mirai-mixture-fast^3 --filter-ram' }}
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PREFECT_API_URL: ${{ vars.PREFECT_API_URL }}
