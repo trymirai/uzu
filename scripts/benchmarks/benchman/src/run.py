@@ -15,7 +15,7 @@ from fnmatch import fnmatchcase
 from functools import cache, partial
 from itertools import product
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 import typer
 from benchman.complete import Files, OrderedZshComplete, SingleCallFishComplete, completes
@@ -26,7 +26,8 @@ from benchman.report import RUNS, Progress, Run, console, progress, report
 from benchman.source import pack
 from benchman.task import TaskRequest
 from benchman.version import VERSION
-from typer._click.exceptions import BadOptionUsage
+from typer._click.core import ParameterSource
+from typer._click.exceptions import BadOptionUsage, UsageError
 from typer._click.shell_completion import CompletionItem, add_completion_class
 from typer.core import TyperCommand
 
@@ -39,6 +40,19 @@ class RepeatableOptionsCommand(TyperCommand):
     """A repeatable option takes every value up to the next option: `-m a b` is `-m a -m b`."""
 
     def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        selections: list[list[str]] = [[]]
+        for arg in args:
+            if arg == "+":
+                selections.append([])
+            else:
+                selections[-1].append(arg)
+        if ctx.resilient_parsing:
+            # A completion is of the selection that is being typed.
+            selections = selections[-1:]
+        elif len(selections) > 1 and not all(selections):
+            raise UsageError("A + is between two selections", ctx)
+        args, *others = selections
+        ctx.meta["selections"] = [self.selection(ctx, other) for other in others]
         repeatable = {flag for parameter in self.params if parameter.multiple for flag in parameter.opts}
         expanded = []
         flag = None
@@ -61,6 +75,15 @@ class RepeatableOptionsCommand(TyperCommand):
                 expanded.append(arg)
         ctx.meta["repeating"] = flag
         return super().parse_args(ctx, expanded)
+
+    def selection(self, ctx: typer.Context, args: list[str]) -> "Selection":
+        """A selection after a +, which has only what a selection is of."""
+        parsed = self.make_context(ctx.info_name, args, parent=ctx.parent)
+        for parameter in self.params:
+            given = parsed.get_parameter_source(parameter.name) is ParameterSource.COMMANDLINE
+            if given and parameter.name not in Selection._fields:
+                raise UsageError(f"{parameter.opts[-1]} is of the whole command, and goes before the first +", ctx)
+        return Selection(**{field: parsed.params[field] for field in Selection._fields})
 
     def shell_complete(self, ctx: typer.Context, incomplete: str) -> list[CompletionItem]:
         flag = ctx.meta["repeating"]
@@ -313,6 +336,45 @@ def select_tasks(datasets: Sequence[str], specdec: bool) -> dict[str, TaskReques
     return {name: task for name, task in included.items() if name not in excluded}
 
 
+class Selection(NamedTuple):
+    """What one selection of a command is of; a command has several, separated by `+`."""
+
+    hosts: list[str]
+    engines: list[str]
+    models: list[str] | None
+    datasets: list[str]
+    seed: int | None
+    filter_ram: bool
+
+
+def match_selection(selection: Selection) -> list[tuple[str, str, str]]:
+    """The hosts, engines and models of the selection that go together."""
+    if not selection.models:
+        raise typer.BadParameter("Every selection needs models", param_hint="--model")
+    hosts, idle = select(split(selection.hosts), match_hosts)
+    if idle:
+        raise typer.BadParameter(f"{', '.join(idle)} leaves no host out", param_hint="--host")
+    engines, idle = select(split(selection.engines), match_engines)
+    if idle:
+        raise typer.BadParameter(f"{', '.join(idle)} leaves no engine out", param_hint="--engine")
+    models = {engine: select(split(selection.models), partial(match_models, engine)) for engine in engines}
+    idle = [value for value in split(selection.models) if all(value in unused for _, unused in models.values())]
+    if idle:
+        raise typer.BadParameter(f"{', '.join(idle)} leaves no model out", param_hint="--model")
+    check_datasets(split(selection.datasets))
+    named_engines = named(split(selection.engines), match_engines)
+    for host, engine in product(named(split(selection.hosts), match_hosts), named_engines):
+        if chips := unsupported_chips(host, engine):
+            raise typer.BadParameter(f"{engine} does not run on the {', '.join(chips)} of {host}", param_hint="--host")
+    return [
+        (host, engine, model)
+        for host, (engine, (engine_models, _)) in product(hosts, models.items())
+        if not unsupported_chips(host, engine)
+        for model in engine_models
+        if engine in named_engines or model in catalog(engine)
+    ]
+
+
 def plan(source: str, host: str, engine: str, model: str, datasets: Sequence[str], seed: int | None, label: str) -> Run:
     """A run to measure: the model's tasks of the datasets, each `[spec:|!spec:][!]NAME[/KEY][^N]`."""
     config = {"model": model} | catalog(engine).get(model, {})
@@ -526,8 +588,9 @@ def measure(
     def leave(how: str, left: list[Run]) -> None:
         """Leaves the progress of these runs on the screen, and says how to reach them."""
         console.print(Progress(left, None))
-        option = f"--source {source_name(runs[0].source)}"
-        console.print(f"{how}. To reach these runs from a changed or another checkout, add {option}.", highlight=False)
+        # Without an archive, the source was given by its name.
+        option = f" To reach these runs from a changed or another checkout, add --source {source_name(runs[0].source)}."
+        console.print(f"{how}.{option if archive else ''}", highlight=False)
 
     # Only fleet runs can be detached, and only from a foreground terminal.
     stdin = sys.stdin.fileno()
@@ -575,9 +638,11 @@ def measure(
                         await run_local(run, root(), archive)
 
             if not detached and (watching or local):
-                # The missing ones first: nothing tells when they went missing.
-                missing = [run for run in runs if run.state == "Missing"]
-                for run in [*missing, *(run for run in runs if run.completed is not None)]:
+                # The missing ones first, as nothing tells when they went missing, then the others as they ended.
+                for run in runs:
+                    if run.missing or run.state == "Missing":
+                        run.announce(missing=True)
+                for run in sorted((run for run in runs if run.completed is not None), key=lambda run: run.ended):
                     run.announce()
                 if detachable:
                     with progress(runs, keys):
@@ -603,6 +668,7 @@ def measure(
 
 @app.command(cls=RepeatableOptionsCommand, no_args_is_help=True)
 def benchman(
+    ctx: typer.Context,
     hosts: Annotated[
         list[str],
         typer.Option(
@@ -718,6 +784,9 @@ def benchman(
 
     Multi-value options take values separated by spaces or commas, or repeated; `m{4,5}-max` expands as in a shell.
 
+    Several selections, separated by `+`, are measured and shown together. Each has its own hosts, engines, models,
+    datasets, seed and --filter-ram; the other options go before the first `+`.
+
     What is named has to work; what a pattern matches is left out where it can't, like a host an engine can't use.
 
     Exit codes: 0 everything measured, 1 a run failed, 75 results missing.
@@ -725,7 +794,7 @@ def benchman(
 
     saved = [run for source in split(inputs or []) for run in load(source)]
     baseline = saved[0].label if saved else None
-    if not models:
+    if not models and not ctx.meta["selections"]:
         if not saved:
             raise typer.BadParameter("Give models to benchmark or saved runs to show", param_hint="--model")
         raise typer.Exit(report(saved, baseline))
@@ -738,31 +807,23 @@ def benchman(
         raise typer.BadParameter("There is nothing to submit, or to save yet", param_hint="--background")
 
     label = name_of(targets[0]) if targets else "now"
-    selected_hosts, idle = select(split(hosts), match_hosts)
-    if idle:
-        raise typer.BadParameter(f"{', '.join(idle)} leaves no host out", param_hint="--host")
-    selected_engines, idle = select(split(engines), match_engines)
-    if idle:
-        raise typer.BadParameter(f"{', '.join(idle)} leaves no engine out", param_hint="--engine")
-    selected_models = {engine: select(split(models), partial(match_models, engine)) for engine in selected_engines}
-    idle = [value for value in split(models) if all(value in unused for _, unused in selected_models.values())]
-    if idle:
-        raise typer.BadParameter(f"{', '.join(idle)} leaves no model out", param_hint="--model")
-    check_datasets(split(datasets))
-    named_engines = named(split(engines), match_engines)
-    for host, engine in product(named(split(hosts), match_hosts), named_engines):
-        if chips := unsupported_chips(host, engine):
-            raise typer.BadParameter(f"{engine} does not run on the {', '.join(chips)} of {host}", param_hint="--host")
+    selections = [Selection(hosts, engines, models, datasets, seed, filter_ram), *ctx.meta["selections"]]
+    matched = [match_selection(selection) for selection in selections]
+    selected_hosts = list(dict.fromkeys(host for matches in matched for host, _, _ in matches))
     source, archive = checkout() if source is None else (stored_source(source, selected_hosts), None)
-    runs = []
-    for host, (engine, (engine_models, _)) in product(selected_hosts, selected_models.items()):
-        if unsupported_chips(host, engine):
-            continue
-        for model in engine_models:
-            if engine in named_engines or model in catalog(engine):
-                run = plan(source, host, engine, model, split(datasets), seed, label)
-                if run.tasks and (not filter_ram or fits(host, engine, run.config)):
-                    runs.append(run)
+    planned: dict[tuple[str, str, str], Run] = {}
+    for selection, matches in zip(selections, matched, strict=True):
+        for host, engine, model in matches:
+            run = plan(source, host, engine, model, split(selection.datasets), selection.seed, label)
+            if not run.tasks or (selection.filter_ram and not fits(host, engine, run.config)):
+                continue
+            # A run that several selections are of has the tasks of each.
+            tasks = planned.setdefault((host, engine, model), run).tasks
+            if differing := [name for name, task in run.tasks.items() if tasks.get(name, task) != task]:
+                message = f"{differing[0]} is selected twice, differently, for {model} on {host}"
+                raise typer.BadParameter(message, param_hint="--dataset")
+            tasks |= run.tasks
+    runs = list(planned.values())
     if not runs:
         raise typer.BadParameter("Nothing to run: the hosts, engines, models and datasets don't go together")
     how = "rerun" if rerun else "wait" if wait else "no-run" if no_run else "cancel" if cancel else "run"

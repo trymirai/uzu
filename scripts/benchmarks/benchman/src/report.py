@@ -44,6 +44,10 @@ class Run:
     message: str = Field(default="", exclude=True)
     step: str = Field(default="", exclude=True)
     since: datetime | None = Field(default=None, exclude=True)
+    # When its last result was stored, as the generation of that record.
+    ended: int = Field(default=0, exclude=True)
+    # How many of its tasks have no result and nothing that measures them. The state is of the others.
+    missing: int = Field(default=0, exclude=True)
     spinner: Spinner = Field(default_factory=lambda: Spinner("dots", style="status.spinner"), exclude=True)
 
     @property
@@ -60,6 +64,7 @@ class Run:
     def stored(self, records: dict[str, TaskRecord]) -> None:
         """Takes what the records of its tasks hold."""
         outcomes = {name: record.outcome for name, record in records.items() if record.outcome is not None}
+        self.ended = max((records[name].generation for name in outcomes), default=0)
         results = {name: outcome.result for name, outcome in outcomes.items()}
         self.responses = {name: result for name, result in results.items() if isinstance(result, TaskResponse)}
         self.failures = {name: result.message for name, result in results.items() if isinstance(result, Failure)}
@@ -81,17 +86,22 @@ class Run:
         """How many of the tasks have results, if only some have."""
         return f"{len(self.responses)}/{len(self.tasks)}" if 0 < len(self.responses) < len(self.tasks) else ""
 
+    def absent(self) -> str:
+        """How many of the tasks are missing, if only some are."""
+        return f"{self.missing}/{len(self.tasks)}" if 0 < self.missing < len(self.tasks) else ""
+
     def progress(self) -> Spinner:
         step = f"{self.step} {(datetime.now(UTC) - self.since).total_seconds():.1f} s" if self.since else ""
         parts = (f" · {part}" for part in (self.measured(), step) if part)
         self.spinner.update(text=Text.assemble(self.name(), *parts))
         return self.spinner
 
-    def announce(self) -> None:
-        """Prints how the run ended; above the progress, if that is shown."""
-        style = {True: "bold green", False: "bold red", None: "bold yellow"}[self.completed]
-        line = Text.assemble((f"{self.state:>9} ", style), self.name(), f" {self.measured()}".rstrip())
-        console.print(line, highlight=False)
+    def announce(self, missing: bool = False) -> None:
+        """Prints how the run ended, or that it has missing tasks; above the progress, if that is shown."""
+        style = {True: "bold green", False: "bold red", None: "bold yellow"}[None if missing else self.completed]
+        state = "Missing" if missing else self.state
+        count = self.absent() if state == "Missing" else self.measured()
+        console.print(Text.assemble((f"{state:>9} ", style), self.name(), f" {count}".rstrip()), highlight=False)
 
 
 RUNS = TypeAdapter(list[Run])
@@ -131,6 +141,9 @@ class Progress:
 
             done = [run for run in self.runs if run.completed]
             states = Counter(run.state for run in sorted(self.runs, key=stage) if not run.completed)
+            # Also of the runs whose other tasks are being measured.
+            states["Missing"] += sum(1 for run in self.runs if run.missing and run.state != "Missing")
+            states = +states
             hosts = Counter(run.host for run in waiting)
             for counted in (states.items(), hosts.most_common()):
                 counts = [f"{name} {count}" for name, count in counted]
@@ -185,7 +198,12 @@ def report(runs: list[Run], baseline: str | None) -> int:
         return metric.value(summarize(responses)) if responses else None
 
     metrics = [metric for metric in METRICS if any(value(run, metric) is not None for run in runs)]
-    status = {run: f"{run.state} {run.measured()}".strip() for run in runs}
+    status = {
+        run: f"Missing {run.absent()}".strip()
+        if run.state == "Missing"
+        else f"{run.state} {run.measured()}".strip() + (f", Missing {run.absent()}".rstrip() if run.missing else "")
+        for run in runs
+    }
     complete = {run: bool(run.completed) and len(run.responses) == len(run.tasks) for run in runs}
     unfinished = not all(complete.values())
     labelled = len({run.label for run in runs}) > 1
