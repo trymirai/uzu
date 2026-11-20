@@ -1,6 +1,8 @@
 use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
+use crate::backends::common::gpu_types::vision::CHANNELS;
+
 #[derive(Debug, Error)]
 pub enum VisionImageError {
     #[error("Invalid vision patch size {patch_size} or spatial merge size {merge_size}")]
@@ -45,8 +47,10 @@ pub(super) fn merged_image_grid(
         });
     }
 
-    let expected =
-        width.checked_mul(height).and_then(|pixels| pixels.checked_mul(3)).ok_or(VisionImageError::ImageTooLarge)?;
+    let expected = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(CHANNELS))
+        .ok_or(VisionImageError::ImageTooLarge)?;
     if image.pixels.len() != expected as usize {
         return Err(VisionImageError::PixelLength {
             actual: image.pixels.len(),

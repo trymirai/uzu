@@ -103,7 +103,7 @@ impl<B: Backend> Engine<B> {
         let vision_path = model_path.join("vision");
         let vision_path = file::exists(&vision_path).await.then_some(vision_path);
         let vision_model = if let Some(path) = vision_path.as_deref() {
-            Some(VisionModel::new(path, data_type, self.context.as_ref()).await?)
+            Some(VisionModel::new(path, data_type, decoder.embedding().model_dim(), self.context.as_ref()).await?)
         } else {
             None
         };

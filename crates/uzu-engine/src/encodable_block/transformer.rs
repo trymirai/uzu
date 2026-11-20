@@ -92,6 +92,11 @@ pub enum TransformerNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Layer error: {0}")]
     Layer(#[from] TransformerLayerError<B>),
+    #[error("M-RoPE frequency pairs per axis sum to {frequency_pairs}, but the RoPE head has {head_pairs} pairs")]
+    MRoPEFrequencyPairs {
+        frequency_pairs: u32,
+        head_pairs: u32,
+    },
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Residual error: {0}")]
@@ -145,6 +150,17 @@ impl<B: Backend> Transformer<B> {
         let mut layers = Vec::with_capacity(num_layers as usize);
         for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
             let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
+
+            if let Some(AnyRoPEConfig::MultimodalRoPEConfig(multimodal_config)) = &layer_config.rope_config {
+                let frequency_pairs = multimodal_config.frequency_pairs_per_axis.iter().sum::<u32>();
+                let head_pairs = multimodal_config.head_dim / 2;
+                if frequency_pairs != head_pairs {
+                    return Err(TransformerNewError::MRoPEFrequencyPairs {
+                        frequency_pairs,
+                        head_pairs,
+                    });
+                }
+            }
 
             let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
                 ropes.iter().position(|rope_config| rope_config == layer_rope_config).unwrap_or_else(|| {

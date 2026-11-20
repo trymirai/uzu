@@ -1,5 +1,5 @@
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, CommandBuffer},
     config::rope::AnyRoPEConfig,
     encodable_block::mixer::attention::rope::PrecalculatedRoPE,
 };
@@ -16,41 +16,26 @@ impl MRoPEPositions {
     ) -> Result<PrecalculatedRoPE<B>, B::Error> {
         let frequency_pairs_per_axis = match rope_config {
             AnyRoPEConfig::MultimodalRoPEConfig(multimodal_config) => multimodal_config.frequency_pairs_per_axis,
+            // Without M-RoPE every pair rotates by the temporal position
             _ => {
-                let temporal_positions = self.positions.iter().map(|[t, _, _]| *t).collect::<Box<[u32]>>();
-                return PrecalculatedRoPE::precalculate(rope_config, &temporal_positions, command_buffer);
+                return PrecalculatedRoPE::precalculate_with(
+                    rope_config,
+                    self.positions.len(),
+                    |token_index, _| self.positions[token_index][0],
+                    command_buffer,
+                );
             },
         };
 
-        let head_dim = *rope_config.head_dim() as usize;
-        let half_dim = head_dim / 2;
-        assert_eq!(
-            frequency_pairs_per_axis.iter().sum::<u32>() as usize,
-            half_dim,
-            "M-RoPE frequency pairs don't cover the RoPE head"
-        );
-
-        let mut cosines = vec![0.0; self.positions.len() * head_dim];
-        let mut sines = vec![0.0; self.positions.len() * head_dim];
-        for pair in 0..half_dim {
-            let inverse_frequency = 1.0 / rope_config.base().powf((2 * pair) as f32 / head_dim as f32);
-            let axis = interleaved_axis(pair as u32, frequency_pairs_per_axis);
-            for (token, position) in self.positions.iter().enumerate() {
-                let angle = position[axis] as f32 * inverse_frequency;
-                let sine = angle.sin();
-                let cosine = angle.cos();
-                for channel in [token * head_dim + pair, token * head_dim + pair + half_dim] {
-                    cosines[channel] = cosine;
-                    sines[channel] = sine;
-                }
-            }
-        }
-
-        Ok(PrecalculatedRoPE {
-            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
-            sines: command_buffer.allocate_constant_from_slice(&sines)?,
-            dim: head_dim as u32,
-        })
+        // `Transformer::new` checks that the frequency pairs cover the RoPE head
+        PrecalculatedRoPE::precalculate_with(
+            rope_config,
+            self.positions.len(),
+            |token_index, pair_index| {
+                self.positions[token_index][interleaved_axis(pair_index, frequency_pairs_per_axis)]
+            },
+            command_buffer,
+        )
     }
 }
 

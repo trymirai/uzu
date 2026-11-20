@@ -1,9 +1,11 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use crate::{data_type::DataTypeRepr, engine::language_model::vision::patch_grid::vision_patch_coordinates};
-
-const CHANNELS: u32 = 3;
+use crate::{
+    backends::common::gpu_types::vision::{CHANNELS, MAX_CHANNEL_VALUE},
+    data_type::DataTypeRepr,
+    engine::language_model::vision::patch_grid::vision_patch_coordinates,
+};
 
 /// Converts an RGB image into patch embedding input, see `metal/kernel/vision/patchify.metal`.
 #[kernel(VisionPatchify)]
@@ -23,9 +25,9 @@ pub fn vision_patchify<T: DataTypeRepr>(
     let patch_dim = CHANNELS * temporal_patch_size * patch_area;
     let grid_width = width / patch_size;
 
-    for position in 0..length {
-        let patch_row = position / patch_dim;
-        let patch_col = position % patch_dim;
+    for output_index in 0..length {
+        let patch_row = output_index / patch_dim;
+        let patch_col = output_index % patch_dim;
 
         let channel = patch_col / (temporal_patch_size * patch_area);
         let y_in_patch = (patch_col % patch_area) / patch_size;
@@ -38,9 +40,9 @@ pub fn vision_patchify<T: DataTypeRepr>(
         let pixel_idx = ((y * width + x) * CHANNELS + channel) as usize;
         let channel = channel as usize;
         unsafe {
-            let pixel = f32::from(*pixels.add(pixel_idx)) / 255.0;
+            let pixel = f32::from(*pixels.add(pixel_idx)) / MAX_CHANNEL_VALUE;
             let normalized_pixel = (pixel - *image_mean.add(channel)) / *image_std.add(channel);
-            *patches.add(position as usize) = T::from(normalized_pixel).unwrap();
+            *patches.add(output_index as usize) = T::from(normalized_pixel).unwrap();
         }
     }
 }

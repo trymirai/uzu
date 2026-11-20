@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::{
     backends::{
         Backend,
-        common::{Kernels, kernel::VisionPatchifyKernel},
+        common::{Kernels, gpu_types::vision::CHANNELS, kernel::VisionPatchifyKernel},
     },
     config::vision::VisionConfig,
     data_type::DataType,
@@ -32,6 +32,11 @@ pub enum VisionLoadError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
+    #[error("Vision output dim {output_dim} doesn't match decoder model dim {decoder_model_dim}")]
+    OutputDimMismatch {
+        output_dim: u32,
+        decoder_model_dim: u32,
+    },
     #[error("ParameterLoader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Position embedding error: {0}")]
@@ -63,6 +68,7 @@ impl<B: Backend> VisionModel<B> {
     pub async fn new(
         vision_path: &Path,
         data_type: DataType,
+        decoder_model_dim: u32,
         context: &B::Context,
     ) -> Result<Self, VisionLoadError<B>> {
         if data_type != DataType::BF16 {
@@ -71,9 +77,18 @@ impl<B: Backend> VisionModel<B> {
 
         let config_file_content = &file::read(vision_path.join("config.json")).await?;
         let config = serde_json::from_slice::<VisionConfig>(config_file_content)?;
+
         // The patchify kernels take RGB pixels
-        if config.encoder_config.in_channels != 3 {
+        if config.encoder_config.in_channels != CHANNELS {
             return Err(VisionLoadError::UnsupportedInChannels(config.encoder_config.in_channels));
+        }
+
+        // Image embeddings replace decoder token embeddings row by row
+        if config.encoder_config.output_dim != decoder_model_dim {
+            return Err(VisionLoadError::OutputDimMismatch {
+                output_dim: config.encoder_config.output_dim,
+                decoder_model_dim,
+            });
         }
 
         let loader = ParameterLoader::new(vision_path.join("model.safetensors"), context).await?;

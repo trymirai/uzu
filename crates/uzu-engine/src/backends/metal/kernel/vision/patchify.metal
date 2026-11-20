@@ -1,8 +1,9 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../generated/vision.h"
 #include "patch_grid.h"
 
-#define CHANNELS 3
+using namespace uzu::vision;
 
 // Convert RGB image into patch embedding input.
 // A patch is [channel, frame, y, x], and every frame repeats the image.
@@ -51,12 +52,12 @@ PUBLIC KERNEL(VisionPatchify)(
     constant uint& merge_size,
     constant uint& temporal_patch_size,
     constant uint& length,
-    const uint position AXIS(length, 256)
+    const uint output_index AXIS(length, 256)
 ) {
   const uint patch_area = patch_size * patch_size;
   const uint patch_dim = CHANNELS * temporal_patch_size * patch_area;
-  const uint patch_row = position / patch_dim;
-  const uint patch_col = position % patch_dim;
+  const uint patch_row = output_index / patch_dim;
+  const uint patch_col = output_index % patch_dim;
 
   const uint channel = patch_col / (temporal_patch_size * patch_area);
   const uint y_in_patch = (patch_col % patch_area) / patch_size;
@@ -68,7 +69,7 @@ PUBLIC KERNEL(VisionPatchify)(
   const uint x = patch_position.x * patch_size + x_in_patch;
 
   const uint pixel_idx = (y * width + x) * CHANNELS + channel;
-  const float pixel = static_cast<float>(pixels[pixel_idx]) / 255.0f;
+  const float pixel = static_cast<float>(pixels[pixel_idx]) / MAX_CHANNEL_VALUE;
   const float normalized_pixel = (pixel - image_mean[channel]) / image_std[channel];
-  patches[position] = static_cast<T>(normalized_pixel);
+  patches[output_index] = static_cast<T>(normalized_pixel);
 }

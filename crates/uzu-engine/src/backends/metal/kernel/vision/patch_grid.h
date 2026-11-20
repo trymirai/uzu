@@ -14,7 +14,7 @@
 // Example:
 //  Input: row = 6, grid_width = 4, merge_size = 2
 //  Output: y = 1, x = 2
-inline uint2 vision_patch_coordinates(uint row, uint grid_width, uint merge_size) {
+METAL_FUNC uint2 vision_patch_coordinates(uint row, uint grid_width, uint merge_size) {
   const uint block_size = merge_size * merge_size;
   const uint blocks_per_row = grid_width / merge_size;
   const uint block = row / block_size;

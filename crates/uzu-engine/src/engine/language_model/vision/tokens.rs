@@ -29,9 +29,9 @@ impl<B: Backend> VisionModel<B> {
     pub fn image_token_count(
         &self,
         image: &VisionImage,
-    ) -> usize {
-        let block_size = self.config.encoder_config.patch_size * self.config.encoder_config.spatial_merge_size;
-        ((image.width / block_size) * (image.height / block_size)) as usize
+    ) -> Result<usize, VisionImageError> {
+        let (token_columns, token_rows) = self.merged_image_grid(image)?;
+        Ok((token_columns * token_rows) as usize)
     }
 
     /// Replaces every image's single pad token with `image_token_count` copies of it, so the input gets a token for each image embedding
@@ -42,9 +42,7 @@ impl<B: Backend> VisionModel<B> {
     ) -> Result<Box<[u64]>, VisionPrefillError<B>> {
         let mut extra_tokens = 0;
         for image in images {
-            let (token_columns, token_rows) = self.merged_image_grid(&image.image)?;
-            let image_tokens = (token_columns * token_rows) as usize;
-            extra_tokens += image_tokens - 1; // The prompt already contains one image pad token.
+            extra_tokens += self.image_token_count(&image.image)? - 1; // The prompt already contains one image pad token.
         }
 
         let mut tokens = Vec::with_capacity(input.len() + extra_tokens);
@@ -59,7 +57,7 @@ impl<B: Backend> VisionModel<B> {
 
             tokens.extend_from_slice(&input[cursor..image.start]);
 
-            let repeated_tokens = repeat_n(input[image.start], self.image_token_count(&image.image));
+            let repeated_tokens = repeat_n(input[image.start], self.image_token_count(&image.image)?);
             tokens.extend(repeated_tokens);
 
             cursor = image.start + 1;

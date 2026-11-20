@@ -15,6 +15,22 @@ impl<B: Backend> PrecalculatedRoPE<B> {
         token_positions: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, B::Error> {
+        Self::precalculate_with(
+            rope_config,
+            token_positions.len(),
+            |token_index, _| token_positions[token_index],
+            command_buffer,
+        )
+    }
+
+    /// `token_position(token_index, pair_index)` is the position frequency pair `pair_index` of token `token_index`
+    /// rotates by
+    pub(super) fn precalculate_with(
+        rope_config: &AnyRoPEConfig,
+        token_count: usize,
+        token_position: impl Fn(usize, u32) -> u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, B::Error> {
         let head_dim = *rope_config.head_dim();
         assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
         let half_dim = head_dim / 2;
@@ -26,7 +42,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             _ => 1.0,
         };
 
-        let element_count = token_positions.len() * head_dim as usize;
+        let element_count = token_count * head_dim as usize;
         let half_offset = half_dim as usize;
         let mut sines = vec![0.0; element_count];
         let mut cosines = vec![0.0; element_count];
@@ -89,8 +105,8 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                 },
             };
 
-            for (token_index, token_position) in token_positions.iter().enumerate() {
-                let embedding = *token_position as f32 * inverse_frequency;
+            for token_index in 0..token_count {
+                let embedding = token_position(token_index, pair_index) as f32 * inverse_frequency;
                 let sine = embedding.sin() * attention_scaling_factor;
                 let cosine = embedding.cos() * attention_scaling_factor;
                 let pair_offset = token_index * head_dim as usize + pair_index as usize;

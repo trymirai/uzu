@@ -131,7 +131,7 @@ impl<B: Backend> VisionModel<B> {
                 height,
             };
             prefilled_images.push(prefilled_image);
-            offset += (width * height) as usize - 1;
+            offset += self.image_token_count(&input.image)? - 1;
         }
 
         let result = VisionPrefillResult {

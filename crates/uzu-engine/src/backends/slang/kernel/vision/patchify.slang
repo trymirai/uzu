@@ -12,7 +12,7 @@ import definitions;
   uint32_t merge_size,
   uint32_t temporal_patch_size,
   uint32_t length,
-  [[Axis("length", "256")]] uint32_t position,
+  [[Axis("length", "256")]] uint32_t output_index,
 ) {
   // TODO
 }

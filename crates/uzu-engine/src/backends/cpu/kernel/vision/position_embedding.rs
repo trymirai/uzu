@@ -37,12 +37,9 @@ pub fn vision_position_embedding<T: DataTypeRepr>(
     model_dim: u32,
     length: u32,
 ) {
-    // Every weight, product and partial sum is rounded to T, as HF does, to match it bit for bit
-    let round = |value: f32| T::from(value).unwrap().to_f32().unwrap();
-
-    for position in 0..length {
-        let row = position / model_dim;
-        let channel = position % model_dim;
+    for output_index in 0..length {
+        let row = output_index / model_dim;
+        let channel = output_index % model_dim;
 
         let (patch_x, patch_y) = vision_patch_coordinates(row, grid_width, merge_size);
         let y = vision_linspace(patch_y, grid_height, side);
@@ -59,16 +56,16 @@ pub fn vision_position_embedding<T: DataTypeRepr>(
         let dx = x - x_floor as f32;
         let weights = [(1.0 - dy) * (1.0 - dx), (1.0 - dy) * dx, dy * (1.0 - dx), dy * dx];
 
+        // Accumulated in f32, rounded to T once when added to the stream
         let mut embedding = 0.0;
         for (corner, weight) in corners.into_iter().zip(weights) {
             let table_idx = (corner * model_dim + channel) as usize;
             let table_value = unsafe { (*table.add(table_idx)).to_f32().unwrap() };
-            let value = round(table_value * round(weight));
-            embedding = round(embedding + value);
+            embedding += table_value * weight;
         }
 
         unsafe {
-            let stream_value = stream.add(position as usize);
+            let stream_value = stream.add(output_index as usize);
             *stream_value = T::from((*stream_value).to_f32().unwrap() + embedding).unwrap();
         }
     }

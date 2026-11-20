@@ -13,8 +13,12 @@ use crate::{
 pub enum VisionPositionEmbeddingNewError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error("Position table size {0} isn't a square")]
+    NonSquareTable(u32),
     #[error("Parameter loading error: {0}")]
     Parameter(#[from] ParameterLoaderError<B>),
+    #[error("Model dim {0} isn't a multiple of 4")]
+    UnsupportedModelDim(u32),
 }
 
 pub struct VisionPositionEmbedding<B: Backend> {
@@ -33,7 +37,14 @@ impl<B: Backend> VisionPositionEmbedding<B> {
         context: &B::Context,
     ) -> Result<Self, VisionPositionEmbeddingNewError<B>> {
         let side = num_positions.isqrt();
-        assert_eq!(side * side, num_positions, "position table size {num_positions} isn't a square");
+        if side * side != num_positions {
+            return Err(VisionPositionEmbeddingNewError::NonSquareTable(num_positions));
+        }
+
+        // The GPU kernels add 4 consecutive channels per thread
+        if !model_dim.is_multiple_of(4) {
+            return Err(VisionPositionEmbeddingNewError::UnsupportedModelDim(model_dim));
+        }
 
         let kernel = <B::Kernels as Kernels>::VisionPositionEmbeddingKernel::new(context, data_type)
             .map_err(VisionPositionEmbeddingNewError::Backend)?;
