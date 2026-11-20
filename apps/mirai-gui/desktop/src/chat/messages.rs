@@ -104,6 +104,7 @@ pub(super) fn assistant_history_message(
         content,
         reasoning_content: (!reasoning_content.is_empty()).then_some(reasoning_content),
         openable_urls: Vec::new(),
+        read_pages: Vec::new(),
     })
 }
 

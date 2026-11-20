@@ -17,11 +17,13 @@ beforeEach(() => {
 });
 
 it("keeps each chat's mode, starts a new chat with the latest one and saves both to the settings", () => {
+  useWebSearchStore.getState().markNew("new");
   expect(mode("new")).toBe("off");
 
   useWebSearchStore.getState().setMode("first", "auto");
   expect(mode("first")).toBe("auto");
   expect(mode("new")).toBe("auto");
+  expect(mode("older"), "a chat from before the modes were kept").toBe("off");
   expect(settings.setWebSearchModes).toHaveBeenLastCalledWith({ chats: { first: "auto" }, last: "auto" });
 
   useWebSearchStore.getState().setMode("second", "off");
@@ -31,6 +33,7 @@ it("keeps each chat's mode, starts a new chat with the latest one and saves both
 });
 
 it("sets one chat's mode without changing what the other chats and a new chat follow", () => {
+  useWebSearchStore.getState().markNew("new");
   useWebSearchStore.getState().setMode("first", "ask");
 
   useWebSearchStore.getState().setChatMode("second", "auto");
@@ -43,6 +46,7 @@ it("sets one chat's mode without changing what the other chats and a new chat fo
 it("reads the saved modes back", async () => {
   settings.getWebSearchModes.mockResolvedValueOnce({ chats: { asked: "ask" }, last: "auto" });
   await useWebSearchStore.getState().load();
+  useWebSearchStore.getState().markNew("new");
   expect(mode("asked")).toBe("ask");
   expect(mode("new")).toBe("auto");
 });
@@ -54,7 +58,7 @@ it("forgets a deleted chat and leaves the others and the latest mode", () => {
 
   useWebSearchStore.getState().forgetChat("first");
   expect(settings.setWebSearchModes).toHaveBeenLastCalledWith({ chats: { second: "auto" }, last: "auto" });
-  expect(mode("first")).toBe("auto");
+  expect(mode("first")).toBe("off");
 });
 
 it("forgets every chat and leaves the latest mode for the next one", () => {
@@ -63,5 +67,6 @@ it("forgets every chat and leaves the latest mode for the next one", () => {
 
   useWebSearchStore.getState().forgetAll();
   expect(settings.setWebSearchModes).toHaveBeenLastCalledWith({ chats: {}, last: "auto" });
-  expect(mode("second")).toBe("auto");
+  useWebSearchStore.getState().markNew("next");
+  expect(mode("next")).toBe("auto");
 });

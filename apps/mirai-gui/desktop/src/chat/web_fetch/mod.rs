@@ -113,11 +113,7 @@ fn requested_page(
     address: &str,
     tools: &WebTools,
 ) -> Result<RequestedPage, FetchError> {
-    let spelled = if address.contains("://") {
-        address.to_string()
-    } else {
-        format!("https://{address}")
-    };
+    let spelled = spelled_address(address);
     let mut url = public_web_url(&spelled).map_err(|_| FetchError::Address)?;
     // A fragment never reaches a server with a plain request, but a reader that runs the
     // page's scripts would hand it to them; a page must not get text through it.
@@ -160,6 +156,14 @@ fn remember_read(
     });
 }
 
+fn spelled_address(address: &str) -> String {
+    if address.contains("://") {
+        address.to_string()
+    } else {
+        format!("https://{address}")
+    }
+}
+
 pub(super) fn requested_address(call: &ToolCall) -> String {
     #[derive(Deserialize)]
     struct Arguments {
@@ -167,7 +171,7 @@ pub(super) fn requested_address(call: &ToolCall) -> String {
     }
     serde_json::from_str::<Arguments>(&call.arguments.json)
         .ok()
-        .and_then(|arguments| public_web_url(&arguments.url).ok())
+        .and_then(|arguments| public_web_url(&spelled_address(&arguments.url)).ok())
         .map(String::from)
         .unwrap_or_default()
 }
@@ -517,6 +521,11 @@ mod tests {
         assert_eq!(
             requested_address(&call(serde_json::json!({ "url": " https://example.com/a " }))),
             "https://example.com/a"
+        );
+        assert_eq!(
+            requested_address(&call(serde_json::json!({ "url": "example.com/a" }))),
+            "https://example.com/a",
+            "spelled as the read spells it"
         );
         assert_eq!(requested_address(&call(serde_json::json!({ "url": "http://127.0.0.1/" }))), "");
         assert_eq!(requested_address(&call(serde_json::json!({ "address": "https://example.com/" }))), "");

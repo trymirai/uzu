@@ -10,10 +10,18 @@ import {
   type WebSearchItem,
 } from "@/types/web-search";
 
+export type ReadPage = { url: string; readFrom?: string };
+
 export type LlmRunParams = {
   repoId: string;
   chatId: string;
-  messages: Array<{ role: ChatRole; content: string; reasoningContent?: string; openableUrls?: string[] }>;
+  messages: Array<{
+    role: ChatRole;
+    content: string;
+    reasoningContent?: string;
+    openableUrls?: string[];
+    readPages?: ReadPage[];
+  }>;
   samplingPolicy?: SamplingPolicyPayload;
   reasoningEffort?: ReasoningEffort;
   modelChatNamingEnabled?: boolean;

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,12 @@ const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const ENDINGS_SETTING_KEY: &str = "webSearchKeyEndings";
 const ENDING_CHARS: usize = 4;
 const CHECK_QUERY: &str = "weather";
+const UNSAVED: &str = "Couldn't save the key. Try again.";
+const UNREMOVED: &str = "Couldn't remove the key. Try again.";
+
+// All keys share one entry, so a save and a removal each read, change and rewrite all of it;
+// running them one at a time keeps either from losing the other's change.
+static ENTRY_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +27,7 @@ pub struct StoredKey {
     ending: String,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct Keys(BTreeMap<Provider, String>);
 
 impl Keys {
@@ -68,28 +74,6 @@ impl Entry {
         }
     }
 
-    fn save(
-        &self,
-        provider: Provider,
-        key: &str,
-    ) -> Result<Keys, String> {
-        let mut keys = self.read()?;
-        keys.0.insert(provider, key.to_string());
-        self.write(&keys)?;
-        Ok(keys)
-    }
-
-    fn remove(
-        &self,
-        provider: Provider,
-    ) -> Result<Keys, String> {
-        let mut keys = self.read()?;
-        if keys.0.remove(&provider).is_some() {
-            self.write(&keys)?;
-        }
-        Ok(keys)
-    }
-
     fn write(
         &self,
         keys: &Keys,
@@ -118,16 +102,40 @@ fn key_endings_in(settings: &serde_json::Value) -> Vec<StoredKey> {
     settings.get(ENDINGS_SETTING_KEY).and_then(|endings| Vec::deserialize(endings).ok()).unwrap_or_default()
 }
 
-fn save_key_endings(keys: &Keys) -> Vec<StoredKey> {
+fn save_key_endings(keys: &Keys) -> Option<Vec<StoredKey>> {
     let endings = keys.endings();
     let patch = serde_json::Map::from_iter([(ENDINGS_SETTING_KEY.to_string(), serde_json::json!(endings))]);
-    if let Err(error) = crate::storage::settings_merge(patch) {
-        crate::logger::warn("web-search:key:unshown", Some(serde_json::json!({ "error": error.to_string() })));
+    match crate::storage::settings_merge(patch) {
+        Ok(_) => Some(endings),
+        Err(error) => {
+            crate::logger::warn("web-search:key:unshown", Some(serde_json::json!({ "error": error.to_string() })));
+            None
+        },
     }
-    endings
+}
+
+fn change_keys(
+    change: impl FnOnce(&mut Keys),
+    failed: &str,
+) -> Result<Vec<StoredKey>, String> {
+    let _guard = ENTRY_LOCK.lock().expect("key entry lock poisoned");
+    let before = ENTRY.read()?;
+    let mut keys = before.clone();
+    change(&mut keys);
+    if keys == before {
+        return Ok(keys.endings());
+    }
+    ENTRY.write(&keys)?;
+    save_key_endings(&keys).ok_or_else(|| {
+        if let Err(error) = ENTRY.write(&before) {
+            crate::logger::warn("web-search:key:unrestored", Some(serde_json::json!({ "error": error })));
+        }
+        failed.to_string()
+    })
 }
 
 pub(super) fn read_for_search() -> Result<Keys, String> {
+    let _guard = ENTRY_LOCK.lock().expect("key entry lock poisoned");
     let keys = ENTRY.read()?;
     if key_endings() != keys.endings() {
         save_key_endings(&keys);
@@ -149,7 +157,7 @@ pub(in crate::chat) async fn save_key(
     }
     let provider = keyed.provider();
     check_verdict(provider, keyed.search(CHECK_QUERY, Some(&key)).await)?;
-    let saved = tokio::task::spawn_blocking(move || ENTRY.save(provider, &key).map(|keys| save_key_endings(&keys)));
+    let saved = tokio::task::spawn_blocking(move || change_keys(|keys| _ = keys.0.insert(provider, key), UNSAVED));
     saved.await.map_err(|error| error.to_string())?
 }
 
@@ -172,7 +180,7 @@ fn check_verdict(
 
 pub(in crate::chat) async fn remove_key(provider: &str) -> Result<Vec<StoredKey>, String> {
     let provider = keyed_provider(provider)?.provider();
-    let removed = tokio::task::spawn_blocking(move || ENTRY.remove(provider).map(|keys| save_key_endings(&keys)));
+    let removed = tokio::task::spawn_blocking(move || change_keys(|keys| _ = keys.0.remove(&provider), UNREMOVED));
     removed.await.map_err(|error| error.to_string())?
 }
 
@@ -187,6 +195,16 @@ fn keyed_provider(id: &str) -> Result<KeyedProvider, String> {
 mod tests {
     use super::*;
 
+    fn change(
+        entry: &Entry,
+        change: impl FnOnce(&mut Keys),
+    ) -> Keys {
+        let mut keys = entry.read().unwrap();
+        change(&mut keys);
+        entry.write(&keys).unwrap();
+        keys
+    }
+
     #[test]
     #[ignore = "writes to the Keychain"]
     fn live_keys_share_one_entry_that_goes_away_with_the_last_key() {
@@ -196,20 +214,20 @@ mod tests {
         let _ = delete_generic_password(TEST_ENTRY.service, ACCOUNT);
         assert_eq!(TEST_ENTRY.read(), Ok(Keys::default()));
 
-        TEST_ENTRY.save(Provider::Keenable, "first-test-value").unwrap();
-        TEST_ENTRY.save(Provider::Keenable, "second-test-value").unwrap();
-        let keys = TEST_ENTRY.save(Provider::Brave, "brave-test-value").unwrap();
+        change(&TEST_ENTRY, |keys| _ = keys.0.insert(Provider::Keenable, "first-test-value".into()));
+        change(&TEST_ENTRY, |keys| _ = keys.0.insert(Provider::Keenable, "second-test-value".into()));
+        let keys = change(&TEST_ENTRY, |keys| _ = keys.0.insert(Provider::Brave, "brave-test-value".into()));
         assert_eq!(TEST_ENTRY.read().as_ref(), Ok(&keys));
         assert_eq!(keys.get(Provider::Keenable), Some("second-test-value"));
         assert_eq!(keys.get(Provider::Brave), Some("brave-test-value"));
         assert_eq!(keys.get(Provider::Exa), None);
 
-        let keys = TEST_ENTRY.remove(Provider::Keenable).unwrap();
+        let keys = change(&TEST_ENTRY, |keys| _ = keys.0.remove(&Provider::Keenable));
         assert_eq!(keys.get(Provider::Keenable), None);
         assert_eq!(TEST_ENTRY.read().unwrap().get(Provider::Brave), Some("brave-test-value"));
 
-        TEST_ENTRY.remove(Provider::Brave).unwrap();
-        TEST_ENTRY.remove(Provider::Brave).unwrap();
+        change(&TEST_ENTRY, |keys| _ = keys.0.remove(&Provider::Brave));
+        change(&TEST_ENTRY, |keys| _ = keys.0.remove(&Provider::Brave));
         assert_eq!(
             get_generic_password(TEST_ENTRY.service, ACCOUNT).map_err(|error| error.code()),
             Err(ERR_SEC_ITEM_NOT_FOUND),

@@ -3,6 +3,8 @@ use std::{
     time::Instant,
 };
 
+use reqwest::Url;
+
 use super::{
     known_urls::{KnownUrls, Origin},
     payloads::MsgIn,
@@ -99,6 +101,22 @@ impl WebTools {
                     known.remember_text(&message.content, &Origin::User);
                 }
                 known.remember_addresses(message.openable_urls.iter().map(String::as_str), &Origin::Trusted);
+                // A page the user's own link led to keeps that origin wherever it redirected,
+                // so after a replay it is still asked about before going to a provider.
+                for page in &message.read_pages {
+                    let Ok(asked) = Url::parse(&page.url) else {
+                        continue;
+                    };
+                    let origin = if known.was_written_by_user(&asked) {
+                        Origin::User
+                    } else {
+                        Origin::Trusted
+                    };
+                    known.remember(&asked, origin.clone());
+                    if let Some(read_from) = page.read_from.as_deref().and_then(|address| Url::parse(address).ok()) {
+                        known.remember(&read_from, origin);
+                    }
+                }
             }
         });
     }
@@ -109,7 +127,10 @@ mod tests {
     use reqwest::Url;
     use uzu::types::session::chat::ChatRole;
 
-    use super::{super::payloads::test_message, *};
+    use super::{
+        super::payloads::{ReadPageIn, test_message},
+        *,
+    };
 
     fn message(
         role: ChatRole,
@@ -120,6 +141,29 @@ mod tests {
             openable_urls: openable_urls.iter().map(ToString::to_string).collect(),
             ..test_message(role, content, None)
         }
+    }
+
+    #[test]
+    fn a_page_the_users_link_redirected_to_stays_the_users_after_a_replay() {
+        let tools = WebTools::new(None);
+        let read = MsgIn {
+            read_pages: vec![
+                ReadPageIn {
+                    url: "https://docs.example/d/1".into(),
+                    read_from: Some("https://files.example/d/1?sig=secret".into()),
+                },
+                ReadPageIn {
+                    url: "https://example.com/found".into(),
+                    read_from: Some("https://www.example.com/found".into()),
+                },
+            ],
+            ..test_message(ChatRole::Assistant {}, "Read both.", None)
+        };
+        tools.remember_messages(&[message(ChatRole::User {}, "Read https://docs.example/d/1", &[]), read], true);
+        let written_by_user = |address: &str| tools.with_known(|known| known.was_written_by_user(&url(address)));
+        assert!(written_by_user("https://files.example/d/1?sig=secret"));
+        assert!(!written_by_user("https://www.example.com/found"));
+        assert!(tools.with_known(|known| known.is_openable(&url("https://www.example.com/found"))));
     }
 
     fn url(text: &str) -> Url {

@@ -1,5 +1,6 @@
 import type { AttachedFile } from "@/types/files";
 import type { ChatRole } from "@/types/chat";
+import type { ReadPage } from "@/types/llm-stream";
 import { Roles } from "@/types/chat";
 
 export const formatMessageWithAttachments = (text: string, files: AttachedFile[]): string =>
@@ -12,6 +13,7 @@ export type ChatRunMessage = {
   content: string;
   reasoningContent?: string;
   openableUrls?: string[];
+  readPages?: ReadPage[];
 };
 
 export const normalizeMessagesForRun = (messages: ChatRunMessage[]): ChatRunMessage[] => {
@@ -31,9 +33,15 @@ export const normalizeMessagesForRun = (messages: ChatRunMessage[]): ChatRunMess
     // Two user turns in a row follow a stopped reply; dropping either would lose text.
     if (prev.role !== m.role) return [...acc, m];
     const openableUrls = [...(prev.openableUrls ?? []), ...(m.openableUrls ?? [])];
+    const readPages = [...(prev.readPages ?? []), ...(m.readPages ?? [])];
     return [
       ...acc.slice(0, -1),
-      { ...prev, content: `${prev.content}\n\n${m.content}`, ...(openableUrls.length ? { openableUrls } : {}) },
+      {
+        ...prev,
+        content: `${prev.content}\n\n${m.content}`,
+        ...(openableUrls.length ? { openableUrls } : {}),
+        ...(readPages.length ? { readPages } : {}),
+      },
     ];
   }, []);
 

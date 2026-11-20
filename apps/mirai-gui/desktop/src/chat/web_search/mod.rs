@@ -8,7 +8,7 @@ mod permission;
 mod tool;
 
 use std::{
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -232,7 +232,8 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 pub(super) struct ReplyState {
     pub(super) permission: Arc<Permission>,
     pub(super) provider: Provider,
-    key: OnceLock<Result<Option<String>, SearchError>>,
+    /// Read once per reply; searches running side by side wait for the same read.
+    key: Arc<tokio::sync::OnceCell<Result<Option<String>, SearchError>>>,
     pub(super) result_chars: usize,
 }
 
@@ -245,7 +246,7 @@ impl ReplyState {
         Self {
             permission: Arc::new(Permission::new(asks_before_searching, show_request)),
             provider,
-            key: OnceLock::new(),
+            key: Arc::default(),
             result_chars: 0,
         }
     }
@@ -267,26 +268,31 @@ async fn reply_key(
     provider: Provider,
     tools: &WebTools,
 ) -> Result<Option<String>, SearchError> {
-    if let Ok(Some(key)) = tools.with_reply(|reply| reply.search.key.get().cloned()) {
-        return key;
+    match tools.with_reply(|reply| reply.search.key.clone()) {
+        Ok(key) => key.get_or_init(|| stored_key(provider)).await.clone(),
+        Err(_) => stored_key(provider).await,
     }
-    let key = match tokio::task::spawn_blocking(move || (keys::read_for_search(), keys::has_ending(provider))).await {
-        Ok((Ok(keys), _)) => Ok(keys.get(provider).map(str::to_string)),
-        Ok((Err(error), stored)) => {
-            crate::logger::warn(
-                "web-search:key:unreadable",
-                Some(serde_json::json!({ "provider": provider, "error": error })),
-            );
-            if stored {
+}
+
+/// The Keychain is read only for a provider whose key the settings show: reading it can make
+/// macOS ask the user, which a search without a key must never do.
+async fn stored_key(provider: Provider) -> Result<Option<String>, SearchError> {
+    let read = tokio::task::spawn_blocking(move || {
+        if !keys::has_ending(provider) {
+            return Ok(None);
+        }
+        match keys::read_for_search() {
+            Ok(keys) => Ok(keys.get(provider).map(str::to_string)),
+            Err(error) => {
+                crate::logger::warn(
+                    "web-search:key:unreadable",
+                    Some(serde_json::json!({ "provider": provider, "error": error })),
+                );
                 Err(SearchError::KeyUnreadable(provider))
-            } else {
-                Ok(None)
-            }
-        },
-        Err(_) => Ok(None),
-    };
-    let _ = tools.with_reply(|reply| reply.search.key.set(key.clone()));
-    key
+            },
+        }
+    });
+    read.await.unwrap_or(Ok(None))
 }
 
 pub(super) async fn read_page(

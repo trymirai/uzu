@@ -392,7 +392,7 @@ it.each([
 );
 
 it("keeps the mode a chat first sent with when the mode is changed in another chat", async () => {
-  useWebSearchStore.setState({ chats: {}, last: "ask" });
+  useWebSearchStore.setState({ chats: {}, last: "ask", fresh: { [CHAT_A]: true } });
   const hook = renderSend();
   await act(async () => void (await hook.result.current.send("prompt A")));
   await waitFor(() => expect(startStream).toHaveBeenCalled());

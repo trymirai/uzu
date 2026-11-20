@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useChatStore } from "@/stores/use-chat-store";
+import { useWebSearchStore } from "@/stores/use-web-search-store";
 
 type UseChatSwitchEffectParams = {
   chatId: string;
@@ -31,6 +32,7 @@ export const useChatSwitchEffect = ({
     setCurrentChatId(chatId);
     useChatStore.getState().clearChat();
     if (isNewChat) {
+      useWebSearchStore.getState().markNew(chatId);
       replayRef.current();
       return;
     }

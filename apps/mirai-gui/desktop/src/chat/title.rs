@@ -47,6 +47,7 @@ pub(super) async fn title_gen_inner(
             content: title_prompt(&payload.user_text),
             reasoning_content: None,
             openable_urls: Vec::new(),
+            read_pages: Vec::new(),
         }],
         support.cheapest(),
     );

@@ -1,5 +1,5 @@
 import type { Message } from "@/types/message";
-import type { TranscriptItem } from "@/types/llm-stream";
+import type { ReadPage, TranscriptItem } from "@/types/llm-stream";
 import { Roles, type NonSystemRole } from "../types";
 import type { AttachedFile } from "@/types/files";
 import { attachmentStorage } from "./attachment-storage";
@@ -10,20 +10,22 @@ type HistoryMessage = {
   content: string;
   reasoningContent?: string;
   openableUrls?: string[];
+  readPages?: ReadPage[];
 };
 
-const addressesOf = (item: TranscriptItem): string[] => {
-  if (item.type === "webSearch") return (item.sources ?? []).map((source) => source.url);
-  if (item.type === "webPage" && item.called && !item.failed) {
-    return [item.url, item.source?.url].filter((url): url is string => Boolean(url));
-  }
-  return [];
-};
-
-const pageAddresses = (transcript: TranscriptItem[] | undefined): string[] => {
-  const all = (transcript ?? []).flatMap(addressesOf);
+const foundAddresses = (transcript: TranscriptItem[] | undefined): string[] => {
+  const all = (transcript ?? []).flatMap((item) =>
+    item.type === "webSearch" ? (item.sources ?? []).map((source) => source.url) : [],
+  );
   return all.filter((url, index) => all.indexOf(url) === index);
 };
+
+const readPages = (transcript: TranscriptItem[] | undefined): ReadPage[] =>
+  (transcript ?? []).flatMap((item) =>
+    item.type === "webPage" && item.called && !item.failed && item.url
+      ? [{ url: item.url, ...(item.source?.url ? { readFrom: item.source.url } : {}) }]
+      : [],
+  );
 
 const projectHistoryMessage = (m: Message): HistoryMessage => {
   const hasVersions = Array.isArray(m.versions) && (m.versions?.length ?? 0) > 0;
@@ -31,7 +33,8 @@ const projectHistoryMessage = (m: Message): HistoryMessage => {
   const output = hasVersions ? activeVersion?.output : m.output;
   const parsed = output?.text?.parsed;
   const text = hasVersions ? (activeVersion?.text ?? m.text) : m.text;
-  const openableUrls = m.sender === Roles.Assistant ? pageAddresses(output?.transcript) : [];
+  const openableUrls = m.sender === Roles.Assistant ? foundAddresses(output?.transcript) : [];
+  const pages = m.sender === Roles.Assistant ? readPages(output?.transcript) : [];
   // History stores attachment ids separately, so reconstruct the content sent to the model.
   const content =
     m.sender === Roles.User && m.attachmentIds?.length
@@ -42,6 +45,7 @@ const projectHistoryMessage = (m: Message): HistoryMessage => {
     content,
     ...(m.sender === Roles.Assistant && parsed?.chainOfThought ? { reasoningContent: parsed.chainOfThought } : {}),
     ...(openableUrls.length ? { openableUrls } : {}),
+    ...(pages.length ? { readPages: pages } : {}),
   };
 };
 

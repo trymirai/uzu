@@ -85,10 +85,20 @@ pub struct MsgIn {
     pub reasoning_content: Option<String>,
     #[serde(default, rename = "openableUrls")]
     pub openable_urls: Vec<String>,
+    #[serde(default, rename = "readPages")]
+    pub read_pages: Vec<ReadPageIn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadPageIn {
+    pub url: String,
+    #[serde(default)]
+    pub read_from: Option<String>,
 }
 
 impl MsgIn {
-    // `openable_urls` is not compared: the client adds them to an answer the session produced.
+    // The addresses are not compared: the client adds them to an answer the session produced.
     pub(super) fn is_same_turn(
         &self,
         held: &Self,
@@ -306,6 +316,7 @@ pub(super) fn test_message(
         content: content.to_string(),
         reasoning_content: reasoning.map(str::to_string),
         openable_urls: Vec::new(),
+        read_pages: Vec::new(),
     }
 }
 

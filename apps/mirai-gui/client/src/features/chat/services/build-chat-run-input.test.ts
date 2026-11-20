@@ -45,10 +45,9 @@ it("sends the pages an earlier answer found or read along with its text", () => 
     {
       role: Roles.Assistant,
       content: "Rust 1.99 is out.",
-      openableUrls: [
-        "https://releases.rs/",
-        "https://blog.rust-lang.org/",
-        "https://blog.rust-lang.org/2026/01/01/Rust-1.99.0/",
+      openableUrls: ["https://releases.rs/", "https://blog.rust-lang.org/"],
+      readPages: [
+        { url: "https://blog.rust-lang.org/", readFrom: "https://blog.rust-lang.org/2026/01/01/Rust-1.99.0/" },
       ],
     },
     { role: Roles.User, content: "Open the second one" },
