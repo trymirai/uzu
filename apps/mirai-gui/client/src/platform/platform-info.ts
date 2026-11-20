@@ -1,6 +1,6 @@
 import { isMacPlatform } from "@/utils/platform";
 
-// The desktop app's macOS-only parts: its CLI installer and its title bar.
+// The desktop app's macOS-only parts: its CLI installer, its updates (releases are macOS-only) and its title bar.
 const isMacApp = __PLATFORM__ === "tauri" && isMacPlatform();
 
 export const platformInfo = {
@@ -9,7 +9,7 @@ export const platformInfo = {
   /** The browser build with a pretend engine, for design work and recordings. */
   isDemo: __PLATFORM__ === "demo",
   features: {
-    autoUpdate: __PLATFORM__ === "tauri",
+    autoUpdate: isMacApp,
     fileSystem: __PLATFORM__ === "tauri",
     logExport: __PLATFORM__ === "tauri",
     localModelDownloads: __PLATFORM__ === "tauri" || __PLATFORM__ === "demo",

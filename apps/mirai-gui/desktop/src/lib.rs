@@ -23,14 +23,17 @@ fn open_external(url: String) -> bool {
 }
 
 fn open_in_browser(url: &str) -> bool {
-    let opener = if cfg!(windows) {
-        "explorer"
+    let mut command = if cfg!(windows) {
+        // Explorer reads commas in its argument as its own options.
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler");
+        command
     } else if cfg!(target_os = "macos") {
-        "open"
+        std::process::Command::new("open")
     } else {
-        "xdg-open"
+        std::process::Command::new("xdg-open")
     };
-    std::process::Command::new(opener).arg(url).spawn().is_ok()
+    command.arg(url).spawn().is_ok()
 }
 
 fn is_app_url(url: &tauri::Url) -> bool {
@@ -65,7 +68,12 @@ pub fn run() {
     use tauri::Manager;
 
     install_panic_logger();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // A second launch would load models and resume downloads beside the first; it focuses the running window instead.
+    // On macOS LaunchServices already does.
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| system_ui::show_and_focus_main(app)));
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
