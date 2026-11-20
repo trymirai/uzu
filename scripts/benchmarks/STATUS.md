@@ -29,7 +29,7 @@ Updated 2026-11-20. Dates are when something was asked for or last touched.
 - Without models, every option but `--input` is ignored, also `--output`. Whether that is an error, and whether `-i tag:A -o tag:B` copies the tag (11-20).
 - Flow run bundles are stored at the bucket's root, which the expiry rule can't cover. Storing them under `benchman/v1/store/` would (11-20).
 - Repetition penalty of the six small Qwen3.5 models: without it MLX and TensorFold loop to the token limit.
-- Engine error output in a failed fleet run: today it only says the exit code.
+- Engine error output in a failed fleet run: it is in the flow run's Prefect log now (11-20), but `benchman` itself still only says the exit code.
 - TensorFold's memory with the 27B model, to finish `--filter-ram` for it.
 - Moving the C++ half of `common-cpp` into `engine-llamacpp`, its only user.
 

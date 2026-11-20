@@ -45,14 +45,14 @@ Splash is the one engine with a chip requirement: an M3 or newer.
 - Any other name goes to the engine as it is, and the engine's own defaults apply: a Hugging Face repository for most engines, for Uzu a registry model newer than the catalog or a directory on the host.
 - A model with `*` in it is every model of the engine's catalog that the pattern matches, and `!MODEL` leaves out what it names or matches: `-m '*' '!LFM*'`.
 
-**Datasets** (`-d`): `[spec:|!spec:][!]NAME[/KEY][^REPEATS]`.
+**Datasets** (`-d`): `[spec:|!spec:][!]NAME[/KEY][^[WARMUPS+]REPEATS]`.
 
 - `NAME` is `oneoff`, `mirai-mixture-fast`, `mirai-mixture-slow`, `mt-bench`, `humaneval`, `math500`, `gsm8k`, `aime25` or `mbpp`; `NAME/KEY` is one prompt of it. Both take `*`: `'oneoff/*-summary'`.
-- `^REPEATS` runs each prompt that many times.
+- `^REPEATS` runs each prompt that many times. `^WARMUPS+REPEATS` first runs it WARMUPS times without measuring, so that what the first run of a prompt pays for, like compiling kernels, is not in the numbers; `^+REPEATS` is one warmup.
 - `spec:` keeps the selection to models that decode speculatively, `!spec:` to those that don't.
 - `!` after that leaves prompts out: `'!spec:!oneoff/ai-*'` leaves them out for the models that don't decode speculatively.
 - The default is `spec:mirai-mixture-fast !spec:oneoff/london-summary`.
-- `-d oneoff/london-summary^3 spec:mirai-mixture-slow` is London three times for every model, and the slow mixture too for the speculative ones.
+- `-d oneoff/london-summary^+3 spec:mirai-mixture-fast^3` is London three times after one warmup for every model, and the fast mixture three times too for the speculative ones.
 
 Datasets come from Hugging Face with your own login, which the gated `mirai-mixture` ones need. A request without its own output limit may generate 4,096 tokens, and an engine that doesn't answer a request in 30 minutes fails its run.
 
@@ -134,7 +134,7 @@ An entry in `models.json` can also state only part of this for a model, and the 
 
 ## Fleet runs
 
-The fleet stores what it measures, addressed by what was asked: the source archive, the host, the engine, the model's settings and the request with its repeats. Any change of the checkout is another source, with results of its own. What `benchman` does about a task depends on what exists:
+The fleet stores what it measures, addressed by what was asked: the source archive, the host, the engine, the model's settings and the request with its repeats and warmups. Any change of the checkout is another source, with results of its own. What `benchman` does about a task depends on what exists:
 
 | Option | Stored | A flow run is measuring it | Neither |
 | --- | --- | --- | --- |
@@ -181,7 +181,7 @@ A saved file or tag is loaded only by the version of `benchman` that saved it.
 ./merge_bench.sh main -h macs-fleet/bench-m5max -e uzu mlx -m Qwen3.5-2B-M
 ```
 
-Without arguments it measures Uzu on the fleet's M5 Max, with three models and eight tasks of the fast mixture from its shortest context to its longest, and on its M4 Max, with two models and the six shortest of those; each twice and unseeded. A commit that was measured before, as the fork point usually was when it was merged, is not measured again. It measures nothing, and says so, if the fork point's `benchman` is of another version.
+Without arguments it measures Uzu on the fleet's M5 Max, with three models and eight tasks of the fast mixture from its shortest context to its longest, and on its M4 Max, with two models and the six shortest of those; each twice after one warmup, and unseeded. A commit that was measured before, as the fork point usually was when it was merged, is not measured again. It measures nothing, and says so, if the fork point's `benchman` is of another version.
 
 The [merge benchmark workflow](../../.github/workflows/merge-bench.yml) runs it for each commit of `main` against its parent. On a pull request whose branch is in this repository, someone with write access can comment `!bench`, or `!bench` followed by the script's arguments, as in `!bench -h macs-fleet/bench-m{4,5}max -e uzu mlx -m Qwen3.5-2B-M`, to compare the branch against where it forked from the branch it merges into. The comparison goes to the workflow run's summary and `merge-bench` artifact, and into a comment on the pull request: the one commented on, or the one that the commit of `main` merged. For a commit of `main` it also goes to the benchmark channel on Discord. These are tables that [results_table.py](results_table.py) makes of the saved runs. A run that failed or is missing is a row that says so, and an error before any result is replied as text.
 
@@ -190,11 +190,11 @@ The [merge benchmark workflow](../../.github/workflows/merge-bench.yml) runs it 
 A release is a selection and a tag. This tags Uzu's release benchmark, submits what is missing of it and returns; the second command shows the tag, exiting with 75 until it has everything:
 
 ```bash
-uv run --project benchman benchman -h 'macs-fleet/bench-*' -e uzu -m '*' -d oneoff/london-summary^3 spec:mirai-mixture-slow --filter-ram -o tag:macs-fleet/0.6.18 -b
+uv run --project benchman benchman -h 'macs-fleet/bench-*' -e uzu -m '*' -d oneoff/london-summary^+3 spec:mirai-mixture-fast^3 --filter-ram -o tag:macs-fleet/0.6.18 -b
 uv run --project benchman benchman -i tag:macs-fleet/0.6.18
 ```
 
-The [release benchmark workflow](../../.github/workflows/release-bench.yml) does that when a GitHub release is published, with the release's tag as the name. Started by hand on a branch, it takes the selection and the name as inputs: by default the same with the fast mixture, under the commit's eight-character hash. With other engines after `-e` it benchmarks the competition. It doesn't wait for the fleet. Its summary and `release-bench` artifact have the tag's results so far, as a table from [results_table.py](results_table.py).
+The [release benchmark workflow](../../.github/workflows/release-bench.yml) does that when a GitHub release is published, with the release's tag as the name. Started by hand on a branch, it takes the selection and the name as inputs: by default the same with the fast mixture once, under the commit's eight-character hash. With other engines after `-e` it benchmarks the competition. It doesn't wait for the fleet. Its summary and `release-bench` artifact have the tag's results so far, as a table from [results_table.py](results_table.py).
 
 [release_summary.py](release_summary.py) turns a saved release benchmark into what the website shows, one entry per run:
 
@@ -202,6 +202,6 @@ The [release benchmark workflow](../../.github/workflows/release-bench.yml) does
 uv run --project benchman python release_summary.py tag:macs-fleet/0.6.18 summary.json
 ```
 
-It is where the rules of a release are: every run has to have the London summary three times, and a model that decodes speculatively all 155 tasks of the slow mixture, or it fails. Input speed and memory are the London summary's; output speed is the mean over the mixture with speculative decoding, and the London summary's without.
+It is where the rules of a release are: every run has to have the London summary three times after one warmup, and a model that decodes speculatively the whole of one mixture, fast or slow, however many times, or it fails. Input speed, time to the first token and memory are the London summary's; output speed, with its accepted length and forward passes, is the mean over the mixture with speculative decoding, and the London summary's without, and says which it is and how many times that ran. A run that failed is an entry with its failure instead of numbers.
 
 Both workflows take the variable `PREFECT_API_URL` and the secret `PREFECT_API_KEY` from the `prefect-benchmarks` environment, and the repository's secret `HF_TOKEN`, which has to have access to the mixture.

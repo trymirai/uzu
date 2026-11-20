@@ -306,7 +306,9 @@ def match_tasks(pattern: str) -> dict[str, TaskRequest]:
 
 
 DEFAULT_DATASETS = ("spec:mirai-mixture-fast", "!spec:oneoff/london-summary")
-SELECTION = re.compile(r"(?P<only>!?spec:)?(?P<exclude>!)?(?P<tasks>.+?)(?:\^(?P<repeats>[1-9]\d*))?")
+SELECTION = re.compile(
+    r"(?P<only>!?spec:)?(?P<exclude>!)?(?P<tasks>.+?)(?:\^(?:(?P<warmups>\d*)\+)?(?P<repeats>[1-9]\d*))?"
+)
 
 
 def check_datasets(datasets: Sequence[str]) -> None:
@@ -325,14 +327,15 @@ def select_tasks(datasets: Sequence[str], specdec: bool) -> dict[str, TaskReques
     included: dict[str, TaskRequest] = {}
     excluded: set[str] = set()
     for selection in datasets:
-        only, exclude, pattern, repeats = SELECTION.fullmatch(selection).groups()
+        only, exclude, pattern, warmups, repeats = SELECTION.fullmatch(selection).groups()
         if only is not None and (only == "spec:") != specdec:
             continue
         if exclude:
             excluded |= match_tasks(pattern).keys()
         else:
             tasks = match_tasks(pattern).items()
-            included |= {name: task.model_copy(update={"repeats": int(repeats or 1)}) for name, task in tasks}
+            times = {"warmups": 0 if warmups is None else int(warmups or 1), "repeats": int(repeats or 1)}
+            included |= {name: task.model_copy(update=times) for name, task in tasks}
     return {name: task for name, task in included.items() if name not in excluded}
 
 
@@ -389,7 +392,7 @@ def plan(source: str, host: str, engine: str, model: str, datasets: Sequence[str
             )
             raise typer.BadParameter(message, param_hint="--dataset")
         tasks = {
-            name: task.model_copy(update={"specdec": None if name in either else name in speculative})
+            name: task.model_copy(update={"specdec_filter": None if name in either else name in speculative})
             for name, task in (speculative | plain).items()
         }
     return Run(
@@ -642,7 +645,9 @@ def measure(
                 for run in runs:
                     if run.missing or run.state == "Missing":
                         run.announce(missing=True)
-                for run in sorted((run for run in runs if run.completed is not None), key=lambda run: run.ended):
+                for run in sorted(
+                    (run for run in runs if run.completed is not None), key=lambda run: run.last_result_generation
+                ):
                     run.announce()
                 if detachable:
                     with progress(runs, keys):
@@ -654,7 +659,6 @@ def measure(
             # As in the waiting, for a Ctrl-C before it.
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             # TODO: decide whether Ctrl-C should detach instead, as in tools that watch remote jobs.
-            # Only what this invocation started; others may be waiting for the rest.
             if dispatch is not None:
                 dispatch.cancel(started=True)
                 _, elsewhere = started()
@@ -709,9 +713,10 @@ def benchman(
             "--dataset",
             "--datasets",
             "-d",
-            metavar="[spec:|!spec:][!]NAME[/KEY][^REPEATS]...",
-            help="Datasets or their prompts, each run REPEATS times; after spec: only by models that decode"
-            " speculatively, after !spec: only by the others; after ! left out.",
+            metavar="[spec:|!spec:][!]NAME[/KEY][^[WARMUPS+]REPEATS]...",
+            help="Datasets or their prompts, each run REPEATS times, after WARMUPS unmeasured runs if there is a +"
+            " (one, without a number); after spec: only by models that decode speculatively, after !spec: only by"
+            " the others; after ! left out.",
             autocompletion=completes(complete_datasets, prefix="(?:!?spec:)?!?"),
         ),
     ] = list(DEFAULT_DATASETS),  # noqa: B006

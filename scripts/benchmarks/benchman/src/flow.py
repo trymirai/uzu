@@ -1,7 +1,10 @@
 import asyncio
+import io
+import logging
+import re
 from collections.abc import AsyncIterator, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, closing, redirect_stderr
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from threading import Lock
@@ -17,7 +20,7 @@ from benchman.report import Run
 from benchman.source import unpack
 from benchman.storage import THREADS, Records, Storage, digest
 from benchman.task import Failure, Outcome, TaskRecord, TaskResponse, resolve_tasks
-from prefect import Task, flow
+from prefect import Task, flow, get_run_logger
 from prefect.artifacts import acreate_markdown_artifact
 from prefect.bundles import convert_step_to_command, create_bundle_for_flow_run
 from prefect.cache_policies import NO_CACHE
@@ -66,6 +69,28 @@ async def task(name: str, *upstream: Any) -> AsyncIterator[TaskBlock]:
     await engine.result()
 
 
+OVERWRITTEN = re.compile(r"\r|\x1b\[[0-9;]*K")
+ESCAPES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+class LoggedLines(io.TextIOBase):
+    """Logs the lines written to it, each as a terminal would have left it."""
+
+    def __init__(self, logger: logging.Logger | logging.LoggerAdapter) -> None:
+        self.logger = logger
+        self.pending = ""
+
+    def write(self, text: str) -> int:
+        *lines, self.pending = (self.pending + text).split("\n")
+        for line in lines:
+            if shown := ESCAPES.sub("", OVERWRITTEN.split(line)[-1]).strip():
+                self.logger.info(shown)
+        return len(text)
+
+    def close(self) -> None:
+        self.write("\n")
+
+
 @flow(persist_result=False)
 async def benchmark(nar_hash: str, engine: str, config: dict[str, Any], tasks: str, run: str) -> None:
     """Measures the tasks whose records name this flow run, and stores how each ended.
@@ -103,6 +128,8 @@ async def benchmark(nar_hash: str, engine: str, config: dict[str, Any], tasks: s
 
     try:
         async with AsyncExitStack() as stack:
+            lines = stack.enter_context(closing(LoggedLines(get_run_logger())))
+            stack.enter_context(redirect_stderr(lines))
             async with task("download archive") as block:
                 archive = unpack(nar_hash, lambda: asyncio.to_thread(storage.read_archive, nar_hash))
                 source = block.set_output(await stack.enter_async_context(archive))
@@ -123,6 +150,9 @@ async def benchmark(nar_hash: str, engine: str, config: dict[str, Any], tasks: s
                     claimed.discard(name)
                     continue
                 measuring = name
+                for warmup in range(request.warmups):
+                    async with task(request.warmup_step(name, warmup), previous) as block:
+                        previous = block.set_output(await run_task(process, request.bench_request()))
                 responses = []
                 for repeat in range(request.repeats):
                     async with task("cooldown", previous) as block:
@@ -191,9 +221,7 @@ class Dispatch:
 
     def __init__(self, runs: list[Run], tags: Sequence[str]) -> None:
         self.records = {run: records(run) for run in runs}
-        # The tags that get a copy of the outcomes.
         self.tags = tags
-        # The flow runs that are measuring the runs' tasks.
         self.measuring: dict[UUID, Run] = {}
         # The flow runs that were created here: those that no worker can take yet, and the others.
         self.reserved: set[UUID] = set()
@@ -350,7 +378,6 @@ class Dispatch:
                 started = [run for run in unclaimed if any(won[run])]
                 list(pool.map(schedule, started))
             except BaseException:
-                # On an interruption, what is queued is not to start.
                 pool.shutdown(cancel_futures=True)
                 raise
 
