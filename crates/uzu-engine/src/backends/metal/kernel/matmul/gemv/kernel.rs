@@ -117,8 +117,13 @@ impl GemvSpecialization {
             QUANT_K_BLOCK_BYTES * 8 / bits
         };
         let input_aligned = shape.k.is_multiple_of(block_size);
-        // Gathered quantized rows cannot share one input tile, and batched tiles need whole K blocks.
-        if is_quant && tile.input_row_tile > 1 && (shape.gathered || !input_aligned) {
+        // Batched tiles need whole K blocks; symmetric W4 and gathered rows use single-input tiles.
+        if is_quant
+            && tile.input_row_tile > 1
+            && (shape.gathered
+                || !input_aligned
+                || (bits == 4 && shape.b_prologue == GemmBPrologueKind::ScaleSymmetricDequant))
+        {
             return None;
         }
         let output_transform = output_transform_for_tile(shape, tile)?;

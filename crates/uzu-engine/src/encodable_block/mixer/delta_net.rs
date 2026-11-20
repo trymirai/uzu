@@ -307,11 +307,9 @@ impl<B: Backend> DeltaNet<B> {
         )
         .map_err(DeltaNetNewError::Backend)?;
 
-        let out_projection = <dyn Linear<B>>::new_mixed_precision(
+        let out_projection = <dyn Linear<B>>::new(
             value_dim,
             hidden_dim,
-            outer_data_type,
-            outer_data_type,
             outer_data_type,
             false,
             &parameter_tree.subtree("out_proj"),

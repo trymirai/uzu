@@ -2,17 +2,25 @@
 name = "benchmarks-omlx"
 version = "0.0.1"
 requires-python = ">=3.13.7,<3.14"
-dependencies = ["benchmarks-common", "omlx", "typer>=0.27.3"]
+dependencies = [
+    "benchmarks-common",
+    "omlx",
+    "typer>=0.27.3",
+]
 
 [build-system]
 requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-bench-omlx = "bench_omlx:main"
+engine-omlx = "bench_omlx:main"
 
 [tool.setuptools]
 py-modules = ["bench_omlx"]
+
+[tool.uv]
+# WORKAROUND: later wheels need the macOS 15 SDK, and the Nix Python builds against 14.4.
+constraint-dependencies = ["opencv-python<5.1"]
 
 [tool.uv.sources]
 benchmarks-common = { path = "../common-py", editable = true }

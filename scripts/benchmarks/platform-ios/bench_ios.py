@@ -24,7 +24,7 @@ PORT = 7171
 BUNDLE_ID = "com.mirai.tech.benchmarks"
 PHONE_CACHE = "Library/Caches/.cache"
 MAC_CACHE = Path("~/.cache").expanduser()
-DEVICE_CACHE = MAC_CACHE / "bench-ios/device"
+DEVICE_CACHE = MAC_CACHE / "platform-ios/device"
 AVAILABLE_MEMORY_PERCENT = 0.75
 SPLASH_FAMILIES = Path(__file__).resolve().parents[1] / "engine-splash/deps/splash/install/families.py"
 
@@ -40,11 +40,10 @@ Host = Annotated[str | None, typer.Option("--host", help="Reach the app at this 
 Engine = Annotated[
     str,
     typer.Option(
-        "-e", "--engine", help="llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash or uzu, as in scripts/benchmarks."
+        "-e", "--engine", help="llamacpp, mlx, mlxserve, mtplx, omlx, splash or uzu, as in scripts/benchmarks."
     ),
 ]
-Model = Annotated[str, typer.Option("-m", "--model", help="Model identifier as the engine expects it.")]
-Arguments = Annotated[list[str] | None, typer.Argument(help="More engine arguments, after --, as on macOS.")]
+Model = Annotated[Path, typer.Argument(help="Engine model configuration JSON.")]
 
 
 def receive(connection: socket.socket, size: int) -> bytes:
@@ -60,7 +59,7 @@ def receive(connection: socket.socket, size: int) -> bytes:
 def usbmux(message: dict[str, Any]) -> tuple[socket.socket, dict[str, Any]]:
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     connection.connect("/var/run/usbmuxd")
-    payload = plistlib.dumps({"ClientVersionString": "bench-ios", "ProgName": "bench-ios", **message})
+    payload = plistlib.dumps({"ClientVersionString": "platform-ios", "ProgName": "platform-ios", **message})
     connection.sendall(struct.pack("<4I", 16 + len(payload), 1, 8, 1) + payload)
     length = struct.unpack("<4I", receive(connection, 16))[0]
     return connection, plistlib.loads(receive(connection, length - 16))
@@ -87,7 +86,7 @@ def choose_device() -> str:
     try:
         terminal = open("/dev/tty"), open("/dev/tty", "w")  # noqa: SIM115
     except OSError:
-        raise SystemExit("Pass --device UDID, or choose a device once with `bench-ios device`") from None
+        raise SystemExit("Pass --device UDID, or choose a device once with `platform-ios device`") from None
     with terminal[0] as keyboard, terminal[1] as screen:
         for index, device in enumerate(devices, 1):
             name, hardware = device["deviceProperties"]["name"], device["hardwareProperties"]
@@ -128,7 +127,7 @@ def paired_device(udid: str | None) -> dict[str, Any]:
             address = tunnel_address(udid)
         if address is None:
             raise SystemExit(
-                f"Device {udid} is not connected; connect and unlock it, or choose another with `bench-ios device`"
+                f"Device {udid} is not connected; connect and unlock it, or choose another with `platform-ios device`"
             )
         device = {"SerialNumber": udid, "Address": address}
     remember(udid)
@@ -253,11 +252,12 @@ def fits_in_memory(engine: str, model: str, memory: int) -> bool:
     return repository_size(model) <= budget
 
 
-def start(engine: str, model: str, arguments: list[str] | None, udid: str | None, host: str | None) -> socket.socket:
-    if not fits_in_memory(engine, model, physical_memory(udid, host)):
+def start(engine: str, model: Path, udid: str | None, host: str | None) -> socket.socket:
+    configuration = model.read_text()
+    if not fits_in_memory(engine, json.loads(configuration)["model"], physical_memory(udid, host)):
         print("Skip, model is too large", file=sys.stderr)
         raise typer.Exit(1)
-    command = {"command": "run", "engine": engine, "arguments": ["-m", model, *(arguments or [])]}
+    command = {"command": "run", "engine": engine, "configuration": configuration}
     return session(command, udid, host, fresh=True)
 
 
@@ -286,19 +286,17 @@ def resolve(model: str, staging: Path) -> tuple[Path, str]:
 
 
 @app.command()
-def run(engine: Engine, model: Model, arguments: Arguments = None, device: Device = None, host: Host = None) -> None:
+def run(engine: Engine, model: Model, device: Device = None, host: Host = None) -> None:
     """Run an engine session in a fresh app process: requests on stdin, responses on stdout, logs on stderr."""
-    connection = start(engine, model, arguments, device, host)
+    connection = start(engine, model, device, host)
     threading.Thread(target=forward_stdin, args=(connection,), daemon=True).start()
     raise typer.Exit(relay(connection))
 
 
 @app.command()
-def download(
-    engine: Engine, model: Model, arguments: Arguments = None, device: Device = None, host: Host = None
-) -> None:
+def download(engine: Engine, model: Model, device: Device = None, host: Host = None) -> None:
     """Load the model as the engine does, downloading it into the app's cache, without running requests."""
-    connection = start(engine, model, arguments, device, host)
+    connection = start(engine, model, device, host)
     connection.sendall(struct.pack(">I", 0))
     raise typer.Exit(relay(connection))
 

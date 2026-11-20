@@ -23,7 +23,7 @@ struct AttentionMatrixLayout {
   UZU_CONST int SCORE_TILE_ELEMENTS = TILE_ROWS * int(BK);
 };
 
-template <uint HEAD_DIM, bool USE_MXU = true, uint NUM_SIMDGROUPS = ATTENTION_GQA_SIMDGROUPS>
+template <uint HEAD_DIM, bool USE_MXU = true, uint NUM_SIMDGROUPS = ATTENTION_GQA_SIMDGROUPS, bool IS_SPARSE = false>
 struct AttentionMatrixScratch {
   using Layout = AttentionMatrixLayout<
       uzu::kv_layout::TILE_KEYS,
@@ -36,10 +36,15 @@ struct AttentionMatrixScratch {
   UZU_CONST int STATS_OFFSET = Layout::SIMDGROUPS * Layout::SCORE_TILE_ELEMENTS / int(sizeof(float));
   UZU_CONST int SUMS_OFFSET = STATS_OFFSET + Layout::SIMDGROUPS * Layout::TILE_ROWS * 2;
   UZU_CONST int SLOT_FLOATS = SUMS_OFFSET + Layout::SIMDGROUPS * Layout::TILE_ROWS;
-  UZU_CONST int ROW_MASKS = USE_MXU ? Layout::BLOCK_ROWS : 1;
+  UZU_CONST int SIMD_KEYS = IS_SPARSE || HEAD_DIM == 512 ? 16 : 32;
+  UZU_CONST int CHUNK_KEYS = 128;
+  UZU_CONST int CHUNK_TABLE_WORDS = CHUNK_KEYS * int(sizeof(int) + 2 * sizeof(float)) / int(sizeof(ulong));
+  UZU_CONST int ROW_MASKS =
+      USE_MXU ? (IS_SPARSE ? uzu::kv_layout::TILE_KEYS * HEAD_DIM / uzu::kv_layout::SLICE_DIMS : Layout::BLOCK_ROWS)
+              : CHUNK_TABLE_WORDS;
 
   UZU_CONST int QUERY_VECTORS_PER_BAND = int(HEAD_DIM) / (2 * uzu::kv_layout::TILE_DIMS) * METAL_SIMD_SIZE;
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
-  UZU_CONST int EXCHANGE_FLOATS = USE_MXU ? 2 * SLOT_FLOATS : NUM_SIMDGROUPS * 8 * (HEAD_DIM == 512 ? 16 : 32);
-  UZU_CONST int STAGING_VECTORS = USE_MXU ? QUERY_VECTORS : (HEAD_DIM == 512 ? 16 : 32) * (HEAD_DIM + 8) / 8;
+  UZU_CONST int EXCHANGE_FLOATS = USE_MXU ? 2 * SLOT_FLOATS : NUM_SIMDGROUPS * 8 * SIMD_KEYS;
+  UZU_CONST int STAGING_VECTORS = USE_MXU ? QUERY_VECTORS : SIMD_KEYS * (HEAD_DIM + 8) / 8;
 };

@@ -418,6 +418,19 @@
   }
 }
 
+/* While the window jumps to a new size (full screen, maximize), what follows its size glides there
+   (hooks/use-window-jump-morph.ts). Unlayered, so it wins over the elements' own transitions. */
+html[data-window-morph] .follows-window {
+  transition-property: width, max-width, padding-left, padding-right, translate, top, left;
+  transition-duration: 400ms;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-window-morph] .follows-window {
+    transition: none;
+  }
+}
+
 @layer components {
   .scrollbar-hide {
     scrollbar-width: none;

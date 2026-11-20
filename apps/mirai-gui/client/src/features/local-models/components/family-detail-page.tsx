@@ -11,7 +11,6 @@ import { buildFamilyDetailView, formatQuantization, toModelCardState, type Famil
 export type FamilyDetailPageProps = {
   family: FamilyEntry;
   searchQuery: string;
-  sortModels: (list: PlatformModel[]) => PlatformModel[];
   onDownload: (model: PlatformModel) => Promise<void> | void;
   onPause: (model: PlatformModel) => void;
   onResume: (model: PlatformModel) => void;
@@ -23,7 +22,6 @@ export type FamilyDetailPageProps = {
 export function FamilyDetailPage({
   family,
   searchQuery,
-  sortModels,
   onDownload,
   onPause,
   onResume,
@@ -43,9 +41,8 @@ export function FamilyDetailPage({
         modelPhasesById,
         familyIdentifier: family.familyIdentifier,
         searchLower: searchQuery.trim().toLowerCase(),
-        sortModels,
       }),
-    [models, modelPhasesById, family.familyIdentifier, searchQuery, sortModels],
+    [models, modelPhasesById, family.familyIdentifier, searchQuery],
   );
 
   const renderRow = (model: PlatformModel) => {

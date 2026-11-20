@@ -85,7 +85,16 @@ fn check_kv_copy<B: Backend>(keys_only: bool) {
     let mut rows: Vec<bf16> =
         (0..KEYS as usize * ROW_WIDTH).map(|i| bf16::from_f32(((i * 37 % 251) as f32 - 125.0) / 128.0)).collect();
     let mut actual = prepare_cache::<B>(&context, layout, &rows);
-    rows.copy_within(40 * ROW_WIDTH..41 * ROW_WIDTH, 5 * ROW_WIDTH);
+    let copies = [(6, 5), (7, 6), (9, 7)].map(|(source, destination)| Copy {
+        source,
+        destination,
+    });
+    for copy in &copies {
+        rows.copy_within(
+            copy.source as usize * ROW_WIDTH..(copy.source as usize + 1) * ROW_WIDTH,
+            copy.destination as usize * ROW_WIDTH,
+        );
+    }
     let expected = prepare_cache::<B>(&context, layout, &rows);
     let kernel = <B::Kernels as Kernels>::KVCacheUpdateKernel::new(
         &context,
@@ -101,11 +110,8 @@ fn check_kv_copy<B: Backend>(keys_only: bool) {
         (!keys_only).then_some(actual.v_codes.as_mut()),
         actual.k_scales.as_mut(),
         (!keys_only).then_some(actual.v_scales.as_mut()),
-        &[Copy {
-            source: 40,
-            destination: 5,
-        }],
-        1,
+        &copies,
+        copies.len() as u32,
         &mut command,
     );
     submit_command_buffer(command);

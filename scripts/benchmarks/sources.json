@@ -1,0 +1,65 @@
+{
+  "splash": {
+    "owner": "incoai",
+    "repo": "splash",
+    "rev": "1.7.0",
+    "hash": "sha256-TpOrLinozvpqkip4ep6sFbMi4xmBlaynGEup1whZQD0="
+  },
+  "llama_cpp": {
+    "owner": "ggml-org",
+    "repo": "llama.cpp",
+    "rev": "v1.0.0",
+    "hash": "sha256-aYziwYzK9Zj7sopAEsrANhMGs4BO0F2g0cDCGmYLxDA="
+  },
+  "cli11": {
+    "owner": "CLIUtils",
+    "repo": "CLI11",
+    "rev": "v2.7.2",
+    "hash": "sha256-lFMv7WH/Gv+lRjs9tH6QYk+E/QC39ndzvtYKwpGNkmg="
+  },
+  "glaze": {
+    "owner": "stephenberry",
+    "repo": "glaze",
+    "rev": "v9.1.0",
+    "hash": "sha256-eL6Y2frjqttrGQuRbovrQumZ1nvzHyOtBFZDy6Grcz8="
+  },
+  "magnitude": {
+    "owner": "magnitudedev",
+    "repo": "magnitude",
+    "rev": "@magnitudedev/cli@0.2.17",
+    "hash": "sha256-snxOFCFD2PQD2CEkp51AIwIffSz3iJElxY0bMksXvVM="
+  },
+  "tensorfold": {
+    "owner": "ashhart",
+    "repo": "TensorFold",
+    "rev": "v1.2.9",
+    "hash": "sha256-xAE5x7q7MEGjqkIkLg+qZdu5X/K8kMYFQq96fsl7q/A="
+  },
+  "kapitsa": {
+    "owner": "nace-ai",
+    "repo": "kapitsa",
+    "rev": "v0.2.36",
+    "hash": "sha256-Fl+9NfKp6DgAdAyLObhrD+b0EMHo1AjEzQHOYXth3qg="
+  },
+  "mlxserve": {
+    "owner": "ddalcu",
+    "repo": "mlx-serve",
+    "rev": "v26.11.2",
+    "fetchSubmodules": true,
+    "hash": "sha256-N36yU2Ltig+NwF8wDznkkfg3QXkBaQD3N4UQa7Bg7oI="
+  },
+  "metal-cpp": {
+    "url": "https://developer.apple.com/metal/cpp/files/metal-cpp_26.zip",
+    "hash": "sha256-7n2eI2lw/S+Us6l7YPAATKwcIbRRpaQ8VmES7S8ZjY8="
+  },
+  "json": {
+    "url": "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz",
+    "hash": "sha256-cnGfiVhXzqfj5Fay823wntWcTnbh8r2SefDLslb1Dh0="
+  },
+  "gguf": {
+    "owner": "antirez",
+    "repo": "gguf-tools",
+    "rev": "8fa6eb65236618e28fd7710a0fba565f7faa1848",
+    "hash": "sha256-15FvyPOFqTOr5vdWQoPnZz+mYH919++EtghjozDlnSA="
+  }
+}

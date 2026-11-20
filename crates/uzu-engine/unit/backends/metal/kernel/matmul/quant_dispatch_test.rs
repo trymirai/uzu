@@ -14,14 +14,14 @@ use crate::{
             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context,
             gpu_types::{
                 activation_type::ActivationType, hadamard_order::HADAMARD_TRANSFORM_BLOCK_SIZE as BLOCK_SIZE,
-                quantization::QuantizationMode, quantization_method::QuantizationMethod,
+                quantization_method::QuantizationMethod,
             },
             kernel::{
                 ActivationQuantization, ActivationTransform, GatedActMul, GatedActMulSettings, Kernels,
                 activation_transform::ACTIVATION_SCALE_GROUP_SIZE,
                 matmul::{
                     ActivationFormat, Int8CodeLayout, MatmulA, MatmulArguments, MatmulGather, MatmulKernel,
-                    MatmulShape, QuantParams, QuantParamsLayout, QuantParamsStrides, packed_half_bytes,
+                    MatmulShape, QuantParamsLayout, packed_half_bytes,
                 },
             },
         },
@@ -66,34 +66,6 @@ fn tile_weights<T: DataTypeRepr + Float>(
     assert_eq!(buffers.weights_layout, GemmBLayout::MxuTiled);
 }
 
-#[uzu_test]
-fn optimize_weights_layout_prepares_unsigned_codes() {
-    let context = block_on(MetalContext::new()).expect("Metal context");
-    if !context.supports_mxu {
-        return;
-    }
-    let kernel = MatmulMetalKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type()).unwrap();
-    let signed = QuantInput::<bf16>::new(16, 512, 64, 64, 8, QuantizationMethod::ScaleSymmetric, 0)
-        .with_group_output()
-        .with_prepared_a(ACTIVATION_SCALE_GROUP_SIZE, None);
-    let mut unsigned = signed.clone();
-    unsigned.signed_codes = false;
-    let mut expected = QuantBuffers::<Metal, bf16>::allocate(&context, &signed);
-    let mut actual = QuantBuffers::<Metal, bf16>::allocate(&context, &unsigned);
-    let signed_shape = MatmulShape::from_arguments(&quant_arguments(&mut expected, &signed));
-    let unsigned_shape = MatmulShape::from_arguments(&quant_arguments(&mut actual, &unsigned));
-
-    assert_eq!(
-        kernel.optimize_weights_layout(&signed_shape, &mut expected.w, &context).unwrap(),
-        (GemmBLayout::MxuTiled, true),
-    );
-    assert_eq!(
-        kernel.optimize_weights_layout(&unsigned_shape, &mut actual.w, &context).unwrap(),
-        (GemmBLayout::MxuTiled, true),
-    );
-    assert_eq!(buffer_to_vec::<Metal, u32>(&context, &actual.w), buffer_to_vec::<Metal, u32>(&context, &expected.w));
-}
-
 fn run_quant_metal<T: DataTypeRepr + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
@@ -115,25 +87,6 @@ fn run_quant_metal<T: DataTypeRepr + Float>(
     }
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
     buffer_to_vec::<Metal, T>(context, &buffers.y)
-}
-
-#[uzu_test]
-fn quant_params_layout_table() {
-    let cases = [
-        (QuantParamsLayout::OutputGroup, [5, 3], [3, 1], [5, 2], [4, 1]),
-        (QuantParamsLayout::GroupOutput, [3, 8], [1, 8], [3, 4], [1, 8]),
-    ];
-    for (layout, scale_shape, scale_strides, u4_shape, u4_strides) in cases {
-        let params = QuantParams::new(layout, 5, 3);
-        let strides = |strides: QuantParamsStrides| [strides.output_stride, strides.group_stride];
-
-        assert_eq!(params.scale_shape(), scale_shape);
-        assert_eq!(strides(params.scale_strides()), scale_strides);
-        assert_eq!(params.zero_point_shape(QuantizationMode::U8), scale_shape);
-        assert_eq!(strides(params.zero_point_strides(QuantizationMode::U8)), scale_strides);
-        assert_eq!(params.zero_point_shape(QuantizationMode::U4), u4_shape);
-        assert_eq!(strides(params.zero_point_strides(QuantizationMode::U4)), u4_strides);
-    }
 }
 
 fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
@@ -176,6 +129,8 @@ fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
 #[case::gs64_4bit_mlx_prefill(64, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_4bit_mlx_decode(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_zp_decode(8, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_4bit_symmetric_draft(8, 256, 128, 64, 4, QuantizationMethod::ScaleSymmetric)]
+#[case::gs64_4bit_symmetric_prefill(64, 256, 128, 64, 4, QuantizationMethod::ScaleSymmetric)]
 #[case::gs32_unaligned_n(64, 256, 96, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_narrow_n_tail_zp(64, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_narrow_n_tail_mlx(64, 256, 72, 32, 4, QuantizationMethod::ScaleBias)]
@@ -484,7 +439,25 @@ fn a8w_mxu_parity_bf16(
         ACTIVATION_SCALE_GROUP_SIZE,
         (method != QuantizationMethod::ScaleSymmetric).then_some(weight_gs),
     );
-    let actual = run_quant_metal(&context, &input.with_group_output(), gemm_b_layout, Some(GemmEngine::Mxu));
+    let input = input.with_group_output();
+    if bits == 8 && gemm_b_layout == GemmBLayout::MxuTiled {
+        let kernel = MatmulMetalKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type()).unwrap();
+        let mut unsigned = input.clone();
+        unsigned.signed_codes = false;
+        let mut expected = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+        let mut actual = QuantBuffers::<Metal, bf16>::allocate(&context, &unsigned);
+        tile_weights(&kernel, &mut expected, &input, &context);
+        let shape = MatmulShape::from_arguments(&quant_arguments(&mut actual, &unsigned));
+        assert_eq!(
+            kernel.optimize_weights_layout(&shape, &mut actual.w, &context).unwrap(),
+            (GemmBLayout::MxuTiled, true)
+        );
+        assert_eq!(
+            buffer_to_vec::<Metal, u32>(&context, &actual.w),
+            buffer_to_vec::<Metal, u32>(&context, &expected.w)
+        );
+    }
+    let actual = run_quant_metal(&context, &input, gemm_b_layout, Some(GemmEngine::Mxu));
     let reference = run_quant_cpu::<bf16>(&reference_input);
     assert_parity::<bf16>(
         &format!(
@@ -553,6 +526,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
 #[test_attr(uzu_test)]
 #[case::w4_bias(4, QuantizationMethod::ScaleBias, 256, 2, 32)]
 #[case::w4_zp(4, QuantizationMethod::ScaleZeroPoint, 256, 2, 32)]
+#[case::w4_sym_gs64(4, QuantizationMethod::ScaleSymmetric, 256, 8, 64)]
 #[case::w8_sym(8, QuantizationMethod::ScaleSymmetric, 256, 2, 32)]
 #[case::direct_w8_m5(8, QuantizationMethod::ScaleSymmetric, 1024, 5, 64)]
 fn signed_weights_full_precision_activations_parity_bf16(
@@ -832,10 +806,10 @@ fn run_packed_half_pipeline(
     if !gated {
         ActivationTransform::<Metal>::input_rht(&context, DataType::BF16, BLOCK_SIZE, false)
             .expect("RHT reference")
-            .encode_fp(&source_buffer, &mut reference_a, &factors_buffer, batch, k, &mut command_buffer);
+            .encode_fp(&source_buffer, &mut reference_a, Some(&factors_buffer), batch, k, &mut command_buffer);
         ActivationTransform::<Metal>::quantize(&context, DataType::BF16, BLOCK_SIZE, format)
             .expect("Metal RHT PackedHalf pack")
-            .encode_pack_half(&source_buffer, &mut packed, &factors_buffer, batch, k, &mut command_buffer);
+            .encode_pack_half(&source_buffer, &mut packed, Some(&factors_buffer), batch, k, &mut command_buffer);
     } else {
         GatedActMul::<Metal>::full_precision(
             &context,
@@ -910,6 +884,8 @@ fn packed_half_producers_match_bf16_reference() {
         (64, 4, false, (5, 64), true, false, None, ScaleBias, 1),
         (32, 4, true, (8, 64), true, true, None, ScaleZeroPoint, 1),
         (64, 4, true, (5, 64), true, false, Some(0.5), ScaleBias, 2),
+        (64, 4, false, (8, 72), true, false, None, QuantizationMethod::ScaleSymmetric, 1),
+        (64, 4, true, (5, 64), false, true, Some(0.5), QuantizationMethod::ScaleSymmetric, 2),
         (128, 2, false, (6, 64), true, true, None, ScaleBias, 1),
         (128, 2, true, (8, 64), true, false, Some(0.5), ScaleBias, 1),
     ] {

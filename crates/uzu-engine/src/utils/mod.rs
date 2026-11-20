@@ -4,7 +4,7 @@ pub mod downcast;
 pub mod file;
 pub mod maybe_mut;
 pub mod maybe_owned;
-#[cfg(any(backend = "cpu", backend = "webgpu"))]
+#[cfg(any(backend = "webgpu", backend = "cpu"))]
 pub mod pointers;
 pub mod size_for_shape;
 pub mod strict_serde;

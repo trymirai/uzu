@@ -1,0 +1,77 @@
+name: "Release benchmark"
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      arguments:
+        description: "What benchman measures"
+        default: "-h macs-fleet/bench-* -e uzu -m * -d oneoff/london-summary^+3 spec:mirai-mixture-fast --filter-ram"
+      tag:
+        description: "Name the results are saved under (the commit by default)"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release-bench:
+    name: Benchmark on the fleet
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: prefect-benchmarks
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Benchmark
+        env:
+          COLUMNS: 200
+          ARGUMENTS: >-
+            ${{ inputs.arguments ||
+            '-h macs-fleet/bench-* -e uzu -m * -d oneoff/london-summary^+3 spec:mirai-mixture-fast^3 --filter-ram' }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          PREFECT_API_URL: ${{ vars.PREFECT_API_URL }}
+          PREFECT_BASIC_CREDENTIAL: ${{ secrets.PREFECT_API_KEY }}
+        run: |
+          PREFECT_API_AUTH_STRING="$(base64 --decode <<< "$PREFECT_BASIC_CREDENTIAL")"
+          export PREFECT_API_AUTH_STRING
+          benchman=(uv run --project scripts/benchmarks/benchman --frozen -- benchman)
+          tag="tag:macs-fleet/${TAG:-$(git rev-parse --short=8 HEAD)}"
+          # xargs splits the arguments without running a shell.
+          mapfile -d '' -t arguments < <(xargs printf '%s\0' <<< "$ARGUMENTS")
+          # benchman's own default is this machine.
+          if ! printf '%s\n' "${arguments[@]}" | grep -qxE -- '-h|--hosts?'; then
+            echo "::error::The arguments have to give the hosts, as in -h macs-fleet/bench-*"
+            exit 1
+          fi
+          "${benchman[@]}" "${arguments[@]}" -o "$tag" -b
+          status=0
+          "${benchman[@]}" -i "$tag" || status=$?
+          {
+            echo "Tagged as \`$tag\`"
+            echo
+            uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/results_table.py "$tag"
+          } | tee "$RUNNER_TEMP/release-bench.md" >> "$GITHUB_STEP_SUMMARY"
+          # 75: submitted, results still missing.
+          if [[ "$status" == 75 ]]; then
+            echo "::notice::Still measuring. benchman -i $tag shows the results."
+            exit 0
+          fi
+          exit "$status"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: release-bench
+          path: ${{ runner.temp }}/release-bench.md

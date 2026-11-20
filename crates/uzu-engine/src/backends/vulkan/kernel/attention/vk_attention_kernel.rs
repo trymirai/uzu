@@ -32,6 +32,9 @@ impl AttentionKernel for VkAttentionKernel {
         context: &VkContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, Error> {
+        if config.sparse_compression_ratio.is_some() {
+            return Err(Error::NotSupported);
+        }
         macro_rules! by_trie {
             ($kernel:ident) => {{
                 let new = |is_trie| {
@@ -78,7 +81,13 @@ impl AttentionKernel for VkAttentionKernel {
             impl BufferRef<Backend = Vulkan>,
             impl BufferRef<Backend = Vulkan>,
         >,
-        arguments: AttentionArguments<'_, Vulkan, impl BufferRef<Backend = Vulkan>, impl BufferRef<Backend = Vulkan>>,
+        arguments: AttentionArguments<
+            '_,
+            Vulkan,
+            impl BufferRef<Backend = Vulkan>,
+            impl BufferRef<Backend = Vulkan>,
+            impl BufferRef<Backend = Vulkan>,
+        >,
         command_buffer: &mut VkCommandBufferEncoding,
     ) -> Result<<Vulkan as Backend>::ScratchBuffer, Error> {
         let config = self.config;
@@ -113,8 +122,9 @@ impl AttentionKernel for VkAttentionKernel {
         let partials_ref = VkBuffer::resolve_ref(&partials);
         let sums_ref = VkBuffer::resolve_ref(&sums);
         let maxs_ref = VkBuffer::resolve_ref(&maxs);
-        let is_trie = usize::from(arguments.trie.is_some());
-        let trie = arguments.trie.map(VkBuffer::resolve_ref);
+        let trie = arguments.trie;
+        let is_trie = usize::from(trie.is_some());
+        let trie = trie.map(VkBuffer::resolve_ref);
         let ring_params = arguments.cache.ring_params();
         let scale = config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt());
         let command_buffer = &mut *command_buffer.debug_group("attention core");

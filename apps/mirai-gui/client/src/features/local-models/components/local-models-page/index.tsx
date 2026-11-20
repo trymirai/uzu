@@ -5,7 +5,6 @@ import { useDownloadManager } from "../../hooks/use-download-manager";
 import { useModelsStore } from "@/stores/use-models-store";
 import type { PlatformModel } from "@/types/models";
 import { ModelVendorIcon } from "@/components/model-vendor-icon";
-import { createNewestTextModelComparator, createSizeAccessor } from "../../lib/model-sort";
 import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { FamilyCard, type FamilyCardBadge } from "../family-card";
@@ -14,7 +13,7 @@ import { Text } from "@/components/ui/typography";
 import { TooltipProvider } from "@/components/ui/tooltip/provider";
 import { RefreshCcw } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAppStore } from "@/stores/use-app-store";
+import { chatWidthCss, useAppStore } from "@/stores/use-app-store";
 import { LocalModelsHero } from "./local-models-hero";
 import { PageScroller } from "@/components/page-title-bar";
 import { v4 as uuidv4 } from "uuid";
@@ -56,7 +55,6 @@ export function LocalModelsPage() {
   const modelsError = useModelsStore((s) => s.error);
   const fetchModels = useModelsStore((s) => s.fetchModels);
   const refreshModels = useModelsStore((s) => s.refreshModels);
-  const getModelState = useModelsStore((s) => s.getModelState);
   const modelPhasesById = useModelsStore((s) => s.modelPhasesById);
   const installedAtById = useModelsStore((s) => s.installedAtById);
 
@@ -66,22 +64,6 @@ export function LocalModelsPage() {
   useEffect(() => {
     void fetchModels();
   }, [fetchModels]);
-
-  const getSize = useMemo(() => createSizeAccessor(getModelState), [getModelState]);
-  const newestTextModelComparator = useMemo(() => createNewestTextModelComparator(), []);
-
-  const sortModels = useCallback(
-    (list: PlatformModel[]) => {
-      const next = [...list];
-      next.sort((a, b) => {
-        const sizeDiff = getSize(a) - getSize(b);
-        if (sizeDiff !== 0) return sizeDiff;
-        return newestTextModelComparator(a, b);
-      });
-      return next;
-    },
-    [getSize, newestTextModelComparator],
-  );
 
   const families: FamilyEntry[] = useMemo(
     () => buildFamiliesView({ models, modelPhasesById, installedAtById, searchLower: "" }),
@@ -166,7 +148,7 @@ export function LocalModelsPage() {
     <TooltipProvider>
       <div
         className="flex h-full min-h-0 flex-col bg-background"
-        style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
+        style={{ "--chat-width": chatWidthCss(chatWidth) } as CSSProperties}
       >
         <div className="w-full flex h-full min-h-0 overflow-clip">
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
@@ -184,7 +166,7 @@ export function LocalModelsPage() {
             >
               <div
                 key={selectedFamilyId ?? "families"}
-                className={`px-5 pt-4 pb-8 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto ${levelAnimation ?? ""}`}
+                className={`follows-window px-5 pt-4 pb-8 w-full max-w-[calc(var(--chat-width)+2.5rem)] mx-auto ${levelAnimation ?? ""}`}
               >
                 {!selectedFamily && models.length > 0 ? <LocalModelsHero /> : null}
                 {(modelsError || incompleteCatalog) && (
@@ -228,7 +210,6 @@ export function LocalModelsPage() {
                   <FamilyDetailPage
                     family={selectedFamily}
                     searchQuery=""
-                    sortModels={sortModels}
                     onDownload={handleDownload}
                     onPause={handlePause}
                     onResume={handleResume}

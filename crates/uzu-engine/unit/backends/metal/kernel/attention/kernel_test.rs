@@ -1,6 +1,6 @@
 use futures::executor::block_on;
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use half::{bf16, f16};
+use rand::{RngExt, SeedableRng, rngs::SmallRng, seq::SliceRandom};
 use uzu_engine_macros::uzu_test;
 
 use crate::{
@@ -10,9 +10,13 @@ use crate::{
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+                attention::KeyBlocks,
             },
         },
-        metal::{Metal, kernel::attention::AttentionMetalKernel},
+        metal::{
+            Metal,
+            kernel::{AttentionBlockScoreMetalKernel, attention::AttentionMetalKernel},
+        },
     },
     data_type::DataType,
     encodable_block::{
@@ -20,11 +24,13 @@ use crate::{
         sampling::PRng,
     },
     tests::{
-        assert::assert_eq_float,
+        assert::{assert_eq_float, assert_parity},
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
     trie::TrieNode,
 };
+
+const COMPRESSION_RATIO: usize = 4;
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
@@ -57,7 +63,10 @@ fn attention_matches_cpu() {
     type Prepare = <<Metal as Backend>::Kernels as Kernels>::AttentionPrepareKernel;
     const NAN: u16 = bf16::NAN.to_bits();
     const DENORMAL: u16 = 1; // 1 / scale overflows to inf
-    for use_mxu in [false, true].into_iter().filter(|&use_mxu| !use_mxu || metal.supports_mxu) {
+    for (use_mxu, sparse) in [(false, false), (false, true), (true, false), (true, true)]
+        .into_iter()
+        .filter(|&(use_mxu, _)| !use_mxu || metal.supports_mxu)
+    {
         // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)
         for (q_heads, suffix, prefix, use_trie, reader, poison) in [
             (8, 80, 16, false, false, NAN),
@@ -81,11 +90,15 @@ fn attention_matches_cpu() {
             (24, 64, 0, true, false, NAN),
         ] {
             let (head_dim, kv_heads) = match q_heads {
+                24 | 32 if sparse => (256, 2),
                 8 => (64, 2),
                 32 => (128, 2),
                 64 => (512, 4),
                 _ => (256, 4),
             };
+            if sparse && head_dim != 256 {
+                continue;
+            }
             let tokens: Vec<u64> = (0..suffix as u64).collect();
             let trie: Vec<GpuTrieNode> = if suffix == 8 {
                 // (start, end, height) per token
@@ -118,6 +131,7 @@ fn attention_matches_cpu() {
                 sliding_window_size: None,
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
+                sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
@@ -136,6 +150,23 @@ fn attention_matches_cpu() {
                 rows[(prefix + index % suffix) * stride + index / suffix * head_dim..][..head_dim]
                     .copy_from_slice(query);
             }
+            let mut rng = SmallRng::seed_from_u64(7);
+            let tail_start =
+                |node: usize| (prefix + usize::from(!use_trie) * (node + 1)) / COMPRESSION_RATIO * COMPRESSION_RATIO;
+            let dropped = |node: usize, block: usize| (block * 7 + node) % 5 == 0;
+            let blocks_per_query = (prefix + suffix).div_ceil(COMPRESSION_RATIO);
+            let block_list: Vec<i32> = (0..suffix * usize::from(sparse))
+                .flat_map(|node| {
+                    let complete = tail_start(node) / COMPRESSION_RATIO;
+                    let mut row: Vec<i32> =
+                        (0..complete).filter(|&block| !dropped(node, block)).map(|block| block as i32).collect();
+                    row.extend(
+                        (row.len()..blocks_per_query).map(|index| [kv_layout::NO_KEY_SLOT, complete as i32][index % 2]),
+                    );
+                    row.shuffle(&mut rng);
+                    row
+                })
+                .collect();
             let mut fill = metal.create_command_buffer(None, None).unwrap();
             let mut kv =
                 KVCache::<Metal>::allocate_scratch(kernel.kv_layout(), (prefix + suffix).max(2048) as u32, &mut fill)
@@ -173,6 +204,8 @@ fn attention_matches_cpu() {
                     let mut query_scales = create_buffer::<Metal, bf16>(&metal, kv_heads * query_rows);
                     let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
                     let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
+                    let key_blocks =
+                        (sparse && attend).then(|| command_buffer.allocate_constant_from_slice(&block_list).unwrap());
                     prepare.encode(
                         &create_buffer_with_data::<Metal, bf16>(&metal, rows),
                         &mut query_codes,
@@ -217,11 +250,15 @@ fn attention_matches_cpu() {
                         trie: trie.as_ref(),
                         cache: KVCacheView::full(prefix as u32),
                         gate: gate.as_ref(),
+                        key_blocks: key_blocks.as_ref().map(|query_blocks| KeyBlocks {
+                            query_blocks,
+                            blocks_per_query: blocks_per_query as u32,
+                        }),
                     };
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
                     let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * head_dim);
                     command_buffer.encode_copy(&pooled, &mut output);
-                    drop((pooled, trie));
+                    drop((pooled, trie, key_blocks));
                     submit_command_buffer(command_buffer);
                     buffer_to_vec::<Metal, bf16>(&metal, &output)
                 };
@@ -234,9 +271,12 @@ fn attention_matches_cpu() {
                 rows[prefix * stride..].chunks_mut(stride).for_each(|row| row[q_heads * head_dim..].fill(bf16::ONE));
                 actual = step(&rows[prefix * stride..], prefix, nodes, false, true);
             }
-            let label =
-                format!("int8 attention mxu={use_mxu} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}");
-            let mut expected = quantized_attention_reference(shape, nodes);
+            let label = format!(
+                "int8 attention mxu={use_mxu} sparse={sparse} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}"
+            );
+            let mut expected = quantized_attention_reference(shape, nodes, &|node, key| {
+                !sparse || key >= tail_start(node) || !dropped(node, key / COMPRESSION_RATIO)
+            });
             if let Some(gates) = &gates {
                 for (token, row) in expected.chunks_exact_mut(q_heads * head_dim).enumerate() {
                     for (channel, value) in row.iter_mut().enumerate() {
@@ -274,6 +314,7 @@ fn attention_inputs(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>, Vec<bf16>) 
 fn quantized_attention_reference(
     shape: AttentionShape,
     nodes: Option<&[GpuTrieNode]>,
+    attended: &dyn Fn(usize, usize) -> bool,
 ) -> Vec<bf16> {
     fn hadamard_transform(row: &mut [f32]) {
         let mut width = 1;
@@ -328,6 +369,9 @@ fn quantized_attention_reference(
             let query = &queries[(head * suffix + token) * head_dim..][..head_dim];
             let mut scores = vec![f32::NEG_INFINITY; length];
             for (key, score) in scores.iter_mut().enumerate() {
+                if !attended(token, key) {
+                    continue;
+                }
                 if causal && key >= prefix {
                     let visible = nodes.map_or(key - prefix <= token, |nodes| {
                         let ancestor = &nodes[key - prefix];
@@ -357,4 +401,75 @@ fn quantized_attention_reference(
         row.iter_mut().zip(&signs).for_each(|(value, sign)| *value *= sign);
     }
     result.into_iter().map(bf16::from_f32).collect()
+}
+
+#[uzu_test]
+fn block_score_matches_cpu() {
+    let (metal, mut rng) = (block_on(<Metal as Backend>::Context::new()).unwrap(), SmallRng::seed_from_u64(11));
+    let ratio = COMPRESSION_RATIO as u32;
+    for (suffix, chain, cached, open, first_row, row_count) in
+        [(4u32, 1, 3u32, 3, 0, 4), (8, 0, 5, 1, 0, 8), (21, 1, 40, 3, 0, 21), (33, 1, 70, 2, 8, 17)]
+    {
+        let prefix = cached * ratio + open;
+        let candidate_blocks =
+            cached + chain * (0..suffix).filter(|n| (prefix + n + 1).is_multiple_of(ratio)).count() as u32;
+        let (q, k) = ((0..4 * suffix * 128).map(|_| rng.random_range(-127..=127i8)), 64 + cached);
+        let (q, k) = (q.collect::<Vec<_>>(), (0..k * 128).map(|_| rng.random_range(-127..=127i8)).collect::<Vec<_>>());
+        let mut scales = |n: usize| (0..n).map(|_| bf16::from_f32(rng.random_range(0.001..0.02))).collect::<Vec<_>>();
+        let (qs, ks) = (scales(4 * suffix as usize), scales(k.len() / 128));
+        let mut expected = vec![f16::NEG_INFINITY; (row_count * candidate_blocks) as usize];
+        for (row, candidate) in (0..row_count).flat_map(|row| (0..candidate_blocks).map(move |c| (row, c))) {
+            if candidate < (prefix + first_row + row + 1) / ratio {
+                let key = if candidate < cached {
+                    64 + candidate
+                } else {
+                    (candidate + 1) * ratio - 1 - prefix
+                } as usize;
+                let relu_sum: f32 = (0..4)
+                    .map(|head| {
+                        let query = head * suffix as usize + (first_row + row) as usize;
+                        let dot: i32 =
+                            (0..128).map(|c| i32::from(q[query * 128 + c]) * i32::from(k[key * 128 + c])).sum();
+                        (qs[query].to_f32() * dot as f32).max(0.0)
+                    })
+                    .sum();
+                expected[(row * candidate_blocks + candidate) as usize] = f16::from_f32(relu_sum * ks[key].to_f32());
+            }
+        }
+        for (mxu, group_rows, blocks_per_group) in [(false, 16, 32), (false, 32, 256), (true, 64, 32)] {
+            if mxu && !metal.supports_mxu {
+                continue;
+            }
+            let kernel = AttentionBlockScoreMetalKernel::new(&metal, 4, 128, mxu, ratio).unwrap();
+            let buffer = |data: &[bf16]| create_buffer_with_data::<Metal, bf16>(&metal, data);
+            let mut scores = create_buffer::<Metal, f16>(&metal, expected.len());
+            let mut command = metal.create_command_buffer(None, None).unwrap();
+            kernel.encode(
+                &create_buffer_with_data::<Metal, i8>(&metal, &q),
+                &buffer(&qs),
+                &create_buffer_with_data::<Metal, i8>(&metal, &k),
+                &buffer(&ks),
+                &mut scores,
+                first_row,
+                row_count,
+                suffix,
+                prefix,
+                64,
+                group_rows,
+                blocks_per_group,
+                candidate_blocks,
+                &mut command,
+            );
+            submit_command_buffer(command);
+            let clamp = |x: &f16| x.max(f16::from_f32(-6e4)); // assert_parity cannot compare inf, so -inf must match exactly
+            let actual = buffer_to_vec::<Metal, f16>(&metal, &scores);
+            assert_parity(
+                "AttentionBlockScore",
+                &expected.iter().map(clamp).collect::<Vec<_>>(),
+                &actual.iter().map(clamp).collect::<Vec<_>>(),
+                6e-4,
+                0.0,
+            );
+        }
+    }
 }

@@ -97,7 +97,13 @@ impl Row {
 
 pub(super) fn encode(
     input: AttentionInput<impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
-    arguments: AttentionArguments<'_, Cpu, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
+    arguments: AttentionArguments<
+        '_,
+        Cpu,
+        impl BufferRef<Backend = Cpu>,
+        impl BufferRef<Backend = Cpu>,
+        impl BufferRef<Backend = Cpu>,
+    >,
     config: AttentionKernelConfig,
     command_buffer: &mut CpuCommandBufferEncoding,
 ) -> Result<<Cpu as crate::backends::common::Backend>::ScratchBuffer, CpuError> {

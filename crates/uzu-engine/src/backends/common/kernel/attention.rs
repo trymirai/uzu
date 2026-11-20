@@ -29,6 +29,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
             Self::Backend,
             impl BufferRef<Backend = Self::Backend>,
             impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
         >,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, Self::Error>;
@@ -46,14 +47,27 @@ pub struct AttentionKernelConfig {
     pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
+    pub sparse_compression_ratio: Option<u32>,
 }
 
-pub struct AttentionArguments<'a, B: Backend, TT: BufferRef<Backend = B>, GT: BufferRef<Backend = B>> {
+pub struct AttentionArguments<
+    'a,
+    B: Backend,
+    TT: BufferRef<Backend = B>,
+    GT: BufferRef<Backend = B>,
+    ST: BufferRef<Backend = B>,
+> {
     pub suffix_length: u32,
     pub trie: Option<TT>,
+    pub key_blocks: Option<KeyBlocks<ST>>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
+}
+
+pub struct KeyBlocks<ST: BufferRef> {
+    pub query_blocks: ST,
+    pub blocks_per_query: u32,
 }
 
 #[derive(Clone, Copy)]

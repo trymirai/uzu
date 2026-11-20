@@ -12,7 +12,10 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::{attention::AttnParams, kv_layout},
-            kernel::{AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel, AttentionVectorMetalKernel},
+            kernel::{
+                AttentionBlockScoreMetalKernel, AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel,
+                AttentionVectorMetalKernel,
+            },
         },
     },
     data_type::DataType,
@@ -24,6 +27,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
+    sparse: Option<(u32, u32, [AttentionMatrixMetalKernel; 2])>,
 }
 
 struct KernelTile {
@@ -47,6 +51,15 @@ impl AttentionMetalKernel {
                 128
             })
         .max(1);
+        let tile_rows = |simdgroups| {
+            simdgroups
+                * if use_mxu {
+                    kv_layout::TILE_QUERIES
+                } else {
+                    8
+                }
+                / slices
+        };
         let mut tiles = Vec::new();
         for simdgroups in [1, 2, 4, 6, 8] {
             if simdgroups % slices != 0 {
@@ -59,21 +72,19 @@ impl AttentionMetalKernel {
                     config.head_dim,
                     use_mxu,
                     simdgroups,
+                    false,
                     config.is_causal,
                     config.is_kv_cache_ring,
                     config.sliding_window_size.is_some(),
                     mask_free,
                     is_trie,
                     config.num_groups,
+                    None,
                 )
             };
             tiles.push(KernelTile {
                 simdgroups,
-                rows: if use_mxu {
-                    simdgroups * kv_layout::TILE_QUERIES / (config.head_dim / kv_layout::SLICE_DIMS)
-                } else {
-                    simdgroups * 8 / slices
-                },
+                rows: tile_rows(simdgroups),
                 prefix: (use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none())
                     .then(|| kernel(true, false))
                     .transpose()?,
@@ -119,6 +130,47 @@ impl AttentionMetalKernel {
                 config.gate_row_stride.is_some(),
                 config.has_sinks,
             )?,
+            sparse: config
+                .sparse_compression_ratio
+                .map(|compression_ratio| {
+                    if config.is_kv_cache_ring || config.sliding_window_size.is_some() || !config.is_causal {
+                        return Err(MetalError::CannotCreateFunction(
+                            "sparse attention is causal without window or ring".to_string(),
+                        ));
+                    }
+                    if compression_ratio % kv_layout::LANE_KEYS != 0 {
+                        return Err(MetalError::CannotCreateFunction(format!(
+                            "sparse blocks of {compression_ratio} keys must fill whole lane groups of {} keys",
+                            kv_layout::LANE_KEYS
+                        )));
+                    }
+                    let simdgroups = config.head_dim / kv_layout::SLICE_DIMS;
+                    let rows = tile_rows(simdgroups);
+                    if config.num_q_heads / config.num_groups > rows {
+                        return Err(MetalError::CannotCreateFunction(format!(
+                            "sparse attention covers at most {rows} GQA rows"
+                        )));
+                    }
+                    let kernel = |is_trie| {
+                        AttentionMatrixMetalKernel::new(
+                            context,
+                            DataType::BF16,
+                            config.head_dim,
+                            use_mxu,
+                            simdgroups,
+                            true,
+                            false,
+                            false,
+                            false,
+                            false,
+                            is_trie,
+                            config.num_groups,
+                            Some(compression_ratio),
+                        )
+                    };
+                    Ok((rows, compression_ratio, [kernel(false)?, kernel(true)?]))
+                })
+                .transpose()?,
         })
     }
 }
@@ -150,13 +202,20 @@ impl AttentionKernel for AttentionMetalKernel {
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
         >,
-        arguments: AttentionArguments<'_, Metal, impl BufferRef<Backend = Metal>, impl BufferRef<Backend = Metal>>,
+        arguments: AttentionArguments<
+            '_,
+            Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
+        >,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let command_buffer = &mut *command_buffer.debug_group("attention core");
         let AttentionArguments {
             suffix_length,
             trie,
+            key_blocks,
             cache,
             gate,
             sinks,
@@ -167,6 +226,10 @@ impl AttentionKernel for AttentionMetalKernel {
         let kv_length = prefix_len + suffix_length;
 
         let gqa_factor = num_q_heads / num_groups;
+        assert!(
+            !self.use_mxu || input.k_codes.size().max(input.v_codes.size()) as u64 <= u64::from(u32::MAX),
+            "the MXU core addresses its K and V cache with 32-bit byte offsets"
+        );
         let grouped_rows = gqa_factor * suffix_length;
         let params = AttnParams {
             q_strides: [0, grouped_rows * head_dim, head_dim],
@@ -180,7 +243,14 @@ impl AttentionKernel for AttentionMetalKernel {
             q_off: prefix_len,
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
-        let direct = !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
+        let sparse = match (key_blocks, &self.sparse) {
+            (None, None) => None,
+            (Some(key_blocks), Some((rows, compression_ratio, cores))) => {
+                Some((key_blocks, &cores[usize::from(trie.is_some())], *rows, *compression_ratio))
+            },
+            _ => panic!("key_blocks must match AttentionKernelConfig::sparse_compression_ratio"),
+        };
+        let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {
             2
         } else {
@@ -192,10 +262,22 @@ impl AttentionKernel for AttentionMetalKernel {
                 .min_by_key(|tile| (grouped_rows.div_ceil(tile.rows) * tile.rows, std::cmp::Reverse(tile.rows)))
                 .unwrap()
         });
-        let padded_rows = tile.map_or(grouped_rows, |tile| grouped_rows.next_multiple_of(tile.rows));
+        // Sparse: every query is padded to one tile of rows.
+        let padded_rows = if let Some((.., rows, _)) = &sparse {
+            rows * suffix_length
+        } else {
+            tile.map_or(grouped_rows, |tile| grouped_rows.next_multiple_of(tile.rows))
+        };
         let split_rows = num_groups * padded_rows;
         let num_splits = if direct {
             1
+        } else if let Some((key_blocks, .., compression_ratio)) = &sparse {
+            policy::sparse_splits(
+                command_buffer.context().gpu_core_count.max(1),
+                suffix_length * num_groups,
+                key_blocks.blocks_per_query,
+                *compression_ratio,
+            )
         } else {
             let (threadgroups, groups_per_core) = match tile {
                 None => (split_rows.div_ceil(4 * vector_queries), 4),
@@ -222,7 +304,31 @@ impl AttentionKernel for AttentionMetalKernel {
             ))
         };
         let (maxima, sums) = statistics.as_mut().map_or((None, None), |(maxima, sums)| (Some(maxima), Some(sums)));
-        if let Some(tile) = tile {
+        if let Some((key_blocks, core, ..)) = sparse {
+            core.encode(
+                input.query_codes,
+                input.query_scales,
+                input.k_codes,
+                input.k_scales,
+                input.v_codes,
+                input.v_scales,
+                trie,
+                cache.ring_params(),
+                config.sliding_window_size,
+                &mut values,
+                maxima.unwrap(),
+                sums.unwrap(),
+                params,
+                suffix_length,
+                num_splits,
+                0,
+                num_splits,
+                suffix_length,
+                Some(key_blocks.query_blocks),
+                Some(key_blocks.blocks_per_query),
+                command_buffer,
+            );
+        } else if let Some(tile) = tile {
             let query_tiles = padded_rows / tile.rows;
             let prefix_splits = tile.prefix.as_ref().map_or(0, |_| {
                 (0..num_splits)
@@ -261,6 +367,8 @@ impl AttentionKernel for AttentionMetalKernel {
                     split_base,
                     split_count,
                     suffix_length,
+                    None::<&<Metal as Backend>::ConstantBuffer>,
+                    None,
                     command_buffer,
                 );
             }
@@ -320,3 +428,16 @@ impl AttentionKernel for AttentionMetalKernel {
 #[cfg(test)]
 #[path = "../../../../../unit/backends/metal/kernel/attention/mod.rs"]
 mod tests;
+
+// Keeps AttentionBlockScore compiled until the QSA indexer wiring calls it.
+#[allow(dead_code)]
+fn encode_block_score(
+    context: &MetalContext,
+    buffer: impl BufferRef<Backend = Metal>,
+    scores: impl BufferMut<Backend = Metal>,
+    encoder: &mut MetalCommandBufferEncoding,
+) -> Result<(), MetalError> {
+    AttentionBlockScoreMetalKernel::new(context, 4, 128, false, 4)?
+        .encode(buffer, buffer, buffer, buffer, scores, 0, 0, 0, 0, 0, 16, 32, 0, encoder);
+    Ok(())
+}

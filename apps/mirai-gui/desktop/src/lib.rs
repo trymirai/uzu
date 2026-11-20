@@ -8,7 +8,9 @@ mod logger;
 mod models;
 mod storage;
 mod system_ui;
+mod traffic_lights;
 mod updater;
+mod zoom;
 
 #[tauri::command]
 fn open_external(url: String) -> bool {
@@ -61,7 +63,7 @@ pub fn run() {
                 .min_inner_size(390.0, 400.0)
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(20.0, 28.0))
+                .traffic_light_position(traffic_lights::creation_position())
                 // In-window navigation to an external URL would replace the app;
                 // hand it to the default browser instead.
                 .on_navigation(|url| {
@@ -81,15 +83,23 @@ pub fn run() {
                 .build()?;
             // Closing hides the window; the Dock reopens it and ⌘Q quits.
             let hide_target = window.clone();
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested {
+            window.on_window_event(move |event| match event {
+                tauri::WindowEvent::CloseRequested {
                     api,
                     ..
-                } = event
-                {
+                } => {
                     api.prevent_close();
                     let _ = hide_target.hide();
-                }
+                },
+                // In case AppKit lays the title bar out afresh (a resize, a full-screen change) and
+                // drops the lights back to where tao keeps them.
+                tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged {
+                    ..
+                } => {
+                    traffic_lights::place(&hide_target);
+                },
+                _ => {},
             });
             logger::info("app:start", Some(serde_json::json!({ "version": app.package_info().version.to_string() })));
             if let Err(error) = system_ui::remove_legacy_autostart() {
@@ -99,6 +109,8 @@ pub fn run() {
                 logger::error("menu:setup", Some(serde_json::json!({ "error": error.to_string() })));
             }
             chat::restore_auto_eject_config(app.handle());
+            zoom::restore(app.handle());
+            traffic_lights::place(&window);
             app.state::<analytics::AnalyticsState>().restore();
             // Warm the engine so the first models/chat request doesn't pay init latency.
             tauri::async_runtime::spawn(async {
@@ -111,6 +123,7 @@ pub fn run() {
         .manage(analytics::AnalyticsState::default())
         .manage(downloads::DownloadsState::default())
         .manage(updater::UpdaterState::default())
+        .manage(zoom::ZoomState::default())
         .invoke_handler(tauri::generate_handler![
             open_external,
             cli_installer::cli_install,
@@ -147,6 +160,8 @@ pub fn run() {
             storage::cleanup::cleanup_preview,
             storage::cleanup::cleanup_execute,
             system_ui::set_window_theme,
+            zoom::zoom_get,
+            zoom::zoom_step,
             updater::update_check,
             updater::update_download,
             updater::update_apply,

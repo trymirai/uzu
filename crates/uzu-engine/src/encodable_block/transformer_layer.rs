@@ -164,7 +164,14 @@ impl<B: Backend> TransformerLayerConv<B> {
             .encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, command_buffer)
             .map_err(TransformerLayerError::Backend)?;
         if let Some((transform, signs)) = &self.input_rht {
-            transform.encode_fp_in_place(&mut output, &**signs, None, sequence_length, self.model_dim, command_buffer);
+            transform.encode_fp_in_place(
+                &mut output,
+                Some(&**signs),
+                None,
+                sequence_length,
+                self.model_dim,
+                command_buffer,
+            );
         }
         Ok((output, coefficients))
     }

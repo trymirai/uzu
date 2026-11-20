@@ -1,0 +1,94 @@
+{
+  "trymirai/Qwen3.5-2B-L": {
+    "model": "mlx-community/Qwen3.5-2B-MLX-4bit",
+    "revision": "93760be4f1f69842a46bc13dbdc0f19e291392a3",
+    "model_size": 1749083534,
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.5-2B-M": {
+    "model": "mlx-community/Qwen3.5-2B-MLX-4bit",
+    "revision": "93760be4f1f69842a46bc13dbdc0f19e291392a3",
+    "model_size": 1749083534,
+    "specdec": false,
+    "sampling": {
+      "temp": 0.6,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "default",
+      "low": "default",
+      "medium": "default",
+      "high": "default",
+      "xhigh": "default"
+    }
+  },
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "revision": "b935172e4bb5dcd0543774a34748fb92422e3027",
+    "model_size": 19923423932,
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2",
+    "draft_revision": "015e795645c74b1a0eeef3b570031fb62e769bc5",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "mlx-community/Qwen3.8-27B-4bit",
+    "revision": "b935172e4bb5dcd0543774a34748fb92422e3027",
+    "model_size": 19923423932,
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2",
+    "draft_revision": "015e795645c74b1a0eeef3b570031fb62e769bc5",
+    "specdec": true,
+    "sampling": {
+      "temp": 1.0,
+      "top_k": 20,
+      "top_p": 0.95,
+      "min_p": null,
+      "repetition_penalty": null,
+      "suffix_repetition_length": null
+    },
+    "reasoning_efforts": {
+      "disabled": "disabled",
+      "default": "xhigh",
+      "low": "low",
+      "medium": "medium",
+      "high": "xhigh",
+      "xhigh": "xhigh"
+    }
+  }
+}

@@ -1,7 +1,6 @@
 [project]
 name = "benchmarks-common"
 version = "0.0.1"
-requires-python = ">=3.13.7"
 dependencies = [
     "huggingface-hub>=0.36",
     "pydantic>=2.14.2",
@@ -12,7 +11,7 @@ requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["bench", "common"]
+py-modules = ["bench", "common", "reasoning"]
 packages = ["mach"]
 package-dir = { "" = "src" }
 
@@ -20,7 +19,6 @@ package-dir = { "" = "src" }
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "setup.py" },
-    { file = "src/mach/*.c" },
     { file = "../common-cpp/src/*.c" },
     { file = "../common-cpp/src/*.h" },
 ]

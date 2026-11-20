@@ -29,17 +29,6 @@ metal = [
     "dep:rangemap",
 ]
 
-webgpu = [
-    "dep:rayon",
-    "dep:serde_json",
-    "dep:blake3",
-    "dep:shader-slang",
-    "dep:shader-slang-sys",
-    "dep:regex",
-    "dep:naga",
-    "dep:wgpu",
-]
-
 vulkan = [
     "cpu",
     "dep:ash",
@@ -52,6 +41,17 @@ vulkan = [
     "dep:rayon",
     "dep:spirv",
     "dep:rangemap",
+]
+
+webgpu = [
+    "dep:rayon",
+    "dep:serde_json",
+    "dep:blake3",
+    "dep:shader-slang",
+    "dep:shader-slang-sys",
+    "dep:regex",
+    "dep:naga",
+    "dep:wgpu",
 ]
 
 cpu = [] # TODO: move libm here
@@ -103,15 +103,17 @@ futures.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
-ash = { workspace = true, optional = true }
-vk-mem = { workspace = true, optional = true }
-dirs = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 metal = { workspace = true, optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))'.dependencies]
+ash = { workspace = true, optional = true }
+vk-mem = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokenizers = { workspace = true, features = ["unstable_wasm"] }

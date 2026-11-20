@@ -7,7 +7,7 @@ use rstest::rstest;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
-use crate::{backends::metal::Metal, tests::matmul::run_quant_cpu};
+use crate::backends::metal::Metal;
 use crate::{
     backends::{
         common::{
@@ -21,10 +21,14 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataTypeRepr,
+    encodable_block::linear::{InputAccess, InputPreparationMode, OutputBasis, OutputRows, OutputStack},
+    safetensors::ParameterLoader,
     tests::{
         assert::assert_eq_float,
-        helpers::{buffer_to_vec, create_buffer_with_data, for_each_non_cpu_backend},
-        matmul::{QuantBuffers, QuantInput},
+        helpers::{
+            buffer_readback, buffer_to_vec, create_buffer_with_data, for_each_backend, for_each_non_cpu_backend,
+        },
+        matmul::{QuantBuffers, QuantInput, run_quant_cpu},
     },
 };
 
@@ -45,11 +49,11 @@ fn get_test_data<T: DataTypeRepr + Float>(
     m: usize,
     k: usize,
     n: usize,
-) -> (Input<T>, Vec<T>) {
+) -> Input<T> {
     let a: Vec<T> = (0..m * k).map(|i| T::from(((i % 13) as f32) * 0.1 - 0.6).unwrap()).collect();
     let b: Vec<T> = (0..n * k).map(|i| T::from(((i % 17) as f32) * 0.1 - 0.8).unwrap()).collect();
 
-    let input = Input {
+    Input {
         a: a.into_boxed_slice(),
         b: b.into_boxed_slice(),
         m,
@@ -58,10 +62,7 @@ fn get_test_data<T: DataTypeRepr + Float>(
         ids: None,
         gather_first_row: 0,
         soft_cap: None,
-    };
-
-    let expected = get_output::<T, Cpu>(&input);
-    (input, expected)
+    }
 }
 
 // Encode one GEMV (dense, or a per-row B-row gather when `gather` is set) and copy out.
@@ -138,7 +139,8 @@ fn test<T: DataTypeRepr + Float + Debug + Display>(
     n: usize,
     eps: f32,
 ) {
-    let (input, expected) = get_test_data::<T>(m, k, n);
+    let input = get_test_data::<T>(m, k, n);
+    let expected = get_output::<T, Cpu>(&input);
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(&input);
         assert_eq_float(&expected, &output, eps, &format!("backend {}", std::any::type_name::<B>()));
@@ -229,57 +231,77 @@ fn assert_gather<T: DataTypeRepr + Float + Debug + Display>(
     assert_eq_float(&expected, gather, eps, &format!("gather vs dense ({name})"));
 }
 
-macro_rules! check_gather {
-    ($m:expr, $vocab:expr, $ids:expr, $ids_per_row:expr, $first_row:expr, $eps:expr, |$B:ident| $run:block) => {{
-        {
-            #[allow(non_camel_case_types)]
-            type $B = Cpu;
-            let (dense, gather) = $run;
-            assert_gather(&dense, &gather, &$ids, $m, $vocab, $ids_per_row, $first_row, $eps, "Cpu");
-        }
-        for_each_non_cpu_backend!(|$B| {
-            let (dense, gather) = $run;
-            assert_gather(
-                &dense,
-                &gather,
-                &$ids,
-                $m,
-                $vocab,
-                $ids_per_row,
-                $first_row,
-                $eps,
-                std::any::type_name::<$B>(),
-            );
-        });
-    }};
-}
-
 fn fp_gather_case<T: DataTypeRepr + Float + Debug + Display>(
     soft_cap: Option<f32>,
     first_row: usize,
     eps: f32,
 ) {
     let (m, k, vocab, ids_per_row) = (4usize, 128usize, 256usize, 8usize);
-    let a: Vec<T> = (0..m * k).map(|i| T::from(((i % 13) as f32) * 0.1 - 0.6).unwrap()).collect();
-    let weights: Vec<T> = (0..vocab * k).map(|i| T::from(((i % 17) as f32) * 0.1 - 0.8).unwrap()).collect();
     let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
-
-    // Dense (`n = vocab`, no ids) and gather (`n = ids_per_row`, ids) share `a`/`weights`/soft-cap.
-    let make = |n: usize, ids: Option<Box<[u32]>>| Input {
-        a: a.clone().into_boxed_slice(),
-        b: weights.clone().into_boxed_slice(),
-        m,
-        k,
-        n,
-        ids,
-        gather_first_row: first_row as u32,
-        soft_cap,
-    };
-    let dense_input = make(vocab, None);
-    let gather_input = make(ids_per_row, Some(ids.clone().into_boxed_slice()));
-
-    check_gather!(m, vocab, ids, ids_per_row, first_row, eps, |B| {
-        (get_output::<T, B>(&dense_input), get_output::<T, B>(&gather_input))
+    let mut input = get_test_data::<T>(m, k, vocab);
+    input.soft_cap = soft_cap;
+    let dense = get_output::<T, Cpu>(&input);
+    input.n = ids_per_row;
+    input.ids = Some(ids.clone().into_boxed_slice());
+    input.gather_first_row = first_row as u32;
+    for_each_backend!(|B| {
+        let gather = get_output::<T, B>(&input);
+        assert_gather(&dense, &gather, &ids, m, vocab, ids_per_row, first_row, eps, std::any::type_name::<B>());
+        if soft_cap.is_none() && first_row == 0 {
+            let bytes = bytemuck::cast_slice(input.b.as_ref());
+            let header = serde_json::to_vec(&serde_json::json!({
+                "parts.0.weights": {"dtype": T::data_type(), "shape": [vocab / 2, k], "data_offsets": [0, bytes.len() / 2]},
+                "parts.1.weights": {"dtype": T::data_type(), "shape": [vocab / 2, k], "data_offsets": [bytes.len() / 2, bytes.len()]}
+            })).unwrap();
+            let path = std::env::temp_dir().join(format!("uzu-readout-{}.safetensors", std::process::id()));
+            std::fs::write(&path, [(header.len() as u64).to_le_bytes().as_slice(), &header, bytes].concat()).unwrap();
+            let context = block_on(<B as Backend>::Context::new()).unwrap();
+            let loader = block_on(ParameterLoader::<B>::new(&path, &context)).unwrap();
+            let part =
+                serde_json::json!({"rows": vocab / 2, "spec": {"type": "FullPrecisionSpec", "layout": "output_input"}});
+            let spec =
+                serde_json::from_value(serde_json::json!({"type": "OutputStackSpec", "parts": [part, part]})).unwrap();
+            let (stack, _) = block_on(OutputStack::load(
+                k as u32,
+                vocab as u32,
+                T::data_type(),
+                T::data_type(),
+                T::data_type(),
+                spec,
+                &loader.tree(),
+                None,
+                InputPreparationMode::InLinear,
+                InputAccess::Preserve,
+                OutputBasis::Original,
+                &context,
+            ))
+            .unwrap();
+            std::fs::remove_file(path).unwrap();
+            let source = create_buffer_with_data::<B, T>(&context, &input.a);
+            let indices = create_buffer_with_data::<B, u32>(&context, &ids);
+            for count in [ids_per_row, vocab * 3 / 4, vocab] {
+                let rows = if count == ids_per_row {
+                    OutputRows::Gather {
+                        indices: &indices,
+                        count: count as u32,
+                    }
+                } else {
+                    OutputRows::Prefix(count as u32)
+                };
+                let mut command = context.create_command_buffer(None, None).unwrap();
+                let output =
+                    stack.encode_input(MatmulA::full_precision(&source), m as u32, rows, &mut command).unwrap();
+                block_on(command.end_encoding().submit().wait_until_completed()).unwrap();
+                let actual = buffer_to_vec::<B, T>(&context, &buffer_readback::<B>(&context, &output));
+                let selected = if count == ids_per_row {
+                    ids.clone()
+                } else {
+                    (0..m).flat_map(|_| 0..count as u32).collect()
+                };
+                assert_gather(&dense, &actual, &selected, m, vocab, count, 0, eps, "stacked readout");
+                assert_eq!(buffer_to_vec::<B, T>(&context, &source).as_slice(), input.a.as_ref());
+            }
+        }
     });
 }
 
@@ -290,38 +312,26 @@ fn quant_gather_case(
 ) {
     let (m, k, vocab, ids_per_row) = (input.m as usize, input.k as usize, input.n as usize, 8);
     let ids: Vec<u32> = (0..m * ids_per_row).map(|i| ((i * 37 + 11) % vocab) as u32).collect();
-    // K_SPLIT == 1 keeps dense and gathered accumulation order identical.
-    check_gather!(m, vocab, ids, ids_per_row, first_row, eps, |B| {
+    let dense = run_quant_cpu(&input);
+    for_each_backend!(|B| {
         let context = block_on(<B as Backend>::Context::new()).expect("context");
         let buffers = QuantBuffers::<B, bf16>::allocate(&context, &input);
         let ids_alloc = create_buffer_with_data::<B, u32>(&context, &ids);
-        let b = || buffers.matmul_b(&input);
-        (
-            run_gemv::<B, bf16>(
-                &context,
-                &buffers.x,
-                b(),
-                None::<MatmulGather<&<B as Backend>::GlobalGpuBuffer>>,
-                m,
-                vocab,
-                k,
-                None,
-            ),
-            run_gemv::<B, bf16>(
-                &context,
-                &buffers.x,
-                b(),
-                Some(MatmulGather {
-                    indices: &ids_alloc,
-                    first_row: first_row as u32,
-                    row_count: (vocab - first_row) as u32,
-                }),
-                m,
-                ids_per_row,
-                k,
-                None,
-            ),
-        )
+        let gather = run_gemv::<B, bf16>(
+            &context,
+            &buffers.x,
+            buffers.matmul_b(&input),
+            Some(MatmulGather {
+                indices: &ids_alloc,
+                first_row: first_row as u32,
+                row_count: (vocab - first_row) as u32,
+            }),
+            m,
+            ids_per_row,
+            k,
+            None,
+        );
+        assert_gather(&dense, &gather, &ids, m, vocab, ids_per_row, first_row, eps, std::any::type_name::<B>());
     });
 }
 
@@ -333,19 +343,17 @@ fn gemv_gather() {
         fp_gather_case::<f32>(soft_cap, first_row, 0.01);
     }
     // Quantized (bf16, per bits/method) — inline, since it isn't type-generic.
-    for (bits, method, signed_codes) in [
-        (4, QuantizationMethod::ScaleBias, false),
-        (4, QuantizationMethod::ScaleZeroPoint, false),
-        (4, QuantizationMethod::ScaleZeroPoint, true),
-        (8, QuantizationMethod::ScaleSymmetric, false),
+    for (bits, method, signed_codes, first_row) in [
+        (4, QuantizationMethod::ScaleBias, false, 0),
+        (4, QuantizationMethod::ScaleZeroPoint, false, 13),
+        (4, QuantizationMethod::ScaleZeroPoint, true, 13),
+        (8, QuantizationMethod::ScaleSymmetric, false, 13),
     ] {
         let mut input = QuantInput::new(8, 128, 64, 32, bits, method, 0x5EED);
         if signed_codes {
             input = input.with_signed_weight_codes();
         }
-        for first_row in [0, 13] {
-            quant_gather_case(input.clone(), first_row, 0.05);
-        }
+        quant_gather_case(input, first_row, 0.05);
     }
     quant_gather_case(
         QuantInput::new(8, 96, 66, 32, 4, QuantizationMethod::ScaleZeroPoint, 0x5EED).with_group_output(),

@@ -1,0 +1,4 @@
+{
+  "trymirai/Qwen3.8-27B-L": "mlx-community/Qwen3.8-27B-4bit",
+  "trymirai/Qwen3.8-27B-M": "mlx-community/Qwen3.8-27B-4bit"
+}

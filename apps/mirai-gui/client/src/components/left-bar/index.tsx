@@ -3,7 +3,7 @@ import { useIsMobile } from "@/hooks/use-media-query";
 import { useNativeFullscreen } from "@/hooks/use-native-fullscreen";
 import { platformInfo } from "@/platform/platform-info";
 import { useChatStore } from "@/stores/use-chat-store";
-import { useSidebarStore } from "@/stores/use-sidebar-store";
+import { useSidebarStore, useSidebarWidth } from "@/stores/use-sidebar-store";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { ChatsIcon, ModelsIcon, NewChatIcon, SidebarIcon } from "./nav-icons";
 import { twMerge } from "tailwind-merge";
@@ -24,7 +24,7 @@ function LeftBar() {
   const isSidebarOpen = useSidebarStore((s) => s.isOpen);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
   const closeOnMobile = useSidebarStore((s) => s.closeOnMobile);
-  const sidebarWidth = useSidebarStore((s) => s.width);
+  const sidebarWidth = useSidebarWidth();
   const [resizing, setResizing] = useState(false);
 
   const mainItems = [
@@ -112,13 +112,14 @@ function LeftBar() {
         if (floating && peek) releasePeek();
       }}
       className={twMerge(
-        "overlay-button flex size-8 items-center justify-center rounded-lg hover:bg-bg-hover transition-[background-color,translate] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none absolute",
-        // The same place at every window width. In the Mac app it sits beside the traffic lights;
-        // on the web, and in full screen where macOS hides the lights, it lines up with the sidebar
-        // icons (its icon starts 18px in, like theirs), or 8px in from the content panel's corner when
-        // the sidebar is out of the way.
+        "follows-window overlay-button flex size-8 items-center justify-center rounded-lg hover:bg-bg-hover transition-[background-color,translate] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none absolute",
+        // The same place at every window width. In the Mac app it sits beside the traffic lights, at
+        // the same distance from the window's corner whatever the zoom (--app-zoom): it grows from
+        // there and the lights move down to stay level with it. On the web, and in full screen where
+        // macOS hides the lights, it lines up with the sidebar icons (its icon starts 18px in, like
+        // theirs), or 8px in from the content panel's corner when the sidebar is out of the way.
         platformInfo.features.nativeTitleBar && !isFullscreen
-          ? "top-2.5 translate-x-[90px]"
+          ? "top-[calc(10px/var(--app-zoom,1))] translate-x-[calc(90px/var(--app-zoom,1))]"
           : !floating && isSidebarOpen
             ? "top-4 left-3 translate-x-0"
             : "top-4 left-3 translate-x-1",
@@ -133,14 +134,15 @@ function LeftBar() {
   return (
     <div
       className={twMerge(
-        "relative z-30 h-full min-h-0 shrink-0 motion-reduce:transition-none",
+        "follows-window relative z-30 h-full min-h-0 shrink-0 motion-reduce:transition-none",
         // Follows the pointer while its edge is dragged; glides when toggled.
         !resizing && "transition-[width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
       )}
       style={{ width: !floating && isSidebarOpen ? sidebarWidth : 0 }}
     >
       {toggleSidebarButton}
-      {!floating && <SidebarResizer onDraggingChange={setResizing} />}
+      {/* Only while the sidebar is out: closed, there is no edge to drag (the button brings it back). */}
+      {!floating && isSidebarOpen && <SidebarResizer onDraggingChange={setResizing} />}
 
       {/* Opened with a click: clicking anywhere else puts it away. No dimming, as in Claude. */}
       {floating && isSidebarOpen && <div className="fixed inset-0 z-40" onClick={closeOnMobile} aria-hidden />}
@@ -160,7 +162,7 @@ function LeftBar() {
           if (floating && peek) releasePeek();
         }}
         className={twMerge(
-          "relative min-h-0 bg-bg-sidebar flex flex-col pt-2 overflow-clip motion-reduce:transition-none",
+          "follows-window relative min-h-0 bg-bg-sidebar flex flex-col pt-2 overflow-clip motion-reduce:transition-none",
           floating
             ? "fixed top-2 left-2 bottom-2 w-[280px] z-50 rounded-2xl shadow-[0_0_0_0.5px_var(--color-border-default),0_24px_48px_-12px_rgb(0_0_0/0.28),0_8px_16px_-8px_rgb(0_0_0/0.12)] transition-[translate,opacity]"
             : "h-full transition-transform",

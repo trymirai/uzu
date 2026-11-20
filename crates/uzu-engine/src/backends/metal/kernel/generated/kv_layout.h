@@ -12,6 +12,8 @@ static constant constexpr uint32_t WORD_BITS = 32;
 static constant constexpr uint32_t ROTATION_SIGN_BITS[8] =
     {2654435769, 2246822507, 3266489909, 668265263, 374761393, 3210233709, 2496678331, 3605593784};
 
+static constant constexpr int32_t NO_KEY_SLOT = -1;
+
 enum class KVLayout : uint32_t {
   RowMajor = 0,
   MxuTiled = 1,
@@ -23,13 +25,13 @@ static constant constexpr uint32_t TILE_QUERIES = 16;
 
 static constant constexpr uint32_t TILE_DIMS = 16;
 
-static constant constexpr uint32_t FRAGMENT_BYTES = TILE_KEYS * TILE_DIMS;
-
 static constant constexpr uint32_t SLICE_DIMS = 64;
 
 static constant constexpr uint32_t GROUP_ROWS = 8;
 
 static constant constexpr uint32_t LANE_COLS = 4;
 
-static constant constexpr uint32_t LANE_BYTES = TILE_KEYS / GROUP_ROWS * LANE_COLS;
+static constant constexpr uint32_t LANE_KEYS = TILE_KEYS / GROUP_ROWS;
+
+static constant constexpr uint32_t LANE_BYTES = LANE_KEYS * LANE_COLS;
 } // namespace uzu::kv_layout

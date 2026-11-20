@@ -8,12 +8,30 @@
     };
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+    };
   };
   outputs = {
     nixpkgs,
     rust-overlay,
     crane,
     flake-utils,
+    pyproject-nix,
+    uv2nix,
+    pyproject-build-systems,
     ...
   }:
     flake-utils.lib.eachSystem ["aarch64-darwin" "aarch64-linux" "x86_64-linux"] (
@@ -40,7 +58,13 @@
         rustupShim = import ./scripts/rustup-shim.nix pkgs;
         rustShimNixCC = rustupShim (rustToolchainsNixCC // {default = "nightly";});
         rustShimHostCC = rustupShim ((pkgs.lib.mapAttrs (_: withoutNixCC) rustToolchainsNixCC) // {default = "nightly";});
-        craneLibNixCC = (crane.mkLib pkgs).overrideToolchain rustToolchainNixCC;
+        craneLibNixCC = ((crane.mkLib pkgs).overrideToolchain rustToolchainNixCC).overrideScope (
+          _: prev:
+            pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+              # WORKAROUND: Short store names keep large Cargo closures below macOS's sandbox profile limit.
+              downloadCargoPackage = args: (prev.downloadCargoPackage args).overrideAttrs {name = "crate";};
+            }
+        );
 
         metal-toolchain = import ./scripts/metal-toolchain.nix pkgs {
           build = "27A266a";
@@ -78,6 +102,7 @@
           (writeText "vulkan-env.sh" ''
             addToSearchPath LD_LIBRARY_PATH "${lib.getLib vulkan-loader}/lib"
             export VK_ADD_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+            export VK_ADD_DRIVER_FILES="${mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
           '');
 
         playwright-env = with pkgs;
@@ -94,24 +119,39 @@
         hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
         nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_26]);
 
-        hostToolchainNativeBuildInputs = with pkgs; [cmake] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config]);
+        hostToolchainNativeBuildInputs = with pkgs; [cmake shader-slang-env] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config bindgen-env]);
         nixToolchainNativeBuildInputs = hostToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [metal-toolchain]);
 
+        benchman = pkgs.writeShellApplication {
+          name = "benchman";
+          runtimeInputs = [pkgs.uv];
+          text = ''
+            if [[ -v _BENCHMAN_COMPLETE ]]; then
+              installed="$(dirname "''${DIRENV_FILE:-}")/scripts/benchmarks/benchman/.venv/bin/benchman"
+              [[ -x "$installed" ]] || exit 0
+              PYTHONDONTWRITEBYTECODE=1 exec "$installed" "$@"
+            fi
+            root="$(dirname "''${DIRENV_FILE:?benchman runs in the uzu direnv}")"
+            [[ "$PWD/" == "$root/"* ]] || { echo "benchman: $PWD is outside $root" >&2; exit 1; }
+            exec uv run --project "$root/scripts/benchmarks/benchman" -- benchman "$@"
+          '';
+        };
+
+        benchmanCompletions = pkgs.runCommand "benchman-completions" {} ''
+          install -Dm644 ${./scripts/benchmarks/benchman/src/completion.zsh} $out/share/zsh/site-functions/_benchman
+          install -Dm644 ${./scripts/benchmarks/benchman/src/completion.fish} $out/share/fish/vendor_completions.d/benchman.fish
+        '';
+
         benchmarkDevshellPackages = with pkgs;
-          [bash git curl gnumake ninja huggingface-cli]
-          ++ lib.optionals stdenv.hostPlatform.isDarwin [bazelisk zig_0_17 pkg-config libwebp];
-        benchmarkDevshellEnvironment =
-          {
-            dontAddPythonPath = true;
-          }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-            USE_BAZEL_VERSION = "${pkgs.bazel_8}/bin/bazel-${pkgs.bazel_8.version}-darwin-arm64";
-          };
+          [bash git curl gnumake ninja huggingface-cli prefect benchman benchmanCompletions]
+          ++ lib.optionals stdenv.hostPlatform.isDarwin [zig_0_17 pkg-config libwebp];
+        benchmarkDevshellEnvironment = {
+          dontAddPythonPath = true;
+        };
 
         commonDevshellPackages = with pkgs;
           [
             nil
-            shader-slang-env
             playwright-env
             uv
             maturin
@@ -130,7 +170,7 @@
             cargo-show-asm
             critcmp
           ]
-          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [bindgen-env vulkan-env vulkan-tools shaderc spirv-tools lldb])
+          ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [vulkan-env vulkan-tools shaderc spirv-tools lldb])
           ++ (with pkgs;
             lib.optionals stdenv.hostPlatform.isDarwin [
               (pkgs.callPackage ./scripts/cargo-instruments.nix {})
@@ -140,28 +180,44 @@
         hostToolchainDevshellPackages = commonDevshellPackages ++ benchmarkDevshellPackages ++ [rustShimHostCC];
         nixToolchainDevshellPackages = commonDevshellPackages ++ benchmarkDevshellPackages ++ [rustShimNixCC];
 
-        mirai = craneLibNixCC.buildPackage {
-          pname = "mirai";
-          src = ./.;
+        mirai-cli = craneLibNixCC.buildPackage {
+          pname = "mirai-cli";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              (craneLibNixCC.fileset.cargoTomlAndLock ./.)
+              (craneLibNixCC.fileset.configToml ./.)
+              ./crates
+              (craneLibNixCC.fileset.commonCargoSources ./apps/mirai-gui/desktop)
+              (craneLibNixCC.fileset.commonCargoSources ./scripts/benchmarks/engine-uzu)
+            ];
+          };
 
           cargoExtraArgs = "-p cli";
           installPhaseCommand = ''
             mkdir -p $out/bin
-            install -Dm755 target/release/cli $out/bin/mirai
+            install -Dm755 target/release/cli $out/bin/mirai-cli
           '';
 
           buildInputs = nixToolchainBuildInputs;
-          nativeBuildInputs = nixToolchainNativeBuildInputs;
+          nativeBuildInputs = nixToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isLinux [autoPatchelfHook]);
+          runtimeDependencies = with pkgs; lib.optionals stdenv.hostPlatform.isLinux [vulkan-loader];
 
           doCheck = false;
+        };
+        benchmarks = import ./scripts/benchmarks {
+          inherit pkgs metal-toolchain pyproject-nix uv2nix pyproject-build-systems;
+          craneLib = craneLibNixCC;
         };
       in {
         formatter = pkgs.alejandra;
 
         packages = {
-          inherit mirai;
-          default = mirai;
+          inherit mirai-cli;
+          default = mirai-cli;
         };
+
+        legacyPackages = {inherit benchmarks;};
 
         devShells = {
           default = pkgs.mkShell ({

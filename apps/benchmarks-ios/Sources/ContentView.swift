@@ -46,7 +46,7 @@ struct ContentView: View {
             if benchmarks.log.isEmpty {
                 ContentUnavailableView(
                     "Waiting for the Mac", systemImage: "laptopcomputer.and.iphone",
-                    description: Text("Run benchmarks with bench-ios from scripts/benchmarks."))
+                    description: Text("Run benchmarks with platform-ios from scripts/benchmarks."))
             }
         }
     }

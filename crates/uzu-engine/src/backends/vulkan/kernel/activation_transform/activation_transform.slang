@@ -7,7 +7,7 @@ import generated.activation_transform;
 [[Variants("BiasT", "float, bf16")]]
 [[Kernel]] [[Public]]
 [[Precondition("new", "ops != ActivationTransformOp::PackHalf")]]
-[[Precondition("new", "hadamard_size.is_power_of_two() && hadamard_size <= 128")]]
+[[Precondition("new", "hadamard_size == 0 || hadamard_size.is_power_of_two() && hadamard_size <= 128")]]
 [[Precondition("new", "ops == ActivationTransformOp::InputRht || ops == ActivationTransformOp::OutputRht || activation_scale_group_size.is_power_of_two() && activation_scale_group_size <= 128")]]
 [[Precondition("new", "ops != ActivationTransformOp::QuantizeWithGroupSums || sum_group_size.is_power_of_two() && sum_group_size <= 128")]]
 func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
@@ -20,7 +20,7 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   [[Optional("ops == ActivationTransformOp::Quantize || ops == ActivationTransformOp::QuantizeWithGroupSums")]]
   Ptr<float, Access.ReadWrite> scales_out,
   [[Optional("ops == ActivationTransformOp::QuantizeWithGroupSums")]] Ptr<int, Access.ReadWrite> group_sums_out,
-  Ptr<int, Access.Read> rht_factors,
+  [[Optional("hadamard_size != 0")]] Ptr<int, Access.Read> rht_factors,
   uint batch_size,
   uint element_count,
   [[Optional("ops == ActivationTransformOp::PackHalf")]] Ptr<uint, Access.ReadWrite> packed_half_out,
@@ -45,14 +45,18 @@ func ActivationTransform<T: IStorageFloat, BiasT: IStorageFloat>(
   int factor = 0;
   if (active) {
     value = in_place_load(input, fp_out, index, in_place);
-    factor = rht_factors[column];
-    if (input_rht) {
-      value = value * float(factor);
+    if (hadamard_size != 0) {
+      factor = rht_factors[column];
+      if (input_rht) {
+        value = value * float(factor);
+      }
     }
   }
-  value = hadamard_transform<ACTIVATION_QUANTIZATION_TILE>(value, hadamard_size, hadamard_size);
-  if (active && !input_rht) {
-    value = value * float(factor);
+  if (hadamard_size != 0) {
+    value = hadamard_transform<ACTIVATION_QUANTIZATION_TILE>(value, hadamard_size, hadamard_size);
+    if (active && !input_rht) {
+      value = value * float(factor);
+    }
   }
   if (ops == ActivationTransformOp.InputRht || ops == ActivationTransformOp.OutputRht) {
     if (active) {

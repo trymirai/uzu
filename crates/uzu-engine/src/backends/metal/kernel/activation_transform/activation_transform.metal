@@ -29,7 +29,7 @@ PUBLIC KERNEL(ActivationTransform)(
     device int8_t* q_out OPTIONAL(QUANTIZED),
     device float* scales_out OPTIONAL(QUANTIZED),
     device int32_t* group_sums_out OPTIONAL(EMITS_GROUP_SUMS),
-    const device int32_t* rht_factors,
+    const device int32_t* rht_factors OPTIONAL(hadamard_size != 0),
     constant uint& batch_size,
     constant uint& element_count,
     device uint* packed_half_out OPTIONAL(PACKED_HALF),
@@ -60,14 +60,18 @@ PUBLIC KERNEL(ActivationTransform)(
   int4 factors = 0;
   if (in_bounds) {
     values = float4(load_vec4(input + element_index));
-    factors = load_vec4(rht_factors + first_index);
-    if (input_rht) {
-      values *= float4(factors);
+    if (hadamard_size != 0) {
+      factors = load_vec4(rht_factors + first_index);
+      if (input_rht) {
+        values *= float4(factors);
+      }
     }
   }
-  values = hadamard::simdgroup_transform_vector(lane_index, values, hadamard_size);
-  if (!input_rht) {
-    values *= float4(factors);
+  if (hadamard_size != 0) {
+    values = hadamard::simdgroup_transform_vector(lane_index, values, hadamard_size);
+    if (!input_rht) {
+      values *= float4(factors);
+    }
   }
 
   if (!QUANTIZED && !PACKED_HALF) {
