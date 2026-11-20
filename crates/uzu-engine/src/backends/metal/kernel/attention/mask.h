@@ -76,12 +76,10 @@ static inline bool should_use_key(
   return use_key;
 }
 
-template <uint COMPRESSION_RATIO>
 struct SparseKeys {
-  static_assert(COMPRESSION_RATIO % uzu::kv_layout::LANE_KEYS == 0, "a sparse block fills whole lane groups of keys");
-
   const device int* blocks;
   const device TrieNode* trie;
+  uint compression_ratio;
   uint block_keys;
   uint selectable_blocks;
   uint prefix_length;
@@ -92,27 +90,28 @@ struct SparseKeys {
   METAL_FUNC SparseKeys(
       const device int* query_blocks,
       const uint blocks_per_query,
+      const uint compression_ratio,
       const device TrieNode* trie,
       const uint trie_nodes,
       const uint prefix_length,
       const uint query_position,
       const bool is_trie
   )
-      : blocks(query_blocks + query_position * blocks_per_query), trie(trie),
-        block_keys(blocks_per_query * COMPRESSION_RATIO), prefix_length(prefix_length),
+      : blocks(query_blocks + query_position * blocks_per_query), trie(trie), compression_ratio(compression_ratio),
+        block_keys(blocks_per_query * compression_ratio), prefix_length(prefix_length),
         key_end(is_trie ? prefix_length + trie_nodes : prefix_length + query_position + 1u),
         query_position(query_position), is_trie(is_trie) {
-    selectable_blocks = (is_trie ? prefix_length : key_end) / COMPRESSION_RATIO;
+    selectable_blocks = (is_trie ? prefix_length : key_end) / compression_ratio;
   }
 
-  METAL_FUNC uint key_count() const { return block_keys + key_end - selectable_blocks * COMPRESSION_RATIO; }
+  METAL_FUNC uint key_count() const { return block_keys + key_end - selectable_blocks * compression_ratio; }
 
   METAL_FUNC uint slot(const uint key) const {
     if (key < block_keys) {
-      const uint block = uint(blocks[key / COMPRESSION_RATIO]);
-      return block < selectable_blocks ? block * COMPRESSION_RATIO + key % COMPRESSION_RATIO : uint(NO_KEY_SLOT);
+      const uint block = uint(blocks[key / compression_ratio]);
+      return block < selectable_blocks ? block * compression_ratio + key % compression_ratio : uint(NO_KEY_SLOT);
     }
-    const uint tail_slot = selectable_blocks * COMPRESSION_RATIO + key - block_keys;
+    const uint tail_slot = selectable_blocks * compression_ratio + key - block_keys;
     if (tail_slot >= key_end) {
       return uint(NO_KEY_SLOT);
     }

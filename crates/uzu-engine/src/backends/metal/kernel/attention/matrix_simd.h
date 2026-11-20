@@ -72,7 +72,7 @@ METAL_FUNC void stage_int8_tile(
   threadgroup_barrier(mem_flags::mem_threadgroup);
 }
 
-template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE, uint COMPRESSION_RATIO>
+template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE>
 METAL_FUNC void attention_matrix_simd(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
@@ -96,6 +96,7 @@ METAL_FUNC void attention_matrix_simd(
     bool is_trie,
     const device int* query_blocks,
     uint blocks_per_query,
+    uint compression_ratio,
     uint num_kv_heads,
     threadgroup float* exchange,
     threadgroup half* kv_tile,
@@ -165,8 +166,16 @@ METAL_FUNC void attention_matrix_simd(
     }
   }
 
-  const SparseKeys<COMPRESSION_RATIO>
-      sparse_keys(query_blocks, blocks_per_query, trie, trie_nodes, params.q_off, query_tile, is_trie);
+  const SparseKeys sparse_keys(
+      query_blocks,
+      blocks_per_query,
+      compression_ratio,
+      trie,
+      trie_nodes,
+      params.q_off,
+      query_tile,
+      is_trie
+  );
   const uint num_blocks = ((IS_SPARSE ? sparse_keys.key_count() : params.k_len) + BK - 1) / BK;
   const uint block_begin = split * num_blocks / num_splits;
   const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : params.q_off;

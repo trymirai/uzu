@@ -101,7 +101,7 @@ struct AttentionMatrixSoftmax {
   }
 };
 
-template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE, uint COMPRESSION_RATIO>
+template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE>
 METAL_FUNC void attention_matrix_mxu(
     const device int8_t* query_codes,
     const device ScaleType* query_scales,
@@ -127,6 +127,7 @@ METAL_FUNC void attention_matrix_mxu(
     bool is_trie,
     const device int* query_blocks,
     uint blocks_per_query,
+    uint compression_ratio,
     uint num_kv_heads,
     threadgroup float* probability_exchange,
     threadgroup ulong* row_masks,
@@ -234,8 +235,16 @@ METAL_FUNC void attention_matrix_mxu(
     }
   }
 
-  const SparseKeys<COMPRESSION_RATIO>
-      sparse_keys(query_blocks, blocks_per_query, trie, trie_nodes, prefix_length, query_tile_index, is_trie);
+  const SparseKeys sparse_keys(
+      query_blocks,
+      blocks_per_query,
+      compression_ratio,
+      trie,
+      trie_nodes,
+      prefix_length,
+      query_tile_index,
+      is_trie
+  );
   const uint key_tiles =
       IS_SPARSE ? (sparse_keys.key_count() + uint(uzu::kv_layout::TILE_KEYS) - 1u) / uint(uzu::kv_layout::TILE_KEYS)
                 : params.nk;

@@ -70,13 +70,13 @@ impl AttentionMetalKernel {
                     use_mxu,
                     simdgroups,
                     false,
-                    kv_layout::LANE_KEYS,
                     config.is_causal,
                     config.is_kv_cache_ring,
                     config.sliding_window_size.is_some(),
                     mask_free,
                     is_trie,
                     config.num_groups,
+                    None,
                 )
             };
             tiles.push(KernelTile {
@@ -135,6 +135,12 @@ impl AttentionMetalKernel {
                             "sparse attention is causal without window or ring".to_string(),
                         ));
                     }
+                    if compression_ratio % kv_layout::LANE_KEYS != 0 {
+                        return Err(MetalError::CannotCreateFunction(format!(
+                            "sparse blocks of {compression_ratio} keys must fill whole lane groups of {} keys",
+                            kv_layout::LANE_KEYS
+                        )));
+                    }
                     let simdgroups = config.head_dim / kv_layout::SLICE_DIMS;
                     let rows = tile_rows(simdgroups);
                     if config.num_q_heads / config.num_groups > rows {
@@ -150,13 +156,13 @@ impl AttentionMetalKernel {
                             use_mxu,
                             simdgroups,
                             true,
-                            compression_ratio,
                             false,
                             false,
                             false,
                             false,
                             is_trie,
                             config.num_groups,
+                            Some(compression_ratio),
                         )
                     };
                     Ok((rows, compression_ratio, [kernel(false)?, kernel(true)?]))
