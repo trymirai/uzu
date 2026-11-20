@@ -266,6 +266,7 @@ impl<B: Backend> VisionLayer<B> {
 
         let attention = Attention::with_projections(
             data_type,
+            true,
             None,
             &padded_config,
             Box::new(projection),

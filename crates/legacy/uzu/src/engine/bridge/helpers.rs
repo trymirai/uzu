@@ -49,8 +49,12 @@ pub fn scale_images<B: Backend>(
         .map(|image| {
             let bytes =
                 std::fs::read(&image.url).map_err(|err| BackendError::other(format!("{}: {err}", image.url)))?;
-            vision::scale(&bytes, factor, min_pixels, max_pixels)
-                .map_err(|err| BackendError::other(format!("{}: {err}", image.url)))
+            let scaled = vision::scale(&bytes, factor, min_pixels, max_pixels)
+                .map_err(|err| BackendError::other(format!("{}: {err}", image.url)))?;
+            Ok(VisionImageInput {
+                start: image.start,
+                image: scaled,
+            })
         })
         .collect()
 }

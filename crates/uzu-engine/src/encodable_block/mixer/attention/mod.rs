@@ -33,6 +33,7 @@ pub struct Attention<B: Backend> {
     num_groups: u32,
     num_kv_heads: Option<u32>,
     ring_capacity: Option<u32>,
+    has_rope: bool,
     max_rope_length: Option<u32>,
     data_type: DataType,
     has_gate: bool,
@@ -95,15 +96,26 @@ impl<B: Backend> Attention<B> {
             context,
         )
         .await?;
-        let attention =
-            Self::with_projections(data_type, rope_config, config, projection, out_projection, parameter_tree, context)
-                .await?;
+        let attention = Self::with_projections(
+            data_type,
+            rope_config.is_some(),
+            rope_config.map(|config| *config.max_sequence_length()),
+            config,
+            projection,
+            out_projection,
+            parameter_tree,
+            context,
+        )
+        .await?;
         Ok((attention, in_projection_input_hadamard_factors))
     }
 
+    /// `has_rope` — whether queries and keys are rotated by the RoPE passed to `encode`,
+    /// `max_rope_length` — context length the RoPE supports, `None` if unlimited
     pub async fn with_projections(
         data_type: DataType,
-        rope_config: Option<&AnyRoPEConfig>,
+        has_rope: bool,
+        max_rope_length: Option<u32>,
         config: &AttentionConfig,
         projection: Box<dyn Linear<B>>,
         out_projection: Box<dyn Linear<B>>,
@@ -178,7 +190,7 @@ impl<B: Backend> Attention<B> {
             data_type,
             DataType::F32,
             head_dim,
-            rope_config.is_some(),
+            has_rope,
             num_groups,
             kernel.kv_layout().backend_opaque_layout,
             !is_kv_sharing,
@@ -190,13 +202,13 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Backend)?;
 
-        let max_rope_length = rope_config.map(|config| *config.max_sequence_length());
         Ok(Self {
             head_dim,
             num_q_heads,
             num_groups,
             num_kv_heads,
             ring_capacity,
+            has_rope,
             max_rope_length,
             data_type,
             has_gate: config.has_gate,
@@ -410,7 +422,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("attention");
 
-        assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
+        assert_eq!(precalculated_rope.is_some(), self.has_rope, "precalculated rope mismatch");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));

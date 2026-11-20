@@ -4,7 +4,7 @@ use image::{
     DynamicImage, GrayAlphaImage, GrayImage, ImageDecoder, ImageError, ImageReader, RgbImage, RgbaImage, imageops,
     imageops::FilterType,
 };
-use shoji::types::session::vision::VisionImageInput;
+use shoji::types::session::vision::VisionImage;
 use zune_heic::{
     HeicErrors, HeifDecoder,
     zune_core::{bytestream::ZCursor, colorspace::ColorSpace},
@@ -35,11 +35,11 @@ pub fn scale(
     factor: u32,
     min_pixels: u32,
     max_pixels: u32,
-) -> Result<VisionImageInput, VisionScalingError> {
+) -> Result<VisionImage, VisionScalingError> {
     let image = get_rgb_image(image_bytes)?;
     let (width, height) = get_new_size(&image, factor, min_pixels, max_pixels)?;
     let image = imageops::resize(&image, width, height, FilterType::CatmullRom);
-    Ok(VisionImageInput {
+    Ok(VisionImage {
         pixels: image.into_raw().into_boxed_slice(),
         width,
         height,

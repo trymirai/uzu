@@ -756,6 +756,16 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
+        // images takes as many tokens as it has embeddings, so the context checks and the prefill see the full length
+        let expanded_input;
+        let input: &[u64] = if images.is_empty() {
+            input
+        } else {
+            let vision_model = model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+            expanded_input = vision_model.expand_tokens(input, images)?;
+            &expanded_input
+        };
+
         let mut submitter = StreamEnqueuer::new(model, input, model_state, options)?;
         let job = submitter.prefill(input, images)?;
 

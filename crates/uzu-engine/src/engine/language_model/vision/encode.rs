@@ -1,4 +1,4 @@
-use shoji::types::session::vision::VisionImageInput;
+use shoji::types::session::vision::{VisionImage, VisionImageInput};
 use thiserror::Error;
 
 use crate::{
@@ -16,6 +16,8 @@ use crate::{
 
 pub struct VisionPrefilledImage<B: Backend> {
     embeddings: B::ScratchBuffer,
+    /// Index of the image's first token in the expanded input tokens, see `VisionModel::expand_tokens`
+    start: usize,
     width: u32,
     height: u32,
 }
@@ -40,6 +42,11 @@ pub enum VisionEncodeError<B: Backend> {
 pub enum VisionPrefillError<B: Backend> {
     #[error("Vision encoder error: {0}")]
     Encode(#[from] VisionEncodeError<B>),
+    #[error("Image pad token index {start} is out of order or outside the input of {length} tokens")]
+    ImagePosition {
+        start: usize,
+        length: usize,
+    },
     #[error("Model has no vision encoder")]
     NoVisionEncoder,
 }
@@ -54,14 +61,18 @@ impl<B: Backend> VisionModel<B> {
         let merge_size = self.config.encoder_config.spatial_merge_size;
 
         let mut prefilled_images = Vec::<VisionPrefilledImage<B>>::with_capacity(images.len());
-        for image in images {
-            let embeddings = self.encode(image, command_buffer)?;
+        // Every earlier image shifts the later ones by its extra tokens, as `expand_tokens` does
+        let mut offset = 0;
+        for input in images {
+            let embeddings = self.encode(&input.image, command_buffer)?;
             let prefilled_image = VisionPrefilledImage {
                 embeddings,
-                width: image.width / patch_size / merge_size,
-                height: image.height / patch_size / merge_size,
+                start: input.start + offset,
+                width: input.image.width / patch_size / merge_size,
+                height: input.image.height / patch_size / merge_size,
             };
             prefilled_images.push(prefilled_image);
+            offset += self.image_token_count(&input.image).saturating_sub(1);
         }
 
         let result = VisionPrefillResult {
@@ -72,7 +83,7 @@ impl<B: Backend> VisionModel<B> {
 
     fn encode(
         &self,
-        image: &VisionImageInput,
+        image: &VisionImage,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, VisionEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("vision encode");
