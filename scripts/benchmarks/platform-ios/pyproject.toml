@@ -12,7 +12,7 @@ requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-bench-ios = "bench_ios:main"
+platform-ios = "bench_ios:main"
 
 [tool.setuptools]
 py-modules = ["bench_ios"]

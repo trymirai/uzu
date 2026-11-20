@@ -12,9 +12,10 @@ pub fn build(b: *std.Build) void {
         b.option([]const u8, "mlx-dir", "MLX and mlx-c install prefix") orelse "lib/mlx",
     });
     const sdk = std.mem.trim(u8, b.run(&.{ "xcrun", "--sdk", if (ios) "iphoneos" else "macosx", "--show-sdk-path" }), " \r\n");
+    const common_dir = b.option([]const u8, "common-dir", "Shared benchmark sources") orelse "../../../common-cpp/src";
     const options = b.addOptions();
-    options.addOption([]const u8, "version", "26.11.1");
-    options.addOption([]const u8, "git_sha", "ac00f9213214db94b96f1837282c1ce4ad9debc8");
+    options.addOption([]const u8, "version", @import("build/config.zig").readAppVersion(b) orelse @panic("Missing upstream version"));
+    options.addOption([]const u8, "git_sha", "");
     options.addOption([]const u8, "mlx_c_version", "source");
     options.addOption([]const u8, "ds4_commit", "disabled");
     options.addOption([]const u8, "llama_tag", "disabled");
@@ -76,27 +77,36 @@ pub fn build(b: *std.Build) void {
     }
     mod.addIncludePath(b.path("lib/ane"));
 
-    const memory = b.addTranslateC(.{
-        .root_source_file = b.path("src/bench_memory.h"),
+    const system = b.addTranslateC(.{
+        .root_source_file = b.path("src/bench_system.h"),
         .target = target,
         .optimize = optimize,
     });
+    const include: std.Build.LazyPath = .{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) };
+    jinja.addSystemIncludePath(include);
+    system.addSystemIncludePath(include);
+    system.addIncludePath(.{ .cwd_relative = b.pathResolve(&.{common_dir}) });
+    mod.addSystemIncludePath(include);
+    mod.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sdk}) });
     if (ios) {
-        const include: std.Build.LazyPath = .{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk}) };
-        jinja.addSystemIncludePath(include);
-        memory.addSystemIncludePath(include);
-        mod.addSystemIncludePath(include);
         const surface = b.addWriteFiles();
         _ = surface.add("IOSurface/IOSurface.h", "#include <IOSurface/IOSurfaceRef.h>\n");
         mod.addIncludePath(surface.getDirectory());
     }
-    mod.addImport("memory_c", memory.createModule());
-    mod.addCSourceFile(.{ .file = b.path("src/bench_memory.c"), .flags = &.{"-O2"} });
+    mod.addImport("system_c", system.createModule());
     mod.addCSourceFile(.{
-        .file = b.path("../../../common-cpp/src/memory_counters.c"),
+        .file = .{ .cwd_relative = b.pathResolve(&.{ common_dir, "memory_counters.c" }) },
         .flags = &.{"-O2"},
     });
-    mod.addIncludePath(b.path("../../../common-cpp/src"));
+    mod.addCSourceFile(.{
+        .file = .{ .cwd_relative = b.pathResolve(&.{ common_dir, "apple_temp_sensors.c" }) },
+        .flags = &.{"-O2"},
+    });
+    mod.addCSourceFile(.{
+        .file = .{ .cwd_relative = b.pathResolve(&.{ common_dir, "energy_counters.c" }) },
+        .flags = &.{"-O2"},
+    });
+    mod.addIncludePath(.{ .cwd_relative = b.pathResolve(&.{common_dir}) });
     mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "include" }) });
     mod.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk}) });
     if (ios) {
@@ -108,6 +118,7 @@ pub fn build(b: *std.Build) void {
         mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "lib" }) });
         mod.addRPath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "lib" }) });
         mod.linkSystemLibrary("mlxc", .{ .use_pkg_config = .no });
+        mod.linkSystemLibrary("IOReport", .{ .use_pkg_config = .no });
         inline for (.{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface", "Accelerate" }) |name| {
             mod.linkFramework(name, .{});
         }

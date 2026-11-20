@@ -158,9 +158,8 @@ export function buildFamilyDetailView(params: {
   modelPhasesById: Record<string, string | undefined>;
   familyIdentifier: string;
   searchLower: string;
-  sortModels: (list: PlatformModel[]) => PlatformModel[];
 }): FamilyDetailView {
-  const { models, modelPhasesById, familyIdentifier, searchLower, sortModels } = params;
+  const { models, modelPhasesById, familyIdentifier, searchLower } = params;
 
   const installed: PlatformModel[] = [];
   const available: PlatformModel[] = [];
@@ -177,8 +176,7 @@ export function buildFamilyDetailView(params: {
     else available.push(model);
   }
 
-  return {
-    installed: sortModels(installed),
-    available: sortModels(available),
-  };
+  // In the catalog's own order: the API lists each family as the team means it to be read (by model
+  // size, and within a size the recommended checkpoint first), so it isn't re-sorted here.
+  return { installed, available };
 }

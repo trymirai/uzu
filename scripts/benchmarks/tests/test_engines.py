@@ -1,8 +1,8 @@
 """Collect the engine-specific classes with pytest's default file discovery."""
 
 from .engines.ios import TestIOS
+from .engines.kapitsa import TestKapitsa
 from .engines.llamacpp import TestLlamaCpp
-from .engines.mldrift import TestMLDrift
 from .engines.mlx import TestMLX
 from .engines.mlxserve import TestMLXServe
 from .engines.mtplx import TestMTPLX
@@ -12,8 +12,8 @@ from .engines.uzu import TestUzu
 
 __all__ = [
     "TestIOS",
+    "TestKapitsa",
     "TestLlamaCpp",
-    "TestMLDrift",
     "TestMLX",
     "TestMLXServe",
     "TestMTPLX",

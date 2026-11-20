@@ -16,7 +16,4 @@ def add_options(parser: pytest.Parser) -> None:
 
 class TestMTPLX(EngineTests):
     engine_name = "mtplx"
-
-    @staticmethod
-    def command(config: pytest.Config) -> list[str]:
-        return ["uv", "run", "--project", "engine-mtplx", "bench-mtplx", "--model", config.getoption("mtplx_model")]
+    specdec = True

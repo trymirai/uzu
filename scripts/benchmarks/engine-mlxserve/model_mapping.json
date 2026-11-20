@@ -1,0 +1,6 @@
+{
+  "trymirai/Qwen3.5-0.8B-L": "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+  "trymirai/Qwen3.5-0.8B-M": "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+  "trymirai/Qwen3.6-27B-L": "ddalcu/Qwen3.6-27B-4bit-MTP-MLX-Serve",
+  "trymirai/Qwen3.6-27B-M": "ddalcu/Qwen3.6-27B-4bit-MTP-MLX-Serve"
+}
