@@ -3,6 +3,9 @@ use tauri::{
     menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID},
 };
 
+#[cfg(not(target_os = "macos"))]
+use crate::error::{AppError, AppResult};
+
 const MENU_NEW_CHAT_ID: &str = "menu:new-chat";
 const MENU_SETTINGS_ID: &str = "menu:settings";
 const MENU_ZOOM_IN_ID: &str = "menu:zoom-in";
@@ -64,25 +67,22 @@ pub(crate) fn show_and_focus_main(app: &AppHandle) {
 pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let package = app.package_info();
     let bundle = &app.config().bundle;
-    let app_menu = SubmenuBuilder::new(app, &package.name)
-        .about(Some(AboutMetadata {
-            name: Some(package.name.clone()),
-            version: Some(package.version.to_string()),
-            copyright: bundle.copyright.clone(),
-            authors: bundle.publisher.clone().map(|publisher| vec![publisher]),
-            ..Default::default()
-        }))
-        .separator()
-        .item(&MenuItem::with_id(app, MENU_SETTINGS_ID, "Settings…", true, Some("CmdOrCtrl+,"))?)
-        .separator();
-    #[cfg(target_os = "macos")]
-    let app_menu = app_menu.services().separator().hide().hide_others().show_all().separator();
-    let app_menu = app_menu.quit().build()?;
+    let about = AboutMetadata {
+        name: Some(package.name.clone()),
+        version: Some(package.version.to_string()),
+        copyright: bundle.copyright.clone(),
+        authors: bundle.publisher.clone().map(|publisher| vec![publisher]),
+        ..Default::default()
+    };
+    let settings = MenuItem::with_id(app, MENU_SETTINGS_ID, "Settings…", true, Some("CmdOrCtrl+,"))?;
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&MenuItem::with_id(app, MENU_NEW_CHAT_ID, "New Chat", true, Some("CmdOrCtrl+N"))?)
-        .separator()
-        .close_window()
-        .build()?;
+        .separator();
+    #[cfg(target_os = "macos")]
+    let file_menu = file_menu.close_window();
+    #[cfg(not(target_os = "macos"))]
+    let file_menu = file_menu.item(&settings).separator().quit();
+    let file_menu = file_menu.build()?;
     let edit_menu =
         SubmenuBuilder::new(app, "Edit").undo().redo().separator().cut().copy().paste().select_all().build()?;
     let view_menu = SubmenuBuilder::new(app, "View")
@@ -96,12 +96,40 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     let window_menu = window_menu.separator().bring_all_to_front();
     let window_menu = window_menu.build()?;
-    let menu = MenuBuilder::new(app).items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu]);
+    let menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
-    let menu = menu.item(&SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help").build()?);
-    let menu = menu.build()?;
+    let menu = menu.item(
+        &SubmenuBuilder::new(app, &package.name)
+            .about(Some(about))
+            .separator()
+            .item(&settings)
+            .separator()
+            .services()
+            .separator()
+            .hide()
+            .hide_others()
+            .show_all()
+            .separator()
+            .quit()
+            .build()?,
+    );
+    let menu = menu.items(&[&file_menu, &edit_menu, &view_menu, &window_menu]);
+    let help_menu = SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help");
+    #[cfg(not(target_os = "macos"))]
+    let help_menu = help_menu.about_with_text(format!("About {}", package.name), Some(about));
+    let menu = menu.item(&help_menu.build()?).build()?;
     app.set_menu(menu)?;
-    app.on_menu_event(|app, event| match event.id().as_ref() {
+    app.on_menu_event(|app, event| {
+        on_menu_item(app, event.id().as_ref());
+    });
+    Ok(())
+}
+
+fn on_menu_item(
+    app: &AppHandle,
+    id: &str,
+) -> bool {
+    match id {
         MENU_NEW_CHAT_ID => {
             show_and_focus_main(app);
             let _ = app.emit("app:new-chat", ());
@@ -119,9 +147,49 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
         MENU_ZOOM_RESET_ID => {
             crate::zoom::step(app, crate::zoom::Step::Reset);
         },
-        _ => {},
-    });
-    Ok(())
+        _ => return false,
+    }
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn submenus(app: &AppHandle) -> AppResult<Vec<tauri::menu::Submenu<tauri::Wry>>> {
+    let menu = app.menu().ok_or_else(|| AppError::msg("the app menu is not set up"))?;
+    Ok(menu.items().map_err(AppError::msg)?.iter().filter_map(|item| item.as_submenu().cloned()).collect())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn menu_titles(app: AppHandle) -> AppResult<Vec<String>> {
+    submenus(&app)?.iter().map(|submenu| submenu.text().map_err(AppError::msg)).collect()
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn run_menu_item(
+    app: AppHandle,
+    id: String,
+) -> AppResult<()> {
+    if on_menu_item(&app, &id) {
+        Ok(())
+    } else {
+        Err(AppError::msg(format!("no menu item {id}")))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn open_menu(
+    app: AppHandle,
+    window: tauri::Window,
+    index: usize,
+    left: f64,
+    bottom: f64,
+) -> AppResult<()> {
+    let submenus = submenus(&app)?;
+    let submenu = submenus.get(index).ok_or_else(|| AppError::msg(format!("no app menu {index}")))?;
+    let zoom = crate::zoom::current(&app);
+    window.popup_menu_at(submenu, tauri::LogicalPosition::new(left * zoom, bottom * zoom)).map_err(AppError::msg)
 }
 
 #[derive(serde::Deserialize)]

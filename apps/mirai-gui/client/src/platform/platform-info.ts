@@ -17,5 +17,6 @@ export const platformInfo = {
     // Overlay title bar with in-content macOS traffic lights: UI must reserve
     // space on the top-left so controls don't sit under the traffic lights.
     nativeTitleBar: isMacApp,
+    titleBar: __PLATFORM__ === "tauri" && !isMacPlatform(),
   },
 } as const;

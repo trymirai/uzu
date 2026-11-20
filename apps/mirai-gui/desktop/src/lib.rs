@@ -14,6 +14,9 @@ mod traffic_lights;
 mod updater;
 mod zoom;
 
+const MIN_WIDTH: f64 = 390.0;
+const MIN_HEIGHT: f64 = 400.0;
+
 #[tauri::command]
 fn open_external(url: String) -> bool {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -78,7 +81,9 @@ pub fn run() {
             let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
                 .title("Mirai")
                 .inner_size(1200.0, 800.0)
-                .min_inner_size(390.0, 400.0);
+                .min_inner_size(MIN_WIDTH, MIN_HEIGHT);
+            #[cfg(not(target_os = "macos"))]
+            let window = window.decorations(false);
             #[cfg(target_os = "macos")]
             let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -97,6 +102,16 @@ pub fn run() {
                     false
                 })
                 .build()?;
+            #[cfg(windows)]
+            {
+                let (outer, inner) = (window.outer_size()?, window.inner_size()?);
+                let borders = tauri::PhysicalSize::new(outer.width - inner.width, outer.height - inner.height)
+                    .to_logical::<f64>(window.scale_factor()?);
+                window.set_min_size(Some(tauri::LogicalSize::new(
+                    MIN_WIDTH + borders.width,
+                    MIN_HEIGHT + borders.height,
+                )))?;
+            }
             // Closing hides the window; the Dock reopens it and ⌘Q quits.
             let hide_target = window.clone();
             window.on_window_event(move |event| match event {
@@ -125,6 +140,8 @@ pub fn run() {
             if let Err(error) = system_ui::setup_app_menu(app.handle()) {
                 logger::error("menu:setup", Some(serde_json::json!({ "error": error.to_string() })));
             }
+            #[cfg(not(target_os = "macos"))]
+            window.hide_menu()?;
             chat::restore_auto_eject_config(app.handle());
             zoom::restore(app.handle());
             #[cfg(target_os = "macos")]
@@ -175,6 +192,12 @@ pub fn run() {
             storage::cleanup::cleanup_preview,
             storage::cleanup::cleanup_execute,
             system_ui::set_window_theme,
+            #[cfg(not(target_os = "macos"))]
+            system_ui::menu_titles,
+            #[cfg(not(target_os = "macos"))]
+            system_ui::open_menu,
+            #[cfg(windows)]
+            system_ui::run_menu_item,
             zoom::zoom_get,
             zoom::zoom_step,
             updater::update_check,
