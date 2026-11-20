@@ -1,5 +1,6 @@
 #include "memory_counters.h"
 
+#include <mach/mach.h>
 #include <mach/mach_error.h>
 #include <malloc/malloc.h>
 #include <unistd.h>

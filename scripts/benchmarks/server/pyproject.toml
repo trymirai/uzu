@@ -2,8 +2,6 @@
 name = "server"
 version = "0.1.0"
 description = "Send JSON requests to OpenAI-compatible completion servers."
-readme = "README.md"
-requires-python = ">=3.13.7"
 dependencies = [
     "benchmarks-common",
     "httpx2>=2.16.0",
@@ -17,11 +15,8 @@ requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-bench-server = "server.main:main"
+server = "server.main:main"
 
 [tool.setuptools]
 packages = ["server", "server.engine"]
 package-dir = { server = "src" }
-
-[tool.uv.sources]
-benchmarks-common = { path = "../common-py", editable = true }

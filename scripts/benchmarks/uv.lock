@@ -50,7 +50,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "packaging" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -64,7 +63,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "packaging", specifier = ">=26.3" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "ruff", specifier = ">=0.17.3" },
     { name = "ty", specifier = ">=0.0.96" },

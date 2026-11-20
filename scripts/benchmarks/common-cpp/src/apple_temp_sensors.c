@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysctl.h>
+#include <time.h>
 
 #if !defined(__APPLE__) || !defined(__arm64__)
 #error This implementation targets macOS on Apple Silicon.
@@ -16,12 +17,15 @@
 enum { MAX_SENSORS = 32 };
 
 // clang-format off
+// An M1 names its sensors differently from macOS 27 on, which the second line of each is for.
 static const char* const CPU_M1[] = {
-    "Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0H", "Tp0L", "Tp0P", "Tp0X", "Tp0b", NULL
+    "Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0H", "Tp0L", "Tp0P", "Tp0X", "Tp0b",
+    "Tp2a", "Tp3a", "Tp4a", "Tp5a", "Tp7a", "Tp8a", "Tp9a", "Te0a", "Te3a", NULL
 };
 
 static const char* const GPU_M1[] = {
-    "Tg05", "Tg0D", "Tg0L", "Tg0T", NULL
+    "Tg05", "Tg0D", "Tg0L", "Tg0T",
+    "Tg1b", "Tg4b", NULL
 };
 
 static const char* const CPU_M2[] = {
@@ -58,6 +62,14 @@ static const char* const CPU_M5[] = {
 
 static const char* const GPU_M5[] = {
     "Tg0U", "Tg0X", "Tg0d", "Tg0g", "Tg0j", "Tg1Y", "Tg1c", "Tg1g", NULL
+};
+
+static const char* const CPU_A18_PRO[] = {
+    "Tp00", "Tp04", "Tp08", "Tp0C", "Tp0l", "Tp0o", "Te04", "Te0R", NULL
+};
+
+static const char* const GPU_A18_PRO[] = {
+    "Tg04", "Tg0C", "Tg0K", "Tg0d", NULL
 };
 
 static const char* const CPU_M6[] = {
@@ -199,41 +211,45 @@ static kern_return_t apple_temps_open(apple_temps_t** out) {
         return kIOReturnError;
     }
 
-    unsigned generation = 0;
-    int end = 0;
-    if (sscanf(model, "Apple M%u%n", &generation, &end) != 1 || (model[end] && model[end] != ' ')) {
-        return kIOReturnUnsupported;
-    }
-
     const char* const* cpu = NULL;
     const char* const* gpu = NULL;
-    switch (generation) {
-        case 1:
-            cpu = CPU_M1;
-            gpu = GPU_M1;
-            break;
-        case 2:
-            cpu = CPU_M2;
-            gpu = GPU_M2;
-            break;
-        case 3:
-            cpu = CPU_M3;
-            gpu = GPU_M3;
-            break;
-        case 4:
-            cpu = CPU_M4;
-            gpu = model[end] ? GPU_M4_PRO_MAX : GPU_M4;
-            break;
-        case 5:
-            cpu = CPU_M5;
-            gpu = GPU_M5;
-            break;
-        case 6:
-            cpu = CPU_M6;
-            gpu = GPU_M6;
-            break;
-        default:
+    if (strcmp(model, "Apple A18 Pro") == 0) {
+        cpu = CPU_A18_PRO;
+        gpu = GPU_A18_PRO;
+    } else {
+        unsigned generation = 0;
+        int end = 0;
+        if (sscanf(model, "Apple M%u%n", &generation, &end) != 1 || (model[end] && model[end] != ' ')) {
             return kIOReturnUnsupported;
+        }
+        switch (generation) {
+            case 1:
+                cpu = CPU_M1;
+                gpu = GPU_M1;
+                break;
+            case 2:
+                cpu = CPU_M2;
+                gpu = GPU_M2;
+                break;
+            case 3:
+                cpu = CPU_M3;
+                gpu = GPU_M3;
+                break;
+            case 4:
+                cpu = CPU_M4;
+                gpu = model[end] ? GPU_M4_PRO_MAX : GPU_M4;
+                break;
+            case 5:
+                cpu = CPU_M5;
+                gpu = GPU_M5;
+                break;
+            case 6:
+                cpu = CPU_M6;
+                gpu = GPU_M6;
+                break;
+            default:
+                return kIOReturnUnsupported;
+        }
     }
 
     apple_temps_t* ctx = calloc(1, sizeof(*ctx));
@@ -262,7 +278,7 @@ static kern_return_t apple_temps_open(apple_temps_t** out) {
 
     ctx->cpu_count = discover(ctx->connection, cpu, ctx->cpu);
     ctx->gpu_count = discover(ctx->connection, gpu, ctx->gpu);
-    if (!ctx->cpu_count && !ctx->gpu_count) {
+    if (!ctx->cpu_count || !ctx->gpu_count) {
         apple_temps_close(ctx);
         return kIOReturnNotFound;
     }
@@ -295,7 +311,7 @@ static kern_return_t apple_temps_read(
 
     out->cpu_avg = average(ctx->connection, ctx->cpu, ctx->cpu_count);
     out->gpu_avg = average(ctx->connection, ctx->gpu, ctx->gpu_count);
-    return isfinite(out->cpu_avg) && isfinite(out->gpu_avg) ? KERN_SUCCESS : kIOReturnNotReady;
+    return isfinite(out->cpu_avg) ? KERN_SUCCESS : kIOReturnNotReady;
 }
 
 kern_return_t get_temp_sensors(apple_temp_sensors_t* out) {
@@ -314,4 +330,23 @@ kern_return_t get_temp_sensors(apple_temp_sensors_t* out) {
     kern_return_t close_err = apple_temps_close(ctx);
 
     return err != KERN_SUCCESS ? err : close_err;
+}
+
+kern_return_t await_cooldown(
+    double threshold,
+    double target
+) {
+    apple_temp_sensors_t temp;
+    kern_return_t result = get_temp_sensors(&temp);
+    if (result != KERN_SUCCESS || (temp.cpu_avg < threshold && temp.gpu_avg < threshold)) {
+        return result;
+    }
+    while (result == KERN_SUCCESS && (temp.cpu_avg >= target || temp.gpu_avg >= target)) {
+        fprintf(stderr, "Cooling: CPU %.1f°C / GPU %.1f°C (target < %.1f°C)\n", temp.cpu_avg, temp.gpu_avg, target);
+        if (nanosleep(&(struct timespec){.tv_sec = 5}, NULL) != 0) {
+            return KERN_ABORTED;
+        }
+        result = get_temp_sensors(&temp);
+    }
+    return result;
 }

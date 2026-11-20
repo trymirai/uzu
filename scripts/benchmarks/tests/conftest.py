@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.engines import ios, llamacpp, mldrift, mlx, mlxserve, mtplx, omlx, splash, uzu
+from tests.engines import ios, kapitsa, llamacpp, mlx, mlxserve, mtplx, omlx, splash, uzu
 
 ENGINE_TEST_CLASSES = {
     "ios": "TestIOS",
+    "kapitsa": "TestKapitsa",
     "llamacpp": "TestLlamaCpp",
-    "mldrift": "TestMLDrift",
     "mlx": "TestMLX",
     "mlxserve": "TestMLXServe",
     "mtplx": "TestMTPLX",
@@ -30,8 +30,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     group.addoption("--engine-timeout", type=float, default=600, help="Response timeout in seconds, including startup.")
     ios.add_options(parser)
+    kapitsa.add_options(parser)
     llamacpp.add_options(parser)
-    mldrift.add_options(parser)
     mlx.add_options(parser)
     mlxserve.add_options(parser)
     mtplx.add_options(parser)

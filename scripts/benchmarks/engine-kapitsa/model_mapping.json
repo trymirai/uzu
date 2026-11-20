@@ -1,0 +1,22 @@
+{
+  "trymirai/Qwen3.5-4B-L": {
+    "model": "lmstudio-community/Qwen3.5-4B-MLX-8bit",
+    "draft_model": "z-lab/Qwen3.5-4B-DFlash"
+  },
+  "trymirai/Qwen3.5-4B-M": {
+    "model": "lmstudio-community/Qwen3.5-4B-MLX-4bit",
+    "draft_model": "z-lab/Qwen3.5-4B-DFlash"
+  },
+  "trymirai/Qwen3.5-9B-M": {
+    "model": "lmstudio-community/Qwen3.5-9B-MLX-4bit",
+    "draft_model": "z-lab/Qwen3.5-9B-DFlash"
+  },
+  "trymirai/Qwen3.8-27B-L": {
+    "model": "lmstudio-community/Qwen3.8-27B-MLX-8bit",
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2"
+  },
+  "trymirai/Qwen3.8-27B-M": {
+    "model": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
+    "draft_model": "incoai/Qwen3.8-27B-DFlash2"
+  }
+}

@@ -1,0 +1,15 @@
+--- a/zig/build/metal_targets.zig
++++ b/zig/build/metal_targets.zig
+@@ -494,6 +494,12 @@
+         .optimize = optimize,
+         .link_libc = true,
+     });
++    // WORKAROUND: Zig skips SDK discovery when Nix compiler flags are present.
++    if (b.graph.environ_map.get("SDKROOT")) |sdk| {
++        metal.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
++        metal.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
++        metal.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
++    }
+     metal.linkFramework("Metal", .{});
+     metal.linkFramework("Foundation", .{});
+     metal.linkFramework("IOSurface", .{}); // the Neural Engine's prompt share passes IOSurfaces
