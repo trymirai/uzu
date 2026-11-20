@@ -40,6 +40,9 @@ dev = [
     "hypothesis>=6.170.15",
     "pytest>=9.2.0",
 ]
+merge-report = [
+    "pillow>=13.0.0",
+]
 
 [tool.pytest.ini_options]
 filterwarnings = ["error::RuntimeWarning", "error::pytest.PytestUnraisableExceptionWarning"]

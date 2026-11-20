@@ -107,7 +107,6 @@ jobs:
       - name: Report
         if: ${{ !cancelled() && steps.benchmark.outcome != 'skipped' }}
         env:
-          COMMAND: ${{ github.event.comment.body }}
           COMMITS: ${{ github.server_url }}/${{ github.repository }}/commit
           DESTINATION: ${{ steps.revisions.outputs.destination }}
           MERGE_BENCH_RESULTS: ${{ runner.temp }}/merge-bench
@@ -116,12 +115,6 @@ jobs:
           WORKFLOW_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           fork_point="$(git merge-base "$DESTINATION" HEAD)"
-          # Of the set that is measured without arguments, these two vary too much between runs to compare.
-          arguments="${COMMAND#!bench}"
-          hidden=()
-          if [[ -z "${arguments//[[:space:]]/}" ]]; then
-            hidden=(--hide Decode --hide Accepted)
-          fi
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
             base="the commit before it on \`$TARGET\`"
           else
@@ -132,8 +125,8 @@ jobs:
               "$base ([log]($WORKFLOW_RUN))"
             echo
             if [[ -f "$MERGE_BENCH_RESULTS/head.json" ]]; then
-              uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/results_table.py \
-                "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json" "${hidden[@]}"
+              uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/merge_report.py \
+                "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json"
             else
               # Not measured, or an error before any result: the end of the output says why.
               echo '```'
@@ -165,13 +158,19 @@ jobs:
           PULL_REQUEST: ${{ steps.revisions.outputs.pull_request }}
           WORKFLOW_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Discord has no tables and 2000 characters for a message.
+          # Discord has no tables: the table is an image.
+          mkdir "$RUNNER_TEMP/discord"
+          files=()
+          output=""
           if [[ -f "$MERGE_BENCH_RESULTS/head.json" ]]; then
-            table="$(uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/results_table.py \
-              "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json" --text \
-              --hide Decode --hide Accepted)"
+            uv run --project scripts/benchmarks/benchman --frozen --group merge-report \
+              python scripts/benchmarks/merge_report.py \
+              "$MERGE_BENCH_RESULTS/head.json" --base "$MERGE_BENCH_RESULTS/base.json" \
+              --image "$RUNNER_TEMP/discord/merge-bench.png"
+            files=(--form "files[0]=@$RUNNER_TEMP/discord/merge-bench.png")
           else
-            table="$(tail -n 20 "$RUNNER_TEMP/merge-bench.txt" | tail -c 1500)"
+            # A message has 2000 characters.
+            output="$(tail -n 20 "$RUNNER_TEMP/merge-bench.txt" | tail -c 1500)"
           fi
           # The pull request that the commit merged, or without one the commit.
           merged="commit/$GITHUB_SHA"
@@ -180,17 +179,20 @@ jobs:
           fi
           jq -n \
             --arg merged "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/$merged" \
+            --arg output "$output" \
             --arg run "$WORKFLOW_RUN" \
-            --arg table "$table" \
             --arg title "$(git log -1 --format=%s)" \
             '{
               allowed_mentions: {parse: []},
-              content: "Merge benchmark of [\($title)](<\($merged)>) ([log](<\($run)>))\n```\n\($table)\n```"
-            }' |
+              content: (
+                "Merge benchmark of [\($title)](<\($merged)>) ([log](<\($run)>))"
+                + if $output == "" then "" else "\n```\n\($output)\n```" end
+              )
+            }' > "$RUNNER_TEMP/discord/message.json"
           curl --fail-with-body --silent --show-error \
-            --connect-timeout 10 --max-time 30 \
-            --header "Content-Type: application/json" \
-            --data-binary @- \
+            --connect-timeout 10 --max-time 60 \
+            --form "payload_json=<$RUNNER_TEMP/discord/message.json;type=application/json" \
+            "${files[@]}" \
             "$DISCORD_WEBHOOK_URL"
 
       - uses: actions/upload-artifact@v7

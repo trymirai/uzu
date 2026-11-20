@@ -246,7 +246,7 @@ def report(runs: list[Run], baseline: str | None) -> int:
             cells = []
             for (engine, _), run in lines.items():
                 cell = Text(shown.get(run, ""), style="underline" if run in shown and float(shown[run]) == best else "")
-                if run not in shown and metric.nonspec_placeholder and run.responses:
+                if run not in shown and metric.nonspec_placeholder and run.responses and not run.ready.specdec:
                     placeholder = metric.nonspec_placeholder(summarize(run.responses.values()))
                     cell = Text(format(placeholder, metric.format), style="bright_black")
                 base = lines.get((engine, baseline))
