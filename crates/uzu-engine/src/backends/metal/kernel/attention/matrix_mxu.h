@@ -125,8 +125,9 @@ METAL_FUNC void attention_matrix_mxu(
     uint trie_nodes,
     bool mask_free,
     bool is_trie,
-    const device int* query_slots,
-    uint slots_per_query,
+    const device int* query_blocks,
+    uint blocks_per_query,
+    uint compression_ratio,
     uint num_kv_heads,
     threadgroup float* probability_exchange,
     threadgroup ulong* row_masks,
@@ -234,8 +235,18 @@ METAL_FUNC void attention_matrix_mxu(
     }
   }
 
+  const SparseKeys sparse_keys(
+      query_blocks,
+      blocks_per_query,
+      compression_ratio,
+      trie,
+      trie_nodes,
+      prefix_length,
+      query_tile_index,
+      is_trie
+  );
   const uint key_tiles =
-      IS_SPARSE ? (slots_per_query + uint(uzu::kv_layout::TILE_KEYS) - 1u) / uint(uzu::kv_layout::TILE_KEYS)
+      IS_SPARSE ? (sparse_keys.key_count() + uint(uzu::kv_layout::TILE_KEYS) - 1u) / uint(uzu::kv_layout::TILE_KEYS)
                 : params.nk;
   const uint first_block = (split_index * key_tiles) / num_splits;
   const uint tile_first_row = query_tile_index * uint(Layout::BLOCK_ROWS);
@@ -278,7 +289,7 @@ METAL_FUNC void attention_matrix_mxu(
 
   threadgroup uint4* const staged_query =
       query_stage + uint(query_band) * uint(Scratch::QUERY_VECTORS_PER_BAND) + uint(lane);
-  threadgroup int* const slot_lists = reinterpret_cast<threadgroup int*>(row_masks);
+  threadgroup uint* const slot_lists = reinterpret_cast<threadgroup uint*>(row_masks);
   constexpr int LANE_KEYS = int(uzu::kv_layout::LANE_KEYS);
   constexpr int KEY_PAIRS = LANE_KEYS / int(uzu::kv_layout::PAIR_KEYS);
   const uint lane_first_key = uzu::kv_layout::lane_first_key(lane);
@@ -299,22 +310,22 @@ METAL_FUNC void attention_matrix_mxu(
                                    threadgroup float4* slot_stats,
                                    threadgroup float2* slot_sums,
                                    threadgroup uchar* slot_codes,
-                                   threadgroup int* step_slots) UZU_ALWAYS_INLINE {
+                                   threadgroup uint* step_slots) UZU_ALWAYS_INLINE {
     const uint key_block = block_index + uint(channel_slice);
     const uint key_base = first_key + key_block * uint(uzu::kv_layout::TILE_KEYS);
 
-    int lane_slot = uzu::kv_layout::NO_KEY_SLOT;
-    uint key_offsets[LANE_KEYS] = {};
+    uint lane_slot = uint(uzu::kv_layout::NO_KEY_SLOT);
+    uint key_offset;
     if constexpr (IS_SPARSE) {
-      lane_slot = key_slot(query_slots, slots_per_query, query_tile_index, key_base + uint(lane));
+      lane_slot = sparse_keys.slot(key_base + uint(lane));
       step_slots[uint(channel_slice) * uint(uzu::kv_layout::TILE_KEYS) + uint(lane)] = lane_slot;
-      METAL_PRAGMA_UNROLL
-      for (int key = 0; key < LANE_KEYS; ++key) {
-        const int slot = simd_shuffle(lane_slot, ushort(lane_first_key + uint(key)));
-        key_offsets[key] = (uint)shape.k_code_index(min(uint(slot), params.k_len - 1u), kv_head_index, lane_channel);
-      }
+      key_offset = (uint)shape.k_code_index(
+          slot_address(simd_shuffle(lane_slot, ushort(lane_first_key))),
+          kv_head_index,
+          lane_channel
+      );
     } else {
-      key_offsets[0] = first_key_offset + key_block * shape.block_stride();
+      key_offset = first_key_offset + key_block * shape.block_stride();
     }
 
     ScoreFragment scores;
@@ -371,15 +382,7 @@ METAL_FUNC void attention_matrix_mxu(
         METAL_PRAGMA_UNROLL
         for (int pair_index = 0; pair_index < 2; ++pair_index) {
           const int fragment_offset = (depth_fragment + pair_index) * int(uzu::kv_layout::BLOCK_FRAGMENT_BYTES);
-          uint4 packed_keys;
-          if constexpr (IS_SPARSE) {
-            METAL_PRAGMA_UNROLL
-            for (int key = 0; key < LANE_KEYS; ++key) {
-              packed_keys[key] = *reinterpret_cast<const device uint*>(key_codes + key_offsets[key] + fragment_offset);
-            }
-          } else {
-            packed_keys = *reinterpret_cast<const device uint4*>(key_codes + key_offsets[0] + fragment_offset);
-          }
+          const uint4 packed_keys = *reinterpret_cast<const device uint4*>(key_codes + key_offset + fragment_offset);
           key_fragments.fragment_data[pair_index] = as_type<CodeVector>(uint2(packed_keys.x, packed_keys.y));
           key_fragments.fragment_data[2 + pair_index] = as_type<CodeVector>(uint2(packed_keys.z, packed_keys.w));
         }
@@ -402,9 +405,9 @@ METAL_FUNC void attention_matrix_mxu(
           uint scale_index;
           bool valid;
           if constexpr (IS_SPARSE) {
-            const int column_slot = simd_shuffle(lane_slot, ushort(lane_column_key(lane_col)));
-            scale_index = shape.scale_index(min(uint(column_slot), params.k_len - 1u), kv_head_index);
-            valid = uint(column_slot) < params.k_len;
+            const uint column_slot = simd_shuffle(lane_slot, ushort(lane_column_key(lane_col)));
+            scale_index = shape.scale_index(min(column_slot, params.k_len - 1u), kv_head_index);
+            valid = column_slot < params.k_len;
           } else {
             const uint key = key_base + lane_column_key(lane_col);
             scale_index =
@@ -499,7 +502,7 @@ METAL_FUNC void attention_matrix_mxu(
                                threadgroup float4* slot_stats,
                                threadgroup float2* slot_sums,
                                threadgroup uchar* slot_codes,
-                               threadgroup int* step_slots) UZU_ALWAYS_INLINE {
+                               threadgroup uint* step_slots) UZU_ALWAYS_INLINE {
     // P x V over the published blocks.
     for (uint published_block = 0; published_block < blocks_in_step; ++published_block) {
       const float4 block_stats = slot_stats[published_block * STAT_ROWS];
@@ -528,12 +531,15 @@ METAL_FUNC void attention_matrix_mxu(
 
       uint value_offsets[LANE_KEYS] = {};
       if constexpr (IS_SPARSE) {
+        const uint run_first_slot =
+            slot_address(step_slots[published_block * uint(uzu::kv_layout::TILE_KEYS) + lane_first_key]);
         METAL_PRAGMA_UNROLL
-        for (int key = 0; key < LANE_KEYS; ++key) {
-          const int slot = step_slots[published_block * uint(uzu::kv_layout::TILE_KEYS) + lane_first_key + uint(key)];
-          value_offsets[key] =
-              (uint)
-                  shape.v_code_index(min(uint(slot), params.k_len - 1u), kv_head_index, channel_offset + lane_channel);
+        for (int pair = 0; pair < KEY_PAIRS; ++pair) {
+          value_offsets[uzu::kv_layout::PAIR_KEYS * pair] = (uint)shape.v_code_index(
+              run_first_slot + uint(pair) * uzu::kv_layout::PAIR_KEYS,
+              kv_head_index,
+              channel_offset + lane_channel
+          );
         }
       } else {
         METAL_PRAGMA_UNROLL
@@ -552,18 +558,7 @@ METAL_FUNC void attention_matrix_mxu(
         for (int key_fragment = 0; key_fragment < KEY_FRAGMENTS; ++key_fragment) {
           const device uchar* panel_values = value_codes + panel * uzu::kv_layout::BLOCK_FRAGMENT_BYTES;
           const uint first_offset = value_offsets[uzu::kv_layout::PAIR_KEYS * key_fragment];
-          const uint second_offset = value_offsets[uzu::kv_layout::PAIR_KEYS * key_fragment + 1];
-          uint4 packed_values;
-          if constexpr (IS_SPARSE) {
-            packed_values = uint4(
-                *reinterpret_cast<const device uint*>(panel_values + first_offset),
-                *reinterpret_cast<const device uint*>(panel_values + second_offset),
-                *reinterpret_cast<const device uint*>(panel_values + first_offset + uzu::kv_layout::TILE_LANE_BYTES),
-                *reinterpret_cast<const device uint*>(panel_values + second_offset + uzu::kv_layout::TILE_LANE_BYTES)
-            );
-          } else {
-            packed_values = *reinterpret_cast<const device uint4*>(panel_values + first_offset);
-          }
+          const uint4 packed_values = *reinterpret_cast<const device uint4*>(panel_values + first_offset);
           value_fragments.fragment_data[key_fragment * FRAGMENTS_PER_PANEL] = as_type<ValueVector>(packed_values.xy);
           value_fragments.fragment_data[key_fragment * FRAGMENTS_PER_PANEL + 1] =
               as_type<ValueVector>(packed_values.zw);
@@ -614,7 +609,7 @@ METAL_FUNC void attention_matrix_mxu(
     threadgroup float4* slot_stats = lane_stats + slot_offset / 4u;
     threadgroup float2* slot_sums = lane_sums + slot_offset / 2u;
     threadgroup uchar* slot_codes = lane_codes + 4u * slot_offset;
-    threadgroup int* step_slots =
+    threadgroup uint* step_slots =
         slot_lists + (slot_offset != 0u ? DEPTH_SLICES * uint(uzu::kv_layout::TILE_KEYS) : 0u);
 
     if (uint(channel_slice) < blocks_in_step) {

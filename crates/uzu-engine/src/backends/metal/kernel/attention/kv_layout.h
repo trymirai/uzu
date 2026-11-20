@@ -13,7 +13,6 @@ METAL_FUNC uint lane_row(const uint lane) {
 
 METAL_FUNC uint lane_group(const uint lane) { return (((lane >> 3) & 1u) << 1) | (lane & 1u); }
 
-constexpr constant uint LANE_KEYS = TILE_KEYS / GROUP_ROWS;
 constexpr constant uint PANEL_TILES = 2;
 constexpr constant uint PAIR_KEYS = 2;
 constexpr constant uint SLICE_PANELS = SLICE_DIMS / (PANEL_TILES * TILE_DIMS);

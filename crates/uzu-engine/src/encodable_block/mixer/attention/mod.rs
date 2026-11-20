@@ -7,7 +7,7 @@ use crate::{
         gpu_types::qkv_norm::QKVNormParams,
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-            attention::KeyArguments,
+            attention::KeyBlocks,
         },
     },
     config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
@@ -159,7 +159,7 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
-                sparse: false,
+                sparse_compression_ratio: None,
             },
         )
         .map_err(AttentionNewError::Kernel)?;
@@ -273,7 +273,8 @@ impl<B: Backend> Attention<B> {
                     input,
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
-                        keys: KeyArguments::<_, &B::ConstantBuffer>::Dense(trie.as_ref()),
+                        trie: trie.as_ref(),
+                        key_blocks: None::<KeyBlocks<&B::ConstantBuffer>>,
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,
