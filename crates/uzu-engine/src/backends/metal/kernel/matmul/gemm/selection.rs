@@ -56,6 +56,9 @@ pub fn small_m_weights(shape: &MatmulShape) -> Option<(ActivationFormat, GemmTil
         (GemmBPrologueKind::ScaleZeroPointDequant | GemmBPrologueKind::ScaleBiasDequant, 4, 32 | 64) => {
             Some((packed_half, GemmTiling::Tile8x32x64_Simdgroups1x2x4, 512))
         },
+        (GemmBPrologueKind::ScaleSymmetricDequant, 4, 64) => {
+            Some((packed_half, GemmTiling::Tile8x32x64_Simdgroups1x2x4, 512))
+        },
         (GemmBPrologueKind::ScaleSymmetricDequant, 8, 32 | 64) => {
             Some((ActivationFormat::Bf16, GemmTiling::Tile8x32x128_Simdgroups1x2x4, 256))
         },
