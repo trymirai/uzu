@@ -9,10 +9,12 @@ shift
 if (($# == 0)); then
     # Tasks of the fast mixture from its shortest context on: the eight up to its longest on the M5 Max, and the
     # first six on the M4 Max, which is slower.
-    set -- -h macs-fleet/bench-m5max -m Qwen3.8-27B-M Qwen3.5-9B-Dash Qwen3.5-2B-M \
-        -d 'mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld,DeepSWE,UTILMEM}:*^+2' \
-        + -h macs-fleet/bench-m4max -m Qwen3.8-27B-M Qwen3.5-9B-Dash \
-        -d 'mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld}:*^+2'
+    six='mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld}:*'
+    eight='mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld,DeepSWE,UTILMEM}:*'
+    set -- -h macs-fleet/bench-m5max -m Qwen3.8-27B-M -d "$eight^+2" \
+        + -h macs-fleet/bench-m5max -m Qwen3.5-9B-Dash -d "$eight^+3" \
+        + -h macs-fleet/bench-m5max -m Qwen3.5-2B-M -d "$eight^+5" \
+        + -h macs-fleet/bench-m4max -m Qwen3.8-27B-M Qwen3.5-9B-Dash -d "$six^+2"
 elif printf '%s\n' "$@" | grep -qxE -- '-o|--outputs?'; then
     echo "Error: the arguments can't give outputs, which are the runs that this saves to compare" >&2
     exit 2
