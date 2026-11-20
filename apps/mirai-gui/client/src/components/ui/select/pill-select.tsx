@@ -5,15 +5,26 @@ import { SelectionItem } from "./selection-item";
 import { SelectionPanel } from "./selection-panel";
 import { SelectionSection } from "./selection-section";
 
+type PillSelectOption<Value extends string> = {
+  value: Value;
+  label: string;
+  icon?: string;
+};
+
 type PillSelectProps<Value extends string> = {
   label: string;
   value: Value;
-  options: readonly { value: Value; label: string }[];
+  options: readonly PillSelectOption<Value>[];
   onChange: (value: Value) => void;
 };
 
+const OptionIcon = ({ src }: { src: string }) => (
+  <img src={src} alt="" aria-hidden="true" draggable={false} className="size-4 shrink-0 rounded-[4px] object-contain" />
+);
+
 export const PillSelect = <Value extends string>({ label, value, options, onChange }: PillSelectProps<Value>) => {
-  const selected = options.find((option) => option.value === value)?.label ?? value;
+  const current = options.find((option) => option.value === value);
+  const selected = current?.label ?? value;
   return (
     <Listbox value={value} onChange={onChange} as="div" className="relative shrink-0">
       <ListboxButton
@@ -21,7 +32,10 @@ export const PillSelect = <Value extends string>({ label, value, options, onChan
         aria-label={`${label}: ${selected}`}
         className="flex h-8 min-w-[110px] items-center justify-between gap-3 rounded-full bg-control-fill px-3 text-[13px] font-[450] leading-[1.3] text-text-primary outline-hidden transition-colors duration-150 ease-out hover:bg-control-fill-hover data-[headlessui-state~=open]:bg-control-fill-hover data-[focus]:bg-control-fill-hover data-[focus]:shadow-focus"
       >
-        <span>{selected}</span>
+        <span className="flex items-center gap-2">
+          {current?.icon && <OptionIcon src={current.icon} />}
+          {selected}
+        </span>
         <ChevronDown size={16} aria-hidden="true" />
       </ListboxButton>
       <Transition
@@ -47,7 +61,10 @@ export const PillSelect = <Value extends string>({ label, value, options, onChan
                         selected={selected}
                         className="flex w-full items-center justify-between gap-4 border-none bg-transparent text-left text-[13px] font-[450] leading-[1.3] text-text-primary outline-hidden"
                       >
-                        {option.label}
+                        <span className="flex items-center gap-2">
+                          {option.icon && <OptionIcon src={option.icon} />}
+                          {option.label}
+                        </span>
                         {selected && <Check size={14} aria-hidden="true" />}
                       </SelectionItem>
                     )}

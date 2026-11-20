@@ -4,14 +4,23 @@ type ProviderKey = {
   product?: string;
 };
 
-type ProviderDetails = { label: string; key?: ProviderKey };
+type ProviderDetails = { label: string; icon: string; key?: ProviderKey };
 
 const PROVIDERS = {
-  duckduckgo: { label: "DuckDuckGo" },
-  exa: { label: "Exa", key: { required: false, page: "https://dashboard.exa.ai/api-keys" } },
-  keenable: { label: "Keenable", key: { required: false, page: "https://app.keenable.ai/console/api-keys" } },
+  duckduckgo: { label: "DuckDuckGo", icon: "/icons/web-search/duckduckgo.svg" },
+  exa: {
+    label: "Exa",
+    icon: "/icons/web-search/exa.svg",
+    key: { required: false, page: "https://dashboard.exa.ai/api-keys" },
+  },
+  keenable: {
+    label: "Keenable",
+    icon: "/icons/web-search/keenable.png",
+    key: { required: false, page: "https://app.keenable.ai/console/api-keys" },
+  },
   brave: {
     label: "Brave",
+    icon: "/icons/web-search/brave.svg",
     key: { required: true, page: "https://brave.com/search/api/", product: "Brave Search" },
   },
 } as const satisfies Record<string, ProviderDetails>;
