@@ -1,8 +1,7 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use super::patch_grid::vision_patch_coordinates;
-use crate::data_type::DataTypeRepr;
+use crate::{data_type::DataTypeRepr, engine::language_model::vision::patch_grid::vision_patch_coordinates};
 
 const CHANNELS: u32 = 3;
 

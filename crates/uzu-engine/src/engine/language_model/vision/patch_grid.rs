@@ -1,7 +1,6 @@
 /// Grid coordinates `(x, y)` of the `row`-th patch of the vision encoder input.
-///
 /// Same as `vision_patch_coordinates` in `metal/kernel/vision/patch_grid.h`, see the example there.
-pub(super) fn vision_patch_coordinates(
+pub fn vision_patch_coordinates(
     row: u32,
     grid_width: u32,
     merge_size: u32,

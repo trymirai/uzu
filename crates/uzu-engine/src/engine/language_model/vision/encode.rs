@@ -6,8 +6,12 @@ use crate::{
         Backend,
         common::{CommandBuffer, CommandBufferEncoding, kernel::VisionPatchifyKernel},
     },
-    encodable_block::{linear::LinearEncodeError, mlp::MlpEncodeError, vision_layer::VisionLayerEncodeError},
-    engine::language_model::vision::model::VisionModel,
+    config::vision::VisionRoPEConfig,
+    encodable_block::{
+        linear::LinearEncodeError, mixer::attention::rope::PrecalculatedRoPE, mlp::MlpEncodeError,
+        vision_layer::VisionLayerEncodeError,
+    },
+    engine::language_model::vision::{model::VisionModel, patch_grid::vision_patch_coordinates},
 };
 
 pub struct VisionPrefilledImage<B: Backend> {
@@ -84,6 +88,7 @@ impl<B: Backend> VisionModel<B> {
         let mut patches = command_buffer
             .allocate_scratch_for_shape(&[rows, patch_dim], self.data_type)
             .map_err(VisionEncodeError::Backend)?;
+
         self.patchify.encode(
             &pixels,
             &mut patches,
@@ -96,9 +101,73 @@ impl<B: Backend> VisionModel<B> {
             rows * patch_dim,
             command_buffer,
         );
+
         let mut stream = self.patch_emb.encode(patches, rows, command_buffer)?;
         self.pos_emb.encode(&mut stream, grid_width, grid_height, encoder_config.spatial_merge_size, command_buffer);
 
-        Ok(stream)
+        let rope = Self::vision_rope(
+            &encoder_config.rope_config,
+            grid_width,
+            grid_height,
+            encoder_config.spatial_merge_size,
+            command_buffer,
+        )
+        .map_err(VisionEncodeError::Backend)?;
+
+        for layer in self.layers.iter() {
+            stream = layer.encode(stream, &rope, rows, command_buffer)?;
+        }
+
+        let normalized = self
+            .merger_norm
+            .encode(&stream, 0, rows, None::<&mut B::ScratchBuffer>, command_buffer)
+            .map_err(VisionEncodeError::Backend)?;
+
+        let merged_rows = rows / encoder_config.spatial_merge_size.pow(2);
+        let embeddings = self.merger_mlp.encode(normalized, merged_rows, command_buffer)?;
+
+        Ok(embeddings)
+    }
+
+    fn vision_rope(
+        rope_config: &VisionRoPEConfig,
+        grid_width: u32,
+        grid_height: u32,
+        merge_size: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<PrecalculatedRoPE<B>, B::Error> {
+        let dim = rope_config.head_dim as usize;
+        let half_dim = dim / 2;
+        let frequency_count = dim / 4;
+        // HF: inv_freq = 1 / base ^ (arange(0, half_dim, 2) / half_dim)
+        let inverse_frequencies: Vec<f32> =
+            (0..frequency_count).map(|j| 1.0 / rope_config.base.powf((2 * j) as f32 / half_dim as f32)).collect();
+
+        let rows = (grid_width * grid_height) as usize;
+        let mut cosines = vec![0.0; rows * dim];
+        let mut sines = vec![0.0; rows * dim];
+        for row in 0..rows {
+            let (x, y) = vision_patch_coordinates(row as u32, grid_width, merge_size);
+            for pair in 0..half_dim {
+                // the first quarter of channels rotates by the row, the second by the column
+                let coordinate = if pair < frequency_count {
+                    y
+                } else {
+                    x
+                };
+                let angle = coordinate as f32 * inverse_frequencies[pair % frequency_count];
+                let (sine, cosine) = angle.sin_cos();
+                for channel in [row * dim + pair, row * dim + pair + half_dim] {
+                    cosines[channel] = cosine;
+                    sines[channel] = sine;
+                }
+            }
+        }
+
+        Ok(PrecalculatedRoPE {
+            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
+            sines: command_buffer.allocate_constant_from_slice(&sines)?,
+            dim: dim as u32,
+        })
     }
 }
