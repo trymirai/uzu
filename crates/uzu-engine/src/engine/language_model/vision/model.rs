@@ -5,20 +5,17 @@ use thiserror::Error;
 use crate::{
     backends::{
         Backend,
-        common::{
-            Context, Kernels,
-            kernel::{TensorAddScaleKernel, VisionPatchifyKernel},
-        },
+        common::{Kernels, kernel::VisionPatchifyKernel},
     },
     config::vision::VisionConfig,
     data_type::DataType,
     encodable_block::{
-        embedding_interpolated::InterpolatedPositionEmbedding,
         linear::{Linear, LinearBlockError},
         mlp::{UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         vision_layer::{VisionLayer, VisionLayerNewError},
     },
+    engine::language_model::vision::position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
     safetensors::{ParameterLoader, ParameterLoaderError},
     utils::{buffer::create_buffer_with_data, file},
 };
@@ -37,6 +34,8 @@ pub enum VisionLoadError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("ParameterLoader error: {0}")]
     ParameterLoader(#[from] ParameterLoaderError<B>),
+    #[error("Position embedding error: {0}")]
+    PositionEmbedding(#[from] VisionPositionEmbeddingNewError<B>),
     #[error("Serde error: {0}")]
     Serde(#[from] serde_json::Error),
     #[error("MLP error: {0}")]
@@ -54,8 +53,7 @@ pub struct VisionModel<B: Backend> {
     pub(super) image_std: B::GlobalGpuBuffer,
     pub(super) patchify: <B::Kernels as Kernels>::VisionPatchifyKernel,
     pub(super) patch_emb: Box<dyn Linear<B>>,
-    pub(super) pos_emb: InterpolatedPositionEmbedding<B>,
-    pub(super) pos_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
+    pub(super) pos_emb: VisionPositionEmbedding<B>,
     pub(super) layers: Box<[VisionLayer<B>]>,
     pub(super) merger_norm: Normalization<B>,
     pub(super) merger_mlp: UngatedMlp<B>,
@@ -99,16 +97,14 @@ impl<B: Backend> VisionModel<B> {
         .await?;
 
         let num_positions = config.encoder_config.position_embedding_config.num_positions;
-        let pos_emb = InterpolatedPositionEmbedding::new(
+        let pos_emb = VisionPositionEmbedding::new(
             data_type,
             num_positions,
             model_dim,
             &encoder_tree.subtree("position_embedding"),
+            context,
         )
         .await?;
-
-        let pos_add = <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, true, true)
-            .map_err(VisionLoadError::Backend)?;
 
         let mut layers = Vec::with_capacity(config.encoder_config.layer_configs.len());
         for (index, layer_config) in config.encoder_config.layer_configs.iter().enumerate() {
@@ -164,7 +160,6 @@ impl<B: Backend> VisionModel<B> {
             patchify,
             patch_emb,
             pos_emb,
-            pos_add,
             layers: layers.into(),
             merger_norm,
             merger_mlp,

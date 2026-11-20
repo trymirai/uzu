@@ -75,7 +75,9 @@ impl<B: Backend> VisionModel<B> {
 
         let encoder_config = &self.config.encoder_config;
         let patch_size = encoder_config.patch_size;
-        let rows = (image.height / patch_size) * (image.width / patch_size);
+        let grid_width = image.width / patch_size;
+        let grid_height = image.height / patch_size;
+        let rows = grid_width * grid_height;
         let patch_dim = encoder_config.in_channels * encoder_config.temporal_patch_size * patch_size * patch_size;
 
         let pixels = command_buffer.allocate_constant_from_slice(&image.pixels).map_err(VisionEncodeError::Backend)?;
@@ -94,7 +96,9 @@ impl<B: Backend> VisionModel<B> {
             rows * patch_dim,
             command_buffer,
         );
-        let stream = self.patch_emb.encode(patches, rows, command_buffer)?;
+        let mut stream = self.patch_emb.encode(patches, rows, command_buffer)?;
+        self.pos_emb.encode(&mut stream, grid_width, grid_height, encoder_config.spatial_merge_size, command_buffer);
+
         Ok(stream)
     }
 }

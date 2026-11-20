@@ -36,22 +36,22 @@
 // @param image_std             — std dev for image normalization [CHANNELS], each value for each channel
 // @param width                 — image width
 // @param patch_size            — patch side size
-// @param merge_size            — block side size for merger (how many patches merge in 1 LLM token)
+// @param merge_size            — block side size for merger (how many patches merge in 1 token)
 // @param temporal_patch_size   — frames count per patch
 // @param length                — number of elements in patches (rows * patch_dim), one thread per element
 template <typename T>
 VARIANTS(T, bfloat)
 PUBLIC KERNEL(VisionPatchify)(
-  const device uchar* pixels,
-  device T* patches,
-  const device float* image_mean,
-  const device float* image_std,
-  constant uint& width,
-  constant uint& patch_size,
-  constant uint& merge_size,
-  constant uint& temporal_patch_size,
-  constant uint& length,
-  const uint position AXIS(length, 256)
+    const device uchar* pixels,
+    device T* patches,
+    const device float* image_mean,
+    const device float* image_std,
+    constant uint& width,
+    constant uint& patch_size,
+    constant uint& merge_size,
+    constant uint& temporal_patch_size,
+    constant uint& length,
+    const uint position AXIS(length, 256)
 ) {
   const uint patch_area = patch_size * patch_size;
   const uint patch_dim = CHANNELS * temporal_patch_size * patch_area;

@@ -6,7 +6,6 @@ pub mod decision;
 pub mod decoder;
 pub mod dflash;
 pub mod embedding;
-pub mod embedding_interpolated;
 pub mod embedding_table;
 pub mod linear;
 pub mod mixer;
