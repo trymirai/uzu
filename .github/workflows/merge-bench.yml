@@ -61,8 +61,10 @@ jobs:
             echo "::error::The pull request's branch is not in $GITHUB_REPOSITORY"
             exit 1
           fi
-          gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT/reactions" -f content=eyes
+          reactions="repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT/reactions"
+          reaction="$(gh api --method POST "$reactions" -f content=eyes --jq .id)"
           {
+            echo "reaction=$reactions/$reaction"
             echo "source=$(jq -r .head.sha <<< "$pull_request")"
             echo "destination=origin/$(jq -r .base.ref <<< "$pull_request")"
             echo "target=$(jq -r .base.ref <<< "$pull_request")"
@@ -146,7 +148,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PULL_REQUEST: ${{ steps.revisions.outputs.pull_request }}
-        run: gh pr comment "$PULL_REQUEST" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/merge-bench.md"
+          REACTION: ${{ steps.revisions.outputs.reaction }}
+        run: |
+          gh pr comment "$PULL_REQUEST" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/merge-bench.md"
+          # On a !bench comment, the eyes are for the time until its reply.
+          if [[ -n "$REACTION" ]]; then
+            gh api --silent --method DELETE "$REACTION"
+            gh api --silent --method POST "${REACTION%/*}" -f content=+1
+          fi
 
       - name: Report to Discord
         if: ${{ !cancelled() && github.event_name == 'push' && steps.benchmark.outcome != 'skipped' }}
