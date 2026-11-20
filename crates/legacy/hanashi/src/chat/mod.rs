@@ -45,6 +45,14 @@ impl Encoding {
         dispatch!(infallible self, grammar_trigger)
     }
 
+    pub fn image_pad_token_id(&self) -> Option<TokenId> {
+        match self {
+            Self::Hanashi(inner) => inner.image_pad_token_id(),
+            #[cfg(not(target_family = "wasm"))]
+            Self::Harmony(_) => None,
+        }
+    }
+
     pub fn try_append(
         &mut self,
         messages: &[ChatMessage],

@@ -31,7 +31,17 @@ pub struct StreamConfig {
     pub grammar_trigger: Option<String>,
 }
 
-pub type StreamInput = Vec<u64>;
+pub struct StreamImage {
+    /// Index in `StreamInput::tokens` of the image's pad token
+    pub start: usize,
+    pub url: String,
+}
+
+#[derive(Default)]
+pub struct StreamInput {
+    pub tokens: Vec<u64>,
+    pub images: Vec<StreamImage>,
+}
 pub type StreamOutput = TokenStreamOutput;
 pub type StreamMetrics = Option<TokenStreamMetrics>;
 

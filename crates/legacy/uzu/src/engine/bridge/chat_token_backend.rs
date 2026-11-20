@@ -35,7 +35,8 @@ use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{
         error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
-        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
+        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, scale_images,
+        stream_error_to_backend_error,
     },
 };
 
@@ -128,7 +129,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 grammar_trigger_token_sequence(grammar_trigger.as_deref(), self.model.tokenizer());
             let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
                 trigger_token_sequence.as_deref(),
-                input,
+                &input.tokens,
                 self.model.tokenizer(),
             );
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
@@ -162,7 +163,12 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-        let stream = match self.model.stream(input, &[], model_state, options) {
+        let images = match scale_images(&self.model, &input.images) {
+            Ok(images) => images,
+            Err(err) => return Box::pin(NoMetricsStream::new(error_to_stream_output(err))),
+        };
+
+        let stream = match self.model.stream(&input.tokens, &images, model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));

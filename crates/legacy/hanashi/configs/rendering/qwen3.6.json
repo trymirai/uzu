@@ -44,8 +44,10 @@
             "message": {
                 "content": {
                     "required": true,
+                    "disable_raw": true,
                     "blocks": [
-                        "text"
+                        "text",
+                        "image"
                     ]
                 }
             }
