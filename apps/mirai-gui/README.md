@@ -57,7 +57,8 @@ it manually; the workflow must be on the default branch for the button to appear
 
 Download the `mirai-macos-…` artifact from the completed run. It contains the
 Apple-signed app in a notarized DMG, plus the app archive and updater signature, and
-is retained for 14 days. The app and bundled CLI are built from the selected
+is retained for 14 days. The `mirai-linux-…` and `mirai-windows-…` artifacts hold
+unsigned `.deb` and NSIS installers. The app and bundled CLI are built from the selected
 commit using its existing version. Manual runs do not create a release or tag,
 change versions, or publish an updater manifest.
 
