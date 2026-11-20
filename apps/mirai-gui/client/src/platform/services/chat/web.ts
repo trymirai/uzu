@@ -28,6 +28,7 @@ export const webChat: ChatService = {
   },
   cancelRun: () => Promise.resolve(),
   answerSearchPermission: () => Promise.resolve(false),
+  siteIcon: () => Promise.resolve(null),
   generateTitle: () => Promise.reject(new Error("Not available on web")),
   cancelTitleGen: () => Promise.resolve(),
   getSamplingDefaults: () => Promise.resolve(null),

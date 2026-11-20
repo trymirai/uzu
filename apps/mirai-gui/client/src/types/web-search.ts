@@ -19,6 +19,7 @@ export type WebSearchFailure =
 export type WebSearchItem = {
   type: "webSearch";
   query: string;
+  provider?: string;
   called: boolean;
   failed?: boolean;
   failure?: WebSearchFailure;
@@ -38,6 +39,7 @@ export const isWebSearchItem = (value: unknown): value is WebSearchItem =>
   isRecord(value) &&
   value.type === "webSearch" &&
   typeof value.query === "string" &&
+  (value.provider === undefined || typeof value.provider === "string") &&
   typeof value.called === "boolean" &&
   (value.failed === undefined || typeof value.failed === "boolean") &&
   (value.failure === undefined || isWebSearchFailure(value.failure)) &&

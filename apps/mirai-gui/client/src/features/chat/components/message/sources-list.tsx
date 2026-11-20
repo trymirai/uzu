@@ -1,8 +1,13 @@
+import { LinkIcon } from "lucide-react";
+import { useState } from "react";
+import { Collapse } from "@/components/ui/collapse";
 import type { WebSearchSource } from "@/types/web-search";
 import { siteOf } from "@/utils/site-of";
+import { ExpandRow, SourceLinks } from "./source-links";
 
 const SOURCES_SELECTOR = "[data-sources]";
 const HEADING = "Sources";
+const NAMED_SITES = 2;
 
 export const formatSourcesForCopy = (
   message: HTMLElement,
@@ -28,28 +33,33 @@ export const formatSourcesForCopy = (
   section.replaceWith(heading, list);
 };
 
+const summaryOf = (sources: WebSearchSource[]): string => {
+  const sites = [...new Set(sources.map((source) => siteOf(source.url)))];
+  const named = sites.slice(0, NAMED_SITES);
+  const more = sites.length - named.length;
+  if (more > 0) return `From ${named.join(", ")} and ${more} more`;
+  return `From ${named.join(" and ")}`;
+};
+
 export function SourcesList({ sources }: { sources: WebSearchSource[] }) {
+  const [open, setOpen] = useState(false);
   if (sources.length === 0) return null;
 
   return (
-    <section aria-label={HEADING} data-sources className="mt-3.5 border-t border-cell-border pt-2.5">
-      <h3 className="mb-1 flex h-5 items-center text-[12px] font-[450] text-label-muted">{HEADING}</h3>
-      <ul className="flex flex-col gap-0.5">
-        {sources.map((source) => (
-          <li key={source.url} className="min-w-0">
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-              title={source.url}
-              className="group flex min-w-0 items-center gap-2 rounded-md py-[5px] text-[13px] leading-[1.3] outline-hidden focus-visible:shadow-focus"
-            >
-              <span className="min-w-0 truncate font-[350] text-blue group-hover:underline">{source.title}</span>
-              <span className="shrink-0 text-[12px] text-label-muted">{siteOf(source.url)}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <div className="mt-3">
+      <ExpandRow
+        icon={<LinkIcon className="size-3.5 shrink-0" aria-hidden="true" />}
+        open={open}
+        onToggle={() => setOpen((value) => !value)}
+        ariaLabel={`${HEADING}: ${sources.length}`}
+      >
+        {summaryOf(sources)}
+      </ExpandRow>
+      <Collapse open={open}>
+        <section aria-label={HEADING} data-sources className="pt-1.5">
+          <SourceLinks sources={sources} />
+        </section>
+      </Collapse>
+    </div>
   );
 }

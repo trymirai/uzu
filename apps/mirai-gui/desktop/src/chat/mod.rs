@@ -5,6 +5,7 @@ mod naming;
 mod payloads;
 mod session;
 mod session_events;
+mod site_icon;
 mod stream;
 mod title;
 mod transcript;
@@ -338,6 +339,11 @@ pub async fn web_search_key_save(
 #[tauri::command]
 pub async fn web_search_key_remove(provider: String) -> AppResult<Vec<web_search::StoredKey>> {
     web_search::remove_key(&provider).await.map_err(crate::error::AppError::msg)
+}
+
+#[tauri::command]
+pub async fn site_icon(host: String) -> Option<String> {
+    site_icon::site_icon(&host).await
 }
 
 #[tauri::command]

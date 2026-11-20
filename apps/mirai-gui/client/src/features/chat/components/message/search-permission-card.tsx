@@ -1,15 +1,13 @@
-import { ChevronRightIcon, GlobeIcon } from "lucide-react";
-import { useState } from "react";
-import { twMerge } from "tailwind-merge";
+import { ChevronDownIcon, GlobeIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SURFACE_BUTTON_SMALL_CLASSNAME, SURFACE_SOFT_BUTTON_CLASSNAME } from "@/components/ui/modal/constants";
+import { PopoverMenu } from "@/components/ui/popover/popover-menu";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useWebSearchStore } from "@/stores/use-web-search-store";
 import type { SearchPermissionRequest } from "@/types/web-search";
+import { useTypedLines } from "../../hooks/use-typed-lines";
+import { Address, Caret, SearchLine, typedAddress } from "./search-field";
 
-// A query or an address is never cut short: the user allows exactly what they can read.
-const QUERY_CLASSNAME = "mt-0.5 text-[13px] leading-[1.45] text-label-muted [overflow-wrap:anywhere]";
-const EASE_CLASSNAME = "duration-250 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none";
+const ACTION_CLASSNAME = "h-6 rounded-full px-2.5 text-[12px] font-[500]";
 
 const cardTitle = ({ provider, queries, pages }: SearchPermissionRequest): string => {
   if (pages.length === 0) {
@@ -30,89 +28,90 @@ export function SearchPermissionCard({
   const alwaysAllow = async () => {
     if (await answer("alwaysAllow")) useWebSearchStore.getState().setChatMode(request.chatId, "auto");
   };
-  const [restOpen, setRestOpen] = useState(false);
-  const [first, ...rest] = [...request.queries, ...request.pages];
+  const items = [
+    ...request.queries.map((text) => ({ text, page: false })),
+    ...request.pages.map((text) => ({ text, page: true })),
+  ];
+  const typing = useTypedLines(items.map((item) => (item.page ? typedAddress(item.text) : item.text)));
   const title = cardTitle(request);
+  // A written address is always asked about: it can't be allowed for the rest of the chat.
+  const canAlwaysAllow = request.pages.length === 0;
 
-  return (
-    <div
-      role="group"
-      aria-label={title}
-      data-tool-call
-      className="mt-1 mb-2 rounded-xl bg-surface-soft py-3 pr-3 pl-3.5 animate-uzu-in"
-    >
-      <div className="flex items-start gap-2 text-[14px] font-[500] leading-[1.35] text-label-title">
-        <GlobeIcon className="mt-[2.5px] size-3.5 shrink-0 text-label-muted" aria-hidden="true" />
-        <span>{title}</span>
-      </div>
-      <div className="ml-[22px]">
-        <p className={QUERY_CLASSNAME}>{first}</p>
-        {rest.length > 0 && (
-          <>
-            <Button
-              kind="ghost"
-              size="xxs"
-              aria-expanded={restOpen}
-              onClick={() => setRestOpen((open) => !open)}
-              icon={
-                <ChevronRightIcon
-                  className={twMerge("size-3.5 transition-transform", EASE_CLASSNAME, restOpen && "rotate-90")}
-                />
-              }
-              iconPosition="right"
-              className="mt-0.5 -ml-2 text-[13px] font-normal text-label-muted"
-            >
-              {rest.length} more
-            </Button>
-            <div
-              aria-hidden={!restOpen}
-              className={twMerge(
-                "grid transition-[grid-template-rows,opacity]",
-                EASE_CLASSNAME,
-                restOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-              )}
-            >
-              <div className="min-h-0 overflow-hidden">
-                {rest.map((query, index) => (
-                  <p key={index} className={QUERY_CLASSNAME}>
-                    {query}
-                  </p>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <Button
-          kind="secondary"
-          size="sm"
-          disabled={request.answering}
-          onClick={() => void answer("deny")}
-          className={twMerge(SURFACE_BUTTON_SMALL_CLASSNAME, SURFACE_SOFT_BUTTON_CLASSNAME)}
-        >
-          Deny
-        </Button>
-        {request.pages.length === 0 && (
-          <Button
-            kind="secondary"
-            size="sm"
-            disabled={request.answering}
-            onClick={() => void alwaysAllow()}
-            className={twMerge(SURFACE_BUTTON_SMALL_CLASSNAME, SURFACE_SOFT_BUTTON_CLASSNAME)}
-          >
-            Always allow
-          </Button>
-        )}
+  const actions = (
+    <span className="flex items-center gap-1">
+      <Button
+        kind="ghost"
+        size="xxs"
+        disabled={request.answering}
+        onClick={() => void answer("deny")}
+        className={ACTION_CLASSNAME}
+      >
+        Deny
+      </Button>
+      <span className="flex">
         <Button
           kind="primary"
-          size="sm"
+          size="xxs"
           disabled={request.answering}
           onClick={() => void answer("allow")}
-          className={SURFACE_BUTTON_SMALL_CLASSNAME}
+          className={`${ACTION_CLASSNAME} ${canAlwaysAllow ? "rounded-r-none pr-2" : ""}`}
         >
           Allow
         </Button>
+        {canAlwaysAllow && (
+          <PopoverMenu
+            side="bottom"
+            align="end"
+            sideOffsetPx={6}
+            className="min-w-[230px]"
+            trigger={
+              <Button
+                kind="primary"
+                size="xxs"
+                iconOnly
+                ariaLabel="More ways to allow"
+                disabled={request.answering}
+                icon={<ChevronDownIcon className="size-3.5" aria-hidden="true" />}
+                className="h-6 w-auto rounded-l-none rounded-r-full border-l border-black/15 px-1.5"
+              />
+            }
+            items={[
+              {
+                id: "always",
+                label: (
+                  <span>
+                    <span className="block text-[13px] font-[500] leading-[1.3]">Always allow</span>
+                    <span className="mt-0.5 block text-[12px] leading-[1.35] text-label-muted">
+                      Search without asking in this chat
+                    </span>
+                  </span>
+                ),
+                onClick: () => void alwaysAllow(),
+              },
+            ]}
+          />
+        )}
+      </span>
+    </span>
+  );
+
+  return (
+    <div role="group" aria-label={title} data-tool-call className="mt-1 mb-2 pl-1 animate-uzu-in">
+      <div className="flex h-6 items-center gap-2 text-[13px] text-label-muted">
+        <GlobeIcon className="size-3.5 shrink-0" aria-hidden="true" />
+        <span>{title}</span>
+      </div>
+      <div className="mt-0.5">
+        {items.slice(0, typing.shown).map((item, index) => (
+          <SearchLine
+            key={index}
+            icon={item.page ? "page" : "search"}
+            end={typing.allTyped && index === items.length - 1 ? actions : undefined}
+          >
+            {item.page && typing.isTyped(index) ? <Address url={item.text} /> : typing.textOf(index)}
+            {typing.isTyping(index) && <Caret />}
+          </SearchLine>
+        ))}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useWebSearchStore } from "@/stores/use-web-search-store";
 import type { SearchPermissionDecision } from "@/types/web-search";
@@ -31,6 +31,11 @@ const show = (queries: string[], pages: string[] = []) => {
 
 const chatMode = () => useWebSearchStore.getState().chats.chat;
 
+// Queries appear whole instead of being typed, so the answers are there at once.
+beforeAll(() => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce"), media: query }));
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   useChatSessionStore.setState({ searchPermission: null });
@@ -42,8 +47,10 @@ it("asks about an address the user wrote without offering to always allow", () =
   const address = "https://docs.example/d/1?key=secret";
   show([], [address]);
   expect(screen.getByRole("group", { name: "Read this page with DuckDuckGo?" })).toBeTruthy();
-  expect(screen.getByText(address)).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Always allow" })).toBeNull();
+  expect(screen.getByRole("group", { name: "Read this page with DuckDuckGo?" }).textContent).toContain(
+    address.replace("https://", ""),
+  );
+  expect(screen.queryByRole("button", { name: "More ways to allow" })).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Allow" }));
   expect(platform.chat.answerSearchPermission).toHaveBeenCalledExactlyOnceWith("run:1", 1, "allow");
@@ -62,7 +69,8 @@ it.each([
 
 it("Always allow sets the chat to search without asking once the backend has taken the answer", async () => {
   show(request.queries);
-  fireEvent.click(screen.getByRole("button", { name: "Always allow" }));
+  fireEvent.click(screen.getByRole("button", { name: "More ways to allow" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /Always allow/ }));
   expect(platform.chat.answerSearchPermission).toHaveBeenCalledExactlyOnceWith("run:1", 1, "alwaysAllow");
   expect(chatMode()).toBe("ask");
   await waitFor(() => expect(chatMode()).toBe("auto"));
@@ -78,17 +86,17 @@ it.each([
   const sent = new Promise<void>((resolve) => (finish = resolve));
   platform.chat.answerSearchPermission.mockImplementationOnce(() => sent.then(respond));
   show(request.queries);
-  const always = screen.getByRole("button", { name: "Always allow" });
+  const allow = screen.getByRole("button", { name: "Allow" });
 
-  fireEvent.click(always);
-  expect(always).toHaveProperty("disabled", true);
-  fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+  fireEvent.click(allow);
+  expect(allow).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: "Deny" }));
   expect(platform.chat.answerSearchPermission).toHaveBeenCalledTimes(1);
 
   const joined = { ...request, queries: ["rust stable version", "second query"] };
   useChatSessionStore.getState().setSearchPermission({ ...joined, ...shownIn });
   finish();
-  await waitFor(() => expect(always).toHaveProperty("disabled", false));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Allow" })).toHaveProperty("disabled", false));
   expect(screen.getByRole("group", { name: "Run 2 searches with DuckDuckGo?" })).toBeTruthy();
   expect(chatMode()).toBe("ask");
 

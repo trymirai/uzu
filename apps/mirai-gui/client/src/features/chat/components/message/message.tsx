@@ -19,7 +19,7 @@ import { collectSources } from "@/utils/web-sources";
 import { SourcesList, formatSourcesForCopy } from "./sources-list";
 import { WebPageRow } from "./web-page-row";
 import { SearchPermissionCard } from "./search-permission-card";
-import { WebSearchRow } from "./web-search-row";
+import { WebSearchBatch } from "./web-search-batch";
 
 const ChartMessage = lazy(() => import("./chart-message"));
 
@@ -71,7 +71,10 @@ function toolCallLabel(tool: Extract<TranscriptItem, { type: "toolCall" }>, isRu
   }[state];
 }
 
-type TranscriptSegment = { kind: "item"; index: number } | { kind: "steps"; start: number; end: number };
+type TranscriptSegment =
+  | { kind: "item"; index: number }
+  | { kind: "steps"; start: number; end: number }
+  | { kind: "searches"; start: number; end: number };
 
 /** Groups the transcript for display: each thinking item starts a "steps" segment that takes in
  *  the tool calls and further thinking after it, up to the next text or chart. Tool calls before
@@ -79,6 +82,13 @@ type TranscriptSegment = { kind: "item"; index: number } | { kind: "steps"; star
 function segmentTranscript(items: TranscriptItem[]): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
   for (let i = 0; i < items.length; i += 1) {
+    if (items[i]!.type === "webSearch") {
+      let end = i;
+      while (end + 1 < items.length && items[end + 1]!.type === "webSearch") end += 1;
+      segments.push({ kind: "searches", start: i, end });
+      i = end;
+      continue;
+    }
     if (items[i]!.type !== "thinking") {
       segments.push({ kind: "item", index: i });
       continue;
@@ -272,6 +282,21 @@ const AssistantMessage: React.FC<MessageProps> = ({
         >
           {transcript !== undefined ? (
             segmentTranscript(transcript).map((segment) => {
+              if (segment.kind === "searches") {
+                const searches = transcript
+                  .slice(segment.start, segment.end + 1)
+                  .filter((item) => item.type === "webSearch");
+                return (
+                  <WebSearchBatch
+                    key={`${currentMsgVersion?.id ?? id}:${segment.start}`}
+                    items={searches}
+                    generating={isThinking}
+                    awaitingPermission={searches.some(
+                      (item) => !item.called && (searchPermission?.queries.includes(item.query) ?? false),
+                    )}
+                  />
+                );
+              }
               if (segment.kind === "steps") {
                 // A run of thinking and tool calls reads as one step of work: one row, with each
                 // tool call in place inside the reasoning.
@@ -336,14 +361,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
                     </div>
                   );
                 case "webSearch":
-                  return (
-                    <WebSearchRow
-                      key={key}
-                      item={item}
-                      generating={isThinking}
-                      awaitingPermission={searchPermission?.queries.includes(item.query) ?? false}
-                    />
-                  );
+                  return null;
                 case "webPage":
                   return <WebPageRow key={key} item={item} generating={isThinking} />;
                 case "chart":

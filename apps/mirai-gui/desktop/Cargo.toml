@@ -33,6 +33,7 @@ dom_smoothie.workspace = true
 dom_query.workspace = true
 security-framework.workspace = true
 encoding_rs.workspace = true
+base64.workspace = true
 
 [lints]
 workspace = true

@@ -13,6 +13,7 @@ export type ChatService = {
   runStream(params: LlmRunParams): LlmAsyncStream;
   cancelRun(runId: string): Promise<void>;
   answerSearchPermission(requestId: string, shownItems: number, decision: SearchPermissionDecision): Promise<boolean>;
+  siteIcon(host: string): Promise<string | null>;
   generateTitle(params: TitleGenParams): Promise<string>;
   cancelTitleGen(): Promise<void>;
   /** Model's actual sampling method and parameters, read without loading weights. */

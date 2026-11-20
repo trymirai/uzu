@@ -56,7 +56,10 @@ pub(in crate::chat) fn web_search_tool(tools: Arc<WebTools>) -> ToolDescriptor {
                     });
                     let chars = serde_json::to_string(&results).map_or(0, |json| json.chars().count());
                     let _ = tools.with_reply(|reply| reply.search.result_chars += chars);
-                    SearchOutcome::Results(results)
+                    SearchOutcome::Found {
+                        provider: provider.label().to_string(),
+                        results,
+                    }
                 },
                 Err(error) => {
                     let provider = provider.label().to_string();
@@ -89,7 +92,10 @@ pub(in crate::chat) fn web_search_tool(tools: Arc<WebTools>) -> ToolDescriptor {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum SearchOutcome {
-    Results(Vec<SearchResult>),
+    Found {
+        provider: String,
+        results: Vec<SearchResult>,
+    },
     Failure {
         error: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,13 +129,25 @@ pub(in crate::chat) fn searched_query(call: &ToolCall) -> String {
 
 #[derive(Debug, Default, PartialEq)]
 pub(in crate::chat) struct SearchView {
+    pub provider: Option<String>,
     pub sources: Vec<WebSource>,
     pub failure: Option<SearchFailure>,
 }
 
 pub(in crate::chat) fn search_view(result: &serde_json::Value) -> SearchView {
-    match SearchOutcome::deserialize(result) {
-        Ok(SearchOutcome::Results(results)) => SearchView {
+    // Chats from before 2026-11-20 recorded the results alone, without the provider.
+    let outcome = SearchOutcome::deserialize(result).or_else(|_| {
+        Vec::<SearchResult>::deserialize(result).map(|results| SearchOutcome::Found {
+            provider: String::new(),
+            results,
+        })
+    });
+    match outcome {
+        Ok(SearchOutcome::Found {
+            provider,
+            results,
+        }) => SearchView {
+            provider: Some(provider).filter(|provider| !provider.is_empty()),
             sources: results
                 .into_iter()
                 .map(|result| WebSource {
@@ -147,8 +165,8 @@ pub(in crate::chat) fn search_view(result: &serde_json::Value) -> SearchView {
             failure,
             ..
         }) => SearchView {
-            sources: Vec::new(),
             failure,
+            ..SearchView::default()
         },
         Err(_) => SearchView::default(),
     }
@@ -207,6 +225,18 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn found_results_name_their_provider() {
+        let found = serde_json::to_value(SearchOutcome::Found {
+            provider: "Exa".into(),
+            results: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(found, serde_json::json!({ "provider": "Exa", "results": [] }));
+        assert_eq!(search_view(&found).provider.as_deref(), Some("Exa"));
+        assert_eq!(search_view(&serde_json::json!([])).provider, None);
     }
 
     #[test]

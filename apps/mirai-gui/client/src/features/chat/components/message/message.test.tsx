@@ -108,8 +108,9 @@ it("copies a searched reply without its tool rows and with its search results on
   useChatStore.setState({ messages: [searched] });
   render(<Message {...searched} chatId="chat" />);
   expect(screen.queryByText("rust stable version")).toBeNull();
-  expect(screen.getByText("Couldn't search the web")).toBeTruthy();
+  expect(screen.getByText("Searched · 1 result")).toBeTruthy();
 
+  fireEvent.click(screen.getByRole("button", { name: "Sources: 1" }));
   fireEvent.click(screen.getByRole("button", { name: "Copy" }));
   await waitFor(() => expect(clipboard.write).toHaveBeenCalledOnce());
 

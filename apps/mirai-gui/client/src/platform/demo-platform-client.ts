@@ -415,6 +415,7 @@ const demoChat: ChatService = {
   runStream: (params) => runLlmStream(demoTransport, params),
   cancelRun: (runId) => demoTransport.cancel(runId),
   answerSearchPermission: async () => false,
+  siteIcon: async () => null,
   generateTitle: async ({ userText }) => fallback(userText).name,
   cancelTitleGen: async () => {},
   getSamplingDefaults: async () => ({

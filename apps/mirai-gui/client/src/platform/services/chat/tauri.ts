@@ -22,6 +22,7 @@ export const tauriChat: ChatService = {
   cancelRun,
   answerSearchPermission: (requestId, shownItems, decision) =>
     invoke<boolean>("answer_search_permission", { requestId, shownItems, decision }),
+  siteIcon: (host) => invoke<string | null>("site_icon", { host }),
 
   generateTitle: (params: TitleGenParams) => invoke<string>("title_gen", { payload: params }),
 

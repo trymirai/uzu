@@ -124,6 +124,7 @@ pub fn run() {
             chat::web_search_keys,
             chat::web_search_key_save,
             chat::web_search_key_remove,
+            chat::site_icon,
             chat::cancel_title_gen,
             chat::eject_session,
             chat::set_auto_eject_config,

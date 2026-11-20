@@ -38,18 +38,36 @@ fn literal_address(url: &Url) -> Option<IpAddr> {
 }
 
 pub(super) fn resolves_to_public(url: &Url) -> bool {
+    resolution(url) == Resolution::Public
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Resolution {
+    Public,
+    NotPublic,
+    Failed,
+}
+
+pub(super) fn resolution(url: &Url) -> Resolution {
+    let public = |yes: bool| {
+        if yes {
+            Resolution::Public
+        } else {
+            Resolution::NotPublic
+        }
+    };
     if let Some(literal) = literal_address(url) {
-        return is_public(literal);
+        return public(is_public(literal));
     }
     let Some(host) = url.host_str() else {
-        return false;
+        return Resolution::NotPublic;
     };
     match (host, 0).to_socket_addrs() {
         Ok(resolved) => {
             let addresses: Vec<SocketAddr> = resolved.collect();
-            !addresses.is_empty() && addresses.iter().all(|address| is_public(address.ip()))
+            public(!addresses.is_empty() && addresses.iter().all(|address| is_public(address.ip())))
         },
-        Err(_) => false,
+        Err(_) => Resolution::Failed,
     }
 }
 

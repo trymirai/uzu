@@ -216,6 +216,8 @@ pub enum TranscriptItem {
     #[serde(rename_all = "camelCase")]
     WebSearch {
         query: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
         called: bool,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         failed: bool,

@@ -158,6 +158,7 @@ impl Transcript {
                                 items.push(match value.name.as_str() {
                                     WEB_SEARCH_TOOL_NAME => TranscriptItem::WebSearch {
                                         query: searched_query(value),
+                                        provider: None,
                                         called: false,
                                         failed: false,
                                         failure: None,
@@ -229,6 +230,7 @@ impl Transcript {
                                     let view = result.as_ref().map(search_view).unwrap_or_default();
                                     TranscriptItem::WebSearch {
                                         query: searched_query(call),
+                                        provider: view.provider,
                                         called: true,
                                         failed,
                                         failure: view.failure,
@@ -981,6 +983,7 @@ mod tests {
         ));
         let running = |query: &str| TranscriptItem::WebSearch {
             query: query.into(),
+            provider: None,
             called: false,
             failed: false,
             failure: None,
@@ -995,7 +998,10 @@ mod tests {
             result_of(
                 WEB_SEARCH_TOOL_NAME,
                 "answered",
-                serde_json::json!([{ "title": "Rust Versions", "url": "https://releases.rs/", "snippet": "Stable" }]),
+                serde_json::json!({
+                    "provider": "Exa",
+                    "results": [{ "title": "Rust Versions", "url": "https://releases.rs/", "snippet": "Stable" }],
+                }),
             ),
             result_of(
                 WEB_SEARCH_TOOL_NAME,
@@ -1013,6 +1019,7 @@ mod tests {
             [
                 TranscriptItem::WebSearch {
                     query: "rust stable version".into(),
+                    provider: Some("Exa".into()),
                     called: true,
                     failed: false,
                     failure: None,
@@ -1023,6 +1030,7 @@ mod tests {
                 },
                 TranscriptItem::WebSearch {
                     query: "rust beta version".into(),
+                    provider: None,
                     called: true,
                     failed: true,
                     failure: Some(SearchFailure::Limit {
@@ -1039,6 +1047,7 @@ mod tests {
             serde_json::json!({
                 "type": "webSearch",
                 "query": "rust stable version",
+                "provider": "Exa",
                 "called": true,
                 "sources": [{ "title": "Rust Versions", "url": "https://releases.rs/" }],
             })

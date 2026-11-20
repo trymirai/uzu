@@ -4851,6 +4851,7 @@ dependencies = [
 name = "mirai-gui"
 version = "0.7.1"
 dependencies = [
+ "base64 0.23.1",
  "dom_query 0.29.0",
  "dom_smoothie",
  "encoding_rs",
