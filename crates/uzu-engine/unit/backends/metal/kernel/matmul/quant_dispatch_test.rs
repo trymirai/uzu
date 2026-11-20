@@ -129,6 +129,8 @@ fn run_parity<T: DataTypeRepr + Float + Debug + Display>(
 #[case::gs64_4bit_mlx_prefill(64, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_4bit_mlx_decode(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_zp_decode(8, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_4bit_symmetric_draft(8, 256, 128, 64, 4, QuantizationMethod::ScaleSymmetric)]
+#[case::gs64_4bit_symmetric_prefill(64, 256, 128, 64, 4, QuantizationMethod::ScaleSymmetric)]
 #[case::gs32_unaligned_n(64, 256, 96, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs32_narrow_n_tail_zp(64, 256, 72, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs32_narrow_n_tail_mlx(64, 256, 72, 32, 4, QuantizationMethod::ScaleBias)]
@@ -524,6 +526,7 @@ fn a8w4_zero_point_tail_parity(#[case] m: u32) {
 #[test_attr(uzu_test)]
 #[case::w4_bias(4, QuantizationMethod::ScaleBias, 256, 2, 32)]
 #[case::w4_zp(4, QuantizationMethod::ScaleZeroPoint, 256, 2, 32)]
+#[case::w4_sym_gs64(4, QuantizationMethod::ScaleSymmetric, 256, 8, 64)]
 #[case::w8_sym(8, QuantizationMethod::ScaleSymmetric, 256, 2, 32)]
 #[case::direct_w8_m5(8, QuantizationMethod::ScaleSymmetric, 1024, 5, 64)]
 fn signed_weights_full_precision_activations_parity_bf16(
