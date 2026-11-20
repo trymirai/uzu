@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "async-openai",
  "futures",
@@ -666,7 +666,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks-uzu"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "convert_case 0.12.0",
  "heck 0.5.0",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "bindings",
  "inventory",
@@ -1300,7 +1300,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -2213,7 +2213,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "async-trait",
  "bindings",
@@ -3297,7 +3297,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "indexmap 2.14.2",
  "jiff",
@@ -4140,7 +4140,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "fancy-regex 0.19.2",
  "indexmap 2.14.2",
@@ -4222,7 +4222,7 @@ dependencies = [
 
 [[package]]
 name = "kanka"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "libc",
  "obfstr",
@@ -4242,7 +4242,7 @@ dependencies = [
 
 [[package]]
 name = "keisoku"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "bitflags 2.13.2",
  "kanka",
@@ -4285,7 +4285,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kiban"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4762,7 +4762,7 @@ dependencies = [
 
 [[package]]
 name = "mirai-gui"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "block2",
  "futures",
@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "base64 0.23.1",
  "bitflags 2.13.2",
@@ -4957,7 +4957,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "async-trait",
  "bindings",
@@ -4995,7 +4995,7 @@ dependencies = [
 
 [[package]]
 name = "nagare-macros"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
@@ -7945,7 +7945,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shoji"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -9149,7 +9149,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "indexmap 2.14.2",
  "json-transform",
@@ -9933,7 +9933,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -9995,7 +9995,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "ash",
@@ -10062,7 +10062,7 @@ dependencies = [
 
 [[package]]
 name = "uzu-engine-macros"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "quote",
  "syn 3.0.9",

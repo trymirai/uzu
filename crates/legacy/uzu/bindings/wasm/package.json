@@ -1,6 +1,6 @@
 {
     "name": "@trymirai/uzu-wasm",
-    "version": "0.7.2",
+    "version": "0.7.3",
     "description": "A high-performance inference engine for AI models",
     "author": "Mirai Tech Inc. <contact@getmirai.co>",
     "types": "dist/index.d.ts",
