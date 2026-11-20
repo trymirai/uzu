@@ -274,6 +274,50 @@ jobs:
             security delete-keychain "${RUNNER_TEMP}/mirai-signing.keychain-db"
           fi
 
+  # Unsigned Linux and Windows installers, as workflow artifacts only: releases ship the macOS app.
+  build-linux-windows:
+    name: Build ${{ matrix.host }} app
+    needs: decide
+    if: ${{ needs.decide.outputs.build == 'true' }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      matrix:
+        include:
+          - host: 'linux'
+            runner: 'ubuntu-22.04'
+            target: 'x86_64-unknown-linux-gnu'
+            bundle: 'deb/*.deb'
+          - host: 'windows'
+            runner: 'windows-2025'
+            target: 'x86_64-pc-windows-msvc'
+            bundle: 'nsis/*.exe'
+
+    defaults:
+      run:
+        working-directory: apps/mirai-gui
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-legacy
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app bundle
+        run: pnpm build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mirai-${{ matrix.host }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   publish:
     name: Publish release assets
     needs: [decide, build]
