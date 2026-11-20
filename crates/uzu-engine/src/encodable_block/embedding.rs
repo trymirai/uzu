@@ -83,6 +83,10 @@ impl<B: Backend> Embedding<B> {
         self.model_dim
     }
 
+    pub fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
     pub fn readout_input_hadamard_factors(&self) -> Option<Arc<B::GlobalGpuBuffer>> {
         match &self.tying {
             EmbeddingTying::Tied {

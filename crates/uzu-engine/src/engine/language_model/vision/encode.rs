@@ -1,3 +1,5 @@
+use std::range::Range;
+
 use shoji::types::session::vision::{VisionImage, VisionImageInput};
 use thiserror::Error;
 
@@ -8,8 +10,8 @@ use crate::{
     },
     config::vision::VisionRoPEConfig,
     encodable_block::{
-        linear::LinearEncodeError, mixer::attention::rope::PrecalculatedRoPE, mlp::MlpEncodeError,
-        vision_layer::VisionLayerEncodeError,
+        decoder::EmbeddingOverride, linear::LinearEncodeError, mixer::attention::rope::PrecalculatedRoPE,
+        mlp::MlpEncodeError, vision_layer::VisionLayerEncodeError,
     },
     engine::language_model::vision::{model::VisionModel, patch_grid::vision_patch_coordinates},
 };
@@ -24,6 +26,30 @@ pub struct VisionPrefilledImage<B: Backend> {
 
 pub struct VisionPrefillResult<B: Backend> {
     images: Box<[VisionPrefilledImage<B>]>,
+}
+
+impl<B: Backend> VisionPrefillResult<B> {
+    /// Image embedding rows that replace pad token rows of a prefill batch,
+    /// `batch` is the batch's range in the expanded input tokens
+    pub fn embedding_overrides(
+        &self,
+        batch: Range<usize>,
+    ) -> Vec<EmbeddingOverride<'_, B>> {
+        let mut overrides = Vec::new();
+        for image in self.images.iter() {
+            let image_end = image.start + (image.width * image.height) as usize;
+            let start = image.start.max(batch.start);
+            let end = image_end.min(batch.end);
+            if start < end {
+                overrides.push(EmbeddingOverride {
+                    source: &image.embeddings,
+                    source_rows: Range::from(start - image.start..end - image.start),
+                    target_row: start - batch.start,
+                });
+            }
+        }
+        overrides
+    }
 }
 
 #[derive(Debug, Error)]

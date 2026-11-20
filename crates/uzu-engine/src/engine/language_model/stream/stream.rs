@@ -281,6 +281,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             prefilled_images = Some(images)
         }
 
+        let mut batch_start = 0;
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
             let token_ids = command_buffer
                 .allocate_constant_from_slice(
@@ -290,11 +291,18 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             let batch_dim = BatchTopology::flat(input_chunk.len() as u32, true);
 
+            // Image embeddings replace the rows of the image pad tokens that fall into this batch
+            let batch_tokens = Range::from(batch_start..batch_start + input_chunk.len());
+            batch_start += input_chunk.len();
+            let embedding_overrides =
+                prefilled_images.as_ref().map(|images| images.embedding_overrides(batch_tokens)).unwrap_or_default();
+
             let decoder_output = self.model.decoder.encode(
                 &token_ids,
                 &batch_dim,
                 sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
                 hidden_feature_layer_indices,
+                &embedding_overrides,
                 &mut self.model_state.transformer_state,
                 &mut command_buffer,
             )?;
@@ -537,6 +545,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             &batch_dim,
             Some((0..batch_dim.size()).into()),
             hidden_feature_layer_indices,
+            &[],
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
