@@ -47,7 +47,7 @@ pub struct AttentionKernelConfig {
     pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
-    pub sparse: bool,
+    pub sparse_compression_ratio: Option<u32>,
 }
 
 pub struct AttentionArguments<
@@ -58,20 +58,16 @@ pub struct AttentionArguments<
     ST: BufferRef<Backend = B>,
 > {
     pub suffix_length: u32,
-    pub keys: KeyArguments<TT, ST>,
+    pub trie: Option<TT>,
+    pub key_blocks: Option<KeyBlocks<ST>>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
     pub cache: KVCacheView,
     pub gate: Option<GT>,
 }
 
-pub enum KeyArguments<TT: BufferRef, ST: BufferRef> {
-    Dense(Option<TT>),
-    Sparse(KeySlots<ST>),
-}
-
-pub struct KeySlots<ST: BufferRef> {
-    pub query_slots: ST,
-    pub slots_per_query: u32,
+pub struct KeyBlocks<ST: BufferRef> {
+    pub query_blocks: ST,
+    pub blocks_per_query: u32,
 }
 
 #[derive(Clone, Copy)]

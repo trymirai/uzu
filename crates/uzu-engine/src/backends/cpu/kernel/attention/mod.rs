@@ -28,7 +28,7 @@ impl AttentionKernel for AttentionCpuKernel {
         _context: &CpuContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, CpuError> {
-        if config.sparse {
+        if config.sparse_compression_ratio.is_some() {
             return Err(CpuError::NotSupported);
         }
         Ok(Self {

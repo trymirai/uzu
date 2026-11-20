@@ -11,4 +11,5 @@ pub const TILE_DIMS: u32 = 16;
 pub const SLICE_DIMS: u32 = 64;
 pub const GROUP_ROWS: u32 = 8;
 pub const LANE_COLS: u32 = 4;
-pub const LANE_BYTES: u32 = TILE_KEYS / GROUP_ROWS * LANE_COLS;
+pub const LANE_KEYS: u32 = TILE_KEYS / GROUP_ROWS;
+pub const LANE_BYTES: u32 = LANE_KEYS * LANE_COLS;

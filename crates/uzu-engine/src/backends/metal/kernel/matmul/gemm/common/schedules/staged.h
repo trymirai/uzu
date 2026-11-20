@@ -110,6 +110,7 @@ static METAL_FUNC auto make_staged_loader(
         values,
         scales,
         right.signed_codes,
+        interleaved_rows,
         int(params->K),
         int(params->scale_group_stride),
         int(params->scale_output_stride),

@@ -122,6 +122,8 @@ struct PackedSchedule {
             if constexpr (HAS_BIAS) {
               weight_offsets[tile_m] =
                   float(right.bias()[right.scale_index(weight_rows[tile_m], weight_group_index, params)]);
+            } else if constexpr (RightOperand::SCHEME == GemmBPrologueKind::ScaleSymmetricDequant) {
+              weight_offsets[tile_m] = float(RightOperand::CODE_ORIGIN);
             } else {
               weight_offsets[tile_m] = float(right.zero_point(weight_rows[tile_m], weight_group_index, params));
             }

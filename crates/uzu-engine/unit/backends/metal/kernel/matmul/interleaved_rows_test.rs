@@ -1,5 +1,5 @@
 //! `GemmBLayout::InterleavedRows`: every kernel that reads interleaved-row W4 strips matches the row-major layout.
-use QuantizationMethod::{ScaleBias, ScaleZeroPoint};
+use QuantizationMethod::{ScaleBias, ScaleSymmetric, ScaleZeroPoint};
 use futures::executor::block_on;
 use half::bf16;
 use uzu_engine_macros::uzu_test;
@@ -95,7 +95,7 @@ fn interleaved_rows_matches_row_major() {
     if context.supports_mxu {
         return;
     }
-    for (k, group_size, method) in [(1024, 32, ScaleZeroPoint), (16384, 64, ScaleBias)] {
+    for (k, group_size, method) in [(1024, 32, ScaleZeroPoint), (16384, 64, ScaleBias), (5120, 64, ScaleSymmetric)] {
         for m in [1, 3, 8, 16, 64] {
             let input = QuantInput::<bf16>::new(m, k, 256, group_size, 4, method, 7).with_group_output();
             let label = format!("m={m} k={k} G{group_size} {method:?}");

@@ -15,9 +15,13 @@ const SPARSE_THREADGROUPS_PER_CORE: u32 = 4;
 pub fn sparse_splits(
     gpu_cores: u32,
     rows: u32,
-    slots_per_query: u32,
+    blocks_per_query: u32,
+    compression_ratio: u32,
 ) -> u32 {
-    (SPARSE_THREADGROUPS_PER_CORE * gpu_cores).div_ceil(rows).min(slots_per_query.div_ceil(kv_layout::TILE_KEYS)).max(1)
+    (SPARSE_THREADGROUPS_PER_CORE * gpu_cores)
+        .div_ceil(rows)
+        .min((blocks_per_query * compression_ratio).div_ceil(kv_layout::TILE_KEYS))
+        .max(1)
 }
 
 pub fn splits(
