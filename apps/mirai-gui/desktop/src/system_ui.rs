@@ -3,6 +3,9 @@ use tauri::{
     menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID},
 };
 
+#[cfg(windows)]
+use crate::error::{AppError, AppResult};
+
 const MENU_NEW_CHAT_ID: &str = "menu:new-chat";
 const MENU_SETTINGS_ID: &str = "menu:settings";
 const MENU_ZOOM_IN_ID: &str = "menu:zoom-in";
@@ -103,7 +106,18 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let menu = menu.item(&SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help").build()?);
     let menu = menu.build()?;
     app.set_menu(menu)?;
-    app.on_menu_event(|app, event| match event.id().as_ref() {
+    app.on_menu_event(|app, event| {
+        on_menu_item(app, event.id().as_ref());
+    });
+    Ok(())
+}
+
+/// Runs the app's own menu item `id`; false for any other id.
+fn on_menu_item(
+    app: &AppHandle,
+    id: &str,
+) -> bool {
+    match id {
         MENU_NEW_CHAT_ID => {
             show_and_focus_main(app);
             let _ = app.emit("app:new-chat", ());
@@ -121,9 +135,53 @@ pub fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
         MENU_ZOOM_RESET_ID => {
             crate::zoom::step(app, crate::zoom::Step::Reset);
         },
-        _ => {},
-    });
-    Ok(())
+        _ => return false,
+    }
+    true
+}
+
+#[cfg(windows)]
+fn submenus(app: &AppHandle) -> AppResult<Vec<tauri::menu::Submenu<tauri::Wry>>> {
+    let menu = app.menu().ok_or_else(|| AppError::msg("the app menu is not set up"))?;
+    Ok(menu.items().map_err(AppError::msg)?.iter().filter_map(|item| item.as_submenu().cloned()).collect())
+}
+
+/// The app menus' titles, for the title bar the Windows window draws itself.
+#[cfg(windows)]
+#[tauri::command]
+pub fn menu_titles(app: AppHandle) -> AppResult<Vec<String>> {
+    submenus(&app)?.iter().map(|submenu| submenu.text().map_err(AppError::msg)).collect()
+}
+
+/// Runs menu item `id` for its shortcut: WebView2 keeps keys from the window, so the page passes them on.
+#[cfg(windows)]
+#[tauri::command]
+pub fn run_menu_item(
+    app: AppHandle,
+    id: String,
+) -> AppResult<()> {
+    if on_menu_item(&app, &id) {
+        Ok(())
+    } else {
+        Err(AppError::msg(format!("no menu item {id}")))
+    }
+}
+
+/// Opens app menu `index` under its title, whose left and bottom edges are in page pixels.
+#[cfg(windows)]
+#[tauri::command]
+pub fn open_menu(
+    app: AppHandle,
+    window: tauri::Window,
+    index: usize,
+    left: f64,
+    bottom: f64,
+) -> AppResult<()> {
+    let submenus = submenus(&app)?;
+    let submenu = submenus.get(index).ok_or_else(|| AppError::msg(format!("no app menu {index}")))?;
+    // The page is zoomed, so a page pixel is the zoom level in window pixels.
+    let zoom = crate::zoom::current(&app);
+    window.popup_menu_at(submenu, tauri::LogicalPosition::new(left * zoom, bottom * zoom)).map_err(AppError::msg)
 }
 
 #[derive(serde::Deserialize)]

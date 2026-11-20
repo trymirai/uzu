@@ -14,6 +14,8 @@ import { HoverPopoverProvider } from "@/components/ui/popover/hover-popover/prov
 import { useAppInitialization } from "@/hooks/use-app-initialization";
 import { useWindowJumpMorph } from "@/hooks/use-window-jump-morph";
 import { ZoomBadge } from "@/components/zoom-badge";
+import { TitleBar } from "@/components/title-bar";
+import { platformInfo } from "@/platform/platform-info";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -31,6 +33,9 @@ function RootComponent() {
   useAppNavigationEvents();
   useSaveFailureToast();
   useWindowJumpMorph();
+  // The Windows title bar sits above the page, which starts below it.
+  const titleBar = platformInfo.features.titleBar && <TitleBar />;
+  const belowTitleBar = platformInfo.features.titleBar ? "pt-8" : "";
 
   useEffect(() => {
     setMobile(isMobile);
@@ -41,8 +46,9 @@ function RootComponent() {
     return (
       <TooltipProvider>
         <HoverPopoverProvider>
-          <div className="h-dvh overflow-clip bg-background text-label-title">
+          <div className={twMerge("h-dvh overflow-clip bg-background text-label-title", belowTitleBar)}>
             <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
+            {titleBar}
             <Outlet />
             <ToastProvider />
             <ZoomBadge />
@@ -55,8 +61,9 @@ function RootComponent() {
   return (
     <TooltipProvider>
       <HoverPopoverProvider>
-        <div className="h-dvh overflow-clip bg-bg-sidebar text-label-title flex">
+        <div className={twMerge("h-dvh overflow-clip bg-bg-sidebar text-label-title flex", belowTitleBar)}>
           <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
+          {titleBar}
           <LeftBar />
           {/* Content sits in an inset, rounded panel on the window's own surface, like a sheet of
           paper on a desk: the panel's edge separates it from the sidebar, so neither needs a line. */}
