@@ -18,6 +18,7 @@ pub mod sampling;
 pub mod stream_op;
 pub mod transformer;
 pub mod transformer_layer;
+pub mod vision_layer;
 pub mod weaver;
 pub mod weaver_layer;
 pub mod weight_matrix;

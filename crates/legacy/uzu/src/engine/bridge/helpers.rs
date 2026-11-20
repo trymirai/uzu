@@ -46,6 +46,7 @@ pub fn stream_error_to_backend_error<B: Backend>(error: LanguageModelStreamError
         },
         LanguageModelStreamError::NoSeedToken => BackendError::NoSeedToken {},
         LanguageModelStreamError::ContextOverflow => BackendError::ContextOverflow {},
+        LanguageModelStreamError::Vision(error) => BackendError::other(error),
     }
 }
 

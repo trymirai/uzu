@@ -162,7 +162,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-        let stream = match self.model.stream(input, model_state, options) {
+        let stream = match self.model.stream(input, &[], model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));

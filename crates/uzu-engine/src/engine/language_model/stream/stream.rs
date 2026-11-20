@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::executor::block_on;
-use shoji::traits::backend::chat_token::TokenStreamMetrics;
+use shoji::{traits::backend::chat_token::TokenStreamMetrics, types::session::vision::VisionImageInput};
 
 use crate::{
     backends::common::{
@@ -16,11 +16,14 @@ use crate::{
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
+    encodable_block::{
+        batch_topology::BatchTopology, mixer::attention::mrope::MRoPEPositions, sampling::SamplingMethod,
+    },
     engine::language_model::{
         LanguageModel,
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
+        vision::encode::{VisionPrefillError, VisionPrefillResult},
     },
     trie::TrieNode,
     utils::{
@@ -237,6 +240,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     pub fn prefill(
         &mut self,
         input: &[u64],
+        images: &[VisionImageInput],
     ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
         let _capture_span = CAPTURE_MATCHER.capture::<B>(&self.model.engine.context, "prefill")?;
 
@@ -272,6 +276,19 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
+        let mut prefilled_images: Option<VisionPrefillResult<B>> = None;
+        if !images.is_empty() {
+            let vision_model = self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+            let images = vision_model.prefill(images, &mut command_buffer)?;
+            prefilled_images = Some(images)
+        }
+
+        // images take 2D MRoPE positions and shift the text after them
+        let mrope_positions = prefilled_images
+            .as_ref()
+            .map(|images| images.mrope_positions(self.model_state.transformer_state.rope_position, input.len()));
+
+        let mut batch_start = 0;
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
             let token_ids = command_buffer
                 .allocate_constant_from_slice(
@@ -281,11 +298,25 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             let batch_dim = BatchTopology::flat(input_chunk.len() as u32, true);
 
+            // Image embeddings replace the rows of the image pad tokens that fall into this batch
+            let batch_tokens = Range::from(batch_start..batch_start + input_chunk.len());
+            batch_start += input_chunk.len();
+            let embedding_overrides =
+                prefilled_images.as_ref().map(|images| images.embedding_overrides(batch_tokens)).unwrap_or_default();
+
+            // Every batch gets its positions: an image in an earlier batch shifts the text in later ones
+            if let Some((mrope_positions, _)) = &mrope_positions {
+                self.model_state.transformer_state.mrope_positions = Some(MRoPEPositions {
+                    positions: mrope_positions.positions[batch_tokens.start..batch_tokens.end].into(),
+                });
+            }
+
             let decoder_output = self.model.decoder.encode(
                 &token_ids,
                 &batch_dim,
                 sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
                 hidden_feature_layer_indices,
+                &embedding_overrides,
                 &mut self.model_state.transformer_state,
                 &mut command_buffer,
             )?;
@@ -336,6 +367,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         } else {
             encode_batch(final_chunk, true)?
         };
+
+        if let Some((_, next_position)) = mrope_positions {
+            self.model_state.transformer_state.rope_position = next_position;
+        }
 
         let logits = decoder_output.logits.unwrap();
 
@@ -528,6 +563,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             &batch_dim,
             Some((0..batch_dim.size()).into()),
             hidden_feature_layer_indices,
+            &[],
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
@@ -743,11 +779,22 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
     pub fn new(
         model: &'a LanguageModel<B>,
         input: &[u64],
+        images: &[VisionImageInput],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
+        // images takes as many tokens as it has embeddings, so the context checks and the prefill see the full length
+        let expanded_input;
+        let input: &[u64] = if images.is_empty() {
+            input
+        } else {
+            let vision_model = model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+            expanded_input = vision_model.expand_tokens(input, images)?;
+            &expanded_input
+        };
+
         let mut submitter = StreamEnqueuer::new(model, input, model_state, options)?;
-        let job = submitter.prefill(input)?;
+        let job = submitter.prefill(input, images)?;
 
         Ok(Self {
             submitter,

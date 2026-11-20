@@ -1,6 +1,7 @@
 use std::sync::mpsc::Sender;
 
 use derive_more::Debug;
+use shoji::types::session::vision::VisionImageInput;
 use thiserror::Error;
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
+        vision::encode::VisionPrefillError,
     },
     speculators::dflash_tfm::DFlashTreeError,
 };
@@ -43,6 +45,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     NoSeedToken,
     #[error("Context overflow")]
     ContextOverflow,
+    #[error("Image error: {0}")]
+    Vision(#[from] VisionPrefillError<B>),
 }
 
 impl<B: Backend> LanguageModel<B> {
@@ -57,9 +61,10 @@ impl<B: Backend> LanguageModel<B> {
     pub fn stream<'a>(
         &'a self,
         input: &[u64],
+        images: &[VisionImageInput],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<LanguageModelStream<'a, B>, LanguageModelStreamError<B>> {
-        LanguageModelStream::new(self, input, state, options)
+        LanguageModelStream::new(self, input, images, state, options)
     }
 }
