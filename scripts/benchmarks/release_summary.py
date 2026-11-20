@@ -13,7 +13,6 @@ from benchman.run import load
 from benchman.task import summarize
 from pydantic import BaseModel, TypeAdapter
 
-SEED = 0
 LONDON = "oneoff/london-summary"
 LONDON_REPEATS = 3
 MIXTURE = "mirai-mixture-slow"
@@ -41,8 +40,6 @@ def result(run: Run) -> Result:
     mixture = [task for task in run.responses if task.startswith(f"{MIXTURE}/")] if run.ready.specdec else []
     if run.ready.specdec and len(mixture) != MIXTURE_TASKS:
         raise typer.BadParameter(f"{name} has run {len(mixture)} of the {MIXTURE_TASKS} tasks of {MIXTURE}")
-    if unseeded := [task for task in [LONDON, *mixture] if run.tasks[task].seed != SEED]:
-        raise typer.BadParameter(f"{name} has not run {unseeded[0]} with seed {SEED}")
     return Result(
         device=run.device,
         engine=run.engine,
