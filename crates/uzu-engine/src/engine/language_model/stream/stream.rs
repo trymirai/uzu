@@ -185,6 +185,18 @@ impl<B: Backend> GenerationJob<B> {
     }
 }
 
+impl<B: Backend> ResolvedJob<B> {
+    /// Returns row index and id
+    fn last_output_token(&self) -> (usize, u32) {
+        match self.accepted_indices_and_input_tokens.as_ref() {
+            Some((accepted_indices, _)) => {
+                (*accepted_indices.last().unwrap() as usize, *self.output_tokens.last().unwrap() as u32)
+            },
+            None => (0, self.output_tokens[0] as u32),
+        }
+    }
+}
+
 impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     fn new(
         model: &'a LanguageModel<B>,
@@ -229,6 +241,19 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             metrics,
             propose_trie: true,
         })
+    }
+
+    fn start_recording(
+        &self,
+        name: &str,
+    ) -> Result<<B::CommandBuffer as CommandBuffer>::Encoding, LanguageModelStreamError<B>> {
+        let command_buffer = self
+            .model
+            .engine
+            .context
+            .create_command_buffer(Some(name), Some(self.allocation_pool.clone()))
+            .map_err(LanguageModelStreamError::Backend)?;
+        Ok(record(command_buffer, self.options.timestamps.as_ref()))
     }
 
     async fn resolve_take(
@@ -297,13 +322,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .prepare(new_context_length, max_batch_length as u32)
             .map_err(LanguageModelStreamError::Backend)?;
 
-        let command_buffer = self
-            .model
-            .engine
-            .context
-            .create_command_buffer(Some("prefill"), Some(self.allocation_pool.clone()))
-            .map_err(LanguageModelStreamError::Backend)?;
-        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+        let mut command_buffer = self.start_recording("prefill")?;
 
         command_buffer.debug_point(&format!(
             "prefill at context {}, suffix {} ({} batches)",
@@ -444,21 +463,15 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
         let queue_span = CpuSpan::start(self.options.timestamps.as_ref(), "queue pass");
-        let command_buffer = self
-            .model
-            .engine
-            .context
-            .create_command_buffer(
-                Some(&format!("decode {}", self.metrics.num_decode_forward_passes)),
-                Some(self.allocation_pool.clone()),
-            )
-            .map_err(LanguageModelStreamError::Backend)?;
-        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+        let round = self.metrics.num_decode_forward_passes;
+        let mut command_buffer = self.start_recording(&format!("decode {round}"))?;
+        let mut pendings = Vec::new();
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
         let mut cpu_token = None;
-        let (batch_dim, token_ids, trie_seeds, mut speculator_pendings, mut trie_cpu) = if self.propose_trie
+        let mut trie_cpu = None;
+        let (batch_dim, token_ids, trie_seeds, mut speculator_pendings) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -470,7 +483,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 let token_buffer = last_job.output_tokens_buffer();
                 (norm_buffer.subrange(..), token_buffer.subrange(..))
             } else {
-                // TODO(perf): CPU-bubble: for `accepted_indices`, to find where the root of the speculator should be.
+                // TODO(perf): CPU-bubble: for `accepted_indices`, to find where the root of the
+                // speculator should be (technically this is always resolved by having to wait for
+                // what tokens where emitted, so the actual bubble is in `generate`)
                 let resolved = last_job
                     .resolve(
                         &self.model.engine.context,
@@ -503,17 +518,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             // The draft is its own command buffer so that it runs while the tree is being encoded.
             let draft_pending = command_buffer.end_encoding().submit();
-            command_buffer = record(
-                self.model
-                    .engine
-                    .context
-                    .create_command_buffer(
-                        Some(&format!("decode {} (tree)", self.metrics.num_decode_forward_passes)),
-                        Some(self.allocation_pool.clone()),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?,
-                self.options.timestamps.as_ref(),
-            );
+            command_buffer = self.start_recording(&format!("decode {round} (tree)"))?;
 
             let proposal = speculator.propose_tree(
                 draft,
@@ -527,35 +532,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             )?;
 
             let trie_pending = command_buffer.end_encoding().submit();
-            command_buffer = record(
-                self.model
-                    .engine
-                    .context
-                    .create_command_buffer(
-                        Some(&format!("decode {} (forward pass)", self.metrics.num_decode_forward_passes)),
-                        Some(self.allocation_pool.clone()),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?,
-                self.options.timestamps.as_ref(),
-            );
+            command_buffer = self.start_recording(&format!("decode {round} (forward pass)"))?;
 
-            // TODO(perf): CPU bubble for finding what rows we have to read from
-            // disk for ngrams. we can overlap this with the first couple of
-            // layers of the transformer, that don't use ngrams.
-            let (speculator_pendings, trie_cpu) = if self.model.decoder.has_ngram_embeddings() {
-                let wait_span = CpuSpan::start(self.options.timestamps.as_ref(), "wait for speculator");
-                for pending in [draft_pending, trie_pending] {
-                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
-                }
-                drop(wait_span);
-
-                let _copyout_span = CpuSpan::start(self.options.timestamps.as_ref(), "copyout trie");
-                (None, Some(copyout_trie(&*self.model.engine.context, &proposal.topology, &proposal.token_ids).await?))
-            } else {
-                (Some([draft_pending, trie_pending]), None)
-            };
-
-            (proposal.topology, proposal.token_ids, proposal.seeds, speculator_pendings, trie_cpu)
+            (proposal.topology, proposal.token_ids, proposal.seeds, Some([draft_pending, trie_pending]))
         } else {
             let batch_dim = BatchTopology::flat(1);
             let context = command_buffer.context();
@@ -564,12 +543,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let token_range = if last_job.batch_dim().full_accept() && !self.model.decoder.has_ngram_embeddings() {
+            let token_range = if last_job.batch_dim().full_accept() {
                 0..token_word_bytes
             } else {
-                // TODO(perf): CPU-bubble. We could be running the first couple
-                // layers that don't need ngram embeddings while waiting to get
-                // the tokens on the CPU.
+                // Technically a CPU-bubble, but only hit at the end of context window.
                 let resolved = last_job
                     .resolve(
                         &self.model.engine.context,
@@ -577,20 +554,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         self.options.timestamps.as_ref(),
                     )
                     .await?;
-                let (row, token) = match resolved.accepted_indices_and_input_tokens.as_ref() {
-                    Some((accepted_indices, _)) => {
-                        (*accepted_indices.last().unwrap() as usize, *resolved.output_tokens.last().unwrap())
-                    },
-                    None => (0, resolved.output_tokens[0]),
-                };
-                cpu_token = Some(token as u32);
+                let (row, token) = resolved.last_output_token();
+                cpu_token = Some(token);
                 row * token_word_bytes..(row + 1) * token_word_bytes
             };
 
             command_buffer.encode_copy(last_job.output_tokens_buffer().subrange(token_range), &mut token_ids);
 
-            // this is starting to get a bit nasty...
-            (batch_dim, token_ids, None, None, None)
+            (batch_dim, token_ids, None, None)
         };
 
         // Main (verifier) forward pass
@@ -609,47 +580,86 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
-        if let Some((nodes, tokens)) = &trie_cpu {
-            // trim padding rows
-            let real = nodes.iter().position(|node| node.trie_start == u32::MAX).unwrap_or(nodes.len());
-            let parents = nodes[..real].iter().map(|node| node.parent).collect::<Box<[_]>>();
-            self.model
-                .decoder
-                .prepare_ngram_rows(&mut self.model_state.transformer_state, &tokens[..real], Some(&parents))
-                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
-        } else if let Some(token) = cpu_token {
-            self.model
-                .decoder
-                .prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None)
-                .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
-        }
-
         let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
-        let decoder_output = self.model.decoder.encode(
+        let mut pass = self.model.decoder.begin(
             &token_ids,
             &batch_dim,
             Some((0..batch_dim.size()).into()),
             hidden_feature_layer_indices,
+            &mut command_buffer,
+        )?;
+
+        // Encode layers up to the ngram to overlap disk fetch.
+        let ngram_layer = self.model.decoder.first_ngram_layer_index();
+        if let Some(ngram_layer) = ngram_layer {
+            pass = self.model.decoder.encode_layers(
+                pass,
+                ngram_layer,
+                &batch_dim,
+                &mut self.model_state.transformer_state,
+                &mut command_buffer,
+            )?;
+            pendings.push(command_buffer.end_encoding().submit());
+            command_buffer = self.start_recording(&format!("decode {round} (n-gram layers)"))?;
+        }
+        drop(encode_span);
+
+        if ngram_layer.is_some()
+            && let Some(speculator_pendings) = speculator_pendings.take()
+        {
+            let wait_span = CpuSpan::start(self.options.timestamps.as_ref(), "wait for speculator");
+            for pending in speculator_pendings {
+                wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
+            }
+            drop(wait_span);
+
+            let _copyout_span = CpuSpan::start(self.options.timestamps.as_ref(), "copyout trie");
+            trie_cpu = Some(copyout_trie(&*self.model.engine.context, &batch_dim, &token_ids).await?);
+        }
+
+        if ngram_layer.is_some() {
+            if let Some((nodes, tokens)) = &trie_cpu {
+                // trim padding rows
+                let real = nodes.iter().position(|node| node.trie_start == u32::MAX).unwrap_or(nodes.len());
+                let parents = nodes[..real].iter().map(|node| node.parent).collect::<Box<[_]>>();
+                self.model
+                    .decoder
+                    .prepare_ngram_rows(&mut self.model_state.transformer_state, &tokens[..real], Some(&parents))
+                    .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
+            } else {
+                let token = match cpu_token {
+                    Some(token) => token,
+                    None => {
+                        last_job
+                            .resolve(
+                                &self.model.engine.context,
+                                self.options.grammar.as_mut(),
+                                self.options.timestamps.as_ref(),
+                            )
+                            .await?
+                            .last_output_token()
+                            .1
+                    },
+                };
+                self.model
+                    .decoder
+                    .prepare_ngram_rows(&mut self.model_state.transformer_state, &[token], None)
+                    .map_err(LanguageModelStreamError::NGramEmbeddingRead)?;
+            }
+        }
+
+        let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
+        let decoder_output = self.model.decoder.finish(
+            pass,
+            &batch_dim,
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
         drop(encode_span);
 
-        let mut pendings = Vec::new();
-
         if self.options.grammar.is_some() {
             pendings.push(command_buffer.end_encoding().submit());
-            command_buffer = record(
-                self.model
-                    .engine
-                    .context
-                    .create_command_buffer(
-                        Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
-                        Some(self.allocation_pool.clone()),
-                    )
-                    .map_err(LanguageModelStreamError::Backend)?,
-                self.options.timestamps.as_ref(),
-            );
+            command_buffer = self.start_recording(&format!("decode {round} (sample and accept)"))?;
 
             // Not a CPU-bubble, forward pass is overlapped.
             last_job
@@ -799,13 +809,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             return Ok(None);
         }
 
-        let command_buffer = self
-            .model
-            .engine
-            .context
-            .create_command_buffer(Some("accept"), Some(self.allocation_pool.clone()))
-            .map_err(LanguageModelStreamError::Backend)?;
-        let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
+        let mut command_buffer = self.start_recording("accept")?;
 
         let (accepted_token_indices, accepted_input_token_ids) =
             resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
