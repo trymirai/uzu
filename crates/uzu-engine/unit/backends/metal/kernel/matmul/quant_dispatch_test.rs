@@ -884,6 +884,8 @@ fn packed_half_producers_match_bf16_reference() {
         (64, 4, false, (5, 64), true, false, None, ScaleBias, 1),
         (32, 4, true, (8, 64), true, true, None, ScaleZeroPoint, 1),
         (64, 4, true, (5, 64), true, false, Some(0.5), ScaleBias, 2),
+        (64, 4, false, (8, 72), true, false, None, QuantizationMethod::ScaleSymmetric, 1),
+        (64, 4, true, (5, 64), false, true, Some(0.5), QuantizationMethod::ScaleSymmetric, 2),
         (128, 2, false, (6, 64), true, true, None, ScaleBias, 1),
         (128, 2, true, (8, 64), true, false, Some(0.5), ScaleBias, 1),
     ] {

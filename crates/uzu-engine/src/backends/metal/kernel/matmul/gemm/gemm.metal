@@ -98,7 +98,7 @@ CONSTRAINT((BITS == 2) == (BLOCK_K == 128))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleZeroPointDequant || BITS == 4)
 CONSTRAINT(
     B_PROLOGUE != GemmBPrologueKind::ScaleSymmetricDequant || BITS == 8 ||
-    (A_PROLOGUE != GemmAPrologueKind::PackedHalf && BLOCK_K == 64 && DT == "bfloat"))
+    (BITS == 4 && BLOCK_K == 64 && (DT == "bfloat" || A_PROLOGUE == GemmAPrologueKind::PackedHalf)))
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::ScaleBiasDequant || BITS == 2 || BITS == 4)
 CONSTRAINT(
     (BITS != 2 || A_IS_INT8 ||
