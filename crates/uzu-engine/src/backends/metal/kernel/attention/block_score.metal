@@ -15,11 +15,10 @@ namespace kv_layout = uzu::kv_layout;
 
 UZU_CONST uint NUM_SIMDGROUPS = THREADS_PER_TG / METAL_SIMD_SIZE;
 
-template <uint NUM_HEADS, uint HEAD_DIM, bool USE_MXU, uint COMPRESSION_RATIO>
+template <uint NUM_HEADS, uint HEAD_DIM, bool USE_MXU>
 VARIANTS(NUM_HEADS, 4)
 VARIANTS(HEAD_DIM, 128)
 VARIANTS(USE_MXU, false, true)
-VARIANTS(COMPRESSION_RATIO, 4)
 KERNEL(AttentionBlockScore)(
     const device int8_t* query_codes,
     const device bfloat* query_scales,
@@ -34,6 +33,7 @@ KERNEL(AttentionBlockScore)(
     const constant uint& rows_per_group,
     const constant uint& blocks_per_group,
     const constant uint& candidate_blocks,
+    const uint compression_ratio SPECIALIZE,
     const ThreadContext thread_context,
     const uint row_group_index GROUPS(row_count.div_ceil(rows_per_group)),
     const uint block_group_index GROUPS(candidate_blocks.div_ceil(blocks_per_group)),
@@ -56,11 +56,11 @@ KERNEL(AttentionBlockScore)(
   using Dots =
       metal::conditional_t<USE_MXU, Fragment<int, 1, KEY_FRAGMENTS, Ops>, Fragment<float, KEY_FRAGMENTS, 1, Ops>>;
 
-  const uint cached_blocks = prefix_tokens / COMPRESSION_RATIO;
+  const uint cached_blocks = prefix_tokens / compression_ratio;
   // A suffix block's key is at its last token's row.
   const auto key_slot = [&](uint candidate_block) {
     return candidate_block < cached_blocks ? cached_block_row + candidate_block
-                                           : (candidate_block + 1) * COMPRESSION_RATIO - 1 - prefix_tokens;
+                                           : (candidate_block + 1) * compression_ratio - 1 - prefix_tokens;
   };
   const uint query_bands = rows_per_group / Ops::FRAGMENT_ROWS;
   const uint query_band = thread_context.simdgroup_index % query_bands;
@@ -212,7 +212,7 @@ KERNEL(AttentionBlockScore)(
       const uint query_row = lane_rows[USE_MXU ? row : column];
       if (query_row >= row_count || key >= candidate_blocks)
         return;
-      const bool visible = key < (prefix_tokens + first_row + query_row + 1) / COMPRESSION_RATIO;
+      const bool visible = key < (prefix_tokens + first_row + query_row + 1) / compression_ratio;
       scores[size_t(query_row) * candidate_blocks + key] =
           half(visible ? head_sum * float(key_scales[key_slot(key)]) : -INFINITY);
     });
