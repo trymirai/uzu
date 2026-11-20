@@ -50,6 +50,7 @@ pub struct Session {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     energy_recorder: EnergyRecorder,
     cached_image_ids: Vec<ImageHash>,
+    image_extra_tokens: usize,
 }
 
 impl Session {
@@ -116,6 +117,7 @@ impl Session {
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             energy_recorder: EnergyRecorder::new(),
             cached_image_ids: Vec::new(),
+            image_extra_tokens: 0,
         })
     }
 
@@ -171,9 +173,11 @@ impl Session {
             input_energy: None,
             total_tokens_input: self.input.tokens.len(),
             cached_tokens_input,
+            cached_image_extra_tokens: self.image_extra_tokens,
+            image_extra_tokens: &mut self.image_extra_tokens,
             total_tokens_output: 0,
             memory_usage: None,
-            metrics: None,
+            metrics: stream.metrics(),
         };
 
         stream::unfold(
@@ -218,6 +222,7 @@ impl Session {
 
     async fn state_reset(&mut self) -> Result<(), ChatSessionError> {
         self.state = self.instance.state().await.map_err(ChatSessionError::from)?;
+        self.image_extra_tokens = 0;
         Ok(())
     }
 
@@ -473,6 +478,8 @@ struct StreamingState<'a> {
     input_energy: Option<ReplyEnergy>,
     total_tokens_input: usize,
     cached_tokens_input: usize,
+    cached_image_extra_tokens: usize,
+    image_extra_tokens: &'a mut usize,
     total_tokens_output: usize,
     memory_usage: Option<usize>,
     metrics: Option<TokenStreamMetrics>,
@@ -480,6 +487,8 @@ struct StreamingState<'a> {
 
 impl Drop for StreamingState<'_> {
     fn drop(&mut self) {
+        *self.image_extra_tokens = self.cached_image_extra_tokens + self.input_image_extra_tokens();
+
         // Emit once per generated message, including streams stopped early.
         tracing::debug!(
             "Decoded tokens: {:?}",
@@ -489,11 +498,16 @@ impl Drop for StreamingState<'_> {
 }
 
 impl StreamingState<'_> {
+    fn input_image_extra_tokens(&self) -> usize {
+        self.metrics.as_ref().map_or(0, |metrics| metrics.num_tokens_prefilled.saturating_sub(self.total_tokens_input))
+    }
+
     fn get_finish_reason(
         &self,
         token: u64,
     ) -> Option<ChatReplyFinishReason> {
-        let tokens_count = self.encoding.state().tokens.len();
+        let tokens_count =
+            self.encoding.state().tokens.len() + self.cached_image_extra_tokens + self.input_image_extra_tokens();
         if self.cancel_token.is_cancelled() {
             Some(ChatReplyFinishReason::Cancelled)
         } else if self.stop_token_ids.contains(&token) {
@@ -516,13 +530,14 @@ impl StreamingState<'_> {
         last_stat: bool,
     ) -> Result<ChatReplyStats, ChatSessionError> {
         let speculator_stats = self.metrics.as_ref().and_then(speculator_stats);
+        let tokens_input = self.total_tokens_input + self.input_image_extra_tokens();
+        let tokens_input_cached = self.cached_tokens_input + self.cached_image_extra_tokens;
 
         let total_duration = self.time_last_token.unwrap_or(Instant::now()).duration_since(self.time_start);
         let ttft_duration =
             self.time_first_token.map(|time_first_token| time_first_token.duration_since(self.time_prefill_start));
         let prefill_tps = ttft_duration.and_then(|duration| {
-            (self.total_tokens_input > 0 && !duration.is_zero())
-                .then_some(self.total_tokens_input as f64 / duration.as_secs_f64())
+            (tokens_input > 0 && !duration.is_zero()).then_some(tokens_input as f64 / duration.as_secs_f64())
         });
 
         let generate_duration = if let (Some(start), Some(finish)) = (self.time_first_token, self.time_last_token) {
@@ -554,8 +569,8 @@ impl StreamingState<'_> {
             time_to_first_token: ttft_duration.map(|time| time.as_secs_f64()),
             prefill_tokens_per_second: prefill_tps,
             generate_tokens_per_second: generate_tps,
-            tokens_count_input: Some(self.total_tokens_input as u32),
-            tokens_count_input_cached: Some(self.cached_tokens_input as u32),
+            tokens_count_input: Some(tokens_input as u32),
+            tokens_count_input_cached: Some(tokens_input_cached as u32),
             tokens_count_output: Some(self.total_tokens_output as u32),
             memory_used_bytes: last_stat.then(|| self.memory_usage.map(|bytes| bytes as i64)).flatten(),
             speculator_stats,
