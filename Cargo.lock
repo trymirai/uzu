@@ -9953,7 +9953,6 @@ dependencies = [
 name = "uzu"
 version = "0.7.5"
 dependencies = [
- "anyhow",
  "async-openai",
  "backend-remote",
  "bindings",

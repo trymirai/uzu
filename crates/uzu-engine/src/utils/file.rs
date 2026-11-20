@@ -1,10 +1,11 @@
-use std::{io, path::Path};
+use std::{io, path::Path, sync::OnceLock};
 
 pub use async_fs::read;
 use futures::{
     io::{AsyncReadExt, AsyncSeekExt, SeekFrom},
     lock::Mutex,
 };
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
 pub struct File(Mutex<async_fs::File>);
 
@@ -56,33 +57,57 @@ pub fn open_random_access(path: impl AsRef<Path>) -> io::Result<std::fs::File> {
     Ok(file)
 }
 
-// TODO(perf): issue the reads concurrently.
 pub fn read_exact_at(reads: Vec<(&std::fs::File, u64, &mut [u8])>) -> io::Result<()> {
-    for (file, offset, buffer) in reads {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            file.read_exact_at(buffer, offset)?;
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::FileExt;
-            let mut buffer = buffer;
-            let mut offset = offset;
-            while !buffer.is_empty() {
-                match file.seek_read(buffer, offset) {
-                    Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-                    Ok(read) => {
-                        buffer = &mut buffer[read..];
-                        offset += read as u64;
-                    },
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
-                    Err(error) => return Err(error),
-                }
+    // TODO(perf): This is bound by SSD latency, not CPU, so this should be
+    // *mostly* fine. However, using io_uring on Linux or IoRing on Windows might
+    // be the more proper way to do this.
+    //
+    // On macos there doesn't seem to be an equivalent. What we could do is load
+    // it directly on the GPU, perhaps.
+    io_pool().install(|| reads.into_par_iter().try_for_each(|(file, offset, buffer)| read_one(file, offset, buffer)))
+}
+
+const IO_THREADS: usize = 16;
+
+fn io_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        ThreadPoolBuilder::new()
+            .num_threads(IO_THREADS)
+            .thread_name(|index| format!("uzu-io-{index}"))
+            .build()
+            .expect("failed to spawn the file read pool")
+    })
+}
+
+fn read_one(
+    file: &std::fs::File,
+    offset: u64,
+    buffer: &mut [u8],
+) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        file.read_exact_at(buffer, offset)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let mut buffer = buffer;
+        let mut offset = offset;
+        while !buffer.is_empty() {
+            match file.seek_read(buffer, offset) {
+                Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                Ok(read) => {
+                    buffer = &mut buffer[read..];
+                    offset += read as u64;
+                },
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+                Err(error) => return Err(error),
             }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 pub async fn exists(path: impl AsRef<Path>) -> bool {

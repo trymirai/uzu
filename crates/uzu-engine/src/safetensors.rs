@@ -1,6 +1,8 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -73,12 +75,14 @@ struct TensorInfo {
     read: AtomicBool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct TensorRegion {
     pub path: PathBuf,
     pub range: std::range::Range<u64>,
 }
 
 pub struct ParameterLoader<'a, B: Backend> {
+    #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
     file: File,
     context: &'a B::Context,
@@ -100,6 +104,7 @@ impl<'a, B: Backend> ParameterLoader<'a, B> {
         file.read_exact_at(&mut header, 8).await?;
         let header: Header = serde_json::from_slice(&header)?;
         Ok(Self {
+            #[cfg(not(target_arch = "wasm32"))]
             path,
             file,
             context,
@@ -241,6 +246,7 @@ impl<B: Backend> ParameterTree<'_, B> {
     /// Like [`Self::read_buffer`], but just returns a handle to the file location.
     ///
     /// This is used to read the ngram embedding table from disk.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn claim(
         &self,
         name: &str,

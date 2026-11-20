@@ -867,6 +867,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let tokens_u32 = tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>();
 
         if model.decoder.has_ngram_embeddings() {
+            // TODO(perf): we could hash and fetch all of the prefill rows at once instead of per-batch.
             model
                 .decoder
                 .prepare_ngram_rows(&mut model_state.transformer_state, &tokens_u32, None)

@@ -134,6 +134,7 @@ web-sys = { workspace = true, features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 async-fs.workspace = true
+rayon.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
