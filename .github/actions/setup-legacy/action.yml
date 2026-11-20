@@ -1,5 +1,5 @@
 name: setup-legacy
-description: Set up dependencies for macOS release workflows
+description: Set up dependencies without Nix, for macOS release workflows and the Linux and Windows app builds
 
 inputs:
   python:
@@ -12,7 +12,36 @@ runs:
   steps:
     - uses: dtolnay/rust-toolchain@nightly
 
-    - run: xcodebuild -downloadComponent MetalToolchain
+    - if: runner.os == 'macOS'
+      run: xcodebuild -downloadComponent MetalToolchain
+      shell: bash
+
+    # The engine's build compiles the Vulkan shaders with Slang's shared library.
+    - if: runner.os != 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}" in
+          Linux) platform=linux-x86_64-glibc-2.28 ;;
+          Windows) platform=windows-x86_64 ;;
+        esac
+        cd "${RUNNER_TEMP}"
+        mkdir slang
+        curl -fsSL "https://github.com/shader-slang/slang/releases/download/v2026.22.1/slang-2026.22.1-${platform}.tar.gz" \
+          | tar -xz -C slang
+        echo "SLANG_DIR=${RUNNER_TEMP}/slang" >> "$GITHUB_ENV"
+        echo "LD_LIBRARY_PATH=${RUNNER_TEMP}/slang/lib" >> "$GITHUB_ENV"
+        echo "${RUNNER_TEMP}/slang/bin" >> "$GITHUB_PATH"
+
+    # The app's webview and the engine's audio output.
+    - if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libasound2-dev
+      shell: bash
+
+    # The C runtime linked in, so the app starts without the Visual C++ Redistributable. Builds pass --target, so
+    # build scripts keep the shared runtime: Defender flags a statically linked engine build script.
+    - if: runner.os == 'Windows'
+      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
       shell: bash
 
     - if: inputs.python == 'true'
