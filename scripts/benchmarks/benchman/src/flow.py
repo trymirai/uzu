@@ -263,6 +263,7 @@ class Dispatch:
                 unclaimed[run] = claimable
             shown = foremost(waiting).id if waiting else next((record.flow_run_id for record in stored.values()), None)
             run.url = url_for("flow-run", obj_id=shown) if shown else ""
+            run.missing = sum(name not in stored for name in run.tasks)
             run.state, run.completed, run.message = "Missing", None, ""
             if waiting:
                 run.state = foremost(waiting).state_name
@@ -355,7 +356,7 @@ class Dispatch:
 
         for run in started:
             self.measuring[flow_runs[run].id] = run
-            run.state, run.completed, run.message = "Pending", None, ""
+            run.state, run.completed, run.message, run.missing = "Pending", None, "", 0
             run.url = url_for("flow-run", obj_id=flow_runs[run].id)
         return [run for run in unclaimed if not all(won[run])]
 

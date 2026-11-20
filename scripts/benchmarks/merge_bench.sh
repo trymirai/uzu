@@ -7,9 +7,12 @@ set -euo pipefail
 destination="$1"
 shift
 if (($# == 0)); then
-    # Eight of the fast mixture's tasks, from its shortest context to its longest.
-    set -- -h macs-fleet/bench-m{4,5}max -m Qwen3.8-27B-M Qwen3.5-9B-Dash \
-        -d 'mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld,DeepSWE,UTILMEM}:*^2'
+    # Tasks of the fast mixture from its shortest context on: the eight up to its longest on the M5 Max, and the
+    # first six on the M4 Max, which is slower.
+    set -- -h macs-fleet/bench-m5max -m Qwen3.8-27B-M Qwen3.5-9B-Dash Qwen3.5-2B-M \
+        -d 'mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld,DeepSWE,UTILMEM}:*^2' \
+        + -h macs-fleet/bench-m4max -m Qwen3.8-27B-M Qwen3.5-9B-Dash \
+        -d 'mirai-mixture-fast/{Random fiction,HLE math,MT-Bench-101,TerminalBench 2.1,CoSER,AppWorld}:*^2'
 elif printf '%s\n' "$@" | grep -qxE -- '-o|--outputs?'; then
     echo "Error: the arguments can't give outputs, which are the runs that this saves to compare" >&2
     exit 2
@@ -40,6 +43,6 @@ results="$(realpath "${MERGE_BENCH_RESULTS:-$directory}")"
 git worktree add --quiet --detach "$directory/source" "$fork_point"
 # A run of the fork point that failed (1) or is missing (75) doesn't keep this checkout from being measured.
 status=0
-(cd "$directory/source" && "${benchman[@]}" "$@" -o "$results/base.json") >&2 || status=$?
+(cd "$directory/source" && "${benchman[@]}" -o "$results/base.json" "$@") >&2 || status=$?
 [[ "$status" == 0 || "$status" == 1 || "$status" == 75 ]] || exit "$status"
-"${benchman[@]}" "$@" -i "$results/base.json" -o "$results/head.json"
+"${benchman[@]}" -i "$results/base.json" -o "$results/head.json" "$@"

@@ -12,6 +12,14 @@ uv run --project benchman benchman -h macs-fleet/bench-m5{pro,max} -e uzu mlx -m
 
 `--host`, `--engine`, `--model` and `--dataset` each take several values, separated by spaces or commas, or given again. Braces expand as in a shell: `bench-m{4,5}max`.
 
+A command may have several selections, separated by `+`, which it measures and shows together:
+
+```bash
+uv run --project benchman benchman -h macs-fleet/bench-m5max -m Qwen3.8-27B-M -d mirai-mixture-fast + -h macs-fleet/bench-m4max -m Qwen3.8-27B-M -d oneoff/london-summary^3
+```
+
+Each selection has its own hosts, engines, models, datasets, seed and `--filter-ram`, with the same defaults; the other options are of the whole command and go before the first `+`. A run that several selections are of gets the tasks of each.
+
 **Hosts** (`-h`, default `local`):
 
 - `local`: this Mac, as `local-nix` where there is Nix and as `local-direct` elsewhere.
@@ -173,7 +181,7 @@ A saved file or tag is loaded only by the version of `benchman` that saved it.
 ./merge_bench.sh main -h macs-fleet/bench-m5max -e uzu mlx -m Qwen3.5-2B-M
 ```
 
-Without arguments it measures Uzu with two models on the fleet's M5 Max and M4 Max: eight tasks of the fast mixture, from its shortest context to its longest, twice each and unseeded. A commit that was measured before, as the fork point usually was when it was merged, is not measured again. It measures nothing, and says so, if the fork point's `benchman` is of another version.
+Without arguments it measures Uzu on the fleet's M5 Max, with three models and eight tasks of the fast mixture from its shortest context to its longest, and on its M4 Max, with two models and the six shortest of those; each twice and unseeded. A commit that was measured before, as the fork point usually was when it was merged, is not measured again. It measures nothing, and says so, if the fork point's `benchman` is of another version.
 
 The [merge benchmark workflow](../../.github/workflows/merge-bench.yml) runs it for each commit of `main` against its parent. On a pull request whose branch is in this repository, someone with write access can comment `!bench`, or `!bench` followed by the script's arguments, as in `!bench -h macs-fleet/bench-m{4,5}max -e uzu mlx -m Qwen3.5-2B-M`, to compare the branch against where it forked from the branch it merges into. The comparison goes to the workflow run's summary and `merge-bench` artifact, and into a comment on the pull request: the one commented on, or the one that the commit of `main` merged. For a commit of `main` it also goes to the benchmark channel on Discord. These are tables that [results_table.py](results_table.py) makes of the saved runs. A run that failed or is missing is a row that says so, and an error before any result is replied as text.
 
