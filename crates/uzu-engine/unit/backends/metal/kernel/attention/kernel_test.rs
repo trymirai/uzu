@@ -27,7 +27,7 @@ use crate::{
     trie::TrieNode,
 };
 
-const COMPRESSION_RATIO: usize = kv_layout::COMPRESSION_RATIO as usize;
+const COMPRESSION_RATIO: usize = 4;
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
 
@@ -128,7 +128,7 @@ fn attention_matches_cpu() {
                 sliding_window_size: None,
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
-                sparse,
+                sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();

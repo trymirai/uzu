@@ -1,12 +1,11 @@
 #pragma once
 
-#include "../generated/kv_layout.h"
+#include "kv_layout.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 
 using namespace uzu::ring;
 using namespace uzu::trie;
-using uzu::kv_layout::COMPRESSION_RATIO;
 using uzu::kv_layout::NO_KEY_SLOT;
 
 static inline bool should_use_key(
@@ -77,7 +76,10 @@ static inline bool should_use_key(
   return use_key;
 }
 
+template <uint COMPRESSION_RATIO>
 struct SparseKeys {
+  static_assert(COMPRESSION_RATIO % uzu::kv_layout::LANE_KEYS == 0, "a sparse block fills whole lane groups of keys");
+
   const device int* blocks;
   const device TrieNode* trie;
   uint block_keys;

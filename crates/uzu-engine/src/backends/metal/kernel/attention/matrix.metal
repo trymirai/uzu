@@ -9,12 +9,13 @@
 
 using namespace metal;
 
-template <typename ScaleType, uint HEAD_DIM, bool USE_MXU, uint NUM_SIMDGROUPS, bool IS_SPARSE>
+template <typename ScaleType, uint HEAD_DIM, bool USE_MXU, uint NUM_SIMDGROUPS, bool IS_SPARSE, uint COMPRESSION_RATIO>
 VARIANTS(ScaleType, bfloat)
 VARIANTS(HEAD_DIM, 64, 128, 256, 512)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(NUM_SIMDGROUPS, 1, 2, 4, 6, 8)
 VARIANTS(IS_SPARSE, false, true)
+VARIANTS(COMPRESSION_RATIO, 4)
 CONSTRAINT(!USE_MXU || NUM_SIMDGROUPS % (HEAD_DIM / 64) == 0)
 CONSTRAINT(HEAD_DIM != 256 || NUM_SIMDGROUPS % 2 == 0)
 CONSTRAINT(HEAD_DIM != 512 || NUM_SIMDGROUPS % 4 == 0)
@@ -55,7 +56,7 @@ KERNEL(AttentionMatrix)(
     const uint thread_index THREADS(NUM_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
   if constexpr (USE_MXU) {
-    attention_matrix_mxu<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE>(
+    attention_matrix_mxu<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE, COMPRESSION_RATIO>(
         query_codes,
         query_scales,
         key_codes,
@@ -89,7 +90,7 @@ KERNEL(AttentionMatrix)(
         kv_head_index
     );
   } else {
-    attention_matrix_simd<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE>(
+    attention_matrix_simd<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE, COMPRESSION_RATIO>(
         query_codes,
         query_scales,
         key_codes,

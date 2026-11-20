@@ -192,7 +192,7 @@ fn attention_windows_sinks_and_head_dims() {
                 sliding_window_size: window,
                 scale,
                 data_type: DataType::BF16,
-                sparse: false,
+                sparse_compression_ratio: None,
             };
             let cache = if ring {
                 KVCacheView::ring(prefix, 11)
@@ -240,7 +240,7 @@ fn attention_large_tree_and_f32() {
         sliding_window_size: None,
         scale: Some(1.0 / 128.0_f32.sqrt()),
         data_type: DataType::F32,
-        sparse: false,
+        sparse_compression_ratio: None,
     };
     for_each_non_cpu_backend!(|B| {
         let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
@@ -261,7 +261,7 @@ fn attention_large_tree_and_f32() {
             sliding_window_size: window,
             scale: Some(1.0 / 256.0_f32.sqrt()),
             data_type: DataType::BF16,
-            sparse: false,
+            sparse_compression_ratio: None,
         };
         let cache = if ring {
             KVCacheView::ring(37, 11)
@@ -301,7 +301,7 @@ fn attention_single_query() {
                         sliding_window_size: ring.then_some(17),
                         scale: Some(1.0 / (dim as f32).sqrt()),
                         data_type: DataType::BF16,
-                        sparse: false,
+                        sparse_compression_ratio: None,
                     };
                     let cache = if ring {
                         KVCacheView::ring(
@@ -347,7 +347,7 @@ fn attention_vector_partial_rows() {
                 sliding_window_size: ring.then_some(19),
                 scale: Some(1.0 / 128.0_f32.sqrt()),
                 data_type: DataType::F32,
-                sparse: false,
+                sparse_compression_ratio: None,
             };
             let cache = if ring {
                 KVCacheView::ring(prefix, 7)

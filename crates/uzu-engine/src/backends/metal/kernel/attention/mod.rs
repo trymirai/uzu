@@ -24,7 +24,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
-    sparse: Option<(u32, [AttentionMatrixMetalKernel; 2])>,
+    sparse: Option<(u32, u32, [AttentionMatrixMetalKernel; 2])>,
 }
 
 struct KernelTile {
@@ -70,6 +70,7 @@ impl AttentionMetalKernel {
                     use_mxu,
                     simdgroups,
                     false,
+                    kv_layout::LANE_KEYS,
                     config.is_causal,
                     config.is_kv_cache_ring,
                     config.sliding_window_size.is_some(),
@@ -127,8 +128,8 @@ impl AttentionMetalKernel {
                 config.has_sinks,
             )?,
             sparse: config
-                .sparse
-                .then(|| {
+                .sparse_compression_ratio
+                .map(|compression_ratio| {
                     if config.is_kv_cache_ring || config.sliding_window_size.is_some() || !config.is_causal {
                         return Err(MetalError::CannotCreateFunction(
                             "sparse attention is causal without window or ring".to_string(),
@@ -149,6 +150,7 @@ impl AttentionMetalKernel {
                             use_mxu,
                             simdgroups,
                             true,
+                            compression_ratio,
                             false,
                             false,
                             false,
@@ -157,7 +159,7 @@ impl AttentionMetalKernel {
                             config.num_groups,
                         )
                     };
-                    Ok((rows, [kernel(false)?, kernel(true)?]))
+                    Ok((rows, compression_ratio, [kernel(false)?, kernel(true)?]))
                 })
                 .transpose()?,
         })
@@ -234,8 +236,10 @@ impl AttentionKernel for AttentionMetalKernel {
         };
         let sparse = match (key_blocks, &self.sparse) {
             (None, None) => None,
-            (Some(key_blocks), Some((rows, cores))) => Some((key_blocks, &cores[usize::from(trie.is_some())], *rows)),
-            _ => panic!("key_blocks must match AttentionKernelConfig::sparse"),
+            (Some(key_blocks), Some((rows, compression_ratio, cores))) => {
+                Some((key_blocks, &cores[usize::from(trie.is_some())], *rows, *compression_ratio))
+            },
+            _ => panic!("key_blocks must match AttentionKernelConfig::sparse_compression_ratio"),
         };
         let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {
@@ -250,7 +254,7 @@ impl AttentionKernel for AttentionMetalKernel {
                 .unwrap()
         });
         // Sparse: every query is padded to one tile of rows.
-        let padded_rows = if let Some((.., rows)) = &sparse {
+        let padded_rows = if let Some((.., rows, _)) = &sparse {
             rows * suffix_length
         } else {
             tile.map_or(grouped_rows, |tile| grouped_rows.next_multiple_of(tile.rows))
@@ -258,11 +262,12 @@ impl AttentionKernel for AttentionMetalKernel {
         let split_rows = num_groups * padded_rows;
         let num_splits = if direct {
             1
-        } else if let Some((key_blocks, ..)) = &sparse {
+        } else if let Some((key_blocks, .., compression_ratio)) = &sparse {
             policy::sparse_splits(
                 command_buffer.context().gpu_core_count.max(1),
                 suffix_length * num_groups,
                 key_blocks.blocks_per_query,
+                *compression_ratio,
             )
         } else {
             let (threadgroups, groups_per_core) = match tile {
@@ -290,7 +295,7 @@ impl AttentionKernel for AttentionMetalKernel {
             ))
         };
         let (maxima, sums) = statistics.as_mut().map_or((None, None), |(maxima, sums)| (Some(maxima), Some(sums)));
-        if let Some((key_blocks, core, _)) = sparse {
+        if let Some((key_blocks, core, ..)) = sparse {
             core.encode(
                 input.query_codes,
                 input.query_scales,

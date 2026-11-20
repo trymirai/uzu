@@ -47,7 +47,7 @@ pub struct AttentionKernelConfig {
     pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
-    pub sparse: bool,
+    pub sparse_compression_ratio: Option<u32>,
 }
 
 pub struct AttentionArguments<
