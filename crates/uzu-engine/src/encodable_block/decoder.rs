@@ -4,7 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::decoder::DecoderConfig,
     data_type::DataType,
     encodable_block::{
@@ -15,7 +15,6 @@ use crate::{
         transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
     safetensors::ParameterTree,
-    utils::size_for_shape::size_for_shape,
 };
 
 #[derive(Debug, Error)]
@@ -34,12 +33,6 @@ pub enum DecoderError<B: Backend> {
     TransformerEncode(#[from] TransformerEncodeError<B>),
 }
 
-pub struct EmbeddingOverride<'a, B: Backend> {
-    pub source: &'a B::ScratchBuffer,
-    pub source_rows: Range<usize>,
-    pub target_row: usize,
-}
-
 pub struct Decoder<B: Backend> {
     embedding: Embedding<B>,
     embedding_norm: Option<Normalization<B>>,
@@ -56,6 +49,10 @@ pub struct DecoderEncodeOutput<B: Backend> {
 impl<B: Backend> Decoder<B> {
     pub(crate) fn embedding(&self) -> &Embedding<B> {
         &self.embedding
+    }
+
+    pub(crate) fn transformer(&self) -> &Transformer<B> {
+        &self.transformer
     }
 
     pub async fn new(
@@ -156,21 +153,12 @@ impl<B: Backend> Decoder<B> {
         batch_dim: &BatchTopology,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
-        embedding_overrides: &[EmbeddingOverride<'_, B>],
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("decoder");
 
-        let mut embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
-        let row_size = size_for_shape(&[self.embedding.model_dim()], self.embedding.data_type());
-        for embedding_override in embedding_overrides {
-            let rows = embedding_override.source_rows;
-            let source = embedding_override.source.subrange(rows.start * row_size..rows.end * row_size);
-            let target_start = embedding_override.target_row * row_size;
-            let target_end = target_start + (rows.end - rows.start) * row_size;
-            command_buffer.encode_copy(source, (&mut embedded).subrange_mut(target_start..target_end));
-        }
+        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
         let embedded = if let Some(embedding_norm) = &self.embedding_norm {
             embedding_norm
                 .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)

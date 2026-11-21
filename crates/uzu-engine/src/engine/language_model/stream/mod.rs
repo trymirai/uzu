@@ -1,7 +1,7 @@
 use std::sync::mpsc::Sender;
 
 use derive_more::Debug;
-use shoji::types::session::vision::VisionImageInput;
+use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
@@ -20,6 +20,12 @@ pub use crate::{
 };
 
 mod stream;
+
+#[derive(Clone, Copy)]
+pub enum LanguageModelInput<'a> {
+    Image(&'a VisionImage),
+    Tokens(&'a [u64]),
+}
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
@@ -60,11 +66,10 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn stream<'a>(
         &'a self,
-        input: &[u64],
-        images: &[VisionImageInput],
+        input: &[LanguageModelInput<'_>],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<LanguageModelStream<'a, B>, LanguageModelStreamError<B>> {
-        LanguageModelStream::new(self, input, images, state, options)
+        LanguageModelStream::new(self, input, state, options)
     }
 }

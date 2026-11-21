@@ -31,7 +31,6 @@ pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
     pub rope_position: u32,
-    pub mrope_positions: Option<MRoPEPositions>,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -278,7 +277,6 @@ impl<B: Backend> Transformer<B> {
             layer_states,
             context_length,
             rope_position: 0,
-            mrope_positions: None,
         })
     }
 
@@ -286,6 +284,30 @@ impl<B: Backend> Transformer<B> {
         &self,
         input: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        batch_dim: &BatchTopology,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
+        self.encode_at_positions(
+            input,
+            per_layer_inputs,
+            None,
+            batch_dim,
+            output_range,
+            hidden_feature_layer_indices,
+            state,
+            command_buffer,
+        )
+    }
+
+    /// Rows take their M-RoPE `positions`, or without them the positions that follow the state's one
+    pub fn encode_at_positions(
+        &self,
+        input: B::ScratchBuffer,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        positions: Option<&MRoPEPositions>,
         batch_dim: &BatchTopology,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
@@ -309,15 +331,14 @@ impl<B: Backend> Transformer<B> {
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
-        let mrope_positions = state.as_deref_mut().and_then(|state| state.mrope_positions.take());
         let rope_position = state.as_ref().map(|state| state.rope_position).unwrap_or(0);
         let token_positions = batch_dim.heights().map(|rel_pos| rope_position + rel_pos).collect::<Box<[u32]>>();
 
         let precalculated_ropes = self
             .ropes
             .iter()
-            .map(|rope_config| match &mrope_positions {
-                Some(mrope_positions) => mrope_positions.precalculate(rope_config, command_buffer),
+            .map(|rope_config| match positions {
+                Some(positions) => positions.precalculate(rope_config, command_buffer),
                 None => PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer),
             })
             .collect::<Result<Box<[_]>, B::Error>>()
