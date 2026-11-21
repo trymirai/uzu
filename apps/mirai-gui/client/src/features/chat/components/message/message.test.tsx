@@ -20,6 +20,22 @@ vi.mock("./markdown-renderer", () => ({
 vi.mock("./model-selector", () => ({ ModelSelector: () => null }));
 vi.mock("./performance-dropdown", () => ({ PerformanceDropdown: () => null }));
 
+class ClipboardEntry {
+  constructor(public items: Record<string, Blob>) {}
+}
+const useClipboardStub = () => {
+  vi.stubGlobal("ClipboardItem", ClipboardEntry);
+  clipboard.write.mockClear();
+};
+const readFirstClipboardWrite = (kind: string): Promise<string> => {
+  const copied = clipboard.write.mock.calls[0]![0][0] as unknown as ClipboardEntry;
+  return new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.readAsText(copied.items[kind]!);
+  });
+};
+
 const sessionDefaults = useChatSessionStore.getState();
 const chatDefaults = useChatStore.getState();
 const message: StoredMessage = {
@@ -40,11 +56,7 @@ afterEach(() => {
 });
 
 it("copies chart-only replies as readable data instead of an empty canvas", async () => {
-  class ClipboardEntry {
-    constructor(public items: Record<string, Blob>) {}
-  }
-  vi.stubGlobal("ClipboardItem", ClipboardEntry);
-  clipboard.write.mockClear();
+  useClipboardStub();
   const chartMessage: StoredMessage = {
     ...message,
     text: "",
@@ -67,19 +79,47 @@ it("copies chart-only replies as readable data instead of an empty canvas", asyn
   await screen.findByRole("img", { name: "Budget (bar chart)" });
   fireEvent.click(screen.getByRole("button", { name: "Copy" }));
   await waitFor(() => expect(clipboard.write).toHaveBeenCalledOnce());
-  const copied = clipboard.write.mock.calls[0]![0][0] as unknown as ClipboardEntry;
-  const read = (kind: string) =>
-    new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.readAsText(copied.items[kind]!);
-    });
-  const html = await read("text/html");
+  const html = await readFirstClipboardWrite("text/html");
   expect(html).toContain("<table>");
   expect(html).toContain("Monthly spending");
   expect(html).toContain("900");
   expect(html).not.toContain("<canvas");
-  expect(await read("text/plain")).toContain("Category\tMonthly spending\nRent\t900\nFood\t350");
+  expect(await readFirstClipboardWrite("text/plain")).toContain("Category\tMonthly spending\nRent\t900\nFood\t350");
+});
+
+it("copies a searched reply without its tool rows and with its search results one per line", async () => {
+  useClipboardStub();
+  const searched: StoredMessage = {
+    ...message,
+    text: "Rust 1.99 is stable.",
+    output: {
+      transcript: [
+        {
+          type: "webSearch",
+          query: "rust stable version",
+          called: true,
+          sources: [{ title: "Rust Versions", url: "https://releases.rs/" }],
+        },
+        { type: "webSearch", query: "rust beta version", called: true, failed: true },
+        { type: "text", text: "Rust 1.99 is stable." },
+      ],
+    },
+  };
+  useChatStore.setState({ messages: [searched] });
+  render(<Message {...searched} chatId="chat" />);
+  expect(screen.queryByText("rust stable version")).toBeNull();
+  expect(screen.getByText("Searched · 1 result")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Sources: 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(clipboard.write).toHaveBeenCalledOnce());
+
+  expect(await readFirstClipboardWrite("text/plain")).toBe(
+    "Rust 1.99 is stable.\n\nSources:\n- Rust Versions: https://releases.rs/\n",
+  );
+  const html = await readFirstClipboardWrite("text/html");
+  expect(html).toContain('<p>Sources:</p><ul><li><a href="https://releases.rs/">Rust Versions</a></li></ul>');
+  expect(html).not.toContain("search the web");
 });
 
 it("changes Thinking… to Thought when this response finishes", () => {

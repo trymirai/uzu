@@ -7,6 +7,8 @@ use super::{
     chart::ChartSpec,
     messages::sanitize,
     payloads::{RunEvent, TranscriptItem},
+    web_fetch::{WEB_FETCH_TOOL_NAME, page_source, requested_address},
+    web_search::{WEB_SEARCH_TOOL_NAME, search_view, searched_query},
 };
 
 /// Only this run's messages: replayed history belongs to earlier UI messages.
@@ -153,10 +155,26 @@ impl Transcript {
                             } else {
                                 complete_thinking(&mut items);
                                 let index = items.len();
-                                items.push(TranscriptItem::ToolCall {
-                                    name: value.name.clone(),
-                                    called: false,
-                                    failed: false,
+                                items.push(match value.name.as_str() {
+                                    WEB_SEARCH_TOOL_NAME => TranscriptItem::WebSearch {
+                                        query: searched_query(value),
+                                        provider: None,
+                                        called: false,
+                                        failed: false,
+                                        failure: None,
+                                        sources: Vec::new(),
+                                    },
+                                    WEB_FETCH_TOOL_NAME => TranscriptItem::WebPage {
+                                        url: requested_address(value),
+                                        called: false,
+                                        failed: false,
+                                        source: None,
+                                    },
+                                    _ => TranscriptItem::ToolCall {
+                                        name: value.name.clone(),
+                                        called: false,
+                                        failed: false,
+                                    },
                                 });
                                 Some(index)
                             };
@@ -192,22 +210,40 @@ impl Transcript {
                         if let Some(index) = item_index {
                             let result = serde_json::from_str::<serde_json::Value>(&value.json).ok();
                             let failed = result.as_ref().is_some_and(|value| value.get("error").is_some());
-                            let chart = if call.name == "show_chart" && !failed {
-                                result
+                            let tool_call = |failed| TranscriptItem::ToolCall {
+                                name: call.name.clone(),
+                                called: true,
+                                failed,
+                            };
+                            items[index] = match call.name.as_str() {
+                                "show_chart" => result
+                                    .filter(|_| !failed)
                                     .and_then(|value| serde_json::from_value::<ChartSpec>(value).ok())
                                     .filter(|chart| chart.validate().is_ok())
-                            } else {
-                                None
-                            };
-                            items[index] = match chart {
-                                Some(chart) => TranscriptItem::Chart {
-                                    chart,
+                                    .map_or_else(
+                                        || tool_call(true),
+                                        |chart| TranscriptItem::Chart {
+                                            chart,
+                                        },
+                                    ),
+                                WEB_SEARCH_TOOL_NAME => {
+                                    let view = result.as_ref().map(search_view).unwrap_or_default();
+                                    TranscriptItem::WebSearch {
+                                        query: searched_query(call),
+                                        provider: view.provider,
+                                        called: true,
+                                        failed,
+                                        failure: view.failure,
+                                        sources: view.sources,
+                                    }
                                 },
-                                None => TranscriptItem::ToolCall {
-                                    name: call.name.clone(),
+                                WEB_FETCH_TOOL_NAME => TranscriptItem::WebPage {
+                                    url: requested_address(call),
                                     called: true,
-                                    failed: failed || call.name == "show_chart",
+                                    failed,
+                                    source: result.as_ref().and_then(page_source),
                                 },
+                                _ => tool_call(failed),
                             };
                         }
                     }
@@ -324,7 +360,10 @@ fn hidden_call(call: &ToolCall) -> bool {
 mod tests {
     use uzu::types::{basic::Value, session::chat::ChatReplyFinishReason};
 
-    use super::*;
+    use super::{
+        super::{web_search::SearchFailure, web_source::WebSource},
+        *,
+    };
 
     fn call(
         name: &str,
@@ -352,6 +391,18 @@ mod tests {
             identifier: id.map(str::to_string),
             name: name.map(str::to_string),
             value: Value::from(serde_json::json!("result")),
+        })
+    }
+
+    fn result_of(
+        name: &str,
+        id: &str,
+        value: serde_json::Value,
+    ) -> ChatMessage {
+        ChatMessage::tool().with_block(ChatContentBlock::ToolCallResult {
+            identifier: Some(id.to_string()),
+            name: Some(name.to_string()),
+            value: value.into(),
         })
     }
 
@@ -852,6 +903,165 @@ mod tests {
         assert_eq!(serialized[0]["failed"], true);
         assert!(serialized[1].get("failed").is_none());
         assert!(serialized[2].get("failed").is_none());
+    }
+
+    #[test]
+    fn read_pages_show_their_address_while_loading_and_become_a_source_when_read() {
+        let fetch = |url: &str, id: &str| ToolCall {
+            arguments: serde_json::json!({ "url": url }).into(),
+            ..call(WEB_FETCH_TOOL_NAME, Some(id))
+        };
+        let mut transcript = Transcript::default();
+        transcript.update(&reply(
+            ChatMessage::assistant()
+                .with_tool_call(fetch("https://example.com/read", "read"))
+                .with_tool_call(fetch("https://example.com/refused", "refused")),
+            true,
+        ));
+        assert_eq!(
+            transcript.items(false)[0],
+            TranscriptItem::WebPage {
+                url: "https://example.com/read".into(),
+                called: false,
+                failed: false,
+                source: None,
+            }
+        );
+        transcript.tool_results(vec![
+            result_of(
+                WEB_FETCH_TOOL_NAME,
+                "read",
+                serde_json::json!({ "url": "https://example.com/final", "title": "Page", "text": "Text", "truncated": false }),
+            ),
+            result_of(
+                WEB_FETCH_TOOL_NAME,
+                "refused",
+                serde_json::json!({ "error": "The site refused automated access (HTTP 403)" }),
+            ),
+        ]);
+
+        let items = transcript.items(false);
+        assert_eq!(
+            items,
+            [
+                TranscriptItem::WebPage {
+                    url: "https://example.com/read".into(),
+                    called: true,
+                    failed: false,
+                    source: Some(WebSource {
+                        title: "Page".into(),
+                        url: "https://example.com/final".into(),
+                    }),
+                },
+                TranscriptItem::WebPage {
+                    url: "https://example.com/refused".into(),
+                    called: true,
+                    failed: true,
+                    source: None,
+                },
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&items[1]).unwrap(),
+            serde_json::json!({ "type": "webPage", "url": "https://example.com/refused", "called": true, "failed": true })
+        );
+    }
+
+    #[test]
+    fn web_searches_show_their_query_while_running_and_their_sources_when_done() {
+        let search = |query: &str, id: &str| ToolCall {
+            arguments: serde_json::json!({ "query": query }).into(),
+            ..call(WEB_SEARCH_TOOL_NAME, Some(id))
+        };
+        let mut transcript = Transcript::default();
+        transcript.update(&reply(
+            ChatMessage::assistant()
+                .with_tool_call(search("rust stable version", "answered"))
+                .with_tool_call(search("rust beta version", "failed"))
+                .with_tool_call(search("rust nightly version", "running")),
+            true,
+        ));
+        let running = |query: &str| TranscriptItem::WebSearch {
+            query: query.into(),
+            provider: None,
+            called: false,
+            failed: false,
+            failure: None,
+            sources: Vec::new(),
+        };
+        assert_eq!(
+            transcript.items(false),
+            [running("rust stable version"), running("rust beta version"), running("rust nightly version")]
+        );
+
+        transcript.tool_results(vec![
+            result_of(
+                WEB_SEARCH_TOOL_NAME,
+                "answered",
+                serde_json::json!({
+                    "provider": "Exa",
+                    "results": [{ "title": "Rust Versions", "url": "https://releases.rs/", "snippet": "Stable" }],
+                }),
+            ),
+            result_of(
+                WEB_SEARCH_TOOL_NAME,
+                "failed",
+                serde_json::json!({
+                    "error": "Exa search limit reached",
+                    "failure": { "kind": "limit", "provider": "Exa" },
+                }),
+            ),
+        ]);
+
+        let items = transcript.items(false);
+        assert_eq!(
+            items,
+            [
+                TranscriptItem::WebSearch {
+                    query: "rust stable version".into(),
+                    provider: Some("Exa".into()),
+                    called: true,
+                    failed: false,
+                    failure: None,
+                    sources: vec![WebSource {
+                        title: "Rust Versions".into(),
+                        url: "https://releases.rs/".into(),
+                    }],
+                },
+                TranscriptItem::WebSearch {
+                    query: "rust beta version".into(),
+                    provider: None,
+                    called: true,
+                    failed: true,
+                    failure: Some(SearchFailure::Limit {
+                        provider: "Exa".into(),
+                    }),
+                    sources: Vec::new(),
+                },
+                running("rust nightly version"),
+            ]
+        );
+        let serialized = serde_json::to_value(items).unwrap();
+        assert_eq!(
+            serialized[0],
+            serde_json::json!({
+                "type": "webSearch",
+                "query": "rust stable version",
+                "provider": "Exa",
+                "called": true,
+                "sources": [{ "title": "Rust Versions", "url": "https://releases.rs/" }],
+            })
+        );
+        assert_eq!(
+            serialized[1],
+            serde_json::json!({
+                "type": "webSearch",
+                "query": "rust beta version",
+                "called": true,
+                "failed": true,
+                "failure": { "kind": "limit", "provider": "Exa" },
+            })
+        );
     }
 
     #[tokio::test]

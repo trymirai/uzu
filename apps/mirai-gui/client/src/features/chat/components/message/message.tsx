@@ -1,7 +1,7 @@
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { isOtherChatGenerating } from "@/features/runtime/runtime-busy";
 import { writeItemsWithFocus } from "@/utils/clipboard";
-import React, { lazy, Suspense, useRef } from "react";
+import React, { lazy, Suspense, useMemo, useRef } from "react";
 import type { MessageVersion } from "@/types/message";
 import type { TranscriptItem } from "@/types/llm-stream";
 import { useChatStore } from "@/stores/use-chat-store";
@@ -15,6 +15,11 @@ import { UserMessage, type UserMessageProps } from "./user-message";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { AssistantCat, PendingStatus, type AssistantPhase } from "./assistant-cat";
 import { UzuBirdAnswerSync, useUzuBirdTaps } from "./uzu-bird";
+import { collectSources } from "@/utils/web-sources";
+import { SourcesList, formatSourcesForCopy } from "./sources-list";
+import { WebPageRow } from "./web-page-row";
+import { SearchPermissionCard } from "./search-permission-card";
+import { WebSearchBatch } from "./web-search-batch";
 
 const ChartMessage = lazy(() => import("./chart-message"));
 
@@ -66,7 +71,10 @@ function toolCallLabel(tool: Extract<TranscriptItem, { type: "toolCall" }>, isRu
   }[state];
 }
 
-type TranscriptSegment = { kind: "item"; index: number } | { kind: "steps"; start: number; end: number };
+type TranscriptSegment =
+  | { kind: "item"; index: number }
+  | { kind: "steps"; start: number; end: number }
+  | { kind: "searches"; start: number; end: number };
 
 /** Groups the transcript for display: each thinking item starts a "steps" segment that takes in
  *  the tool calls and further thinking after it, up to the next text or chart. Tool calls before
@@ -74,6 +82,13 @@ type TranscriptSegment = { kind: "item"; index: number } | { kind: "steps"; star
 function segmentTranscript(items: TranscriptItem[]): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
   for (let i = 0; i < items.length; i += 1) {
+    if (items[i]!.type === "webSearch") {
+      let end = i;
+      while (end + 1 < items.length && items[end + 1]!.type === "webSearch") end += 1;
+      segments.push({ kind: "searches", start: i, end });
+      i = end;
+      continue;
+    }
     if (items[i]!.type !== "thinking") {
       segments.push({ kind: "item", index: i });
       continue;
@@ -138,6 +153,7 @@ const AssistantMessage: React.FC<MessageProps> = ({
   const hasActiveVersions = Array.isArray(messageFromStore?.versions) && (messageFromStore?.versions?.length || 0) > 0;
   const parsed = hasActiveVersions ? currentMsgVersion?.output?.text?.parsed : messageFromStore?.output?.text?.parsed;
   const transcript = hasActiveVersions ? currentMsgVersion?.output?.transcript : messageFromStore?.output?.transcript;
+  const sources = useMemo(() => collectSources(transcript), [transcript]);
 
   const visibleChainOfThought = parsed?.chainOfThought;
   const visibleMessageText = hasActiveVersions ? (currentMsgVersion?.text ?? text) : text;
@@ -173,6 +189,8 @@ const AssistantMessage: React.FC<MessageProps> = ({
       if (table) canvas.replaceWith(table);
     });
     const plainClone = messageClone.cloneNode(true) as HTMLDivElement;
+    formatSourcesForCopy(messageClone, "html", sources);
+    formatSourcesForCopy(plainClone, "text", sources);
     plainClone.querySelectorAll("table").forEach((table) => {
       const rows = Array.from(table.rows, (row) => Array.from(row.cells, (cell) => cell.textContent).join("\t"));
       table.replaceWith(document.createTextNode(`\n${rows.join("\n")}\n`));
@@ -212,6 +230,9 @@ const AssistantMessage: React.FC<MessageProps> = ({
 
   const isEjecting = useChatSessionStore((s) => s.isEjecting);
   const blockedByOtherChat = useChatSessionStore((s) => isOtherChatGenerating(s, chatId));
+  const searchPermission = useChatSessionStore((s) =>
+    s.searchPermission?.messageId === id ? s.searchPermission : null,
+  );
 
   const lastItem = transcript?.at(-1);
   const phase: AssistantPhase = pendingPhase
@@ -261,6 +282,21 @@ const AssistantMessage: React.FC<MessageProps> = ({
         >
           {transcript !== undefined ? (
             segmentTranscript(transcript).map((segment) => {
+              if (segment.kind === "searches") {
+                const searches = transcript
+                  .slice(segment.start, segment.end + 1)
+                  .filter((item) => item.type === "webSearch");
+                return (
+                  <WebSearchBatch
+                    key={`${currentMsgVersion?.id ?? id}:${segment.start}`}
+                    items={searches}
+                    generating={isThinking}
+                    awaitingPermission={searches.some(
+                      (item) => !item.called && (searchPermission?.queries.includes(item.query) ?? false),
+                    )}
+                  />
+                );
+              }
               if (segment.kind === "steps") {
                 // A run of thinking and tool calls reads as one step of work: one row, with each
                 // tool call in place inside the reasoning.
@@ -324,6 +360,10 @@ const AssistantMessage: React.FC<MessageProps> = ({
                       )}
                     </div>
                   );
+                case "webSearch":
+                  return null;
+                case "webPage":
+                  return <WebPageRow key={key} item={item} generating={isThinking} />;
                 case "chart":
                   return (
                     <Suspense key={key} fallback={<div className="my-3 h-96 text-label-muted">Loading chart...</div>}>
@@ -345,6 +385,8 @@ const AssistantMessage: React.FC<MessageProps> = ({
               <MarkdownRenderer content={visibleResponseText} streaming={streamInProgress} />
             </>
           )}
+          {searchPermission && <SearchPermissionCard request={searchPermission} />}
+          {!isThinking && <SourcesList sources={sources} />}
           {hasError && (
             <div role="alert" className="mt-4 p-3 rounded-md border border-error/30 bg-error/10">
               <span className="text-[13px] leading-[150%] text-error">{errorText}</span>

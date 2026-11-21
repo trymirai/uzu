@@ -28,6 +28,12 @@ jiff.workspace = true
 uuid.workspace = true
 uzu = { workspace = true, features = ["metal"] }
 hanashi.workspace = true
+reqwest.workspace = true
+dom_smoothie.workspace = true
+dom_query.workspace = true
+security-framework.workspace = true
+encoding_rs.workspace = true
+base64.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 block2.workspace = true

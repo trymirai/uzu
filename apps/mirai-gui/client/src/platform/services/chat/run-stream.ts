@@ -1,12 +1,14 @@
-import type {
-  LlmAsyncStream,
-  LlmRunParams,
-  LlmRunResult,
-  ParsedPatch,
-  SessionOutputFinishReason,
-  SessionOutputStats,
-  TranscriptItem,
+import {
+  isTranscript,
+  type LlmAsyncStream,
+  type LlmRunParams,
+  type LlmRunResult,
+  type ParsedPatch,
+  type SessionOutputFinishReason,
+  type SessionOutputStats,
+  type TranscriptItem,
 } from "@/types/llm-stream";
+import { toSearchPermissionRequest, type SearchPermissionRequest } from "@/types/web-search";
 import { v4 as uuidv4 } from "uuid";
 import { emptyStats } from "./empty-stats";
 
@@ -15,6 +17,7 @@ export type RunEvent =
   | { type: "chatName"; name: string }
   | { type: "transcript"; items: TranscriptItem[] }
   | { type: "transcriptDelta"; index: number; delta: string }
+  | { type: "searchPermission"; requestId: string; provider: string; queries: string[]; pages?: string[] }
   | {
       type: "done";
       text: string;
@@ -37,8 +40,10 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
   const parsedListeners = new Set<(patch: ParsedPatch) => void>();
   const chatNameListeners = new Set<(name: string) => void>();
   const transcriptListeners = new Set<(items: TranscriptItem[]) => void>();
+  const searchPermissionListeners = new Set<(request: SearchPermissionRequest) => void>();
   let chatName: string | undefined;
   let transcript: TranscriptItem[] | undefined;
+  let searchPermission: SearchPermissionRequest | undefined;
   const pendingDeltas = new Map<number, string[]>();
   let transcriptFrame: number | undefined;
   let settled = false;
@@ -114,6 +119,10 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
             notifyChatName(event.name);
             return;
           case "transcript":
+            if (!isTranscript(event.items)) {
+              fail("Invalid transcript");
+              return;
+            }
             notifyTranscript(event.items);
             return;
           case "transcriptDelta": {
@@ -128,7 +137,23 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
             transcriptFrame ??= requestAnimationFrame(flushTranscript);
             return;
           }
+          case "searchPermission": {
+            const request = toSearchPermissionRequest(event);
+            if (!request) {
+              // The backend is waiting for an answer nobody can give: end the run on both sides.
+              void transport.cancel(runId).catch(() => undefined);
+              fail("Invalid search permission request");
+              return;
+            }
+            searchPermission = request;
+            searchPermissionListeners.forEach((listener) => listener(request));
+            return;
+          }
           case "done":
+            if (event.transcript !== undefined && !isTranscript(event.transcript)) {
+              fail("Invalid transcript");
+              return;
+            }
             if (event.chatName !== undefined) notifyChatName(event.chatName);
             if (event.transcript !== undefined) notifyTranscript(event.transcript);
             settle({
@@ -179,6 +204,11 @@ export function runLlmStream(transport: RunTransport, params: LlmRunParams): Llm
       transcriptListeners.add(listener);
       if (transcript !== undefined) listener(transcript);
       return () => transcriptListeners.delete(listener);
+    },
+    onSearchPermission: (listener) => {
+      searchPermissionListeners.add(listener);
+      if (searchPermission !== undefined) listener(searchPermission);
+      return () => searchPermissionListeners.delete(listener);
     },
   };
 }

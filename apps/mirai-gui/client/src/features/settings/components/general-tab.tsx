@@ -12,6 +12,7 @@ import { CliInstallSetting } from "./general/cli-install-setting";
 import { DataSettings } from "./general/data-settings";
 import { SettingGroup, SettingRow } from "./general/setting-row";
 import { ThemeSelector } from "./general/theme-selector";
+import { WebSearchSettings } from "./general/web-search-settings";
 
 export default function GeneralTab() {
   const {
@@ -89,6 +90,8 @@ export default function GeneralTab() {
         )}
         <CliInstallSetting />
       </SettingGroup>
+
+      {platformInfo.features.webSearch && <WebSearchSettings />}
 
       {/* What the model is told in every chat. Its own card, so it sits under a group heading
           rather than inside a group. */}

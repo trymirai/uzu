@@ -1,17 +1,26 @@
 mod chart;
+mod known_urls;
 mod messages;
 mod naming;
 mod payloads;
 mod session;
 mod session_events;
+mod site_icon;
 mod stream;
 mod title;
 mod transcript;
+mod web_address;
+mod web_fetch;
+mod web_instruction;
+mod web_search;
+mod web_source;
+mod web_tools;
+mod web_view;
 
 use std::collections::HashMap;
 
 use payloads::{MsgIn, RunEvent, RunStreamPayload, SamplingDefaults, TitleGenPayload};
-use session::arm_idle_timer;
+use session::{EnabledTools, arm_idle_timer};
 use session_events::emit_session_state;
 use stream::run_stream_inner;
 use tauri::{AppHandle, Manager, ipc::Channel};
@@ -33,10 +42,12 @@ struct IdleConfig {
 }
 
 // The client-visible prefix represented by the resident session. The session
-// also retains internal tool calls and results that are absent from this projection.
+// also retains internal tool calls and results that are absent from this
+// projection, so the same words in another chat are not the same history.
 #[derive(Default)]
 struct SessionHistory {
     repo_id: String,
+    chat_id: String,
     messages: Vec<MsgIn>,
     reasoning_effort: Option<ReasoningEffort>,
 }
@@ -46,10 +57,9 @@ struct ResidentSession {
     identifier: String,
     session: ChatSession,
     instance: ChatInstance,
-    model_chat_naming_enabled: bool,
-    date_time_tool_enabled: bool,
-    chart_tool_enabled: bool,
+    tools: EnabledTools,
     naming: Option<naming::ChatNaming>,
+    web_tools: Option<std::sync::Arc<web_tools::WebTools>>,
     support: ReasoningSupport,
 }
 
@@ -89,11 +99,18 @@ impl Default for ChatState {
 }
 
 impl ChatState {
+    #[must_use]
     fn register_run(
         &self,
         run_id: &str,
-    ) {
-        self.cancels.lock().expect("cancels mutex poisoned").insert(run_id.to_string(), RunCancel::default());
+    ) -> bool {
+        match self.cancels.lock().expect("cancels mutex poisoned").entry(run_id.to_string()) {
+            std::collections::hash_map::Entry::Occupied(_) => false,
+            std::collections::hash_map::Entry::Vacant(free) => {
+                free.insert(RunCancel::default());
+                true
+            },
+        }
     }
 
     fn finish_run(
@@ -144,15 +161,17 @@ impl ChatState {
     fn plan_run(
         &self,
         repo_id: &str,
+        chat_id: &str,
         messages: &[MsgIn],
         reasoning_effort: Option<ReasoningEffort>,
     ) -> RunPlan {
         let history = self.history.lock().expect("history mutex poisoned");
         let continues = history.repo_id == repo_id
+            && history.chat_id == chat_id
             && history.reasoning_effort == reasoning_effort
             && messages.len() > history.messages.len()
             && !history.messages.is_empty()
-            && messages[..history.messages.len()] == history.messages[..];
+            && messages.iter().zip(&history.messages).all(|(sent, held)| sent.is_same_turn(held));
         if continues {
             RunPlan::Continue {
                 tail: messages[history.messages.len()..].to_vec(),
@@ -165,11 +184,13 @@ impl ChatState {
     fn remember_history(
         &self,
         repo_id: &str,
+        chat_id: &str,
         messages: Vec<MsgIn>,
         reasoning_effort: Option<ReasoningEffort>,
     ) {
         let mut history = self.history.lock().expect("history mutex poisoned");
         history.repo_id = repo_id.to_string();
+        history.chat_id = chat_id.to_string();
         history.messages = messages;
         history.reasoning_effort = reasoning_effort;
     }
@@ -218,8 +239,11 @@ pub async fn run_stream(
     payload: RunStreamPayload,
     on_event: Channel<RunEvent>,
 ) -> AppResult<()> {
+    if !state.register_run(&payload.run_id) {
+        crate::logger::info("chat:run:duplicate", Some(serde_json::json!({ "runId": payload.run_id })));
+        return Err(crate::error::AppError::msg("This run has already started"));
+    }
     state.cancel_idle_timer();
-    state.register_run(&payload.run_id);
     let result = run_stream_inner(&app, &state, &payload, &on_event).await;
     state.finish_run(&payload.run_id);
     if let Err(error) = result {
@@ -246,8 +270,10 @@ pub async fn title_gen(
     state: tauri::State<'_, ChatState>,
     payload: TitleGenPayload,
 ) -> AppResult<String> {
+    if !state.register_run(TITLE_GEN_RUN_ID) {
+        return Err(crate::error::AppError::msg("A title is already being generated"));
+    }
     state.cancel_idle_timer();
-    state.register_run(TITLE_GEN_RUN_ID);
     let result = title_gen_inner(&app, &state, &payload).await;
     state.finish_run(TITLE_GEN_RUN_ID);
     if state.session.lock().await.is_some() {
@@ -262,6 +288,62 @@ pub fn cancel_run(
     run_id: String,
 ) {
     state.request_cancel(&run_id);
+}
+
+pub fn cancel_runs_of_previous_page(app: &AppHandle) {
+    let state = app.state::<ChatState>();
+    let mut cancels = state.cancels.lock().expect("cancels mutex poisoned");
+    if !cancels.is_empty() {
+        crate::logger::info("chat:run:page-gone", Some(serde_json::json!({ "runs": cancels.len() })));
+    }
+    for run in cancels.values_mut() {
+        run.requested = true;
+        if let Some(token) = &run.token {
+            token.cancel();
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn answer_search_permission(
+    state: tauri::State<'_, ChatState>,
+    request_id: String,
+    shown_items: usize,
+    decision: web_search::Decision,
+) -> AppResult<bool> {
+    let web_tools = state.session.lock().await.as_ref().and_then(|resident| resident.web_tools.clone());
+    let permission = web_tools.and_then(|web_tools| web_tools.with_reply(|reply| reply.search.permission.clone()).ok());
+    let answered = permission.is_some_and(|permission| permission.answer(&request_id, shown_items, decision));
+    crate::logger::info(
+        "web-search:permission",
+        Some(serde_json::json!({ "requestId": request_id, "decision": decision, "answered": answered })),
+    );
+    Ok(answered)
+}
+
+#[tauri::command]
+pub async fn web_search_keys() -> AppResult<Vec<web_search::StoredKey>> {
+    tauri::async_runtime::spawn_blocking(web_search::key_endings)
+        .await
+        .map_err(|error| crate::error::AppError::msg(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn web_search_key_save(
+    provider: String,
+    key: String,
+) -> AppResult<Vec<web_search::StoredKey>> {
+    web_search::save_key(&provider, &key).await.map_err(crate::error::AppError::msg)
+}
+
+#[tauri::command]
+pub async fn web_search_key_remove(provider: String) -> AppResult<Vec<web_search::StoredKey>> {
+    web_search::remove_key(&provider).await.map_err(crate::error::AppError::msg)
+}
+
+#[tauri::command]
+pub async fn site_icon(host: String) -> Option<String> {
+    site_icon::site_icon(&host).await
 }
 
 #[tauri::command]
@@ -390,6 +472,21 @@ mod tests {
     use super::{payloads::test_message, *};
 
     #[test]
+    fn a_run_id_that_is_already_going_is_not_registered_again_and_keeps_its_cancel_token() {
+        let state = ChatState::default();
+        assert!(state.register_run("run"));
+        let token = CancelToken::create();
+        state.attach_cancel_token("run", token.clone());
+
+        assert!(!state.register_run("run"), "the page sent the same call again");
+        state.request_cancel("run");
+        assert!(token.is_cancelled());
+
+        state.finish_run("run");
+        assert!(state.register_run("run"));
+    }
+
+    #[test]
     fn normalized_client_history_continues_the_resident_session() {
         let state = ChatState::default();
         let question = test_message(ChatRole::User {}, "question", None);
@@ -398,7 +495,7 @@ mod tests {
         let projected = messages::assistant_history_message(raw_text, raw_reasoning, false).unwrap();
         assert_eq!(projected.content, "An answer 👩\u{200D}💻\n");
         assert_eq!(projected.reasoning_content.as_deref(), Some("Consider this."));
-        state.remember_history("model", vec![question.clone(), projected], Some(ReasoningEffort::Medium));
+        state.remember_history("model", "chat", vec![question.clone(), projected], Some(ReasoningEffort::Medium));
 
         // The next request uses the finalized client fields, not raw engine output.
         let parsed = messages::parsed_from(raw_text, raw_reasoning).unwrap();
@@ -408,15 +505,17 @@ mod tests {
             test_message(ChatRole::Assistant {}, &messages::sanitize(raw_text), parsed.chain_of_thought.as_deref()),
             next_question.clone(),
         ];
-        match state.plan_run("model", &request, Some(ReasoningEffort::Medium)) {
+        let plan = |repo_id, chat_id, effort| state.plan_run(repo_id, chat_id, &request, Some(effort));
+        match plan("model", "chat", ReasoningEffort::Medium) {
             RunPlan::Continue {
                 tail,
             } => assert!(tail == vec![next_question]),
             RunPlan::Replay => panic!("client normalization should not discard the resident session"),
         }
 
-        assert!(matches!(state.plan_run("other-model", &request, Some(ReasoningEffort::Medium)), RunPlan::Replay));
-        assert!(matches!(state.plan_run("model", &request, Some(ReasoningEffort::High)), RunPlan::Replay));
+        assert!(matches!(plan("other-model", "chat", ReasoningEffort::Medium), RunPlan::Replay));
+        assert!(matches!(plan("model", "chat", ReasoningEffort::High), RunPlan::Replay));
+        assert!(matches!(plan("model", "other-chat", ReasoningEffort::Medium), RunPlan::Replay));
     }
 
     #[test]
@@ -426,15 +525,19 @@ mod tests {
             test_message(ChatRole::User {}, "question", None),
             test_message(ChatRole::Assistant {}, "answer", Some("first path")),
         ];
-        state.remember_history("model", history.clone(), Some(ReasoningEffort::Medium));
+        state.remember_history("model", "chat", history.clone(), Some(ReasoningEffort::Medium));
+        let plan = |messages: &[MsgIn]| state.plan_run("model", "chat", messages, Some(ReasoningEffort::Medium));
 
         let mut continued = history.clone();
         continued.push(test_message(ChatRole::User {}, "next", None));
-        assert!(matches!(state.plan_run("model", &continued, Some(ReasoningEffort::Medium)), RunPlan::Continue { .. }));
+        assert!(matches!(plan(&continued), RunPlan::Continue { .. }));
+
+        continued[1].openable_urls = vec!["https://example.com/found".to_string()];
+        assert!(matches!(plan(&continued), RunPlan::Continue { .. }));
 
         let mut changed = history;
         changed[1].reasoning_content = Some("second path".to_string());
         changed.push(test_message(ChatRole::User {}, "next", None));
-        assert!(matches!(state.plan_run("model", &changed, Some(ReasoningEffort::Medium)), RunPlan::Replay));
+        assert!(matches!(plan(&changed), RunPlan::Replay));
     }
 }

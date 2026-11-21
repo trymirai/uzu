@@ -82,3 +82,34 @@ describe("auto-eject defaults", () => {
     },
   );
 });
+
+describe("web search provider", () => {
+  it("reads the stored provider, and DuckDuckGo for a value that names none without rewriting the file", async () => {
+    vi.mocked(invoke).mockResolvedValue({ webSearchProvider: "brave" });
+    expect(await tauriSettings.getWebSearchProvider()).toBe("brave");
+
+    vi.mocked(invoke).mockClear().mockResolvedValue({ webSearchProvider: "nobody" });
+    expect(await tauriSettings.getWebSearchProvider()).toBe("duckduckgo");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("settings_load");
+  });
+});
+
+describe("web search modes", () => {
+  it("reads each chat's mode and the latest one, and patches both", async () => {
+    vi.mocked(invoke).mockResolvedValue({ webSearchChats: { first: "ask", second: "auto" }, webSearchLast: "auto" });
+    expect(await tauriSettings.getWebSearchModes()).toEqual({ chats: { first: "ask", second: "auto" }, last: "auto" });
+
+    await tauriSettings.setWebSearchModes({ chats: { first: "off" }, last: "off" });
+    expect(invoke).toHaveBeenLastCalledWith("settings_patch", {
+      patch: { webSearchChats: { first: "off" }, webSearchLast: "off" },
+    });
+  });
+
+  it("drops what it cannot read: a chat's mode, and the latest one, which is then off", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      webSearchChats: { asked: "ask", unknown: "sometimes", broken: 3 },
+      webSearchLast: true,
+    });
+    expect(await tauriSettings.getWebSearchModes()).toEqual({ chats: { asked: "ask" }, last: "off" });
+  });
+});
