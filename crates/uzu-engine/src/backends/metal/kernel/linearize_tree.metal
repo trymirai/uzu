@@ -94,6 +94,7 @@ METAL_FUNC uint linearize_winner(
     uint first_nan,
     threadgroup uint4* reduction,
     threadgroup uint& selected_slot,
+    threadgroup float& selected_score,
     uint tid
 ) {
   constexpr uint NONE = FRONTIER_NO_WINNER;
@@ -117,7 +118,9 @@ METAL_FUNC uint linearize_winner(
     const uint nan = simd_min(value.w);
     if (lane == 0) {
       // A serial scan keeps its first open candidate when that score is NaN.
-      selected_slot = first != NONE && first == nan ? first : best;
+      const bool keep_nan = first != NONE && first == nan;
+      selected_slot = keep_nan ? first : best;
+      selected_score = keep_nan ? NAN : best_logprob;
     }
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -162,6 +165,7 @@ PUBLIC KERNEL(LinearizeTree)(
     threadgroup ushort selected_slots[LINEARIZE_MAX_SLOTS],
     threadgroup uint4 reduction[LINEARIZE_SIMDGROUP_COUNT],
     threadgroup uint& selected_slot,
+    threadgroup float& selected_score,
     const uint tid THREADS(LINEARIZE_THREADGROUP_SIZE)
 ) {
   constexpr uint NONE = FRONTIER_NO_WINNER;
@@ -175,21 +179,23 @@ PUBLIC KERNEL(LinearizeTree)(
     return source[column * stride + index];
   };
 
+  const float root_score = as_type<float>(packed_tree[uint(TreeIdx::EdgeLogprobBits) * tree_slot_count]);
   uint parents[LINEARIZE_SLOTS_PER_THREAD];
-  float path_logprobs[LINEARIZE_SLOTS_PER_THREAD];
+  float scores[LINEARIZE_SLOTS_PER_THREAD];
   uint open_mask = 0;
   uint kept_mask = uint(tid == 0);
   METAL_PRAGMA_UNROLL
   for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
     parents[item] = NONE;
-    path_logprobs[item] = -INFINITY;
+    scores[item] = -INFINITY;
     const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
     if (slot >= total_slots) {
       continue;
     }
     const bool valid = slot_field(slot, TreeIdx::Valid, FrontierIdx::Active) != 0;
     parents[item] = valid ? slot_field(slot, TreeIdx::ParentSlot, FrontierIdx::ParentSlot) : NONE;
-    path_logprobs[item] = as_type<float>(slot_field(slot, TreeIdx::PathLogprobBits, FrontierIdx::PathLogprobBits));
+    const float edge = as_type<float>(slot_field(slot, TreeIdx::EdgeLogprobBits, FrontierIdx::EdgeLogprobBits));
+    scores[item] = parents[item] == 0 ? root_score + edge : edge;
     parent_slots[slot] = ushort(parents[item]);
     open_mask |= uint(parents[item] == 0) << item;
   }
@@ -209,17 +215,18 @@ PUBLIC KERNEL(LinearizeTree)(
         continue;
       }
       const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
-      const float logprob = path_logprobs[item];
+      const float logprob = scores[item];
       first_open = min(first_open, slot);
       first_nan = min(first_nan, isnan(logprob) ? slot : NONE);
       const bool better = logprob > best_logprob || (logprob == best_logprob && slot < best);
       best = better ? slot : best;
       best_logprob = better ? logprob : best_logprob;
     }
-    best = linearize_winner(best_logprob, best, first_open, first_nan, reduction, selected_slot, tid);
+    best = linearize_winner(best_logprob, best, first_open, first_nan, reduction, selected_slot, selected_score, tid);
     if (best == NONE) {
       break;
     }
+    const float best_score = selected_score;
     if (tid == 0) {
       selected_slots[kept] = ushort(best);
     }
@@ -228,7 +235,9 @@ PUBLIC KERNEL(LinearizeTree)(
     for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
       const uint slot = tid + item * LINEARIZE_THREADGROUP_SIZE;
       kept_mask |= uint(slot == best) << item;
-      children |= uint(parents[item] == best) << item;
+      const bool child = parents[item] == best;
+      children |= uint(child) << item;
+      scores[item] = child ? best_score + scores[item] : scores[item];
     }
     open_mask = (open_mask | children) & ~kept_mask;
     kept++;
