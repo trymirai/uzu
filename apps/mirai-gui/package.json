@@ -1,6 +1,6 @@
 {
   "name": "mirai-gui",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.9.0",
