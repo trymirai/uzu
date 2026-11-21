@@ -19,7 +19,6 @@ use crate::{
         linear::{InputRhtParameters, Linear, LinearBlockError},
         mixer::{
             Mixer, MixerEncodeError, MixerState,
-            attention::rope::PositionedRoPE,
             delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
         },
     },
@@ -664,13 +663,10 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
     fn encode(
         &self,
         hidden: B::ScratchBuffer,
-        rope: Option<&PositionedRoPE<'_, B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
-        assert!(rope.is_none(), "unexpected rope for delta net mixer");
-
         let command_buffer = &mut *command_buffer.debug_group("delta net");
         let Some(state) = state else {
             return self.encode_stateless(hidden, batch_dim, command_buffer);

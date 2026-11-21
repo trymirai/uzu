@@ -7,11 +7,7 @@ pub struct RoPE<B: Backend> {
     pub inverse_frequencies: B::GlobalGpuBuffer,
     pub scale: f32,
     pub dim: u32,
-}
-
-pub struct PositionedRoPE<'a, B: Backend> {
-    pub rope: &'a RoPE<B>,
-    pub position_offset: u32,
+    pub max_sequence_length: u32,
 }
 
 impl<B: Backend> RoPE<B> {
@@ -99,16 +95,7 @@ impl<B: Backend> RoPE<B> {
             inverse_frequencies: buffer.handoff()?,
             scale,
             dim: head_dim,
+            max_sequence_length: *rope_config.max_sequence_length(),
         })
-    }
-
-    pub fn at(
-        &self,
-        position_offset: u32,
-    ) -> PositionedRoPE<'_, B> {
-        PositionedRoPE {
-            rope: self,
-            position_offset,
-        }
     }
 }

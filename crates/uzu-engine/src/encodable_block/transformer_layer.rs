@@ -15,7 +15,7 @@ use crate::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::PositionedRoPE},
+        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
@@ -433,7 +433,6 @@ impl<B: Backend> TransformerLayer<B> {
         &self,
         mut stream: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        rope: Option<&PositionedRoPE<'_, B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -450,7 +449,7 @@ impl<B: Backend> TransformerLayer<B> {
         }
 
         stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
-            Ok(self.mixer.encode(hidden, rope, batch_dim, state, command_buffer)?)
+            Ok(self.mixer.encode(hidden, batch_dim, state, command_buffer)?)
         })?;
 
         stream = self.mlp_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {

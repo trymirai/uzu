@@ -17,7 +17,7 @@ use crate::{
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{
             MixerState,
-            attention::{ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState, rope::RoPE},
+            attention::{ATTENTION_SUFFIX_CAPACITY, Attention, AttentionNewError, AttentionState},
         },
         mlp::MlpBlockNewError,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -46,7 +46,6 @@ pub struct DFlash<B: Backend> {
     layer_kv_dim: u32,
     layers: Box<[TransformerLayer<B>]>,
     output_norm: Normalization<B>,
-    rope: RoPE<B>,
     model_dim: u32,
     max_context_length: u32,
     block_size: u32,
@@ -141,6 +140,9 @@ impl<B: Backend> DFlash<B> {
         let residual_config = AnyResidualConfig::AdditiveResidualConfig(AdditiveResidualConfig::default());
         let mut layers = Vec::with_capacity(num_layers as usize);
         for (layer_config, index) in config.layer_configs.iter().zip(0u32..) {
+            if layer_config.rope_config.as_ref() != Some(&config.rope_config) {
+                return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use the draft RoPE config"));
+            }
             layers.push(
                 TransformerLayer::new(
                     config.model_dim,
@@ -175,7 +177,6 @@ impl<B: Backend> DFlash<B> {
             layer_kv_dim,
             layers: layers.into_boxed_slice(),
             output_norm,
-            rope: RoPE::new(&config.rope_config, context).map_err(DFlashNewError::Backend)?,
             model_dim: config.model_dim,
             max_context_length: *config.rope_config.max_sequence_length(),
             block_size: config.block_size,
@@ -251,7 +252,6 @@ impl<B: Backend> DFlash<B> {
             .projected_feature_norm
             .encode(&projected_features, 0, num_tokens, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(DFlashEncodeError::Backend)?;
-        let rope = self.rope.at(state.context_length);
 
         let projected_kv = self.state_kv_projection.encode(normalized_features, num_tokens, command_buffer)?;
         let layer_kv_bytes = size_for_shape(&[self.layer_kv_dim], self.data_type);
@@ -280,7 +280,7 @@ impl<B: Backend> DFlash<B> {
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
             attention
-                .append_projected_kv(&key_value, &rope, num_tokens, attention_state, command_buffer)
+                .append_projected_kv(&key_value, num_tokens, attention_state, command_buffer)
                 .map_err(DFlashEncodeError::Backend)?;
         }
 
@@ -315,7 +315,6 @@ impl<B: Backend> DFlash<B> {
         let token_embeddings = target_embedding.encode_lookup(&token_ids, batch_size, command_buffer)?;
 
         let batch_topology = BatchTopology::flat(batch_size);
-        let rope = self.rope.at(state.context_length);
 
         let mut stream = token_embeddings;
         for (layer, mixer_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
@@ -323,7 +322,6 @@ impl<B: Backend> DFlash<B> {
             stream = layer.encode(
                 stream,
                 None::<&B::ScratchBuffer>,
-                Some(&rope),
                 &batch_topology,
                 Some(MaybeMut::Mut(mixer_state.as_mut())),
                 command_buffer,
