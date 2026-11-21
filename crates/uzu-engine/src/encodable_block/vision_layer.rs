@@ -294,7 +294,6 @@ impl<B: Backend> VisionLayer<B> {
     }
 }
 
-/// The first half of the frequency pairs rotates by the patch row, the second by the column, with the same frequencies
 fn vision_rope<B: Backend>(
     rope_config: &VisionRoPEConfig,
     context: &B::Context,
@@ -305,8 +304,6 @@ fn vision_rope<B: Backend>(
     let inverse_frequencies: Vec<f32> = (0..half_dim)
         .map(|pair| 1.0 / rope_config.base.powf((2 * (pair % frequency_count)) as f32 / half_dim as f32))
         .collect();
-
-    // Rows take their positions from the patch grid, so there is no sequence limit
     RoPE::from_inverse_frequencies(&inverse_frequencies, 1.0, rope_config.head_dim, u32::MAX, context)
 }
 

@@ -40,7 +40,6 @@ impl<B: Backend> TransformerState<B> {
         self.context_length
     }
 
-    /// RoPE position of the next row
     pub fn rope_position(&self) -> u32 {
         self.rope_position
     }
@@ -136,7 +135,6 @@ pub enum TransformerEncodeError<B: Backend> {
 pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
     layers: Box<[TransformerLayer<B>]>,
-    /// Index of the layer's RoPE config in `ropes`
     layer_ropes: Box<[Option<usize>]>,
     output_norm: Option<Normalization<B>>,
     model_dim: u32,
@@ -322,7 +320,6 @@ impl<B: Backend> Transformer<B> {
         )
     }
 
-    /// Rows take their M-RoPE `positions`, or without them the positions that follow the state's one
     pub fn encode_at_positions(
         &self,
         input: B::ScratchBuffer,

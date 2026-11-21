@@ -440,7 +440,6 @@ impl<B: Backend> TransformerLayer<B> {
         self.encode_with_positions(stream, per_layer_inputs, None, batch_dim, state, command_buffer)
     }
 
-    /// Rows rotate by `positions` instead of the positions that follow the state's one
     pub fn encode_at_positions(
         &self,
         stream: B::ScratchBuffer,

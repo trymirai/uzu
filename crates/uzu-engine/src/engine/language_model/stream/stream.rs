@@ -361,7 +361,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         position_after_image = Some(image.next_position(image_position));
                     }
 
-                    // The image rows enter the transformer as they are, in place of looked up token embeddings
                     let embedding = self.model.decoder.embedding();
                     let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
                     let mut embedded = command_buffer
