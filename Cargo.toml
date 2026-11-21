@@ -235,7 +235,7 @@ needless_range_loop = "allow" # TODO: remove
 missing_safety_doc = "allow" # TODO: maybe remove?
 
 [workspace.metadata.published]
-version = "0.7.4"
+version = "0.7.5"
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["backend"]
