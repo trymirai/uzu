@@ -16,6 +16,7 @@ mod linearize_tree;
 mod logit_transform;
 mod matmul;
 mod moe;
+mod ngram_injection;
 mod normalization;
 mod pooling;
 mod radix_top_k_small;

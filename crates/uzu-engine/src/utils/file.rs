@@ -22,6 +22,51 @@ impl File {
         file.seek(SeekFrom::Start(offset)).await?;
         file.read_exact(buffer).await
     }
+
+    /// Unsupported on WASM.
+    pub async fn to_sync(&self) -> io::Result<std::fs::File> {
+        let file = self.0.lock().await;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsFd;
+            Ok(file.as_fd().try_clone_to_owned()?.into())
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsHandle;
+            Ok(file.as_handle().try_clone_to_owned()?.into())
+        }
+    }
+}
+
+pub fn read_exact_at(
+    file: &std::fs::File,
+    buffer: &mut [u8],
+    offset: u64,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        file.read_exact_at(buffer, offset)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let mut buffer = buffer;
+        let mut offset = offset;
+        while !buffer.is_empty() {
+            match file.seek_read(buffer, offset) {
+                Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                Ok(read) => {
+                    buffer = &mut buffer[read..];
+                    offset += read as u64;
+                },
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
 }
 
 pub async fn exists(path: impl AsRef<Path>) -> bool {

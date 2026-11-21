@@ -35,6 +35,9 @@ pub fn stream_error_to_backend_error<B: Backend>(error: LanguageModelStreamError
         LanguageModelStreamError::Decoder(error) => BackendError::Decoder {
             message: error.to_string(),
         },
+        LanguageModelStreamError::NGramEmbeddingRead(error) => BackendError::Decoder {
+            message: format!("n-gram embedding read failed: {error}"),
+        },
         LanguageModelStreamError::Grammar(error) => BackendError::Grammar {
             message: error.to_string(),
         },
