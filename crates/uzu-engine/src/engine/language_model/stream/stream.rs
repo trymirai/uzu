@@ -457,7 +457,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
-        let (batch_dim, token_ids, trie_seeds, mut trie_pending) = if self.propose_trie
+        let (batch_dim, token_ids, trie_seeds, mut speculator_pendings) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -486,8 +486,30 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
             };
 
-            let proposal = speculator.propose_tree(
+            let draft = speculator.encode_draft(
                 self.model_state.speculator_state.as_mut().unwrap(),
+                target_output_token,
+                self.model.decoder.embedding(),
+                &shape,
+                &mut command_buffer,
+            )?;
+
+            // The draft is its own command buffer so that it runs while the tree is being encoded.
+            let draft_pending = command_buffer.end_encoding().submit();
+            command_buffer = record(
+                self.model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some(&format!("decode {} (tree)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?,
+                self.options.timestamps.as_ref(),
+            );
+
+            let proposal = speculator.propose_tree(
+                draft,
                 target_output_norm,
                 target_output_token,
                 self.model.decoder.embedding(),
@@ -510,7 +532,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 self.options.timestamps.as_ref(),
             );
 
-            (proposal.topology, proposal.token_ids, proposal.seeds, Some(trie_pending))
+            (proposal.topology, proposal.token_ids, proposal.seeds, Some([draft_pending, trie_pending]))
         } else {
             let batch_dim = BatchTopology::flat(1);
             let context = command_buffer.context();
@@ -589,10 +611,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let was_filled = if let Some(trie_pending) = trie_pending.take() {
-                wait(trie_pending, self.options.timestamps.as_ref())
-                    .await
-                    .map_err(LanguageModelStreamError::Backend)?;
+            let was_filled = if let Some(speculator_pendings) = speculator_pendings.take() {
+                for pending in speculator_pendings {
+                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
+                }
 
                 let trie_nodes = self
                     .model
@@ -622,7 +644,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             None
         };
 
-        pendings.extend(trie_pending);
+        pendings.extend(speculator_pendings.into_iter().flatten());
 
         let flat_seed =
             if trie_seeds.is_none() && matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
