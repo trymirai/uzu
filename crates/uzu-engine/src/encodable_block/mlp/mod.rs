@@ -1,8 +1,10 @@
 mod dense;
 mod gate_act_mul;
+mod ungated;
 
 use derive_more::Debug;
 use thiserror::Error;
+pub use ungated::{UngatedMlp, UngatedMlpNewError};
 
 use crate::{
     backends::common::{Backend, CommandBuffer},

@@ -106,6 +106,7 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             0,
             false,
+            false,
         )
         .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
@@ -213,6 +214,7 @@ impl<B: Backend> WeaverLayer<B> {
             token_count,
             token_count,
             None,
+            None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             command_buffer,
         );

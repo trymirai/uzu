@@ -6,23 +6,26 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::model::language_model::LanguageModelConfig,
+    config::{model::language_model::LanguageModelConfig, vision::VisionConfig},
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
     },
-    engine::Engine,
+    engine::{
+        Engine,
+        language_model::vision::model::{VisionLoadError, VisionModel},
+    },
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
     utils::file,
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
 
+pub mod grammar;
 pub mod state;
 pub mod stream;
-
-pub mod grammar;
+pub mod vision;
 
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
@@ -32,6 +35,7 @@ pub struct LanguageModel<B: Backend> {
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
     tokenizer: Arc<Tokenizer>,
+    vision_model: Option<VisionModel<B>>,
     vocab_size: usize,
 }
 
@@ -51,6 +55,10 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Speculator(#[from] DFlashSpeculatorLoadError<B>),
     #[error("Tokenizer error: {0}")]
     Tokenizer(#[from] tokenizers::Error),
+    #[error("Image prefill does not support decoders with per-layer embeddings")]
+    UnsupportedVisionPerLayerEmbedding,
+    #[error("Vision error: {0}")]
+    Vision(#[from] VisionLoadError<B>),
 }
 
 impl<B: Backend> Engine<B> {
@@ -59,6 +67,12 @@ impl<B: Backend> Engine<B> {
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
+
+        let vision_path = model_path.join("vision");
+        let vision_path = file::exists(&vision_path).await.then_some(vision_path);
+        if vision_path.is_some() && config.decoder_config.ple_model_config.is_some() {
+            return Err(EngineLoadLanguageModelError::UnsupportedVisionPerLayerEmbedding);
+        }
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;
 
@@ -94,6 +108,12 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
+        let vision_model = if let Some(path) = vision_path.as_deref() {
+            Some(VisionModel::new(path, data_type, decoder.embedding().model_dim(), self.context.as_ref()).await?)
+        } else {
+            None
+        };
+
         weight_loader.assert_all_tensors_read()?;
 
         let generation_config = config.generation_config;
@@ -107,6 +127,7 @@ impl<B: Backend> Engine<B> {
             context_ring_update,
             generation_config,
             tokenizer,
+            vision_model,
             vocab_size,
         })
     }
@@ -158,5 +179,9 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn tokenizer(&self) -> &Arc<Tokenizer> {
         &self.tokenizer
+    }
+
+    pub fn vision_config(&self) -> Option<&VisionConfig> {
+        self.vision_model.as_ref().map(|vision_model| &vision_model.config)
     }
 }

@@ -1,7 +1,29 @@
 use crate::{
-    backends::common::{Backend, Context, CpuBuffer, GlobalBufferCpuGpu},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu},
     config::rope::AnyRoPEConfig,
 };
+
+pub struct RoPEPositions<B: Backend> {
+    pub positions: B::ConstantBuffer,
+}
+
+impl<B: Backend> RoPEPositions<B> {
+    pub fn new(
+        row_count: usize,
+        dim: u32,
+        position: impl Fn(usize, u32) -> u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Self, B::Error> {
+        let positions = (0..row_count)
+            .flat_map(|row| (0..dim / 2).map(move |pair_index| (row, pair_index)))
+            .map(|(row, pair_index)| position(row, pair_index))
+            .collect::<Box<[u32]>>();
+
+        Ok(Self {
+            positions: command_buffer.allocate_constant_from_slice(&positions)?,
+        })
+    }
+}
 
 pub struct RoPE<B: Backend> {
     pub inverse_frequencies: B::GlobalGpuBuffer,
@@ -31,7 +53,7 @@ impl<B: Backend> RoPE<B> {
             let channel_index = pair_index * 2;
             let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
             let inverse_frequency = match rope_config {
-                AnyRoPEConfig::UnscaledRoPEConfig(_) => inverse_frequency,
+                AnyRoPEConfig::UnscaledRoPEConfig(_) | AnyRoPEConfig::MultimodalRoPEConfig(_) => inverse_frequency,
                 AnyRoPEConfig::LinearScalingRoPEConfig(config) => inverse_frequency / config.scaling_factor,
                 AnyRoPEConfig::LlamaRoPEConfig(config) => {
                     let low_frequency_wavelength = config.original_context_length as f32 / config.low_frequency_factor;
@@ -89,13 +111,31 @@ impl<B: Backend> RoPE<B> {
             inverse_frequencies.push(inverse_frequency);
         }
 
-        let mut buffer = context.create_buffer_cpu_gpu(size_of_val(inverse_frequencies.as_slice()))?;
-        buffer.copyin(&inverse_frequencies);
+        Self::from_inverse_frequencies(
+            &inverse_frequencies,
+            scale,
+            head_dim,
+            *rope_config.max_sequence_length(),
+            context,
+        )
+    }
+
+    /// `inverse_frequencies` has one frequency per pair of the `dim` rotated channels
+    pub fn from_inverse_frequencies(
+        inverse_frequencies: &[f32],
+        scale: f32,
+        dim: u32,
+        max_sequence_length: u32,
+        context: &B::Context,
+    ) -> Result<Self, B::Error> {
+        assert_eq!(inverse_frequencies.len(), (dim / 2) as usize, "RoPE takes a frequency per channel pair");
+        let mut buffer = context.create_buffer_cpu_gpu(size_of_val(inverse_frequencies))?;
+        buffer.copyin(inverse_frequencies);
         Ok(Self {
             inverse_frequencies: buffer.handoff()?,
             scale,
-            dim: head_dim,
-            max_sequence_length: *rope_config.max_sequence_length(),
+            dim,
+            max_sequence_length,
         })
     }
 }

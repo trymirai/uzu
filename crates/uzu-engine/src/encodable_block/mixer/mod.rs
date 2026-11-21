@@ -11,7 +11,7 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{InputRhtParameters, LinearEncodeError},
         mixer::{
-            attention::{Attention, AttentionEncodeError, AttentionNewError},
+            attention::{Attention, AttentionEncodeError, AttentionNewError, rope::RoPEPositions},
             delta_net::{DeltaNet, DeltaNetNewError},
             short_conv::{ShortConv, ShortConvNewError},
         },
@@ -36,6 +36,12 @@ pub trait MixerState<B: Backend>: Any + Send {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
+
+    fn set_rope_position(
+        &mut self,
+        _position: u32,
+    ) {
+    }
 }
 
 impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {
@@ -75,6 +81,17 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>>;
+
+    fn encode_at_positions(
+        &self,
+        hidden: B::ScratchBuffer,
+        _positions: &RoPEPositions<B>,
+        batch_dim: &BatchTopology<B>,
+        state: Option<MaybeMut<dyn MixerState<B>>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
+        self.encode(hidden, batch_dim, state, command_buffer)
+    }
 }
 
 #[derive(Debug, Error)]

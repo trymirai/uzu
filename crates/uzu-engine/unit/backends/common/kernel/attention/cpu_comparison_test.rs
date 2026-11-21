@@ -84,6 +84,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             false,
             0,
             trie.is_some(),
+            false,
         )
         .unwrap();
         prepare.encode(
@@ -112,6 +113,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             heads / config.num_groups * length,
             None,
             trie,
+            None::<&B::GlobalGpuBuffer>,
             &mut command,
         );
     }

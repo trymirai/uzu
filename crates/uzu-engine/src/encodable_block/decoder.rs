@@ -51,6 +51,10 @@ impl<B: Backend> Decoder<B> {
         &self.embedding
     }
 
+    pub(crate) fn transformer(&self) -> &Transformer<B> {
+        &self.transformer
+    }
+
     pub async fn new(
         data_type: DataType,
         config: &DecoderConfig,

@@ -14,6 +14,7 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 #[derive(Clone, Copy)]
 pub struct KVCacheState {
     context_length: u32,
+    rope_position: u32,
     ring_capacity: Option<u32>,
 }
 
@@ -25,12 +26,17 @@ impl KVCacheState {
         assert!(ring_capacity != Some(0), "zero ring capacity");
         Self {
             context_length,
+            rope_position: context_length,
             ring_capacity,
         }
     }
 
     pub fn context_length(self) -> u32 {
         self.context_length
+    }
+
+    pub fn rope_position(self) -> u32 {
+        self.rope_position
     }
 
     pub fn prefix_len(self) -> u32 {
@@ -75,6 +81,7 @@ impl KVCacheState {
                 });
             }
             self.context_length += 1;
+            self.rope_position += 1;
         }
         copies
     }
@@ -222,6 +229,13 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         }
 
         Ok(())
+    }
+
+    fn set_rope_position(
+        &mut self,
+        position: u32,
+    ) {
+        self.cache.rope_position = position;
     }
 }
 

@@ -184,6 +184,7 @@ fn attention_matches_cpu() {
                         false,
                         0,
                         trie.is_some(),
+                        false,
                     )
                     .unwrap();
                     let mut query_codes = create_buffer::<Metal, i8>(&metal, kv_heads * query_rows * head_dim);
@@ -218,6 +219,7 @@ fn attention_matches_cpu() {
                         query_rows as u32,
                         None,
                         trie.as_ref(),
+                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         &mut command_buffer,
                     );
                     if !attend {
