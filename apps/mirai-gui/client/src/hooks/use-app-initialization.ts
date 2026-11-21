@@ -23,4 +23,23 @@ export const useAppInitialization = () => {
       void useAppStore.getState().fetchVersion();
     }
   }, []);
+
+  // The app is not a browser tab: a reload (F5 or Ctrl+R in WebView2, the page menu everywhere) would drop the reply
+  // being streamed, and the page menu offers only browser commands. Fields and selections keep theirs.
+  useEffect(() => {
+    if (!platformInfo.isTauri) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "F5" || (event.ctrlKey && event.key.toLowerCase() === "r")) event.preventDefault();
+    };
+    const onContextMenu = (event: MouseEvent) => {
+      const field = event.target instanceof Element && event.target.closest("input, textarea, [contenteditable]");
+      if (!field && !window.getSelection()?.toString()) event.preventDefault();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
 };

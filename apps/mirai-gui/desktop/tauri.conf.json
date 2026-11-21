@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "category": "public.app-category.productivity",
     "macOS": {
       "files": { "Resources/Assets.car": "icons/Assets.car" },

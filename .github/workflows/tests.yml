@@ -237,9 +237,29 @@ jobs:
         run: pnpm test
 
   build-mirai-gui:
-    name: build (mirai-gui)
-    runs-on: prefect-github-actions
+    name: build (mirai-gui, ${{ matrix.host }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+
+    strategy:
+      matrix:
+        include:
+          - host: 'macos'
+            runner: 'prefect-github-actions'
+            target: 'aarch64-apple-darwin'
+            bundle: 'dmg/*.dmg'
+            artifact: 'mirai-gui-macos-arm64'
+          # The oldest supported Ubuntu, so the package runs on more distributions.
+          - host: 'linux'
+            runner: 'ubuntu-22.04'
+            target: 'x86_64-unknown-linux-gnu'
+            bundle: 'deb/*.deb'
+            artifact: 'mirai-gui-linux-x86_64'
+          - host: 'windows'
+            runner: 'windows-2025'
+            target: 'x86_64-pc-windows-msvc'
+            bundle: 'nsis/*.exe'
+            artifact: 'mirai-gui-windows-x86_64'
 
     defaults:
       run:
@@ -247,19 +267,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-nix
+      - if: ${{ runner.os == 'macOS' }}
+        uses: ./.github/actions/setup-nix
+      # Nix does not run on Windows, and a Linux package built in Nix links against the Nix store.
+      - if: ${{ runner.os != 'macOS' }}
+        uses: ./.github/actions/setup-legacy
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build app bundle
-        run: pnpm build
+        run: pnpm build --target ${{ matrix.target }}
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v7
         with:
-          name: mirai-gui-macos-arm64
-          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: ${{ matrix.artifact }}
+          path: target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
           if-no-files-found: error
 
   build-uzu-pi-extension:
