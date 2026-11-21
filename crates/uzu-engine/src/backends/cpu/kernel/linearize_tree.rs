@@ -171,12 +171,13 @@ pub fn linearize_tree(
             frontier_field(FrontierIdx::Depth as usize, slot - tree_slots)
         }
     };
-    let slot_path_logprob = |slot: usize| -> u32 {
-        if slot < tree_slots {
-            tree_field(TreeIdx::PathLogprobBits as usize, slot)
+
+    let slot_edge_logprob = |slot: usize| -> f32 {
+        f32::from_bits(if slot < tree_slots {
+            tree_field(TreeIdx::EdgeLogprobBits as usize, slot)
         } else {
-            frontier_field(FrontierIdx::PathLogprobBits as usize, slot - tree_slots)
-        }
+            frontier_field(FrontierIdx::EdgeLogprobBits as usize, slot - tree_slots)
+        })
     };
 
     debug_assert!(slot_valid(0), "tree slot 0 must be the valid root");
@@ -188,14 +189,17 @@ pub fn linearize_tree(
     let state = stack;
     let dfs_stack = unsafe { stack.add(total_slots) };
 
+    let mut scores = vec![0.0f32; total_slots];
     for slot in 0..total_slots {
         unsafe { *state.add(slot) = 0 };
     }
     unsafe { *state.add(0) = KEPT };
+    scores[0] = slot_edge_logprob(0);
     let mut kept = 1usize;
     for child in 0..total_slots {
         if slot_valid(child) && slot_parent(child) == 0 && slot_parent(child) != FRONTIER_NO_WINNER {
             unsafe { *state.add(child) = OPEN };
+            scores[child] = scores[0] + slot_edge_logprob(child);
         }
     }
     while kept < budget {
@@ -205,7 +209,7 @@ pub fn linearize_tree(
             if unsafe { *state.add(slot) } != OPEN {
                 continue;
             }
-            let logprob = f32::from_bits(slot_path_logprob(slot));
+            let logprob = scores[slot];
             if best.is_none() || logprob > best_logprob {
                 best = Some(slot);
                 best_logprob = logprob;
@@ -219,6 +223,7 @@ pub fn linearize_tree(
         for child in 0..total_slots {
             if slot_valid(child) && slot_parent(child) == best as u32 && slot_parent(child) != FRONTIER_NO_WINNER {
                 unsafe { *state.add(child) = OPEN };
+                scores[child] = best_logprob + slot_edge_logprob(child);
             }
         }
     }

@@ -127,7 +127,7 @@ groupshared uint16_t linearize_parents[LINEARIZE_MAX_SLOTS];
 // The selection order while selecting; afterwards, each kept slot's flat index.
 groupshared uint16_t linearize_slots[LINEARIZE_MAX_SLOTS];
 
-// (path logprob order key, best slot, first open slot, first open slot with a NaN logprob)
+// (score order key, best slot, first open slot, first open slot with a NaN score)
 struct LinearizeWinner : IReduction {
   typealias Value = uint4;
   static uint4 combine(uint4 a, uint4 b) {
@@ -189,13 +189,14 @@ func LinearizeTree(
   static_assert(LINEARIZE_SLOTS_PER_THREAD <= 32, "selection masks must fit in uint");
   let total_slots = tree_slot_count + frontier_capacity;
 
+  let root_score = asfloat(packed_tree[uint(TreeIdx.EdgeLogprobBits) * tree_slot_count]);
   uint parents[LINEARIZE_SLOTS_PER_THREAD];
-  float path_logprobs[LINEARIZE_SLOTS_PER_THREAD];
+  float scores[LINEARIZE_SLOTS_PER_THREAD];
   uint open_mask = 0;
   uint kept_mask = tid == 0 ? 1u : 0u;
   for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
     parents[item] = FRONTIER_NO_WINNER;
-    path_logprobs[item] = NEGATIVE_INFINITY;
+    scores[item] = NEGATIVE_INFINITY;
     let slot = tid + item * LINEARIZE_THREADS;
     if (slot >= total_slots) {
       continue;
@@ -208,8 +209,9 @@ func LinearizeTree(
     if (valid) {
       parents[item] = source[(tree ? uint(TreeIdx.ParentSlot) : uint(FrontierIdx.ParentSlot)) * stride + index];
     }
-    path_logprobs[item] =
-      asfloat(source[(tree ? uint(TreeIdx.PathLogprobBits) : uint(FrontierIdx.PathLogprobBits)) * stride + index]);
+    let edge =
+      asfloat(source[(tree ? uint(TreeIdx.EdgeLogprobBits) : uint(FrontierIdx.EdgeLogprobBits)) * stride + index]);
+    scores[item] = parents[item] == 0 ? root_score + edge : edge;
     linearize_parents[slot] = uint16_t(parents[item]);
     open_mask |= (parents[item] == 0 ? 1u : 0u) << item;
   }
@@ -228,7 +230,7 @@ func LinearizeTree(
         continue;
       }
       let slot = tid + item * LINEARIZE_THREADS;
-      let logprob = path_logprobs[item];
+      let logprob = scores[item];
       first_open = min(first_open, slot);
       first_nan = min(first_nan, isnan(logprob) ? slot : FRONTIER_NO_WINNER);
       let better = logprob > best_logprob || (logprob == best_logprob && slot < best);
@@ -239,10 +241,12 @@ func LinearizeTree(
       uint4(float_order_key(asuint(best_logprob)), best, first_open, first_nan)
     );
     // A serial scan keeps its first open candidate when that score is NaN.
-    best = winner.z != FRONTIER_NO_WINNER && winner.z == winner.w ? winner.z : winner.y;
+    let keep_nan = winner.z != FRONTIER_NO_WINNER && winner.z == winner.w;
+    best = keep_nan ? winner.z : winner.y;
     if (best == FRONTIER_NO_WINNER) {
       break;
     }
+    let best_score = keep_nan ? asfloat(0x7fc00000u) : asfloat(float_order_bits(winner.x));
     if (tid == 0) {
       linearize_slots[kept] = uint16_t(best);
     }
@@ -250,7 +254,9 @@ func LinearizeTree(
     for (uint item = 0; item < LINEARIZE_SLOTS_PER_THREAD; item++) {
       let slot = tid + item * LINEARIZE_THREADS;
       kept_mask |= (slot == best ? 1u : 0u) << item;
-      children |= (parents[item] == best ? 1u : 0u) << item;
+      let child = parents[item] == best;
+      children |= (child ? 1u : 0u) << item;
+      scores[item] = child ? best_score + scores[item] : scores[item];
     }
     open_mask = (open_mask | children) & ~kept_mask;
     kept++;
