@@ -10,10 +10,10 @@ use crate::{
     },
     encodable_block::{
         linear::Linear,
-        mixer::attention::{KVCache, rope::PrecalculatedRoPE},
+        mixer::attention::{KVCache, rope::RoPE},
         mlp::Mlp,
         normalization::{Normalization, ShortcutMode},
-        weaver::{DATA_TYPE, ROPE_DATA_TYPE, WeaverEncodeError, WeaverNewError},
+        weaver::{DATA_TYPE, WeaverEncodeError, WeaverNewError},
     },
     safetensors::ParameterTree,
 };
@@ -95,7 +95,6 @@ impl<B: Backend> WeaverLayer<B> {
         let attention_prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
             context,
             DATA_TYPE,
-            ROPE_DATA_TYPE,
             head_dim,
             true,
             num_heads,
@@ -106,6 +105,8 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             false,
             0,
+            false,
+            false,
         )
         .map_err(WeaverNewError::Backend)?;
         let pre_attention_norm = Normalization::new(
@@ -171,7 +172,7 @@ impl<B: Backend> WeaverLayer<B> {
         &self,
         residual_input: impl BufferRef<Backend = B>,
         residual_state: impl BufferMut<Backend = B>,
-        rope: &PrecalculatedRoPE<B>,
+        rope: &RoPE<B>,
         token_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<PreparedPrefixAttention<B>, WeaverEncodeError<B>> {
@@ -196,8 +197,7 @@ impl<B: Backend> WeaverLayer<B> {
             Some(kv_cache.k_scales.as_mut()),
             Some(kv_cache.v_codes.as_mut()),
             Some(kv_cache.v_scales.as_mut()),
-            Some(&rope.cosines),
-            Some(&rope.sines),
+            Some(&rope.inverse_frequencies),
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
@@ -207,11 +207,15 @@ impl<B: Backend> WeaverLayer<B> {
             Default::default(),
             self.num_heads,
             Some(rope.dim),
+            Some(rope.scale),
+            Some(0),
             0,
             3 * self.model_dim,
             token_count,
             token_count,
             None,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
             command_buffer,
         );
         Ok(PreparedPrefixAttention {

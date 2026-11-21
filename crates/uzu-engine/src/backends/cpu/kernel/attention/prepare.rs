@@ -15,9 +15,8 @@ use crate::{
 
 #[kernel(AttentionPrepare)]
 #[variants(ElementT, bf16, f32)]
-#[variants(RopeT, f32)]
 #[variants(HEAD_DIM, 64, 128, 256, 512)]
-pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + Float, const HEAD_DIM: u32>(
+pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     qkvg: *const ElementT,
     q_codes: *mut i8,
     q_scales: *mut bf16,
@@ -25,8 +24,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     #[optional(append_kv)] k_scales: Option<*mut bf16>,
     #[optional(append_kv)] v_codes: Option<*mut u8>,
     #[optional(append_kv)] v_scales: Option<*mut bf16>,
-    #[optional(has_rope)] cosines: Option<*const RopeT>,
-    #[optional(has_rope)] sines: Option<*const RopeT>,
+    #[optional(has_rope)] rope_inverse_frequencies: Option<*const f32>,
     #[optional(has_query_norm_scales)] query_norm_scales: Option<*const f32>,
     #[optional(has_key_norm_scales)] key_norm_scales: Option<*const f32>,
     #[optional(has_value_norm_scales)] value_norm_scales: Option<*const f32>,
@@ -36,11 +34,15 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     norm_params: QKVNormParams,
     num_q_heads: u32,
     #[optional(has_rope)] rope_dim: Option<u32>,
+    #[optional(has_rope)] rope_scale: Option<f32>,
+    #[optional(has_rope)] rope_position_offset: Option<u32>,
     kv_token_offset: u32,
     input_row_stride: u32,
     suffix_length: u32,
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
+    #[optional(has_trie)] trie: Option<*const TrieNode>,
+    #[optional(has_rope_positions)] rope_positions: Option<*const u32>, // [token, rope_dim / 2]
     #[specialize] has_rope: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
@@ -50,6 +52,8 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
     #[specialize] has_value_norm_scales: bool,
     #[specialize] block_mean: bool,
     #[specialize] compression_ratio: u32,
+    #[specialize] has_trie: bool,
+    #[specialize] has_rope_positions: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
@@ -91,6 +95,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
             (2, has_value_norm_scales.then(|| value_norm_scales.unwrap()))
         };
         for token in 0..suffix_length {
+            let rope_row = if has_trie {
+                unsafe { (*trie.unwrap().add(token as usize)).height }
+            } else {
+                token
+            };
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             if block_mean {
                 let token = token as usize;
@@ -135,7 +144,22 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, RopeT: DataTypeRepr + F
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    apply_rope(source, cosines.unwrap(), sines.unwrap(), token as usize, channel, rope_dim)
+                    let position = if has_rope_positions {
+                        let half_rope_dim = rope_dim / 2;
+                        unsafe {
+                            *rope_positions.unwrap().add(token as usize * half_rope_dim + channel % half_rope_dim)
+                        }
+                    } else {
+                        rope_position_offset.unwrap() + rope_row
+                    };
+                    apply_rope(
+                        source,
+                        rope_inverse_frequencies.unwrap(),
+                        rope_scale.unwrap(),
+                        position,
+                        channel,
+                        rope_dim,
+                    )
                 } else {
                     unsafe { *source.add(channel) }
                 }

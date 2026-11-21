@@ -9,14 +9,20 @@ use crate::{
             kernel::TensorAddScaleKernel,
         },
     },
-    config::{token_mixer::attention::AttentionConfig, vision::VisionLayerConfig},
+    config::{
+        token_mixer::attention::AttentionConfig,
+        vision::{VisionLayerConfig, VisionRoPEConfig},
+    },
     data_type::{DataType, DataTypeRepr},
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{LinearMatmul, LinearMatmulError},
         mixer::{
             Mixer, MixerEncodeError,
-            attention::{Attention, AttentionNewError, rope::PrecalculatedRoPE},
+            attention::{
+                Attention, AttentionNewError,
+                rope::{RoPE, RoPEPositions},
+            },
         },
         mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -63,6 +69,7 @@ impl<B: Backend> VisionLayer<B> {
     pub async fn new(
         data_type: DataType,
         config: &VisionLayerConfig,
+        rope_config: &VisionRoPEConfig,
         parameter_tree: &ParameterTree<'_, B>,
         model_dim: u32,
         hidden_dim: u32,
@@ -72,6 +79,7 @@ impl<B: Backend> VisionLayer<B> {
         let attention = Self::load_padded_attention::<bf16>(
             data_type,
             &config.attention_config,
+            rope_config,
             &parameter_tree.subtree("attention"),
             model_dim,
             padded_head_dim,
@@ -130,7 +138,7 @@ impl<B: Backend> VisionLayer<B> {
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        rope: &PrecalculatedRoPE<B>,
+        rope_positions: &RoPEPositions<B>,
         row_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, VisionLayerEncodeError<B>> {
@@ -142,8 +150,13 @@ impl<B: Backend> VisionLayer<B> {
             .encode(&stream, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(VisionLayerEncodeError::Backend)?;
 
-        let attention =
-            self.attention.encode(hidden, Some(rope), &BatchTopology::flat(row_count, true), None, command_buffer)?;
+        let attention = self.attention.encode_at_positions(
+            hidden,
+            rope_positions,
+            &BatchTopology::flat(row_count),
+            None,
+            command_buffer,
+        )?;
 
         self.residual_add.encode(
             None::<&B::ScratchBuffer>,
@@ -178,6 +191,7 @@ impl<B: Backend> VisionLayer<B> {
     async fn load_padded_attention<T: DataTypeRepr>(
         data_type: DataType,
         config: &AttentionConfig,
+        rope_config: &VisionRoPEConfig,
         tree: &ParameterTree<'_, B>,
         model_dim: u32,
         padded_head_dim: u32,
@@ -264,10 +278,10 @@ impl<B: Backend> VisionLayer<B> {
         padded_config.head_dim = padded_head_dim;
         padded_config.scale = Some(config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()));
 
+        let rope = vision_rope(rope_config, context).map_err(VisionLayerNewError::Backend)?;
         let attention = Attention::with_projections(
             data_type,
-            true,
-            None,
+            Some(rope),
             &padded_config,
             Box::new(projection),
             Box::new(out_proj),
@@ -278,6 +292,22 @@ impl<B: Backend> VisionLayer<B> {
 
         Ok(attention)
     }
+}
+
+/// The first half of the frequency pairs rotates by the patch row, the second by the column, with the same frequencies
+fn vision_rope<B: Backend>(
+    rope_config: &VisionRoPEConfig,
+    context: &B::Context,
+) -> Result<RoPE<B>, B::Error> {
+    let half_dim = rope_config.head_dim / 2;
+    let frequency_count = rope_config.head_dim / 4;
+    // inv_freq = 1 / base ^ (arange(0, half_dim, 2) / half_dim)
+    let inverse_frequencies: Vec<f32> = (0..half_dim)
+        .map(|pair| 1.0 / rope_config.base.powf((2 * (pair % frequency_count)) as f32 / half_dim as f32))
+        .collect();
+
+    // Rows take their positions from the patch grid, so there is no sequence limit
+    RoPE::from_inverse_frequencies(&inverse_frequencies, 1.0, rope_config.head_dim, u32::MAX, context)
 }
 
 fn get_padded_buffer<B: Backend, T: DataTypeRepr>(

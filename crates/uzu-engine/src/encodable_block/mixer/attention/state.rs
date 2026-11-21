@@ -6,100 +6,58 @@ use crate::{
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{MixerState, attention::Attention},
+    encodable_block::mixer::{Mixer, MixerState, attention::Attention},
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
 
 #[derive(Clone, Copy)]
-pub struct KVCacheView {
-    prefix_len: u32,
-    ring: Option<RingParams>,
-}
-
-impl KVCacheView {
-    pub fn full(prefix_len: u32) -> Self {
-        Self {
-            prefix_len,
-            ring: None,
-        }
-    }
-
-    pub fn ring(
-        prefix_len: u32,
-        offset: u32,
-    ) -> Self {
-        Self {
-            prefix_len,
-            ring: Some(RingParams {
-                ring_offset: offset,
-                ring_length: prefix_len,
-            }),
-        }
-    }
-
-    pub fn prefix_len(self) -> u32 {
-        self.prefix_len
-    }
-
-    pub fn ring_params(self) -> Option<RingParams> {
-        self.ring
-    }
-}
-
-enum KVCacheState {
-    Full {
-        length: u32,
-    },
-    Ring {
-        offset: u32,
-        length: u32,
-        capacity: u32,
-    },
+pub struct KVCacheState {
+    context_length: u32,
+    /// RoPE position of the next row, behind `context_length` once an image has taken fewer positions than rows
+    rope_position: u32,
+    ring_capacity: Option<u32>,
 }
 
 impl KVCacheState {
-    fn full() -> Self {
-        Self::Full {
-            length: 0,
+    pub fn new(
+        context_length: u32,
+        ring_capacity: Option<u32>,
+    ) -> Self {
+        assert!(ring_capacity != Some(0), "zero ring capacity");
+        Self {
+            context_length,
+            rope_position: context_length,
+            ring_capacity,
         }
     }
 
-    fn ring(capacity: u32) -> Self {
-        assert!(capacity > 0, "zero ring capacity");
-        Self::Ring {
-            offset: 0,
-            length: 0,
-            capacity,
-        }
+    pub fn context_length(self) -> u32 {
+        self.context_length
     }
 
-    pub fn view(&self) -> KVCacheView {
-        match self {
-            Self::Full {
-                length,
-            } => KVCacheView::full(*length),
-            Self::Ring {
-                offset,
-                length,
-                capacity: _,
-            } => KVCacheView::ring(*length, *offset),
-        }
+    pub fn rope_position(self) -> u32 {
+        self.rope_position
+    }
+
+    pub fn prefix_len(self) -> u32 {
+        self.required_prefix_len(self.context_length)
+    }
+
+    pub fn ring_params(self) -> Option<RingParams> {
+        let ring_length = self.prefix_len();
+        // Rows are written round-robin, so once the ring is full the oldest one is the next to be overwritten.
+        self.ring_capacity.map(|capacity| RingParams {
+            ring_offset: (self.context_length - ring_length) % capacity,
+            ring_length,
+        })
     }
 
     fn required_prefix_len(
-        &self,
+        self,
         context_length: u32,
     ) -> u32 {
-        match self {
-            Self::Full {
-                ..
-            } => context_length,
-            Self::Ring {
-                capacity,
-                ..
-            } => context_length.min(*capacity),
-        }
+        self.ring_capacity.map_or(context_length, |capacity| context_length.min(capacity))
     }
 
     fn accept(
@@ -107,54 +65,26 @@ impl KVCacheState {
         accepted_indices: &[u32],
     ) -> Vec<Copy> {
         assert!(accepted_indices.is_sorted_by(|a, b| a < b), "unsorted accept");
-        let suffix_base = self.view().prefix_len();
+        let suffix_base = self.prefix_len();
+        let count = accepted_indices.len() as u32;
 
-        match self {
-            Self::Full {
-                length,
-            } => {
-                let mut copies = Vec::with_capacity(accepted_indices.len());
-                for (destination_index, accepted_index) in accepted_indices.iter().copied().enumerate() {
-                    let source = suffix_base + accepted_index;
-                    let destination = suffix_base + destination_index as u32;
-                    if source != destination {
-                        copies.push(Copy {
-                            source,
-                            destination,
-                        });
-                    }
-                }
-                *length += accepted_indices.len() as u32;
-                copies
-            },
-            Self::Ring {
-                offset,
-                length,
-                capacity,
-            } => {
-                let count = accepted_indices.len() as u32;
-                let mut copies = Vec::with_capacity(accepted_indices.len().min(*capacity as usize));
-                for (index, accepted_index) in accepted_indices.iter().copied().enumerate() {
-                    let source = suffix_base + accepted_index;
-                    let destination = (*offset + *length) % *capacity;
-                    // A copy is dead when a later accept in the same batch overwrites its
-                    // destination; emitting it would alias in a single kernel dispatch.
-                    if index as u32 + *capacity >= count && source != destination {
-                        copies.push(Copy {
-                            source,
-                            destination,
-                        });
-                    }
-
-                    if length < capacity {
-                        *length += 1;
-                    } else {
-                        *offset = (*offset + 1) % *capacity;
-                    }
-                }
-                copies
-            },
+        let mut copies = Vec::with_capacity(accepted_indices.len());
+        for (index, accepted_index) in accepted_indices.iter().copied().enumerate() {
+            let source = suffix_base + accepted_index;
+            let destination = self.ring_capacity.map_or(self.context_length, |capacity| self.context_length % capacity);
+            // A copy is dead when a later accept in the same batch overwrites its
+            // destination; emitting it would alias in a single kernel dispatch.
+            let is_dead = self.ring_capacity.is_some_and(|capacity| index as u32 + capacity < count);
+            if !is_dead && source != destination {
+                copies.push(Copy {
+                    source,
+                    destination,
+                });
+            }
+            self.context_length += 1;
+            self.rope_position += 1;
         }
+        copies
     }
 }
 
@@ -189,8 +119,8 @@ pub struct AttentionState<B: Backend> {
 }
 
 impl<B: Backend> AttentionState<B> {
-    pub fn view(&self) -> KVCacheView {
-        self.cache.view()
+    pub fn cache(&self) -> KVCacheState {
+        self.cache
     }
 
     pub fn create_empty(
@@ -198,20 +128,21 @@ impl<B: Backend> AttentionState<B> {
         max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<Self, B::Error> {
+        let max_rope_length = attention.max_context_length();
         if let Some(max_context_length) = max_context_length {
             assert!(
-                attention.max_rope_length.is_none_or(|max_rope_length| max_context_length <= max_rope_length),
+                max_rope_length.is_none_or(|max_rope_length| max_context_length <= max_rope_length),
                 "context exceeds RoPE length"
             );
         }
 
         let max_prefix_elements = attention.ring_capacity.unwrap_or_else(|| {
             max_context_length
-                .or(attention.max_rope_length)
+                .or(max_rope_length)
                 .expect("Cannot create full attention state with unlimited length for with no RoPE")
         });
 
-        let cache = attention.ring_capacity.map_or_else(KVCacheState::full, KVCacheState::ring);
+        let cache = KVCacheState::new(0, attention.ring_capacity);
 
         let num_kv_heads = attention.num_kv_heads.unwrap();
         let head_dim = attention.head_dim;
@@ -299,6 +230,13 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         }
 
         Ok(())
+    }
+
+    fn set_rope_position(
+        &mut self,
+        position: u32,
+    ) {
+        self.cache.rope_position = position;
     }
 }
 

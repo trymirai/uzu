@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    io,
-    path::Path,
-    sync::{Arc, mpsc::Sender},
-};
+use std::{collections::HashMap, io, mem::size_of, path::Path, sync::Arc};
 
 use derive_more::Debug;
 use serde::{Deserialize, Serialize};
@@ -12,25 +7,22 @@ use thiserror::Error;
 pub use crate::encodable_block::dflash::DFlashState;
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, TimestampSpan,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+        gpu_types::trie::TrieNode as GpuTrieNode,
+        kernel::{LinearizeChainKernel, LinearizeTreeKernel},
     },
     config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig},
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         confidence_head::{ConfidenceHead, ConfidenceHeadError},
-        dflash::{DFlash, DFlashEncodeError, DFlashNewError},
+        dflash::{DFlash, DFlashEncodeError, DFlashNewError, DFlashOutput},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
-        weaver::{ProposalNode, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
+        weaver::{EncodedWeaverTree, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
-    engine::language_model::grammar::Grammar,
     safetensors::{ParameterLoader, ParameterLoaderError},
-    trie::TrieNode,
-    utils::{
-        file,
-        timestamps::{record, wait},
-    },
+    utils::file,
 };
 
 #[derive(Debug, Error)]
@@ -47,6 +39,8 @@ pub enum DFlashTreeError<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum DFlashSpeculatorLoadError<B: Backend> {
+    #[error("backend error: {0}")]
+    Backend(#[source] B::Error),
     #[error("I/O error: {0}")]
     IO(#[from] io::Error),
     #[error("Serde error: {0}")]
@@ -86,12 +80,40 @@ pub struct DFlashTfmTreeShape {
     pub construction_method: DFlashTfmTreeConstructionMethod,
 }
 
+pub struct TreeProposal<B: Backend> {
+    pub topology: BatchTopology<B>,
+    pub token_ids: B::GlobalGpuBuffer,
+    /// Present iff sampling is stochastic.
+    pub seeds: Option<B::GlobalGpuBuffer>,
+}
+
+/// A draft whose tree is still to be proposed.
+pub struct TreeDraft<B: Backend> {
+    dflash_output: DFlashOutput<B>,
+    dflash_depth: u32,
+    root_position: u32,
+}
+
+enum ProposalSource<B: Backend> {
+    Argmax {
+        sampled: B::GlobalGpuBuffer,
+        chain_length: u32,
+    },
+    Weaver {
+        tree: EncodedWeaverTree<B>,
+        tree_slot_count: u32,
+        frontier_capacity: u32,
+    },
+}
+
 pub struct DFlashTfmSpeculator<B: Backend> {
     context: Arc<B::Context>,
     dflash: DFlash<B>,
     weaver: Option<Weaver<B>>,
     confidence_head: Option<ConfidenceHead<B>>,
     sampling: Sampling<B>,
+    linearize_chain: [<B::Kernels as Kernels>::LinearizeChainKernel; 2],
+    linearize_tree: [<B::Kernels as Kernels>::LinearizeTreeKernel; 2],
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
 }
@@ -162,12 +184,27 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let sampling = Sampling::new(draft_vocab_size, data_type);
 
+        let linearize_chain = [
+            <B::Kernels as Kernels>::LinearizeChainKernel::new(&*context, false)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+            <B::Kernels as Kernels>::LinearizeChainKernel::new(&*context, true)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+        ];
+        let linearize_tree = [
+            <B::Kernels as Kernels>::LinearizeTreeKernel::new(&*context, false)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+            <B::Kernels as Kernels>::LinearizeTreeKernel::new(&*context, true)
+                .map_err(DFlashSpeculatorLoadError::Backend)?,
+        ];
+
         Ok(Some(Self {
             context,
             dflash,
             weaver,
             confidence_head,
             sampling,
+            linearize_chain,
+            linearize_tree,
             config,
             shape,
         }))
@@ -221,20 +258,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         Some(shape)
     }
 
-    pub async fn propose_tree(
+    /// The number of draft rows a tree of `shape` is built from, or why it can't be built.
+    fn dflash_depth(
         &self,
-        state: &mut DFlashState<B>,
-        target_output_norm: impl BufferRef<Backend = B>,
-        target_output_token: u32,
-        target_embedding: &Embedding<B>,
-        shape: DFlashTfmTreeShape,
-        sampling_method: &SamplingMethod,
-        grammar: Option<&mut Grammar>,
-        prng: &PRng,
-        allocation_pool: Arc<B::AllocationPool>,
-        command_buffer_name: Option<&str>,
-        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
-    ) -> Result<TrieNode, DFlashTreeError<B>> {
+        shape: &DFlashTfmTreeShape,
+    ) -> Result<u32, DFlashTreeError<B>> {
         assert!(shape.tree_budget >= 2, "tree budget needs at least a root and one draft token");
 
         let block_size = self.dflash.block_size();
@@ -245,15 +273,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             )));
         }
 
-        let root_position = state.context_length();
-
-        let command_buffer = self
-            .context
-            .create_command_buffer(command_buffer_name, Some(allocation_pool))
-            .map_err(DFlashTreeError::Backend)?;
-        let mut command_buffer = record(command_buffer, timestamps);
-
-        let nodes = match shape.construction_method {
+        match &shape.construction_method {
             DFlashTfmTreeConstructionMethod::Argmax => {
                 if shape.tree_budget > dflash_depth {
                     return Err(DFlashTreeError::InvalidTreeShape(format!(
@@ -263,57 +283,9 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         dflash_depth
                     )));
                 }
-                let chain_length = shape.tree_budget - 1;
-                let mut nodes = Vec::with_capacity(shape.tree_budget as usize);
-                nodes.push(ProposalNode {
-                    token_id: target_output_token,
-                    depth: 0,
-                    logprob: 0.0,
-                    child_indices: vec![1],
-                });
-                let dflash_output = self.dflash.encode_draft(
-                    target_embedding,
-                    target_output_token,
-                    dflash_depth,
-                    state,
-                    &mut command_buffer,
-                )?;
-                let batch_topology = BatchTopology::flat(chain_length, true);
-                let sampled = self
-                    .sampling
-                    .encode(
-                        &dflash_output.logits,
-                        None::<&B::ConstantBuffer>,
-                        None::<&B::ConstantBuffer>,
-                        None::<&B::GlobalGpuBuffer>,
-                        None::<&B::ConstantBuffer>,
-                        &batch_topology,
-                        (0..chain_length).into(),
-                        &SamplingMethod::Greedy,
-                        &mut command_buffer,
-                    )
-                    .map_err(DFlashTreeError::Backend)?;
-                let completed =
-                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let tokens = self.context.copyout::<u32>(&sampled).await.map_err(DFlashTreeError::Backend)?;
-                drop(completed);
-                nodes.extend(tokens.into_iter().zip(1u32..).map(|(token_id, depth)| ProposalNode {
-                    token_id,
-                    depth,
-                    logprob: 0.0,
-                    child_indices: if depth < chain_length {
-                        vec![depth as usize + 1]
-                    } else {
-                        Vec::new()
-                    },
-                }));
-                nodes
             },
             DFlashTfmTreeConstructionMethod::Weaver {
-                rounds,
-                expand_per_round,
-                expand_width,
-                prune_sigma,
+                ..
             } => {
                 let weaver =
                     self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
@@ -333,15 +305,83 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         dflash_depth
                     )));
                 }
-                let dflash_output = self.dflash.encode_draft(
-                    target_embedding,
-                    target_output_token,
-                    dflash_depth,
-                    state,
-                    &mut command_buffer,
-                )?;
+            },
+        }
+
+        Ok(dflash_depth)
+    }
+
+    /// Encodes the draft that [`Self::propose_tree`] builds a tree of `shape` from.
+    pub fn encode_draft(
+        &self,
+        state: &mut DFlashState<B>,
+        target_output_token: impl BufferRef<Backend = B>,
+        target_embedding: &Embedding<B>,
+        shape: &DFlashTfmTreeShape,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TreeDraft<B>, DFlashTreeError<B>> {
+        let dflash_depth = self.dflash_depth(shape)?;
+        let root_position = state.context_length();
+        let dflash_output =
+            self.dflash.encode_draft(target_embedding, target_output_token, dflash_depth, state, command_buffer)?;
+
+        Ok(TreeDraft {
+            dflash_output,
+            dflash_depth,
+            root_position,
+        })
+    }
+
+    fn encode_proposal(
+        &self,
+        draft: &TreeDraft<B>,
+        target_output_norm: impl BufferRef<Backend = B>,
+        target_output_token: impl BufferRef<Backend = B, Buffer = B::GlobalGpuBuffer>,
+        target_embedding: &Embedding<B>,
+        shape: &DFlashTfmTreeShape,
+        sampling_method: &SamplingMethod,
+        prng: &PRng,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<ProposalSource<B>, DFlashTreeError<B>> {
+        let TreeDraft {
+            dflash_output,
+            dflash_depth,
+            root_position,
+        } = draft;
+
+        let source = match &shape.construction_method {
+            DFlashTfmTreeConstructionMethod::Argmax => {
+                let chain_length = shape.tree_budget - 1;
+                let batch_topology = BatchTopology::flat(chain_length);
+                let sampled = self
+                    .sampling
+                    .encode(
+                        &dflash_output.logits,
+                        None::<&B::ConstantBuffer>,
+                        None::<&B::ConstantBuffer>,
+                        None::<&B::GlobalGpuBuffer>,
+                        None::<&B::ConstantBuffer>,
+                        &batch_topology,
+                        (0..chain_length).into(),
+                        &SamplingMethod::Greedy,
+                        command_buffer,
+                    )
+                    .map_err(DFlashTreeError::Backend)?;
+                ProposalSource::Argmax {
+                    sampled,
+                    chain_length,
+                }
+            },
+            DFlashTfmTreeConstructionMethod::Weaver {
+                rounds,
+                expand_per_round,
+                expand_width,
+                prune_sigma,
+            } => {
+                let weaver =
+                    self.weaver.as_ref().expect("weaver tree construction requires a speculator with weaver weights");
                 let depth_seeds = (0..weaver.max_depth())
-                    .map(|depth| prng.derive(root_position as u64 + depth as u64))
+                    .map(|depth| prng.derive(*root_position as u64 + depth as u64))
                     .collect::<Box<[u64]>>();
                 let (head, prune_sigma) = match sampling_method {
                     SamplingMethod::Greedy => (None, None),
@@ -349,7 +389,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                         ..
                     } => match &self.confidence_head {
                         Some(head) => (Some(head), None),
-                        None => (None, prune_sigma),
+                        None => (None, *prune_sigma),
                     },
                 };
                 // The target samples argmax(l / T + G) = argmax(l + T G): the tree sees the noise scaled by T.
@@ -360,6 +400,18 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     } => *temperature,
                     _ => 1.0,
                 };
+                let weaver_shape = WeaverTreeShape {
+                    tree_budget: shape.tree_budget,
+                    max_depth: shape.max_tree_depth,
+                    dflash_depth: *dflash_depth,
+                    rounds: *rounds,
+                    expand_per_round: *expand_per_round,
+                    expand_width: *expand_width,
+                    noise_scale,
+                    prune_noise_scale: prune_sigma.map(|sigma| noise_scale / sigma),
+                };
+                let tree_slot_count = weaver_shape.slot_count();
+                let frontier_capacity = tree_slot_count * weaver_shape.expand_width;
                 let tree = weaver.encode_tree(
                     target_output_norm,
                     &dflash_output.draft_hidden,
@@ -367,61 +419,113 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                     &dflash_output.logits,
                     &depth_seeds,
                     target_output_token,
-                    WeaverTreeShape {
-                        tree_budget: shape.tree_budget,
-                        max_depth: shape.max_tree_depth,
-                        dflash_depth,
-                        rounds,
-                        expand_per_round,
-                        expand_width,
-                        noise_scale,
-                        prune_noise_scale: prune_sigma.map(|sigma| noise_scale / sigma),
-                    },
+                    weaver_shape,
                     head,
-                    &mut command_buffer,
+                    command_buffer,
                 )?;
-                let completed =
-                    wait(command_buffer.end_encoding().submit(), timestamps).await.map_err(DFlashTreeError::Backend)?;
-                let nodes = tree.read_nodes(&self.context).await.map_err(DFlashTreeError::Backend)?;
-                drop(completed);
-                nodes
+                ProposalSource::Weaver {
+                    tree,
+                    tree_slot_count,
+                    frontier_capacity,
+                }
             },
         };
 
-        fn recursive_build(
-            nodes: &[ProposalNode],
-            index: usize,
-            root_position: u32,
-            mut grammar: Option<&mut Grammar>,
-            prng: &PRng,
-        ) -> TrieNode {
-            let node = &nodes[index];
-            let mut trie_node = TrieNode::new(
-                node.token_id as u64,
-                prng.derive(root_position as u64 + node.depth as u64),
-                node.logprob,
-            );
-            for &child_index in &node.child_indices {
-                if let Some(grammar) = grammar.as_mut()
-                    && (grammar.is_terminated() || grammar.accept_token(nodes[child_index].token_id as u64).is_err())
-                {
-                    continue;
-                }
+        Ok(source)
+    }
 
-                let child = recursive_build(nodes, child_index, root_position, grammar.as_deref_mut(), prng);
+    /// Encodes the tree of `shape` over `draft`, which [`Self::encode_draft`] encoded for the same shape.
+    pub fn propose_tree(
+        &self,
+        draft: TreeDraft<B>,
+        target_output_norm: impl BufferRef<Backend = B>,
+        target_output_token: impl BufferRef<Backend = B, Buffer = B::GlobalGpuBuffer>,
+        target_embedding: &Embedding<B>,
+        shape: DFlashTfmTreeShape,
+        sampling_method: &SamplingMethod,
+        prng: &PRng,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TreeProposal<B>, DFlashTreeError<B>> {
+        let source = self.encode_proposal(
+            &draft,
+            target_output_norm,
+            target_output_token,
+            target_embedding,
+            &shape,
+            sampling_method,
+            prng,
+            command_buffer,
+        )?;
+        let root_position = draft.root_position;
 
-                if let Some(grammar) = grammar.as_mut() {
-                    grammar.rollback(1);
-                }
+        let budget = shape.tree_budget;
+        let context = &*self.context;
+        let word_bytes = size_of::<u32>();
+        let mut nodes =
+            context.create_buffer_gpu(budget as usize * size_of::<GpuTrieNode>()).map_err(DFlashTreeError::Backend)?;
+        let mut token_ids =
+            context.create_buffer_gpu(budget as usize * word_bytes).map_err(DFlashTreeError::Backend)?;
+        let with_seeds = matches!(sampling_method, SamplingMethod::Stochastic { .. });
+        let mut seeds = if with_seeds {
+            Some(context.create_buffer_gpu(budget as usize * size_of::<u64>()).map_err(DFlashTreeError::Backend)?)
+        } else {
+            None
+        };
 
-                trie_node.add(child).expect("tree children are selected without replacement");
-            }
-            trie_node
+        let prng_seed = prng.seed();
+        match &source {
+            ProposalSource::Argmax {
+                sampled,
+                chain_length,
+            } => {
+                self.linearize_chain[usize::from(with_seeds)].encode(
+                    sampled,
+                    target_output_token,
+                    &mut nodes,
+                    &mut token_ids,
+                    seeds.as_mut(),
+                    *chain_length,
+                    budget,
+                    prng_seed,
+                    root_position,
+                    command_buffer,
+                );
+            },
+            ProposalSource::Weaver {
+                tree,
+                tree_slot_count,
+                frontier_capacity,
+            } => {
+                // The linearize kernel's scratch: one selection-state word per
+                // weaver slot, then the DFS emission stack.
+                let total_slots = (*tree_slot_count + *frontier_capacity) as usize;
+                let mut stack = command_buffer
+                    .allocate_scratch((total_slots + 3 * (shape.max_tree_depth as usize + 2)) * word_bytes)
+                    .map_err(DFlashTreeError::Backend)?;
+                self.linearize_tree[usize::from(with_seeds)].encode(
+                    tree.packed_tree(),
+                    tree.frontier(),
+                    &mut nodes,
+                    &mut token_ids,
+                    seeds.as_mut(),
+                    &mut stack,
+                    *tree_slot_count,
+                    *frontier_capacity,
+                    budget,
+                    prng_seed,
+                    root_position,
+                    command_buffer,
+                );
+            },
         }
 
-        let mut trie = recursive_build(&nodes, 0, root_position, grammar, prng);
-        trie.prune_to_budget(shape.tree_budget as usize);
-        Ok(trie)
+        let is_flat = matches!(source, ProposalSource::Argmax { .. });
+
+        Ok(TreeProposal {
+            topology: BatchTopology::new(Some(nodes), budget, false, is_flat),
+            token_ids,
+            seeds,
+        })
     }
 }
 

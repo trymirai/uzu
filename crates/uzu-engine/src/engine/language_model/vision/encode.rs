@@ -11,7 +11,7 @@ use crate::{
     config::vision::VisionRoPEConfig,
     encodable_block::{
         linear::LinearEncodeError,
-        mixer::attention::{mrope::MRoPEPositions, rope::PrecalculatedRoPE},
+        mixer::attention::{mrope::MRoPEPositions, rope::RoPEPositions},
         mlp::MlpEncodeError,
         vision_layer::VisionLayerEncodeError,
     },
@@ -163,39 +163,22 @@ impl<B: Backend> VisionModel<B> {
         grid_height: u32,
         merge_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<PrecalculatedRoPE<B>, B::Error> {
-        let dim = rope_config.head_dim as usize;
-        let half_dim = dim / 2;
-        let frequency_count = dim / 4;
-        // inv_freq = 1 / base ^ (arange(0, half_dim, 2) / half_dim)
-        let inverse_frequencies: Vec<f32> =
-            (0..frequency_count).map(|j| 1.0 / rope_config.base.powf((2 * j) as f32 / half_dim as f32)).collect();
+    ) -> Result<RoPEPositions<B>, B::Error> {
+        let frequency_count = rope_config.head_dim / 4;
 
-        let rows = (grid_width * grid_height) as usize;
-        let mut cosines = vec![0.0; rows * dim];
-        let mut sines = vec![0.0; rows * dim];
-        for row in 0..rows {
-            let (x, y) = vision_patch_coordinates(row as u32, grid_width, merge_size);
-            for pair in 0..half_dim {
+        RoPEPositions::new(
+            (grid_width * grid_height) as usize,
+            rope_config.head_dim,
+            |row, pair| {
+                let (x, y) = vision_patch_coordinates(row as u32, grid_width, merge_size);
                 // the first quarter of channels rotates by the row, the second by the column
-                let coordinate = if pair < frequency_count {
+                if pair < frequency_count {
                     y
                 } else {
                     x
-                };
-                let angle = coordinate as f32 * inverse_frequencies[pair % frequency_count];
-                let (sine, cosine) = angle.sin_cos();
-                for channel in [row * dim + pair, row * dim + pair + half_dim] {
-                    cosines[channel] = cosine;
-                    sines[channel] = sine;
                 }
-            }
-        }
-
-        Ok(PrecalculatedRoPE {
-            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
-            sines: command_buffer.allocate_constant_from_slice(&sines)?,
-            dim: dim as u32,
-        })
+            },
+            command_buffer,
+        )
     }
 }

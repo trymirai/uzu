@@ -1,40 +1,49 @@
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu},
     config::rope::AnyRoPEConfig,
 };
 
-pub struct PrecalculatedRoPE<B: Backend> {
-    pub cosines: B::ConstantBuffer,
-    pub sines: B::ConstantBuffer,
+pub struct RoPE<B: Backend> {
+    pub inverse_frequencies: B::GlobalGpuBuffer,
+    pub scale: f32,
     pub dim: u32,
+    pub max_sequence_length: u32,
 }
 
-impl<B: Backend> PrecalculatedRoPE<B> {
-    pub fn precalculate(
-        rope_config: &AnyRoPEConfig,
-        token_positions: &[u32],
+/// Positions the rows of one batch rotate by, in place of the ones that follow the context
+pub struct RoPEPositions<B: Backend> {
+    /// `[row, dim / 2]`
+    pub positions: B::ConstantBuffer,
+}
+
+impl<B: Backend> RoPEPositions<B> {
+    /// `position(row, pair_index)` is the position frequency pair `pair_index` of row `row` rotates by
+    pub fn new(
+        row_count: usize,
+        dim: u32,
+        position: impl Fn(usize, u32) -> u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<Self, B::Error> {
-        Self::precalculate_with(
-            rope_config,
-            token_positions.len(),
-            |token_index, _| token_positions[token_index],
-            command_buffer,
-        )
-    }
+        let positions = (0..row_count)
+            .flat_map(|row| (0..dim / 2).map(move |pair_index| (row, pair_index)))
+            .map(|(row, pair_index)| position(row, pair_index))
+            .collect::<Box<[u32]>>();
 
-    /// `token_position(token_index, pair_index)` is the position frequency pair `pair_index` of token `token_index`
-    /// rotates by
-    pub(super) fn precalculate_with(
+        Ok(Self {
+            positions: command_buffer.allocate_constant_from_slice(&positions)?,
+        })
+    }
+}
+
+impl<B: Backend> RoPE<B> {
+    pub fn new(
         rope_config: &AnyRoPEConfig,
-        token_count: usize,
-        token_position: impl Fn(usize, u32) -> u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        context: &B::Context,
     ) -> Result<Self, B::Error> {
         let head_dim = *rope_config.head_dim();
         assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
         let half_dim = head_dim / 2;
-        let attention_scaling_factor = match rope_config {
+        let scale = match rope_config {
             AnyRoPEConfig::YARNRoPEConfig(config) => 0.1 * config.scaling_factor.ln() + 1.0,
             AnyRoPEConfig::LongRoPEConfig(config) if config.scaling_factor > 1.0 => {
                 (1.0 + config.scaling_factor.ln() / (config.original_context_length as f32).ln()).sqrt()
@@ -42,10 +51,7 @@ impl<B: Backend> PrecalculatedRoPE<B> {
             _ => 1.0,
         };
 
-        let element_count = token_count * head_dim as usize;
-        let half_offset = half_dim as usize;
-        let mut sines = vec![0.0; element_count];
-        let mut cosines = vec![0.0; element_count];
+        let mut inverse_frequencies = Vec::with_capacity(half_dim as usize);
         for pair_index in 0..half_dim {
             let channel_index = pair_index * 2;
             let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
@@ -105,22 +111,34 @@ impl<B: Backend> PrecalculatedRoPE<B> {
                 },
             };
 
-            for token_index in 0..token_count {
-                let embedding = token_position(token_index, pair_index) as f32 * inverse_frequency;
-                let sine = embedding.sin() * attention_scaling_factor;
-                let cosine = embedding.cos() * attention_scaling_factor;
-                let pair_offset = token_index * head_dim as usize + pair_index as usize;
-                sines[pair_offset] = sine;
-                sines[pair_offset + half_offset] = sine;
-                cosines[pair_offset] = cosine;
-                cosines[pair_offset + half_offset] = cosine;
-            }
+            inverse_frequencies.push(inverse_frequency);
         }
 
+        Self::from_inverse_frequencies(
+            &inverse_frequencies,
+            scale,
+            head_dim,
+            *rope_config.max_sequence_length(),
+            context,
+        )
+    }
+
+    /// `inverse_frequencies` has one frequency per pair of the `dim` rotated channels
+    pub fn from_inverse_frequencies(
+        inverse_frequencies: &[f32],
+        scale: f32,
+        dim: u32,
+        max_sequence_length: u32,
+        context: &B::Context,
+    ) -> Result<Self, B::Error> {
+        assert_eq!(inverse_frequencies.len(), (dim / 2) as usize, "RoPE takes a frequency per channel pair");
+        let mut buffer = context.create_buffer_cpu_gpu(size_of_val(inverse_frequencies))?;
+        buffer.copyin(inverse_frequencies);
         Ok(Self {
-            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
-            sines: command_buffer.allocate_constant_from_slice(&sines)?,
-            dim: *rope_config.head_dim(),
+            inverse_frequencies: buffer.handoff()?,
+            scale,
+            dim,
+            max_sequence_length,
         })
     }
 }

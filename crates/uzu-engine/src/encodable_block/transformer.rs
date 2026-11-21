@@ -10,10 +10,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::InputRhtParameters,
-        mixer::{
-            MixerState,
-            attention::{mrope::MRoPEPositions, rope::PrecalculatedRoPE},
-        },
+        mixer::{MixerState, attention::mrope::MRoPEPositions},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
@@ -30,7 +27,7 @@ enum TransformerLayerStateType<B: Backend> {
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
-    pub rope_position: u32,
+    rope_position: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -41,6 +38,26 @@ pub struct TransformerEncodeOutput<B: Backend> {
 impl<B: Backend> TransformerState<B> {
     pub fn context_length(&self) -> u32 {
         self.context_length
+    }
+
+    /// RoPE position of the next row
+    pub fn rope_position(&self) -> u32 {
+        self.rope_position
+    }
+
+    pub fn set_rope_position(
+        &mut self,
+        position: u32,
+    ) {
+        for layer_state in &mut self.layer_states {
+            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
+                continue;
+            };
+
+            layer_state.set_rope_position(position);
+        }
+
+        self.rope_position = position;
     }
 
     pub fn prepare(
@@ -118,7 +135,9 @@ pub enum TransformerEncodeError<B: Backend> {
 
 pub struct Transformer<B: Backend> {
     ropes: Box<[AnyRoPEConfig]>,
-    layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
+    layers: Box<[TransformerLayer<B>]>,
+    /// Index of the layer's RoPE config in `ropes`
+    layer_ropes: Box<[Option<usize>]>,
     output_norm: Option<Normalization<B>>,
     model_dim: u32,
     residual_head: ResidualHead<B>,
@@ -147,6 +166,7 @@ impl<B: Backend> Transformer<B> {
 
         let num_layers = transformer_config.layer_configs.len() as u32;
         let mut layers = Vec::with_capacity(num_layers as usize);
+        let mut layer_ropes = Vec::with_capacity(num_layers as usize);
         for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
             let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
@@ -181,7 +201,8 @@ impl<B: Backend> Transformer<B> {
             )
             .await?;
 
-            layers.push((layer, rope));
+            layers.push(layer);
+            layer_ropes.push(rope);
         }
 
         let output_norm = match (&transformer_config.output_norm_config, output_norm_hadamard_factors) {
@@ -205,6 +226,7 @@ impl<B: Backend> Transformer<B> {
         Ok(Self {
             ropes: ropes.into_boxed_slice(),
             layers: layers.into_boxed_slice(),
+            layer_ropes: layer_ropes.into_boxed_slice(),
             output_norm,
             model_dim: transformer_config.model_dim,
             residual_head,
@@ -227,23 +249,21 @@ impl<B: Backend> Transformer<B> {
 
     pub fn speculation_supported(&self) -> bool {
         matches!(self.residual_head, ResidualHead::Additive)
-            && self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
+            && self.layers.iter().all(|layer| layer.mixer.speculation_supported())
     }
 
     pub fn max_context_length(&self) -> Option<u32> {
-        self.layers.iter().map(|(layer, _rope_index)| layer.mixer.max_context_length()).fold(None, |acc, el| {
-            match (acc, el) {
-                (Some(a), Some(b)) => Some(u32::min(a, b)),
-                (Some(x), None) | (None, Some(x)) => Some(x),
-                (None, None) => None,
-            }
+        self.layers.iter().map(|layer| layer.mixer.max_context_length()).fold(None, |acc, el| match (acc, el) {
+            (Some(a), Some(b)) => Some(u32::min(a, b)),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
         })
     }
 
     pub fn prefill_cache_layer_count(&self) -> usize {
         let num_layers = self.layers.len();
         let Some(last_owned_kv_layer_index) =
-            self.layers.iter().rposition(|(layer, _rope_index)| layer.kv_source_layer_index.is_none())
+            self.layers.iter().rposition(|layer| layer.kv_source_layer_index.is_none())
         else {
             return num_layers;
         };
@@ -263,7 +283,7 @@ impl<B: Backend> Transformer<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|(layer, _rope)| match layer.kv_source_layer_index {
+            .map(|layer| match layer.kv_source_layer_index {
                 None => {
                     layer.mixer.create_empty_state(max_context_length, context).map(TransformerLayerStateType::Owned)
                 },
@@ -284,7 +304,7 @@ impl<B: Backend> Transformer<B> {
         &self,
         input: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         state: Option<&mut TransformerState<B>>,
@@ -308,7 +328,7 @@ impl<B: Backend> Transformer<B> {
         input: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         positions: Option<&MRoPEPositions>,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
@@ -331,21 +351,21 @@ impl<B: Backend> Transformer<B> {
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
-        let rope_position = state.as_ref().map(|state| state.rope_position).unwrap_or(0);
-        let token_positions = batch_dim.heights().map(|rel_pos| rope_position + rel_pos).collect::<Box<[u32]>>();
-
-        let precalculated_ropes = self
-            .ropes
-            .iter()
-            .map(|rope_config| match positions {
-                Some(positions) => positions.precalculate(rope_config, command_buffer),
-                None => PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer),
+        let rope_positions = positions
+            .map(|positions| {
+                self.ropes
+                    .iter()
+                    .map(|rope_config| positions.precalculate(rope_config, command_buffer))
+                    .collect::<Result<Box<[_]>, B::Error>>()
             })
-            .collect::<Result<Box<[_]>, B::Error>>()
+            .transpose()
             .map_err(TransformerEncodeError::Backend)?;
 
-        for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
-            let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
+        for layer in self.layers.iter().take(layer_count) {
+            let layer_rope_positions = rope_positions
+                .as_ref()
+                .zip(self.layer_ropes[layer.layer_index as usize])
+                .map(|(rope_positions, rope_index)| &rope_positions[rope_index]);
 
             let layer_state = if let Some(state) = &mut state {
                 Some(match &mut state.layer_states[layer.layer_index as usize] {
@@ -363,8 +383,17 @@ impl<B: Backend> Transformer<B> {
                 None
             };
 
-            stream =
-                layer.encode(stream, per_layer_inputs, precalculated_rope, batch_dim, layer_state, command_buffer)?;
+            stream = match layer_rope_positions {
+                Some(positions) => layer.encode_at_positions(
+                    stream,
+                    per_layer_inputs,
+                    positions,
+                    batch_dim,
+                    layer_state,
+                    command_buffer,
+                )?,
+                None => layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?,
+            };
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {

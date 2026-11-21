@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../generated/trie.h"
 
 template <typename T>
 VARIANTS(T, float, half, bfloat)
@@ -162,7 +163,7 @@ PUBLIC KERNEL(ShortConvTrie)(
     device const WeightT* w,
     device const WeightT* b OPTIONAL(has_bias),
     device const T* base_state,
-    device const int* parents,
+    device const uzu::trie::TrieNode* trie,
     device T* out,
     device T* suffix_state,
     constant const uint& suffix_len,
@@ -186,7 +187,7 @@ PUBLIC KERNEL(ShortConvTrie)(
     float x = x_in * pre_conv_gate;
 
     // Select parent state (root uses base_state)
-    const int parent = parents[node];
+    const int parent = trie[node].parent;
     const device T* parent_state = (parent < 0) ? (base_state + base_state_offset)
                                                 : (suffix_state + (parent * model_dim + channel_idx) * state_stride);
 

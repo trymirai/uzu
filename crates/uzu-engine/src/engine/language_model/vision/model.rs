@@ -127,6 +127,7 @@ impl<B: Backend> VisionModel<B> {
             let vision_layer = VisionLayer::new(
                 data_type,
                 layer_config,
+                &config.encoder_config.rope_config,
                 &layer_tree,
                 model_dim,
                 config.encoder_config.hidden_dim,

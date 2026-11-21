@@ -1,7 +1,7 @@
 use crate::{
     backends::common::{Backend, CommandBuffer},
     config::rope::AnyRoPEConfig,
-    encodable_block::mixer::attention::rope::PrecalculatedRoPE,
+    encodable_block::mixer::attention::rope::RoPEPositions,
 };
 
 pub struct MRoPEPositions {
@@ -13,14 +13,15 @@ impl MRoPEPositions {
         &self,
         rope_config: &AnyRoPEConfig,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<PrecalculatedRoPE<B>, B::Error> {
+    ) -> Result<RoPEPositions<B>, B::Error> {
+        let head_dim = *rope_config.head_dim();
         let frequency_pairs_per_axis = match rope_config {
             AnyRoPEConfig::MultimodalRoPEConfig(multimodal_config) => multimodal_config.frequency_pairs_per_axis,
             // Without M-RoPE every pair rotates by the temporal position
             _ => {
-                return PrecalculatedRoPE::precalculate_with(
-                    rope_config,
+                return RoPEPositions::new(
                     self.positions.len(),
+                    head_dim,
                     |token_index, _| self.positions[token_index][0],
                     command_buffer,
                 );
@@ -28,9 +29,9 @@ impl MRoPEPositions {
         };
 
         // `Transformer::new` checks that the frequency pairs cover the RoPE head
-        PrecalculatedRoPE::precalculate_with(
-            rope_config,
+        RoPEPositions::new(
             self.positions.len(),
+            head_dim,
             |token_index, pair_index| {
                 self.positions[token_index][interleaved_axis(pair_index, frequency_pairs_per_axis)]
             },

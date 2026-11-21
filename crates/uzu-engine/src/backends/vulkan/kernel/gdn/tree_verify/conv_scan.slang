@@ -1,6 +1,7 @@
 import definitions;
 import common.activation;
 import generated.activation_type;
+import generated.trie;
 
 [[Variants("T", "float, bf16")]]
 [[Kernel]] [[Public]]
@@ -10,7 +11,7 @@ func ConvTreeScan<T: IStorageFloat>(
   Ptr<float, Access.Read> conv_weight,
   [[Optional("has_bias")]] Ptr<float, Access.Read> bias,
   Ptr<float, Access.Read> base_state,
-  Ptr<int, Access.Read> parents,
+  Ptr<TrieNode, Access.Read> trie,
   Ptr<T, Access.ReadWrite> out_proj,
   Ptr<float, Access.ReadWrite> suffix_state,
   uint suffix_len,
@@ -44,7 +45,7 @@ func ConvTreeScan<T: IStorageFloat>(
     acc = fma(sample, weight, acc);
     if (h < taps) {
       suffix_state[state_offset + taps - 1 - h] = sample;
-      source = source >= 0 ? parents[uint(source)] : source - 1;
+      source = source >= 0 ? trie[uint(source)].parent : source - 1;
     }
   }
   out_proj[proj] = T.fromFloat(activate(acc, ActivationType.SILU));
