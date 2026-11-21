@@ -55,6 +55,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Speculator(#[from] DFlashSpeculatorLoadError<B>),
     #[error("Tokenizer error: {0}")]
     Tokenizer(#[from] tokenizers::Error),
+    #[error("Image prefill does not support decoders with per-layer embeddings")]
+    UnsupportedVisionPerLayerEmbedding,
     #[error("Vision error: {0}")]
     Vision(#[from] VisionLoadError<B>),
 }
@@ -65,6 +67,12 @@ impl<B: Backend> Engine<B> {
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
+
+        let vision_path = model_path.join("vision");
+        let vision_path = file::exists(&vision_path).await.then_some(vision_path);
+        if vision_path.is_some() && config.decoder_config.ple_model_config.is_some() {
+            return Err(EngineLoadLanguageModelError::UnsupportedVisionPerLayerEmbedding);
+        }
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;
 
@@ -100,8 +108,6 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
-        let vision_path = model_path.join("vision");
-        let vision_path = file::exists(&vision_path).await.then_some(vision_path);
         let vision_model = if let Some(path) = vision_path.as_deref() {
             Some(VisionModel::new(path, data_type, decoder.embedding().model_dim(), self.context.as_ref()).await?)
         } else {
