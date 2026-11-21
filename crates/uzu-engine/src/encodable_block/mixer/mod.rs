@@ -11,7 +11,7 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{InputRhtParameters, LinearEncodeError},
         mixer::{
-            attention::{Attention, AttentionEncodeError, AttentionNewError, rope::PositionedRoPE},
+            attention::{Attention, AttentionEncodeError, AttentionNewError},
             delta_net::{DeltaNet, DeltaNetNewError},
             short_conv::{ShortConv, ShortConvNewError},
         },
@@ -71,7 +71,6 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
     fn encode(
         &self,
         hidden: B::ScratchBuffer,
-        rope: Option<&PositionedRoPE<'_, B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,

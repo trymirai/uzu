@@ -19,7 +19,7 @@ use crate::{
         },
     },
     data_type::DataType,
-    encodable_block::mixer::attention::{KVCache, KVCacheView},
+    encodable_block::mixer::attention::{KVCache, KVCacheState},
     tests::{
         assert::{assert_eq_float, assert_parity},
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
@@ -236,7 +236,7 @@ fn attention_matches_cpu() {
                         sinks: None,
                         suffix_length: suffix as u32,
                         trie: trie.as_ref(),
-                        cache: KVCacheView::full(prefix as u32),
+                        cache: KVCacheState::new(prefix as u32, None),
                         gate: gate.as_ref(),
                         key_blocks: key_blocks.as_ref().map(|query_blocks| KeyBlocks {
                             query_blocks,

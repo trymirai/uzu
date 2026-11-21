@@ -833,20 +833,26 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             }
         } else if let Some((mut queued, emitted_len)) = self.emitting.take() {
             let accept_pending = self.submitter.encode_accept(&mut queued, emitted_len)?;
+
+            let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
+                self.submitter.model_state.transformer_state.context_length() >= max_context_length
+            });
+
+            let queued_pass = if !context_full {
+                Some(self.submitter.get_and_queue_pass(GenerationJob::Resolved(queued)).await?)
+            } else {
+                None
+            };
+
+            // NOTE: not a CPU bubble. The next pass has already been queued behind the accept.
             if let Some(pending) = accept_pending {
                 wait(pending, self.submitter.options.timestamps.as_ref())
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
             }
 
-            let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
-                self.submitter.model_state.transformer_state.context_length() >= max_context_length
-            });
-
-            if !context_full {
-                // Important to keep `last_resolved` alive
-                let (last_resolved, new_job) =
-                    self.submitter.get_and_queue_pass(GenerationJob::Resolved(queued)).await?;
+            // Important to keep `last_resolved` alive
+            if let Some((last_resolved, new_job)) = queued_pass {
                 let resolved_new = self.submitter.resolve_take(new_job).await?;
                 drop(last_resolved);
                 self.emitting = Some((resolved_new, 0))

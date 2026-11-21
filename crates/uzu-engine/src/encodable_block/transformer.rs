@@ -5,12 +5,12 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
-    config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
+    config::transformer::TransformerConfig,
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         linear::InputRhtParameters,
-        mixer::{MixerState, attention::rope::RoPE},
+        mixer::MixerState,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
         transformer_layer::{TransformerLayer, TransformerLayerError},
@@ -107,8 +107,7 @@ pub enum TransformerEncodeError<B: Backend> {
 }
 
 pub struct Transformer<B: Backend> {
-    ropes: Box<[RoPE<B>]>,
-    layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
+    layers: Box<[TransformerLayer<B>]>,
     output_norm: Option<Normalization<B>>,
     model_dim: u32,
     residual_head: ResidualHead<B>,
@@ -123,8 +122,6 @@ impl<B: Backend> Transformer<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
-        let mut ropes: Vec<AnyRoPEConfig> = Vec::new();
-
         let residual_config = transformer_config.residual_config.clone();
         let residual_head = ResidualHead::new(
             &residual_config,
@@ -140,13 +137,6 @@ impl<B: Backend> Transformer<B> {
         for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
             let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
-            let rope = layer_config.rope_config.as_ref().map(|layer_rope_config| {
-                ropes.iter().position(|rope_config| rope_config == layer_rope_config).unwrap_or_else(|| {
-                    ropes.push(layer_rope_config.clone());
-                    ropes.len() - 1
-                })
-            });
-
             let layer = TransformerLayer::new(
                 transformer_config.model_dim,
                 transformer_config.hidden_dim,
@@ -160,7 +150,7 @@ impl<B: Backend> Transformer<B> {
             )
             .await?;
 
-            layers.push((layer, rope));
+            layers.push(layer);
         }
 
         let output_norm = match (&transformer_config.output_norm_config, output_norm_hadamard_factors) {
@@ -181,14 +171,7 @@ impl<B: Backend> Transformer<B> {
             (None, None) => None,
         };
 
-        let ropes = ropes
-            .iter()
-            .map(|rope_config| RoPE::new(rope_config, context))
-            .collect::<Result<Box<[_]>, _>>()
-            .map_err(TransformerNewError::Backend)?;
-
         Ok(Self {
-            ropes,
             layers: layers.into_boxed_slice(),
             output_norm,
             model_dim: transformer_config.model_dim,
@@ -212,23 +195,21 @@ impl<B: Backend> Transformer<B> {
 
     pub fn speculation_supported(&self) -> bool {
         matches!(self.residual_head, ResidualHead::Additive)
-            && self.layers.iter().all(|(layer, _rope)| layer.mixer.speculation_supported())
+            && self.layers.iter().all(|layer| layer.mixer.speculation_supported())
     }
 
     pub fn max_context_length(&self) -> Option<u32> {
-        self.layers.iter().map(|(layer, _rope_index)| layer.mixer.max_context_length()).fold(None, |acc, el| {
-            match (acc, el) {
-                (Some(a), Some(b)) => Some(u32::min(a, b)),
-                (Some(x), None) | (None, Some(x)) => Some(x),
-                (None, None) => None,
-            }
+        self.layers.iter().map(|layer| layer.mixer.max_context_length()).fold(None, |acc, el| match (acc, el) {
+            (Some(a), Some(b)) => Some(u32::min(a, b)),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => None,
         })
     }
 
     pub fn prefill_cache_layer_count(&self) -> usize {
         let num_layers = self.layers.len();
         let Some(last_owned_kv_layer_index) =
-            self.layers.iter().rposition(|(layer, _rope_index)| layer.kv_source_layer_index.is_none())
+            self.layers.iter().rposition(|layer| layer.kv_source_layer_index.is_none())
         else {
             return num_layers;
         };
@@ -248,7 +229,7 @@ impl<B: Backend> Transformer<B> {
         let layer_states = self
             .layers
             .iter()
-            .map(|(layer, _rope)| match layer.kv_source_layer_index {
+            .map(|layer| match layer.kv_source_layer_index {
                 None => {
                     layer.mixer.create_empty_state(max_context_length, context).map(TransformerLayerStateType::Owned)
                 },
@@ -291,12 +272,7 @@ impl<B: Backend> Transformer<B> {
         let mut hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
-        let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
-        let positioned_ropes = self.ropes.iter().map(|rope| rope.at(context_length)).collect::<Box<[_]>>();
-
-        for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
-            let rope = layer_rope_index.map(|i| &positioned_ropes[i]);
-
+        for layer in self.layers.iter().take(layer_count) {
             let layer_state = if let Some(state) = &mut state {
                 Some(match &mut state.layer_states[layer.layer_index as usize] {
                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
@@ -313,7 +289,7 @@ impl<B: Backend> Transformer<B> {
                 None
             };
 
-            stream = layer.encode(stream, per_layer_inputs, rope, batch_dim, layer_state, command_buffer)?;
+            stream = layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?;
 
             if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {

@@ -16,7 +16,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::{DataType, DataTypeRepr},
-    encodable_block::mixer::attention::{KVCache, KVCacheView},
+    encodable_block::mixer::attention::{KVCache, KVCacheState},
     tests::{
         assert::assert_eq_float,
         helpers::{
@@ -26,9 +26,17 @@ use crate::{
     },
 };
 
+/// A ring cache holding `prefix` rows, wrapped far enough that its oldest row is `offset`.
+fn ring_cache(
+    prefix: u32,
+    offset: u32,
+) -> KVCacheState {
+    KVCacheState::new(prefix + offset, Some(prefix.max(1)))
+}
+
 fn run<B: Backend, T: DataTypeRepr>(
     config: AttentionKernelConfig,
-    cache: KVCacheView,
+    cache: KVCacheState,
     nodes: &[TrieNode],
     is_trie: bool,
 ) -> (Vec<T>, f32) {
@@ -199,9 +207,9 @@ fn attention_windows_sinks_and_head_dims() {
                 sparse_compression_ratio: None,
             };
             let cache = if ring {
-                KVCacheView::ring(prefix, 11)
+                ring_cache(prefix, 11)
             } else {
-                KVCacheView::full(prefix)
+                KVCacheState::new(prefix, None)
             };
             for is_trie in [false, true] {
                 for_each_non_cpu_backend!(|B| {
@@ -247,8 +255,8 @@ fn attention_large_tree_and_f32() {
         sparse_compression_ratio: None,
     };
     for_each_non_cpu_backend!(|B| {
-        let (expected, _) = run::<Cpu, f32>(config, KVCacheView::full(37), nodes, true);
-        let (actual, tolerance) = run::<B, f32>(config, KVCacheView::full(37), nodes, true);
+        let (expected, _) = run::<Cpu, f32>(config, KVCacheState::new(37, None), nodes, true);
+        let (actual, tolerance) = run::<B, f32>(config, KVCacheState::new(37, None), nodes, true);
         assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
     });
     for (causal, ring, window) in
@@ -268,9 +276,9 @@ fn attention_large_tree_and_f32() {
             sparse_compression_ratio: None,
         };
         let cache = if ring {
-            KVCacheView::ring(37, 11)
+            ring_cache(37, 11)
         } else {
-            KVCacheView::full(37)
+            KVCacheState::new(37, None)
         };
         for is_trie in [false, true] {
             for_each_non_cpu_backend!(|B| {
@@ -308,7 +316,7 @@ fn attention_single_query() {
                         sparse_compression_ratio: None,
                     };
                     let cache = if ring {
-                        KVCacheView::ring(
+                        ring_cache(
                             prefix,
                             if prefix > 0 {
                                 11
@@ -317,7 +325,7 @@ fn attention_single_query() {
                             },
                         )
                     } else {
-                        KVCacheView::full(prefix)
+                        KVCacheState::new(prefix, None)
                     };
                     for_each_non_cpu_backend!(|B| {
                         let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, false);
@@ -354,9 +362,9 @@ fn attention_vector_partial_rows() {
                 sparse_compression_ratio: None,
             };
             let cache = if ring {
-                KVCacheView::ring(prefix, 7)
+                ring_cache(prefix, 7)
             } else {
-                KVCacheView::full(prefix)
+                KVCacheState::new(prefix, None)
             };
             for_each_non_cpu_backend!(|B| {
                 let (expected, _) = run::<Cpu, f32>(config, cache, nodes, true);

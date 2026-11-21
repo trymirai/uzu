@@ -24,7 +24,7 @@ use crate::{
         confidence_head::{ConfidenceHead, ConfidenceHeadError, ConfidenceHeadStep},
         embedding::{Embedding, EmbeddingError},
         linear::{Linear, LinearBlockError, LinearEncodeError, OutputBasis},
-        mixer::attention::{KVCache, KVCacheView, rope::RoPE},
+        mixer::attention::{KVCache, KVCacheState, rope::RoPE},
         mlp::{MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         weaver_layer::{PreparedPrefixAttention, WeaverLayer},
@@ -351,7 +351,7 @@ impl<B: Backend> Weaver<B> {
                 query_scales,
                 kv_cache,
             } = layer.encode_prefix_attention(&residual_input, &mut residual_state, rope, depth, command_buffer)?;
-            let cache = KVCacheView::full(0);
+            let cache = KVCacheState::new(0, None);
             let attention_output = layer
                 .prefix_attention
                 .encode(
