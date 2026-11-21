@@ -9,7 +9,6 @@ mod gdn;
 mod linearize_tree_test;
 mod logit_transform_test;
 mod matmul;
-mod moe;
 mod normalization_test;
 mod pooling;
 mod radix_top_k_small_test;
