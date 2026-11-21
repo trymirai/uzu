@@ -14,7 +14,6 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 #[derive(Clone, Copy)]
 pub struct KVCacheState {
     context_length: u32,
-    /// RoPE position of the next row, behind `context_length` once an image has taken fewer positions than rows
     rope_position: u32,
     ring_capacity: Option<u32>,
 }

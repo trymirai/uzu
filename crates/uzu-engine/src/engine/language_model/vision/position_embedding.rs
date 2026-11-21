@@ -56,7 +56,6 @@ impl<B: Backend> VisionPositionEmbedding<B> {
         })
     }
 
-    /// Adds the position embedding, resized to the `grid_width` x `grid_height` patch grid, to `stream` in place.
     pub fn encode(
         &self,
         stream: impl BufferMut<Backend = B>,

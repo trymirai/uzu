@@ -3,21 +3,11 @@ use crate::{
     config::rope::AnyRoPEConfig,
 };
 
-pub struct RoPE<B: Backend> {
-    pub inverse_frequencies: B::GlobalGpuBuffer,
-    pub scale: f32,
-    pub dim: u32,
-    pub max_sequence_length: u32,
-}
-
-/// Positions the rows of one batch rotate by, in place of the ones that follow the context
 pub struct RoPEPositions<B: Backend> {
-    /// `[row, dim / 2]`
     pub positions: B::ConstantBuffer,
 }
 
 impl<B: Backend> RoPEPositions<B> {
-    /// `position(row, pair_index)` is the position frequency pair `pair_index` of row `row` rotates by
     pub fn new(
         row_count: usize,
         dim: u32,
@@ -33,6 +23,13 @@ impl<B: Backend> RoPEPositions<B> {
             positions: command_buffer.allocate_constant_from_slice(&positions)?,
         })
     }
+}
+
+pub struct RoPE<B: Backend> {
+    pub inverse_frequencies: B::GlobalGpuBuffer,
+    pub scale: f32,
+    pub dim: u32,
+    pub max_sequence_length: u32,
 }
 
 impl<B: Backend> RoPE<B> {

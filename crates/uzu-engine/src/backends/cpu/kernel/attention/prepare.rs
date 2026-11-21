@@ -42,7 +42,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
-    #[optional(has_rope_positions)] rope_positions: Option<*const u32>, // [token, rope_dim / 2]
+    #[optional(has_rope_positions)] rope_positions: Option<*const u32>,
     #[specialize] has_rope: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,

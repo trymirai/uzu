@@ -37,7 +37,6 @@ pub trait MixerState<B: Backend>: Any + Send {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
 
-    /// The next accepted row takes RoPE `position`, whatever the context length is
     fn set_rope_position(
         &mut self,
         _position: u32,
@@ -83,7 +82,6 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>>;
 
-    /// Rows rotate by `positions` instead of the positions that follow the state's one
     fn encode_at_positions(
         &self,
         hidden: B::ScratchBuffer,

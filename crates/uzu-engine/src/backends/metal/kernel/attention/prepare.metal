@@ -64,7 +64,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& query_rows,
     const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
-    const device uint32_t* rope_positions OPTIONAL(has_rope_positions), // [token, rope_dim / 2]
+    const device uint32_t* rope_positions OPTIONAL(has_rope_positions),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -95,7 +95,6 @@ PUBLIC KERNEL(AttentionPrepare)(
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
-  const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
@@ -146,6 +145,8 @@ PUBLIC KERNEL(AttentionPrepare)(
     }
     inverse_rms = rsqrt(simd_sum(sum) / float(HEAD_DIM) + norm_params.epsilon[norm_index]);
   }
+
+  const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   float values[VALUES_PER_LANE];
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
