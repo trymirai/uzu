@@ -41,7 +41,7 @@ impl<B: Backend> NGramInjection<B> {
     pub fn encode(
         &self,
         stream: B::ScratchBuffer,
-        batch_dim: &BatchTopology,
+        batch_dim: &BatchTopology<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
         todo!("n-gram injection: hash token n-grams, gate embeddings per stream, causal conv, add to stream")

@@ -401,6 +401,7 @@ fn canonical_struct<'a>(
     );
     let scalar = |text: &str| match text {
         "u32" => Some(ScalarType::Uint32),
+        "i32" => Some(ScalarType::Int32),
         "f32" => Some(ScalarType::Float32),
         _ => None,
     };
