@@ -26,12 +26,18 @@ tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 futures.workspace = true
 jiff.workspace = true
 uuid.workspace = true
+dirs.workspace = true
 uzu = { workspace = true, features = ["metal"] }
 hanashi.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
 block2.workspace = true
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+tauri-plugin-single-instance.workspace = true
 
 [lints]
 workspace = true
