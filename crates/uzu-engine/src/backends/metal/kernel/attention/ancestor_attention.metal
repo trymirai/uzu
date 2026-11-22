@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 #include "../common/defines.h"
 #include "../common/dsl.h"
+#include "../common/integral_constant.h"
 #include "../common/thread_context.h"
 #include "../hadamard_transform/hadamard_transform.h"
 #include "../weaver/weaver_frontier.h"
@@ -44,14 +45,14 @@ PUBLIC KERNEL(AncestorAttention)(
     threadgroup float split_maxs[SIMD_GROUPS_PER_THREADGROUP],
     threadgroup float split_sums[SIMD_GROUPS_PER_THREADGROUP],
     const ThreadContext thread_context,
-    const uint row GROUPS(rows),
-    const uint head GROUPS(num_heads),
+    const uint group GROUPS(rows * num_heads),
     const uint lid THREADS(THREADS_PER_THREADGROUP)
 ) {
-  static_assert(HEAD_DIM == THREADS_PER_THREADGROUP, "merge assigns one channel per thread");
-  constexpr ushort N = HEAD_DIM / METAL_SIMD_SIZE;
+  constexpr ushort VALUES_PER_LANE = HEAD_DIM / METAL_SIMD_SIZE;
   constexpr ushort TILE_KEYS = 4;
-  const uint split_index = thread_context.simdgroup_index;
+  const uint simdgroup_index = thread_context.simdgroup_index;
+  const uint row = group / num_heads;
+  const uint head = group % num_heads;
   const ushort lane = ushort(thread_context.simd_lane_id);
   const uint model_dim = num_heads * HEAD_DIM;
   const uint position = node_metadata[uint(MetadataIdx::Depth) * rows + row] + 1;
@@ -61,132 +62,126 @@ PUBLIC KERNEL(AncestorAttention)(
       num_heads,
       static_cast<uzu::kv_layout::KVLayout>(backend_opaque_layout)
   };
-  float query[N], key[N], value[N];
+  using LaneValues = vec<float, VALUES_PER_LANE>;
+  using LaneCodes = vec<int, VALUES_PER_LANE>;
+  const uint first_channel = lane * VALUES_PER_LANE;
+  LaneValues query, key, value;
   METAL_PRAGMA_UNROLL
-  for (ushort i = 0; i < N; ++i) {
-    const uint channel = i * METAL_SIMD_SIZE + lane;
+  for (ushort i = 0; i < VALUES_PER_LANE; ++i) {
+    const uint channel = first_channel + i;
     const float sign = uzu::kv_layout::rotation_sign(channel);
     query[i] = apply_rope<float>(qkv, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM) * sign;
-    if (split_index == 0) {
+    if (simdgroup_index == 0) {
       key[i] =
           apply_rope<float>(qkv + model_dim, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM) * sign;
       value[i] = float(qkv[2 * model_dim + channel]) * sign;
     }
   }
-  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, query);
-  int q[N], k[N], v[N];
-  const float score_scale = float(kv_quantize_row<N>(query, q)) * scale * M_LOG2E_F;
-  bfloat ks, vs;
-  if (split_index == 0) {
-    hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, key);
-    hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, value);
-    ks = kv_quantize_row<N>(key, k);
-    vs = kv_quantize_row<N>(value, v);
+  auto quantize = [&](thread LaneValues& values, thread LaneCodes& codes) {
+    hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane, reinterpret_cast<thread float*>(&values));
+    return kv_quantize_row<VALUES_PER_LANE>(
+        reinterpret_cast<thread float*>(&values),
+        reinterpret_cast<thread int*>(&codes)
+    );
+  };
+  LaneCodes q, k, v;
+  const float score_scale = float(quantize(query, q)) * scale * M_LOG2E_F;
+  bfloat k_scale, v_scale;
+  if (simdgroup_index == 0) {
+    k_scale = quantize(key, k);
+    v_scale = quantize(value, v);
   }
-  float result[N] = {};
+  LaneValues result = 0.0f;
   float maximum = -INFINITY;
   float denominator = 0.0f;
   const uint num_ancestors = ancestor_counts[row];
-  auto load = [&](uint slot, bool is_prefix, thread float& score, thread float* values) {
-    const device int8_t* kc = is_prefix ? prefix_k_codes : node_k_codes;
-    const device uchar* vc = is_prefix ? prefix_v_codes : node_v_codes;
+  auto load = [&](uint slot, bool is_prefix, thread float& score, thread LaneValues& values) UZU_ALWAYS_INLINE {
+    const device int8_t* k_codes = is_prefix ? prefix_k_codes : node_k_codes;
+    const device uchar* v_codes = is_prefix ? prefix_v_codes : node_v_codes;
     const float key_scale = float((is_prefix ? prefix_k_scales : node_k_scales)[shape.scale_index(slot, head)]);
     const float value_scale = float((is_prefix ? prefix_v_scales : node_v_scales)[shape.scale_index(slot, head)]);
-    float dot = 0.0f;
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < N; ++i) {
-      const uint channel = i * METAL_SIMD_SIZE + lane;
-      dot += float(q[i]) * float(kc[shape.k_code_index(slot, head, channel)]);
-      values[i] = value_scale * float(int(vc[shape.v_code_index(slot, head, channel)]) - 128);
-    }
-    score = simd_sum(dot) * score_scale * key_scale;
+    const auto key_codes = *reinterpret_cast<const device vec<char, VALUES_PER_LANE>*>(
+        k_codes + shape.k_code_index(slot, head, first_channel)
+    );
+    const auto value_codes = *reinterpret_cast<const device vec<uchar, VALUES_PER_LANE>*>(
+        v_codes + shape.v_code_index(slot, head, first_channel)
+    );
+    score = simd_sum(dot(LaneValues(q), LaneValues(key_codes))) * score_scale * key_scale;
+    values = value_scale * (LaneValues(value_codes) - 128.0f);
   };
-  auto attend = [&](thread const float* scores, thread const float (*values)[N], uint count) {
+  auto attend = [&](thread const float* scores, thread const LaneValues* values, uint count) UZU_ALWAYS_INLINE {
     float next_max = maximum;
     METAL_PRAGMA_UNROLL
     for (ushort j = 0; j < count; ++j)
       next_max = max(next_max, scores[j]);
     const float correction = fast::exp2(maximum - next_max);
     denominator *= correction;
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < N; ++i)
-      result[i] *= correction;
+    result *= correction;
     METAL_PRAGMA_UNROLL
     for (ushort j = 0; j < count; ++j) {
       const float probability = fast::exp2(scores[j] - next_max);
       denominator += probability;
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < N; ++i)
-        result[i] += probability * values[j][i];
+      result += probability * values[j];
     }
     maximum = next_max;
   };
-  const uint num_keys = prefix_length + num_ancestors;
-  for (uint first = split_index; first < num_keys; first += TILE_KEYS * SIMD_GROUPS_PER_THREADGROUP) {
-    float scores[TILE_KEYS], values[TILE_KEYS][N];
+  constexpr uint KEY_STRIDE = SIMD_GROUPS_PER_THREADGROUP;
+  auto attend_cached = [&](uint first, uint count, bool is_prefix) UZU_ALWAYS_INLINE {
+    float scores[TILE_KEYS];
+    LaneValues values[TILE_KEYS];
     METAL_PRAGMA_UNROLL
-    for (ushort j = 0; j < TILE_KEYS; ++j) {
-      const uint key = first + j * SIMD_GROUPS_PER_THREADGROUP;
-      if (key >= num_keys) {
-        scores[j] = -INFINITY;
-        METAL_PRAGMA_UNROLL
-        for (ushort i = 0; i < N; ++i)
-          values[j][i] = 0.0f;
-        continue;
-      }
-      const bool is_prefix = key < prefix_length;
-      load(
-          is_prefix ? key : ancestor_indices[row * ancestor_stride + key - prefix_length],
-          is_prefix,
-          scores[j],
-          values[j]
-      );
+    for (ushort j = 0; j < count; ++j) {
+      const uint index = first + j * KEY_STRIDE;
+      load(is_prefix ? index : ancestor_indices[row * ancestor_stride + index], is_prefix, scores[j], values[j]);
     }
-    attend(scores, values, TILE_KEYS);
-  }
-  if (split_index == 0) {
-    float score = 0.0f, current[N];
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < N; ++i) {
-      score += float(q[i]) * float(k[i]);
-      current[i] = float(vs) * float(v[i]);
-    }
-    score = simd_sum(score) * score_scale * float(ks);
+    attend(scores, values, count);
+  };
+  uint prefix_key = simdgroup_index;
+  for (; prefix_key + (TILE_KEYS - 1) * KEY_STRIDE < prefix_length; prefix_key += TILE_KEYS * KEY_STRIDE)
+    attend_cached(prefix_key, TILE_KEYS, true);
+  for (; prefix_key < prefix_length; prefix_key += KEY_STRIDE)
+    attend_cached(prefix_key, 1, true);
+  for (uint ancestor = simdgroup_index; ancestor < num_ancestors; ancestor += KEY_STRIDE)
+    attend_cached(ancestor, 1, false);
+  if (simdgroup_index == 0) {
+    const float score = simd_sum(dot(LaneValues(q), LaneValues(k))) * score_scale * float(k_scale);
+    const LaneValues current = float(v_scale) * LaneValues(v);
     attend(&score, &current, 1);
     if (node_capacity > 0) {
       const uint node = node_indices[row];
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < N; ++i) {
-        const uint channel = i * METAL_SIMD_SIZE + lane;
-        node_k_codes[shape.k_code_index(node, head, channel)] = int8_t(k[i]);
-        node_v_codes[shape.v_code_index(node, head, channel)] = uchar(v[i] + 128);
-      }
+      *reinterpret_cast<device vec<char, VALUES_PER_LANE>*>(
+          node_k_codes + shape.k_code_index(node, head, first_channel)
+      ) = vec<char, VALUES_PER_LANE>(k);
+      *reinterpret_cast<device vec<uchar, VALUES_PER_LANE>*>(
+          node_v_codes + shape.v_code_index(node, head, first_channel)
+      ) = vec<uchar, VALUES_PER_LANE>(v + 128);
       if (lane == 0) {
-        node_k_scales[shape.scale_index(node, head)] = ks;
-        node_v_scales[shape.scale_index(node, head)] = vs;
+        node_k_scales[shape.scale_index(node, head)] = k_scale;
+        node_v_scales[shape.scale_index(node, head)] = v_scale;
       }
     }
   }
-  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, result);
+  hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane, reinterpret_cast<thread float*>(&result));
   METAL_PRAGMA_UNROLL
-  for (ushort i = 0; i < N; ++i) {
-    const uint channel = i * METAL_SIMD_SIZE + lane;
-    split_results[split_index * HEAD_DIM + channel] = result[i] * uzu::kv_layout::rotation_sign(channel);
-  }
+  for (ushort i = 0; i < VALUES_PER_LANE; ++i)
+    split_results[simdgroup_index * HEAD_DIM + first_channel + i] =
+        result[i] * uzu::kv_layout::rotation_sign(first_channel + i);
   if (lane == 0) {
-    split_maxs[split_index] = maximum;
-    split_sums[split_index] = denominator;
+    split_maxs[simdgroup_index] = maximum;
+    split_sums[simdgroup_index] = denominator;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   float peak = -INFINITY;
   for (uint s = 0; s < SIMD_GROUPS_PER_THREADGROUP; ++s)
     peak = max(peak, split_maxs[s]);
-  float merged = 0.0f;
-  float total = 0.0f;
-  for (uint s = 0; s < SIMD_GROUPS_PER_THREADGROUP; ++s) {
-    const float correction = fast::exp2(split_maxs[s] - peak);
-    total += correction * split_sums[s];
-    merged += correction * split_results[s * HEAD_DIM + lid];
+  for (uint channel = lid; channel < HEAD_DIM; channel += THREADS_PER_THREADGROUP) {
+    float merged = 0.0f;
+    float total = 0.0f;
+    for (uint s = 0; s < SIMD_GROUPS_PER_THREADGROUP; ++s) {
+      const float correction = fast::exp2(split_maxs[s] - peak);
+      total += correction * split_sums[s];
+      merged += correction * split_results[s * HEAD_DIM + channel];
+    }
+    output[group * HEAD_DIM + channel] = bfloat(merged / total);
   }
-  output[(row * num_heads + head) * HEAD_DIM + lid] = bfloat(merged / total);
 }
