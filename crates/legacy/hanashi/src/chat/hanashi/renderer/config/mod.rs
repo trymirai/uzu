@@ -170,6 +170,7 @@ mod tests {
         for (config, expected) in [
             (HanashiConfig::Gemma4, Some("<channel|>")),
             (HanashiConfig::GptOss, Some("<|channel|>final<|message|>")),
+            (HanashiConfig::Inkling2, Some("<|content_text|>")),
             (HanashiConfig::MuseGlimmer, Some(" to=user<|message|>")),
             (HanashiConfig::Lfm25Thinking, Some("</think>")),
             (HanashiConfig::Qwen3, Some("</think>")),
@@ -192,6 +193,7 @@ mod tests {
     fn grammar_trigger_tracks_reasoning_controls() {
         for config in [
             HanashiConfig::Gemma4,
+            HanashiConfig::Inkling2,
             HanashiConfig::Qwen3,
             HanashiConfig::Qwen35,
             HanashiConfig::Qwen36,

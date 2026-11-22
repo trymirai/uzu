@@ -5,6 +5,7 @@
 #include "kv_layout.h"
 #include "int8_quantization.h"
 #include "rope.h"
+#include "../generated/attention_prepare.h"
 #include "../generated/qkv_norm.h"
 #include "../generated/trie.h"
 
@@ -64,6 +65,11 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& query_rows,
     const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
+    const device ElementT* key_input OPTIONAL(has_kv_input), // [token, key_row_stride]
+    const device ElementT* value_input OPTIONAL(has_kv_input), // [token, value_row_stride]
+    const device float* query_clip_scales OPTIONAL(has_query_clip_scales), // [q head, HEAD_DIM]
+    const constant uzu::attention_prepare::AttentionPrepareParams& extras
+        OPTIONAL(has_kv_input || has_query_clip || has_key_clip || has_log_scaling),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -74,6 +80,11 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool block_mean SPECIALIZE,
     const uint32_t compression_ratio SPECIALIZE,
     const bool has_trie SPECIALIZE,
+    const bool has_kv_input SPECIALIZE,
+    const bool has_query_clip SPECIALIZE,
+    const bool has_query_clip_scales SPECIALIZE,
+    const bool has_key_clip SPECIALIZE,
+    const bool has_log_scaling SPECIALIZE,
     threadgroup float block_mean_row OPTIONAL(block_mean)[HEAD_DIM],
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
@@ -94,7 +105,12 @@ PUBLIC KERNEL(AttentionPrepare)(
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
   const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
-  const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
+  const device ElementT* head =
+      has_kv_input && !is_query
+          ? (is_key ? key_input + size_t(token_idx) * extras.key_row_stride
+                    : value_input + size_t(token_idx) * extras.value_row_stride) +
+                size_t(kv_head) * HEAD_DIM
+          : qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
   const bool norm_full_layer = norm_params.full_layer[norm_index];
@@ -176,6 +192,34 @@ PUBLIC KERNEL(AttentionPrepare)(
       );
     }
     values[value_index] = float(element);
+  }
+
+  // L2 clipping scales a head down to the threshold norm, after the optional query scales.
+  const bool has_clip = is_query ? has_query_clip : is_key && has_key_clip;
+  if (has_clip) {
+    float sum = 0.0f;
+    METAL_PRAGMA_UNROLL
+    for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+      if (is_query && has_query_clip_scales) {
+        values[value_index] *= query_clip_scales[head_idx * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane_index];
+      }
+      sum += values[value_index] * values[value_index];
+    }
+    const float threshold = is_query ? extras.query_clip_threshold : extras.key_clip_threshold;
+    const float clip = metal::min(threshold / (metal::sqrt(simd_sum(sum)) + 1e-6f), 1.0f);
+    METAL_PRAGMA_UNROLL
+    for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+      values[value_index] *= clip;
+    }
+  }
+  if (is_query && has_log_scaling) {
+    const uint32_t position = extras.position_offset + (has_trie ? trie[token_idx].height : token_idx);
+    const float ratio = float(position + 1) / extras.log_scaling_n_floor;
+    const float scale = 1.0f + extras.log_scaling_alpha * metal::log(metal::max(ratio, 1.0f));
+    METAL_PRAGMA_UNROLL
+    for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+      values[value_index] *= scale;
+    }
   }
 
   METAL_PRAGMA_UNROLL

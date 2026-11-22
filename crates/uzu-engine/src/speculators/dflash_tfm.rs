@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, mem::size_of, path::Path, sync::Arc};
+use std::{io, mem::size_of, path::Path, sync::Arc};
 
 use derive_more::Debug;
 use serde::{Deserialize, Serialize};
@@ -11,18 +11,19 @@ use crate::{
         gpu_types::trie::TrieNode as GpuTrieNode,
         kernel::{LinearizeChainKernel, LinearizeTreeKernel},
     },
-    config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig},
+    config::speculator::dflash::DFlashSpeculatorConfig,
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
         confidence_head::{ConfidenceHead, ConfidenceHeadError},
         dflash::{DFlash, DFlashEncodeError, DFlashNewError, DFlashOutput},
+        dspark::{DSparkEncodeError, DSparkNewError},
         embedding::Embedding,
         sampling::{PRng, Sampling, SamplingMethod},
+        transformer::HiddenFeature,
         weaver::{EncodedWeaverTree, Weaver, WeaverEncodeError, WeaverNewError, WeaverTreeShape},
     },
     safetensors::{ParameterLoader, ParameterLoaderError},
-    utils::file,
 };
 
 #[derive(Debug, Error)]
@@ -33,6 +34,8 @@ pub enum DFlashTreeError<B: Backend> {
     DFlash(#[from] DFlashEncodeError<B>),
     #[error("Weaver error: {0}")]
     Weaver(#[from] WeaverEncodeError<B>),
+    #[error("DSpark draft error: {0}")]
+    DSpark(#[from] DSparkEncodeError<B>),
     #[error("invalid tree shape: {0}")]
     InvalidTreeShape(String),
 }
@@ -53,6 +56,10 @@ pub enum DFlashSpeculatorLoadError<B: Backend> {
     Weaver(#[from] WeaverNewError<B>),
     #[error("confidence head error: {0}")]
     ConfidenceHead(#[from] ConfidenceHeadError<B>),
+    #[error("DSpark error: {0}")]
+    DSpark(#[from] DSparkNewError<B>),
+    #[error("speculator does not fit the target: {0}")]
+    TargetMismatch(String),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -89,9 +96,9 @@ pub struct TreeProposal<B: Backend> {
 
 /// A draft whose tree is still to be proposed.
 pub struct TreeDraft<B: Backend> {
-    dflash_output: DFlashOutput<B>,
-    dflash_depth: u32,
-    root_position: u32,
+    pub(crate) dflash_output: DFlashOutput<B>,
+    pub(crate) dflash_depth: u32,
+    pub(crate) root_position: u32,
 }
 
 enum ProposalSource<B: Backend> {
@@ -114,31 +121,19 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     sampling: Sampling<B>,
     linearize_chain: [<B::Kernels as Kernels>::LinearizeChainKernel; 2],
     linearize_tree: [<B::Kernels as Kernels>::LinearizeTreeKernel; 2],
-    config: DFlashSpeculatorConfig,
+    hidden_features: Box<[HiddenFeature]>,
     shape: DFlashTfmTreeShape,
 }
 
 impl<B: Backend> DFlashTfmSpeculator<B> {
     pub async fn new(
         model_path: &Path,
+        config: DFlashSpeculatorConfig,
+        shape: DFlashTfmTreeShape,
         target_embedding: &Embedding<B>,
         context: Arc<B::Context>,
-    ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
-        let mut shapes: HashMap<String, DFlashTfmTreeShape> =
-            serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
-
-        let Some(shape) = context
-            .device_name()
-            .and_then(|device_name| shapes.remove(device_name))
-            .or_else(|| shapes.remove("default"))
-        else {
-            return Ok(None);
-        };
-
+    ) -> Result<Self, DFlashSpeculatorLoadError<B>> {
         let data_type = DataType::BF16;
-
-        let AnySpeculatorConfig::DFlashSpeculatorConfig(config) =
-            serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
         let draft_vocab_size = config.draft_config.vocab_size;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
@@ -197,7 +192,11 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 .map_err(DFlashSpeculatorLoadError::Backend)?,
         ];
 
-        Ok(Some(Self {
+        // DFlash reads the residual stream after each target layer.
+        let hidden_features =
+            config.draft_config.target_layer_ids.iter().map(|&layer| HiddenFeature::AfterVisit(layer)).collect();
+
+        Ok(Self {
             context,
             dflash,
             weaver,
@@ -205,13 +204,13 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             sampling,
             linearize_chain,
             linearize_tree,
-            config,
+            hidden_features,
             shape,
-        }))
+        })
     }
 
-    pub fn hidden_feature_layer_indices(&self) -> &[u32] {
-        &self.config.draft_config.target_layer_ids
+    pub fn hidden_features(&self) -> &[HiddenFeature] {
+        &self.hidden_features
     }
 
     pub fn empty_state(

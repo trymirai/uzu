@@ -14,7 +14,7 @@ use crate::{
     },
     engine::Engine,
     safetensors::{ParameterLoader, ParameterLoaderError},
-    speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
+    speculators::{AnySpeculator, dflash_tfm::DFlashSpeculatorLoadError},
     utils::file,
 };
 pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde::Unsupported};
@@ -27,7 +27,7 @@ pub mod grammar;
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
     decoder: Decoder<B>,
-    speculator: Option<DFlashTfmSpeculator<B>>,
+    speculator: Option<AnySpeculator<B>>,
     sampling: Sampling<B>,
     context_ring_update: <B::Kernels as Kernels>::ContextRingUpdateKernel,
     generation_config: GenerationConfig,
@@ -84,7 +84,7 @@ impl<B: Backend> Engine<B> {
         );
 
         let speculator = if let Some(speculator_path) = speculator_path.as_deref() {
-            DFlashTfmSpeculator::new(speculator_path, decoder.embedding(), self.context.clone()).await?
+            AnySpeculator::load(speculator_path, &decoder, self.context.clone()).await?
         } else {
             None
         };
@@ -160,3 +160,7 @@ impl<B: Backend> LanguageModel<B> {
         &self.tokenizer
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/engine/language_model_smoke_test.rs"]
+mod smoke_tests;

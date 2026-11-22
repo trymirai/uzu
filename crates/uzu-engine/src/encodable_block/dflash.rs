@@ -152,6 +152,7 @@ impl<B: Backend> DFlash<B> {
                     data_type,
                     layer_config,
                     &residual_config,
+                    None,
                     &layers_tree.subtree(&index.to_string()),
                     context,
                 )
@@ -280,7 +281,7 @@ impl<B: Backend> DFlash<B> {
                 .downcast_mut::<AttentionState<B>>()
                 .expect("DFlash draft layer states must be attention states");
             attention
-                .append_projected_kv(&key_value, num_tokens, attention_state, command_buffer)
+                .append_projected_kv(&key_value, num_tokens, None, attention_state, command_buffer)
                 .map_err(DFlashEncodeError::Backend)?;
         }
 
@@ -324,6 +325,8 @@ impl<B: Backend> DFlash<B> {
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
                 Some(MaybeMut::Mut(mixer_state.as_mut())),
+                None,
+                false,
                 command_buffer,
             )?;
         }

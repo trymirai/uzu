@@ -36,11 +36,16 @@ Benchmarks live inside the `uzu-engine` library test target (registered with `#[
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
 | `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
 | `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
+| `Metal/Kernel/MoE/Inkling/<format>/T<n>` | `Metal/Kernel/MoE`                 |
 | `ChatSession run`                       | `ChatSession run`                   |
 | `Forward pass`                          | `Forward pass`                      |
 
 The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass. The session and language-model groups
 require the test model path configured by the test helpers.
+
+`Metal/Kernel/MoE` runs one Inkling 2 Mini mixture-of-experts layer visit (router, gate/up, down) for NVFP4 and MLX
+affine 4-bit experts at 1, 8, 16 and 512 tokens. Its throughput counts the bytes the visit must read (the float32
+router plus every routed expert), so `thrpt` is the achieved DRAM bandwidth and `time` the time per layer visit.
 
 ## Output layout
 

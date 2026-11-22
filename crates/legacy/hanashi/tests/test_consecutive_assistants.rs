@@ -218,6 +218,17 @@ fn muse_glimmer_history_ending_with_assistant_keeps_a_separate_reply() {
 }
 
 #[test]
+fn inkling_2_history_ending_with_assistant_keeps_a_separate_reply() {
+    assert_merging_parser_keeps_a_separate_reply(
+        HanashiConfig::Inkling2,
+        concat!(
+            "<|content_thinking|>Done thinking.<|end_message|>",
+            "<|message_model|><|content_text|>Resumed successfully.<|end_message|><|content_model_end_sampling|>"
+        ),
+    );
+}
+
+#[test]
 fn history_ending_with_assistant_preserves_tool_context() {
     let mut encoding = encoding(HanashiConfig::Llama32);
     // Llama's bare-JSON tool-call extraction depends on the parser's `tools` variable.
@@ -270,6 +281,11 @@ fn tool_result_continues_after_an_isolated_reply() {
             HanashiConfig::FunctionGemma,
             "<start_function_call>call:get_weather{}<end_function_call>",
             "Sunny.<end_of_turn>",
+        ),
+        (
+            HanashiConfig::Inkling2,
+            r#"get_weather<|content_invoke_tool_json|>{"name":"get_weather","args":{}}<|end_message|><|content_model_end_sampling|>"#,
+            "<|content_text|>Sunny.<|end_message|><|content_model_end_sampling|>",
         ),
     ] {
         let needs_developer_text = matches!(config, HanashiConfig::FunctionGemma);

@@ -13,7 +13,10 @@ use crate::{
             buffer::CpuBufferExt,
             command_buffer::CpuCommandBufferEncoding,
             error::CpuError,
-            kernel::{activation_transform::hadamard_transform, attention::mask::should_use_key},
+            kernel::{
+                activation_transform::hadamard_transform,
+                attention::mask::{key_logical_position, should_use_key},
+            },
         },
     },
     utils::{
@@ -98,8 +101,9 @@ impl Row {
 pub(super) fn encode(
     input: AttentionInput<impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>, impl BufferRef<Backend = Cpu>>,
     arguments: AttentionArguments<
-        '_,
         Cpu,
+        impl BufferRef<Backend = Cpu>,
+        impl BufferRef<Backend = Cpu>,
         impl BufferRef<Backend = Cpu>,
         impl BufferRef<Backend = Cpu>,
         impl BufferRef<Backend = Cpu>,
@@ -125,6 +129,8 @@ pub(super) fn encode(
     let trie = arguments.trie.map(ptr);
     let sinks = arguments.sinks.map(ptr);
     let gate = arguments.gate.map(ptr);
+    let relative_logits = arguments.relative_logits.map(ptr);
+    assert_eq!(relative_logits.is_some(), config.relative_extent.is_some(), "relative logits must match the config");
     let prefix = arguments.cache.prefix_len();
     let ring = arguments.cache.ring_params();
     let suffix = arguments.suffix_length;
@@ -142,7 +148,8 @@ pub(super) fn encode(
                     unsafe {
                         let qs = (*q_scales.as_ptr().cast::<bf16>().add(qrow)).to_f32();
                         let position = suffix_position + trie.map_or(query, |p| (*p.add(query as usize)).height);
-                        let mut row = Row::new(dim, sinks.map(|p| (*p.as_ptr().cast::<T>().add(head as usize)).as_()));
+                        let sink_index = (query * config.sink_row_stride + head) as usize;
+                        let mut row = Row::new(dim, sinks.map(|p| (*p.as_ptr().cast::<T>().add(sink_index)).as_()));
                         for key in 0..prefix + suffix {
                             if !should_use_key(
                                 ring, trie, config.sliding_window_size, query, prefix,
@@ -161,7 +168,17 @@ pub(super) fn encode(
                                 .sum();
                             let ks = (*k_scales.as_ptr().cast::<bf16>().add(kv_row)).to_f32();
                             let vs = (*v_scales.as_ptr().cast::<bf16>().add(kv_row)).to_f32();
-                            row.add(dot as f32 * qs * ks * scale, |c| {
+                            let mut logit = dot as f32 * qs * ks * scale;
+                            if let (Some(logits), Some(extent)) = (relative_logits, config.relative_extent) {
+                                let key_position =
+                                    key_logical_position(ring, trie, prefix, suffix_position, key);
+                                let distance = position.wrapping_sub(key_position);
+                                if position >= key_position && distance < extent {
+                                    let index = qrow * extent as usize + distance as usize;
+                                    logit += (*logits.as_ptr().cast::<bf16>().add(index)).to_f32();
+                                }
+                            }
+                            row.add(logit, |c| {
                                 let code = *v_codes.as_ptr().add(kv_row * dim + c);
                                 (i32::from(code) - 128) as f32 * vs
                             });

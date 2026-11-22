@@ -84,6 +84,11 @@ fn run<B: Backend, T: DataTypeRepr>(
             false,
             0,
             trie.is_some(),
+            false,
+            false,
+            false,
+            false,
+            false,
         )
         .unwrap();
         prepare.encode(
@@ -112,12 +117,30 @@ fn run<B: Backend, T: DataTypeRepr>(
             heads / config.num_groups * length,
             None,
             trie,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None,
             &mut command,
         );
     }
-    let sinks = config
-        .has_sinks
-        .then(|| create_buffer_with_data::<B, T>(&context, &vec![T::from(1.5).unwrap(); config.num_q_heads as usize]));
+    // Learned sinks are one per head; token sinks are one per query and head, `sink_row_stride` apart.
+    let sinks = config.has_sinks.then(|| {
+        let sinks = if config.sink_row_stride == 0 {
+            vec![T::from(1.5).unwrap(); config.num_q_heads as usize]
+        } else {
+            (0..suffix * config.sink_row_stride).map(|i| T::from((i % 13) as f32 / 4.0 - 1.0).unwrap()).collect()
+        };
+        create_buffer_with_data::<B, T>(&context, &sinks)
+    });
+    let relative_logits = config.relative_extent.map(|extent| {
+        create_buffer_with_data::<B, bf16>(
+            &context,
+            &(0..config.num_q_heads * suffix * extent)
+                .map(|i| bf16::from_f32(((i * 7 % 61) as f32 - 30.0) / 10.0))
+                .collect::<Vec<_>>(),
+        )
+    });
     let gate = config.gate_row_stride.map(|stride| {
         create_buffer_with_data::<B, T>(
             &context,
@@ -141,6 +164,7 @@ fn run<B: Backend, T: DataTypeRepr>(
                 sinks: sinks.as_ref(),
                 cache,
                 gate: gate.as_ref(),
+                relative_logits: relative_logits.as_ref(),
             },
             &mut command,
         )
@@ -198,6 +222,7 @@ fn attention_windows_sinks_and_head_dims() {
                 num_groups: 2,
                 num_q_heads: 8,
                 has_sinks: window != Some(0),
+                sink_row_stride: 0,
                 gate_row_stride: Some(8 * dim + 7),
                 is_kv_cache_ring: ring,
                 is_causal: causal,
@@ -205,6 +230,7 @@ fn attention_windows_sinks_and_head_dims() {
                 scale,
                 data_type: DataType::BF16,
                 sparse_compression_ratio: None,
+                relative_extent: None,
             };
             let cache = if ring {
                 ring_cache(prefix, 11)
@@ -246,6 +272,7 @@ fn attention_large_tree_and_f32() {
         num_groups: 2,
         num_q_heads: 8,
         has_sinks: false,
+        sink_row_stride: 0,
         gate_row_stride: None,
         is_kv_cache_ring: false,
         is_causal: true,
@@ -253,6 +280,7 @@ fn attention_large_tree_and_f32() {
         scale: Some(1.0 / 128.0_f32.sqrt()),
         data_type: DataType::F32,
         sparse_compression_ratio: None,
+        relative_extent: None,
     };
     for_each_non_cpu_backend!(|B| {
         let (expected, _) = run::<Cpu, f32>(config, KVCacheState::new(37, None), nodes, true);
@@ -267,6 +295,7 @@ fn attention_large_tree_and_f32() {
             num_groups: 4,
             num_q_heads: 24,
             has_sinks: true,
+            sink_row_stride: 0,
             gate_row_stride: None,
             is_kv_cache_ring: ring,
             is_causal: causal,
@@ -274,6 +303,7 @@ fn attention_large_tree_and_f32() {
             scale: Some(1.0 / 256.0_f32.sqrt()),
             data_type: DataType::BF16,
             sparse_compression_ratio: None,
+            relative_extent: None,
         };
         let cache = if ring {
             ring_cache(37, 11)
@@ -307,6 +337,7 @@ fn attention_single_query() {
                         num_groups: 2,
                         num_q_heads: q_heads,
                         has_sinks: true,
+                        sink_row_stride: 0,
                         gate_row_stride: Some(q_heads * dim + 7),
                         is_kv_cache_ring: ring,
                         is_causal: true,
@@ -314,6 +345,7 @@ fn attention_single_query() {
                         scale: Some(1.0 / (dim as f32).sqrt()),
                         data_type: DataType::BF16,
                         sparse_compression_ratio: None,
+                        relative_extent: None,
                     };
                     let cache = if ring {
                         ring_cache(
@@ -353,6 +385,7 @@ fn attention_vector_partial_rows() {
                 num_groups: 3,
                 num_q_heads: 6,
                 has_sinks: true,
+                sink_row_stride: 0,
                 gate_row_stride: Some(6 * 128 + 3),
                 is_kv_cache_ring: ring,
                 is_causal: true,
@@ -360,6 +393,7 @@ fn attention_vector_partial_rows() {
                 scale: Some(1.0 / 128.0_f32.sqrt()),
                 data_type: DataType::F32,
                 sparse_compression_ratio: None,
+                relative_extent: None,
             };
             let cache = if ring {
                 ring_cache(prefix, 7)
@@ -371,6 +405,65 @@ fn attention_vector_partial_rows() {
                 let (actual, tolerance) = run::<B, f32>(config, cache, nodes, true);
                 assert_eq_float(&expected, &actual, tolerance, "INT8 vector partial rows, tree, F32, sinks and gate");
             });
+        }
+    }
+}
+
+#[uzu_test]
+fn attention_relative_bias_and_token_sinks() {
+    // (trie_start, trie_end, height, parent)
+    let tree: &[TrieNode] = bytemuck::cast_slice::<[u32; 4], TrieNode>(&[
+        [0, 4, 0, u32::MAX],
+        [1, 2, 1, 0],
+        [2, 2, 2, 1],
+        [3, 4, 1, 0],
+        [4, 4, 2, 3],
+    ]);
+    let single: &[TrieNode] = bytemuck::cast_slice::<[u32; 4], TrieNode>(&[[0, 0, 0, u32::MAX]]);
+    for nodes in [single, tree] {
+        for (prefix, ring, window, extent) in [
+            (37, false, None, 64),
+            (1031, false, None, 1024),
+            (1031, false, None, 100),
+            (37, true, Some(29), 29),
+            (1031, true, Some(1024), 1024),
+        ] {
+            let config = AttentionKernelConfig {
+                head_dim: 128,
+                num_groups: 2,
+                num_q_heads: 6,
+                has_sinks: true,
+                sink_row_stride: 6 * 128 + 6 * 16 + 6 * 128 + 6,
+                gate_row_stride: Some(6 * 128 + 6 * 16 + 6 * 128 + 6),
+                is_kv_cache_ring: ring,
+                is_causal: true,
+                sliding_window_size: window,
+                scale: None,
+                data_type: DataType::BF16,
+                sparse_compression_ratio: None,
+                relative_extent: Some(extent),
+            };
+            let cache = if ring {
+                ring_cache(prefix.min(window.unwrap()), 11)
+            } else {
+                KVCacheState::new(prefix, None)
+            };
+            for is_trie in [false, true] {
+                for_each_non_cpu_backend!(|B| {
+                    let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
+                    let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
+                    assert_eq_float(
+                        &expected,
+                        &actual,
+                        tolerance,
+                        &format!(
+                            "relative bias rows={} prefix={prefix} ring={ring} window={window:?} extent={extent} \
+                             trie={is_trie}",
+                            nodes.len()
+                        ),
+                    );
+                });
+            }
         }
     }
 }

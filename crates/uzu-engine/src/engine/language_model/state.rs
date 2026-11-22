@@ -3,7 +3,8 @@ use thiserror::Error;
 
 use crate::{
     backends::common::Backend,
-    encodable_block::{dflash::DFlashState, sampling::PRng, transformer::TransformerState},
+    encodable_block::{sampling::PRng, transformer::TransformerState},
+    speculators::AnySpeculatorState,
     engine::language_model::LanguageModel,
 };
 
@@ -11,7 +12,7 @@ pub struct LanguageModelState<B: Backend> {
     pub(super) tokens: Vec<u64>,
     pub(super) prng: PRng,
     pub(super) transformer_state: TransformerState<B>,
-    pub(super) speculator_state: Option<DFlashState<B>>,
+    pub(super) speculator_state: Option<AnySpeculatorState<B>>,
     pub(super) max_context_length: Option<u32>,
 }
 

@@ -5,24 +5,29 @@ use futures::future::try_join_all;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform},
+    backends::common::{
+        Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, kernel::ActivationTransform,
+    },
     config::{
         residual::AnyResidualConfig,
+        transformer::LoopConfig,
         transformer_layer::{SublayerConfigCommon, TransformerLayerConfig, TransformerLayerConvConfig},
     },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        block_attention::{ConnectionPlacement, SublayerRole},
+        causal_conv::{CausalConv, CausalConvNewError, CausalConvState},
         convolution::{ConvolutionNewError, SeparableCausalConv},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
-        residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
+        residual::{ResidualConnection, ResidualEncodeError, ResidualNewError, SublayerUpdate},
         stream_op::{StreamOp, StreamOpContext, StreamOpEncodeError, StreamOpNewError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
-    utils::{maybe_mut::MaybeMut, maybe_owned::MaybeOwned},
+    utils::{maybe_mut::MaybeMut, maybe_owned::MaybeOwned, size_for_shape::size_for_shape},
 };
 
 #[derive(Debug, Error)]
@@ -43,6 +48,8 @@ pub enum TransformerLayerError<B: Backend> {
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Convolution error: {0}")]
     Convolution(#[from] ConvolutionNewError<B>),
+    #[error("Causal convolution error: {0}")]
+    CausalConvolution(#[from] CausalConvNewError<B>),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
     #[error("Linear encoding error: {0}")]
@@ -74,8 +81,31 @@ struct TransformerLayerConv<B: Backend> {
 struct Sublayer<B: Backend> {
     pre_norm: Option<Normalization<B>>,
     conv: Option<TransformerLayerConv<B>>,
+    output_conv: Option<CausalConv<B>>,
     post_norm: Option<Normalization<B>>,
     connection: ResidualConnection<B>,
+    model_dim: u32,
+    data_type: DataType,
+    num_inputs: u32,
+    separate_input_norms: bool,
+}
+
+/// The states of the stateful convolutions on a layer's sublayer outputs.
+pub struct SublayerConvStates<B: Backend> {
+    mixer: Option<CausalConvState<B>>,
+    mlp: Option<CausalConvState<B>>,
+}
+
+impl<B: Backend> SublayerConvStates<B> {
+    pub fn encode_accept(
+        &mut self,
+        accepted_indices: &[u32],
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        for state in [&mut self.mixer, &mut self.mlp].into_iter().flatten() {
+            state.encode_accept(accepted_indices, command_buffer);
+        }
+    }
 }
 
 pub struct TransformerLayer<B: Backend> {
@@ -198,7 +228,7 @@ impl<B: Backend> Sublayer<B> {
     async fn new(
         model_dim: u32,
         data_type: DataType,
-        layer_index: u32,
+        placement: &ConnectionPlacement,
         name: &'static str,
         config: &SublayerConfigCommon,
         mut input_hadamard_factors: Option<InputRhtParameters<B>>,
@@ -206,6 +236,7 @@ impl<B: Backend> Sublayer<B> {
         layer_parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
+        let layer_index = placement.layer_index;
         let parameter_tree = layer_parameter_tree.subtree(name);
 
         let conv = if let Some(conv_config) = &config.conv_config {
@@ -226,7 +257,8 @@ impl<B: Backend> Sublayer<B> {
 
         let pre_norm = if let Some(norm_config) = &config.pre_norm_config {
             Some(
-                Normalization::new(
+                Normalization::new_mixture(
+                    config.separate_input_norms.then_some(config.num_inputs),
                     model_dim,
                     data_type,
                     data_type,
@@ -267,8 +299,16 @@ impl<B: Backend> Sublayer<B> {
             None
         };
 
+        let output_conv = match &config.output_conv_config {
+            Some(conv_config) => {
+                Some(CausalConv::new(model_dim, data_type, conv_config, &parameter_tree.subtree("output_conv"), context).await?)
+            },
+            None => None,
+        };
+
         let connection = ResidualConnection::new(
             residual_config,
+            placement,
             model_dim,
             data_type,
             &parameter_tree.subtree("connection"),
@@ -279,25 +319,69 @@ impl<B: Backend> Sublayer<B> {
         Ok(Self {
             pre_norm,
             conv,
+            output_conv,
             post_norm,
             connection,
+            model_dim,
+            data_type,
+            num_inputs: config.num_inputs,
+            separate_input_norms: config.separate_input_norms,
         })
+    }
+
+    fn create_output_conv_state(
+        &self,
+        context: &B::Context,
+    ) -> Result<Option<CausalConvState<B>>, B::Error> {
+        self.output_conv.as_ref().map(|conv| conv.create_state(context)).transpose()
+    }
+
+    /// Normalizes the `num_inputs` input-major inputs of `row_count` rows each.
+    fn encode_pre_norm(
+        &self,
+        pre_norm: &Normalization<B>,
+        input: &B::ScratchBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
+        let command_buffer = &mut *command_buffer.debug_group("pre norm");
+        let input_size = size_for_shape(&[row_count, self.model_dim], self.data_type);
+        if !self.separate_input_norms {
+            // Inputs that share one read arrive once.
+            let input_count = (input.size() / input_size) as u32;
+            return pre_norm.encode(input, 0, row_count * input_count, None::<&mut B::ScratchBuffer>, command_buffer);
+        }
+        let mut output = command_buffer.allocate_scratch(input_size * self.num_inputs as usize)?;
+        for component in 0..self.num_inputs {
+            let range = component as usize * input_size..(component as usize + 1) * input_size;
+            pre_norm.encode_component(
+                input.subrange(range.clone()),
+                component,
+                row_count,
+                (&mut output).subrange_mut(range),
+                command_buffer,
+            );
+        }
+        Ok(output)
     }
 
     fn encode(
         &self,
         stream: B::ScratchBuffer,
-        row_count: u32,
+        batch_dim: &BatchTopology<B>,
+        has_messages: bool,
+        output_conv_state: Option<&mut CausalConvState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         body: impl FnOnce(
             B::ScratchBuffer,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         ) -> Result<B::ScratchBuffer, TransformerLayerError<B>>,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
-        self.connection.encode(&stream, row_count, command_buffer, |input, command_buffer| {
+        let row_count = batch_dim.size();
+        self.connection.encode(stream, row_count, has_messages, command_buffer, |input, target, command_buffer| {
             let mut hidden = match (&self.pre_norm, input) {
-                (Some(pre_norm), input) => pre_norm
-                    .encode(&*input, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                (Some(pre_norm), input) => self
+                    .encode_pre_norm(pre_norm, &input, row_count, command_buffer)
                     .map_err(TransformerLayerError::Backend)?,
                 (None, MaybeOwned::Owned(input)) => input,
                 (None, MaybeOwned::Borrowed(input)) => {
@@ -318,13 +402,43 @@ impl<B: Backend> Sublayer<B> {
                 hidden = body(hidden, command_buffer)?;
             }
 
+            if let Some(output_conv) = &self.output_conv {
+                let command_buffer = &mut *command_buffer.debug_group("output conv");
+                // Without a post norm the convolution writes straight into the residual stream.
+                if let (Some(target), None) = (target, &self.post_norm) {
+                    output_conv
+                        .encode_into(
+                            &hidden,
+                            self.model_dim,
+                            None::<(&B::ScratchBuffer, u32)>,
+                            batch_dim,
+                            output_conv_state,
+                            target.stream.subrange_mut(target.range),
+                            target.accumulate,
+                            command_buffer,
+                        )
+                        .map_err(TransformerLayerError::Backend)?;
+                    return Ok(SublayerUpdate::Written);
+                }
+                hidden = output_conv
+                    .encode(
+                        &hidden,
+                        self.model_dim,
+                        None::<(&B::ScratchBuffer, u32)>,
+                        batch_dim,
+                        output_conv_state,
+                        command_buffer,
+                    )
+                    .map_err(TransformerLayerError::Backend)?;
+            }
+
             if let Some(post_norm) = &self.post_norm {
                 hidden = post_norm
                     .encode(&hidden, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
                     .map_err(TransformerLayerError::Backend)?;
             }
 
-            Ok(hidden)
+            Ok(SublayerUpdate::Returned(hidden))
         })
     }
 }
@@ -338,9 +452,18 @@ impl<B: Backend> TransformerLayer<B> {
         data_type: DataType,
         layer_config: &TransformerLayerConfig,
         residual_config: &AnyResidualConfig,
+        loop_config: Option<&LoopConfig>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
+        let placement = |role: SublayerRole, config: &SublayerConfigCommon| ConnectionPlacement {
+            layer_index,
+            num_layers,
+            role,
+            num_inputs: config.num_inputs,
+            num_reads: config.num_reads(),
+            loop_config: loop_config.cloned(),
+        };
         let prologue_params = parameter_tree.subtree("prologue");
         let prologue = try_join_all(layer_config.prologue_configs.iter().enumerate().map(|(i, cfg)| {
             StreamOp::new(
@@ -385,7 +508,7 @@ impl<B: Backend> TransformerLayer<B> {
         let mixer_sublayer = Sublayer::new(
             model_dim,
             data_type,
-            layer_index,
+            &placement(SublayerRole::Mixer, &layer_config.mixer.common),
             "mixer",
             &layer_config.mixer.common,
             mixer_hadamard_factors,
@@ -407,7 +530,7 @@ impl<B: Backend> TransformerLayer<B> {
         let mlp_sublayer = Sublayer::new(
             model_dim,
             data_type,
-            layer_index,
+            &placement(SublayerRole::Mlp, &layer_config.mlp.common),
             "mlp",
             &layer_config.mlp.common,
             mlp_hadamard_factors,
@@ -429,12 +552,28 @@ impl<B: Backend> TransformerLayer<B> {
         })
     }
 
+    /// The states of the stateful convolutions on the sublayer outputs, if the layer has any.
+    pub fn create_conv_states(
+        &self,
+        context: &B::Context,
+    ) -> Result<Option<SublayerConvStates<B>>, B::Error> {
+        let mixer = self.mixer_sublayer.create_output_conv_state(context)?;
+        let mlp = self.mlp_sublayer.create_output_conv_state(context)?;
+        Ok((mixer.is_some() || mlp.is_some()).then_some(SublayerConvStates {
+            mixer,
+            mlp,
+        }))
+    }
+
+    /// `has_messages` marks a repeated pass over looped layers.
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
+        conv_states: Option<&mut SublayerConvStates<B>>,
+        has_messages: bool,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
@@ -448,13 +587,31 @@ impl<B: Backend> TransformerLayer<B> {
             stream = op.encode(stream, &op_context, command_buffer)?;
         }
 
-        stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
-            Ok(self.mixer.encode(hidden, batch_dim, state, command_buffer)?)
-        })?;
+        let (mixer_conv_state, mlp_conv_state) = match conv_states {
+            Some(SublayerConvStates {
+                mixer,
+                mlp,
+            }) => (mixer.as_mut(), mlp.as_mut()),
+            None => (None, None),
+        };
 
-        stream = self.mlp_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
-            Ok(self.mlp.encode(hidden, row_count, command_buffer)?)
-        })?;
+        stream = self.mixer_sublayer.encode(
+            stream,
+            batch_dim,
+            has_messages,
+            mixer_conv_state,
+            command_buffer,
+            |hidden, command_buffer| Ok(self.mixer.encode(hidden, batch_dim, state, command_buffer)?),
+        )?;
+
+        stream = self.mlp_sublayer.encode(
+            stream,
+            batch_dim,
+            has_messages,
+            mlp_conv_state,
+            command_buffer,
+            |hidden, command_buffer| Ok(self.mlp.encode(hidden, row_count, command_buffer)?),
+        )?;
 
         for op in &self.epilogue {
             stream = op.encode(stream, &op_context, command_buffer)?;

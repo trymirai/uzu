@@ -1,0 +1,652 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "system",
+                "open_token": "<|message_system|>",
+                "close_tokens": [
+                    "<|end_message|>"
+                ],
+                "groups": [
+                    {
+                        "type": "open",
+                        "name": "text",
+                        "open_token": "<|content_text|>"
+                    },
+                    {
+                        "type": "open",
+                        "name": "xml",
+                        "open_token": "<|content_xml|>"
+                    }
+                ]
+            },
+            {
+                "type": "bounded",
+                "name": "user",
+                "open_token": "<|message_user|>",
+                "close_tokens": [
+                    "<|end_message|>"
+                ],
+                "groups": [
+                    {
+                        "type": "open",
+                        "name": "text",
+                        "open_token": "<|content_text|>"
+                    },
+                    {
+                        "type": "open",
+                        "name": "image",
+                        "open_token": "<|content_image|>"
+                    }
+                ]
+            },
+            {
+                "type": "bounded",
+                "name": "tool",
+                "open_token": "<|message_tool|>",
+                "close_tokens": [
+                    "<|end_message|>"
+                ],
+                "groups": [
+                    {
+                        "type": "open",
+                        "name": "text",
+                        "open_token": "<|content_text|>"
+                    },
+                    {
+                        "type": "open",
+                        "name": "tool_error",
+                        "open_token": "<|content_tool_error|>"
+                    },
+                    {
+                        "type": "open",
+                        "name": "image",
+                        "open_token": "<|content_image|>"
+                    }
+                ]
+            },
+            {
+                "type": "bounded",
+                "name": "model",
+                "open_token": "<|message_model|>",
+                "close_tokens": [
+                    "<|content_model_end_sampling|>"
+                ],
+                "groups": [
+                    {
+                        "type": "open",
+                        "name": "part",
+                        "open_token": "<|message_model|>"
+                    },
+                    {
+                        "type": "bounded",
+                        "name": "thinking",
+                        "open_token": "<|content_thinking|>",
+                        "close_tokens": [
+                            "<|end_message|>"
+                        ],
+                        "closes_on_sibling": true
+                    },
+                    {
+                        "type": "bounded",
+                        "name": "text",
+                        "open_token": "<|content_text|>",
+                        "close_tokens": [
+                            "<|end_message|>"
+                        ],
+                        "closes_on_sibling": true
+                    },
+                    {
+                        "type": "bounded",
+                        "name": "tool_text",
+                        "open_token": "<|content_invoke_tool_text|>",
+                        "close_tokens": [
+                            "<|end_message|>"
+                        ],
+                        "closes_on_sibling": true
+                    },
+                    {
+                        "type": "bounded",
+                        "name": "tool_call",
+                        "open_token": "<|content_invoke_tool_json|>",
+                        "close_tokens": [
+                            "<|end_message|>"
+                        ],
+                        "closes_on_sibling": true
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "system": [
+            {
+                "type": "object",
+                "fields": {
+                    "role": [
+                        {
+                            "type": "literal",
+                            "value": "system"
+                        }
+                    ],
+                    "content": [
+                        {
+                            "type": "get",
+                            "key": "$value"
+                        },
+                        {
+                            "type": "each",
+                            "apply": [
+                                {
+                                    "type": "call",
+                                    "name": "map_text_section"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "filter",
+                            "condition": {
+                                "type": "not",
+                                "condition": {
+                                    "type": "is_null"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "user": [
+            {
+                "type": "object",
+                "fields": {
+                    "role": [
+                        {
+                            "type": "literal",
+                            "value": "user"
+                        }
+                    ],
+                    "content": [
+                        {
+                            "type": "get",
+                            "key": "$value"
+                        },
+                        {
+                            "type": "each",
+                            "apply": [
+                                {
+                                    "type": "call",
+                                    "name": "map_text_section"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "filter",
+                            "condition": {
+                                "type": "not",
+                                "condition": {
+                                    "type": "is_null"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "tool": [
+            {
+                "type": "object",
+                "fields": {
+                    "role": [
+                        {
+                            "type": "literal",
+                            "value": "tool"
+                        }
+                    ],
+                    "content": [
+                        {
+                            "type": "get",
+                            "key": "$value"
+                        },
+                        {
+                            "type": "each",
+                            "apply": [
+                                {
+                                    "type": "call",
+                                    "name": "map_tool_section"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "filter",
+                            "condition": {
+                                "type": "not",
+                                "condition": {
+                                    "type": "is_null"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "model": [
+            {
+                "type": "object",
+                "fields": {
+                    "role": [
+                        {
+                            "type": "literal",
+                            "value": "assistant"
+                        }
+                    ],
+                    "content": [
+                        {
+                            "type": "switch",
+                            "key": [
+                                {
+                                    "type": "get",
+                                    "key": "$value"
+                                },
+                                {
+                                    "type": "each",
+                                    "apply": [
+                                        {
+                                            "type": "call",
+                                            "name": "map_model_section"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "filter",
+                                    "condition": {
+                                        "type": "not",
+                                        "condition": {
+                                            "type": "is_null"
+                                        }
+                                    }
+                                }
+                            ],
+                            "cases": [
+                                {
+                                    "when": {
+                                        "type": "equals",
+                                        "value": []
+                                    },
+                                    "then": [
+                                        {
+                                            "type": "switch",
+                                            "key": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "$finished"
+                                                }
+                                            ],
+                                            "cases": [
+                                                {
+                                                    "when": {
+                                                        "type": "equals",
+                                                        "value": true
+                                                    },
+                                                    "then": [
+                                                        {
+                                                            "type": "get",
+                                                            "key": "$value"
+                                                        },
+                                                        {
+                                                            "type": "each",
+                                                            "apply": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "name": "map_header_section"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "filter",
+                                                            "condition": {
+                                                                "type": "not",
+                                                                "condition": {
+                                                                    "type": "is_null"
+                                                                }
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            ],
+                                            "default": [
+                                                {
+                                                    "type": "literal",
+                                                    "value": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ],
+                            "default": [
+                                {
+                                    "type": "get",
+                                    "key": "$value"
+                                },
+                                {
+                                    "type": "each",
+                                    "apply": [
+                                        {
+                                            "type": "call",
+                                            "name": "map_model_section"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "filter",
+                                    "condition": {
+                                        "type": "not",
+                                        "condition": {
+                                            "type": "is_null"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ],
+        "tool_call": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "parse_json",
+                        "repair": true
+                    },
+                    {
+                        "type": "switch",
+                        "key": [],
+                        "cases": [
+                            {
+                                "when": {
+                                    "type": "field",
+                                    "key": "name",
+                                    "condition": {
+                                        "type": "not",
+                                        "condition": {
+                                            "type": "is_null"
+                                        }
+                                    }
+                                },
+                                "then": [
+                                    {
+                                        "type": "object",
+                                        "fields": {
+                                            "name": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "name"
+                                                }
+                                            ],
+                                            "arguments": [
+                                                {
+                                                    "type": "switch",
+                                                    "key": [
+                                                        {
+                                                            "type": "get",
+                                                            "key": "args"
+                                                        }
+                                                    ],
+                                                    "cases": [
+                                                        {
+                                                            "when": {
+                                                                "type": "is_null"
+                                                            },
+                                                            "then": [
+                                                                {
+                                                                    "type": "get",
+                                                                    "key": "arguments"
+                                                                },
+                                                                {
+                                                                    "type": "default",
+                                                                    "value": {}
+                                                                }
+                                                            ]
+                                                        }
+                                                    ],
+                                                    "default": [
+                                                        {
+                                                            "type": "get",
+                                                            "key": "args"
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                        "default": []
+                    }
+                ]
+            }
+        ],
+        "map_text_section": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "type"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "text"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "$text"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "literal",
+                        "value": null
+                    }
+                ]
+            }
+        ],
+        "map_tool_section": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "type"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "text"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "tool_call_result"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "tool_error"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "tool_call_result"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "literal",
+                        "value": null
+                    }
+                ]
+            }
+        ],
+        "map_model_section": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "type"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "thinking"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "reasoning"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "text"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "$text"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "tool_text"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "$text"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "tool_call"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "tool_call"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "literal",
+                        "value": null
+                    }
+                ]
+            }
+        ],
+        "map_header_section": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "type"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "$text"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_section",
+                                "arguments": {
+                                    "section_type": "$text"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "literal",
+                        "value": null
+                    }
+                ]
+            }
+        ],
+        "build_section": [
+            {
+                "type": "object",
+                "fields": {
+                    "type": [
+                        {
+                            "type": "get",
+                            "key": "section_type"
+                        }
+                    ],
+                    "value": [
+                        {
+                            "type": "get",
+                            "key": "value"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

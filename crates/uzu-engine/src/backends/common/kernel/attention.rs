@@ -25,8 +25,9 @@ pub trait AttentionKernel: Sized + Send + Sync {
             impl BufferRef<Backend = Self::Backend>,
         >,
         arguments: AttentionArguments<
-            '_,
             Self::Backend,
+            impl BufferRef<Backend = Self::Backend>,
+            impl BufferRef<Backend = Self::Backend>,
             impl BufferRef<Backend = Self::Backend>,
             impl BufferRef<Backend = Self::Backend>,
             impl BufferRef<Backend = Self::Backend>,
@@ -41,6 +42,8 @@ pub struct AttentionKernelConfig {
     pub num_groups: u32,
     pub num_q_heads: u32,
     pub has_sinks: bool,
+    /// Elements between the sink logits of consecutive queries; zero shares one learned sink per head.
+    pub sink_row_stride: u32,
     pub gate_row_stride: Option<u32>,
     pub is_kv_cache_ring: bool,
     pub is_causal: bool,
@@ -48,21 +51,27 @@ pub struct AttentionKernelConfig {
     pub scale: Option<f32>,
     pub data_type: DataType,
     pub sparse_compression_ratio: Option<u32>,
+    /// Logits get a bias by query-to-key distance below this extent, see `AttentionArguments::relative_logits`.
+    pub relative_extent: Option<u32>,
 }
 
 pub struct AttentionArguments<
-    'a,
     B: Backend,
     TT: BufferRef<Backend = B>,
     GT: BufferRef<Backend = B>,
     ST: BufferRef<Backend = B>,
+    SK: BufferRef<Backend = B>,
+    RT: BufferRef<Backend = B>,
 > {
     pub suffix_length: u32,
     pub trie: Option<TT>,
     pub key_blocks: Option<KeyBlocks<ST>>,
-    pub sinks: Option<&'a B::GlobalGpuBuffer>,
+    /// Sink logits with a zero value: one per head, or one per query and head `sink_row_stride` elements apart.
+    pub sinks: Option<SK>,
     pub cache: KVCacheState,
     pub gate: Option<GT>,
+    /// `[q head][query][relative_extent]` bf16 biases of the logits of keys `distance` positions before the query.
+    pub relative_logits: Option<RT>,
 }
 
 pub struct KeyBlocks<ST: BufferRef> {

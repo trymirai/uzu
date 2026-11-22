@@ -1,10 +1,13 @@
 pub mod batch_topology;
+pub mod block_attention;
+pub mod causal_conv;
 pub mod classifier;
 pub mod confidence_head;
 pub mod convolution;
 pub mod decision;
 pub mod decoder;
 pub mod dflash;
+pub mod dspark;
 pub mod embedding;
 pub mod embedding_table;
 pub mod linear;

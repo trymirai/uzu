@@ -18,4 +18,7 @@ pub struct MixtureOfExpertsConfig {
     pub num_shared_experts: u32,
     pub expert_hidden_dim: u32,
     pub gate_config: Option<LinearConfig>,
+    /// The router weights (and biases) are stored and applied in float32.
+    #[serde(default)]
+    pub has_float32_router: bool,
 }

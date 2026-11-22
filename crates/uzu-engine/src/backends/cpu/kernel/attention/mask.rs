@@ -1,5 +1,21 @@
 use crate::backends::common::gpu_types::{ring::RingParams, trie::TrieNode};
 
+/// The position of key slot `i` in the order that `should_use_key` compares with query positions.
+pub fn key_logical_position(
+    ring_params: Option<RingParams>,
+    trie: Option<*const TrieNode>,
+    prefix_length: u32,
+    suffix_position: u32,
+    i: u32,
+) -> u32 {
+    if i >= prefix_length {
+        let key_position_in_suffix = i - prefix_length;
+        return suffix_position
+            + trie.map_or(key_position_in_suffix, |trie| unsafe { (*trie.add(key_position_in_suffix as usize)).height });
+    }
+    ring_params.map_or(i, |ring_params| (prefix_length + i - ring_params.ring_offset) % prefix_length)
+}
+
 pub fn should_use_key(
     ring_params: Option<RingParams>,
     trie: Option<*const TrieNode>,

@@ -408,6 +408,25 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
         }
     }
 
+    fn encode_borrowed(
+        &self,
+        input: &B::ScratchBuffer,
+        offset: usize,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        OutputStack::encode_input(
+            self,
+            MatmulA::FullPrecision {
+                values: input,
+                offset,
+            },
+            batch_dim,
+            OutputRows::<&B::ScratchBuffer>::Prefix(self.output_dim),
+            command_buffer,
+        )
+    }
+
     fn select_activation_format(
         &self,
         batch_dim: u32,

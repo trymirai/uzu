@@ -49,6 +49,15 @@ pub trait Linear<B: Backend>: Send + Sync {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
 
+    /// Encodes the linear on `batch_dim` rows of `input` that start `offset` bytes in, leaving `input` intact.
+    fn encode_borrowed(
+        &self,
+        input: &B::ScratchBuffer,
+        offset: usize,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
+
     fn select_activation_format(
         &self,
         _batch_dim: u32,

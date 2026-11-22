@@ -10,6 +10,9 @@ pub struct DenseMLPConfig {
     pub has_down_biases: bool,
     pub gate_clipping: ClippingBounds,
     pub up_clipping: ClippingBounds,
+    /// Soft cap `c * tanh(up / c)` applied to the up projection before it multiplies the activated gate.
+    #[serde(default)]
+    pub up_soft_cap: Option<f32>,
 }
 
 impl DenseMLPConfig {
@@ -27,6 +30,7 @@ impl DenseMLPConfig {
             has_down_biases,
             gate_clipping: ClippingBounds::default(),
             up_clipping: ClippingBounds::default(),
+            up_soft_cap: None,
         }
     }
 }

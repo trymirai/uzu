@@ -98,6 +98,9 @@ METAL_FUNC void attention_matrix_simd(
     uint blocks_per_query,
     uint compression_ratio,
     uint num_kv_heads,
+    bool has_relative_bias,
+    const device bfloat* relative_logits,
+    uint relative_extent,
     threadgroup float* exchange,
     threadgroup half* kv_tile,
     threadgroup ulong* row_masks,
@@ -292,6 +295,29 @@ METAL_FUNC void attention_matrix_simd(
           }
         }
         return visible ? score : -INFINITY;
+      });
+    }
+    if (!IS_SPARSE && has_relative_bias) {
+      scores.map_coords(lane, [&](short, short col, float score) {
+        const uint key = key_base + uint(col);
+        if (key >= params.k_len || score == -INFINITY) {
+          return score;
+        }
+        return score + relative_bias_log2(
+                           relative_logits,
+                           relative_extent,
+                           query_group + query_row,
+                           logical_query,
+                           key_logical_position(
+                               ring_params,
+                               trie,
+                               params.q_off,
+                               suffix_position,
+                               key,
+                               is_kv_cache_ring,
+                               is_trie
+                           )
+                       );
       });
     }
     float block_max;

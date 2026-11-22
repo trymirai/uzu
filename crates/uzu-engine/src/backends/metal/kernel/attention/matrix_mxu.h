@@ -129,6 +129,9 @@ METAL_FUNC void attention_matrix_mxu(
     uint blocks_per_query,
     uint compression_ratio,
     uint num_kv_heads,
+    bool has_relative_bias,
+    const device bfloat* relative_logits,
+    uint relative_extent,
     threadgroup float* probability_exchange,
     threadgroup ulong* row_masks,
     threadgroup uint4* query_stage,
@@ -209,6 +212,18 @@ METAL_FUNC void attention_matrix_mxu(
     query_positions[row] = (query_row_base + lane_rows[row]) % params.q_len;
     logical_queries[row] =
         is_sliding_window ? suffix_position + (is_trie ? trie[query_positions[row]].height : query_positions[row]) : 0u;
+  }
+  // Relative bias rows and positions; padding rows reread the last real row.
+  size_t bias_rows[ROWS_PER_LANE];
+  uint bias_query_positions[ROWS_PER_LANE];
+  if (has_relative_bias) {
+    METAL_PRAGMA_UNROLL
+    for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
+      const uint query_row = min(query_row_base + lane_rows[row], num_query_rows - 1u);
+      bias_rows[row] = size_t(kv_head_index) * params.gqa_factor * params.q_len + query_row;
+      const uint query_position = query_row % params.q_len;
+      bias_query_positions[row] = suffix_position + (is_trie ? trie[query_position].height : query_position);
+    }
   }
   if (!mask_free && is_causal && !is_kv_cache_ring && !is_sliding_window) {
     ulong row_mask[ROWS_PER_LANE];
@@ -437,6 +452,28 @@ METAL_FUNC void attention_matrix_mxu(
         },
         score
     );
+    if (!IS_SPARSE && has_relative_bias) {
+      scores.for_each_lane([&](ushort row, ushort column, thread AccumType& value) UZU_ALWAYS_INLINE {
+        const uint key = key_base + lane_column_key(column);
+        if (key < key_length && value != -INFINITY) {
+          value += relative_bias_log2(
+              relative_logits,
+              relative_extent,
+              bias_rows[row],
+              bias_query_positions[row],
+              key_logical_position(
+                  ring_params,
+                  trie,
+                  prefix_length,
+                  suffix_position,
+                  key,
+                  is_kv_cache_ring,
+                  is_trie
+              )
+          );
+        }
+      });
+    }
 
     if (!IS_SPARSE && !mask_free && !is_kv_cache_ring && !is_sliding_window &&
         key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length) {

@@ -1,0 +1,94 @@
+{
+    "grammar_trigger": "<|content_text|>",
+    "jinja": {
+        "template": "{#- Inkling 2 chat template adapted for hanashi (minijinja):\n    - tojson has no sort_keys/separators here, so compact_json writes the same compact JSON;\n    - the HF-only generation/endgeneration tags are dropped;\n    - tool calls are {name, arguments} objects, tool results arrive as {name, response} (wrapped as {\"value\": ...} if not an object);\n    - add_generation_prompt opens the reply with <|message_model|>, the token the model starts every reply with. -#}\n{%- set effort_map = {\"none\": 0.0, \"minimal\": 0.1, \"low\": 0.2, \"medium\": 0.7, \"high\": 0.9, \"xhigh\": 0.99, \"max\": 0.99} -%}\n{%- set role_token = {\"user\": \"<|message_user|>\", \"assistant\": \"<|message_model|>\", \"system\": \"<|message_system|>\", \"tool\": \"<|message_tool|>\"} -%}\n\n{%- macro compact_json(value, sort_keys) -%}\n    {%- if value is mapping -%}\n        {{- \"{\" -}}\n        {%- for key, item in (value | dictsort(case_sensitive=true) if sort_keys else value | items) -%}\n            {{- \",\" if not loop.first -}}\n            {{- key | tojson -}}\n            {{- \":\" -}}\n            {{- compact_json(item, sort_keys) -}}\n        {%- endfor -%}\n        {{- \"}\" -}}\n    {#- Lists built with `+` are lazy iterables in minijinja, not sequences; none and undefined iterate as empty. -#}\n    {%- elif value is defined and value is not none and value is not string and value is iterable -%}\n        {{- \"[\" -}}\n        {%- for item in value -%}\n            {{- \",\" if not loop.first -}}\n            {{- compact_json(item, sort_keys) -}}\n        {%- endfor -%}\n        {{- \"]\" -}}\n    {%- else -%}\n        {{- value | tojson -}}\n    {%- endif -%}\n{%- endmacro -%}\n\n{%- macro emit_thinking_effort() -%}\n    {%- set eff = reasoning_effort if reasoning_effort is defined and reasoning_effort is not none else 0.9 -%}\n    {%- if eff is string -%}\n        {%- set key = eff | trim -%}\n        {%- if key not in effort_map -%}\n            {{- raise_exception(\"Unknown reasoning_effort: \" ~ eff) -}}\n        {%- endif -%}\n        {%- set num = effort_map[key] -%}\n    {%- else -%}\n        {%- set num = eff | float -%}\n    {%- endif -%}\n    {%- if num < 0.0 or num > 0.99 -%}\n        {{- raise_exception(\"reasoning_effort must be in [0.0, 0.99]\") -}}\n    {%- endif -%}\n    {{- \"<|message_system|><|content_text|>Thinking effort level: \" -}}\n    {%- if num == 0.0 -%}0{%- else -%}{{ num }}{%- endif -%}\n    {{- \"<|end_message|>\" -}}\n{%- endmacro -%}\n\n{%- if tools -%}\n    {%- set tool_state = namespace(specs=[]) -%}\n    {%- for tool in tools -%}\n        {%- set fn = tool.function if tool.function is defined else tool -%}\n        {%- set spec = {\n            \"description\": (fn.description if fn.description is defined and fn.description else \"\"),\n            \"name\": fn.name,\n            \"parameters\": (fn.parameters if fn.parameters is defined and fn.parameters else {}),\n            \"type\": (tool.type if tool.type is defined and tool.type else \"function\"),\n        } -%}\n        {%- set tool_state.specs = tool_state.specs + [spec] -%}\n    {%- endfor -%}\n    {{- \"<|message_system|>tool_declare<|content_xml|>\" -}}\n    {{- compact_json(tool_state.specs, true) -}}\n    {{- \"<|end_message|>\" -}}\n{%- endif -%}\n\n{%- set state = namespace(effort_emitted=false) -%}\n{%- for message in messages -%}\n    {%- if message.role not in role_token -%}\n        {{- raise_exception(\"Unknown message role: \" ~ message.role) -}}\n    {%- endif -%}\n    {%- if not state.effort_emitted and message.role != \"system\" -%}\n        {{- emit_thinking_effort() -}}\n        {%- set state.effort_emitted = true -%}\n    {%- endif -%}\n\n    {%- set message_state = namespace(content=message.content, name=(message.name if message.name is defined else none)) -%}\n    {%- if message.role == \"tool\" -%}\n        {%- if message.content is mapping and message.content | length == 2 and \"name\" in message.content and \"response\" in message.content -%}\n            {%- set message_state.name = message.content.name -%}\n            {%- set message_state.content = message.content.response -%}\n            {%- if message_state.content is mapping and message_state.content | length == 1 and \"value\" in message_state.content -%}\n                {%- set message_state.content = message_state.content.value -%}\n            {%- endif -%}\n        {%- endif -%}\n        {%- if message_state.content is not string -%}\n            {%- set message_state.content = compact_json(message_state.content, false) -%}\n        {%- endif -%}\n    {%- endif -%}\n\n    {%- set header = namespace(text=role_token[message.role]) -%}\n    {%- if message.role == \"tool\" -%}\n        {%- if message_state.name is string and message_state.name -%}\n            {%- set header.text = header.text ~ message_state.name -%}\n        {%- endif -%}\n    {%- elif message.role == \"assistant\" and message.name is defined and message.name -%}\n        {%- set header.text = header.text ~ message.name -%}\n    {%- endif -%}\n    {%- set rtok = header.text -%}\n    {%- set rendered -%}\n\n    {%- if message.role == \"assistant\" and message.reasoning_content is defined and message.reasoning_content -%}\n        {{- rtok ~ \"<|content_thinking|>\" ~ message.reasoning_content ~ \"<|end_message|>\" -}}\n    {%- endif -%}\n\n    {%- if message_state.content is string and (message_state.content or not (message.role == \"assistant\" and (message.tool_calls or message.reasoning_content))) -%}\n        {{- rtok ~ \"<|content_text|>\" ~ message_state.content ~ \"<|end_message|>\" -}}\n    {%- elif message_state.content -%}\n        {%- for part in message_state.content -%}\n            {%- if part is string -%}\n                {{- rtok ~ \"<|content_text|>\" ~ part ~ \"<|end_message|>\" -}}\n            {%- elif part.type is not defined or part.type in (\"text\", \"input_text\") -%}\n                {%- set text_part = (part.text if part.text is defined and part.text is string else \"\") -%}\n                {{- rtok ~ \"<|content_text|>\" ~ text_part ~ \"<|end_message|>\" -}}\n            {%- elif part.type in (\"image\", \"input_image\", \"image_url\") -%}\n                {%- if message.role not in (\"user\", \"tool\") -%}\n                    {{- raise_exception(\"Image content is only supported for user and tool messages\") -}}\n                {%- endif -%}\n                {{- rtok ~ \"<|content_image|><|unused_200054|><|end_message|>\" -}}\n            {%- elif part.type in (\"audio\", \"input_audio\", \"audio_url\") -%}\n                {{- raise_exception(\"Inkling 2 does not accept audio input\") -}}\n            {%- else -%}\n                {{- raise_exception(\"Unsupported content part type: \" ~ part.type) -}}\n            {%- endif -%}\n        {%- endfor -%}\n    {%- endif -%}\n\n    {%- if message.role == \"assistant\" and message.tool_calls -%}\n        {%- for tc in message.tool_calls -%}\n            {%- set fn = tc.function if tc is mapping and tc.function is defined else tc -%}\n            {#- Unparsed tool call candidates have no name: they are skipped instead of failing the prompt. -#}\n            {%- if fn is mapping and fn.name is string -%}\n                {%- if message.name is defined and message.name and message.name != fn.name -%}\n                    {{- raise_exception(\"assistant name \" ~ message.name ~ \" does not match its tool call \" ~ fn.name) -}}\n                {%- endif -%}\n                {%- set args = fn.arguments if fn.arguments is defined and fn.arguments else {} -%}\n                {{- \"<|message_model|>\" ~ fn.name ~ \"<|content_invoke_tool_json|>\" -}}\n                {{- '{\"name\":' ~ (fn.name | tojson) ~ ',\"args\":' -}}\n                {%- if args is mapping -%}\n                    {{- \"{\" -}}\n                    {%- for key, value in args | dictsort(case_sensitive=true) -%}\n                        {{- (key | tojson) ~ \":\" ~ compact_json(value, false) -}}\n                        {%- if not loop.last -%},{%- endif -%}\n                    {%- endfor -%}\n                    {{- \"}\" -}}\n                {%- else -%}\n                    {#- Arguments that are not an object are kept as generated instead of failing the prompt. -#}\n                    {{- compact_json(args, false) -}}\n                {%- endif -%}\n                {{- \"}<|end_message|>\" -}}\n            {%- endif -%}\n        {%- endfor -%}\n    {%- endif -%}\n\n    {%- if message.role == \"assistant\" -%}\n        {{- \"<|content_model_end_sampling|>\" -}}\n    {%- endif -%}\n    {%- endset -%}\n    {{- rendered -}}\n{%- endfor -%}\n\n{%- if not state.effort_emitted -%}\n    {{- emit_thinking_effort() -}}\n{%- endif -%}\n\n{%- if add_generation_prompt -%}\n    {{- \"<|message_model|>\" -}}\n{%- endif -%}\n",
+        "required_functions": [],
+        "preamble_control_key": "add_generation_prompt"
+    },
+    "canonization": {
+        "role_key": "role",
+        "type_key": "type",
+        "text_key": "text",
+        "url_key": "url",
+        "custom_keys": {
+            "tool_call_result_name": "name",
+            "tool_call_result_response": "response"
+        }
+    },
+    "rendering": {
+        "system": {
+            "role": "system",
+            "message": {
+                "content": {
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            },
+            "context": {
+                "reasoning_effort": {
+                    "block": "reasoning_effort",
+                    "mapping": {
+                        "disabled": "none",
+                        "default": "high",
+                        "low": "low",
+                        "medium": "medium",
+                        "high": "high",
+                        "xhigh": "xhigh"
+                    }
+                }
+            }
+        },
+        "developer": {
+            "role": "developer",
+            "context": {
+                "tools": {
+                    "block": "tools"
+                }
+            }
+        },
+        "user": {
+            "role": "user",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "assistant": {
+            "role": "assistant",
+            "message": {
+                "content": {
+                    "blocks": [
+                        "text"
+                    ]
+                },
+                "reasoning_content": {
+                    "block": "reasoning"
+                },
+                "tool_calls": {
+                    "disable_raw": true,
+                    "blocks": [
+                        "tool_call",
+                        "tool_call_candidate"
+                    ]
+                }
+            }
+        },
+        "tool": {
+            "role": "tool",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "tool_call_result"
+                    ],
+                    "limit": 1
+                }
+            }
+        }
+    }
+}

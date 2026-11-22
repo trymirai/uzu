@@ -6,8 +6,9 @@ pub mod gelu;
 pub mod identity;
 pub mod sigmoid;
 pub mod silu;
+pub mod soft_capped_silu;
 
-#[uzu_config_abstract(silu::SiLU, gelu::GELU, identity::Identity, sigmoid::Sigmoid)]
+#[uzu_config_abstract(silu::SiLU, gelu::GELU, identity::Identity, sigmoid::Sigmoid, soft_capped_silu::SoftCappedSiLU)]
 pub struct Activation;
 
 impl AnyActivation {
@@ -24,13 +25,24 @@ impl AnyActivation {
             }) => ActivationType::GELUExact,
             AnyActivation::Identity(_) => ActivationType::IDENTITY,
             AnyActivation::Sigmoid(_) => ActivationType::SIGMOID,
+            AnyActivation::SoftCappedSiLU(_) => {
+                panic!("SoftCappedSiLU has no element-wise kernel; only the mixture-of-experts kernels apply it")
+            },
         }
+    }
+
+    /// Whether the element-wise activation kernels implement this activation.
+    pub fn has_act_type(&self) -> bool {
+        !matches!(self, AnyActivation::SoftCappedSiLU(_))
     }
 
     pub fn alpha(&self) -> f32 {
         match self {
             AnyActivation::SiLU(config) => config.alpha,
-            AnyActivation::GELU(_) | AnyActivation::Identity(_) | AnyActivation::Sigmoid(_) => 1.0,
+            AnyActivation::GELU(_)
+            | AnyActivation::Identity(_)
+            | AnyActivation::Sigmoid(_)
+            | AnyActivation::SoftCappedSiLU(_) => 1.0,
         }
     }
 

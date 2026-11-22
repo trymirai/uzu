@@ -82,8 +82,9 @@ impl AttentionKernel for VkAttentionKernel {
             impl BufferRef<Backend = Vulkan>,
         >,
         arguments: AttentionArguments<
-            '_,
             Vulkan,
+            impl BufferRef<Backend = Vulkan>,
+            impl BufferRef<Backend = Vulkan>,
             impl BufferRef<Backend = Vulkan>,
             impl BufferRef<Backend = Vulkan>,
             impl BufferRef<Backend = Vulkan>,

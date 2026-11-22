@@ -82,6 +82,7 @@ impl<B: Backend> WeaverLayer<B> {
                 num_groups: num_heads,
                 num_q_heads: num_heads,
                 has_sinks: false,
+                sink_row_stride: 0,
                 gate_row_stride: None,
                 is_kv_cache_ring: false,
                 is_causal: true,
@@ -89,6 +90,7 @@ impl<B: Backend> WeaverLayer<B> {
                 scale: Some(attention_scale),
                 data_type: DATA_TYPE,
                 sparse_compression_ratio: None,
+                relative_extent: None,
             },
         )
         .map_err(WeaverNewError::Attention)?;
@@ -105,6 +107,11 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             false,
             0,
+            false,
+            false,
+            false,
+            false,
+            false,
             false,
         )
         .map_err(WeaverNewError::Backend)?;
@@ -214,6 +221,10 @@ impl<B: Backend> WeaverLayer<B> {
             token_count,
             None,
             None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None::<&B::GlobalGpuBuffer>,
+            None,
             command_buffer,
         );
         Ok(PreparedPrefixAttention {

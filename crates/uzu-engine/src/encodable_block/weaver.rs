@@ -367,9 +367,10 @@ impl<B: Backend> Weaver<B> {
                         suffix_length: depth,
                         trie: None::<&B::ConstantBuffer>,
                         key_blocks: None::<KeyBlocks<&B::ConstantBuffer>>,
-                        sinks: None,
+                        sinks: None::<&B::ConstantBuffer>,
                         cache,
                         gate: None::<&B::ConstantBuffer>,
+                        relative_logits: None::<&B::ConstantBuffer>,
                     },
                     command_buffer,
                 )

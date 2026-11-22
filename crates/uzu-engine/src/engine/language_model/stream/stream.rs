@@ -291,8 +291,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             number_of_batches
         ));
 
-        let hidden_feature_layer_indices =
-            self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+        let requested_features =
+            self.model.speculator.as_ref().map(|speculator| speculator.hidden_features());
 
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
             let token_ids = command_buffer
@@ -307,7 +307,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 &token_ids,
                 &batch_dim,
                 sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
-                hidden_feature_layer_indices,
+                requested_features,
                 &mut self.model_state.transformer_state,
                 &mut command_buffer,
             )?;
@@ -489,7 +489,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             let draft = speculator.encode_draft(
                 self.model_state.speculator_state.as_mut().unwrap(),
                 target_output_token,
-                self.model.decoder.embedding(),
+                &self.model.decoder,
                 &shape,
                 &mut command_buffer,
             )?;
@@ -510,9 +510,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             let proposal = speculator.propose_tree(
                 draft,
+                self.model_state.speculator_state.as_ref().unwrap(),
                 target_output_norm,
                 target_output_token,
-                self.model.decoder.embedding(),
+                &self.model.decoder,
                 shape,
                 &self.options.sampling_method,
                 &self.model_state.prng,
@@ -570,14 +571,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .prepare(context_length, batch_dim.size())
             .map_err(LanguageModelStreamError::Backend)?;
 
-        let hidden_feature_layer_indices =
-            self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+        let requested_features =
+            self.model.speculator.as_ref().map(|speculator| speculator.hidden_features());
 
         let decoder_output = self.model.decoder.encode(
             &token_ids,
             &batch_dim,
             Some((0..batch_dim.size()).into()),
-            hidden_feature_layer_indices,
+            requested_features,
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;

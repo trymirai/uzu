@@ -3,6 +3,8 @@ use crate::backends::common::Backend;
 pub mod ancestor_attention;
 pub mod kv_cache_update;
 pub mod prepare;
+pub mod prepare_separate;
+pub mod relative_logits;
 
 mod compute;
 mod mask;
@@ -48,8 +50,9 @@ impl AttentionKernel for AttentionCpuKernel {
             impl BufferRef<Backend = Cpu>,
         >,
         arguments: AttentionArguments<
-            '_,
             Cpu,
+            impl BufferRef<Backend = Cpu>,
+            impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,
             impl BufferRef<Backend = Cpu>,

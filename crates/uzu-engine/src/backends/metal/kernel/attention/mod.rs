@@ -80,6 +80,7 @@ impl AttentionMetalKernel {
                     is_trie,
                     config.num_groups,
                     None,
+                    config.relative_extent.is_some(),
                 )
             };
             tiles.push(KernelTile {
@@ -112,6 +113,7 @@ impl AttentionMetalKernel {
                         is_trie,
                         !split_kv && config.gate_row_stride.is_some(),
                         !split_kv && config.has_sinks,
+                        config.relative_extent.is_some(),
                         config.num_groups,
                     )
                 };
@@ -166,6 +168,7 @@ impl AttentionMetalKernel {
                             is_trie,
                             config.num_groups,
                             Some(compression_ratio),
+                            false,
                         )
                     };
                     Ok((rows, compression_ratio, [kernel(false)?, kernel(true)?]))
@@ -203,8 +206,9 @@ impl AttentionKernel for AttentionMetalKernel {
             impl BufferRef<Backend = Metal>,
         >,
         arguments: AttentionArguments<
-            '_,
             Metal,
+            impl BufferRef<Backend = Metal>,
+            impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
             impl BufferRef<Backend = Metal>,
@@ -219,7 +223,13 @@ impl AttentionKernel for AttentionMetalKernel {
             cache,
             gate,
             sinks,
+            relative_logits,
         } = arguments;
+        assert_eq!(
+            relative_logits.is_some(),
+            self.config.relative_extent.is_some(),
+            "relative logits must match AttentionKernelConfig::relative_extent"
+        );
         let config = &self.config;
         let (head_dim, num_q_heads, num_groups) = (config.head_dim, config.num_q_heads, config.num_groups);
         let prefix_len = cache.prefix_len();
@@ -326,11 +336,15 @@ impl AttentionKernel for AttentionMetalKernel {
                 suffix_length,
                 Some(key_blocks.query_blocks),
                 Some(key_blocks.blocks_per_query),
+                None::<&<Metal as Backend>::ScratchBuffer>,
+                None,
                 command_buffer,
             );
         } else if let Some(tile) = tile {
             let query_tiles = padded_rows / tile.rows;
-            let prefix_splits = tile.prefix.as_ref().map_or(0, |_| {
+            // The mask-free prefix kernel has no trie, so it cannot place trie queries for relative biases.
+            let prefix_kernel = tile.prefix.as_ref().filter(|_| trie.is_none() || config.relative_extent.is_none());
+            let prefix_splits = prefix_kernel.map_or(0, |_| {
                 (0..num_splits)
                     .take_while(|split| ((split + 1) * params.nk / num_splits) * kv_layout::TILE_KEYS <= params.q_off)
                     .count() as u32
@@ -369,6 +383,8 @@ impl AttentionKernel for AttentionMetalKernel {
                     suffix_length,
                     None::<&<Metal as Backend>::ConstantBuffer>,
                     None,
+                    relative_logits,
+                    config.relative_extent,
                     command_buffer,
                 );
             }
@@ -394,6 +410,9 @@ impl AttentionKernel for AttentionMetalKernel {
                 gate.filter(|_| direct),
                 sinks.filter(|_| direct),
                 config.gate_row_stride.filter(|_| direct),
+                config.has_sinks.then_some(config.sink_row_stride).filter(|_| direct),
+                relative_logits,
+                config.relative_extent,
                 params,
                 split_rows,
                 num_splits,
@@ -419,6 +438,7 @@ impl AttentionKernel for AttentionMetalKernel {
             num_groups,
             num_splits,
             config.gate_row_stride,
+            config.has_sinks.then_some(config.sink_row_stride),
             command_buffer,
         );
         Ok(output)

@@ -32,6 +32,9 @@ KERNEL(AttentionVector)(
     const device T* gate OPTIONAL(!SPLIT_KV && has_gate),
     const device T* sinks OPTIONAL(!SPLIT_KV && has_sinks),
     const constant uint& gate_row_stride OPTIONAL(!SPLIT_KV && has_gate),
+    const constant uint& sink_row_stride OPTIONAL(!SPLIT_KV && has_sinks),
+    const device bfloat* relative_logits OPTIONAL(has_relative_bias),
+    const constant uint& relative_extent OPTIONAL(has_relative_bias),
     const constant uzu::attention::AttnParams& params,
     const constant uint& rows,
     const constant uint& num_splits,
@@ -41,6 +44,7 @@ KERNEL(AttentionVector)(
     const bool is_trie SPECIALIZE,
     const bool has_gate SPECIALIZE,
     const bool has_sinks SPECIALIZE,
+    const bool has_relative_bias SPECIALIZE,
     const uint num_kv_heads SPECIALIZE,
     const ThreadContext thread_context,
     const uint group GROUPS(rows.div_ceil(4 * QUERIES)),
@@ -72,7 +76,9 @@ KERNEL(AttentionVector)(
     q_position[q] = (row + q) % params.q_len;
     query_position[q] = suffix_position + (is_trie ? trie[q_position[q]].height : q_position[q]);
     query_scale[q] = float(query_scales[row + q]) * params.scale * M_LOG2E_F;
-    maximum[q] = !SPLIT_KV && has_sinks ? float(sinks[(row + q) / params.q_len]) * M_LOG2E_F : -INFINITY;
+    maximum[q] = !SPLIT_KV && has_sinks
+                     ? float(sinks[q_position[q] * sink_row_stride + (row + q) / params.q_len]) * M_LOG2E_F
+                     : -INFINITY;
     denominator[q] = !SPLIT_KV && has_sinks ? 1.0f : 0.0f;
   }
   const uint begin = SPLIT_KV ? split * params.nk / num_splits : 0;
@@ -127,6 +133,15 @@ KERNEL(AttentionVector)(
                                                    );
         const size_t scale_index = shape.scale_index(key, kv_head);
         scores[q][i] = visible ? scores[q][i] * query_scale[q] * float(key_scales[scale_index]) : -INFINITY;
+        if (has_relative_bias && visible) {
+          scores[q][i] += relative_bias_log2(
+              relative_logits,
+              relative_extent,
+              row + q,
+              query_position[q],
+              key_logical_position(ring_params, trie, params.q_off, suffix_position, key, is_kv_cache_ring, is_trie)
+          );
+        }
         value_scale[i] = visible ? float(value_scales[scale_index]) : 0.0f;
       }
       const float tile_max =

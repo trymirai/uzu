@@ -38,6 +38,8 @@ pub enum HanashiConfig {
     Gemma4,
     #[serde(rename = "gpt-oss")]
     GptOss,
+    #[serde(rename = "inkling-2")]
+    Inkling2,
     #[serde(rename = "lfm2")]
     Lfm2,
     #[serde(rename = "lfm2.5-instruct")]
@@ -123,6 +125,7 @@ impl HanashiConfig {
             HanashiConfig::Gemma3 => resolve_bundled_config("gemma-3"),
             HanashiConfig::Gemma4 => resolve_bundled_config("gemma-4"),
             HanashiConfig::GptOss => resolve_bundled_config("gpt-oss"),
+            HanashiConfig::Inkling2 => resolve_bundled_config("inkling-2"),
             HanashiConfig::Lfm2 => resolve_bundled_config("lfm2"),
             HanashiConfig::Lfm25Instruct => resolve_bundled_config("lfm2.5-instruct"),
             HanashiConfig::Lfm25Thinking => resolve_bundled_config("lfm2.5-thinking"),

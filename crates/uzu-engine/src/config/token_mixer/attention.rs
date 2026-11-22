@@ -3,7 +3,32 @@ use uzu_engine_macros::uzu_config;
 use crate::config::{
     linear::LinearConfig,
     normalization::{NormalizationConfig, UpcastMode},
+    token_mixer::convolutions::CausalConvConfig,
 };
+
+/// Scales each head vector down to `threshold` when its L2 norm is larger, after an optional learned
+/// per-head per-channel scale.
+#[uzu_config]
+pub struct L2ClipConfig {
+    pub threshold: f32,
+    pub has_scale: bool,
+}
+
+/// Position-dependent scale `1 + alpha * ln(max((position + 1) / n_floor, 1))` of the queries and relative states.
+#[uzu_config]
+pub struct LogScalingConfig {
+    pub n_floor: u32,
+    pub alpha: f32,
+}
+
+/// Per-token relative states (`dim` per head, clipped) mix learned bias-versus-distance profiles into one logit
+/// bias per distance; the bias is zero outside `0 <= distance < extent`.
+#[uzu_config]
+pub struct RelativePositionBiasConfig {
+    pub dim: u32,
+    pub extent: u32,
+    pub clip_config: L2ClipConfig,
+}
 
 #[uzu_config(super::TokenMixerConfig)]
 pub struct AttentionConfig {
@@ -26,6 +51,25 @@ pub struct AttentionConfig {
     pub has_gate: bool,
     pub normalize_values: bool,
     pub is_kv_sharing: bool,
+    /// Queries, keys and values project separate inputs. The query projection also yields the relative states,
+    /// the gate and the token sinks; the key and value projections also yield their dynamic convolution taps.
+    #[serde(default)]
+    pub separate_inputs: bool,
+    #[serde(default)]
+    pub query_clip_config: Option<L2ClipConfig>,
+    #[serde(default)]
+    pub key_clip_config: Option<L2ClipConfig>,
+    #[serde(default)]
+    pub log_scaling_config: Option<LogScalingConfig>,
+    #[serde(default)]
+    pub relative_position_bias_config: Option<RelativePositionBiasConfig>,
+    /// A sink logit per token and head, projected from the query input, with a zero value.
+    #[serde(default)]
+    pub has_token_sinks: bool,
+    #[serde(default)]
+    pub key_conv_config: Option<CausalConvConfig>,
+    #[serde(default)]
+    pub value_conv_config: Option<CausalConvConfig>,
 }
 
 impl AttentionConfig {

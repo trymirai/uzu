@@ -53,8 +53,9 @@ impl AttentionKernel for Unsupported<WebGPU> {
             impl BufferRef<Backend = WebGPU>,
         >,
         _arguments: AttentionArguments<
-            '_,
             WebGPU,
+            impl BufferRef<Backend = WebGPU>,
+            impl BufferRef<Backend = WebGPU>,
             impl BufferRef<Backend = WebGPU>,
             impl BufferRef<Backend = WebGPU>,
             impl BufferRef<Backend = WebGPU>,

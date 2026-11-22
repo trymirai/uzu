@@ -111,6 +111,7 @@ fn attention_matches_cpu() {
                 num_groups: kv_heads as u32,
                 num_q_heads: q_heads as u32,
                 has_sinks: false,
+                sink_row_stride: 0,
                 gate_row_stride: gates.as_ref().map(|_| gate_stride as u32),
                 is_kv_cache_ring: false,
                 is_causal: true,
@@ -118,6 +119,7 @@ fn attention_matches_cpu() {
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
                 sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
+                relative_extent: None,
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
@@ -184,6 +186,11 @@ fn attention_matches_cpu() {
                         false,
                         0,
                         trie.is_some(),
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
                     )
                     .unwrap();
                     let mut query_codes = create_buffer::<Metal, i8>(&metal, kv_heads * query_rows * head_dim);
@@ -218,6 +225,10 @@ fn attention_matches_cpu() {
                         query_rows as u32,
                         None,
                         trie.as_ref(),
+                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                        None,
                         &mut command_buffer,
                     );
                     if !attend {
@@ -233,7 +244,8 @@ fn attention_matches_cpu() {
                         v_scales: kv.v_scales.as_ref(),
                     };
                     let arguments = AttentionArguments {
-                        sinks: None,
+                        sinks: None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                        relative_logits: None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         suffix_length: suffix as u32,
                         trie: trie.as_ref(),
                         cache: KVCacheState::new(prefix as u32, None),

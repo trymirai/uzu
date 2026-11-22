@@ -12,7 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
+        transformer::{HiddenFeature, Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
     safetensors::ParameterTree,
 };
@@ -49,6 +49,15 @@ pub struct DecoderEncodeOutput<B: Backend> {
 impl<B: Backend> Decoder<B> {
     pub(crate) fn embedding(&self) -> &Embedding<B> {
         &self.embedding
+    }
+
+    pub(crate) fn embedding_norm(&self) -> Option<&Normalization<B>> {
+        self.embedding_norm.as_ref()
+    }
+
+    /// How many layer visits a token's forward pass runs.
+    pub(crate) fn layer_visit_count(&self) -> u32 {
+        self.transformer.layer_visit_count()
     }
 
     pub async fn new(
@@ -148,7 +157,7 @@ impl<B: Backend> Decoder<B> {
         token_ids: impl BufferRef<Backend = B>,
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
-        hidden_feature_layer_indices: Option<&[u32]>,
+        requested_features: Option<&[HiddenFeature]>,
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
@@ -174,7 +183,7 @@ impl<B: Backend> Decoder<B> {
             per_layer_inputs.as_ref(),
             batch_dim,
             output_range,
-            hidden_feature_layer_indices,
+            requested_features,
             Some(state),
             command_buffer,
         )?;
@@ -192,7 +201,7 @@ impl<B: Backend> Decoder<B> {
         } else {
             None
         };
-        let final_hidden = if hidden_feature_layer_indices.is_none() {
+        let final_hidden = if requested_features.is_none() {
             None
         } else {
             transformer_output.output

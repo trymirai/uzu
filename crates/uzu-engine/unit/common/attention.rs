@@ -18,6 +18,7 @@ pub(crate) fn kv_layout<B: Backend>(
             num_groups: num_kv_heads,
             num_q_heads: num_kv_heads,
             has_sinks: false,
+            sink_row_stride: 0,
             gate_row_stride: None,
             is_kv_cache_ring: false,
             is_causal: true,
@@ -25,6 +26,7 @@ pub(crate) fn kv_layout<B: Backend>(
             scale: None,
             data_type: DataType::BF16,
             sparse_compression_ratio: None,
+            relative_extent: None,
         },
     )
     .unwrap()

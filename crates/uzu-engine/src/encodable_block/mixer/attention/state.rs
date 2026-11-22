@@ -6,7 +6,10 @@ use crate::{
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{Mixer, MixerState, attention::Attention},
+    encodable_block::{
+        causal_conv::CausalConvState,
+        mixer::{Mixer, MixerState, attention::Attention},
+    },
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
@@ -108,6 +111,8 @@ pub struct AttentionState<B: Backend> {
     cache: KVCacheState,
     pub kv: KVCache<B>,
     kv_cache_update: <B::Kernels as Kernels>::KVCacheUpdateKernel,
+    /// The states of the key and value convolutions.
+    pub conv_states: [Option<CausalConvState<B>>; 2],
 }
 
 impl<B: Backend> AttentionState<B> {
@@ -168,6 +173,7 @@ impl<B: Backend> AttentionState<B> {
             cache,
             kv,
             kv_cache_update,
+            conv_states: attention.create_conv_states(context)?,
         })
     }
 }
@@ -208,6 +214,10 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 .is_some(),
             "copy reads a row an earlier copy wrote"
         );
+
+        for conv_state in self.conv_states.iter_mut().flatten() {
+            conv_state.encode_accept(accepted_indices, command_buffer);
+        }
 
         if !copies.is_empty() {
             self.kv_cache_update.encode(

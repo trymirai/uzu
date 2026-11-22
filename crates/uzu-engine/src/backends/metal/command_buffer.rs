@@ -114,6 +114,15 @@ impl MetalCommandBufferEncoding {
         })
     }
 
+    /// A full dispatch barrier, for `duplicate_dispatch`.
+    pub(crate) fn dispatch_barrier(&mut self) {
+        self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
+            MTLStages::Dispatch,
+            MTLStages::Dispatch,
+            MTL4VisibilityOptions::Device,
+        );
+    }
+
     pub(super) fn access(
         &mut self,
         accesses: &[Access],
@@ -122,6 +131,8 @@ impl MetalCommandBufferEncoding {
         if accesses.iter().any(|access| {
             self.writes.overlaps(&access.range.into()) || (access.write && self.reads.overlaps(&access.range.into()))
         }) {
+            super::BARRIER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            super::trace_dispatch(super::DISPATCH_COUNT.load(std::sync::atomic::Ordering::Relaxed), "--- barrier");
             self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
                 MTLStages::Dispatch,
                 MTLStages::Dispatch,

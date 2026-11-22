@@ -28,6 +28,13 @@
         "ordering": "default"
     },
     {
+        "name": "inkling-2",
+        "parsing": "inkling-2",
+        "rendering": "inkling-2",
+        "tokens": "inkling-2",
+        "ordering": "default"
+    },
+    {
         "name": "lfm2",
         "parsing": "lfm2",
         "rendering": "lfm2",

@@ -168,4 +168,33 @@ impl<B: Backend> Normalization<B> {
 
         Ok(output)
     }
+
+    /// Normalizes `row_count` rows of `input` with the scales and biases of mixture component `component`, into
+    /// `output`.
+    pub fn encode_component(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        component: u32,
+        row_count: u32,
+        output: impl BufferMut<Backend = B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        assert!(component < self.mixture_size, "mixture component {component} out of {}", self.mixture_size);
+        let affine_size = size_for_shape(&[self.element_count], DataType::F32);
+        let affine = component as usize * affine_size..(component as usize + 1) * affine_size;
+        self.kernel.encode(
+            Some(input),
+            self.scales.as_ref().map(|scales| scales.subrange(affine.clone())),
+            self.biases.as_ref().map(|biases| biases.subrange(affine.clone())),
+            output,
+            None::<&mut B::ScratchBuffer>,
+            self.hadamard_factors.as_deref(),
+            row_count,
+            self.element_count,
+            self.epsilon,
+            self.scale_offset.unwrap_or(0.0),
+            1,
+            command_buffer,
+        );
+    }
 }

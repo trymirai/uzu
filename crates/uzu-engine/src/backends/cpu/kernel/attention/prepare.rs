@@ -4,7 +4,9 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
-        common::gpu_types::{kv_layout, qkv_norm::QKVNormParams, trie::TrieNode},
+        common::gpu_types::{
+            attention_prepare::AttentionPrepareParams, kv_layout, qkv_norm::QKVNormParams, trie::TrieNode,
+        },
         cpu::kernel::{
             activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
             attention::rope::apply_rope,
@@ -42,6 +44,12 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
+    #[optional(has_kv_input)] key_input: Option<*const ElementT>,
+    #[optional(has_kv_input)] value_input: Option<*const ElementT>,
+    #[optional(has_query_clip_scales)] query_clip_scales: Option<*const f32>,
+    #[optional(has_kv_input || has_query_clip || has_key_clip || has_log_scaling)] extras: Option<
+        AttentionPrepareParams,
+    >,
     #[specialize] has_rope: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
@@ -52,6 +60,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[specialize] block_mean: bool,
     #[specialize] compression_ratio: u32,
     #[specialize] has_trie: bool,
+    #[specialize] has_kv_input: bool,
+    #[specialize] has_query_clip: bool,
+    #[specialize] has_query_clip_scales: bool,
+    #[specialize] has_key_clip: bool,
+    #[specialize] has_log_scaling: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
@@ -98,7 +111,17 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             } else {
                 token
             };
-            let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
+            let mut source = if has_kv_input && !is_query {
+                let extras = extras.unwrap();
+                let (input, stride) = if is_key {
+                    (key_input.unwrap(), extras.key_row_stride)
+                } else {
+                    (value_input.unwrap(), extras.value_row_stride)
+                };
+                unsafe { input.add((token * stride + kv_head * HEAD_DIM) as usize) }
+            } else {
+                unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) }
+            };
             if block_mean {
                 let token = token as usize;
                 unsafe { std::ptr::copy_nonoverlapping(source, raw_row(ratio - 1 + token), head_dim) };
@@ -141,7 +164,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                 source = normalized.as_ptr();
             }
             for (channel, value) in values.iter_mut().enumerate() {
-                let element = if (is_query || is_key) && channel < rope_dim {
+                *value = if (is_query || is_key) && channel < rope_dim {
                     apply_rope(
                         source,
                         rope_inverse_frequencies.unwrap(),
@@ -155,13 +178,35 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                 }
                 .to_f32()
                 .unwrap();
+            }
+            let clip_threshold = if is_query {
+                has_query_clip.then(|| extras.unwrap().query_clip_threshold)
+            } else if is_key {
+                has_key_clip.then(|| extras.unwrap().key_clip_threshold)
+            } else {
+                None
+            };
+            if let Some(threshold) = clip_threshold {
+                if is_query && has_query_clip_scales {
+                    for (channel, value) in values.iter_mut().enumerate() {
+                        *value *= unsafe { *query_clip_scales.unwrap().add(head as usize * head_dim + channel) };
+                    }
+                }
+                let norm = values.iter().map(|value| value * value).sum::<f32>().sqrt();
+                let clip = (threshold / (norm + 1e-6)).min(1.0);
+                values.iter_mut().for_each(|value| *value *= clip);
+            }
+            if is_query && has_log_scaling {
+                let extras = extras.unwrap();
+                let ratio = (extras.position_offset + rope_row + 1) as f32 / extras.log_scaling_n_floor;
+                let scale = 1.0 + extras.log_scaling_alpha * ratio.max(1.0).ln();
+                values.iter_mut().for_each(|value| *value *= scale);
+            }
+            for (channel, value) in values.iter_mut().enumerate() {
                 let sign_word = kv_layout::ROTATION_SIGN_BITS[channel / kv_layout::WORD_BITS as usize % 8];
-                let flip_sign = (sign_word >> (channel % kv_layout::WORD_BITS as usize)) & 1 != 0;
-                *value = if flip_sign {
-                    -element
-                } else {
-                    element
-                };
+                if (sign_word >> (channel % kv_layout::WORD_BITS as usize)) & 1 != 0 {
+                    *value = -*value;
+                }
             }
             hadamard_transform(&mut values);
             let maximum = values.iter().fold(0.0f32, |maximum, value| maximum.max(value.abs()));

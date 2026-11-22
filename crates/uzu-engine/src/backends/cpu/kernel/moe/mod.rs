@@ -1,3 +1,17 @@
+pub mod batch_down;
+pub mod batch_up;
 pub mod combine;
+pub mod combine_routes;
+pub mod expert_down;
+pub mod expert_math;
+pub mod expert_up;
 pub mod gemv;
+pub mod grouped_affine_down;
+pub mod grouped_affine_up;
+pub mod grouped_down;
+pub mod grouped_up;
+pub mod route;
+pub mod route_finalize;
+pub mod router_logits;
 pub mod router_top_k;
+pub mod sum_routes;

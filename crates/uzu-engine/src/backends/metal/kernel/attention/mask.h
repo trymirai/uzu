@@ -76,6 +76,40 @@ static inline bool should_use_key(
   return use_key;
 }
 
+// The position of key slot `i` in the order that should_use_key compares with query positions: a ring orders its
+// prefix from the oldest row, and a trie places each suffix node at its height.
+static inline uint key_logical_position(
+    const constant RingParams& ring_params,
+    const device TrieNode* trie,
+    const uint prefix_length,
+    const uint suffix_position,
+    const uint i,
+    const bool is_kv_cache_ring,
+    const bool is_trie
+) {
+  if (i >= prefix_length) {
+    const uint key_position_in_suffix = i - prefix_length;
+    return suffix_position + (is_trie ? trie[key_position_in_suffix].height : key_position_in_suffix);
+  }
+  return is_kv_cache_ring ? (prefix_length + i - ring_params.ring_offset) % prefix_length : i;
+}
+
+// The relative logit bias of a query at `query_position` for a key at `key_position`, in log2 units: rows of
+// `relative_logits` hold one bias per distance from zero to `relative_extent`, and other distances have none.
+static inline float relative_bias_log2(
+    const device bfloat* relative_logits,
+    const uint relative_extent,
+    const size_t query_row,
+    const uint query_position,
+    const uint key_position
+) {
+  const uint distance = query_position - key_position;
+  if (query_position < key_position || distance >= relative_extent) {
+    return 0.0f;
+  }
+  return float(relative_logits[query_row * relative_extent + distance]) * M_LOG2E_F;
+}
+
 struct SparseKeys {
   const device int* blocks;
   const device TrieNode* trie;

@@ -8,9 +8,16 @@ use crate::{
             GatedResidualUpdateKernel, TensorAddScaleKernel,
         },
     },
-    config::residual::{AnyResidualConfig, gated::GatedResidualConfig},
+    config::{
+        residual::{AnyResidualConfig, gated::GatedResidualConfig},
+        transformer::LoopConfig,
+    },
     data_type::DataType,
     encodable_block::{
+        block_attention::{
+            BlockAttentionConnection, BlockAttentionEncodeError, BlockAttentionHead, BlockAttentionNewError,
+            ConnectionPlacement,
+        },
         linear::{Linear, LinearBlockError, LinearEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
     },
@@ -26,6 +33,8 @@ pub enum ResidualNewError<B: Backend> {
     Linear(#[from] LinearBlockError<B>),
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
+    #[error("Block attention error: {0}")]
+    BlockAttention(#[from] BlockAttentionNewError<B>),
 }
 
 #[derive(Debug, Error)]
@@ -34,6 +43,8 @@ pub enum ResidualEncodeError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Linear encoding error: {0}")]
     LinearEncode(#[from] LinearEncodeError<B>),
+    #[error("Block attention encoding error: {0}")]
+    BlockAttention(#[from] BlockAttentionEncodeError<B>),
 }
 
 struct GatedStreamReader<B: Backend> {
@@ -155,6 +166,7 @@ impl<B: Backend> GatedStreamReader<B> {
 pub enum ResidualConnection<B: Backend> {
     Additive(AdditiveResidualConnection<B>),
     Gated(GatedResidualConnection<B>),
+    BlockAttention(BlockAttentionConnection<B>),
 }
 
 pub struct AdditiveResidualConnection<B: Backend> {
@@ -181,10 +193,11 @@ impl<B: Backend> AdditiveResidualConnection<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         body: impl FnOnce(
             MaybeOwned<'_, B::ScratchBuffer>,
+            Option<ResidualTarget<'_, B>>,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        ) -> Result<B::ScratchBuffer, E>,
+        ) -> Result<SublayerUpdate<B>, E>,
     ) -> Result<B::ScratchBuffer, E> {
-        let update = body(MaybeOwned::Borrowed(stream), command_buffer)?;
+        let update = body(MaybeOwned::Borrowed(stream), None, command_buffer)?.into_returned();
 
         let mut output = command_buffer.allocate_scratch(stream.size()).map_err(ResidualEncodeError::Backend)?;
         let elements = row_count * self.model_dim;
@@ -235,14 +248,15 @@ impl<B: Backend> GatedResidualConnection<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         sublayer_body: impl FnOnce(
             MaybeOwned<'_, B::ScratchBuffer>,
+            Option<ResidualTarget<'_, B>>,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        ) -> Result<B::ScratchBuffer, E>,
+        ) -> Result<SublayerUpdate<B>, E>,
     ) -> Result<B::ScratchBuffer, E> {
         let (normalized, mixed) = self.reader.encode(stream, 0, row_count, command_buffer)?;
         let injection_logits =
             self.injection.encode(normalized, row_count, command_buffer).map_err(ResidualEncodeError::LinearEncode)?;
 
-        let update = sublayer_body(MaybeOwned::Owned(mixed), command_buffer)?;
+        let update = sublayer_body(MaybeOwned::Owned(mixed), None, command_buffer)?.into_returned();
 
         let mut output = command_buffer.allocate_scratch(stream.size()).map_err(ResidualEncodeError::Backend)?;
         let model_dim = self.reader.model_dim;
@@ -264,6 +278,7 @@ impl<B: Backend> GatedResidualConnection<B> {
 impl<B: Backend> ResidualConnection<B> {
     pub async fn new(
         config: &AnyResidualConfig,
+        placement: &ConnectionPlacement,
         model_dim: u32,
         data_type: DataType,
         parameter_tree: &ParameterTree<'_, B>,
@@ -276,22 +291,54 @@ impl<B: Backend> ResidualConnection<B> {
             AnyResidualConfig::GatedResidualConfig(config) => {
                 Self::Gated(GatedResidualConnection::new(model_dim, data_type, config, parameter_tree, context).await?)
             },
+            AnyResidualConfig::BlockAttentionResidualConfig(config) => Self::BlockAttention(
+                BlockAttentionConnection::new(config, placement, model_dim, data_type, parameter_tree, context).await?,
+            ),
         })
     }
 
+    /// Runs `body` on the sublayer input and returns the updated stream. `has_messages` marks a repeated pass over
+    /// looped layers, whose inputs also read the previous pass.
     pub fn encode<E: From<ResidualEncodeError<B>>>(
         &self,
-        stream: &B::ScratchBuffer,
+        stream: B::ScratchBuffer,
         row_count: u32,
+        has_messages: bool,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         body: impl FnOnce(
             MaybeOwned<'_, B::ScratchBuffer>,
+            Option<ResidualTarget<'_, B>>,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        ) -> Result<B::ScratchBuffer, E>,
+        ) -> Result<SublayerUpdate<B>, E>,
     ) -> Result<B::ScratchBuffer, E> {
         match self {
-            Self::Additive(connection) => connection.encode(stream, row_count, command_buffer, body),
-            Self::Gated(connection) => connection.encode(stream, row_count, command_buffer, body),
+            Self::Additive(connection) => connection.encode(&stream, row_count, command_buffer, body),
+            Self::Gated(connection) => connection.encode(&stream, row_count, command_buffer, body),
+            Self::BlockAttention(connection) => {
+                connection.encode(stream, row_count, has_messages, command_buffer, body)
+            },
+        }
+    }
+}
+
+/// Rows of the residual stream that a sublayer may write its update into itself, replacing them or adding to them.
+pub struct ResidualTarget<'a, B: Backend> {
+    pub stream: &'a mut B::ScratchBuffer,
+    pub range: std::ops::Range<usize>,
+    pub accumulate: bool,
+}
+
+/// What a sublayer body leaves its residual connection: an update to apply, or none when it wrote into the target.
+pub enum SublayerUpdate<B: Backend> {
+    Returned(B::ScratchBuffer),
+    Written,
+}
+
+impl<B: Backend> SublayerUpdate<B> {
+    fn into_returned(self) -> B::ScratchBuffer {
+        match self {
+            Self::Returned(update) => update,
+            Self::Written => unreachable!("a sublayer wrote its update without a target"),
         }
     }
 }
@@ -299,6 +346,7 @@ impl<B: Backend> ResidualConnection<B> {
 pub enum ResidualHead<B: Backend> {
     Additive,
     Gated(GatedResidualHead<B>),
+    BlockAttention(BlockAttentionHead<B>),
 }
 
 pub struct GatedResidualHead<B: Backend> {
@@ -307,9 +355,25 @@ pub struct GatedResidualHead<B: Backend> {
 }
 
 impl<B: Backend> ResidualHead<B> {
+    /// The bytes of a stream of `token_count` tokens that hold the hidden state a speculator taps: the whole stream
+    /// of an additive residual, the partial sum of block attention. A gated stream has none.
+    pub fn hidden_rows(
+        &self,
+        stream_size: usize,
+        token_count: u32,
+    ) -> Option<std::ops::Range<usize>> {
+        match self {
+            Self::Additive => Some(0..stream_size),
+            Self::Gated(_) => None,
+            Self::BlockAttention(head) => Some(head.partial_rows(token_count)),
+        }
+    }
+
     pub async fn new(
         config: &AnyResidualConfig,
         model_dim: u32,
+        num_layers: u32,
+        loop_config: Option<&LoopConfig>,
         data_type: DataType,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
@@ -328,6 +392,10 @@ impl<B: Backend> ResidualHead<B> {
                 expand: <B::Kernels as Kernels>::GatedResidualExpandKernel::new(context, data_type)
                     .map_err(ResidualNewError::Backend)?,
             })),
+            AnyResidualConfig::BlockAttentionResidualConfig(config) => Ok(Self::BlockAttention(
+                BlockAttentionHead::new(config, model_dim, num_layers, loop_config, data_type, parameter_tree, context)
+                    .await?,
+            )),
         }
     }
 
@@ -353,12 +421,14 @@ impl<B: Backend> ResidualHead<B> {
                 );
                 Ok(stream)
             },
+            Self::BlockAttention(head) => head.expand(embeddings, row_count, command_buffer),
         }
     }
 
     pub fn readout(
         &self,
         stream: impl BufferRef<Backend = B>,
+        token_count: u32,
         row_offset: u32,
         row_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -369,6 +439,10 @@ impl<B: Backend> ResidualHead<B> {
                 let (_, mixed) = head.reader.encode(stream, row_offset, row_count, command_buffer)?;
                 Ok(Some(mixed))
             },
+            Self::BlockAttention(head) => Ok(Some(
+                head.readout(stream, token_count, row_offset, row_count, command_buffer)
+                    .map_err(ResidualEncodeError::Backend)?,
+            )),
         }
     }
 }

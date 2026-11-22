@@ -47,6 +47,11 @@ fn prepare_cache<B: Backend>(
         false,
         0,
         false,
+        false,
+        false,
+        false,
+        false,
+        false,
     )
     .unwrap();
     prepare.encode(
@@ -75,6 +80,10 @@ fn prepare_cache<B: Backend>(
         0,
         None,
         None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None,
         &mut command,
     );
     submit_command_buffer(command);

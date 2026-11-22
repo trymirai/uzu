@@ -6,8 +6,10 @@ use crate::backends::{
 mod activation;
 pub(crate) mod activation_transform;
 mod attention;
+mod block_attention;
 mod confidence_head;
 mod convolution;
+mod dspark;
 mod embedding;
 mod gated_act_mul;
 mod gated_residual;

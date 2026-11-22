@@ -239,6 +239,30 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         Ok(output)
     }
 
+    fn encode_borrowed(
+        &self,
+        input: &B::ScratchBuffer,
+        offset: usize,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        let mut output = command_buffer
+            .allocate_scratch_for_shape(&[batch_dim, self.output_dim], self.output_data_type)
+            .map_err(LinearEncodeError::Backend)?;
+        self.encode_output(
+            MatmulA::FullPrecision {
+                values: input,
+                offset,
+            },
+            batch_dim,
+            self.output_dim,
+            None::<MatmulGather<&B::ScratchBuffer>>,
+            MatmulOutput::new(&mut output, self.d_ops()),
+            command_buffer,
+        )?;
+        Ok(output)
+    }
+
     fn select_activation_format(
         &self,
         batch_dim: u32,

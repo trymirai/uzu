@@ -216,6 +216,27 @@ impl<B: Backend> ParameterTree<'_, B> {
         buffer.handoff().map_err(ParameterLoaderError::BackendError)
     }
 
+    /// Like [`Self::read_buffer`], but `transform` may rewrite the tensor's bytes in place before the device sees them.
+    pub async fn read_buffer_with(
+        &self,
+        name: &str,
+        shape: &[u32],
+        dtype: DataType,
+        transform: impl FnOnce(&mut [u8]),
+    ) -> Result<B::GlobalGpuBuffer, ParameterLoaderError<B>> {
+        let tensor = self.tensor(name, shape, dtype)?;
+        let (start, end) = tensor.data_offsets;
+        let mut buffer = self
+            .loader
+            .context
+            .create_buffer_cpu_gpu((end - start) as usize)
+            .map_err(ParameterLoaderError::BackendError)?;
+        self.loader.file.read_exact_at(buffer.as_slice_mut::<u8>(), self.loader.data_offset + start).await?;
+        transform(buffer.as_slice_mut::<u8>());
+        tensor.read.store(true, Ordering::Relaxed);
+        buffer.handoff().map_err(ParameterLoaderError::BackendError)
+    }
+
     pub async fn read_slice<T: DataTypeRepr>(
         &self,
         name: &str,

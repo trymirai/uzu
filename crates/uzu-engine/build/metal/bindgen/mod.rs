@@ -128,6 +128,10 @@ pub fn bindgen(
                 command_buffer.compute_encoder.set_compute_pipeline_state(&self.pipeline);
                 #(#encode_set_calls)*
                 #dispatch_code
+                if crate::backends::metal::duplicate_dispatch(#kernel_name) {
+                    command_buffer.dispatch_barrier();
+                    #dispatch_code
+                }
             }
         }
     };

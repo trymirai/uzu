@@ -26,6 +26,8 @@ pub enum DenseMlpNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearBlockError<B>),
+    #[error("Unsupported dense MLP configuration: {0}")]
+    UnsupportedConfiguration(&'static str),
 }
 
 impl<B: Backend> DenseMlp<B> {
@@ -37,6 +39,16 @@ impl<B: Backend> DenseMlp<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<InputRhtParameters<B>>), DenseMlpNewError<B>> {
+        if !config.activation.has_act_type() {
+            return Err(DenseMlpNewError::UnsupportedConfiguration(
+                "this activation is only implemented for mixture-of-experts layers",
+            ));
+        }
+        if config.up_soft_cap.is_some() {
+            return Err(DenseMlpNewError::UnsupportedConfiguration(
+                "up projection soft capping is only implemented for mixture-of-experts layers",
+            ));
+        }
         let (up, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             model_dimension,
             2 * hidden_dimension,

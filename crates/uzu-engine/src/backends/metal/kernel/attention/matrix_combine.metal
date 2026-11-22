@@ -23,6 +23,7 @@ KERNEL(AttentionMatrixCombine)(
     const constant uint& kv_heads,
     const constant uint& num_splits,
     const constant uint& gate_row_stride OPTIONAL(has_gate),
+    const constant uint& sink_row_stride OPTIONAL(has_sinks),
     const bool has_gate SPECIALIZE,
     const bool has_sinks SPECIALIZE,
     threadgroup float rotation[BD],
@@ -42,7 +43,7 @@ KERNEL(AttentionMatrixCombine)(
   float numerator = 0.0f;
   float denominator = 0.0f;
   constexpr uint SIMDGROUPS = BD / METAL_SIMD_SIZE;
-  const float sink = has_sinks ? float(sinks[q_head_idx]) * M_LOG2E_F : -INFINITY;
+  const float sink = has_sinks ? float(sinks[query_position * sink_row_stride + q_head_idx]) * M_LOG2E_F : -INFINITY;
   float global_max = sink;
   for (uint s = column; s < num_splits; s += BD) {
     if (row_sums[s * split_rows] > 0.0f) {
