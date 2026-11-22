@@ -4,8 +4,8 @@ use cli_tools::{
     configs::PlatformsConfig,
     hanashi::export_tokenizers,
     languages::{
-        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
-        WasmLanguageBackend,
+        KotlinLanguageBackend, LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend,
+        TypeScriptLanguageBackend, WasmLanguageBackend,
     },
     release::{run_release, run_version},
     sync::run_sync,
@@ -116,6 +116,7 @@ fn language_backend(
         Language::Swift => Ok(Box::new(SwiftLanguageBackend::new(config))),
         Language::TypeScript => Ok(Box::new(TypeScriptLanguageBackend::new(config))),
         Language::Wasm => Ok(Box::new(WasmLanguageBackend::new(config))),
+        Language::Kotlin => Ok(Box::new(KotlinLanguageBackend::new(config))),
     }
 }
 

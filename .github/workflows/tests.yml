@@ -284,6 +284,26 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
           if-no-files-found: error
 
+  build-kotlin:
+    name: build (kotlin)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-legacy
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install cargo-ndk
+        run: cargo tools install kotlin
+
+      - name: Build the SDK and its tests
+        working-directory: apps/playground-android
+        run: ./gradlew :uzu:assembleDebug :uzu:compileDebugAndroidTestKotlin
+
   build-uzu-pi-extension:
     name: check and build (uzu-pi-extension)
     runs-on: prefect-github-actions
@@ -328,7 +348,7 @@ jobs:
     name: completed
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-uzu-pi-extension]
+    needs: [linters, tests, validate-bindings, linters-mirai-gui, tests-mirai-gui, build-mirai-gui, build-kotlin, build-uzu-pi-extension]
     if: ${{ always() }}
 
     steps:
@@ -339,4 +359,5 @@ jobs:
           [ "${{ needs.linters-mirai-gui.result }}" = success ]
           [ "${{ needs.tests-mirai-gui.result }}" = success ]
           [ "${{ needs.build-mirai-gui.result }}" = success ]
+          [ "${{ needs.build-kotlin.result }}" = success ]
           [ "${{ needs.build-uzu-pi-extension.result }}" = success ]

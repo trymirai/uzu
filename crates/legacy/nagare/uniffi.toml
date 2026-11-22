@@ -1,2 +1,16 @@
 [bindings.swift]
 generate_codable_conformance = true
+
+[bindings.kotlin]
+package_name = "com.trymirai.uzu.nagare"
+android = true
+generate_immutable_records = true
+
+[bindings.kotlin.rename]
+"ChatSessionError.Loading.message" = "reason"
+"ClassificationSessionError.Backend.message" = "reason"
+"DecisionSessionError.Backend.message" = "reason"
+"DecisionSessionError.Encoding.message" = "reason"
+"DecisionSessionError.InvalidQuestion.message" = "reason"
+"ForeignToolError.Invocation.message" = "reason"
+"TextToSpeechSessionError.Backend.message" = "reason"

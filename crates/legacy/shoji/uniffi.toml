@@ -1,2 +1,17 @@
 [bindings.swift]
 generate_codable_conformance = true
+
+[bindings.kotlin]
+package_name = "com.trymirai.uzu.shoji"
+android = true
+generate_immutable_records = true
+
+[bindings.kotlin.rename]
+"BackendError.Backend.message" = "reason"
+"BackendError.Capture.message" = "reason"
+"BackendError.Decoder.message" = "reason"
+"BackendError.Grammar.message" = "reason"
+"BackendError.TrieAccept.message" = "reason"
+"BackendError.Speculator.message" = "reason"
+"BackendError.Other.message" = "reason"
+"PcmBatchError.UnableToSaveAsWav.message" = "reason"

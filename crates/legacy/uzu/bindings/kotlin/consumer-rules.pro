@@ -1,0 +1,5 @@
+-keep class com.sun.jna.** { *; }
+-keep class * extends com.sun.jna.** { *; }
+-keep class com.trymirai.uzu.** { *; }
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+-dontwarn java.awt.**

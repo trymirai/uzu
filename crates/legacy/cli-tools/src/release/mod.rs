@@ -11,8 +11,8 @@ pub use version::{bump_published_version, bump_workspace_version};
 use crate::{
     configs::{Paths, PlatformsConfig, WorkspaceManifest},
     languages::{
-        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
-        WasmLanguageBackend,
+        KotlinLanguageBackend, LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend,
+        TypeScriptLanguageBackend, WasmLanguageBackend,
     },
     sync::run_sync,
     types::{Command, Language},
@@ -82,5 +82,6 @@ fn backend_for_language(
         Language::Swift => Box::new(SwiftLanguageBackend::new(config)),
         Language::TypeScript => Box::new(TypeScriptLanguageBackend::new(config)),
         Language::Wasm => Box::new(WasmLanguageBackend::new(config)),
+        Language::Kotlin => Box::new(KotlinLanguageBackend::new(config)),
     }
 }

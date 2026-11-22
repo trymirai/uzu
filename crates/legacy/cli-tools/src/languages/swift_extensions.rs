@@ -1,409 +1,48 @@
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use anyhow::Result;
-use heck::{AsLowerCamelCase, AsSnakeCase};
-use ignore::WalkBuilder;
+use heck::AsLowerCamelCase;
+
+use crate::languages::foreign_extensions::{
+    CallbackFactory, Factory, StreamBridge, collect_all, free_function_name, spell_rust_type,
+};
 
 pub fn generate_swift_extensions(
     crates_path: PathBuf,
     destination_path: PathBuf,
 ) -> Result<()> {
-    let (aliases, factories, callback_factories, stream_bridges) = collect_all(&crates_path)?;
+    let (aliases, factories, callback_factories, stream_bridges) = collect_all(&crates_path, rust_type_to_swift)?;
     let swift_source = render_extensions_file(&aliases, &factories, &callback_factories, &stream_bridges);
     fs::write(&destination_path, swift_source)?;
     Ok(())
-}
-
-#[derive(Debug, Clone)]
-struct Factory {
-    type_name: String,
-    method_name: String,
-    is_async: bool,
-    throws: bool,
-    optional: bool,
-    arguments: Vec<FactoryArgument>,
-}
-
-#[derive(Debug, Clone)]
-struct FactoryArgument {
-    name: String,
-    swift_type: String,
-}
-
-#[derive(Debug, Clone)]
-struct CallbackFactory {
-    type_name: String,
-    method_name: String,
-    callback_arg_types: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-struct StreamBridge {
-    type_name: String,
-    next_method_name: String,
-    item_swift_type: String,
-    cancel_getter_name: Option<String>,
-}
-
-fn collect_all(
-    crates_path: &Path
-) -> Result<(BTreeMap<String, String>, Vec<Factory>, Vec<CallbackFactory>, Vec<StreamBridge>)> {
-    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
-    let mut factories: Vec<Factory> = Vec::new();
-    let mut callback_factories: Vec<CallbackFactory> = Vec::new();
-    let mut stream_bridges: Vec<StreamBridge> = Vec::new();
-
-    for entry in WalkBuilder::new(crates_path).build().flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-            continue;
-        }
-        let Ok(source) = fs::read_to_string(path) else {
-            continue;
-        };
-        let Ok(file) = syn::parse_file(&source) else {
-            continue;
-        };
-        collect_from_items(&file.items, &mut aliases, &mut factories, &mut callback_factories, &mut stream_bridges);
-    }
-
-    factories.sort_by(|lhs, rhs| lhs.type_name.cmp(&rhs.type_name).then_with(|| lhs.method_name.cmp(&rhs.method_name)));
-    factories.dedup_by(|lhs, rhs| lhs.type_name == rhs.type_name && lhs.method_name == rhs.method_name);
-    callback_factories
-        .sort_by(|lhs, rhs| lhs.type_name.cmp(&rhs.type_name).then_with(|| lhs.method_name.cmp(&rhs.method_name)));
-    callback_factories.dedup_by(|lhs, rhs| lhs.type_name == rhs.type_name && lhs.method_name == rhs.method_name);
-    stream_bridges.sort_by(|lhs, rhs| lhs.type_name.cmp(&rhs.type_name));
-    stream_bridges.dedup_by(|lhs, rhs| lhs.type_name == rhs.type_name);
-
-    Ok((aliases, factories, callback_factories, stream_bridges))
-}
-
-fn collect_from_items(
-    items: &[syn::Item],
-    aliases: &mut BTreeMap<String, String>,
-    factories: &mut Vec<Factory>,
-    callback_factories: &mut Vec<CallbackFactory>,
-    stream_bridges: &mut Vec<StreamBridge>,
-) {
-    for item in items {
-        match item {
-            syn::Item::Impl(item_impl) => collect_from_impl(item_impl, factories, callback_factories, stream_bridges),
-            syn::Item::Type(item_type)
-                if item_type.attrs.iter().any(|attribute| is_bindings_export_with(attribute, "Alias")) =>
-            {
-                if let Some(swift_type) = rust_type_to_swift(&item_type.ty, "") {
-                    aliases.insert(item_type.ident.to_string(), swift_type);
-                }
-            },
-            syn::Item::Mod(item_mod) => {
-                if let Some((_, nested)) = &item_mod.content {
-                    collect_from_items(nested, aliases, factories, callback_factories, stream_bridges);
-                }
-            },
-            _ => {},
-        }
-    }
-}
-
-fn collect_from_impl(
-    item_impl: &syn::ItemImpl,
-    factories: &mut Vec<Factory>,
-    callback_factories: &mut Vec<CallbackFactory>,
-    stream_bridges: &mut Vec<StreamBridge>,
-) {
-    if !impl_is_bindings_implementation(item_impl) {
-        return;
-    }
-    let Some(type_name) = impl_self_type_ident(item_impl) else {
-        return;
-    };
-
-    let cancel_getter_name = item_impl.items.iter().find_map(|impl_item| {
-        let syn::ImplItem::Fn(method) = impl_item else {
-            return None;
-        };
-        if !is_cancel_token_getter(method) {
-            return None;
-        }
-        Some(method.sig.ident.to_string())
-    });
-
-    for impl_item in &item_impl.items {
-        let syn::ImplItem::Fn(method) = impl_item else {
-            continue;
-        };
-        if method_is_stream_next(method) {
-            if let Some(bridge) = extract_stream_bridge(method, &type_name, cancel_getter_name.clone()) {
-                stream_bridges.push(bridge);
-            }
-            continue;
-        }
-        if method_has_receiver(method) {
-            continue;
-        }
-        if method_is_factory_with_callback(method) {
-            let callback_arg_types = extract_callback_arg_swift_types(method, &type_name).unwrap_or_default();
-            callback_factories.push(CallbackFactory {
-                type_name: type_name.clone(),
-                method_name: method.sig.ident.to_string(),
-                callback_arg_types,
-            });
-            continue;
-        }
-        if !method_is_factory(method) {
-            continue;
-        }
-        let Some(factory) = extract_factory(method, &type_name) else {
-            continue;
-        };
-        factories.push(factory);
-    }
-}
-
-fn method_is_stream_next(method: &syn::ImplItemFn) -> bool {
-    method.attrs.iter().any(|attribute| is_bindings_export_with(attribute, "StreamNext"))
-}
-
-fn extract_stream_bridge(
-    method: &syn::ImplItemFn,
-    type_name: &str,
-    cancel_getter_name: Option<String>,
-) -> Option<StreamBridge> {
-    let syn::ReturnType::Type(_, return_type) = &method.sig.output else {
-        return None;
-    };
-    let inner = path_generic(return_type.as_ref(), "Option")?;
-    let swift_type = rust_type_to_swift(inner, type_name)?;
-    Some(StreamBridge {
-        type_name: type_name.to_string(),
-        next_method_name: method.sig.ident.to_string(),
-        item_swift_type: swift_type,
-        cancel_getter_name,
-    })
-}
-
-fn is_cancel_token_getter(method: &syn::ImplItemFn) -> bool {
-    let has_getter_attr = method.attrs.iter().any(|attribute| is_bindings_export_with(attribute, "Getter"));
-    if !has_getter_attr {
-        return false;
-    }
-    let syn::ReturnType::Type(_, return_type) = &method.sig.output else {
-        return false;
-    };
-    let syn::Type::Path(type_path) = return_type.as_ref() else {
-        return false;
-    };
-    type_path.path.segments.last().map(|segment| segment.ident == "CancelToken").unwrap_or(false)
-}
-
-fn method_is_factory_with_callback(method: &syn::ImplItemFn) -> bool {
-    method.attrs.iter().any(|attribute| is_bindings_export_with(attribute, "FactoryWithCallback"))
-}
-
-fn extract_callback_arg_swift_types(
-    method: &syn::ImplItemFn,
-    self_type_name: &str,
-) -> Option<Vec<String>> {
-    for input in &method.sig.inputs {
-        let syn::FnArg::Typed(pat_type) = input else {
-            continue;
-        };
-        let Some(inputs) = extract_box_fn_inputs(&pat_type.ty) else {
-            continue;
-        };
-        let swift_types: Vec<String> = inputs
-            .iter()
-            .map(|ty| rust_type_to_swift(ty, self_type_name).unwrap_or_else(|| "Any".to_string()))
-            .collect();
-        return Some(swift_types);
-    }
-    None
-}
-
-fn extract_box_fn_inputs(ty: &syn::Type) -> Option<Vec<syn::Type>> {
-    let inner = path_generic(ty, "Box")?;
-    let syn::Type::TraitObject(trait_object) = inner else {
-        return None;
-    };
-    for bound in &trait_object.bounds {
-        let syn::TypeParamBound::Trait(trait_bound) = bound else {
-            continue;
-        };
-        let segment = trait_bound.path.segments.last()?;
-        if segment.ident != "Fn" && segment.ident != "FnMut" && segment.ident != "FnOnce" {
-            continue;
-        }
-        let syn::PathArguments::Parenthesized(paren) = &segment.arguments else {
-            continue;
-        };
-        return Some(paren.inputs.iter().map(|input| input.ty.clone()).collect());
-    }
-    None
-}
-
-fn extract_factory(
-    method: &syn::ImplItemFn,
-    type_name: &str,
-) -> Option<Factory> {
-    let (throws, optional, is_self_return) = classify_return(&method.sig.output, type_name)?;
-    if !is_self_return {
-        return None;
-    }
-
-    let mut arguments = Vec::with_capacity(method.sig.inputs.len());
-    for input in &method.sig.inputs {
-        let syn::FnArg::Typed(pat_type) = input else {
-            return None;
-        };
-        let syn::Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
-            return None;
-        };
-        let swift_type = rust_type_to_swift(&pat_type.ty, type_name)?;
-        arguments.push(FactoryArgument {
-            name: pat_ident.ident.to_string(),
-            swift_type,
-        });
-    }
-
-    Some(Factory {
-        type_name: type_name.to_string(),
-        method_name: method.sig.ident.to_string(),
-        is_async: method.sig.asyncness.is_some(),
-        throws,
-        optional,
-        arguments,
-    })
-}
-
-fn classify_return(
-    output: &syn::ReturnType,
-    self_type_name: &str,
-) -> Option<(bool, bool, bool)> {
-    let syn::ReturnType::Type(_, return_type) = output else {
-        return None;
-    };
-    let mut current = return_type.as_ref();
-    let mut throws = false;
-    let mut optional = false;
-
-    if let Some(inner) = path_generic(current, "Result") {
-        throws = true;
-        current = inner;
-    }
-    if let Some(inner) = path_generic(current, "Option") {
-        optional = true;
-        current = inner;
-    }
-
-    let syn::Type::Path(type_path) = current else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    let is_self_return = segment.ident == "Self" || segment.ident == self_type_name;
-    if !is_self_return {
-        return None;
-    }
-    Some((throws, optional, true))
-}
-
-fn path_generic<'t>(
-    ty: &'t syn::Type,
-    expected: &str,
-) -> Option<&'t syn::Type> {
-    let syn::Type::Path(type_path) = ty else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    if segment.ident != expected {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    for argument in &args.args {
-        if let syn::GenericArgument::Type(inner) = argument {
-            return Some(inner);
-        }
-    }
-    None
 }
 
 fn rust_type_to_swift(
     ty: &syn::Type,
     self_type_name: &str,
 ) -> Option<String> {
-    if let Some(inner) = path_generic(ty, "Option") {
-        let inner_swift = rust_type_to_swift(inner, self_type_name)?;
-        return Some(format!("{}?", inner_swift));
-    }
-    if let Some(inner) = path_generic(ty, "Vec") {
-        let inner_swift = rust_type_to_swift(inner, self_type_name)?;
-        return Some(format!("[{}]", inner_swift));
-    }
-    let syn::Type::Path(type_path) = ty else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    let name = segment.ident.to_string();
-    Some(match name.as_str() {
-        "Self" => self_type_name.to_string(),
-        "String" => "String".to_string(),
-        "bool" => "Bool".to_string(),
-        "i8" => "Int8".to_string(),
-        "i16" => "Int16".to_string(),
-        "i32" => "Int32".to_string(),
-        "i64" => "Int64".to_string(),
-        "u8" => "UInt8".to_string(),
-        "u16" => "UInt16".to_string(),
-        "u32" => "UInt32".to_string(),
-        "u64" => "UInt64".to_string(),
-        "f32" => "Float".to_string(),
-        "f64" => "Double".to_string(),
-        _ => name,
-    })
-}
-
-fn impl_is_bindings_implementation(item_impl: &syn::ItemImpl) -> bool {
-    item_impl.attrs.iter().any(|attribute| is_bindings_export_with(attribute, "Implementation"))
-}
-
-fn impl_self_type_ident(item_impl: &syn::ItemImpl) -> Option<String> {
-    let syn::Type::Path(type_path) = item_impl.self_ty.as_ref() else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    Some(segment.ident.to_string())
-}
-
-fn method_is_factory(method: &syn::ImplItemFn) -> bool {
-    method.attrs.iter().any(|attribute| is_bindings_export_with(attribute, "Factory"))
-}
-
-fn method_has_receiver(method: &syn::ImplItemFn) -> bool {
-    method.sig.inputs.iter().any(|arg| matches!(arg, syn::FnArg::Receiver(_)))
-}
-
-fn is_bindings_export_with(
-    attribute: &syn::Attribute,
-    kind: &str,
-) -> bool {
-    let path = attribute.path();
-    let segments: Vec<String> = path.segments.iter().map(|segment| segment.ident.to_string()).collect();
-    let matches_path = segments == ["bindings", "export"] || segments == ["export"];
-    if !matches_path {
-        return false;
-    }
-    let syn::Meta::List(list) = &attribute.meta else {
-        return false;
-    };
-    list.tokens
-        .to_string()
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .any(|token| token == kind)
+    spell_rust_type(
+        ty,
+        self_type_name,
+        |name| {
+            Some(match name {
+                "String" => "String",
+                "bool" => "Bool",
+                "i8" => "Int8",
+                "i16" => "Int16",
+                "i32" => "Int32",
+                "i64" => "Int64",
+                "u8" => "UInt8",
+                "u16" => "UInt16",
+                "u32" => "UInt32",
+                "u64" => "UInt64",
+                "f32" => "Float",
+                "f64" => "Double",
+                _ => return None,
+            })
+        },
+        |inner| format!("[{}]", inner),
+    )
 }
 
 fn render_extensions_file(
@@ -435,7 +74,7 @@ fn render_extensions_file(
 fn render_stream_bridge(bridge: &StreamBridge) -> String {
     let swift_next = AsLowerCamelCase(&bridge.next_method_name).to_string();
     let type_name = &bridge.type_name;
-    let item_type = &bridge.item_swift_type;
+    let item_type = &bridge.item_foreign_type;
     let (capture, cancel_hook) = match &bridge.cancel_getter_name {
         Some(getter) => {
             let swift_getter = AsLowerCamelCase(getter).to_string();
@@ -527,16 +166,12 @@ fn render_callback_factory(factory: &CallbackFactory) -> String {
 
 fn render_factory(factory: &Factory) -> String {
     let swift_method = AsLowerCamelCase(&factory.method_name).to_string();
-    let free_function = format!(
-        "{}{}",
-        AsLowerCamelCase(AsSnakeCase(&factory.type_name).to_string()),
-        capitalize_first(&swift_method),
-    );
+    let free_function = free_function_name(factory);
 
     let args_signature = factory
         .arguments
         .iter()
-        .map(|arg| format!("{label}: {ty}", label = AsLowerCamelCase(&arg.name), ty = arg.swift_type,))
+        .map(|arg| format!("{label}: {ty}", label = AsLowerCamelCase(&arg.name), ty = arg.foreign_type,))
         .collect::<Vec<_>>()
         .join(", ");
 
@@ -581,12 +216,4 @@ fn render_factory(factory: &Factory) -> String {
         ret = return_type,
         invocation = invocation,
     )
-}
-
-fn capitalize_first(input: &str) -> String {
-    let mut characters = input.chars();
-    match characters.next() {
-        Some(first) => first.to_ascii_uppercase().to_string() + characters.as_str(),
-        None => String::new(),
-    }
 }
