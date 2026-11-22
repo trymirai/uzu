@@ -1,3 +1,5 @@
+#[cfg(backend = "metal")]
+mod chunked_bench;
 mod chunked_test;
 mod conv_pack_test;
 mod delta_net_test;
