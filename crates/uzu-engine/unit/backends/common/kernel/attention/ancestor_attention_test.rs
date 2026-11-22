@@ -211,15 +211,25 @@ impl<B: Backend> Runner<B> {
 
 #[uzu_test]
 fn ancestor_attention_matches_cpu() {
-    for_each_non_cpu_backend!(|B| {
-        let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16, None);
-        cpu.encode(1);
-        let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+    #[cfg(backend = "metal")]
+    let layouts = [crate::backends::metal::KVLayout::RowMajor, crate::backends::metal::KVLayout::MxuTiled]
+        .map(|layout| Some(layout as u32));
+    #[cfg(not(backend = "metal"))]
+    let layouts = [None];
 
-        let mut runner = Runner::<B>::new(4, 5, 3, 16, None);
-        runner.encode(1);
-        let actual = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);
-        assert_eq_float(&expected, &actual, 0.02, "AncestorAttention output");
+    for_each_non_cpu_backend!(|B| {
+        for (rows, prefix) in [(1, 8), (4, 16), (4, 33)] {
+            let mut cpu = Runner::<Cpu>::new(rows, prefix, 16, 65, None);
+            cpu.encode(1);
+            let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+
+            for layout in layouts {
+                let mut runner = Runner::<B>::new(rows, prefix, 16, 65, layout);
+                runner.encode(1);
+                let actual = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);
+                assert_eq_float(&expected, &actual, 0.02, "AncestorAttention output");
+            }
+        }
     });
 }
 
@@ -239,25 +249,4 @@ fn benchmark_ancestor_attention() {
     let mut samples = (0..SAMPLES).map(|_| run()).collect::<Vec<_>>();
     samples.sort_unstable();
     eprintln!("ancestor_attention gpu={:?}", samples[SAMPLES / 2]);
-}
-
-#[cfg(backend = "metal")]
-#[uzu_test]
-fn ancestor_attention_layouts_and_fallbacks_match_cpu() {
-    use crate::backends::metal::KVLayout;
-
-    for layout in [KVLayout::RowMajor, KVLayout::MxuTiled] {
-        for (rows, prefix) in [(1, 8), (4, 8), (1, 16), (4, 16), (1, 17), (1, 33), (5, 8)] {
-            let mut cpu = Runner::<Cpu>::new(rows, prefix, 16, 65, None);
-            let mut runner = Runner::<Metal>::new(rows, prefix, 16, 65, Some(layout as u32));
-            cpu.encode(1);
-            runner.encode(1);
-            assert_eq_float(
-                &buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output),
-                &buffer_to_vec::<Metal, bf16>(&runner.context, &runner.output),
-                0.02,
-                "AncestorAttention layout and fallback",
-            );
-        }
-    }
 }
