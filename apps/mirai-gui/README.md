@@ -5,7 +5,7 @@ Tauri v2, React, Rust.
 
 ## Requirements
 
-- macOS 26.4 or newer on Apple silicon, with Xcode 26 and the Metal toolchain
+- macOS 27.0 or newer on Apple silicon, with Xcode 27 and the Metal toolchain
   (`xcodebuild -downloadComponent MetalToolchain`)
 - or Windows or Linux, with what the engine's Vulkan backend needs (see the
   repository README) and, on Linux, [Tauri's system packages](https://v2.tauri.app/start/prerequisites/#linux)

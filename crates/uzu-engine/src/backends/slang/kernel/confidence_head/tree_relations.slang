@@ -2,13 +2,13 @@
 import definitions;
 
 [[Public]] [[Kernel]] func ConfidenceHeadTreeRelations(
-  StructuredBuffer<uint> frontier,
-  StructuredBuffer<uint> slot_ancestors,
-  StructuredBuffer<uint> slot_rows,
-  RWStructuredBuffer<uint> relations,
-  uint rows,
-  uint ancestor_stride,
-  [[Axis("rows * rows", "256")]] uint index,
+  StructuredBuffer<uint32_t> frontier,
+  StructuredBuffer<uint32_t> slot_ancestors,
+  StructuredBuffer<uint32_t> slot_rows,
+  RWStructuredBuffer<uint32_t> relations,
+  uint32_t rows,
+  uint32_t ancestor_stride,
+  [[Axis("rows* rows", "256")]] uint32_t index,
 ) {
   // TODO
 }

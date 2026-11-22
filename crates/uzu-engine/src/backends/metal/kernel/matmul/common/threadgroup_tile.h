@@ -50,7 +50,7 @@ struct ThreadgroupTile {
   ushort a_shared_offset;
   ushort b_shared_offset;
 
-  METAL_FUNC ThreadgroupTile(const thread ThreadContext& thread_context) {
+  METAL_FUNC ThreadgroupTile(const thread ThreadContext& thread_context) thread {
     ushort tile_row_base = SIMDGROUP_BLOCK_SIZE * (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
     ushort tile_col_base = SIMDGROUP_BLOCK_SIZE * (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
@@ -67,7 +67,7 @@ struct ThreadgroupTile {
     c_fragment.clear();
   }
 
-  METAL_FUNC void matmul(const threadgroup AT* a_shared, const threadgroup BT* b_shared) {
+  METAL_FUNC void matmul(const threadgroup AT* a_shared, const threadgroup BT* b_shared) thread {
     a_shared += a_shared_offset;
     b_shared += b_shared_offset;
 
@@ -84,7 +84,7 @@ struct ThreadgroupTile {
     }
   }
 
-  METAL_FUNC void store_result(device DT* D, const int leading_dimension_d) {
+  METAL_FUNC void store_result(device DT* D, const int leading_dimension_d) thread {
     c_fragment.map([](AccumulatorType value) { return Epilogue::apply(value); });
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
@@ -92,7 +92,11 @@ struct ThreadgroupTile {
     fragment_store<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(c_fragment, D, leading_dimension_d);
   }
 
-  METAL_FUNC void store_result_safe(device DT* D, const int leading_dimension_d, short2 destination_tile_dimensions) {
+  METAL_FUNC void store_result_safe(
+      device DT* D,
+      const int leading_dimension_d,
+      short2 destination_tile_dimensions
+  ) thread {
     c_fragment.map([](AccumulatorType value) { return Epilogue::apply(value); });
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
@@ -110,7 +114,7 @@ struct ThreadgroupTile {
   }
 
   template <class Fn>
-  METAL_FUNC void for_each_output(Fn fn) {
+  METAL_FUNC void for_each_output(Fn fn) thread {
     thread AccumulatorType* data = c_fragment.elements();
     constexpr ushort epm = SimdgroupFragmentOps::ELEMENTS_PER_THREAD;
     METAL_PRAGMA_UNROLL
@@ -128,12 +132,12 @@ struct ThreadgroupTile {
   }
 
   template <typename EpilogueOp>
-  METAL_FUNC void apply_epilogue(thread const EpilogueOp& op) {
+  METAL_FUNC void apply_epilogue(thread const EpilogueOp& op) thread {
     c_fragment.map([&](AccumulatorType value) { return op.apply(value); });
   }
 
   template <typename BiasT>
-  METAL_FUNC void apply_bias(const device BiasT* bias) {
+  METAL_FUNC void apply_bias(const device BiasT* bias) thread {
     const device BiasT* bias_ptr = bias + simdgroup_col_offset;
     for_each_output([&](ushort, ushort col_offset, ushort k, thread AccumulatorType& v) {
       v += static_cast<AccumulatorType>(bias_ptr[col_offset + k]);
@@ -141,7 +145,7 @@ struct ThreadgroupTile {
   }
 
   template <typename BiasT>
-  METAL_FUNC void apply_bias_safe(const device BiasT* bias, short2 tile_dimensions) {
+  METAL_FUNC void apply_bias_safe(const device BiasT* bias, short2 tile_dimensions) thread {
     const device BiasT* bias_ptr = bias + simdgroup_col_offset;
     tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
     for_each_output([&](ushort row_offset, ushort col_offset, ushort k, thread AccumulatorType& v) {

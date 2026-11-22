@@ -4,9 +4,9 @@ import PackageDescription
 let package = Package(
     name: "Uzu",
     platforms: [
-        .iOS("26.4"),
-        .macOS("26.4"),
-        .macCatalyst("26.4"),
+        .iOS("27.0"),
+        .macOS("27.0"),
+        .macCatalyst("27.0"),
     ],
     products: [
         .library(name: "Uzu", targets: ["Uzu"]),

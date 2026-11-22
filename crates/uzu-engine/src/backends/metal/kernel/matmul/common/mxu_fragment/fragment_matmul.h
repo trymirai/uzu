@@ -27,8 +27,8 @@ METAL_FUNC static void matmul(
   auto cooperative_left = matmul_op.template get_left_input_cooperative_tensor<LeftType, RightType, OutputType>();
   auto cooperative_right = matmul_op.template get_right_input_cooperative_tensor<LeftType, RightType, OutputType>();
   auto cooperative_output = matmul_op.template get_destination_cooperative_tensor<
-      decltype(cooperative_left),
-      decltype(cooperative_right),
+      metal::remove_addrspace_t<decltype(cooperative_left)>,
+      metal::remove_addrspace_t<decltype(cooperative_right)>,
       OutputType>();
 
   marshal_inputs(cooperative_left, cooperative_right);

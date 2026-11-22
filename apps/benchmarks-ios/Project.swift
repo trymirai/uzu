@@ -50,7 +50,7 @@ let project = Project(
             destinations: [.iPhone, .iPad],
             product: .app,
             bundleId: "com.mirai.tech.benchmarks",
-            deploymentTargets: .iOS("26.4"),
+            deploymentTargets: .iOS("27.0"),
             infoPlist: .extendingDefault(with: [
                 "LSSupportsOpeningDocumentsInPlace": true,
                 "NSLocalNetworkUsageDescription":

@@ -4,15 +4,15 @@ import generated.confidence_head;
 
 [[Public]] [[Kernel]] func ConfidenceHeadPools(
   StructuredBuffer<float> candidate_logits,
-  StructuredBuffer<uint> candidate_ids,
+  StructuredBuffer<uint32_t> candidate_ids,
   StructuredBuffer<uint64_t> depth_seeds,
   RWStructuredBuffer<float> pool_features,
   ConfidenceHeadParams params,
-  uint depths,
+  uint32_t depths,
   float noise_scale,
   ThreadContext context,
-  [[Groups("depths")]] uint depth,
-  [[Threads("512")]] uint lid,
+  [[Groups("depths")]] uint32_t depth,
+  [[Threads("512")]] uint32_t lid,
 ) {
   // TODO
 }

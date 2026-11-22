@@ -5,12 +5,12 @@ import definitions;
   StructuredBuffer<BFloat16> depth_embedding,
   StructuredBuffer<BFloat16> child_in,
   StructuredBuffer<BFloat16> node_in,
-  StructuredBuffer<uint> frontier,
-  StructuredBuffer<uint> row_slots,
+  StructuredBuffer<uint32_t> frontier,
+  StructuredBuffer<uint32_t> row_slots,
   RWStructuredBuffer<BFloat16> output,
-  uint rows,
-  uint width,
-  [[Axis("rows * width", "256")]] uint index,
+  uint32_t rows,
+  uint32_t width,
+  [[Axis("rows* width", "256")]] uint32_t index,
 ) {
   // TODO
 }

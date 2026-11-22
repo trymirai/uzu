@@ -28,7 +28,7 @@ import definitions;
   [[Specialize]] uint32_t num_heads,
   [[Specialize]] uint32_t backend_opaque_layout,
   ThreadContext thread_context,
-  [[Groups("(rows * num_heads).div_ceil(4)")]] uint32_t group,
+  [[Groups("rows * num_heads")]] uint32_t group,
   [[Threads("(4 * 32)")]] uint32_t lid,
 ) {
   // TODO

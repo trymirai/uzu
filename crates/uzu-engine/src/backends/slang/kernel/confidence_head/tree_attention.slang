@@ -3,14 +3,14 @@ import definitions;
 
 [[Public]] [[Kernel]] func ConfidenceHeadTreeAttention(
   StructuredBuffer<BFloat16> qkv,
-  StructuredBuffer<uint> relations,
+  StructuredBuffer<uint32_t> relations,
   StructuredBuffer<BFloat16> relation_bias,
   RWStructuredBuffer<BFloat16> output,
-  uint rows,
-  [[Specialize]] uint num_heads,
-  [[Specialize]] uint head_dim,
-  [[Groups("rows * num_heads")]] uint index,
-  [[Threads("32")]] uint lane,
+  uint32_t rows,
+  [[Specialize]] uint32_t num_heads,
+  [[Specialize]] uint32_t head_dim,
+  [[Groups("rows* num_heads")]] uint32_t index,
+  [[Threads("32")]] uint32_t lane,
 ) {
   // TODO
 }

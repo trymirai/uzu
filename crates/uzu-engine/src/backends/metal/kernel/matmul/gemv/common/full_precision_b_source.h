@@ -27,7 +27,7 @@ struct FullPrecisionBSource {
     const uint weights_row_stride = params.in_vec_size;
     const uint input_row = tile.input_row;
     const device AT* input = ops.a + input_row * params.in_vec_size + thread_k;
-    thread const device BT* weight_rows[Tile::ROWS_PER_LANE];
+    const device BT* weight_rows[Tile::ROWS_PER_LANE];
     const uint last_row = params.out_vec_size > 0 ? params.out_vec_size - 1 : 0;
 
     METAL_PRAGMA_UNROLL

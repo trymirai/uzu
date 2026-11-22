@@ -3,7 +3,7 @@ import definitions;
 
 [[Public]] [[Kernel]] func TrellisTransform(
   StructuredBuffer<BFloat16> input,
-  StructuredBuffer<float> rht_factors,
+  StructuredBuffer<int32_t> rht_factors,
   StructuredBuffer<float> mixing,
   RWStructuredBuffer<int8_t> activations,
   RWStructuredBuffer<vector<float, 4>> column_group_sums,
