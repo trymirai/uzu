@@ -44,10 +44,11 @@ PUBLIC KERNEL(AncestorAttention)(
     threadgroup float split_maxs[SIMD_GROUPS_PER_THREADGROUP],
     threadgroup float split_sums[SIMD_GROUPS_PER_THREADGROUP],
     const ThreadContext thread_context,
-    const uint head GROUPS(num_heads),
     const uint row GROUPS(rows),
+    const uint head GROUPS(num_heads),
     const uint lid THREADS(THREADS_PER_THREADGROUP)
 ) {
+  static_assert(HEAD_DIM == THREADS_PER_THREADGROUP, "merge assigns one channel per thread");
   constexpr ushort N = HEAD_DIM / METAL_SIMD_SIZE;
   constexpr ushort TILE_KEYS = 4;
   const uint split_index = thread_context.simdgroup_index;
@@ -120,23 +121,29 @@ PUBLIC KERNEL(AncestorAttention)(
     }
     maximum = next_max;
   };
-  auto attend_cached = [&](uint first, uint count, bool is_prefix) {
+  const uint num_keys = prefix_length + num_ancestors;
+  for (uint first = split_index; first < num_keys; first += TILE_KEYS * SIMD_GROUPS_PER_THREADGROUP) {
     float scores[TILE_KEYS], values[TILE_KEYS][N];
     METAL_PRAGMA_UNROLL
-    for (ushort j = 0; j < count; ++j) {
-      const uint index = first + j * SIMD_GROUPS_PER_THREADGROUP;
-      load(is_prefix ? index : ancestor_indices[row * ancestor_stride + index], is_prefix, scores[j], values[j]);
+    for (ushort j = 0; j < TILE_KEYS; ++j) {
+      const uint key = first + j * SIMD_GROUPS_PER_THREADGROUP;
+      if (key >= num_keys) {
+        scores[j] = -INFINITY;
+        METAL_PRAGMA_UNROLL
+        for (ushort i = 0; i < N; ++i)
+          values[j][i] = 0.0f;
+        continue;
+      }
+      const bool is_prefix = key < prefix_length;
+      load(
+          is_prefix ? key : ancestor_indices[row * ancestor_stride + key - prefix_length],
+          is_prefix,
+          scores[j],
+          values[j]
+      );
     }
-    attend(scores, values, count);
-  };
-  uint index = split_index;
-  for (; index + (TILE_KEYS - 1) * SIMD_GROUPS_PER_THREADGROUP < prefix_length;
-       index += TILE_KEYS * SIMD_GROUPS_PER_THREADGROUP)
-    attend_cached(index, TILE_KEYS, true);
-  for (; index < prefix_length; index += SIMD_GROUPS_PER_THREADGROUP)
-    attend_cached(index, 1, true);
-  for (index = split_index; index < num_ancestors; index += SIMD_GROUPS_PER_THREADGROUP)
-    attend_cached(index, 1, false);
+    attend(scores, values, TILE_KEYS);
+  }
   if (split_index == 0) {
     float score = 0.0f, current[N];
     METAL_PRAGMA_UNROLL
@@ -160,33 +167,26 @@ PUBLIC KERNEL(AncestorAttention)(
       }
     }
   }
+  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, result);
   METAL_PRAGMA_UNROLL
-  for (ushort i = 0; i < N; ++i)
-    split_results[split_index * HEAD_DIM + i * METAL_SIMD_SIZE + lane] = result[i];
+  for (ushort i = 0; i < N; ++i) {
+    const uint channel = i * METAL_SIMD_SIZE + lane;
+    split_results[split_index * HEAD_DIM + channel] = result[i] * uzu::kv_layout::rotation_sign(channel);
+  }
   if (lane == 0) {
     split_maxs[split_index] = maximum;
     split_sums[split_index] = denominator;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (split_index != 0)
-    return;
-  const float peak = simd_max(lane < SIMD_GROUPS_PER_THREADGROUP ? split_maxs[lane] : -INFINITY);
-  float merged[N] = {};
+  float peak = -INFINITY;
+  for (uint s = 0; s < SIMD_GROUPS_PER_THREADGROUP; ++s)
+    peak = max(peak, split_maxs[s]);
+  float merged = 0.0f;
   float total = 0.0f;
   for (uint s = 0; s < SIMD_GROUPS_PER_THREADGROUP; ++s) {
     const float correction = fast::exp2(split_maxs[s] - peak);
     total += correction * split_sums[s];
-    METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < N; ++i)
-      merged[i] += correction * split_results[s * HEAD_DIM + i * METAL_SIMD_SIZE + lane];
+    merged += correction * split_results[s * HEAD_DIM + lid];
   }
-  METAL_PRAGMA_UNROLL
-  for (ushort i = 0; i < N; ++i)
-    merged[i] /= total;
-  hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, merged);
-  METAL_PRAGMA_UNROLL
-  for (ushort i = 0; i < N; ++i) {
-    const uint channel = i * METAL_SIMD_SIZE + lane;
-    output[(row * num_heads + head) * HEAD_DIM + channel] = bfloat(merged[i] * uzu::kv_layout::rotation_sign(channel));
-  }
+  output[(row * num_heads + head) * HEAD_DIM + lid] = bfloat(merged / total);
 }
