@@ -40,17 +40,17 @@ PUBLIC KERNEL(AncestorAttention)(
     constant float& scale,
     const uint num_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
-    threadgroup float partials[SIMD_GROUPS_PER_THREADGROUP * (HEAD_DIM + 2)],
+    threadgroup float split_results[SIMD_GROUPS_PER_THREADGROUP * HEAD_DIM],
+    threadgroup float split_maxs[SIMD_GROUPS_PER_THREADGROUP],
+    threadgroup float split_sums[SIMD_GROUPS_PER_THREADGROUP],
     const ThreadContext thread_context,
-    const uint row_head GROUPS(rows * num_heads),
+    const uint head GROUPS(num_heads),
+    const uint row GROUPS(rows),
     const uint lid THREADS(THREADS_PER_THREADGROUP)
 ) {
   constexpr ushort N = HEAD_DIM / METAL_SIMD_SIZE;
-  constexpr uint SPLITS = SIMD_GROUPS_PER_THREADGROUP;
-  constexpr ushort BATCH = 4;
-  const uint split = thread_context.simdgroup_index;
-  const uint row = row_head / num_heads;
-  const uint head = row_head % num_heads;
+  constexpr ushort TILE_KEYS = 4;
+  const uint split_index = thread_context.simdgroup_index;
   const ushort lane = ushort(thread_context.simd_lane_id);
   const uint model_dim = num_heads * HEAD_DIM;
   const uint position = node_metadata[uint(MetadataIdx::Depth) * rows + row] + 1;
@@ -66,7 +66,7 @@ PUBLIC KERNEL(AncestorAttention)(
     const uint channel = i * METAL_SIMD_SIZE + lane;
     const float sign = uzu::kv_layout::rotation_sign(channel);
     query[i] = apply_rope<float>(qkv, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM) * sign;
-    if (split == 0) {
+    if (split_index == 0) {
       key[i] =
           apply_rope<float>(qkv + model_dim, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM) * sign;
       value[i] = float(qkv[2 * model_dim + channel]) * sign;
@@ -74,9 +74,9 @@ PUBLIC KERNEL(AncestorAttention)(
   }
   hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, query);
   int q[N], k[N], v[N];
-  const float qs = float(kv_quantize_row<N>(query, q));
+  const float score_scale = float(kv_quantize_row<N>(query, q)) * scale * M_LOG2E_F;
   bfloat ks, vs;
-  if (split == 0) {
+  if (split_index == 0) {
     hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, key);
     hadamard::simdgroup_transform<N, METAL_SIMD_SIZE>(lane, value);
     ks = kv_quantize_row<N>(key, k);
@@ -98,21 +98,21 @@ PUBLIC KERNEL(AncestorAttention)(
       dot += float(q[i]) * float(kc[shape.k_code_index(slot, head, channel)]);
       values[i] = value_scale * float(int(vc[shape.v_code_index(slot, head, channel)]) - 128);
     }
-    score = simd_sum(dot) * qs * key_scale * scale;
+    score = simd_sum(dot) * score_scale * key_scale;
   };
   auto attend = [&](thread const float* scores, thread const float (*values)[N], uint count) {
     float next_max = maximum;
     METAL_PRAGMA_UNROLL
     for (ushort j = 0; j < count; ++j)
       next_max = max(next_max, scores[j]);
-    const float correction = fast::exp(maximum - next_max);
+    const float correction = fast::exp2(maximum - next_max);
     denominator *= correction;
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < N; ++i)
       result[i] *= correction;
     METAL_PRAGMA_UNROLL
     for (ushort j = 0; j < count; ++j) {
-      const float probability = fast::exp(scores[j] - next_max);
+      const float probability = fast::exp2(scores[j] - next_max);
       denominator += probability;
       METAL_PRAGMA_UNROLL
       for (ushort i = 0; i < N; ++i)
@@ -121,29 +121,30 @@ PUBLIC KERNEL(AncestorAttention)(
     maximum = next_max;
   };
   auto attend_cached = [&](uint first, uint count, bool is_prefix) {
-    float scores[BATCH], values[BATCH][N];
+    float scores[TILE_KEYS], values[TILE_KEYS][N];
     METAL_PRAGMA_UNROLL
     for (ushort j = 0; j < count; ++j) {
-      const uint index = first + j * SPLITS;
+      const uint index = first + j * SIMD_GROUPS_PER_THREADGROUP;
       load(is_prefix ? index : ancestor_indices[row * ancestor_stride + index], is_prefix, scores[j], values[j]);
     }
     attend(scores, values, count);
   };
-  uint index = split;
-  for (; index + (BATCH - 1) * SPLITS < prefix_length; index += BATCH * SPLITS)
-    attend_cached(index, BATCH, true);
-  for (; index < prefix_length; index += SPLITS)
+  uint index = split_index;
+  for (; index + (TILE_KEYS - 1) * SIMD_GROUPS_PER_THREADGROUP < prefix_length;
+       index += TILE_KEYS * SIMD_GROUPS_PER_THREADGROUP)
+    attend_cached(index, TILE_KEYS, true);
+  for (; index < prefix_length; index += SIMD_GROUPS_PER_THREADGROUP)
     attend_cached(index, 1, true);
-  for (index = split; index < num_ancestors; index += SPLITS)
+  for (index = split_index; index < num_ancestors; index += SIMD_GROUPS_PER_THREADGROUP)
     attend_cached(index, 1, false);
-  if (split == 0) {
+  if (split_index == 0) {
     float score = 0.0f, current[N];
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < N; ++i) {
       score += float(q[i]) * float(k[i]);
       current[i] = float(vs) * float(v[i]);
     }
-    score = simd_sum(score) * qs * float(ks) * scale;
+    score = simd_sum(score) * score_scale * float(ks);
     attend(&score, &current, 1);
     if (node_capacity > 0) {
       const uint node = node_indices[row];
@@ -159,26 +160,25 @@ PUBLIC KERNEL(AncestorAttention)(
       }
     }
   }
-  threadgroup float* stats = partials + SPLITS * HEAD_DIM;
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < N; ++i)
-    partials[split * HEAD_DIM + i * METAL_SIMD_SIZE + lane] = result[i];
+    split_results[split_index * HEAD_DIM + i * METAL_SIMD_SIZE + lane] = result[i];
   if (lane == 0) {
-    stats[split] = maximum;
-    stats[SPLITS + split] = denominator;
+    split_maxs[split_index] = maximum;
+    split_sums[split_index] = denominator;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  if (split != 0)
+  if (split_index != 0)
     return;
-  const float peak = simd_max(lane < SPLITS ? stats[lane] : -INFINITY);
+  const float peak = simd_max(lane < SIMD_GROUPS_PER_THREADGROUP ? split_maxs[lane] : -INFINITY);
   float merged[N] = {};
   float total = 0.0f;
-  for (uint s = 0; s < SPLITS; ++s) {
-    const float correction = fast::exp(stats[s] - peak);
-    total += correction * stats[SPLITS + s];
+  for (uint s = 0; s < SIMD_GROUPS_PER_THREADGROUP; ++s) {
+    const float correction = fast::exp2(split_maxs[s] - peak);
+    total += correction * split_sums[s];
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < N; ++i)
-      merged[i] += correction * partials[s * HEAD_DIM + i * METAL_SIMD_SIZE + lane];
+      merged[i] += correction * split_results[s * HEAD_DIM + i * METAL_SIMD_SIZE + lane];
   }
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < N; ++i)
@@ -187,6 +187,6 @@ PUBLIC KERNEL(AncestorAttention)(
   METAL_PRAGMA_UNROLL
   for (ushort i = 0; i < N; ++i) {
     const uint channel = i * METAL_SIMD_SIZE + lane;
-    output[row_head * HEAD_DIM + channel] = bfloat(merged[i] * uzu::kv_layout::rotation_sign(channel));
+    output[(row * num_heads + head) * HEAD_DIM + channel] = bfloat(merged[i] * uzu::kv_layout::rotation_sign(channel));
   }
 }
