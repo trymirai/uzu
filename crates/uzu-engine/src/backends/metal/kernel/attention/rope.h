@@ -20,9 +20,8 @@ METAL_FUNC float rope_rotate(
   return element * (cos_val * scale) + signed_paired * (sin_val * scale);
 }
 
-// TODO: very ugly and wasteful, clean up and optimize
-template <typename ElementT>
-METAL_FUNC ElementT apply_rope(
+template <typename ResultT, typename ElementT>
+METAL_FUNC ResultT apply_rope(
     const device ElementT* head,
     const device float* inverse_frequencies,
     float scale,
@@ -33,7 +32,7 @@ METAL_FUNC ElementT apply_rope(
   const uint32_t half_rope_dim = rope_dim / 2;
   const uint32_t paired_idx =
       head_dim_idx < half_rope_dim ? head_dim_idx + half_rope_dim : head_dim_idx - half_rope_dim;
-  return static_cast<ElementT>(rope_rotate(
+  return static_cast<ResultT>(rope_rotate(
       float(head[head_dim_idx]),
       float(head[paired_idx]),
       inverse_frequencies,

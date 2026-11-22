@@ -49,7 +49,7 @@ fn ancestor_attention<const HEAD_DIM: u32>(
                 let rotate = |component| {
                     (0..dim)
                         .map(|c| {
-                            apply_rope(
+                            apply_rope::<f32, _>(
                                 qkv.add(component * model_dim),
                                 rope_inverse_frequencies,
                                 rope_scale,
@@ -57,7 +57,6 @@ fn ancestor_attention<const HEAD_DIM: u32>(
                                 c,
                                 dim,
                             )
-                            .to_f32()
                         })
                         .collect()
                 };
