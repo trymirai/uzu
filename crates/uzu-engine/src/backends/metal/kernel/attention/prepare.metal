@@ -44,15 +44,15 @@ PUBLIC KERNEL(AttentionPrepare)(
     device bfloat* q_scales,
     device int8_t* k_codes OPTIONAL(append_kv),
     device bfloat* k_scales OPTIONAL(append_kv),
-    device uchar* v_codes OPTIONAL(append_kv),
-    device bfloat* v_scales OPTIONAL(append_kv),
+    device uchar* v_codes OPTIONAL(append_kv && !pool_keys),
+    device bfloat* v_scales OPTIONAL(append_kv && !pool_keys),
     const device float* rope_inverse_frequencies OPTIONAL(has_rope),
     const device float* query_norm_scales OPTIONAL(has_query_norm_scales),
     const device float* key_norm_scales OPTIONAL(has_key_norm_scales),
     const device float* value_norm_scales OPTIONAL(has_value_norm_scales),
-    const device uzu::trie::TrieNode* pool_nodes OPTIONAL(block_mean),
-    const device int* pool_token_indices OPTIONAL(block_mean),
-    device ElementT* raw_keys OPTIONAL(block_mean),
+    const device uzu::trie::TrieNode* pool_nodes OPTIONAL(pool_keys),
+    const device int* pool_token_indices OPTIONAL(pool_keys),
+    device ElementT* raw_keys OPTIONAL(pool_keys),
     const constant uzu::qkv_norm::QKVNormParams& norm_params,
     const constant uint32_t& num_q_heads,
     const constant uint32_t& rope_dim OPTIONAL(has_rope),
@@ -62,7 +62,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
-    const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
+    const constant uint32_t& prefix_tokens OPTIONAL(pool_keys),
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
@@ -71,12 +71,12 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool has_query_norm_scales SPECIALIZE,
     const bool has_key_norm_scales SPECIALIZE,
     const bool has_value_norm_scales SPECIALIZE,
-    const bool block_mean SPECIALIZE,
+    const bool pool_keys SPECIALIZE,
     const uint32_t compression_ratio SPECIALIZE,
     const bool has_trie SPECIALIZE,
-    threadgroup float block_mean_row OPTIONAL(block_mean)[HEAD_DIM],
+    threadgroup float pooled_key OPTIONAL(pool_keys)[HEAD_DIM],
     const uint32_t token_idx GROUPS(suffix_length),
-    const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
+    const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * (if pool_keys { 1 } else { 2 })),
     const uint32_t lane THREADS(METAL_SIMD_SIZE)
 ) {
   constexpr ushort VALUES_PER_LANE = HEAD_DIM / METAL_SIMD_SIZE;
@@ -91,12 +91,13 @@ PUBLIC KERNEL(AttentionPrepare)(
       is_query ? size_t(head_idx / gqa_factor) * query_rows + size_t(head_idx % gqa_factor) * suffix_length + token_idx
                : 0;
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
+  const bool is_pooled_key = pool_keys && is_key;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
   const uint32_t rope_position =
-      !has_rope    ? 0
-      : block_mean ? max(prefix_tokens + pool_nodes[token_idx].height + 1, compression_ratio) - compression_ratio
-                   : rope_position_offset + (has_trie ? trie[token_idx].height : token_idx);
+      !has_rope       ? 0
+      : is_pooled_key ? max(prefix_tokens + pool_nodes[token_idx].height + 1, compression_ratio) - compression_ratio
+                      : rope_position_offset + (has_trie ? trie[token_idx].height : token_idx);
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
@@ -107,8 +108,8 @@ PUBLIC KERNEL(AttentionPrepare)(
   if (has_scales) {
     norm_scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   }
-  if (block_mean) {
-    // raw_keys: open-block cache rows, then one row per suffix node.
+  if (is_pooled_key) {
+    // One key head: cached partial block, then one raw row per draft node.
     const uint tail_rows = compression_ratio - 1;
     const uint block_start = prefix_tokens - prefix_tokens % compression_ratio;
     const uint position = prefix_tokens + pool_nodes[token_idx].height;
@@ -118,8 +119,9 @@ PUBLIC KERNEL(AttentionPrepare)(
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < compression_ratio; ++i) {
         const uint slot = uint(pool_token_indices[token_idx * compression_ratio + i]);
-        const device ElementT* row = slot >= prefix_tokens ? qkvg + size_t(slot - prefix_tokens) * input_row_stride
-                                                           : raw_keys + size_t(slot - block_start) * HEAD_DIM;
+        const device ElementT* row =
+            slot >= prefix_tokens ? qkvg + size_t(slot - prefix_tokens) * input_row_stride + size_t(head_idx) * HEAD_DIM
+                                  : raw_keys + size_t(slot - block_start) * HEAD_DIM;
         METAL_PRAGMA_UNROLL
         for (ushort v = 0; v < VALUES_PER_LANE; ++v)
           sums[v] += float(row[lane * VALUES_PER_LANE + v]);
@@ -129,11 +131,11 @@ PUBLIC KERNEL(AttentionPrepare)(
     for (ushort v = 0; v < VALUES_PER_LANE; ++v) {
       const uint channel = lane * VALUES_PER_LANE + v;
       raw_keys[size_t(tail_rows + token_idx) * HEAD_DIM + channel] = head[channel];
-      block_mean_row[channel] = float(ElementT(sums[v] / compression_ratio));
+      pooled_key[channel] = float(ElementT(sums[v] / compression_ratio));
     }
     simdgroup_barrier(mem_flags::mem_threadgroup);
   }
-  const auto input = [&](uint channel) { return block_mean ? ElementT(block_mean_row[channel]) : head[channel]; };
+  const auto input = [&](uint channel) { return is_pooled_key ? ElementT(pooled_key[channel]) : head[channel]; };
   float inverse_rms = 1.0f;
   if (norm_enabled) {
     float sum = 0.0f;
