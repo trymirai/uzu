@@ -36,13 +36,13 @@ METAL_FUNC void load_row_keys(
       const uint4 packed_scores = *reinterpret_cast<const device uint4*>(row_scores + vector_column);
       METAL_PRAGMA_UNROLL
       for (uint lane = 0; lane < VECTOR_WIDTH; ++lane) {
-        keys[vector * VECTOR_WIDTH + lane] = top_k_bf16_key(ushort(packed_scores[lane / 2] >> (16 * (lane % 2))));
+        keys[vector * VECTOR_WIDTH + lane] = top_k_16bit_key(ushort(packed_scores[lane / 2] >> (16 * (lane % 2))));
       }
     } else {
       for (uint lane = 0; lane < VECTOR_WIDTH; ++lane) {
         const uint position = vector_column + lane;
         keys[vector * VECTOR_WIDTH + lane] =
-            position - leading_pad < padded_columns - leading_pad ? top_k_bf16_key(row_scores[position]) : 0;
+            position - leading_pad < padded_columns - leading_pad ? top_k_16bit_key(row_scores[position]) : 0;
       }
     }
   }
@@ -65,8 +65,10 @@ threadgroup_prefix_sum(uint value, threadgroup uint* simdgroup_totals, const Thr
   return uint2(simd_prefix + previous_simdgroups_total, total);
 }
 
+template <typename T>
+VARIANTS(T, bfloat, half)
 KERNEL(RadixTopKSmall)(
-    const device bfloat* input,
+    const device T* input,
     device uint* output_ids,
     device float* output_scores,
     constant uint& rows,
@@ -83,8 +85,8 @@ KERNEL(RadixTopKSmall)(
     const uint row GROUPS(rows),
     const uint lid THREADS(THREADS_PER_TG)
 ) {
-  const device bfloat* row_input = input + ulong(row) * columns;
-  const uint leading_pad = (reinterpret_cast<ulong>(row_input) / sizeof(bfloat)) % VECTOR_WIDTH;
+  const device T* row_input = input + ulong(row) * columns;
+  const uint leading_pad = (reinterpret_cast<ulong>(row_input) / sizeof(T)) % VECTOR_WIDTH;
   const device ushort* row_scores = reinterpret_cast<const device ushort*>(row_input) - leading_pad;
   const uint padded_columns = leading_pad + columns;
   device uint* row_ids = output_ids + row * k;

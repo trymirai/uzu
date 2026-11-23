@@ -62,7 +62,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
   [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
   [[Optional("block_mean")]] Ptr<TrieNode, Access.Read> pool_nodes,
-  [[Optional("block_mean")]] Ptr<int, Access.Read> pool_windows,
+  [[Optional("block_mean")]] Ptr<int, Access.Read> pool_token_indices,
   [[Optional("block_mean")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
   QKVNormParams norm_params,
   uint num_q_heads,
@@ -107,7 +107,9 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   let scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   let row = token * input_row_stride + head * HEAD_DIM;
   // Trie nodes sit at their depth below the root, not at their row in the suffix.
-  let rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
+  let rope_position = !has_rope ? 0 : block_mean
+    ? max(prefix_tokens + pool_nodes[token].height + 1, compression_ratio) - compression_ratio
+    : rope_position_offset + (has_trie ? trie[token].height : token);
   if (block_mean) {
     // raw_keys: the open block's cached rows, then one row per suffix node.
     let block_start = prefix_tokens - prefix_tokens % compression_ratio;
@@ -116,7 +118,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
       let channel = first + a;
       var sum = 0.0;
       for (uint i = 0; completes_block && i < compression_ratio; i++) {
-        let slot = uint(pool_windows[token * compression_ratio + i]);
+        let slot = uint(pool_token_indices[token * compression_ratio + i]);
         if (slot >= prefix_tokens) {
           sum += qkvg[(slot - prefix_tokens) * input_row_stride + channel].toFloat();
         } else {

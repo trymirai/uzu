@@ -4,7 +4,10 @@ use crate::{
     backends::{
         common::{
             Backend, BufferMut, BufferRef, CommandBufferEncoding,
-            kernel::{AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, kv_layout::KVLayout},
+            kernel::{
+                AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, attention::KeyBlocks,
+                kv_layout::KVLayout,
+            },
         },
         metal::{
             Metal,
@@ -14,7 +17,7 @@ use crate::{
             gpu_types::{attention::AttnParams, kv_layout},
             kernel::{
                 AttentionBlockScoreMetalKernel, AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel,
-                AttentionVectorMetalKernel,
+                AttentionVectorMetalKernel, PrepareDraftBlocksMetalKernel, RadixTopKSmallMetalKernel,
             },
         },
     },
@@ -27,7 +30,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
-    sparse: Option<(u32, u32, [AttentionMatrixMetalKernel; 2])>,
+    sparse: Option<SparseKernels>,
 }
 
 struct KernelTile {
@@ -36,6 +39,15 @@ struct KernelTile {
     prefix: Option<AttentionMatrixMetalKernel>,
     masked: AttentionMatrixMetalKernel,
     trie: AttentionMatrixMetalKernel,
+}
+
+struct SparseKernels {
+    rows: u32,
+    compression_ratio: u32,
+    cores: [AttentionMatrixMetalKernel; 2],
+    prepare_draft: [PrepareDraftBlocksMetalKernel; 2],
+    scorers: [AttentionBlockScoreMetalKernel; 2],
+    top_k: RadixTopKSmallMetalKernel,
 }
 
 impl AttentionMetalKernel {
@@ -168,7 +180,21 @@ impl AttentionMetalKernel {
                             Some(compression_ratio),
                         )
                     };
-                    Ok((rows, compression_ratio, [kernel(false)?, kernel(true)?]))
+                    Ok(SparseKernels {
+                        rows,
+                        compression_ratio,
+                        cores: [kernel(false)?, kernel(true)?],
+                        prepare_draft: [
+                            PrepareDraftBlocksMetalKernel::new(context, false)?,
+                            PrepareDraftBlocksMetalKernel::new(context, true)?,
+                        ],
+                        // TODO: Read indexer dimensions from config in the runtime wiring PR.
+                        scorers: [
+                            AttentionBlockScoreMetalKernel::new(context, 4, 128, use_mxu, compression_ratio, false)?,
+                            AttentionBlockScoreMetalKernel::new(context, 4, 128, use_mxu, compression_ratio, true)?,
+                        ],
+                        top_k: RadixTopKSmallMetalKernel::new(context, DataType::F16, false)?,
+                    })
                 })
                 .transpose()?,
         })
@@ -193,6 +219,81 @@ impl AttentionKernel for AttentionMetalKernel {
         config: AttentionKernelConfig,
     ) -> Result<Self, MetalError> {
         Self::new_with_mxu(context, &config, context.supports_mxu && config.data_type == DataType::BF16)
+    }
+
+    fn prepare_draft_blocks(
+        &self,
+        trie: Option<impl BufferRef<Backend = Metal>>,
+        rows: u32,
+        prefix: u32,
+        selected: KeyBlocks<impl BufferMut<Backend = Metal>>,
+        command_buffer: &mut MetalCommandBufferEncoding,
+    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
+        let sparse = self.sparse.as_ref().expect("sparse attention config required");
+        let mut nodes = command_buffer
+            .allocate_scratch(rows as usize * size_of::<crate::backends::common::gpu_types::trie::TrieNode>())?;
+        sparse.prepare_draft[usize::from(trie.is_some())].encode(
+            trie,
+            &mut nodes,
+            selected.query_blocks.subrange_mut((rows * selected.blocks_per_query) as usize * size_of::<i32>()..),
+            rows,
+            prefix,
+            sparse.compression_ratio,
+            command_buffer,
+        );
+        Ok(nodes)
+    }
+
+    fn select_blocks(
+        &self,
+        query_codes: impl BufferRef<Backend = Metal>,
+        query_scales: impl BufferRef<Backend = Metal>,
+        key_codes: impl BufferRef<Backend = Metal>,
+        key_scales: impl BufferRef<Backend = Metal>,
+        rows: u32,
+        prefix_len: u32,
+        cached_block_row: u32,
+        candidates: u32,
+        selected: KeyBlocks<impl BufferMut<Backend = Metal>>,
+        trie: Option<impl BufferRef<Backend = Metal>>,
+        command_buffer: &mut MetalCommandBufferEncoding,
+    ) -> Result<(), MetalError> {
+        let blocks = selected.blocks_per_query;
+        assert!(rows > 0 && blocks > 0 && blocks <= candidates);
+        assert!(blocks <= crate::backends::common::kernel::radix_top_k_small::MAX_K);
+        let sparse = self.sparse.as_ref().expect("sparse attention config required");
+        let mut scores =
+            command_buffer.allocate_scratch(rows as usize * candidates as usize * size_of::<half::f16>())?;
+        let id_bytes = rows as usize * blocks as usize * size_of::<u32>();
+        let mut top_scores = command_buffer.allocate_scratch(id_bytes)?;
+        let (rows_per_group, blocks_per_group) = policy::score_tiling(self.use_mxu, rows);
+        sparse.scorers[usize::from(trie.is_some())].encode(
+            query_codes,
+            query_scales,
+            key_codes,
+            key_scales,
+            &mut scores,
+            0,
+            rows,
+            rows,
+            prefix_len,
+            cached_block_row,
+            rows_per_group,
+            blocks_per_group,
+            candidates,
+            trie,
+            command_buffer,
+        );
+        sparse.top_k.encode(
+            &scores,
+            selected.query_blocks.subrange_mut(..id_bytes),
+            &mut top_scores,
+            rows,
+            candidates,
+            blocks,
+            command_buffer,
+        );
+        Ok(())
     }
 
     fn encode(
@@ -244,9 +345,9 @@ impl AttentionKernel for AttentionMetalKernel {
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
         let sparse = match (key_blocks, &self.sparse) {
-            (None, None) => None,
-            (Some(key_blocks), Some((rows, compression_ratio, cores))) => {
-                Some((key_blocks, &cores[usize::from(trie.is_some())], *rows, *compression_ratio))
+            (None, _) => None,
+            (Some(key_blocks), Some(sparse)) => {
+                Some((key_blocks, &sparse.cores[usize::from(trie.is_some())], sparse.rows, sparse.compression_ratio))
             },
             _ => panic!("key_blocks must match AttentionKernelConfig::sparse_compression_ratio"),
         };
@@ -428,31 +529,3 @@ impl AttentionKernel for AttentionMetalKernel {
 #[cfg(test)]
 #[path = "../../../../../unit/backends/metal/kernel/attention/mod.rs"]
 mod tests;
-
-// Keeps AttentionBlockScore compiled until the QSA indexer wiring calls it.
-#[allow(dead_code)]
-fn encode_block_score(
-    context: &MetalContext,
-    buffer: impl BufferRef<Backend = Metal>,
-    scores: impl BufferMut<Backend = Metal>,
-    encoder: &mut MetalCommandBufferEncoding,
-) -> Result<(), MetalError> {
-    AttentionBlockScoreMetalKernel::new(context, 4, 128, false, 4, false)?.encode(
-        buffer,
-        buffer,
-        buffer,
-        buffer,
-        scores,
-        0,
-        0,
-        0,
-        0,
-        0,
-        16,
-        32,
-        0,
-        None::<&<Metal as Backend>::GlobalGpuBuffer>,
-        encoder,
-    );
-    Ok(())
-}

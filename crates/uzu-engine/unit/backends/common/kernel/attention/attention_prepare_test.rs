@@ -34,6 +34,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
     fused: bool,
     rope: bool,
     block_mean: bool,
+    block_rope_reference: bool,
 ) -> PrepareOutput {
     const CACHE_TOKENS: usize = 64;
     const SUFFIX: usize = 2;
@@ -102,7 +103,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[2],
         block_mean,
         4 * u32::from(block_mean),
-        false,
+        block_rope_reference,
     )
     .unwrap();
     let nodes = create_buffer_with_data::<B, u32>(
@@ -122,7 +123,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
             },
         ]),
     );
-    let windows = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 4, 4, 4, 4]);
+    let path_token_indices = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 4, 4, 4, 4]);
     let mut raw_keys =
         create_buffer_with_data::<B, bf16>(&context, &[rows[..DIM].to_vec(), vec![bf16::ZERO; 5 * DIM]].concat());
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
@@ -139,7 +140,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[1].then_some(&norm_scales[1]),
         affine[2].then_some(&norm_scales[2]),
         block_mean.then_some(&nodes),
-        block_mean.then_some(&windows),
+        block_mean.then_some(&path_token_indices),
         block_mean.then_some(&mut raw_keys),
         if fused {
             norm_params
@@ -149,13 +150,17 @@ fn run_prepare<B: Backend, const DIM: usize>(
         num_q_heads,
         rope.then_some(rope_dim),
         rope.then_some(1.0),
-        rope.then_some(5),
+        rope.then_some(if block_rope_reference {
+            0
+        } else {
+            5
+        }),
         33,
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
         num_q_heads * SUFFIX as u32,
         block_mean.then_some(PREFIX),
-        None::<&B::GlobalGpuBuffer>,
+        block_rope_reference.then_some(&nodes),
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
@@ -182,17 +187,19 @@ fn test_attention_prepare_fused_norm() {
                     };
                     for rope in [false, true] {
                         for_each_backend!(|B| {
-                            let separate = run_prepare::<B, DIM>(queries, case, false, rope, false);
-                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, false);
+                            let separate = run_prepare::<B, DIM>(queries, case, false, rope, false, false);
+                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, false, false);
                             assert_eq!(
                                 separate, fused,
                                 "fused norm mismatch D{DIM} queries={queries} full_layer={full_layer} rope={rope}"
                             );
                             if queries == 1 {
-                                let block_mean = run_prepare::<B, DIM>(queries, case, true, rope, true);
+                                let block_mean = run_prepare::<B, DIM>(queries, case, true, rope, true, false);
+                                // Pool path_token_indices repeat each input row; block-start positions are [0, 4].
+                                let reference = run_prepare::<B, DIM>(queries, case, true, rope, false, true);
                                 assert_eq!(
                                     (&block_mean.codes[0], &block_mean.scales[0]),
-                                    (&fused.codes[0], &fused.scales[0])
+                                    (&reference.codes[0], &reference.scales[0])
                                 );
                             }
                         });

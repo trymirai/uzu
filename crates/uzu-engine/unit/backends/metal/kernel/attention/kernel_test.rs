@@ -6,7 +6,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::{
         common::{
-            Backend, CommandBufferEncoding, Context, Kernels,
+            Backend, BufferMut, CommandBufferEncoding, Context, Kernels,
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
@@ -15,7 +15,7 @@ use crate::{
         },
         metal::{
             Metal,
-            kernel::{AttentionBlockScoreMetalKernel, attention::AttentionMetalKernel},
+            kernel::{AttentionBlockScoreMetalKernel, RadixTopKSmallMetalKernel, attention::AttentionMetalKernel},
         },
     },
     data_type::DataType,
@@ -219,8 +219,21 @@ fn attention_matches_cpu() {
                     let trie = trie.map(|nodes| command_buffer.allocate_constant_from_slice(nodes).unwrap());
                     let key_blocks = (sparse && attend).then(|| {
                         let mut packed = block_list.clone();
-                        packed.extend_from_slice(&expected_token_indices);
-                        create_buffer_with_data::<Metal, i32>(&metal, &packed)
+                        packed.resize(suffix * (blocks_per_query + COMPRESSION_RATIO), i32::MIN);
+                        let mut query_blocks = create_buffer_with_data::<Metal, i32>(&metal, &packed);
+                        kernel
+                            .prepare_draft_blocks(
+                                trie.as_ref(),
+                                suffix as u32,
+                                prefix as u32,
+                                KeyBlocks {
+                                    query_blocks: &mut query_blocks,
+                                    blocks_per_query: blocks_per_query as u32,
+                                },
+                                &mut command_buffer,
+                            )
+                            .unwrap();
+                        query_blocks
                     });
                     prepare.encode(
                         &create_buffer_with_data::<Metal, bf16>(&metal, rows),
@@ -276,8 +289,14 @@ fn attention_matches_cpu() {
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
                     let mut output = create_buffer::<Metal, bf16>(&metal, suffix * q_heads * head_dim);
                     command_buffer.encode_copy(&pooled, &mut output);
-                    drop((pooled, trie, key_blocks));
+                    drop((pooled, trie));
                     submit_command_buffer(command_buffer);
+                    if let Some(selected) = key_blocks {
+                        let packed = buffer_to_vec::<Metal, i32>(&metal, &selected);
+                        let members_start = suffix * blocks_per_query;
+                        assert_eq!(&packed[..members_start], &block_list);
+                        assert_eq!(&packed[members_start..], &expected_token_indices);
+                    }
                     buffer_to_vec::<Metal, bf16>(&metal, &output)
                 };
             if prefix > 0 {
@@ -484,5 +503,35 @@ fn block_score_matches_cpu() {
                 0.0,
             );
         }
+    }
+}
+
+#[uzu_test]
+fn radix_top_k_small_half() {
+    let metal = block_on(<Metal as Backend>::Context::new()).unwrap();
+    let input = create_buffer_with_data::<Metal, f16>(
+        &metal,
+        &[f16::NEG_INFINITY, f16::MAX, f16::ONE, f16::NEG_ONE, f16::INFINITY, f16::from_f32(2.0)],
+    );
+    for sorted in [false, true] {
+        let kernel = RadixTopKSmallMetalKernel::new(&metal, DataType::F16, sorted).unwrap();
+        let mut packed = create_buffer_with_data::<Metal, i32>(&metal, &[-123; 7]);
+        let mut scores = create_buffer::<Metal, f32>(&metal, 3);
+        let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
+        kernel.encode(
+            &input,
+            (&mut packed).subrange_mut(..3 * size_of::<i32>()),
+            &mut scores,
+            1,
+            6,
+            3,
+            &mut command_buffer,
+        );
+        submit_command_buffer(command_buffer);
+        let packed = buffer_to_vec::<Metal, i32>(&metal, &packed);
+        assert_eq!(&packed[3..], &[-123; 4]);
+        let mut pairs: Vec<_> = packed[..3].iter().copied().zip(buffer_to_vec::<Metal, f32>(&metal, &scores)).collect();
+        pairs.sort_by_key(|&(id, _)| id);
+        assert_eq!(pairs, vec![(1, f16::MAX.to_f32()), (4, f32::INFINITY), (5, 2.0)]);
     }
 }

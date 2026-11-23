@@ -55,3 +55,20 @@ pub fn splits(
     };
     splits.clamp(1, params.nk.max(1))
 }
+
+const SIMD_FRAGMENT_ROWS: u32 = 8;
+const SCORE_MAX_QUERY_FRAGMENTS: u32 = 4;
+const SCORE_BLOCKS_PER_GROUP: u32 = 128;
+
+pub fn score_tiling(
+    use_mxu: bool,
+    rows: u32,
+) -> (u32, u32) {
+    let fragment_rows = if use_mxu {
+        kv_layout::TILE_DIMS
+    } else {
+        SIMD_FRAGMENT_ROWS
+    };
+    let rows_per_group = rows.next_power_of_two().clamp(fragment_rows, SCORE_MAX_QUERY_FRAGMENTS * fragment_rows);
+    (rows_per_group, SCORE_BLOCKS_PER_GROUP)
+}

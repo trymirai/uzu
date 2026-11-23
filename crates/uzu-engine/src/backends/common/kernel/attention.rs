@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use crate::{
-    backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
+    backends::common::{Backend, BufferMut, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
     data_type::DataType,
     encodable_block::mixer::attention::KVCacheState,
 };
@@ -16,6 +16,34 @@ pub trait AttentionKernel: Sized + Send + Sync {
     ) -> Result<Self, Self::Error>;
 
     fn kv_layout(&self) -> KVLayout;
+
+    fn prepare_draft_blocks(
+        &self,
+        _trie: Option<impl BufferRef<Backend = Self::Backend>>,
+        _rows: u32,
+        _prefix: u32,
+        _selected: KeyBlocks<impl BufferMut<Backend = Self::Backend>>,
+        _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error> {
+        unreachable!("sparse attention is Metal only")
+    }
+
+    fn select_blocks(
+        &self,
+        _query_codes: impl BufferRef<Backend = Self::Backend>,
+        _query_scales: impl BufferRef<Backend = Self::Backend>,
+        _key_codes: impl BufferRef<Backend = Self::Backend>,
+        _key_scales: impl BufferRef<Backend = Self::Backend>,
+        _rows: u32,
+        _prefix_len: u32,
+        _cached_block_row: u32,
+        _candidates: u32,
+        _selected: KeyBlocks<impl BufferMut<Backend = Self::Backend>>,
+        _trie: Option<impl BufferRef<Backend = Self::Backend>>,
+        _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        unreachable!("sparse attention is Metal only")
+    }
 
     fn encode(
         &self,
@@ -65,8 +93,8 @@ pub struct AttentionArguments<
     pub gate: Option<GT>,
 }
 
-pub struct KeyBlocks<ST: BufferRef> {
-    pub query_blocks: ST,
+pub struct KeyBlocks<T> {
+    pub query_blocks: T,
     pub blocks_per_query: u32,
 }
 

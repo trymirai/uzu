@@ -29,7 +29,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[optional(has_key_norm_scales)] key_norm_scales: Option<*const f32>,
     #[optional(has_value_norm_scales)] value_norm_scales: Option<*const f32>,
     #[optional(block_mean)] pool_nodes: Option<*const TrieNode>,
-    #[optional(block_mean)] pool_windows: Option<*const i32>,
+    #[optional(block_mean)] pool_token_indices: Option<*const i32>,
     #[optional(block_mean)] raw_keys: Option<*mut ElementT>,
     norm_params: QKVNormParams,
     num_q_heads: u32,
@@ -93,7 +93,10 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             (2, has_value_norm_scales.then(|| value_norm_scales.unwrap()))
         };
         for token in 0..suffix_length {
-            let rope_row = if has_trie {
+            let rope_row = if block_mean {
+                (prefix as u32 + unsafe { (*pool_nodes.unwrap().add(token as usize)).height } + 1)
+                    .saturating_sub(compression_ratio)
+            } else if has_trie {
                 unsafe { (*trie.unwrap().add(token as usize)).height }
             } else {
                 token
@@ -106,7 +109,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                 let height = unsafe { (*pool_nodes.unwrap().add(token)).height } as usize;
                 if (prefix + height + 1).is_multiple_of(ratio) {
                     for i in 0..ratio {
-                        let slot = unsafe { *pool_windows.unwrap().add(token * ratio + i) } as usize;
+                        let slot = unsafe { *pool_token_indices.unwrap().add(token * ratio + i) } as usize;
                         let row = match slot.checked_sub(prefix) {
                             Some(suffix_row) => unsafe { qkvg.add(suffix_row * input_row_stride as usize) },
                             None => raw_row(slot - block_start).cast_const(),
@@ -146,7 +149,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                         source,
                         rope_inverse_frequencies.unwrap(),
                         rope_scale.unwrap(),
-                        rope_position_offset.unwrap() + rope_row,
+                        if block_mean {
+                            rope_row
+                        } else {
+                            rope_position_offset.unwrap() + rope_row
+                        },
                         channel,
                         rope_dim,
                     )
