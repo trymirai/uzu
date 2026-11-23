@@ -7,10 +7,14 @@ use crate::{
         gpu_types::qkv_norm::QKVNormParams,
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-            attention::KeyBlocks,
+            attention::{KeyBlocks, SparseAttentionKernelConfig},
         },
     },
-    config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
+    config::{
+        normalization::UpcastMode,
+        rope::AnyRoPEConfig,
+        token_mixer::{attention::AttentionConfig, sparse_attention::SparseAttentionIndexerConfig},
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -21,13 +25,16 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
+mod indexer;
 mod state;
 
+use indexer::Indexer;
 pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheState};
 
 pub mod rope;
 
 pub struct Attention<B: Backend> {
+    indexer: Option<Indexer<B>>,
     head_dim: u32,
     num_q_heads: u32,
     num_groups: u32,
@@ -75,9 +82,34 @@ impl<B: Backend> Attention<B> {
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AttentionConfig,
+        indexer_config: Option<&SparseAttentionIndexerConfig>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
+        let indexer = if let Some(indexer_config) = indexer_config {
+            assert_eq!(data_type, DataType::BF16, "sparse attention requires bf16");
+            assert!(
+                config.is_causal
+                    && !config.is_kv_sharing
+                    && !config.has_sinks
+                    && !config.has_qkvg_biases
+                    && config.sliding_window_size.is_none(),
+                "sparse attention requires causal, no KV sharing, sinks, biases or sliding window"
+            );
+            Some(
+                Indexer::new(
+                    indexer_config.clone(),
+                    rope_config.expect("sparse attention requires RoPE"),
+                    &parameter_tree.subtree("indexer"),
+                    context,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        let attention_tree = indexer.as_ref().map(|_| parameter_tree.subtree("attention"));
+        let parameter_tree = attention_tree.as_ref().unwrap_or(parameter_tree);
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;
@@ -93,11 +125,12 @@ impl<B: Backend> Attention<B> {
             .map_err(AttentionNewError::Backend)?;
 
         let q_dim = num_q_heads * head_dim;
+        let indexer_dim = indexer_config.map_or(0, |config| (config.num_heads + 1) * config.head_dim);
 
         let projection_tree = parameter_tree.subtree("qkvg_projection");
         let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
-            q_dim + kv_dim + kv_dim
+            q_dim + kv_dim + kv_dim + indexer_dim
         } else {
             q_dim
         };
@@ -163,7 +196,11 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
-                sparse: None,
+                sparse: indexer_config.map(|config| SparseAttentionKernelConfig {
+                    num_heads: config.num_heads,
+                    head_dim: config.head_dim,
+                    compression_ratio: config.compression_ratio,
+                }),
             },
         )
         .map_err(AttentionNewError::Kernel)?;
@@ -212,6 +249,7 @@ impl<B: Backend> Attention<B> {
 
         Ok((
             Self {
+                indexer,
                 head_dim,
                 num_q_heads,
                 num_groups,
