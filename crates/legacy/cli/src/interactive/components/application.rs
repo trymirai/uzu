@@ -19,6 +19,7 @@ use crate::{
         helpers::SYMBOL_COMMAND,
         keyboard_enhancement::KeyboardEnhancement,
         sessions::{self, SessionState},
+        util::types_text,
     },
 };
 
@@ -80,6 +81,17 @@ impl ApplicationState {
 
     pub fn theme(&self) -> &Theme {
         &self.preferences.theme
+    }
+
+    pub fn deletable_model(&self) -> Option<&Model> {
+        self.model_state
+            .as_ref()
+            .filter(|model_state| {
+                model_state.model.is_downloadable()
+                    && model_state.session_state.is_none()
+                    && model_state.download_state.can_delete()
+            })
+            .map(|model_state| &model_state.model)
     }
 
     pub fn set_preferences(
@@ -290,49 +302,44 @@ pub fn Application(
         else {
             return;
         };
-        if kind == KeyEventKind::Release {
+        // A held key repeats, which must not count as pressing Ctrl+C again.
+        if kind != KeyEventKind::Press {
             return;
         }
 
         let is_escape = matches!(code, KeyCode::Esc);
-        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL);
+        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && !types_text(modifiers);
         if !is_escape && !is_ctrl_c {
             return;
         }
 
         let mut state = state;
         let mut state = state.write();
-
-        let consumed_by_session = if let Some(session_state) = state.session_state() {
-            if is_escape {
-                session_state.interrupt() || session_state.is_busy()
-            } else {
-                session_state.is_busy()
-            }
-        } else {
-            false
-        };
+        let consumed_by_session =
+            match state.model_state.as_mut().and_then(|model_state| model_state.session_state.as_deref_mut()) {
+                Some(session_state) if is_escape => session_state.interrupt() || session_state.is_busy(),
+                // Ctrl+C stops a reply, and otherwise quits, also while a model loads.
+                Some(session_state) => session_state.interrupt(),
+                None => false,
+            };
         if consumed_by_session {
             return;
         }
 
+        if is_ctrl_c {
+            state.flow = Some(Box::new(ExitFlow));
+            return;
+        }
+
+        // Esc closes a flow but never quits, unlike Ctrl+C and /exit; the input handles the rest.
         if state.flow.is_some() {
-            if is_escape {
-                if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
-                    state.history.push(HistoryCellType::CommandResult {
-                        result: "Cancelled".to_string(),
-                    });
-                }
-                state.flow = None;
+            if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
+                state.history.push(HistoryCellType::CommandResult {
+                    result: "Cancelled".to_string(),
+                });
             }
-            return;
+            state.flow = None;
         }
-
-        if is_escape && sessions::decision::leave_question_mode(&mut state) {
-            return;
-        }
-
-        state.flow = Some(Box::new(ExitFlow));
     });
 
     let on_flow_event: Handler<FlowEvent> = Handler::from(move |event: FlowEvent| {

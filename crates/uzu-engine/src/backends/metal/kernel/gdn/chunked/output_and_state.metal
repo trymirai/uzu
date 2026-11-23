@@ -102,7 +102,8 @@ KERNEL(DeltaNetChunkedOutputAndState)(
 
   // Load the initial state slice transposed into threadgroup memory:
   //   transposed_state_tile[key * VT + value] = state[(hv, value_base + value, key)]
-  for (uint idx = thread_idx; idx < VT * HEAD_K_DIM; idx += OUTPUT_STATE_THREADS) {
+  static_assert(VT * HEAD_K_DIM % OUTPUT_STATE_THREADS == 0, "every thread moves the same number of state values");
+  for (uint idx = thread_idx; idx < VT * HEAD_K_DIM + thread_idx; idx += OUTPUT_STATE_THREADS) {
     const uint local_value_idx = idx / HEAD_K_DIM;
     const uint local_key_idx = idx - local_value_idx * HEAD_K_DIM;
     transposed_state_tile[local_key_idx * VT + local_value_idx] =
@@ -315,7 +316,7 @@ KERNEL(DeltaNetChunkedOutputAndState)(
   }
 
   // Write the final state slice back to device, transposing [K, VT] -> [V, K].
-  for (uint idx = thread_idx; idx < VT * HEAD_K_DIM; idx += OUTPUT_STATE_THREADS) {
+  for (uint idx = thread_idx; idx < VT * HEAD_K_DIM + thread_idx; idx += OUTPUT_STATE_THREADS) {
     const uint local_value_idx = idx / HEAD_K_DIM;
     const uint local_key_idx = idx - local_value_idx * HEAD_K_DIM;
     state[(hv_idx * head_v_dim + value_base + local_value_idx) * HEAD_K_DIM + local_key_idx] =

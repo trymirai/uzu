@@ -2,20 +2,19 @@ use std::time::{Duration, Instant};
 
 use iocraft::prelude::*;
 use tokio_stream::StreamExt;
+use unicode_width::UnicodeWidthStr;
 use uzu::storage::DownloadPhase;
 
 use crate::{
     common::thinking::ThinkingSupport,
-    interactive::components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+    interactive::{
+        components::{ApplicationState, ProgressBar, ThinkingSupportExt},
+        util::types_text,
+    },
 };
 
 const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
-
-#[derive(Clone, Copy)]
-enum StorageAction {
-    Toggle,
-    Delete,
-}
+const PROGRESS_BAR_MINIMAL_WIDTH: usize = 10;
 
 #[derive(Default, Props)]
 pub struct SelectedModelProps {}
@@ -26,6 +25,7 @@ pub fn SelectedModel(
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
     let state = *hooks.use_context::<State<ApplicationState>>();
+    let (width, _) = hooks.use_terminal_size();
 
     hooks.use_future({
         let engine = state.read().engine.clone();
@@ -91,12 +91,12 @@ pub fn SelectedModel(
         }
     });
 
-    let on_action = hooks.use_async_handler({
+    let on_toggle = hooks.use_async_handler({
         let engine = state.read().engine.clone();
         let model = state.read().model_state.as_ref().map(|model_state| model_state.model.clone());
         let has_session =
             state.read().model_state.as_ref().map(|model_state| model_state.session_state.is_some()).unwrap_or(false);
-        move |action: StorageAction| {
+        move |()| {
             let engine = engine.clone();
             let model = model.clone();
             async move {
@@ -110,31 +110,24 @@ pub fn SelectedModel(
                     return;
                 }
                 let downloader = engine.downloader(&model);
-                match action {
-                    StorageAction::Toggle => {
-                        let Some(current) = downloader.state().await else {
-                            return;
-                        };
-                        match current.phase {
-                            DownloadPhase::Downloading {} => {
-                                let _ = downloader.pause().await;
-                            },
-                            DownloadPhase::Paused {}
-                            | DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Locked {
-                                ..
-                            }
-                            | DownloadPhase::Error {
-                                ..
-                            } => {
-                                let _ = downloader.resume().await;
-                            },
-                            DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
-                        }
+                let Some(current) = downloader.state().await else {
+                    return;
+                };
+                match current.phase {
+                    DownloadPhase::Downloading {} => {
+                        let _ = downloader.pause().await;
                     },
-                    StorageAction::Delete => {
-                        let _ = downloader.delete().await;
+                    DownloadPhase::Paused {}
+                    | DownloadPhase::NotDownloaded {}
+                    | DownloadPhase::Locked {
+                        ..
+                    }
+                    | DownloadPhase::Error {
+                        ..
+                    } => {
+                        let _ = downloader.resume().await;
                     },
+                    DownloadPhase::Initializing {} | DownloadPhase::Downloaded {} => {},
                 }
             }
         }
@@ -156,16 +149,8 @@ pub fn SelectedModel(
         else {
             return;
         };
-        if kind == KeyEventKind::Release {
-            return;
-        }
-        if !modifiers.contains(KeyModifiers::CONTROL) {
-            return;
-        }
-        match code {
-            KeyCode::Char('p') => on_action(StorageAction::Toggle),
-            KeyCode::Char('d') => on_action(StorageAction::Delete),
-            _ => {},
+        if kind == KeyEventKind::Press && code == KeyCode::Char('p') && !types_text(modifiers) {
+            on_toggle(());
         }
     });
 
@@ -217,6 +202,26 @@ pub fn SelectedModel(
                     None => format!("sampling {}", preferences.sampling.mode.label()),
                 }
             });
+            // The download status always shows, wrapping only if it alone does not fit, as a long error may. Narrow
+            // terminals drop the other parts that do not fit whole, in order of priority, instead of wrapping them.
+            let name = model.name();
+            let status = model.is_downloadable().then_some(status);
+            let mut remaining = (width as usize).saturating_sub(
+                name.width()
+                    + padding_wide as usize
+                    + status.as_ref().map_or(0, |status| padding as usize + status.width()),
+            );
+            let mut fits = |part_width: usize| match remaining.checked_sub(part_width) {
+                Some(left) => {
+                    remaining = left;
+                    true
+                },
+                None => false,
+            };
+            let session_status = session_status.filter(|status| fits(padding_wide as usize + status.width()));
+            let is_downloading =
+                is_downloading && fits(PROGRESS_BAR_MINIMAL_WIDTH + padding as usize + progress_size.width());
+            let chat_indicator = chat_indicator.filter(|indicator| fits(indicator.width()));
 
             element! {
                 View(
@@ -224,8 +229,8 @@ pub fn SelectedModel(
                     align_items: AlignItems::Center,
                     width: 100pct,
                 ) {
-                    Text(content: model.name(), color: theme.accent_color)
-                    #(model.is_downloadable().then(|| element! {
+                    Text(content: name, color: theme.accent_color)
+                    #(status.map(|status| element! {
                         View(flex_direction: FlexDirection::Row) {
                             View(width: padding as u32)
                             Text(content: status, color: theme.subtitle_color)
@@ -243,13 +248,13 @@ pub fn SelectedModel(
                         View(flex_grow: 1.0f32)
                     }))
                     #(chat_indicator.map(|indicator| element! {
-                        View(flex_direction: FlexDirection::Row) {
-                            Text(content: indicator, color: theme.subtitle_color)
-                            View(width: padding_wide as u32)
-                        }
+                        Text(content: indicator, color: theme.subtitle_color)
                     }))
                     #(session_status.map(|status| element! {
-                        Text(content: status, color: theme.subtitle_color)
+                        View(flex_direction: FlexDirection::Row) {
+                            View(width: padding_wide as u32)
+                            Text(content: status, color: theme.subtitle_color)
+                        }
                     }))
                 }
             }

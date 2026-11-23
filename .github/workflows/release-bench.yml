@@ -58,20 +58,10 @@ jobs:
           "${benchman[@]}" "${arguments[@]}" -o "$tag" -b
           status=0
           "${benchman[@]}" -i "$tag" || status=$?
-          {
-            echo "Tagged as \`$tag\`"
-            echo
-            uv run --project scripts/benchmarks/benchman --frozen python scripts/benchmarks/results_table.py "$tag"
-          } | tee "$RUNNER_TEMP/release-bench.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tagged as \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
           # 75: submitted, results still missing.
           if [[ "$status" == 75 ]]; then
             echo "::notice::Still measuring. benchman -i $tag shows the results."
             exit 0
           fi
           exit "$status"
-
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: release-bench
-          path: ${{ runner.temp }}/release-bench.md

@@ -19,36 +19,16 @@ use crate::{
         },
     },
     data_type::DataType,
-    encodable_block::{
-        mixer::attention::{KVCache, KVCacheView},
-        sampling::PRng,
-    },
+    encodable_block::mixer::attention::{KVCache, KVCacheState},
     tests::{
         assert::{assert_eq_float, assert_parity},
         helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, submit_command_buffer},
     },
-    trie::TrieNode,
 };
 
 const COMPRESSION_RATIO: usize = 4;
 
 type AttentionShape = (usize, usize, usize, usize, usize, bool);
-
-fn flat_trie(
-    prefix_length: usize,
-    tokens: &[u64],
-    prng: &PRng,
-) -> TrieNode {
-    assert!(!tokens.is_empty(), "need seed node");
-
-    let mut node = TrieNode::new(tokens[0], prng.derive(prefix_length as u64), 0.0);
-    for (index, token) in tokens.iter().copied().enumerate().skip(1).rev() {
-        let mut parent = TrieNode::new(token, prng.derive((prefix_length + index) as u64), 0.0);
-        parent.add(node).unwrap();
-        node = parent;
-    }
-    node
-}
 
 pub(super) fn fill_attention(
     count: usize,
@@ -99,22 +79,28 @@ fn attention_matches_cpu() {
             if sparse && head_dim != 256 {
                 continue;
             }
-            let tokens: Vec<u64> = (0..suffix as u64).collect();
             let trie: Vec<GpuTrieNode> = if suffix == 8 {
-                // (start, end, height) per token
-                bytemuck::cast_slice::<[u32; 3], GpuTrieNode>(&[
-                    [0, 7, 0],
-                    [1, 3, 1],
-                    [2, 2, 2],
-                    [3, 3, 2],
-                    [4, 7, 1],
-                    [5, 6, 2],
-                    [6, 6, 3],
-                    [7, 7, 2],
+                // (start, end, height, parent)
+                bytemuck::cast_slice::<[u32; 4], GpuTrieNode>(&[
+                    [0, 7, 0, u32::MAX],
+                    [1, 3, 1, 0],
+                    [2, 2, 2, 1],
+                    [3, 3, 2, 1],
+                    [4, 7, 1, 0],
+                    [5, 6, 2, 4],
+                    [6, 6, 3, 5],
+                    [7, 7, 2, 4],
                 ])
                 .to_vec()
             } else {
-                flat_trie(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect()
+                (0..suffix as u32)
+                    .map(|index| GpuTrieNode {
+                        trie_start: index,
+                        trie_end: suffix as u32 - 1,
+                        height: index,
+                        parent: index as i32 - 1,
+                    })
+                    .collect()
             };
             let (shape, nodes) =
                 ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
@@ -187,7 +173,6 @@ fn attention_matches_cpu() {
                     let prepare = Prepare::new(
                         &metal,
                         DataType::BF16,
-                        DataType::F32,
                         head_dim as u32,
                         false,
                         kv_heads as u32,
@@ -198,6 +183,7 @@ fn attention_matches_cpu() {
                         false,
                         false,
                         0,
+                        trie.is_some(),
                     )
                     .unwrap();
                     let mut query_codes = create_buffer::<Metal, i8>(&metal, kv_heads * query_rows * head_dim);
@@ -220,16 +206,18 @@ fn attention_matches_cpu() {
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
-                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
                         Default::default(),
                         q_heads as u32,
+                        None,
+                        None,
                         None,
                         prefix as u32,
                         stride as u32,
                         suffix as u32,
                         query_rows as u32,
                         None,
+                        trie.as_ref(),
                         &mut command_buffer,
                     );
                     if !attend {
@@ -248,7 +236,7 @@ fn attention_matches_cpu() {
                         sinks: None,
                         suffix_length: suffix as u32,
                         trie: trie.as_ref(),
-                        cache: KVCacheView::full(prefix as u32),
+                        cache: KVCacheState::new(prefix as u32, None),
                         gate: gate.as_ref(),
                         key_blocks: key_blocks.as_ref().map(|query_blocks| KeyBlocks {
                             query_blocks,

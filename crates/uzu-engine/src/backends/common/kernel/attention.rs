@@ -3,7 +3,7 @@ use std::error::Error;
 use crate::{
     backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
     data_type::DataType,
-    encodable_block::mixer::attention::KVCacheView,
+    encodable_block::mixer::attention::KVCacheState,
 };
 
 pub trait AttentionKernel: Sized + Send + Sync {
@@ -61,7 +61,7 @@ pub struct AttentionArguments<
     pub trie: Option<TT>,
     pub key_blocks: Option<KeyBlocks<ST>>,
     pub sinks: Option<&'a B::GlobalGpuBuffer>,
-    pub cache: KVCacheView,
+    pub cache: KVCacheState,
     pub gate: Option<GT>,
 }
 

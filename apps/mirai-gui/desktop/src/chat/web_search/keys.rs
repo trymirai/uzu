@@ -1,15 +1,9 @@
 use std::{collections::BTreeMap, sync::Mutex};
 
-use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
 use serde::{Deserialize, Serialize};
 
 use super::{KeyedProvider, Provider, SearchError, SearchResult};
 
-const ENTRY: Entry = Entry {
-    service: "com.mirai.tech.chat.web-search",
-};
-const ACCOUNT: &str = "keys";
-const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const ENDINGS_SETTING_KEY: &str = "webSearchKeyEndings";
 const ENDING_CHARS: usize = 4;
 const CHECK_QUERY: &str = "weather";
@@ -31,6 +25,7 @@ pub struct StoredKey {
 pub(super) struct Keys(BTreeMap<Provider, String>);
 
 impl Keys {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn parse(entry: &[u8]) -> Self {
         let stored: BTreeMap<String, String> = serde_json::from_slice(entry).unwrap_or_default();
         Self(
@@ -61,32 +56,48 @@ impl Keys {
     }
 }
 
-struct Entry {
-    service: &'static str,
-}
+#[cfg(target_os = "macos")]
+mod keychain {
+    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
 
-impl Entry {
-    fn read(&self) -> Result<Keys, String> {
-        match get_generic_password(self.service, ACCOUNT) {
+    use super::Keys;
+
+    const SERVICE: &str = "com.mirai.tech.chat.web-search";
+    const ACCOUNT: &str = "keys";
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+    pub(super) fn read() -> Result<Keys, String> {
+        match get_generic_password(SERVICE, ACCOUNT) {
             Ok(entry) => Ok(Keys::parse(&entry)),
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(Keys::default()),
             Err(error) => Err(error.to_string()),
         }
     }
 
-    fn write(
-        &self,
-        keys: &Keys,
-    ) -> Result<(), String> {
+    pub(super) fn write(keys: &Keys) -> Result<(), String> {
         if keys.0.is_empty() {
-            return match delete_generic_password(self.service, ACCOUNT) {
+            return match delete_generic_password(SERVICE, ACCOUNT) {
                 Ok(()) => Ok(()),
                 Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
                 Err(error) => Err(error.to_string()),
             };
         }
         let entry = serde_json::to_vec(&keys.0).map_err(|error| error.to_string())?;
-        set_generic_password(self.service, ACCOUNT, &entry).map_err(|error| error.to_string())
+        set_generic_password(SERVICE, ACCOUNT, &entry).map_err(|error| error.to_string())
+    }
+}
+
+// Web search is shown on macOS only (`platformInfo.features.webSearch`).
+#[cfg(not(target_os = "macos"))]
+mod keychain {
+    use super::Keys;
+
+    pub(super) fn read() -> Result<Keys, String> {
+        Ok(Keys::default())
+    }
+
+    pub(super) fn write(_keys: &Keys) -> Result<(), String> {
+        Err("Web search keys are kept only on macOS.".into())
     }
 }
 
@@ -119,15 +130,15 @@ fn change_keys(
     failed: &str,
 ) -> Result<Vec<StoredKey>, String> {
     let _guard = ENTRY_LOCK.lock().expect("key entry lock poisoned");
-    let before = ENTRY.read()?;
+    let before = keychain::read()?;
     let mut keys = before.clone();
     change(&mut keys);
     if keys == before {
         return Ok(keys.endings());
     }
-    ENTRY.write(&keys)?;
+    keychain::write(&keys)?;
     save_key_endings(&keys).ok_or_else(|| {
-        if let Err(error) = ENTRY.write(&before) {
+        if let Err(error) = keychain::write(&before) {
             crate::logger::warn("web-search:key:unrestored", Some(serde_json::json!({ "error": error })));
         }
         failed.to_string()
@@ -136,7 +147,7 @@ fn change_keys(
 
 pub(super) fn read_for_search() -> Result<Keys, String> {
     let _guard = ENTRY_LOCK.lock().expect("key entry lock poisoned");
-    let keys = ENTRY.read()?;
+    let keys = keychain::read()?;
     if key_endings() != keys.endings() {
         save_key_endings(&keys);
     }

@@ -9,5 +9,6 @@ typedef struct {
   uint32_t trie_start;
   uint32_t trie_end;
   uint32_t height;
+  int32_t parent;
 } TrieNode;
 } // namespace uzu::trie

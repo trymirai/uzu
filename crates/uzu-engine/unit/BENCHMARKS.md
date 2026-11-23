@@ -34,6 +34,10 @@ Benchmarks live inside the `uzu-engine` library test target (registered with `#[
 | `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
 | `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
 | `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
+| `Metal/Kernel/Attention/...`            | `Metal/Kernel/Attention/`           |
+| `Metal/Kernel/AttentionPrepare/...`     | `Metal/Kernel/AttentionPrepare`     |
+| `Metal/Kernel/GDNChunkedPrefill/...`    | `Metal/Kernel/GDNChunkedPrefill`    |
+| `Metal/Kernel/RadixTopKSmall/...`       | `Metal/Kernel/RadixTopKSmall`       |
 | `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
 | `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
 | `ChatSession run`                       | `ChatSession run`                   |

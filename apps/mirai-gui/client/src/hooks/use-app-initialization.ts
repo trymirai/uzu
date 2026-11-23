@@ -27,4 +27,21 @@ export const useAppInitialization = () => {
       void useAppStore.getState().fetchVersion();
     }
   }, []);
+
+  useEffect(() => {
+    if (!platformInfo.isTauri) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "F5" || (event.ctrlKey && event.key.toLowerCase() === "r")) event.preventDefault();
+    };
+    const onContextMenu = (event: MouseEvent) => {
+      const field = event.target instanceof Element && event.target.closest("input, textarea, [contenteditable]");
+      if (!field && !window.getSelection()?.toString()) event.preventDefault();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
 };

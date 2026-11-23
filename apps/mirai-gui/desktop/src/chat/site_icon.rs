@@ -63,8 +63,7 @@ fn icon_url(host: &str) -> Option<Url> {
 }
 
 fn cache_path(host: &str) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join("Library/Caches/mirai/site-icons").join(host.to_ascii_lowercase()))
+    Some(dirs::cache_dir()?.join("mirai/site-icons").join(host.to_ascii_lowercase()))
 }
 
 /// An empty file records a site without an icon until it is due to be asked again.

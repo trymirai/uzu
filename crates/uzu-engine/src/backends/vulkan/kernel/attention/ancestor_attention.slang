@@ -101,8 +101,7 @@ func AncestorAttention(
   Ptr<uint8_t, Access.ReadWrite> node_v_codes,
   Ptr<bf16, Access.ReadWrite> node_v_scales,
   Ptr<bf16, Access.Read> current_qkv,
-  Ptr<float, Access.Read> cosines,
-  Ptr<float, Access.Read> sines,
+  Ptr<float, Access.Read> rope_inverse_frequencies,
   Ptr<uint, Access.Read> node_metadata,
   Ptr<uint, Access.Read> ancestor_indices,
   Ptr<uint, Access.Read> ancestor_counts,
@@ -113,6 +112,7 @@ func AncestorAttention(
   uint ancestor_stride,
   uint node_capacity,
   uint max_depth,
+  float rope_scale,
   float scale,
   [[Groups("num_heads")]] uint head,
   [[Groups("rows")]] uint row,
@@ -129,7 +129,7 @@ func AncestorAttention(
   let first = lane * dims;
   let model_dim = num_heads * HEAD_DIM;
   let qkv = row * 3 * model_dim + head * HEAD_DIM;
-  let table = (node_metadata[uint(MetadataIdx.Depth) * rows + row] + 1) * HEAD_DIM;
+  let position = node_metadata[uint(MetadataIdx.Depth) * rows + row] + 1;
   let half_dim = HEAD_DIM / 2;
 
   for (uint component = 0; component < 3; component++) {
@@ -141,8 +141,9 @@ func AncestorAttention(
       if (component != ANCESTOR_ATTENTION_VALUE) {
         let low = channel < half_dim;
         let paired = current_qkv[base + (low ? channel + half_dim : channel - half_dim)].toFloat();
-        value = bf16.fromFloat(rope_rotated(value, paired, low, cosines[table + channel], sines[table + channel]))
-          .toFloat();
+        value =
+          bf16.fromFloat(rope_rotate(value, paired, rope_inverse_frequencies, rope_scale, position, channel, HEAD_DIM))
+            .toFloat();
       }
       values[a] = value;
     }
