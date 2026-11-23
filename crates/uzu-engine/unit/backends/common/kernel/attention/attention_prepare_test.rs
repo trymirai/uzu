@@ -5,7 +5,8 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-        gpu_types::qkv_norm::QKVNormParams, kernel::AttentionPrepareKernel,
+        gpu_types::{qkv_norm::QKVNormParams, trie::TrieNode},
+        kernel::AttentionPrepareKernel,
     },
     data_type::DataType,
     tests::{
@@ -83,19 +84,14 @@ fn run_prepare<B: Backend, const DIM: usize>(
     let mut k_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
     let mut v_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
     let rope_dim = DIM as u32 / 2;
-    let cosines = create_buffer_with_data::<B, f32>(
+    let rope_inverse_frequencies = create_buffer_with_data::<B, f32>(
         &context,
-        &(0..SUFFIX as u32 * rope_dim).map(|i| (i as f32 * 0.07).cos()).collect::<Vec<_>>(),
-    );
-    let sines = create_buffer_with_data::<B, f32>(
-        &context,
-        &(0..SUFFIX as u32 * rope_dim).map(|i| (i as f32 * 0.07).sin()).collect::<Vec<_>>(),
+        &(0..rope_dim / 2).map(|pair| 10_000f32.powf(-2.0 * pair as f32 / rope_dim as f32)).collect::<Vec<_>>(),
     );
     let affine = normalization.affine.map(|affine| affine && fused);
     let kernel = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
         &context,
         DataType::BF16,
-        DataType::F32,
         DIM as u32,
         rope,
         1,
@@ -106,9 +102,27 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[2],
         block_mean,
         4 * u32::from(block_mean),
+        false,
+        false,
     )
     .unwrap();
-    let nodes = create_buffer_with_data::<B, u32>(&context, &[0, 0, 0, 0, 0, 4]);
+    let nodes = create_buffer_with_data::<B, u32>(
+        &context,
+        bytemuck::cast_slice(&[
+            TrieNode {
+                trie_start: 0,
+                trie_end: 0,
+                height: 0,
+                parent: -1,
+            },
+            TrieNode {
+                trie_start: 0,
+                trie_end: 0,
+                height: 4,
+                parent: -1,
+            },
+        ]),
+    );
     let windows = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 4, 4, 4, 4]);
     let mut raw_keys =
         create_buffer_with_data::<B, bf16>(&context, &[rows[..DIM].to_vec(), vec![bf16::ZERO; 5 * DIM]].concat());
@@ -121,8 +135,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         Some(&mut k_scales),
         Some(&mut v_codes),
         Some(&mut v_scales),
-        rope.then_some(&cosines),
-        rope.then_some(&sines),
+        rope.then_some(&rope_inverse_frequencies),
         affine[0].then_some(&norm_scales[0]),
         affine[1].then_some(&norm_scales[1]),
         affine[2].then_some(&norm_scales[2]),
@@ -136,11 +149,15 @@ fn run_prepare<B: Backend, const DIM: usize>(
         },
         num_q_heads,
         rope.then_some(rope_dim),
+        rope.then_some(1.0),
+        rope.then_some(5),
         33,
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
         num_q_heads * SUFFIX as u32,
         block_mean.then_some(PREFIX),
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();

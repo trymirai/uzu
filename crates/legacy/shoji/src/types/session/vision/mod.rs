@@ -4,10 +4,3 @@ pub struct VisionImage {
     pub width: u32,
     pub height: u32,
 }
-
-/// An image and the place of its `<|image_pad|>` token in the stream input tokens
-pub struct VisionImageInput {
-    /// Index of the image's pad token in the input tokens
-    pub start: usize,
-    pub image: VisionImage,
-}

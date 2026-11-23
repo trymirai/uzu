@@ -11,7 +11,7 @@ use shoji::{
             BackendError, ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
             SamplingPolicy as ShojiSamplingPolicy,
         },
-        session::vision::VisionImageInput,
+        session::vision::VisionImage,
     },
 };
 use tokenizers::Tokenizer;
@@ -32,14 +32,14 @@ pub fn error_to_stream_output<'a>(
     Box::pin(stream::once(async move { Err::<ChatTokenStreamOutput, ShojiBackendError>(error.into()) }))
 }
 
-/// Reads each image file and scales it to the size the model's vision encoder expects.
 pub fn scale_images<B: Backend>(
     model: &LanguageModel<B>,
     images: &[StreamImage],
-) -> Result<Vec<VisionImageInput>, BackendError> {
+) -> Result<Vec<VisionImage>, BackendError> {
     if images.is_empty() {
         return Ok(Vec::new());
     }
+
     let config = model.vision_config().ok_or_else(|| BackendError::other("Model has no vision encoder"))?;
     let factor = config.encoder_config.patch_size * config.encoder_config.spatial_merge_size;
     let min_pixels = config.preprocessing_config.min_pixels;
@@ -51,10 +51,7 @@ pub fn scale_images<B: Backend>(
                 std::fs::read(&image.url).map_err(|err| BackendError::other(format!("{}: {err}", image.url)))?;
             let scaled = vision::scale(&bytes, factor, min_pixels, max_pixels)
                 .map_err(|err| BackendError::other(format!("{}: {err}", image.url)))?;
-            Ok(VisionImageInput {
-                start: image.start,
-                image: scaled,
-            })
+            Ok(scaled)
         })
         .collect()
 }

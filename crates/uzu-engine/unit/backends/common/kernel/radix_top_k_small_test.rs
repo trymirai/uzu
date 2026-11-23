@@ -1,12 +1,19 @@
 #[cfg(backend = "metal")]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+#[cfg(backend = "metal")]
+use criterion::Criterion;
 use futures::executor::block_on;
 use half::bf16;
+#[cfg(backend = "metal")]
+use uzu_engine_macros::uzu_bench;
 use uzu_engine_macros::uzu_test;
 
 #[cfg(backend = "metal")]
-use crate::backends::{common::CommandBufferCompleted, metal::Metal};
+use crate::{
+    backends::{common::CommandBufferCompleted, metal::Metal},
+    tests::{matmul::iter_encode_loop_named, util::shared_metal_context},
+};
 use crate::{
     backends::{
         common::{
@@ -123,6 +130,41 @@ fn radix_top_k_small_matches_cpu() {
             });
         }
     }
+}
+
+#[cfg(backend = "metal")]
+#[uzu_bench]
+fn bench_radix_top_k_small(c: &mut Criterion) {
+    // The weaver readout: fifteen rows of vocabulary scores, the best 512 of each.
+    const ROWS: usize = 15;
+    const BENCHMARK: &str = "Metal/Kernel/RadixTopKSmall/WeaverReadout";
+
+    let context = shared_metal_context();
+    let input = create_buffer_with_data::<Metal, bf16>(
+        &context,
+        &values(ROWS, TARGET_COLUMNS).into_iter().map(bf16::from_f32).collect::<Vec<_>>(),
+    );
+    let mut ids = create_buffer::<Metal, u32>(&context, ROWS * TARGET_K);
+    let mut scores = create_buffer::<Metal, f32>(&context, ROWS * TARGET_K);
+    let kernel = <<Metal as Backend>::Kernels as Kernels>::RadixTopKSmall::new(&context).unwrap();
+    let mut group = c.benchmark_group(BENCHMARK);
+    group.sample_size(20).warm_up_time(Duration::from_millis(300)).measurement_time(Duration::from_secs(2));
+    group.bench_function("sorted", |bencher| {
+        iter_encode_loop_named::<Metal, _>(&context, bencher, &format!("{BENCHMARK}/sorted"), |command_buffer| {
+            kernel
+                .encode(
+                    &input,
+                    &mut ids,
+                    &mut scores,
+                    ROWS as u32,
+                    TARGET_COLUMNS as u32,
+                    TARGET_K as u32,
+                    true,
+                    command_buffer,
+                )
+                .unwrap();
+        });
+    });
 }
 
 #[cfg(backend = "metal")]

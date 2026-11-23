@@ -36,7 +36,6 @@ fn prepare_cache<B: Backend>(
     let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
         context,
         DataType::BF16,
-        DataType::F32,
         HEAD_DIM,
         false,
         NUM_HEADS,
@@ -47,6 +46,8 @@ fn prepare_cache<B: Backend>(
         false,
         false,
         0,
+        false,
+        false,
     )
     .unwrap();
     prepare.encode(
@@ -63,16 +64,19 @@ fn prepare_cache<B: Backend>(
         None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
-        None::<&B::GlobalGpuBuffer>,
         None::<&mut B::GlobalGpuBuffer>,
         Default::default(),
         0,
+        None,
+        None,
         None,
         0,
         ROW_WIDTH as u32,
         KEYS,
         0,
         None,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
         &mut command,
     );
     submit_command_buffer(command);

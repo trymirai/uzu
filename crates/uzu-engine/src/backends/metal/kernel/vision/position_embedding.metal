@@ -5,7 +5,7 @@
 
 // `index`-th of `count` points spread evenly over [0, side - 1], computed as torch.linspace does:
 // the first half steps up from 0, the second half steps down from side - 1
-inline float vision_linspace(uint index, uint count, uint side) {
+METAL_FUNC float vision_linspace(uint index, uint count, uint side) {
   if (count <= 1) {
     return 0.0f;
   }
@@ -26,7 +26,8 @@ inline float vision_linspace(uint index, uint count, uint side) {
 // @param grid_height  — patch grid height
 // @param merge_size   — block side size for merger, sets the row order (how many patches merge in 1 token)
 // @param model_dim    — embedding size
-// @param length       — number of elements in stream (rows * model_dim), one thread per element
+// @param length       — number of elements in stream (rows * model_dim), one thread per 4 consecutive channels;
+//                       model_dim must be a multiple of 4
 template <typename T>
 VARIANTS(T, bfloat)
 PUBLIC KERNEL(VisionPositionEmbedding)(
@@ -38,10 +39,11 @@ PUBLIC KERNEL(VisionPositionEmbedding)(
     constant uint& merge_size,
     constant uint& model_dim,
     constant uint& length,
-    const uint position AXIS(length, 256)
+    const uint output_index AXIS(length / 4, 256)
 ) {
-  const uint row = position / model_dim;
-  const uint channel = position % model_dim;
+  const uint first_element = output_index * 4;
+  const uint row = first_element / model_dim;
+  const uint channel = first_element % model_dim;
 
   const uint2 patch_position = vision_patch_coordinates(row, grid_width, merge_size);
   const float y = vision_linspace(patch_position.y, grid_height, side);
@@ -69,14 +71,13 @@ PUBLIC KERNEL(VisionPositionEmbedding)(
       dy * dx,
   };
 
-  // every weight, product and partial sum is rounded to T, as HF does, to match it bit for bit
-  T embedding = static_cast<T>(0.0f);
+  // accumulated in float, rounded to T once when added to the stream
+  float4 embedding = float4(0.0f);
   METAL_PRAGMA_UNROLL
   for (uint i = 0; i < 4; ++i) {
-    const T weight = static_cast<T>(weights[i]);
     const uint table_idx = corners[i] * model_dim + channel;
-    const T value = static_cast<T>(static_cast<float>(table[table_idx]) * static_cast<float>(weight));
-    embedding = static_cast<T>(static_cast<float>(embedding) + static_cast<float>(value));
+    embedding += float4(*reinterpret_cast<const device vec<T, 4>*>(table + table_idx)) * weights[i];
   }
-  stream[position] = stream[position] + embedding;
+  device vec<T, 4>* output = reinterpret_cast<device vec<T, 4>*>(stream + first_element);
+  *output = vec<T, 4>(float4(*output) + embedding);
 }

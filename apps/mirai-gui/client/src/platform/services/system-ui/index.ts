@@ -8,4 +8,11 @@ export type SystemUiService = {
   stepZoom(step: ZoomStep): Promise<number>;
   /** Every zoom change, from the menu, its shortcuts or stepZoom. */
   onZoomChange(cb: (level: number) => void): () => void;
+  menuTitles(): Promise<string[]>;
+  openMenu(index: number, left: number, bottom: number): Promise<void>;
+  runMenuItem(id: string): Promise<void>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  onWindowMaximizedChange(cb: (maximized: boolean) => void): () => void;
 };

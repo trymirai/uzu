@@ -62,7 +62,7 @@ impl SessionState for DecisionSessionState {
         matches!(self.status, DecisionSessionStatus::Loading | DecisionSessionStatus::Deciding)
     }
 
-    fn interrupt(&self) -> bool {
+    fn interrupt(&mut self) -> bool {
         false
     }
 
@@ -177,16 +177,11 @@ pub fn is_question_mode(state: &ApplicationState) -> bool {
     decision_state(state).is_some_and(|decision_state| decision_state.current_state.is_some())
 }
 
-// Esc in question mode goes back to state mode; otherwise it's left to the application.
-pub fn leave_question_mode(state: &mut ApplicationState) -> bool {
-    let Some(decision_state) = decision_state_mut(state) else {
-        return false;
-    };
-    if decision_state.status != DecisionSessionStatus::Idle || decision_state.current_state.is_none() {
-        return false;
+// Esc in question mode goes back to state mode.
+pub fn leave_question_mode(state: &mut ApplicationState) {
+    if let Some(decision_state) = decision_state_mut(state) {
+        decision_state.current_state = None;
     }
-    decision_state.current_state = None;
-    true
 }
 
 // The first line is the instructions. No more lines make a yes/no question, one line of levels

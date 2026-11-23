@@ -21,4 +21,5 @@ pub mod quantization_method;
 pub mod ring;
 pub mod trellis;
 pub mod trie;
+pub mod vision;
 pub mod weaver;

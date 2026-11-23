@@ -1,8 +1,11 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::{
-    activation::AnyActivation, linear::LinearConfig, normalization::NormalizationConfig,
-    token_mixer::attention::AttentionConfig,
+use crate::{
+    backends::common::gpu_types::vision::CHANNELS,
+    config::{
+        activation::AnyActivation, linear::LinearConfig, normalization::NormalizationConfig,
+        token_mixer::attention::AttentionConfig,
+    },
 };
 
 #[uzu_config]
@@ -55,22 +58,12 @@ pub struct VisionEncoderConfig {
 pub struct ImagePreprocessingConfig {
     pub min_pixels: u32,
     pub max_pixels: u32,
-    pub image_mean: [f32; 3],
-    pub image_std: [f32; 3],
+    pub image_mean: [f32; CHANNELS as usize],
+    pub image_std: [f32; CHANNELS as usize],
 }
 
 #[uzu_config]
 pub struct VisionConfig {
     pub encoder_config: VisionEncoderConfig,
     pub preprocessing_config: ImagePreprocessingConfig,
-}
-
-impl VisionConfig {
-    pub fn image_token_count(
-        &self,
-        grid_thw: [u32; 3],
-    ) -> u32 {
-        let [frames, height, width] = grid_thw;
-        frames * height * width / self.encoder_config.spatial_merge_size.pow(2)
-    }
 }

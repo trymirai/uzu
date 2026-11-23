@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
 use uzu_engine_macros::kernel;
 
-use crate::data_type::DataTypeRepr;
+use crate::{backends::common::gpu_types::trie::TrieNode, data_type::DataTypeRepr};
 
 #[kernel(ShortConvPack)]
 #[variants(T, f32, f16, bf16)]
@@ -190,7 +190,7 @@ pub fn short_conv_trie<T: DataTypeRepr + Float, WeightT: DataTypeRepr + Float>(
     w: *const WeightT,
     #[optional(has_bias)] b: Option<*const WeightT>,
     base_state: *const T,
-    parents: *const i32,
+    trie: *const TrieNode,
     out: *mut T,
     suffix_state: *mut T,
     suffix_len: u32,
@@ -220,7 +220,7 @@ pub fn short_conv_trie<T: DataTypeRepr + Float, WeightT: DataTypeRepr + Float>(
                 let x = (x_in * pre_conv_gate).to_f32().unwrap();
 
                 // Select parent state (root uses base_state)
-                let parent = *parents.add(node);
+                let parent = (*trie.add(node)).parent;
                 let parent_state = if parent < 0 {
                     base_state.add(base_state_offset)
                 } else {

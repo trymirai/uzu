@@ -1,6 +1,6 @@
 use std::range::Range;
 
-use shoji::types::session::vision::{VisionImage, VisionImageInput};
+use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
@@ -10,9 +10,8 @@ use crate::{
     },
     config::vision::VisionRoPEConfig,
     encodable_block::{
-        decoder::EmbeddingOverride,
         linear::LinearEncodeError,
-        mixer::attention::{mrope::MRoPEPositions, rope::PrecalculatedRoPE},
+        mixer::attention::{mrope::MRoPEPositions, rope::RoPEPositions},
         mlp::MlpEncodeError,
         vision_layer::VisionLayerEncodeError,
     },
@@ -23,65 +22,39 @@ use crate::{
 };
 
 pub struct VisionPrefilledImage<B: Backend> {
-    embeddings: B::ScratchBuffer,
-    start: usize,
+    pub embeddings: B::ScratchBuffer,
     width: u32,
     height: u32,
 }
 
-pub struct VisionPrefillResult<B: Backend> {
-    images: Box<[VisionPrefilledImage<B>]>,
-}
-
-impl<B: Backend> VisionPrefillResult<B> {
-    pub fn embedding_overrides(
-        &self,
-        batch: Range<usize>,
-    ) -> Vec<EmbeddingOverride<'_, B>> {
-        let mut overrides = Vec::new();
-        for image in self.images.iter() {
-            let image_end = image.start + (image.width * image.height) as usize;
-            let start = image.start.max(batch.start);
-            let end = image_end.min(batch.end);
-            if start < end {
-                overrides.push(EmbeddingOverride {
-                    source: &image.embeddings,
-                    source_rows: Range::from(start - image.start..end - image.start),
-                    target_row: start - batch.start,
-                });
-            }
-        }
-        overrides
+impl<B: Backend> VisionPrefilledImage<B> {
+    pub fn row_count(&self) -> usize {
+        (self.width * self.height) as usize
     }
 
     pub fn mrope_positions(
         &self,
-        first_position: u32,
-        length: usize,
-    ) -> (MRoPEPositions, u32) {
-        let mut positions = Vec::with_capacity(length);
-        let mut position = first_position;
-        for image in self.images.iter() {
-            for _ in positions.len()..image.start {
-                positions.push([position; 3]);
-                position += 1;
-            }
-            for row in 0..image.height {
-                for column in 0..image.width {
-                    positions.push([position, position + row, position + column]);
-                }
-            }
-            position += image.width.max(image.height);
-        }
-        for _ in positions.len()..length {
-            positions.push([position; 3]);
-            position += 1;
-        }
+        position: u32,
+        rows: Range<usize>,
+    ) -> MRoPEPositions {
+        let positions = rows
+            .iter()
+            .map(|row| {
+                let row = row as u32;
+                [position, position + row / self.width, position + row % self.width]
+            })
+            .collect();
 
-        let positions = MRoPEPositions {
-            positions: positions.into_boxed_slice(),
-        };
-        (positions, position)
+        MRoPEPositions {
+            positions,
+        }
+    }
+
+    pub fn next_position(
+        &self,
+        position: u32,
+    ) -> u32 {
+        position + self.width.max(self.height)
     }
 }
 
@@ -101,11 +74,8 @@ pub enum VisionEncodeError<B: Backend> {
 pub enum VisionPrefillError<B: Backend> {
     #[error("Vision encoder error: {0}")]
     Encode(#[from] VisionEncodeError<B>),
-    #[error("Image pad token index {start} is out of order or outside the input of {length} tokens")]
-    ImagePosition {
-        start: usize,
-        length: usize,
-    },
+    #[error("Input ends with an image, but generation continues from a token")]
+    ImageAtEnd,
     #[error(transparent)]
     InvalidImage(#[from] VisionImageError),
     #[error("Model has no vision encoder")]
@@ -115,29 +85,17 @@ pub enum VisionPrefillError<B: Backend> {
 impl<B: Backend> VisionModel<B> {
     pub fn prefill(
         &self,
-        images: &[VisionImageInput],
+        image: &VisionImage,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<VisionPrefillResult<B>, VisionPrefillError<B>> {
-        let mut prefilled_images = Vec::<VisionPrefilledImage<B>>::with_capacity(images.len());
-        // Every earlier image shifts the later ones by its extra tokens, as `expand_tokens` does
-        let mut offset = 0;
-        for input in images {
-            let (width, height) = self.merged_image_grid(&input.image)?;
-            let embeddings = self.encode(&input.image, command_buffer)?;
-            let prefilled_image = VisionPrefilledImage {
-                embeddings,
-                start: input.start + offset,
-                width,
-                height,
-            };
-            prefilled_images.push(prefilled_image);
-            offset += (width * height) as usize - 1;
-        }
+    ) -> Result<VisionPrefilledImage<B>, VisionPrefillError<B>> {
+        let (width, height) = self.merged_image_grid(image)?;
+        let embeddings = self.encode(image, command_buffer)?;
 
-        let result = VisionPrefillResult {
-            images: prefilled_images.into_boxed_slice(),
-        };
-        Ok(result)
+        Ok(VisionPrefilledImage {
+            embeddings,
+            width,
+            height,
+        })
     }
 
     fn encode(
@@ -205,39 +163,22 @@ impl<B: Backend> VisionModel<B> {
         grid_height: u32,
         merge_size: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<PrecalculatedRoPE<B>, B::Error> {
-        let dim = rope_config.head_dim as usize;
-        let half_dim = dim / 2;
-        let frequency_count = dim / 4;
-        // inv_freq = 1 / base ^ (arange(0, half_dim, 2) / half_dim)
-        let inverse_frequencies: Vec<f32> =
-            (0..frequency_count).map(|j| 1.0 / rope_config.base.powf((2 * j) as f32 / half_dim as f32)).collect();
+    ) -> Result<RoPEPositions<B>, B::Error> {
+        let frequency_count = rope_config.head_dim / 4;
 
-        let rows = (grid_width * grid_height) as usize;
-        let mut cosines = vec![0.0; rows * dim];
-        let mut sines = vec![0.0; rows * dim];
-        for row in 0..rows {
-            let (x, y) = vision_patch_coordinates(row as u32, grid_width, merge_size);
-            for pair in 0..half_dim {
+        RoPEPositions::new(
+            (grid_width * grid_height) as usize,
+            rope_config.head_dim,
+            |row, pair| {
+                let (x, y) = vision_patch_coordinates(row as u32, grid_width, merge_size);
                 // the first quarter of channels rotates by the row, the second by the column
-                let coordinate = if pair < frequency_count {
+                if pair < frequency_count {
                     y
                 } else {
                     x
-                };
-                let angle = coordinate as f32 * inverse_frequencies[pair % frequency_count];
-                let (sine, cosine) = angle.sin_cos();
-                for channel in [row * dim + pair, row * dim + pair + half_dim] {
-                    cosines[channel] = cosine;
-                    sines[channel] = sine;
                 }
-            }
-        }
-
-        Ok(PrecalculatedRoPE {
-            cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
-            sines: command_buffer.allocate_constant_from_slice(&sines)?,
-            dim: dim as u32,
-        })
+            },
+            command_buffer,
+        )
     }
 }

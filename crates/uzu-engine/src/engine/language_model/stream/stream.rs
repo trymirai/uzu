@@ -6,26 +6,29 @@ use std::{
 };
 
 use futures::executor::block_on;
-use shoji::{traits::backend::chat_token::TokenStreamMetrics, types::session::vision::VisionImageInput};
+use shoji::{traits::backend::chat_token::TokenStreamMetrics, types::session::vision::VisionImage};
 
 use crate::{
     backends::common::{
         Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, Context, CpuBuffer,
         DeviceCapabilities, GlobalBufferCpuGpu, GpuBuffer,
         capture_matcher::{CAPTURE_MATCHER, CaptureMatcherSpan},
+        gpu_types::trie::TrieNode as TrieNodeGpu,
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
     encodable_block::{
-        batch_topology::BatchTopology, mixer::attention::mrope::MRoPEPositions, sampling::SamplingMethod,
+        batch_topology::BatchTopology,
+        decoder::{DecoderEncodeOutput, DecoderError},
+        sampling::SamplingMethod,
     },
     engine::language_model::{
         LanguageModel,
         state::LanguageModelState,
-        stream::{LanguageModelStreamError, LanguageModelStreamOptions},
-        vision::encode::{VisionPrefillError, VisionPrefillResult},
+        stream::{LanguageModelInput, LanguageModelStreamError, LanguageModelStreamOptions},
+        vision::encode::{VisionPrefillError, VisionPrefilledImage},
     },
-    trie::TrieNode,
+    trie,
     utils::{
         size_for_shape::size_for_shape,
         timestamps::{record, wait},
@@ -48,16 +51,36 @@ struct StreamEnqueuer<'a, B: Backend> {
     propose_trie: bool,
 }
 
+#[derive(Clone, Copy)]
+enum PrefillBatch<'a> {
+    Image {
+        image: &'a VisionImage,
+        rows: Range<usize>,
+    },
+    Tokens(&'a [u64]),
+}
+
+impl PrefillBatch<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Image {
+                rows,
+                ..
+            } => rows.end - rows.start,
+            Self::Tokens(tokens) => tokens.len(),
+        }
+    }
+}
+
 enum GenerationJob<B: Backend> {
     Pending {
         output_norm: Option<B::ScratchBuffer>,
         output_tokens: B::GlobalGpuBuffer,
-        batch_dim: BatchTopology,
-        trie: Option<TrieNode>,
+        batch_dim: BatchTopology<B>,
+        input_token_ids: Option<B::GlobalGpuBuffer>,
         hidden_features: Option<Box<[B::ScratchBuffer]>>,
         capture_span: Option<CaptureMatcherSpan>,
         pendings: Box<[<<B as Backend>::CommandBuffer as CommandBuffer>::Pending]>,
-        _input_token_source: Option<B::GlobalGpuBuffer>,
     },
     Resolved(ResolvedJob<B>),
     Invalid,
@@ -66,15 +89,15 @@ enum GenerationJob<B: Backend> {
 struct ResolvedJob<B: Backend> {
     output_tokens: Box<[u64]>,
     output_norm_buffer: Option<B::ScratchBuffer>,
-    output_tokens_buffer: Option<B::GlobalGpuBuffer>,
-    batch_dim: BatchTopology,
+    output_tokens_buffer: B::GlobalGpuBuffer,
+    batch_dim: BatchTopology<B>,
     hidden_features: Option<Box<[B::ScratchBuffer]>>,
     accepted_indices_and_input_tokens: Option<(Box<[u32]>, Box<[u64]>)>,
     capture_span: Option<CaptureMatcherSpan>,
 }
 
 impl<B: Backend> GenerationJob<B> {
-    fn batch_dim(&self) -> &BatchTopology {
+    fn batch_dim(&self) -> &BatchTopology<B> {
         match self {
             Self::Pending {
                 batch_dim,
@@ -91,7 +114,18 @@ impl<B: Backend> GenerationJob<B> {
                 output_tokens,
                 ..
             } => output_tokens,
-            Self::Resolved(resolved) => resolved.output_tokens_buffer.as_ref().unwrap(),
+            Self::Resolved(resolved) => &resolved.output_tokens_buffer,
+            Self::Invalid => unreachable!(),
+        }
+    }
+
+    fn output_norm_buffer(&self) -> Option<&B::ScratchBuffer> {
+        match self {
+            Self::Pending {
+                output_norm,
+                ..
+            } => output_norm.as_ref(),
+            Self::Resolved(resolved) => resolved.output_norm_buffer.as_ref(),
             Self::Invalid => unreachable!(),
         }
     }
@@ -100,18 +134,28 @@ impl<B: Backend> GenerationJob<B> {
 impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     fn new(
         model: &'a LanguageModel<B>,
-        input: &[u64],
+        input: &[LanguageModelInput<'_>],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
-        if input.is_empty() {
+        let mut input_length = 0;
+        for part in input {
+            input_length += match *part {
+                LanguageModelInput::Image(image) => {
+                    let vision_model = model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+                    vision_model.image_token_count(image).map_err(VisionPrefillError::<B>::from)?
+                },
+                LanguageModelInput::Tokens(tokens) => tokens.len(),
+            };
+        }
+
+        if input_length == 0 {
             return Err(LanguageModelStreamError::NoSeedToken);
         };
 
-        if model_state
-            .max_context_length
-            .is_some_and(|max_context_length| model_state.tokens.len() + input.len() > max_context_length as usize)
-        {
+        if model_state.max_context_length.is_some_and(|max_context_length| {
+            model_state.transformer_state.context_length() as usize + input_length > max_context_length as usize
+        }) {
             return Err(LanguageModelStreamError::ContextOverflow);
         }
 
@@ -164,9 +208,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             GenerationJob::Pending {
                 output_norm: output_norm_buffer,
                 output_tokens: output_tokens_buffer,
-                _input_token_source,
                 batch_dim,
-                trie,
+                input_token_ids,
                 hidden_features,
                 capture_span,
                 pendings,
@@ -184,29 +227,41 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
                 let mut output_tokens = gpu_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
 
-                let accepted_indices_and_input_tokens = if let Some(trie) = trie {
-                    let flat = trie.linearize();
-                    let full = flat.accept(&output_tokens, self.options.grammar.as_mut())?;
-
-                    let accepted_token_indicies = full.iter().map(|(i, _, _)| *i as u32).collect::<Box<[u32]>>();
-                    let accepted_input_token_ids = full.iter().map(|(_, t, _)| *t).collect::<Box<[u64]>>();
-                    let accepted_output_token_ids = full.iter().map(|(_, _, t)| *t).collect::<Box<[u64]>>();
-                    output_tokens = accepted_output_token_ids;
-
-                    Some((accepted_token_indicies, accepted_input_token_ids))
-                } else {
+                let accepted_indices_and_input_tokens = if batch_dim.full_accept() {
                     if let Some(grammar) = self.options.grammar.as_mut() {
                         for &token_id in &output_tokens {
                             grammar.accept_token(token_id)?
                         }
                     }
                     None
+                } else {
+                    let input_tokens = self
+                        .model
+                        .engine
+                        .context
+                        .copyout::<u32>(input_token_ids.as_ref().expect("trie batch carries token ids"))
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let trie_nodes = self
+                        .model
+                        .engine
+                        .context
+                        .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie batch carries trie nodes"))
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let (accepted_token_indicies, accepted_input_token_ids, accepted_output_token_ids) =
+                        trie::accept(&trie_nodes, &output_tokens, &input_tokens, self.options.grammar.as_mut())?;
+
+                    output_tokens = accepted_output_token_ids;
+                    Some((accepted_token_indicies, accepted_input_token_ids))
                 };
 
                 ResolvedJob {
                     output_tokens,
                     output_norm_buffer,
-                    output_tokens_buffer: Some(output_tokens_buffer),
+                    output_tokens_buffer,
                     batch_dim,
                     hidden_features,
                     accepted_indices_and_input_tokens,
@@ -239,8 +294,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
     pub fn prefill(
         &mut self,
-        input: &[u64],
-        images: &[VisionImageInput],
+        input: &[LanguageModelInput<'_>],
     ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
         let _capture_span = CAPTURE_MATCHER.capture::<B>(&self.model.engine.context, "prefill")?;
 
@@ -248,14 +302,20 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // 1024). This is really bad design, attention should be rewritten to
         // allow on-demand suffix length
         let max_batch_size = 1024;
-        let number_of_batches = input.len().div_ceil(max_batch_size);
 
+        let mut prefill_batches: Vec<PrefillBatch> = self.get_prefill_batches(input, max_batch_size)?;
+        let number_of_batches = prefill_batches.len();
+        let input_length = prefill_batches.iter().map(PrefillBatch::len).sum::<usize>();
+        let max_batch_length = prefill_batches.iter().map(PrefillBatch::len).max().unwrap_or(0);
+        let Some(PrefillBatch::Tokens(final_chunk)) = prefill_batches.pop() else {
+            return Err(VisionPrefillError::<B>::ImageAtEnd.into());
+        };
+
+        let new_context_length =
+            self.model_state.transformer_state.context_length() + (input_length - final_chunk.len()) as u32;
         self.model_state
             .transformer_state
-            .prepare(
-                self.model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
-                usize::min(max_batch_size, input.len()) as u32,
-            )
+            .prepare(new_context_length, max_batch_length as u32)
             .map_err(LanguageModelStreamError::Backend)?;
 
         let command_buffer = self
@@ -269,108 +329,141 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         command_buffer.debug_point(&format!(
             "prefill at context {}, suffix {} ({} batches)",
             self.model_state.transformer_state.context_length(),
-            input.len(),
+            input_length,
             number_of_batches
         ));
 
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
-        let mut prefilled_images: Option<VisionPrefillResult<B>> = None;
-        if !images.is_empty() {
-            let vision_model = self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
-            let images = vision_model.prefill(images, &mut command_buffer)?;
-            prefilled_images = Some(images)
-        }
+        let mut prefilled_image: Option<VisionPrefilledImage<B>> = None;
 
-        // images take 2D MRoPE positions and shift the text after them
-        let mrope_positions = prefilled_images
-            .as_ref()
-            .map(|images| images.mrope_positions(self.model_state.transformer_state.rope_position, input.len()));
+        let mut encode_batch = |batch: PrefillBatch, sample: bool| -> Result<_, LanguageModelStreamError<B>> {
+            let batch_length = batch.len() as u32;
+            let batch_dim = BatchTopology::flat(batch_length);
 
-        let mut batch_start = 0;
-        let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
-            let token_ids = command_buffer
-                .allocate_constant_from_slice(
-                    &input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
-                )
-                .map_err(LanguageModelStreamError::Backend)?;
+            let mut token_ids: Option<B::ConstantBuffer> = None;
+            let mut position_after_image: Option<u32> = None;
+            let decoder_output = match batch {
+                PrefillBatch::Image {
+                    image,
+                    rows,
+                } => {
+                    if rows.start == 0 {
+                        let vision_model =
+                            self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+                        prefilled_image = Some(vision_model.prefill(image, &mut command_buffer)?);
+                    }
 
-            let batch_dim = BatchTopology::flat(input_chunk.len() as u32, true);
+                    let image = prefilled_image.as_ref().unwrap();
+                    let image_position = self.model_state.transformer_state.rope_position() - rows.start as u32;
+                    if rows.end == image.row_count() {
+                        position_after_image = Some(image.next_position(image_position));
+                    }
 
-            // Image embeddings replace the rows of the image pad tokens that fall into this batch
-            let batch_tokens = Range::from(batch_start..batch_start + input_chunk.len());
-            batch_start += input_chunk.len();
-            let embedding_overrides =
-                prefilled_images.as_ref().map(|images| images.embedding_overrides(batch_tokens)).unwrap_or_default();
+                    let embedding = self.model.decoder.embedding();
+                    let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
+                    let mut embedded = command_buffer
+                        .allocate_scratch_for_shape(&[batch_length, embedding.model_dim()], embedding.data_type())
+                        .map_err(LanguageModelStreamError::Backend)?;
+                    command_buffer.encode_copy(
+                        image.embeddings.subrange(rows.start * row_size..rows.end * row_size),
+                        &mut embedded,
+                    );
 
-            // Every batch gets its positions: an image in an earlier batch shifts the text in later ones
-            if let Some((mrope_positions, _)) = &mrope_positions {
-                self.model_state.transformer_state.mrope_positions = Some(MRoPEPositions {
-                    positions: mrope_positions.positions[batch_tokens.start..batch_tokens.end].into(),
-                });
-            }
+                    let mrope_positions = &image.mrope_positions(image_position, rows);
+                    let transformer_output = self
+                        .model
+                        .decoder
+                        .transformer()
+                        .encode_at_positions(
+                            embedded,
+                            None::<&B::ScratchBuffer>,
+                            Some(mrope_positions),
+                            &batch_dim,
+                            None,
+                            hidden_feature_layer_indices,
+                            Some(&mut self.model_state.transformer_state),
+                            &mut command_buffer,
+                        )
+                        .map_err(DecoderError::from)?;
 
-            let decoder_output = self.model.decoder.encode(
-                &token_ids,
-                &batch_dim,
-                sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
-                hidden_feature_layer_indices,
-                &embedding_overrides,
-                &mut self.model_state.transformer_state,
-                &mut command_buffer,
-            )?;
+                    DecoderEncodeOutput {
+                        logits: None,
+                        hidden_features: transformer_output.hidden_features,
+                        final_hidden: None,
+                    }
+                },
+                PrefillBatch::Tokens(input_chunk) => {
+                    let chunk_token_ids = command_buffer
+                        .allocate_constant_from_slice(
+                            &input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
+                        )
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let decoder_output = self.model.decoder.encode(
+                        &chunk_token_ids,
+                        &batch_dim,
+                        sample.then(|| (batch_length - 1..batch_length).into()),
+                        hidden_feature_layer_indices,
+                        &mut self.model_state.transformer_state,
+                        &mut command_buffer,
+                    )?;
+
+                    token_ids = Some(chunk_token_ids);
+                    self.model_state.tokens.extend(input_chunk);
+
+                    decoder_output
+                },
+            };
 
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
+                .encode_accept(&(0..batch_length).collect::<Box<[u32]>>(), &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
+            if let Some(position) = position_after_image {
+                self.model_state.transformer_state.set_rope_position(position);
+            }
 
             if let Some(speculator) = self.model.speculator.as_ref() {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
                 speculator.encode_accept(
                     speculator_state,
                     decoder_output.hidden_features.as_ref().unwrap().iter(),
-                    &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
+                    &(0..batch_length).collect::<Box<[u32]>>(),
                     &mut command_buffer,
                 )?;
             }
 
-            if !sample && let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
+            if !sample
+                && let Some(token_ids) = &token_ids
+                && let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length()
+            {
                 self.model.context_ring_update.encode(
-                    &token_ids,
+                    token_ids,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
-                    input_chunk.len() as u32,
+                    batch_length,
                     &mut command_buffer,
                 );
             }
 
-            self.model_state.tokens.extend(input_chunk);
-
             Ok((decoder_output, token_ids, batch_dim))
         };
 
-        let mut token_chunks = input.chunks(max_batch_size);
-        for input_chunk in token_chunks.by_ref().take(number_of_batches - 1) {
-            encode_batch(input_chunk, false)?;
+        for batch in prefill_batches {
+            encode_batch(batch, false)?;
         }
-
-        // `token_chunks` should have exactly one element left.
-        let final_chunk = token_chunks.next().unwrap();
 
         let split_last_logits_row = self.model.decoder.prefill_cache_skips_trailing_layers();
         let (decoder_output, token_ids, batch_dim) = if split_last_logits_row && final_chunk.len() > 1 {
             let (start, end) = final_chunk.split_at(final_chunk.len() - 1);
-            encode_batch(start, false)?;
-            encode_batch(end, true)?
+            encode_batch(PrefillBatch::Tokens(start), false)?;
+            encode_batch(PrefillBatch::Tokens(end), true)?
         } else {
-            encode_batch(final_chunk, true)?
+            encode_batch(PrefillBatch::Tokens(final_chunk), true)?
         };
-
-        if let Some((_, next_position)) = mrope_positions {
-            self.model_state.transformer_state.rope_position = next_position;
-        }
+        let token_ids = token_ids.unwrap();
 
         let logits = decoder_output.logits.unwrap();
 
@@ -436,15 +529,14 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         drop(token_ids);
 
         self.metrics.num_prefill_forward_passes += 1;
-        self.metrics.num_tokens_prefilled += input.len();
+        self.metrics.num_tokens_prefilled += input_length;
         self.metrics.num_tokens_proposed += 1;
 
         Ok(GenerationJob::Pending {
             output_norm,
             output_tokens: output_token,
-            _input_token_source: None,
             batch_dim,
-            trie: None,
+            input_token_ids: None,
             hidden_features: decoder_output.hidden_features,
             capture_span: None,
             pendings: Box::new([command_buffer.end_encoding().submit()]),
@@ -458,52 +550,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
-        // Speculator pass
-        let context_length = self.model_state.transformer_state.context_length();
-        let trie = if self.propose_trie
-            && let Some(speculator) = &self.model.speculator
-            && let Some(shape) = speculator.make_shape(
-                self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
-            ) {
-            // TODO: CPU-bubble
-            let resolved = self.resolve(&mut last_job).await?;
-            let tokens = &resolved.output_tokens;
-            let batch_dim = &resolved.batch_dim;
-            let final_hidden = resolved.output_norm_buffer.as_ref().unwrap();
-
-            let last_norm_buffer =
-                if let Some((accepted_indices, _)) = resolved.accepted_indices_and_input_tokens.as_ref() {
-                    let row = (*accepted_indices.last().unwrap()) as usize;
-                    let row_bytes = final_hidden.size() / batch_dim.size() as usize;
-                    final_hidden.subrange(row * row_bytes..(row + 1) * row_bytes)
-                } else {
-                    final_hidden.subrange(..)
-                };
-
-            // TODO: CPU-bubble: for next `batch_dim`. To remove we need to
-            // contruct the trie nodes GPU-side and have `batch_dim` carry a
-            // GPU representation.
-            let trie = speculator
-                .propose_tree(
-                    self.model_state.speculator_state.as_mut().unwrap(),
-                    last_norm_buffer,
-                    tokens[tokens.len() - 1] as u32,
-                    self.model.decoder.embedding(),
-                    shape,
-                    &self.options.sampling_method,
-                    self.options.grammar.as_mut(),
-                    &self.model_state.prng,
-                    self.allocation_pool.clone(),
-                    Some(&format!("decode {} (speculate)", self.metrics.num_decode_forward_passes)),
-                    self.options.timestamps.as_ref(),
-                )
-                .await?;
-            Some(trie)
-        } else {
-            None
-        };
-
-        // Main (verifier) forward pass
         let command_buffer = self
             .model
             .engine
@@ -513,36 +559,111 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 Some(self.allocation_pool.clone()),
             )
             .map_err(LanguageModelStreamError::Backend)?;
-
         let mut command_buffer = record(command_buffer, self.options.timestamps.as_ref());
 
-        let mut constant_token_ids = None;
-        let mut needs_last_job_input = false;
-        let flat_trie = trie.as_ref().map(|trie| trie.linearize());
-        let (token_ids, batch_dim): (&dyn GpuBuffer<Backend = B>, _) = if let Some(flat_trie) = flat_trie.as_ref() {
-            let batch_dim = BatchTopology::new(flat_trie.token_subtrie_ranges().collect::<Box<[_]>>(), false);
+        // Speculator pass
+        let context_length = self.model_state.transformer_state.context_length();
+        let (batch_dim, token_ids, trie_seeds, mut speculator_pendings) = if self.propose_trie
+            && let Some(speculator) = &self.model.speculator
+            && let Some(shape) = speculator.make_shape(
+                self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
+            ) {
+            let last_batch_dim = last_job.batch_dim();
 
-            let token_ids = command_buffer
-                .allocate_constant_from_slice(
-                    &flat_trie.token_ids().map(|token_id| token_id as u32).collect::<Box<[u32]>>(),
+            let (target_output_norm, target_output_token) = if last_batch_dim.full_accept() {
+                let norm_buffer = last_job.output_norm_buffer().unwrap();
+                let token_buffer = last_job.output_tokens_buffer();
+                (norm_buffer.subrange(..), token_buffer.subrange(..))
+            } else {
+                // TODO: CPU-bubble: for `accepted_indices`, to find where the root of the speculator should be.
+                let resolved = self.resolve(&mut last_job).await?;
+                let batch_dim = &resolved.batch_dim;
+                let norm_buffer = resolved.output_norm_buffer.as_ref().unwrap();
+                let token_buffer = &resolved.output_tokens_buffer;
+
+                let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
+
+                let row = (*accepted_indices.last().unwrap()) as usize;
+                let norm_row_bytes = norm_buffer.size() / batch_dim.size() as usize;
+                let token_word_bytes = DataType::U32.size_in_bytes();
+                (
+                    norm_buffer.subrange(row * norm_row_bytes..(row + 1) * norm_row_bytes),
+                    token_buffer.subrange(row * token_word_bytes..(row + 1) * token_word_bytes),
                 )
+            };
+
+            let draft = speculator.encode_draft(
+                self.model_state.speculator_state.as_mut().unwrap(),
+                target_output_token,
+                self.model.decoder.embedding(),
+                &shape,
+                &mut command_buffer,
+            )?;
+
+            // The draft is its own command buffer so that it runs while the tree is being encoded.
+            let draft_pending = command_buffer.end_encoding().submit();
+            command_buffer = record(
+                self.model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some(&format!("decode {} (tree)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?,
+                self.options.timestamps.as_ref(),
+            );
+
+            let proposal = speculator.propose_tree(
+                draft,
+                target_output_norm,
+                target_output_token,
+                self.model.decoder.embedding(),
+                shape,
+                &self.options.sampling_method,
+                &self.model_state.prng,
+                &mut command_buffer,
+            )?;
+
+            let trie_pending = command_buffer.end_encoding().submit();
+            command_buffer = record(
+                self.model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some(&format!("decode {} (forward pass)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?,
+                self.options.timestamps.as_ref(),
+            );
+
+            (proposal.topology, proposal.token_ids, proposal.seeds, Some([draft_pending, trie_pending]))
+        } else {
+            let batch_dim = BatchTopology::flat(1);
+            let context = command_buffer.context();
+            let token_word_bytes = DataType::U32.size_in_bytes();
+            let mut token_ids = context
+                .create_buffer_gpu(batch_dim.size() as usize * token_word_bytes)
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            constant_token_ids = Some(token_ids);
-            (constant_token_ids.as_ref().unwrap(), batch_dim)
-        } else if last_job.batch_dim().size() == 1 {
-            needs_last_job_input = true;
-            (last_job.output_tokens_buffer(), BatchTopology::flat(1, true))
-        } else {
-            let resolved = self.resolve(&mut last_job).await?;
-            let token = *resolved.output_tokens.last().unwrap() as u32;
-            let token_ids =
-                command_buffer.allocate_constant_from_slice(&[token]).map_err(LanguageModelStreamError::Backend)?;
+            let token_range = if last_job.batch_dim().full_accept() {
+                0..token_word_bytes
+            } else {
+                // Technically a bubble, but only hit if at the very end of
+                // context window.
+                let resolved = self.resolve(&mut last_job).await?;
+                let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
+                let row = (*accepted_indices.last().unwrap()) as usize;
+                row * token_word_bytes..(row + 1) * token_word_bytes
+            };
 
-            constant_token_ids = Some(token_ids);
-            (constant_token_ids.as_ref().unwrap(), BatchTopology::flat(1, true))
+            command_buffer.encode_copy(last_job.output_tokens_buffer().subrange(token_range), &mut token_ids);
+
+            (batch_dim, token_ids, None, None)
         };
 
+        // Main (verifier) forward pass
         command_buffer.debug_point(&format!(
             "decode round {} at context {} suffix {}",
             self.metrics.num_decode_forward_passes,
@@ -559,39 +680,33 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
         let decoder_output = self.model.decoder.encode(
-            token_ids,
+            &token_ids,
             &batch_dim,
             Some((0..batch_dim.size()).into()),
             hidden_feature_layer_indices,
-            &[],
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
 
         let mut pendings = Vec::new();
 
-        // sampling
-        let (mut command_buffer, token_ids): (_, &dyn GpuBuffer<Backend = B>) =
-            if needs_last_job_input && self.options.grammar.is_some() {
-                pendings.push(command_buffer.end_encoding().submit());
-                let command_buffer = record(
-                    self.model
-                        .engine
-                        .context
-                        .create_command_buffer(
-                            Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
-                            Some(self.allocation_pool.clone()),
-                        )
-                        .map_err(LanguageModelStreamError::Backend)?,
-                    self.options.timestamps.as_ref(),
-                );
+        if self.options.grammar.is_some() {
+            pendings.push(command_buffer.end_encoding().submit());
+            command_buffer = record(
+                self.model
+                    .engine
+                    .context
+                    .create_command_buffer(
+                        Some(&format!("decode {} (sample and accept)", self.metrics.num_decode_forward_passes)),
+                        Some(self.allocation_pool.clone()),
+                    )
+                    .map_err(LanguageModelStreamError::Backend)?,
+                self.options.timestamps.as_ref(),
+            );
 
-                // NOTE: Not a CPU bubble, forward pass is overlapped.
-                self.resolve(&mut last_job).await?;
-                (command_buffer, last_job.output_tokens_buffer())
-            } else {
-                (command_buffer, token_ids)
-            };
+            // Not a CPU-bubble, forward pass is overlapped.
+            self.resolve(&mut last_job).await?;
+        }
 
         let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
             let mut bitmask = command_buffer
@@ -602,8 +717,30 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 )
                 .map_err(LanguageModelStreamError::Backend)?;
 
-            let was_filled = if let Some(flat_trie) = flat_trie.as_ref() {
-                flat_trie.fill_bitmasks(bitmask.as_slice_mut(), self.model.vocab_size, grammar)
+            let was_filled = if let Some(speculator_pendings) = speculator_pendings.take() {
+                for pending in speculator_pendings {
+                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
+                }
+
+                let trie_nodes = self
+                    .model
+                    .engine
+                    .context
+                    .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie decode carries trie nodes"))
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+
+                let trie_tokens = self
+                    .model
+                    .engine
+                    .context
+                    .copyout::<u32>(&token_ids)
+                    .await
+                    .map_err(LanguageModelStreamError::Backend)?;
+
+                let trie_tokens = trie_tokens.into_iter().map(|t| t as u64).collect::<Box<[_]>>();
+
+                trie::fill_bitmasks(&trie_nodes, &trie_tokens, bitmask.as_slice_mut(), self.model.vocab_size, grammar)
             } else {
                 grammar.next_bitmask(bitmask.as_slice_mut())
             };
@@ -613,27 +750,33 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             None
         };
 
-        let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-            let seeds = if let Some(flat_trie) = flat_trie.as_ref() {
-                flat_trie.token_seeds().collect::<Box<[u64]>>()
+        pendings.extend(speculator_pendings.into_iter().flatten());
+
+        let flat_seed =
+            if trie_seeds.is_none() && matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
+                Some(
+                    command_buffer
+                        .allocate_constant_from_slice(&[self.model_state.prng.derive(context_length as u64)])
+                        .map_err(LanguageModelStreamError::Backend)?,
+                )
             } else {
-                Box::new([self.model_state.prng.derive(context_length as u64)])
+                None
             };
 
-            Some(command_buffer.allocate_constant_from_slice(&seeds).map_err(LanguageModelStreamError::Backend)?)
-        } else {
-            None
-        };
+        let seeds = trie_seeds
+            .as_ref()
+            .map(|seeds| seeds as &dyn GpuBuffer<Backend = B>)
+            .or_else(|| flat_seed.as_ref().map(|seed| seed as &dyn GpuBuffer<Backend = B>));
 
         let output_tokens = self
             .model
             .sampling
             .encode(
                 &decoder_output.logits.unwrap(),
-                seeds.as_ref(),
+                seeds,
                 bitmask.as_ref(),
                 self.context_ring.as_ref(),
-                Some(token_ids),
+                Some(&token_ids),
                 &batch_dim,
                 (0..batch_dim.size()).into(),
                 &self.options.sampling_method,
@@ -641,7 +784,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             )
             .map_err(LanguageModelStreamError::Backend)?;
 
-        drop(seeds);
         drop(bitmask);
 
         // new job and statistics
@@ -666,7 +808,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
                 self.model.context_ring_update.encode(
-                    token_ids,
+                    &token_ids,
                     self.context_ring.as_mut().unwrap(),
                     suffix_repetition_length,
                     batch_dim.size(),
@@ -675,7 +817,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             }
         }
 
-        drop(constant_token_ids);
+        drop(flat_seed);
 
         pendings.push(command_buffer.end_encoding().submit());
 
@@ -683,12 +825,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             capture_span.take();
         }
 
-        let mut new_job = GenerationJob::Pending {
+        let new_job = GenerationJob::Pending {
             output_norm: decoder_output.final_hidden,
             output_tokens,
-            _input_token_source: None,
             batch_dim,
-            trie,
+            input_token_ids: Some(token_ids),
             hidden_features: decoder_output.hidden_features,
             capture_span,
             pendings: pendings.into_boxed_slice(),
@@ -696,19 +837,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         // Return results
         // NOTE: not a CPU bubble. The next job has already been scheduled.
-        let mut resolved_job = self.resolve_take(last_job).await?;
-
-        if needs_last_job_input {
-            // Keep previous input alive if necessary.
-            let GenerationJob::Pending {
-                _input_token_source,
-                ..
-            } = &mut new_job
-            else {
-                unreachable!()
-            };
-            *_input_token_source = resolved_job.output_tokens_buffer.take();
-        }
+        let resolved_job = self.resolve_take(last_job).await?;
 
         Ok((resolved_job, new_job))
     }
@@ -766,6 +895,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 accepted_token_indices.len() as u32,
                 &mut command_buffer,
             );
+            drop(accepted_input_token_ids_const);
         }
 
         let pending = command_buffer.end_encoding().submit();
@@ -773,28 +903,45 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         Ok(Some(pending))
     }
+
+    fn get_prefill_batches<'i>(
+        &self,
+        input: &[LanguageModelInput<'i>],
+        max_batch_size: usize,
+    ) -> Result<Vec<PrefillBatch<'i>>, LanguageModelStreamError<B>> {
+        let mut batches: Vec<PrefillBatch> = Vec::new();
+        for part in input {
+            match *part {
+                LanguageModelInput::Image(image) => {
+                    let vision_model =
+                        self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+                    let row_count = vision_model.image_token_count(image).map_err(VisionPrefillError::<B>::from)?;
+                    for start in (0..row_count).step_by(max_batch_size) {
+                        let image_batch = PrefillBatch::Image {
+                            image,
+                            rows: Range::from(start..usize::min(start + max_batch_size, row_count)),
+                        };
+                        batches.push(image_batch);
+                    }
+                },
+                LanguageModelInput::Tokens(tokens) => {
+                    batches.extend(tokens.chunks(max_batch_size).map(PrefillBatch::Tokens));
+                },
+            }
+        }
+        Ok(batches)
+    }
 }
 
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
     pub fn new(
         model: &'a LanguageModel<B>,
-        input: &[u64],
-        images: &[VisionImageInput],
+        input: &[LanguageModelInput<'_>],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
-        // images takes as many tokens as it has embeddings, so the context checks and the prefill see the full length
-        let expanded_input;
-        let input: &[u64] = if images.is_empty() {
-            input
-        } else {
-            let vision_model = model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
-            expanded_input = vision_model.expand_tokens(input, images)?;
-            &expanded_input
-        };
-
         let mut submitter = StreamEnqueuer::new(model, input, model_state, options)?;
-        let job = submitter.prefill(input, images)?;
+        let job = submitter.prefill(input)?;
 
         Ok(Self {
             submitter,
@@ -842,19 +989,28 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
             }
         } else if let Some((mut queued, emitted_len)) = self.emitting.take() {
             let accept_pending = self.submitter.encode_accept(&mut queued, emitted_len)?;
+
+            let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
+                self.submitter.model_state.transformer_state.context_length() >= max_context_length
+            });
+
+            let queued_pass = if !context_full {
+                Some(self.submitter.get_and_queue_pass(GenerationJob::Resolved(queued)).await?)
+            } else {
+                None
+            };
+
+            // NOTE: not a CPU bubble. The next pass has already been queued behind the accept.
             if let Some(pending) = accept_pending {
                 wait(pending, self.submitter.options.timestamps.as_ref())
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
             }
 
-            let context_full = self.submitter.model_state.max_context_length.is_some_and(|max_context_length| {
-                self.submitter.model_state.transformer_state.context_length() >= max_context_length
-            });
-
-            if !context_full {
-                let (_, new_job) = self.submitter.get_and_queue_pass(GenerationJob::Resolved(queued)).await?;
+            // Important to keep `last_resolved` alive
+            if let Some((last_resolved, new_job)) = queued_pass {
                 let resolved_new = self.submitter.resolve_take(new_job).await?;
+                drop(last_resolved);
                 self.emitting = Some((resolved_new, 0))
             } else {
                 assert!(self.emit_token().is_none());
@@ -885,16 +1041,19 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             // Make sure last token is accepted.
             if emitted_len == output_len && !context_full {
-                let next_job = match self.job.take() {
-                    Some(job) => job,
+                // Important to keep `prev_resolved` alive
+                let (prev_resolved, next_job) = match self.job.take() {
+                    Some(job) => (None, job),
                     None => {
                         self.submitter.propose_trie = false;
                         let queued = self.submitter.get_and_queue_pass(GenerationJob::Resolved(last_resolved)).await;
                         self.submitter.propose_trie = true;
-                        queued?.1
+                        let (prev_resolved, next_job) = queued?;
+                        (Some(prev_resolved), next_job)
                     },
                 };
                 let mut next_resolved = self.submitter.resolve_take(next_job).await?;
+                drop(prev_resolved);
                 let accept_pending = self.submitter.encode_accept(&mut next_resolved, 1)?;
                 if let Some(pending) = accept_pending {
                     wait(pending, self.submitter.options.timestamps.as_ref())

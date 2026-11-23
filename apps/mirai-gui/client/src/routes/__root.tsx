@@ -5,7 +5,7 @@ import { useIsMobile } from "@/hooks/use-media-query";
 import { useGlobalDownloadToasts } from "@/hooks/use-global-download-toasts";
 import { useSidebarStore } from "@/stores/use-sidebar-store";
 import { createRootRoute, Outlet, useLocation } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { twMerge } from "tailwind-merge";
 import LeftBar from "@/components/left-bar";
 import { ToastProvider } from "@/components/ui/toast/toast-provider";
@@ -14,6 +14,8 @@ import { HoverPopoverProvider } from "@/components/ui/popover/hover-popover/prov
 import { useAppInitialization } from "@/hooks/use-app-initialization";
 import { useWindowJumpMorph } from "@/hooks/use-window-jump-morph";
 import { ZoomBadge } from "@/components/zoom-badge";
+import { TitleBar } from "@/components/title-bar";
+import { platformInfo } from "@/platform/platform-info";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -31,6 +33,9 @@ function RootComponent() {
   useAppNavigationEvents();
   useSaveFailureToast();
   useWindowJumpMorph();
+  const [titleBarStart, setTitleBarStart] = useState<HTMLElement | null>(null);
+  const titleBar = platformInfo.features.titleBar && <TitleBar start={setTitleBarStart} />;
+  const belowTitleBar = platformInfo.features.titleBar ? "pt-8" : "";
 
   useEffect(() => {
     setMobile(isMobile);
@@ -41,8 +46,9 @@ function RootComponent() {
     return (
       <TooltipProvider>
         <HoverPopoverProvider>
-          <div className="h-dvh overflow-clip bg-background text-label-title">
+          <div className={twMerge("h-dvh overflow-clip bg-background text-label-title", belowTitleBar)}>
             <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
+            {titleBar}
             <Outlet />
             <ToastProvider />
             <ZoomBadge />
@@ -55,9 +61,10 @@ function RootComponent() {
   return (
     <TooltipProvider>
       <HoverPopoverProvider>
-        <div className="h-dvh overflow-clip bg-bg-sidebar text-label-title flex">
+        <div className={twMerge("h-dvh overflow-clip bg-bg-sidebar text-label-title flex", belowTitleBar)}>
           <div className="drag-layer fixed top-0 left-0 right-0 h-10 select-none" />
-          <LeftBar />
+          {titleBar}
+          <LeftBar titleBarStart={titleBarStart} />
           {/* Content sits in an inset, rounded panel on the window's own surface, like a sheet of
           paper on a desk: the panel's edge separates it from the sidebar, so neither needs a line. */}
           {/* The margin around the panel is window chrome: dragging it moves the window. */}

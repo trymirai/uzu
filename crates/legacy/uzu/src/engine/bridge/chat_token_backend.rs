@@ -28,7 +28,10 @@ use tokenizers::Tokenizer;
 use tokio_util::sync::CancellationToken;
 use uzu_engine::{
     backends::Backend,
-    engine::{Engine, language_model::LanguageModel},
+    engine::{
+        Engine,
+        language_model::{LanguageModel, stream::LanguageModelInput},
+    },
 };
 
 use crate::engine::bridge::{
@@ -163,12 +166,17 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
+        let mut model_input = Vec::<LanguageModelInput>::new();
         let images = match scale_images(&self.model, &input.images) {
             Ok(images) => images,
             Err(err) => return Box::pin(NoMetricsStream::new(error_to_stream_output(err))),
         };
+        for image in &images {
+            model_input.push(LanguageModelInput::Image(image))
+        }
+        model_input.push(LanguageModelInput::Tokens(input.tokens.as_slice()));
 
-        let stream = match self.model.stream(&input.tokens, &images, model_state, options) {
+        let stream = match self.model.stream(&model_input, model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));
