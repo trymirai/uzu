@@ -18,7 +18,7 @@ import generated.trie;
   [[Optional("has_key_norm_scales")]] StructuredBuffer<float> key_norm_scales,
   [[Optional("has_value_norm_scales")]] StructuredBuffer<float> value_norm_scales,
   [[Optional("block_mean")]] StructuredBuffer<TrieNode> pool_nodes,
-  [[Optional("block_mean")]] StructuredBuffer<int32_t> pool_windows,
+  [[Optional("block_mean")]] StructuredBuffer<int32_t> pool_token_indices,
   [[Optional("block_mean")]] RWStructuredBuffer<ElementT> raw_keys,
   QKVNormParams norm_params,
   uint32_t num_q_heads,
