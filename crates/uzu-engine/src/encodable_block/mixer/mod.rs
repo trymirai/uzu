@@ -11,7 +11,7 @@ use crate::{
         batch_topology::BatchTopology,
         linear::{InputRhtParameters, LinearEncodeError},
         mixer::{
-            attention::{Attention, AttentionEncodeError, AttentionNewError, rope::RoPEPositions},
+            attention::{Attention, AttentionEncodeError, AttentionNewError},
             delta_net::{DeltaNet, DeltaNetNewError},
             short_conv::{ShortConv, ShortConvNewError},
         },
@@ -37,9 +37,11 @@ pub trait MixerState<B: Backend>: Any + Send {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
 
-    fn set_rope_position(
+    /// The next `width * height` rows are an image grid
+    fn begin_grid(
         &mut self,
-        _position: u32,
+        _width: u32,
+        _height: u32,
     ) {
     }
 }
@@ -81,17 +83,6 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>>;
-
-    fn encode_at_positions(
-        &self,
-        hidden: B::ScratchBuffer,
-        _positions: &RoPEPositions<B>,
-        batch_dim: &BatchTopology<B>,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
-        self.encode(hidden, batch_dim, state, command_buffer)
-    }
 }
 
 #[derive(Debug, Error)]

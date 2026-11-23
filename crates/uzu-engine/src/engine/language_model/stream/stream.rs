@@ -345,7 +345,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             let batch_dim = BatchTopology::flat(batch_length);
 
             let mut token_ids: Option<B::ConstantBuffer> = None;
-            let mut position_after_image: Option<u32> = None;
             let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
             let decoder_output = match batch {
                 PrefillBatch::Image {
@@ -355,14 +354,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     if rows.start == 0 {
                         let vision_model =
                             self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
-                        prefilled_image = Some(vision_model.prefill(image, &mut command_buffer)?);
+                        let image = vision_model.prefill(image, &mut command_buffer)?;
+                        self.model_state.transformer_state.begin_grid(image.width, image.height);
+                        prefilled_image = Some(image);
                     }
 
                     let image = prefilled_image.as_ref().unwrap();
-                    let image_position = self.model_state.transformer_state.rope_position() - rows.start as u32;
-                    if rows.end == image.row_count() {
-                        position_after_image = Some(image.next_position(image_position));
-                    }
 
                     let embedding = self.model.decoder.embedding();
                     let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
@@ -374,15 +371,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                         &mut embedded,
                     );
 
-                    let mrope_positions = &image.mrope_positions(image_position, rows);
                     let transformer_output = self
                         .model
                         .decoder
                         .transformer()
-                        .encode_at_positions(
+                        .encode(
                             embedded,
                             None::<&B::ScratchBuffer>,
-                            Some(mrope_positions),
                             &batch_dim,
                             None,
                             hidden_feature_layer_indices,
@@ -425,9 +420,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .transformer_state
                 .encode_accept(&(0..batch_length).collect::<Box<[u32]>>(), &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
-            if let Some(position) = position_after_image {
-                self.model_state.transformer_state.set_rope_position(position);
-            }
 
             if let Some(speculator) = self.model.speculator.as_ref() {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
