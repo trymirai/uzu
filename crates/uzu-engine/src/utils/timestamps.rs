@@ -1,7 +1,8 @@
-use std::sync::mpsc::Sender;
+use std::{sync::mpsc::Sender, time::Instant};
 
 use crate::backends::common::{
-    Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferPending, TimestampSpan,
+    Backend, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferPending, TimestampSource,
+    TimestampSpan,
 };
 
 pub fn record<Encoding: CommandBufferEncoding>(
@@ -26,4 +27,33 @@ pub async fn wait<Pending: CommandBufferPending>(
         let _ = sender.send(completed.timestamps().into());
     }
     Ok(completed)
+}
+
+#[must_use = "the span ends when dropped"]
+pub struct CpuSpan {
+    recording: Option<(Sender<Box<[TimestampSpan]>>, String, Instant)>,
+}
+
+impl CpuSpan {
+    pub fn start(
+        timestamps: Option<&Sender<Box<[TimestampSpan]>>>,
+        name: &str,
+    ) -> Self {
+        Self {
+            recording: timestamps.map(|sender| (sender.clone(), name.to_owned(), Instant::now())),
+        }
+    }
+}
+
+impl Drop for CpuSpan {
+    fn drop(&mut self) {
+        if let Some((sender, name, start)) = self.recording.take() {
+            let _ = sender.send(Box::new([TimestampSpan {
+                name,
+                source: TimestampSource::Cpu,
+                start,
+                end: Instant::now(),
+            }]));
+        }
+    }
 }
