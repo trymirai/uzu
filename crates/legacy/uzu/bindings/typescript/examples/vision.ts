@@ -1,0 +1,44 @@
+import {
+    ChatConfig,
+    ChatContentBlockImage,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    ReasoningEffort
+} from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('trymirai/Qwen3.5-9B-M-Vision');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    let session = await engine.chat(model, ChatConfig.create());
+    let messages = [
+        ChatMessage.system()
+            .withText('You are a helpful assistant')
+            .withReasoningEffort("Disabled" as ReasoningEffort),
+        ChatMessage.user()
+            .withBlock(new ChatContentBlockImage('https://assets.trymirai.com/images/artifacts/photo-cat.jpeg'))
+            .withBlock(new ChatContentBlockImage('https://assets.trymirai.com/images/artifacts/photo-london.jpeg'))
+            .withText("What's on the images?")
+    ];
+    let replies = await session.reply(messages, ChatReplyConfig.create().withTokenLimit(256));
+    let message = replies[replies.length - 1]?.message;
+    if (message) {
+        console.log('Reasoning: ', message.reasoning ?? '');
+        console.log('Text: ', message.text ?? '');
+    }
+}
+
+main().catch((error) => {
+    console.error(error);
+});
