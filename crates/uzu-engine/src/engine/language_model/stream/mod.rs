@@ -12,6 +12,7 @@ use crate::{
         state::LanguageModelState,
     },
     speculators::dflash_tfm::DFlashTreeError,
+    utils::trace,
 };
 pub use crate::{
     encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,
@@ -46,10 +47,11 @@ pub enum LanguageModelStreamError<B: Backend> {
 }
 
 impl<B: Backend> LanguageModel<B> {
+    /// Records a trace when `UZU_TRACE` is set, see [`trace::sender_from_env`].
     pub fn default_stream_options(&self) -> LanguageModelStreamOptions {
         LanguageModelStreamOptions {
             sampling_method: self.default_sampling_method(),
-            timestamps: None,
+            timestamps: trace::sender_from_env(),
             grammar: None,
         }
     }

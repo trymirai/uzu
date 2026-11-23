@@ -94,7 +94,7 @@ METAL_FUNC void attention_matrix_simd(
     uint num_splits,
     uint trie_nodes,
     bool is_trie,
-    const device int* query_blocks,
+    const device int* selected_blocks,
     uint blocks_per_query,
     uint compression_ratio,
     uint num_kv_heads,
@@ -167,14 +167,14 @@ METAL_FUNC void attention_matrix_simd(
   }
 
   const SparseKeys sparse_keys(
-      query_blocks,
+      selected_blocks,
       blocks_per_query,
       compression_ratio,
       trie,
       trie_nodes,
       params.q_off,
       query_tile,
-      is_trie
+      IS_SPARSE && is_trie
   );
   const uint num_blocks = ((IS_SPARSE ? sparse_keys.key_count() : params.k_len) + BK - 1) / BK;
   const uint block_begin = split * num_blocks / num_splits;

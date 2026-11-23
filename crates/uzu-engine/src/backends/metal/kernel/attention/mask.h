@@ -76,19 +76,30 @@ static inline bool should_use_key(
   return use_key;
 }
 
+// The incomplete block is always attended independently of top-k.
+struct PartialBlock {
+  const device int* token_rows;
+  uint token_count;
+
+  METAL_FUNC uint slot(uint key) const { return key < token_count ? uint(token_rows[key]) : uint(NO_KEY_SLOT); }
+};
+
+// KeyBlocks packs per-query block IDs before the shared draft-member rows.
 struct SparseKeys {
-  const device int* blocks;
+  const device int* block_ids;
   const device TrieNode* trie;
+  const device int* draft_token_rows;
   uint compression_ratio;
   uint block_keys;
-  uint selectable_blocks;
+  uint contiguous_blocks;
   uint prefix_length;
-  uint key_end;
+  uint suffix_length;
+  PartialBlock partial_block;
   uint query_position;
   bool is_trie;
 
   METAL_FUNC SparseKeys(
-      const device int* query_blocks,
+      const device int* selected_blocks,
       const uint blocks_per_query,
       const uint compression_ratio,
       const device TrieNode* trie,
@@ -97,31 +108,34 @@ struct SparseKeys {
       const uint query_position,
       const bool is_trie
   )
-      : blocks(query_blocks + query_position * blocks_per_query), trie(trie), compression_ratio(compression_ratio),
-        block_keys(blocks_per_query * compression_ratio), prefix_length(prefix_length),
-        key_end(is_trie ? prefix_length + trie_nodes : prefix_length + query_position + 1u),
+      : block_ids(selected_blocks + query_position * blocks_per_query), trie(trie),
+        draft_token_rows(selected_blocks + trie_nodes * blocks_per_query), compression_ratio(compression_ratio),
+        block_keys(blocks_per_query * compression_ratio), prefix_length(prefix_length), suffix_length(trie_nodes),
         query_position(query_position), is_trie(is_trie) {
-    selectable_blocks = (is_trie ? prefix_length : key_end) / compression_ratio;
+    const uint tokens = prefix_length + (is_trie ? trie[query_position].height : query_position) + 1u;
+    contiguous_blocks = (is_trie ? prefix_length : tokens) / compression_ratio;
+    partial_block.token_count = tokens % compression_ratio;
+    partial_block.token_rows =
+        draft_token_rows + query_position * compression_ratio + compression_ratio - partial_block.token_count;
   }
 
-  METAL_FUNC uint key_count() const { return block_keys + key_end - selectable_blocks * compression_ratio; }
+  METAL_FUNC uint key_count() const { return block_keys + partial_block.token_count; }
 
   METAL_FUNC uint slot(const uint key) const {
     if (key < block_keys) {
-      const uint block = uint(blocks[key / compression_ratio]);
-      return block < selectable_blocks ? block * compression_ratio + key % compression_ratio : uint(NO_KEY_SLOT);
-    }
-    const uint tail_slot = selectable_blocks * compression_ratio + key - block_keys;
-    if (tail_slot >= key_end) {
+      const uint block = uint(block_ids[key / compression_ratio]);
+      if (block < contiguous_blocks)
+        return block * compression_ratio + key % compression_ratio;
+      if (is_trie && block - contiguous_blocks < suffix_length) {
+        const uint node_index = block - contiguous_blocks;
+        const auto node = trie[node_index];
+        if ((prefix_length + node.height + 1) % compression_ratio == 0 && query_position >= node.trie_start &&
+            query_position <= node.trie_end)
+          return uint(draft_token_rows[node_index * compression_ratio + key % compression_ratio]);
+      }
       return uint(NO_KEY_SLOT);
     }
-    if (is_trie && tail_slot >= prefix_length) {
-      const TrieNode node = trie[tail_slot - prefix_length];
-      if (query_position < node.trie_start || query_position > node.trie_end) {
-        return ~tail_slot;
-      }
-    }
-    return tail_slot;
+    return partial_block.slot(key - block_keys);
   }
 };
 

@@ -437,7 +437,22 @@ fn encode_block_score(
     scores: impl BufferMut<Backend = Metal>,
     encoder: &mut MetalCommandBufferEncoding,
 ) -> Result<(), MetalError> {
-    AttentionBlockScoreMetalKernel::new(context, 4, 128, false, 4)?
-        .encode(buffer, buffer, buffer, buffer, scores, 0, 0, 0, 0, 0, 16, 32, 0, encoder);
+    AttentionBlockScoreMetalKernel::new(context, 4, 128, false, 4, false)?.encode(
+        buffer,
+        buffer,
+        buffer,
+        buffer,
+        scores,
+        0,
+        0,
+        0,
+        0,
+        0,
+        16,
+        32,
+        0,
+        None::<&<Metal as Backend>::GlobalGpuBuffer>,
+        encoder,
+    );
     Ok(())
 }
