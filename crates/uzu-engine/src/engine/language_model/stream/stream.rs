@@ -31,7 +31,7 @@ use crate::{
     trie,
     utils::{
         size_for_shape::size_for_shape,
-        timestamps::{record, wait},
+        timestamps::{CpuSpan, record, wait},
     },
 };
 
@@ -214,6 +214,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 capture_span,
                 pendings,
             } => {
+                let _span = CpuSpan::start(self.options.timestamps.as_ref(), "resolve");
                 for pending in pendings {
                     wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
                 }
@@ -297,6 +298,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         input: &[LanguageModelInput<'_>],
     ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
         let _capture_span = CAPTURE_MATCHER.capture::<B>(&self.model.engine.context, "prefill")?;
+        let _span = CpuSpan::start(self.options.timestamps.as_ref(), "prefill");
 
         // NOTE: this is required for attention correctness (hardcoded suffix
         // 1024). This is really bad design, attention should be rewritten to
@@ -344,6 +346,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
             let mut token_ids: Option<B::ConstantBuffer> = None;
             let mut position_after_image: Option<u32> = None;
+            let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
             let decoder_output = match batch {
                 PrefillBatch::Image {
                     image,
@@ -404,7 +407,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     let decoder_output = self.model.decoder.encode(
                         &chunk_token_ids,
                         &batch_dim,
-                        sample.then(|| (batch_length - 1..batch_length).into()),
+                        sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
                         hidden_feature_layer_indices,
                         &mut self.model_state.transformer_state,
                         &mut command_buffer,
@@ -416,6 +419,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     decoder_output
                 },
             };
+            drop(encode_span);
 
             self.model_state
                 .transformer_state
@@ -550,6 +554,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let mut capture_span = CAPTURE_MATCHER
             .capture::<B>(&self.model.engine.context, &format!("decode:{}", self.metrics.num_decode_forward_passes))?;
 
+        let queue_span = CpuSpan::start(self.options.timestamps.as_ref(), "queue pass");
         let command_buffer = self
             .model
             .engine
@@ -679,6 +684,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
 
+        let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
         let decoder_output = self.model.decoder.encode(
             &token_ids,
             &batch_dim,
@@ -687,6 +693,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
+        drop(encode_span);
 
         let mut pendings = Vec::new();
 
@@ -718,9 +725,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let was_filled = if let Some(speculator_pendings) = speculator_pendings.take() {
+                let wait_span = CpuSpan::start(self.options.timestamps.as_ref(), "wait for speculator");
                 for pending in speculator_pendings {
                     wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
                 }
+                drop(wait_span);
+
+                let copyout_span = CpuSpan::start(self.options.timestamps.as_ref(), "copyout trie");
 
                 let trie_nodes = self
                     .model
@@ -737,6 +748,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     .copyout::<u32>(&token_ids)
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;
+                drop(copyout_span);
 
                 let trie_tokens = trie_tokens.into_iter().map(|t| t as u64).collect::<Box<[_]>>();
 
@@ -820,6 +832,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         drop(flat_seed);
 
         pendings.push(command_buffer.end_encoding().submit());
+        drop(queue_span);
 
         if batch_dim.full_accept() {
             capture_span.take();
@@ -1002,6 +1015,7 @@ impl<'a, B: Backend> LanguageModelStream<'a, B> {
 
             // NOTE: not a CPU bubble. The next pass has already been queued behind the accept.
             if let Some(pending) = accept_pending {
+                let _span = CpuSpan::start(self.submitter.options.timestamps.as_ref(), "wait for accept");
                 wait(pending, self.submitter.options.timestamps.as_ref())
                     .await
                     .map_err(LanguageModelStreamError::Backend)?;

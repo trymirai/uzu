@@ -125,7 +125,7 @@ METAL_FUNC void attention_matrix_mxu(
     uint trie_nodes,
     bool mask_free,
     bool is_trie,
-    const device int* query_blocks,
+    const device int* selected_blocks,
     uint blocks_per_query,
     uint compression_ratio,
     uint num_kv_heads,
@@ -236,14 +236,14 @@ METAL_FUNC void attention_matrix_mxu(
   }
 
   const SparseKeys sparse_keys(
-      query_blocks,
+      selected_blocks,
       blocks_per_query,
       compression_ratio,
       trie,
       trie_nodes,
       prefix_length,
       query_tile_index,
-      is_trie
+      IS_SPARSE && is_trie
   );
   const uint key_tiles =
       IS_SPARSE ? (sparse_keys.key_count() + uint(uzu::kv_layout::TILE_KEYS) - 1u) / uint(uzu::kv_layout::TILE_KEYS)
@@ -294,6 +294,7 @@ METAL_FUNC void attention_matrix_mxu(
   constexpr int KEY_PAIRS = LANE_KEYS / int(uzu::kv_layout::PAIR_KEYS);
   const uint lane_first_key = uzu::kv_layout::lane_first_key(lane);
   const uint lane_channel = uzu::kv_layout::lane_channel(lane);
+  const bool gather_codes = IS_SPARSE && is_trie;
   const uint first_key_offset = (uint)shape.k_code_index(first_key + lane_first_key, kv_head_index, lane_channel);
   uint first_value_offsets[KEY_PAIRS];
   METAL_PRAGMA_UNROLL
@@ -369,6 +370,18 @@ METAL_FUNC void attention_matrix_mxu(
     // Q x K^T (int8).
     Fragment<int, 1, KEY_FRAGMENTS, Ops> score;
     score.clear();
+    uint4 key_offsets(key_offset);
+    if constexpr (IS_SPARSE) {
+      const uint lane_address = slot_address(lane_slot);
+      METAL_PRAGMA_UNROLL
+      for (uint key = 0; key < uint(LANE_KEYS); ++key) {
+        key_offsets[key] = (uint)shape.k_code_index(
+            simd_shuffle(lane_address, ushort(lane_first_key + key)),
+            kv_head_index,
+            lane_channel
+        );
+      }
+    }
     for (int depth_slice = 0; depth_slice < int(DEPTH_SLICES); ++depth_slice) {
       METAL_PRAGMA_UNROLL
       for (int slice_fragment = 0; slice_fragment < DEPTH_FRAGMENTS; slice_fragment += 2) {
@@ -382,7 +395,11 @@ METAL_FUNC void attention_matrix_mxu(
         METAL_PRAGMA_UNROLL
         for (int pair_index = 0; pair_index < 2; ++pair_index) {
           const int fragment_offset = (depth_fragment + pair_index) * int(uzu::kv_layout::BLOCK_FRAGMENT_BYTES);
-          const uint4 packed_keys = *reinterpret_cast<const device uint4*>(key_codes + key_offset + fragment_offset);
+          const uint4 packed_keys = uzu::kv_layout::load_code_words(
+              reinterpret_cast<const device uchar*>(key_codes) + fragment_offset,
+              key_offsets,
+              gather_codes
+          );
           key_fragments.fragment_data[pair_index] = as_type<CodeVector>(uint2(packed_keys.x, packed_keys.y));
           key_fragments.fragment_data[2 + pair_index] = as_type<CodeVector>(uint2(packed_keys.z, packed_keys.w));
         }
@@ -531,12 +548,10 @@ METAL_FUNC void attention_matrix_mxu(
 
       uint value_offsets[LANE_KEYS] = {};
       if constexpr (IS_SPARSE) {
-        const uint run_first_slot =
-            slot_address(step_slots[published_block * uint(uzu::kv_layout::TILE_KEYS) + lane_first_key]);
         METAL_PRAGMA_UNROLL
-        for (int pair = 0; pair < KEY_PAIRS; ++pair) {
-          value_offsets[uzu::kv_layout::PAIR_KEYS * pair] = (uint)shape.v_code_index(
-              run_first_slot + uint(pair) * uzu::kv_layout::PAIR_KEYS,
+        for (uint key = 0; key < uint(LANE_KEYS); ++key) {
+          value_offsets[key] = (uint)shape.v_code_index(
+              slot_address(step_slots[published_block * uint(uzu::kv_layout::TILE_KEYS) + lane_first_key + key]),
               kv_head_index,
               channel_offset + lane_channel
           );
@@ -558,7 +573,14 @@ METAL_FUNC void attention_matrix_mxu(
         for (int key_fragment = 0; key_fragment < KEY_FRAGMENTS; ++key_fragment) {
           const device uchar* panel_values = value_codes + panel * uzu::kv_layout::BLOCK_FRAGMENT_BYTES;
           const uint first_offset = value_offsets[uzu::kv_layout::PAIR_KEYS * key_fragment];
-          const uint4 packed_values = *reinterpret_cast<const device uint4*>(panel_values + first_offset);
+          const uint second_offset = value_offsets[uzu::kv_layout::PAIR_KEYS * key_fragment + 1];
+          const uint4 offsets(
+              first_offset,
+              second_offset,
+              first_offset + uzu::kv_layout::TILE_LANE_BYTES,
+              second_offset + uzu::kv_layout::TILE_LANE_BYTES
+          );
+          const uint4 packed_values = uzu::kv_layout::load_code_words(panel_values, offsets, gather_codes);
           value_fragments.fragment_data[key_fragment * FRAGMENTS_PER_PANEL] = as_type<ValueVector>(packed_values.xy);
           value_fragments.fragment_data[key_fragment * FRAGMENTS_PER_PANEL + 1] =
               as_type<ValueVector>(packed_values.zw);
