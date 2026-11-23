@@ -22,7 +22,7 @@ pub trait AttentionKernel: Sized + Send + Sync {
         _trie: Option<impl BufferRef<Backend = Self::Backend>>,
         _rows: u32,
         _prefix: u32,
-        _selected: KeyBlocks<impl BufferMut<Backend = Self::Backend>>,
+        _draft_token_rows: impl BufferMut<Backend = Self::Backend>,
         _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error> {
         unreachable!("sparse attention is Metal only")

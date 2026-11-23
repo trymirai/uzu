@@ -230,10 +230,7 @@ fn attention_matches_cpu() {
                                 trie.as_ref(),
                                 suffix as u32,
                                 prefix as u32,
-                                KeyBlocks {
-                                    query_blocks: &mut query_blocks,
-                                    blocks_per_query: blocks_per_query as u32,
-                                },
+                                (&mut query_blocks).subrange_mut(suffix * blocks_per_query * size_of::<i32>()..),
                                 &mut command_buffer,
                             )
                             .unwrap();

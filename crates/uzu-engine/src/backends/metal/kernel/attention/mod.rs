@@ -233,7 +233,7 @@ impl AttentionKernel for AttentionMetalKernel {
         trie: Option<impl BufferRef<Backend = Metal>>,
         rows: u32,
         prefix: u32,
-        selected: KeyBlocks<impl BufferMut<Backend = Metal>>,
+        draft_token_rows: impl BufferMut<Backend = Metal>,
         command_buffer: &mut MetalCommandBufferEncoding,
     ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
         let sparse = self.sparse.as_ref().expect("sparse attention config required");
@@ -242,7 +242,7 @@ impl AttentionKernel for AttentionMetalKernel {
         sparse.prepare_draft[usize::from(trie.is_some())].encode(
             trie,
             &mut nodes,
-            selected.query_blocks.subrange_mut((rows * selected.blocks_per_query) as usize * size_of::<i32>()..),
+            draft_token_rows,
             rows,
             prefix,
             sparse.compression_ratio,
