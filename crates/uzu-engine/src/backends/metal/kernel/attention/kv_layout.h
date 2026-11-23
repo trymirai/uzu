@@ -25,6 +25,17 @@ METAL_FUNC uint lane_channel(const uint lane) { return lane_group(lane) * LANE_C
 
 METAL_FUNC uint column_key(const uint column) { return LANE_KEYS * (column % GROUP_ROWS) + column / GROUP_ROWS; }
 
+METAL_FUNC uint4 load_code_words(const device uchar* codes, uint4 offsets, bool gather) {
+  if (!gather)
+    return *reinterpret_cast<const device uint4*>(codes + offsets.x);
+  constexpr uint WORDS_PER_LOAD = sizeof(uint4) / sizeof(uint);
+  uint4 words;
+  METAL_PRAGMA_UNROLL
+  for (uint word = 0; word < WORDS_PER_LOAD; ++word)
+    words[word] = *reinterpret_cast<const device uint*>(codes + offsets[word]);
+  return words;
+}
+
 struct KVShape {
   uint head_dim;
   uint num_kv_heads;
