@@ -151,7 +151,7 @@ impl AttentionMetalKernel {
                             "sparse attention is causal without window or ring".to_string(),
                         ));
                     }
-                    if compression_ratio % kv_layout::LANE_KEYS != 0 {
+                    if compression_ratio == 0 || !compression_ratio.is_multiple_of(kv_layout::LANE_KEYS) {
                         return Err(MetalError::CannotCreateFunction(format!(
                             "sparse blocks of {compression_ratio} keys must fill whole lane groups of {} keys",
                             kv_layout::LANE_KEYS
