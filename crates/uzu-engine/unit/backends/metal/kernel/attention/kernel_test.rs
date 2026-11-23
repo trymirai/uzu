@@ -220,10 +220,7 @@ fn attention_matches_cpu() {
                     let key_blocks = (sparse && attend).then(|| {
                         let mut packed = block_list.clone();
                         packed.extend_from_slice(&expected_token_indices);
-                        KeyBlocks {
-                            query_blocks: create_buffer_with_data::<Metal, i32>(&metal, &packed),
-                            blocks_per_query: blocks_per_query as u32,
-                        }
+                        create_buffer_with_data::<Metal, i32>(&metal, &packed)
                     });
                     prepare.encode(
                         &create_buffer_with_data::<Metal, bf16>(&metal, rows),
@@ -271,9 +268,9 @@ fn attention_matches_cpu() {
                         trie: trie.as_ref(),
                         cache: KVCacheState::new(prefix as u32, None),
                         gate: gate.as_ref(),
-                        key_blocks: key_blocks.as_ref().map(|blocks| KeyBlocks {
-                            query_blocks: &blocks.query_blocks,
-                            blocks_per_query: blocks.blocks_per_query,
+                        key_blocks: key_blocks.as_ref().map(|query_blocks| KeyBlocks {
+                            query_blocks,
+                            blocks_per_query: blocks_per_query as u32,
                         }),
                     };
                     let pooled = kernel.encode(input, arguments, &mut command_buffer).unwrap();
