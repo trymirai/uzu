@@ -33,6 +33,8 @@ pub struct StreamConfig {
 
 pub struct StreamImage {
     pub url: String,
+    /// Encoded image file contents read from `url`
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Default)]

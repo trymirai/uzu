@@ -8,12 +8,6 @@ use uzu::engine::{Engine, EngineConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let image_path = "/Users/glk/Downloads/cat.jpg".to_string();
-    if image_path.is_empty() {
-        eprintln!("Empty image_path");
-        return Ok(());
-    }
-
     let engine = Engine::new(EngineConfig::default()).await?;
     let mut model = engine.model("/Users/glk/.cache/huggingface/hub/models--trymirai--Qwen3.5-9B-M-Vision/snapshots/1565da232128f13e0debd694652d7157e95220cc".to_string()).await?.ok_or("Model not found")?;
     // TODO agolokoz: remove when model will appear in registry
@@ -33,9 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_reasoning_effort(ReasoningEffort::Disabled),
         ChatMessage::user()
             .with_block(ChatContentBlock::Image {
-                url: image_path,
+                url: "https://images.unsplash.com/photo-1495360010541-f48722b34f7d?fm=jpg&q=85&w=720".to_string(),
             })
-            .with_text("What's on the image?".to_string()),
+            .with_block(ChatContentBlock::Image {
+                url: "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?fm=jpg&q=85&w=1280".to_string(),
+            })
+            .with_text("What's on the images?".to_string()),
     ];
     let replies = session
         .reply(

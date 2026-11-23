@@ -36,7 +36,7 @@ use crate::util::power::{EnergyRecorder, Error as EnergyError};
 use crate::{
     chat::{
         ChatSessionError,
-        image::{ImageHash, get_image_hashes, get_image_urls},
+        image::{ImageHash, get_image_hashes, get_image_urls, load_images},
     },
     util::helpers::error_stream,
 };
@@ -155,6 +155,9 @@ impl Session {
             Ok(cached_tokens) => cached_tokens,
             Err(error) => return error_stream(error),
         };
+        if let Err(error) = load_images(&mut self.input.images).await {
+            return error_stream(error);
+        }
 
         let instance = self.instance.as_ref();
         #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -321,6 +324,7 @@ impl Session {
         let images: Vec<_> = urls
             .map(|url| StreamImage {
                 url: url.to_owned(),
+                bytes: Vec::new(),
             })
             .collect();
         let pad_count = tokens.iter().filter(|&&token| token == pad).count();
