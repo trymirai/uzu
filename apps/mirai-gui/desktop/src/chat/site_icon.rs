@@ -93,7 +93,10 @@ async fn download(mut url: Url) -> Fetched {
             break response;
         }
         let next = response.headers().get(LOCATION).and_then(|location| location.to_str().ok());
-        let Some(next) = next.and_then(|location| url.join(location).ok()).filter(is_public_web) else {
+        let Some(next) = next
+            .and_then(|location| url.join(location).ok())
+            .filter(|next| next.scheme() == "https" && is_public_web(next))
+        else {
             return Fetched::Missing;
         };
         if redirects == MAX_REDIRECTS {

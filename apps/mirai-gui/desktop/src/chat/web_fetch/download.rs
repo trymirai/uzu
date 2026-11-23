@@ -299,6 +299,7 @@ mod tests {
             title: "Title".into(),
             text: text.into(),
             published_at: None,
+            cut_short: false,
         };
         ReadPage::new(url("https://example.com/"), content, reader)
     }
@@ -395,6 +396,7 @@ mod tests {
             title: " Two\n lines ".into(),
             text: "Text".into(),
             published_at: Some("x".repeat(100)),
+            cut_short: false,
         };
         let read = ReadPage::new(url("https://example.com/"), content, Reader::Plain).unwrap();
         assert_eq!(read.content.title, "Two lines");

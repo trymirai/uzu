@@ -294,7 +294,7 @@ fn part(
         url: page.url.to_string(),
         title: page.content.title.clone(),
         text: page.content.text.chars().skip(start).take(end - start).collect(),
-        truncated: end < page.length,
+        truncated: end < page.length || page.content.cut_short,
         start,
         next_start: (end < page.length).then_some(end),
         published_at: page.content.published_at.clone(),
@@ -320,6 +320,7 @@ mod tests {
             title: "Title".into(),
             text: text.into(),
             published_at: None,
+            cut_short: false,
         };
         ReadPage::new(Url::parse(address).unwrap(), content, download::Reader::Plain)
     }
@@ -355,6 +356,11 @@ mod tests {
         let rest_of_allowance = part(&long, 0, 100).unwrap();
         assert_eq!(rest_of_allowance.text.chars().count(), 100);
         assert_eq!((rest_of_allowance.truncated, rest_of_allowance.next_start), (true, Some(100)));
+
+        let mut cut_by_provider = page("The start of a longer page").unwrap();
+        cut_by_provider.content.cut_short = true;
+        let last = part(&cut_by_provider, 0, TEXT_MAX_CHARS).unwrap();
+        assert_eq!((last.truncated, last.next_start), (true, None));
     }
 
     #[test]

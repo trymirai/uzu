@@ -2,6 +2,7 @@ import { useAppStore } from "@/stores/use-app-store";
 import { platformInfo } from "@/platform/platform-info";
 import { useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
+import { useSettingsStore } from "@/stores/use-settings-store";
 import { useWebSearchStore } from "@/stores/use-web-search-store";
 import { attachmentStorage } from "@/features/chat/services/attachment-storage";
 import { useEffect } from "react";
@@ -20,6 +21,7 @@ export const useAppInitialization = () => {
     attachmentStorage.cleanup();
     void useModelParamsStore.getState().load();
     void useWebSearchStore.getState().load();
+    void useSettingsStore.getState().fetch();
     void useModelsStore.getState().fetchModels();
     if (platformInfo.isTauri) {
       void useAppStore.getState().fetchVersion();

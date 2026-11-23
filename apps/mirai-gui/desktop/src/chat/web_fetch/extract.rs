@@ -41,6 +41,7 @@ pub(super) fn extract(
                     .published_time
                     .map(|time| collapse_whitespace(&time))
                     .filter(|time| !time.is_empty()),
+                cut_short: false,
             };
         }
     }
@@ -139,6 +140,7 @@ fn whole_body(
         title,
         text: document.select("body").nodes().first().map(|body| tidy(&body.md(Some(&MEDIA)))).unwrap_or_default(),
         published_at: None,
+        cut_short: false,
     }
 }
 

@@ -326,11 +326,15 @@ pub(super) async fn read_page(
 fn presentable(results: Vec<SearchResult>) -> Vec<SearchResult> {
     let mut kept: Vec<SearchResult> = Vec::new();
     for result in results {
-        let is_web_page = result.url.starts_with("https://") || result.url.starts_with("http://");
-        let is_new = kept.iter().all(|other| other.url != result.url);
-        if is_web_page && is_new && result.url.len() <= MAX_URL_BYTES && kept.len() < RESULT_COUNT as usize {
+        let Some(url) = Url::parse(&result.url).ok().filter(|url| matches!(url.scheme(), "http" | "https")) else {
+            continue;
+        };
+        let url = url.to_string();
+        let is_new = kept.iter().all(|other| other.url != url);
+        if is_new && url.len() <= MAX_URL_BYTES && kept.len() < RESULT_COUNT as usize {
             kept.push(SearchResult {
                 title: title_line(&result.title),
+                url,
                 ..result
             });
         }
@@ -446,5 +450,9 @@ mod tests {
         assert_eq!(presentable(vec![page(" Two\n lines ", "https://example.com/")])[0].title, "Two lines");
         assert_eq!(kept[1].title, "Plain");
         assert!(kept[2..].iter().all(|result| result.title == "More"));
+        assert_eq!(
+            presentable(vec![page("Split", "https://example.com/a\n- [x](y)")])[0].url,
+            "https://example.com/a-%20[x](y)"
+        );
     }
 }

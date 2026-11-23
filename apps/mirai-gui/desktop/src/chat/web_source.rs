@@ -15,6 +15,8 @@ pub(super) struct PageContent {
     pub(super) title: String,
     pub(super) text: String,
     pub(super) published_at: Option<String>,
+    /// The reader returned only the start of a longer page.
+    pub(super) cut_short: bool,
 }
 
 pub(super) fn title_line(title: &str) -> String {

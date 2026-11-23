@@ -108,6 +108,7 @@ fn labelled_page(
         title: labelled(title_label).unwrap_or_default(),
         text: text.to_string(),
         published_at: labelled("Published:"),
+        cut_short: labelled("Truncated:").is_some(),
     })
 }
 
@@ -199,6 +200,7 @@ mod tests {
                 title: "Rust Versions | Rust Changelogs".into(),
                 text: "Rust Versions\n\n- Stable: 1.100.0".into(),
                 published_at: None,
+                cut_short: false,
             })
         );
         let keenable = "Title: Rust\nURL: https://example.com/rust\nPublished: 2026-10-23\n\
@@ -210,6 +212,7 @@ mod tests {
                 title: "Rust".into(),
                 text: "Rust is a language...".into(),
                 published_at: Some("2026-10-23".into()),
+                cut_short: true,
             })
         );
         for unrecognized in
