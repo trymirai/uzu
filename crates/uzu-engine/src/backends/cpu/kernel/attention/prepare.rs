@@ -142,7 +142,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    apply_rope(
+                    apply_rope::<ElementT, _>(
                         source,
                         rope_inverse_frequencies.unwrap(),
                         rope_scale.unwrap(),

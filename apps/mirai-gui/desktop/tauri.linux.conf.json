@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "targets": ["deb"],
+    "linux": {
+      "deb": {
+        "depends": ["libvulkan1", "xdg-utils"]
+      }
+    }
+  }
+}

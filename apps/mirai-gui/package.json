@@ -1,12 +1,12 @@
 {
   "name": "mirai-gui",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.9.0",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build --target aarch64-apple-darwin",
+    "build": "tauri build",
     "client:dev": "vite",
     "client:build": "vite build",
     "web:dev": "vite --mode web",

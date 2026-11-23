@@ -1,5 +1,6 @@
 mod analytics;
 mod chat;
+#[cfg(target_os = "macos")]
 mod cli_installer;
 mod downloads;
 mod engine;
@@ -8,16 +9,33 @@ mod logger;
 mod models;
 mod storage;
 mod system_ui;
+#[cfg(target_os = "macos")]
 mod traffic_lights;
 mod updater;
 mod zoom;
+
+const MIN_WIDTH: f64 = 390.0;
+const MIN_HEIGHT: f64 = 400.0;
 
 #[tauri::command]
 fn open_external(url: String) -> bool {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return false;
     }
-    std::process::Command::new("open").arg(&url).spawn().is_ok()
+    open_in_browser(&url)
+}
+
+fn open_in_browser(url: &str) -> bool {
+    let mut command = if cfg!(windows) {
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler");
+        command
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    command.arg(url).spawn().is_ok()
 }
 
 fn is_app_url(url: &tauri::Url) -> bool {
@@ -52,7 +70,10 @@ pub fn run() {
     use tauri::Manager;
 
     install_panic_logger();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| system_ui::show_and_focus_main(app)));
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -60,10 +81,15 @@ pub fn run() {
             let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
                 .title("Mirai")
                 .inner_size(1200.0, 800.0)
-                .min_inner_size(390.0, 400.0)
+                .min_inner_size(MIN_WIDTH, MIN_HEIGHT);
+            #[cfg(not(target_os = "macos"))]
+            let window = window.decorations(false);
+            #[cfg(target_os = "macos")]
+            let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(traffic_lights::creation_position())
+                .traffic_light_position(traffic_lights::creation_position());
+            let window = window
                 // In-window navigation to an external URL would replace the app;
                 // hand it to the default browser instead.
                 .on_navigation(|url| {
@@ -71,23 +97,34 @@ pub fn run() {
                         return true;
                     }
                     if matches!(url.scheme(), "http" | "https") {
-                        let _ = std::process::Command::new("open").arg(url.as_str()).spawn();
+                        open_in_browser(url.as_str());
                     }
                     false
                 })
                 .build()?;
+            #[cfg(windows)]
+            {
+                let (outer, inner) = (window.outer_size()?, window.inner_size()?);
+                let borders = tauri::PhysicalSize::new(outer.width - inner.width, outer.height - inner.height)
+                    .to_logical::<f64>(window.scale_factor()?);
+                window.set_min_size(Some(tauri::LogicalSize::new(
+                    MIN_WIDTH + borders.width,
+                    MIN_HEIGHT + borders.height,
+                )))?;
+            }
             // Closing hides the window; the Dock reopens it and ⌘Q quits.
             let hide_target = window.clone();
             window.on_window_event(move |event| match event {
                 tauri::WindowEvent::CloseRequested {
                     api,
                     ..
-                } => {
+                } if cfg!(target_os = "macos") => {
                     api.prevent_close();
                     let _ = hide_target.hide();
                 },
                 // In case AppKit lays the title bar out afresh (a resize, a full-screen change) and
                 // drops the lights back to where tao keeps them.
+                #[cfg(target_os = "macos")]
                 tauri::WindowEvent::Resized(_)
                 | tauri::WindowEvent::ScaleFactorChanged {
                     ..
@@ -103,8 +140,11 @@ pub fn run() {
             if let Err(error) = system_ui::setup_app_menu(app.handle()) {
                 logger::error("menu:setup", Some(serde_json::json!({ "error": error.to_string() })));
             }
+            #[cfg(not(target_os = "macos"))]
+            window.hide_menu()?;
             chat::restore_auto_eject_config(app.handle());
             zoom::restore(app.handle());
+            #[cfg(target_os = "macos")]
             traffic_lights::place(&window);
             app.state::<analytics::AnalyticsState>().restore();
             // Warm the engine so the first models/chat request doesn't pay init latency.
@@ -121,7 +161,9 @@ pub fn run() {
         .manage(zoom::ZoomState::default())
         .invoke_handler(tauri::generate_handler![
             open_external,
+            #[cfg(target_os = "macos")]
             cli_installer::cli_install,
+            #[cfg(target_os = "macos")]
             cli_installer::cli_status,
             models::chat_models_get,
             models::chat_models_refresh,
@@ -150,6 +192,12 @@ pub fn run() {
             storage::cleanup::cleanup_preview,
             storage::cleanup::cleanup_execute,
             system_ui::set_window_theme,
+            #[cfg(not(target_os = "macos"))]
+            system_ui::menu_titles,
+            #[cfg(not(target_os = "macos"))]
+            system_ui::open_menu,
+            #[cfg(windows)]
+            system_ui::run_menu_item,
             zoom::zoom_get,
             zoom::zoom_step,
             updater::update_check,
@@ -158,15 +206,18 @@ pub fn run() {
             updater::update_status,
         ])
         .build(tauri::generate_context!())
-        .expect("error while running tauri application")
-        .run(|app, event| {
-            // Clicking the dock icon while the window is hidden must bring it
-            // back; macOS delivers that as Reopen, not a window event.
-            if let tauri::RunEvent::Reopen {
-                ..
-            } = event
-            {
-                system_ui::show_and_focus_main(app);
-            }
-        });
+        .expect("error while running tauri application");
+    // Clicking the dock icon while the window is hidden must bring it
+    // back; macOS delivers that as Reopen, not a window event.
+    #[cfg(target_os = "macos")]
+    app.run(|app, event| {
+        if let tauri::RunEvent::Reopen {
+            ..
+        } = event
+        {
+            system_ui::show_and_focus_main(app);
+        }
+    });
+    #[cfg(not(target_os = "macos"))]
+    app.run(|_, _| {});
 }
