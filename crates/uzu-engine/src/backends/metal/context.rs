@@ -31,6 +31,7 @@ use crate::backends::{
         heaps::MetalHeaps,
         kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
         metal_extensions::{DeviceExt, LibraryPipelineExtensions},
+        timestamp_recorder::MetalGpuClock,
     },
 };
 
@@ -57,10 +58,15 @@ pub struct MetalContext {
     pipeline_cache: Mutex<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     pub(super) blit_copy: [OnceLock<BlitCopyMetalKernel>; 3],
     pub(super) blit_fill: [OnceLock<BlitFillMetalKernel>; 2],
+    gpu_clock: OnceLock<MetalGpuClock>,
     weak_self: Weak<MetalContext>,
 }
 
 impl MetalContext {
+    pub(super) fn gpu_clock(&self) -> &MetalGpuClock {
+        self.gpu_clock.get_or_init(|| MetalGpuClock::sample(&self.device))
+    }
+
     fn library(
         &self,
         data: &'static [u8],
@@ -175,6 +181,7 @@ impl Context for MetalContext {
             pipeline_cache: Mutex::new(HashMap::new()),
             blit_copy: std::array::from_fn(|_| OnceLock::new()),
             blit_fill: std::array::from_fn(|_| OnceLock::new()),
+            gpu_clock: OnceLock::new(),
             weak_self: weak_self.clone(),
         }))
     }
