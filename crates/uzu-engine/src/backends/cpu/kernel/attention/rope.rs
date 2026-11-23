@@ -2,14 +2,14 @@ use num_traits::Float;
 
 use crate::data_type::DataTypeRepr;
 
-pub(super) fn apply_rope<ElementT: DataTypeRepr + Float>(
+pub(super) fn apply_rope<ResultT: DataTypeRepr + Float, ElementT: DataTypeRepr + Float>(
     head: *const ElementT,
     inverse_frequencies: *const f32,
     scale: f32,
     position: u32,
     head_dim_idx: usize,
     rope_dim: usize,
-) -> ElementT {
+) -> ResultT {
     let half_rope_dim = rope_dim / 2;
     let paired_idx = if head_dim_idx < half_rope_dim {
         head_dim_idx + half_rope_dim
@@ -26,5 +26,5 @@ pub(super) fn apply_rope<ElementT: DataTypeRepr + Float>(
     let angle = position as f32 * unsafe { *inverse_frequencies.add(head_dim_idx % half_rope_dim) };
     let (sin_val, cos_val) = angle.sin_cos();
 
-    ElementT::from(input * (cos_val * scale) + signed_paired * (sin_val * scale)).unwrap()
+    ResultT::from(input * (cos_val * scale) + signed_paired * (sin_val * scale)).unwrap()
 }

@@ -139,7 +139,7 @@ fn attention_matches_cpu() {
             let mut rng = SmallRng::seed_from_u64(7);
             let tail_start =
                 |node: usize| (prefix + usize::from(!use_trie) * (node + 1)) / COMPRESSION_RATIO * COMPRESSION_RATIO;
-            let dropped = |node: usize, block: usize| (block * 7 + node) % 5 == 0;
+            let dropped = |node: usize, block: usize| (block * 7 + node).is_multiple_of(5);
             let blocks_per_query = (prefix + suffix).div_ceil(COMPRESSION_RATIO);
             let block_list: Vec<i32> = (0..suffix * usize::from(sparse))
                 .flat_map(|node| {

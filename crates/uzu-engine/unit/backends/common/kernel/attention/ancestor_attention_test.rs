@@ -29,7 +29,7 @@ use crate::{
 
 const HEAD_DIM: usize = 128;
 const NUM_HEADS: u32 = 16;
-const MAX_DEPTH: u32 = 8;
+const MAX_DEPTH: u32 = 16;
 
 struct Runner<B: Backend> {
     context: Arc<B::Context>,
@@ -54,9 +54,10 @@ impl<B: Backend> Runner<B> {
         rows: usize,
         prefix_length: usize,
         ancestor_stride: usize,
-        nodes: usize,
+        node_capacity: usize,
+        layout_override: Option<u32>,
     ) -> Self {
-        assert!(rows < nodes && ancestor_stride > 0);
+        assert!(rows < node_capacity && ancestor_stride > 0);
         let model_dim = NUM_HEADS as usize * HEAD_DIM;
         let qkv_width = 3 * model_dim;
         let kv_width = 2 * model_dim;
@@ -65,9 +66,10 @@ impl<B: Backend> Runner<B> {
                 .map(|index| bf16::from_f32((((index + offset) * 17 % 251) as f32 - 125.0) / 128.0))
                 .collect::<Vec<_>>()
         };
-        let first_output_node = nodes - rows;
-        let node_indices = (first_output_node..nodes).map(|node| node as u32).collect::<Vec<_>>();
-        let ancestor_counts = (0..rows).map(|row| (row % (ancestor_stride + 1)) as u32).collect::<Vec<_>>();
+        let first_output_node = node_capacity - rows;
+        let node_indices = (first_output_node..node_capacity).map(|node| node as u32).collect::<Vec<_>>();
+        let ancestor_counts =
+            (0..rows).map(|row| [0u32, 1, 4, 15][row % 4].min(ancestor_stride as u32)).collect::<Vec<_>>();
         let mut ancestor_indices = vec![0; rows * ancestor_stride];
         for row in 0..rows {
             for offset in 0..ancestor_counts[row] as usize {
@@ -80,11 +82,14 @@ impl<B: Backend> Runner<B> {
             (0..HEAD_DIM / 2).map(|pair| 1.0 / 10_000f32.powf(2.0 * pair as f32 / HEAD_DIM as f32)).collect::<Vec<_>>();
         let mut node_metadata = vec![0u32; rows * MetadataIdx::COUNT];
         for row in 0..rows {
-            node_metadata[MetadataIdx::Depth as usize * rows + row] = (row as u32 * 3) % MAX_DEPTH;
+            node_metadata[MetadataIdx::Depth as usize * rows + row] = ancestor_counts[row];
         }
 
         let context = create_context::<B>();
-        let layout = kv_layout::<B>(&context, HEAD_DIM as u32, NUM_HEADS);
+        let mut layout = kv_layout::<B>(&context, HEAD_DIM as u32, NUM_HEADS);
+        if let Some(layout_override) = layout_override {
+            layout.backend_opaque_layout = layout_override;
+        }
         let kernel = <B::Kernels as Kernels>::AncestorAttentionKernel::new(
             context.as_ref(),
             HEAD_DIM as u32,
@@ -117,12 +122,12 @@ impl<B: Backend> Runner<B> {
             command.encode_fill(kv.v_codes.as_mut(), 128);
             command.encode_fill(kv.k_scales.as_mut(), 0);
             command.encode_fill(kv.v_scales.as_mut(), 0);
-            let mut q = create_buffer::<B, i8>(&context, 1);
-            let mut qs = create_buffer::<B, bf16>(&context, 1);
+            let mut unused_q_codes = create_buffer::<B, i8>(&context, 1);
+            let mut unused_q_scales = create_buffer::<B, bf16>(&context, 1);
             prepare.encode(
                 &data,
-                &mut q,
-                &mut qs,
+                &mut unused_q_codes,
+                &mut unused_q_scales,
                 Some(kv.k_codes.as_mut()),
                 Some(kv.k_scales.as_mut()),
                 Some(kv.v_codes.as_mut()),
@@ -153,7 +158,7 @@ impl<B: Backend> Runner<B> {
         };
         Self {
             prefix_kv: prepare_cache(prefix_length, 0),
-            node_kv: prepare_cache(nodes, 11),
+            node_kv: prepare_cache(node_capacity, 11),
             current_qkv: create_buffer_with_data::<B, bf16>(&context, &values(rows * qkv_width, 29)),
             rope_inverse_frequencies: create_buffer_with_data::<B, f32>(&context, &rope_inverse_frequencies),
             node_metadata: create_buffer_with_data::<B, u32>(&context, &node_metadata),
@@ -166,7 +171,7 @@ impl<B: Backend> Runner<B> {
             rows: rows as u32,
             prefix_length: prefix_length as u32,
             ancestor_stride: ancestor_stride as u32,
-            node_capacity: nodes as u32,
+            node_capacity: node_capacity as u32,
         }
     }
 
@@ -208,15 +213,25 @@ impl<B: Backend> Runner<B> {
 
 #[uzu_test]
 fn ancestor_attention_matches_cpu() {
-    for_each_non_cpu_backend!(|B| {
-        let mut cpu = Runner::<Cpu>::new(4, 5, 3, 16);
-        cpu.encode(1);
-        let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+    #[cfg(backend = "metal")]
+    let layouts = [crate::backends::metal::KVLayout::RowMajor, crate::backends::metal::KVLayout::MxuTiled]
+        .map(|layout| Some(layout as u32));
+    #[cfg(not(backend = "metal"))]
+    let layouts = [None];
 
-        let mut runner = Runner::<B>::new(4, 5, 3, 16);
-        runner.encode(1);
-        let actual = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);
-        assert_eq_float(&expected, &actual, 0.02, "AncestorAttention output");
+    for_each_non_cpu_backend!(|B| {
+        for (rows, prefix) in [(1, 8), (4, 16), (4, 33)] {
+            let mut cpu = Runner::<Cpu>::new(rows, prefix, 16, 65, None);
+            cpu.encode(1);
+            let expected = buffer_to_vec::<Cpu, bf16>(&cpu.context, &cpu.output);
+
+            for layout in layouts {
+                let mut runner = Runner::<B>::new(rows, prefix, 16, 65, layout);
+                runner.encode(1);
+                let actual = buffer_to_vec::<B, bf16>(&runner.context, &runner.output);
+                assert_eq_float(&expected, &actual, 0.02, "AncestorAttention output");
+            }
+        }
     });
 }
 
@@ -227,7 +242,7 @@ fn benchmark_ancestor_attention() {
     const BATCH: u32 = 32;
     const SAMPLES: usize = 50;
 
-    let mut runner = Runner::<Metal>::new(8, 16, 8, 65);
+    let mut runner = Runner::<Metal>::new(8, 16, 8, 65, None);
     let mut run = || runner.encode(BATCH).unwrap().div_f64(BATCH as f64);
     let warmup = Instant::now();
     while warmup.elapsed() < Duration::from_millis(500) {

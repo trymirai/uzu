@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { useNativeFullscreen } from "@/hooks/use-native-fullscreen";
 import { platformInfo } from "@/platform/platform-info";
@@ -14,7 +15,7 @@ import Settings from "./settings";
 import { FooterBar } from "../footer-bar";
 import { SidebarResizer } from "./sidebar-resizer";
 
-function LeftBar() {
+function LeftBar({ titleBarStart }: { titleBarStart: HTMLElement | null }) {
   const location = useLocation();
   const navigate = useNavigate();
   const createNewChat = useChatStore((s) => s.createNewChat);
@@ -118,11 +119,13 @@ function LeftBar() {
         // there and the lights move down to stay level with it. On the web, and in full screen where
         // macOS hides the lights, it lines up with the sidebar icons (its icon starts 18px in, like
         // theirs), or 8px in from the content panel's corner when the sidebar is out of the way.
-        platformInfo.features.nativeTitleBar && !isFullscreen
-          ? "top-[calc(10px/var(--app-zoom,1))] translate-x-[calc(90px/var(--app-zoom,1))]"
-          : !floating && isSidebarOpen
-            ? "top-4 left-3 translate-x-0"
-            : "top-4 left-3 translate-x-1",
+        platformInfo.features.titleBar
+          ? "static ml-1 size-7 rounded-md"
+          : platformInfo.features.nativeTitleBar && !isFullscreen
+            ? "top-[calc(10px/var(--app-zoom,1))] translate-x-[calc(90px/var(--app-zoom,1))]"
+            : !floating && isSidebarOpen
+              ? "top-4 left-3 translate-x-0"
+              : "top-4 left-3 translate-x-1",
       )}
     >
       {/* The sidebar's real state, not a hover peek. In narrow windows, where hovering opens the
@@ -140,7 +143,9 @@ function LeftBar() {
       )}
       style={{ width: !floating && isSidebarOpen ? sidebarWidth : 0 }}
     >
-      {toggleSidebarButton}
+      {titleBarStart
+        ? createPortal(toggleSidebarButton, titleBarStart)
+        : !platformInfo.features.titleBar && toggleSidebarButton}
       {/* Only while the sidebar is out: closed, there is no edge to drag (the button brings it back). */}
       {!floating && isSidebarOpen && <SidebarResizer onDraggingChange={setResizing} />}
 
@@ -164,8 +169,9 @@ function LeftBar() {
         className={twMerge(
           "follows-window relative min-h-0 bg-bg-sidebar flex flex-col pt-2 overflow-clip motion-reduce:transition-none",
           floating
-            ? "fixed top-2 left-2 bottom-2 w-[280px] z-50 rounded-2xl shadow-[0_0_0_0.5px_var(--color-border-default),0_24px_48px_-12px_rgb(0_0_0/0.28),0_8px_16px_-8px_rgb(0_0_0/0.12)] transition-[translate,opacity]"
+            ? "fixed left-2 bottom-2 w-[280px] z-50 rounded-2xl shadow-[0_0_0_0.5px_var(--color-border-default),0_24px_48px_-12px_rgb(0_0_0/0.28),0_8px_16px_-8px_rgb(0_0_0/0.12)] transition-[translate,opacity]"
             : "h-full transition-transform",
+          floating && (platformInfo.features.titleBar ? "top-10" : "top-2"),
           visible
             ? "translate-x-0 opacity-100 duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
             : floating
@@ -173,7 +179,9 @@ function LeftBar() {
               : "-translate-x-full duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
         )}
       >
-        <div className="flex-1 min-h-0 flex flex-col overflow-clip mt-12">
+        <div
+          className={twMerge("flex-1 min-h-0 flex flex-col overflow-clip", !platformInfo.features.titleBar && "mt-12")}
+        >
           <div className="flex-shrink-0">
             <nav className="flex flex-col gap-px">
               {mainItems.map((item) => (
