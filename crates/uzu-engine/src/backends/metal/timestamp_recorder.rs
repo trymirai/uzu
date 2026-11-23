@@ -9,11 +9,55 @@ use metal::{
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::backends::{common::TimestampSpan, metal::error::MetalError};
+use crate::backends::{
+    common::{TimestampSource, TimestampSpan},
+    metal::error::MetalError,
+};
 
 // "Maximum counter sample buffer length" is 32 KB, i.e. 4096 timestamp entries of 8 bytes (`MTL4TimestampHeapEntry`):
 // https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
 const COUNTER_HEAP_CAPACITY: usize = 4096;
+
+// Enough tries for one to avoid preemption between the host reads around `sampleTimestamps`, cheap since it runs once.
+const CLOCK_SAMPLE_ATTEMPTS: usize = 8;
+
+pub struct MetalGpuClock {
+    instant: Instant,
+    nanoseconds: u64,
+    frequency: u128,
+}
+
+impl MetalGpuClock {
+    pub fn sample(device: &ProtocolObject<dyn MTLDevice>) -> Self {
+        let (_, instant, nanoseconds) = (0..CLOCK_SAMPLE_ATTEMPTS)
+            .map(|_| {
+                let (mut cpu_nanoseconds, mut gpu_nanoseconds) = (0, 0);
+                let before = Instant::now();
+                device.sample_timestamps_gpu_timestamp(&mut cpu_nanoseconds, &mut gpu_nanoseconds);
+                let bracket = before.elapsed();
+                (bracket, before + bracket / 2, gpu_nanoseconds)
+            })
+            .min_by_key(|&(bracket, ..)| bracket)
+            .expect("at least one clock sample");
+
+        Self {
+            instant,
+            nanoseconds,
+            frequency: device.query_timestamp_frequency() as u128,
+        }
+    }
+
+    fn to_instant(
+        &self,
+        ticks: u64,
+    ) -> Instant {
+        let nanoseconds = (ticks as u128 * 1_000_000_000 / self.frequency) as u64;
+        match nanoseconds.checked_sub(self.nanoseconds) {
+            Some(after) => self.instant + Duration::from_nanos(after),
+            None => self.instant - Duration::from_nanos(self.nanoseconds - nanoseconds),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct MetalTimestampRecorder {
@@ -74,7 +118,7 @@ impl MetalTimestampRecorder {
 
     pub fn resolve(
         &self,
-        device: &ProtocolObject<dyn MTLDevice>,
+        clock: &MetalGpuClock,
     ) -> Result<Box<[TimestampSpan]>, MetalError> {
         let count = self.slot_count;
         let mut ticks = Vec::with_capacity(count);
@@ -84,21 +128,13 @@ impl MetalTimestampRecorder {
             let (entries, _) = bytes.as_chunks::<{ size_of::<u64>() }>();
             ticks.extend(entries.iter().map(|entry| u64::from_ne_bytes(*entry)));
         }
-        let frequency = device.query_timestamp_frequency() as u128;
-        let (mut cpu_now, mut gpu_now) = (0, 0);
-        let now = Instant::now();
-        device.sample_timestamps_gpu_timestamp(&mut cpu_now, &mut gpu_now);
-        let to_instant = |ticks: u64| {
-            let nanoseconds = (ticks as u128 * 1_000_000_000 / frequency) as u64;
-            now - Duration::from_nanos(gpu_now - nanoseconds)
-        };
         let instants = ticks
             .iter()
             .enumerate()
             .scan(None, |previous_timestamp, (slot, &slot_ticks)| {
                 let timestamp = match slot_ticks {
                     0 => previous_timestamp.ok_or(MetalError::UnwrittenTimestamp(slot)),
-                    slot_ticks => Ok(to_instant(slot_ticks)),
+                    slot_ticks => Ok(clock.to_instant(slot_ticks)),
                 };
                 *previous_timestamp = timestamp.as_ref().ok().copied();
                 Some(timestamp)
@@ -109,6 +145,7 @@ impl MetalTimestampRecorder {
             .iter()
             .map(|(name, slots)| TimestampSpan {
                 name: name.clone(),
+                source: TimestampSource::Gpu,
                 start: instants[slots.start],
                 end: instants[slots.end],
             })

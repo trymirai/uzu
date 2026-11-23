@@ -6,6 +6,7 @@
 #include "../matmul/common/mxu_fragment/ops.h"
 #include "../matmul/common/simdgroup_fragment_ops.h"
 #include "kv_layout.h"
+#include "../generated/trie.h"
 
 using namespace metal;
 using namespace uzu::matmul;
@@ -33,7 +34,9 @@ KERNEL(AttentionBlockScore)(
     const constant uint& rows_per_group,
     const constant uint& blocks_per_group,
     const constant uint& candidate_blocks,
+    const device uzu::trie::TrieNode* trie OPTIONAL(is_trie),
     const uint compression_ratio SPECIALIZE,
+    const bool is_trie SPECIALIZE,
     const ThreadContext thread_context,
     const uint row_group_index GROUPS(row_count.div_ceil(rows_per_group)),
     const uint block_group_index GROUPS(candidate_blocks.div_ceil(blocks_per_group)),
@@ -60,6 +63,7 @@ KERNEL(AttentionBlockScore)(
   // A suffix block's key is at its last token's row.
   const auto key_slot = [&](uint candidate_block) {
     return candidate_block < cached_blocks ? cached_block_row + candidate_block
+           : is_trie                       ? candidate_block - cached_blocks
                                            : (candidate_block + 1) * compression_ratio - 1 - prefix_tokens;
   };
   const uint query_bands = rows_per_group / Ops::FRAGMENT_ROWS;
@@ -212,7 +216,13 @@ KERNEL(AttentionBlockScore)(
       const uint query_row = lane_rows[USE_MXU ? row : column];
       if (query_row >= row_count || key >= candidate_blocks)
         return;
-      const bool visible = key < (prefix_tokens + first_row + query_row + 1) / compression_ratio;
+      bool visible = key < (prefix_tokens + first_row + query_row + 1) / compression_ratio;
+      if (is_trie && key >= cached_blocks) {
+        const auto node = trie[key - cached_blocks];
+        const uint query = first_row + query_row;
+        visible = (prefix_tokens + node.height + 1) % compression_ratio == 0 && query >= node.trie_start &&
+                  query <= node.trie_end;
+      }
       scores[size_t(query_row) * candidate_blocks + key] =
           half(visible ? head_sum * float(key_scales[key_slot(key)]) : -INFINITY);
     });

@@ -22,4 +22,4 @@ pub use command_buffer::{
 pub use context::Context;
 pub use device_capabilities::DeviceCapabilities;
 pub use kernel::Kernels;
-pub use timestamp_span::TimestampSpan;
+pub use timestamp_span::{TimestampSource, TimestampSpan};

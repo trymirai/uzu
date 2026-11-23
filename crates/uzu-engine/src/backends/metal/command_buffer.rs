@@ -57,6 +57,7 @@ pub struct MetalCommandBufferEncoding {
     allocation_pool: Arc<<Metal as Backend>::AllocationPool>,
     pub(super) context: Arc<MetalContext>,
     timestamps: Option<MetalTimestampRecorder>,
+    label: Option<String>,
 }
 
 unsafe impl Send for MetalCommandBufferEncoding {}
@@ -111,6 +112,7 @@ impl MetalCommandBufferEncoding {
             allocation_pool,
             context,
             timestamps: None,
+            label: name.map(str::to_owned),
         })
     }
 
@@ -225,11 +227,21 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     }
 
     fn with_timestamps(mut self) -> Self {
-        self.timestamps = Some(MetalTimestampRecorder::default());
+        let mut timestamps = MetalTimestampRecorder::default();
+        if let Some(label) = &self.label {
+            timestamps.start(label, &self.context.device, &self.compute_encoder);
+        }
+        self.timestamps = Some(timestamps);
         self
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
+        if self.label.is_some()
+            && let Some(timestamps) = &mut self.timestamps
+        {
+            timestamps.end(&self.context.device, &self.compute_encoder);
+        }
+
         let constant_allocator = self.constant_allocator.take().unwrap();
         assert!(constant_allocator.is_done(), "attempted to end encoding while constants are still alive");
 
@@ -322,7 +334,7 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
             } else {
                 timestamps
                     .as_ref()
-                    .map_or_else(|| Ok(Box::default()), |timestamps| timestamps.resolve(&context_clone.device))
+                    .map_or_else(|| Ok(Box::default()), |timestamps| timestamps.resolve(context_clone.gpu_clock()))
                     .map(|spans| (Duration::from_secs_f64(feedback.gpu_end_time() - feedback.gpu_start_time()), spans))
             };
             let _ = sender.unbounded_send(message);

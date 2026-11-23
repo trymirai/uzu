@@ -1,6 +1,8 @@
 // Only the Metal backend records timestamps.
 #![cfg(backend = "metal")]
 
+use std::time::Instant;
+
 use futures::executor::block_on;
 use uzu_engine_macros::uzu_test;
 
@@ -64,4 +66,18 @@ fn only_command_buffers_asked_for_timestamps_record_them() {
         }
     }
     assert!(record::<Metal>(context.create_command_buffer(None, None).unwrap()).is_empty());
+}
+
+// CPU spans are compared against these directly in traces, so they must land on the host clock.
+#[uzu_test]
+fn spans_fall_between_submission_and_completion_on_the_host_clock() {
+    let context = create_context::<Metal>();
+    let command_buffer = context.create_command_buffer(None, None).unwrap().with_timestamps();
+    let submitted = Instant::now();
+    let spans = record::<Metal>(command_buffer);
+    let completed = Instant::now();
+    for span in &spans {
+        assert!(submitted <= span.start, "{} starts {:?} before submission", span.name, submitted - span.start);
+        assert!(span.end <= completed, "{} ends {:?} after completion", span.name, span.end - completed);
+    }
 }
