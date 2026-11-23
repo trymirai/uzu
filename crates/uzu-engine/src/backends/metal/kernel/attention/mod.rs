@@ -143,8 +143,9 @@ impl AttentionMetalKernel {
                 config.has_sinks,
             )?,
             sparse: config
-                .sparse_compression_ratio
-                .map(|compression_ratio| {
+                .sparse
+                .map(|indexer| {
+                    let compression_ratio = indexer.compression_ratio;
                     if config.is_kv_cache_ring || config.sliding_window_size.is_some() || !config.is_causal {
                         return Err(MetalError::CannotCreateFunction(
                             "sparse attention is causal without window or ring".to_string(),
@@ -180,6 +181,16 @@ impl AttentionMetalKernel {
                             Some(compression_ratio),
                         )
                     };
+                    let scorer = |is_trie| {
+                        AttentionBlockScoreMetalKernel::new(
+                            context,
+                            indexer.num_heads,
+                            indexer.head_dim,
+                            use_mxu,
+                            compression_ratio,
+                            is_trie,
+                        )
+                    };
                     Ok(SparseKernels {
                         rows,
                         compression_ratio,
@@ -188,11 +199,7 @@ impl AttentionMetalKernel {
                             PrepareDraftBlocksMetalKernel::new(context, false)?,
                             PrepareDraftBlocksMetalKernel::new(context, true)?,
                         ],
-                        // TODO: Read indexer dimensions from config in the runtime wiring PR.
-                        scorers: [
-                            AttentionBlockScoreMetalKernel::new(context, 4, 128, use_mxu, compression_ratio, false)?,
-                            AttentionBlockScoreMetalKernel::new(context, 4, 128, use_mxu, compression_ratio, true)?,
-                        ],
+                        scorers: [scorer(false)?, scorer(true)?],
                         top_k: RadixTopKSmallMetalKernel::new(context, DataType::F16, false)?,
                     })
                 })
@@ -349,7 +356,7 @@ impl AttentionKernel for AttentionMetalKernel {
             (Some(key_blocks), Some(sparse)) => {
                 Some((key_blocks, &sparse.cores[usize::from(trie.is_some())], sparse.rows, sparse.compression_ratio))
             },
-            _ => panic!("key_blocks must match AttentionKernelConfig::sparse_compression_ratio"),
+            _ => panic!("key_blocks must match AttentionKernelConfig::sparse"),
         };
         let direct = sparse.is_none() && !self.use_mxu && kv_length <= kv_layout::TILE_KEYS;
         let vector_queries = if grouped_rows.is_multiple_of(2) {

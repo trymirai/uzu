@@ -75,7 +75,14 @@ pub struct AttentionKernelConfig {
     pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
-    pub sparse_compression_ratio: Option<u32>,
+    pub sparse: Option<SparseAttentionKernelConfig>,
+}
+
+#[derive(Clone, Copy)]
+pub struct SparseAttentionKernelConfig {
+    pub num_heads: u32,
+    pub head_dim: u32,
+    pub compression_ratio: u32,
 }
 
 pub struct AttentionArguments<

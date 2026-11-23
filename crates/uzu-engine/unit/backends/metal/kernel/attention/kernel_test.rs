@@ -10,7 +10,7 @@ use crate::{
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-                attention::KeyBlocks,
+                attention::{KeyBlocks, SparseAttentionKernelConfig},
             },
         },
         metal::{
@@ -137,7 +137,11 @@ fn attention_matches_cpu() {
                 sliding_window_size: None,
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
-                sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
+                sparse: sparse.then_some(SparseAttentionKernelConfig {
+                    num_heads: 4,
+                    head_dim: 128,
+                    compression_ratio: COMPRESSION_RATIO as u32,
+                }),
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();

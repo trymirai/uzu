@@ -163,7 +163,7 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
-                sparse_compression_ratio: None,
+                sparse: None,
             },
         )
         .map_err(AttentionNewError::Kernel)?;
