@@ -15,7 +15,7 @@ use crate::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState, attention::rope::RoPEPositions},
+        mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
@@ -431,32 +431,8 @@ impl<B: Backend> TransformerLayer<B> {
 
     pub fn encode(
         &self,
-        stream: B::ScratchBuffer,
-        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        batch_dim: &BatchTopology<B>,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
-        self.encode_with_positions(stream, per_layer_inputs, None, batch_dim, state, command_buffer)
-    }
-
-    pub fn encode_at_positions(
-        &self,
-        stream: B::ScratchBuffer,
-        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        positions: &RoPEPositions<B>,
-        batch_dim: &BatchTopology<B>,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
-        self.encode_with_positions(stream, per_layer_inputs, Some(positions), batch_dim, state, command_buffer)
-    }
-
-    fn encode_with_positions(
-        &self,
         mut stream: B::ScratchBuffer,
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        positions: Option<&RoPEPositions<B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -473,12 +449,7 @@ impl<B: Backend> TransformerLayer<B> {
         }
 
         stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
-            Ok(match positions {
-                Some(positions) => {
-                    self.mixer.encode_at_positions(hidden, positions, batch_dim, state, command_buffer)?
-                },
-                None => self.mixer.encode(hidden, batch_dim, state, command_buffer)?,
-            })
+            Ok(self.mixer.encode(hidden, batch_dim, state, command_buffer)?)
         })?;
 
         stream = self.mlp_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {

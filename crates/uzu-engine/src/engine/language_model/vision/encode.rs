@@ -1,5 +1,3 @@
-use std::range::Range;
-
 use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
@@ -10,9 +8,7 @@ use crate::{
     },
     config::vision::VisionRoPEConfig,
     encodable_block::{
-        linear::LinearEncodeError,
-        mixer::attention::{mrope::MRoPEPositions, rope::RoPEPositions},
-        mlp::MlpEncodeError,
+        linear::LinearEncodeError, mixer::attention::rope::RoPEPositions, mlp::MlpEncodeError,
         vision_layer::VisionLayerEncodeError,
     },
     engine::language_model::vision::{
@@ -23,39 +19,8 @@ use crate::{
 
 pub struct VisionPrefilledImage<B: Backend> {
     pub embeddings: B::ScratchBuffer,
-    width: u32,
-    height: u32,
-}
-
-impl<B: Backend> VisionPrefilledImage<B> {
-    pub fn row_count(&self) -> usize {
-        (self.width * self.height) as usize
-    }
-
-    pub fn mrope_positions(
-        &self,
-        position: u32,
-        rows: Range<usize>,
-    ) -> MRoPEPositions {
-        let positions = rows
-            .iter()
-            .map(|row| {
-                let row = row as u32;
-                [position, position + row / self.width, position + row % self.width]
-            })
-            .collect();
-
-        MRoPEPositions {
-            positions,
-        }
-    }
-
-    pub fn next_position(
-        &self,
-        position: u32,
-    ) -> u32 {
-        position + self.width.max(self.height)
-    }
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Error)]

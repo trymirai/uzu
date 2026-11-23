@@ -229,7 +229,7 @@ impl<B: Backend> Attention<B> {
         })
     }
 
-    fn attend(
+    pub fn attend(
         &self,
         hidden: B::ScratchBuffer,
         rope_positions: Option<&RoPEPositions<B>>,
@@ -344,6 +344,14 @@ impl<B: Backend> Attention<B> {
         // K/V-only calls still need bound query buffers.
         let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
         let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
+
+        // Rows of an image grid don't follow one another, so the kernel takes a position for each of them
+        let cursor = cache.rope_cursor();
+        let grid_positions = match rope {
+            Some(rope) if cursor.in_grid() => Some(rope.positions(cursor, suffix_length, command_buffer)?),
+            _ => None,
+        };
+        let rope_positions = rope_positions.or(grid_positions.as_ref());
         let prepare = match (rope_positions, trie) {
             (Some(_), Some(_)) => panic!("trie rows rotate by their heights"),
             (Some(_), None) => self.prepare_at_positions.as_ref().expect("positions for attention without RoPE"),
@@ -369,7 +377,7 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| cache.rope_position()),
+            rope.map(|_| cursor.position()[0]),
             cache.prefix_len(),
             input_row_stride,
             suffix_length,
@@ -429,23 +437,6 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
         let output = self.attend(hidden, None, batch_dim, state, command_buffer)?;
-
-        Ok(output)
-    }
-
-    fn encode_at_positions(
-        &self,
-        hidden: B::ScratchBuffer,
-        positions: &RoPEPositions<B>,
-        batch_dim: &BatchTopology<B>,
-        state: Option<MaybeMut<dyn MixerState<B>>>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("attention");
-
-        let state =
-            state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, Some(positions), batch_dim, state, command_buffer)?;
 
         Ok(output)
     }
