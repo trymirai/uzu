@@ -104,6 +104,10 @@ impl Session {
                 message: "can not get encoding config".to_string(),
             }),
         }?;
+        let instance = match encoding.image_pad_token_id() {
+            Some(id) => Arc::from(instance.with_image_pad_token_id(u64::from(id)).map_err(ChatSessionError::from)?),
+            None => instance,
+        };
         let state = instance.state().await.map_err(ChatSessionError::from)?;
         let stop_token_ids = instance.stop_token_ids().ok_or_else(|| ChatSessionError::Loading {
             message: "stop_token_ids is None".to_string(),
@@ -145,7 +149,7 @@ impl Session {
         {
             return error_stream(error);
         }
-        // Preparing input advances the encoding before the backend has consumed the prompt.
+
         self.prefix_valid = false;
         let cached_tokens_input = match self.prepare_input(input).await {
             Ok(cached_tokens) => cached_tokens,
@@ -268,7 +272,7 @@ impl Session {
             return Ok(cached.len());
         }
 
-        let rendered_ids = self.build_input(messages)?;
+        let rendered_ids = self.build_tokens_input(messages)?;
         let cached_ids: Vec<_> = cached.iter().map(|token| u64::from(token.id)).collect();
         if cached_images_match && rendered_ids.starts_with(&cached_ids) {
             self.input = Self::attach_images(pad, suffix_urls, rendered_ids[cached_ids.len()..].to_vec())?;
@@ -292,7 +296,7 @@ impl Session {
         Ok(0)
     }
 
-    fn build_input(
+    fn build_tokens_input(
         &mut self,
         all_messages: &[ChatMessage],
     ) -> Result<Vec<u64>, ChatSessionError> {
@@ -304,27 +308,26 @@ impl Session {
 
     fn attach_images<'a>(
         pad: Option<u64>,
-        mut urls: impl Iterator<Item = &'a str>,
+        urls: impl Iterator<Item = &'a str>,
         tokens: Vec<u64>,
     ) -> Result<StreamInput, ChatSessionError> {
         let Some(pad) = pad else {
             return Ok(StreamInput {
                 tokens,
-                images: Vec::new(),
+                ..Default::default()
             });
         };
 
-        let starts = tokens.iter().enumerate().filter(|&(_, &token)| token == pad).map(|(index, _)| index);
-        let mut images = Vec::new();
-        for start in starts {
-            let url =
-                urls.next().ok_or_else(|| ChatSessionError::backend("image pad token has no matching image block"))?;
-            images.push(StreamImage {
-                start,
+        let images: Vec<_> = urls
+            .map(|url| StreamImage {
                 url: url.to_owned(),
-            });
+            })
+            .collect();
+        let pad_count = tokens.iter().filter(|&&token| token == pad).count();
+        if pad_count > images.len() {
+            return Err(ChatSessionError::backend("image pad token has no matching image block"));
         }
-        if urls.next().is_some() {
+        if pad_count < images.len() {
             return Err(ChatSessionError::backend("image block has no matching image pad token"));
         }
 
@@ -633,7 +636,7 @@ mod tests {
         let urls = ["cached.png", "new.png"];
         let suffix = || urls.iter().copied().skip(1);
         let input = Session::attach_images(Some(42), suffix(), vec![7, 42]).unwrap();
-        assert_eq!(input.images[0].start, 1);
+        assert_eq!(input.images.len(), 1);
         assert_eq!(input.images[0].url, "new.png");
         assert!(Session::attach_images(Some(42), urls.iter().copied().skip(2), vec![42]).is_err());
         assert!(Session::attach_images(Some(42), suffix(), vec![42, 42]).is_err());

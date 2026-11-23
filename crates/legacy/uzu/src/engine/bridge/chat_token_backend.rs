@@ -49,6 +49,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     model: Arc<LanguageModel<B>>,
     config: ChatConfig,
     stop_token_ids: Vec<i32>,
+    image_pad_token_id: Option<u64>,
     max_context_length: Option<u32>,
     sampling_defaults: SamplingParameters,
 }
@@ -79,6 +80,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             model: Arc::new(model),
             config,
             stop_token_ids,
+            image_pad_token_id: None,
             max_context_length,
             sampling_defaults,
         })
@@ -171,10 +173,20 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
             Ok(images) => images,
             Err(err) => return Box::pin(NoMetricsStream::new(error_to_stream_output(err))),
         };
-        for image in &images {
-            model_input.push(LanguageModelInput::Image(image))
+        if images.is_empty() {
+            model_input.push(LanguageModelInput::Tokens(&input.tokens));
+        } else {
+            let mut chunks = input.tokens.split(|&token| Some(token) == self.image_pad_token_id);
+            for image in &images {
+                if let Some(tokens) = chunks.next().filter(|tokens| !tokens.is_empty()) {
+                    model_input.push(LanguageModelInput::Tokens(tokens));
+                }
+                model_input.push(LanguageModelInput::Image(image));
+            }
+            if let Some(tokens) = chunks.next().filter(|tokens| !tokens.is_empty()) {
+                model_input.push(LanguageModelInput::Tokens(tokens));
+            }
         }
-        model_input.push(LanguageModelInput::Tokens(input.tokens.as_slice()));
 
         let stream = match self.model.stream(&model_input, model_state, options) {
             Ok(stream) => stream,
@@ -241,6 +253,16 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
             config,
             ..self.clone()
         })
+    }
+
+    fn with_image_pad_token_id(
+        &self,
+        image_pad_token_id: u64,
+    ) -> Result<Box<dyn ChatTokenBackendInstance>, ShojiBackendError> {
+        Ok(Box::new(Self {
+            image_pad_token_id: Some(image_pad_token_id),
+            ..self.clone()
+        }))
     }
 
     fn tokenizer(&self) -> Arc<Tokenizer> {

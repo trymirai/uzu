@@ -62,6 +62,11 @@ fn get_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionScalingError> {
 /// HEIC orientation (`irot`/`imir`) is applied by the decoder.
 fn get_heic_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionScalingError> {
     let mut decoder = HeifDecoder::new(ZCursor::new(image_bytes));
+    decoder.decode_headers()?;
+    let output_bytes = decoder.output_buffer_size().ok_or_else(|| {
+        ImageError::Limits(image::error::LimitError::from_kind(image::error::LimitErrorKind::InsufficientMemory))
+    })?;
+    image::Limits::default().reserve_usize(output_bytes)?;
     let pixels = decoder.decode()?;
     let colorspace = decoder.colorspace();
     let (Some(width), Some(height)) = (decoder.width(), decoder.height()) else {

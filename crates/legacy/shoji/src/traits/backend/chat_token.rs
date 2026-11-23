@@ -32,8 +32,6 @@ pub struct StreamConfig {
 }
 
 pub struct StreamImage {
-    /// Index in `StreamInput::tokens` of the image's pad token
-    pub start: usize,
     pub url: String,
 }
 
@@ -65,6 +63,13 @@ pub trait Instance:
         &self,
         config: ChatConfig,
     ) -> Box<dyn Instance>;
+
+    fn with_image_pad_token_id(
+        &self,
+        image_pad_token_id: u64,
+    ) -> Result<Box<dyn Instance>, Error> {
+        Err(format!("Backend does not support image pad token {image_pad_token_id}").into())
+    }
 
     fn tokenizer(&self) -> Arc<Tokenizer>;
 
