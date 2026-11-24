@@ -458,7 +458,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // Speculator pass
         let context_length = self.model_state.transformer_state.context_length();
         let mut cpu_token = None;
-        let (batch_dim, token_ids, trie_seeds, speculator_pendings, trie_cpu) = if self.propose_trie
+        let (batch_dim, token_ids, trie_seeds, mut speculator_pendings, mut trie_cpu) = if self.propose_trie
             && let Some(speculator) = &self.model.speculator
             && let Some(shape) = speculator.make_shape(
                 self.model_state.max_context_length.map(|max_context_length| max_context_length - context_length),
@@ -542,9 +542,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             // TODO(perf): CPU bubble for finding what rows we have to read from
             // disk for ngrams. we can overlap this with the first couple of
             // layers of the transformer, that don't use ngrams.
-            let (speculator_pendings, trie_cpu) = if self.model.decoder.has_ngram_embeddings()
-                || self.options.grammar.is_some()
-            {
+            let (speculator_pendings, trie_cpu) = if self.model.decoder.has_ngram_embeddings() {
                 let wait_span = CpuSpan::start(self.options.timestamps.as_ref(), "wait for speculator");
                 for pending in [draft_pending, trie_pending] {
                     wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
@@ -669,8 +667,21 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 .map_err(LanguageModelStreamError::Backend)?;
 
             let was_filled = if batch_dim.nodes().is_some() {
-                let (trie_nodes, trie_tokens) =
-                    trie_cpu.as_ref().expect("a grammar copies the trie out before the pass");
+                if trie_cpu.is_none()
+                    && let Some(speculator_pendings) = speculator_pendings.take()
+                {
+                    let wait_span = CpuSpan::start(self.options.timestamps.as_ref(), "wait for speculator");
+                    for pending in speculator_pendings {
+                        wait(pending, self.options.timestamps.as_ref())
+                            .await
+                            .map_err(LanguageModelStreamError::Backend)?;
+                    }
+                    drop(wait_span);
+
+                    let _copyout_span = CpuSpan::start(self.options.timestamps.as_ref(), "copyout trie");
+                    trie_cpu = Some(copyout_trie(&*self.model.engine.context, &batch_dim, &token_ids).await?);
+                }
+                let (trie_nodes, trie_tokens) = trie_cpu.as_ref().unwrap();
                 let trie_tokens = trie_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
 
                 trie::fill_bitmasks(trie_nodes, &trie_tokens, bitmask.as_slice_mut(), self.model.vocab_size, grammar)
