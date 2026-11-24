@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <img alt="Mirai" src="https://artifacts.trymirai.com/social/github/uzu-header.jpg" style="max-width: 100%;">
+    <img alt="Mirai" src="https://assets.trymirai.com/images/github/uzu-cover-v1.png" style="max-width: 100%;">
   </picture>
 </p>
 
