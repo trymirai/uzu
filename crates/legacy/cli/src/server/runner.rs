@@ -42,17 +42,7 @@ pub async fn run_server(
     let engine_config = EngineConfig::default();
     let engine = Engine::new(engine_config).await.context("Failed to create engine")?;
 
-    // TODO agolokoz: remove when model will appear in registry
-    let resolved = if model == "trymirai/Qwen3.5-9B-M-Vision" {
-        let mut resolved = engine
-            .model("/Users/glk/.cache/huggingface/hub/models--trymirai--Qwen3.5-9B-M-Vision/snapshots/1565da232128f13e0debd694652d7157e95220cc".to_string())
-            .await?
-            .with_context(|| format!("Model not found: {model}"))?;
-        resolved.encoding = Some(serde_json::json!({"type": "hanashi", "name": "qwen3.5"}).into());
-        resolved
-    } else {
-        engine.model(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?
-    };
+    let resolved = engine.model(model.clone()).await?.with_context(|| format!("Model not found: {model}"))?;
 
     let spinner = ProgressBar::new_spinner();
     spinner.enable_steady_tick(Duration::from_millis(100));

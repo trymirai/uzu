@@ -17,7 +17,8 @@ pub(crate) fn get_image_hashes(messages: &[ChatMessage]) -> Result<Vec<ImageHash
     let urls = get_image_urls(messages);
     let mut hashes = Vec::<ImageHash>::new();
     for url in urls {
-        let hash = get_image_hash(url).map_err(ChatSessionError::backend)?;
+        let hash = get_image_hash(url)
+            .map_err(|error| ChatSessionError::backend(format!("Reading image {url:?}: {error}")))?;
         hashes.push(hash);
     }
     Ok(hashes)

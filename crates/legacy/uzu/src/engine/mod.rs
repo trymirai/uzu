@@ -504,6 +504,31 @@ impl Engine {
             return Ok(Some(model));
         }
 
+        // TODO agolokoz: remove when model will appear in registry
+        // Temporary fallback until the vision model is available in the registry.
+        #[cfg(not(target_family = "wasm"))]
+        if identifier == "trymirai/Qwen3.5-9B-M-Vision" {
+            use std::{env, path::PathBuf};
+
+            let hub = env::var_os("HF_HUB_CACHE").map(PathBuf::from).or_else(|| {
+                let home = env::var_os("HF_HOME").map(PathBuf::from).or_else(|| {
+                    env::var_os("XDG_CACHE_HOME")
+                        .map(PathBuf::from)
+                        .or_else(|| dirs::home_dir().map(|home| home.join(".cache")))
+                        .map(|cache| cache.join("huggingface"))
+                });
+                home.map(|home| home.join("hub"))
+            });
+            if let Some(hub) = hub {
+                let snapshot = hub
+                    .join("models--trymirai--Qwen3.5-9B-M-Vision/snapshots/1565da232128f13e0debd694652d7157e95220cc");
+                if let Some(mut model) = self.model_by_path(snapshot.to_string_lossy().into_owned()).await? {
+                    model.encoding = Some(serde_json::json!({"type": "hanashi", "name": "qwen3.5"}).into());
+                    return Ok(Some(model));
+                }
+            }
+        }
+
         let models = self.models().await?;
         #[cfg(not(target_family = "wasm"))]
         let memory_total = {
