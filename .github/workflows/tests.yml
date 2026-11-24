@@ -157,28 +157,56 @@ jobs:
         run: git diff --exit-code
 
   validate-bindings:
-    name: validate-bindings
-    runs-on: prefect-github-actions
+    name: validate-bindings (${{ matrix.host }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: 'macos'
+            runner: 'prefect-github-actions'
+            languages: 'python swift typescript kotlin'
+          - host: 'linux'
+            runner: 'uzu-n4std16'
+            languages: 'kotlin'
+          # The Windows runner has no Vulkan driver: it builds and compiles the bindings without testing them.
+          - host: 'windows'
+            runner: 'windows-2025'
 
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-nix
+      - if: ${{ runner.os != 'Windows' }}
+        uses: ./.github/actions/setup-nix
+      - if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-legacy
+      - if: ${{ runner.os == 'Windows' }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
 
       - name: "Verify"
         id: verify
         run: |
           cargo tools verify
 
+      - name: "Compile Kotlin"
+        if: ${{ runner.os == 'Windows' }}
+        working-directory: crates/legacy/uzu/bindings/kotlin
+        run: ./gradlew.bat jvmTestClasses
+
       - name: "Print diff"
         if: ${{ always() && steps.verify.outcome == 'failure' }}
         run: git diff
 
       - name: "Test"
+        if: ${{ matrix.languages }}
         run: |
-          cargo tools test python
-          cargo tools test swift
-          cargo tools test typescript
+          for language in ${{ matrix.languages }}; do
+            cargo tools test "$language"
+          done
 
   linters-mirai-gui:
     name: linters (mirai-gui)

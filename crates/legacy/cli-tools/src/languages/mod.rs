@@ -1,3 +1,7 @@
+mod foreign_extensions;
+mod kotlin;
+mod kotlin_error_renames;
+mod kotlin_extensions;
 mod python;
 mod rust;
 mod swift;
@@ -9,6 +13,7 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use colored::Colorize;
+pub use kotlin::KotlinLanguageBackend;
 pub use python::PythonLanguageBackend;
 pub use rust::RustLanguageBackend;
 pub use swift::SwiftLanguageBackend;

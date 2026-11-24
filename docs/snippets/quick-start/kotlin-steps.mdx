@@ -1,0 +1,27 @@
+<Step title="Create a new project">
+    Create a Kotlin/JVM Gradle project, for example with `gradle init --type kotlin-application`.
+</Step>
+<Step title="Add the SDK">
+    Clone [uzu](https://github.com/trymirai/uzu) and build the engine for your machine with `cargo tools build kotlin`, then include the Kotlin module:
+    ```kotlin
+    // settings.gradle.kts
+    includeBuild("<uzu checkout>/crates/legacy/uzu/bindings/kotlin")
+
+    // build.gradle.kts
+    dependencies {
+        implementation("com.trymirai:uzu")
+    }
+    ```
+    The engine runs on macOS (Apple silicon, Metal), Linux and Windows (x86-64, Vulkan 1.4). The structured output example also needs `implementation("org.json:json:20260814")`.
+    On Windows, use a JDK whose bundled C++ runtime (`bin\msvcp140.dll`) is 14.40 or newer, such as Eclipse Temurin 21.
+</Step>
+<Step title="Paste the snippet">
+    <CodeKotlin/>
+</Step>
+<Step title="Add the snippet call">
+    ```kotlin
+    fun main() = kotlinx.coroutines.runBlocking {
+        runExampleName()
+    }
+    ```
+</Step>

@@ -4,6 +4,8 @@ IPHONEOS_DEPLOYMENT_TARGET = "26.4"
 XROS_DEPLOYMENT_TARGET = "26.4"
 TVOS_DEPLOYMENT_TARGET = "26.4"
 WATCHOS_DEPLOYMENT_TARGET = "26.4"
+# A JVM loads the Windows library next to its own C++ runtime, which can be older than our toolset: link it statically.
+CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
 
 [tools]
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
@@ -51,6 +53,7 @@ aliases = ["windows"]
 [targets."x86_64-pc-windows-msvc"]
 features = ["cpu"]
 aliases = ["windows"]
+required_envs = ["CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"]
 
 [targets."wasm32-unknown-unknown"]
 features = ["webgpu"]
@@ -83,6 +86,7 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-heade
     "swift_spm",
     "swift_platforms",
     "swift_version",
+    "kotlin",
 ] }
 
 [languages.python]
@@ -144,6 +148,20 @@ targets = ["wasm32-unknown-unknown"]
 tools = []
 bindings = ["wasm"]
 
+[languages.kotlin]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+tools = []
+bindings = ["uniffi"]
+examples_path = "crates/legacy/uzu/bindings/kotlin/src/jvmTest/kotlin/com/trymirai/uzu/examples"
+metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-header.jpg", badges = [
+    "discord",
+    "email",
+    "docs",
+    "license",
+    "build",
+    "kotlin",
+] }
+
 [binaries.mirai]
 crate = "cli"
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
@@ -164,6 +182,7 @@ swift = '[![Swift](https://img.shields.io/badge/Swift-blue)](crates/legacy/uzu/b
 swift_platforms = '[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20Mac%20Catalyst-blue)](Package.swift)'
 swift_spm = '[![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift)'
 swift_version = '[![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org)'
+kotlin = '[![Kotlin](https://img.shields.io/badge/Kotlin-purple)](crates/legacy/uzu/bindings/kotlin)'
 
 [examples]
 quick-start = { title = "Quick Start", description = "Minimal snippet that downloads a model and generates a single reply" }

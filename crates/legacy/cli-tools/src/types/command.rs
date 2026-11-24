@@ -428,6 +428,24 @@ impl Command {
         ])
     }
 
+    pub fn gradle_test(
+        project_path: &Path,
+        task: &str,
+        test_filter: &str,
+    ) -> Self {
+        let wrapper = if cfg!(windows) {
+            "gradlew.bat"
+        } else {
+            "gradlew"
+        };
+        Self::new(&project_path.join(wrapper).to_string_lossy())
+            .with_current_path(project_path)
+            .with_argument(task)
+            // Without --rerun an unchanged repeat run is up to date and executes nothing.
+            .with_argument("--rerun")
+            .with_arguments(vec!["--tests".to_string(), test_filter.to_string()])
+    }
+
     pub fn xcodebuild() -> Self {
         Self::new("xcodebuild")
     }

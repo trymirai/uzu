@@ -126,6 +126,14 @@ impl Paths {
         self.artifacts_path().join("swift").join("slices")
     }
 
+    pub fn kotlin_generated_sources_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Kotlin).join("src").join("commonMain").join("generated")
+    }
+
+    pub fn kotlin_natives_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Kotlin).join("src").join("jvmMain").join("natives")
+    }
+
     pub fn root_package_swift_path(&self) -> PathBuf {
         self.root_path.join("Package.swift")
     }

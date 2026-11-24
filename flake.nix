@@ -152,6 +152,7 @@
         commonDevshellPackages = with pkgs;
           [
             nil
+            jdk21 # Kotlin bindings (Gradle)
             playwright-env
             uv
             maturin
