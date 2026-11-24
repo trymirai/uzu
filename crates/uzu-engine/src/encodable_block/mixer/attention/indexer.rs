@@ -4,7 +4,7 @@ use crate::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         gpu_types::qkv_norm::QKVNormParams,
         kernel::{
-            AttentionKernel, AttentionPrepareKernel, IndexerCacheUpdateKernel, attention::KeyBlocks,
+            AttentionPrepareKernel, IndexerCacheUpdateKernel, attention::KeyBlocks, indexer::IndexerKernel,
             radix_top_k_small::MAX_K,
         },
     },
@@ -27,6 +27,7 @@ pub struct Indexer<B: Backend> {
     query_norm_scales: Option<B::GlobalGpuBuffer>,
     key_norm_scales: Option<B::GlobalGpuBuffer>,
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    kernel: <B::Kernels as Kernels>::IndexerKernel,
 }
 
 impl<B: Backend> Indexer<B> {
@@ -36,6 +37,9 @@ impl<B: Backend> Indexer<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, AttentionNewError<B>> {
+        if !<B::Kernels as Kernels>::IndexerKernel::is_supported(context) {
+            return Err(AttentionNewError::IndexerNotSupported);
+        }
         assert!(
             (1..=ATTENTION_SUFFIX_CAPACITY).contains(&config.compression_ratio)
                 && config.token_budget.is_multiple_of(config.compression_ratio)
@@ -76,6 +80,13 @@ impl<B: Backend> Indexer<B> {
                 true,
             )
             .map_err(AttentionNewError::Backend)?,
+            kernel: <B::Kernels as Kernels>::IndexerKernel::new(
+                context,
+                config.num_heads,
+                config.head_dim,
+                config.compression_ratio,
+            )
+            .map_err(AttentionNewError::Backend)?,
             config,
             norm_params,
             query_norm_scales,
@@ -87,7 +98,6 @@ impl<B: Backend> Indexer<B> {
     pub fn encode(
         &self,
         keys: &mut IndexerCache<B>,
-        kernel: &<B::Kernels as Kernels>::AttentionKernel,
         projected: impl BufferRef<Backend = B>,
         projected_row_stride: u32,
         rope: &RoPE<B>,
@@ -111,7 +121,7 @@ impl<B: Backend> Indexer<B> {
         };
         let draft_rows_bytes = (suffix * self.config.compression_ratio) as usize * size_of::<i32>();
         let mut query_blocks = command_buffer.allocate_scratch(block_ids_bytes + draft_rows_bytes)?;
-        let nodes = kernel.prepare_draft_blocks(
+        let nodes = self.kernel.prepare_draft_blocks(
             topology.nodes(),
             suffix,
             prefix,
@@ -161,7 +171,7 @@ impl<B: Backend> Indexer<B> {
         } else {
             prefix / self.config.compression_ratio + suffix
         };
-        kernel.select_blocks(
+        self.kernel.select_blocks(
             &query_codes,
             &query_scales,
             &keys.block_codes,

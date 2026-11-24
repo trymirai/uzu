@@ -10,12 +10,15 @@ use crate::{
             gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-                attention::{KeyBlocks, SparseAttentionKernelConfig},
+                attention::KeyBlocks, indexer::IndexerKernel,
             },
         },
         metal::{
             Metal,
-            kernel::{AttentionBlockScoreMetalKernel, RadixTopKSmallMetalKernel, attention::AttentionMetalKernel},
+            kernel::{
+                AttentionBlockScoreMetalKernel, RadixTopKSmallMetalKernel, attention::AttentionMetalKernel,
+                indexer::IndexerMetalKernel,
+            },
         },
     },
     data_type::DataType,
@@ -137,21 +140,21 @@ fn attention_matches_cpu() {
                 sliding_window_size: None,
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
-                sparse: sparse.then_some(SparseAttentionKernelConfig {
-                    num_heads: 4,
-                    head_dim: 128,
-                    compression_ratio: COMPRESSION_RATIO as u32,
-                }),
+                sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
+            let indexer =
+                sparse.then(|| IndexerMetalKernel::new(&metal, 4, 128, COMPRESSION_RATIO as u32, use_mxu).unwrap());
             if sparse && !use_mxu && q_heads == 24 && suffix == 1 && prefix == 1024 {
                 let codes =
                     create_buffer_with_data::<Metal, i8>(&metal, &[vec![1; 128], vec![-1; 128]].concat().repeat(6));
                 let scales = create_buffer_with_data::<Metal, bf16>(&metal, &[bf16::ONE; 12]);
                 let mut selected = create_buffer_with_data::<Metal, i32>(&metal, &[-123; 12]);
                 let mut command = metal.create_command_buffer(None, None).unwrap();
-                kernel
+                indexer
+                    .as_ref()
+                    .unwrap()
                     .select_blocks(
                         &codes,
                         &scales,
@@ -255,7 +258,9 @@ fn attention_matches_cpu() {
                         let mut packed = block_list.clone();
                         packed.resize(suffix * (blocks_per_query + COMPRESSION_RATIO), i32::MIN);
                         let mut query_blocks = create_buffer_with_data::<Metal, i32>(&metal, &packed);
-                        kernel
+                        indexer
+                            .as_ref()
+                            .unwrap()
                             .prepare_draft_blocks(
                                 trie.as_ref(),
                                 suffix as u32,

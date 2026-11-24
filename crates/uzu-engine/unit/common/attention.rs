@@ -24,7 +24,7 @@ pub(crate) fn kv_layout<B: Backend>(
             sliding_window_size: None,
             scale: None,
             data_type: DataType::BF16,
-            sparse: None,
+            sparse_compression_ratio: None,
         },
     )
     .unwrap()

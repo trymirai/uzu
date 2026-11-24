@@ -1,5 +1,8 @@
 use crate::backends::{
-    common::{Kernels, kernel::tree_verify_blocks::TreeVerifyBlocks},
+    common::{
+        Kernels,
+        kernel::{Unsupported, tree_verify_blocks::TreeVerifyBlocks},
+    },
     vulkan::{
         VkAttentionKernel, VkDeltaNetChunkedPrefill, VkDeltaNetUpdateKernel, VkLinearizeChain, VkLinearizeTree,
         VkMatmulKernel, VkRadixTopKSmall, VkTreeVerify, Vulkan,
@@ -15,6 +18,7 @@ impl Kernels for VulkanKernels {
 
     autogen_kernels!();
     type AttentionKernel = VkAttentionKernel;
+    type IndexerKernel = Unsupported<Vulkan>;
     type DeltaNetChunkedPrefill = VkDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = TreeVerifyBlocks<Vulkan>;
     type DeltaNetUpdateKernel = VkDeltaNetUpdateKernel;

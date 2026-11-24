@@ -32,7 +32,7 @@ impl AttentionKernel for VkAttentionKernel {
         context: &VkContext,
         config: AttentionKernelConfig,
     ) -> Result<Self, Error> {
-        if config.sparse.is_some() {
+        if config.sparse_compression_ratio.is_some() {
             return Err(Error::NotSupported);
         }
         macro_rules! by_trie {

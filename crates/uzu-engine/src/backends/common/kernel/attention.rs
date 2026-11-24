@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use crate::{
-    backends::common::{Backend, BufferMut, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
+    backends::common::{Backend, BufferRef, CommandBuffer, Kernels, kernel::kv_layout::KVLayout},
     data_type::DataType,
     encodable_block::mixer::attention::KVCacheState,
 };
@@ -16,34 +16,6 @@ pub trait AttentionKernel: Sized + Send + Sync {
     ) -> Result<Self, Self::Error>;
 
     fn kv_layout(&self) -> KVLayout;
-
-    fn prepare_draft_blocks(
-        &self,
-        _trie: Option<impl BufferRef<Backend = Self::Backend>>,
-        _rows: u32,
-        _prefix: u32,
-        _draft_token_rows: impl BufferMut<Backend = Self::Backend>,
-        _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error> {
-        unreachable!("sparse attention is Metal only")
-    }
-
-    fn select_blocks(
-        &self,
-        _query_codes: impl BufferRef<Backend = Self::Backend>,
-        _query_scales: impl BufferRef<Backend = Self::Backend>,
-        _key_codes: impl BufferRef<Backend = Self::Backend>,
-        _key_scales: impl BufferRef<Backend = Self::Backend>,
-        _rows: u32,
-        _prefix_len: u32,
-        _cached_block_row: u32,
-        _candidates: u32,
-        _selected: KeyBlocks<impl BufferMut<Backend = Self::Backend>>,
-        _trie: Option<impl BufferRef<Backend = Self::Backend>>,
-        _command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<(), <Self::Backend as Backend>::Error> {
-        unreachable!("sparse attention is Metal only")
-    }
 
     fn encode(
         &self,
@@ -75,14 +47,7 @@ pub struct AttentionKernelConfig {
     pub sliding_window_size: Option<u32>,
     pub scale: Option<f32>,
     pub data_type: DataType,
-    pub sparse: Option<SparseAttentionKernelConfig>,
-}
-
-#[derive(Clone, Copy)]
-pub struct SparseAttentionKernelConfig {
-    pub num_heads: u32,
-    pub head_dim: u32,
-    pub compression_ratio: u32,
+    pub sparse_compression_ratio: Option<u32>,
 }
 
 pub struct AttentionArguments<

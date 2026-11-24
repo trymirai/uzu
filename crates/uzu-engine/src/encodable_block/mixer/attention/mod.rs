@@ -7,7 +7,7 @@ use crate::{
         gpu_types::qkv_norm::QKVNormParams,
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
-            attention::{KeyBlocks, SparseAttentionKernelConfig},
+            attention::KeyBlocks,
         },
     },
     config::{
@@ -56,6 +56,8 @@ pub struct Attention<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum AttentionNewError<B: Backend> {
+    #[error("Sparse attention indexer is not supported by this backend")]
+    IndexerNotSupported,
     #[error("Attention kernel error: {0}")]
     Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("Backend error: {0}")]
@@ -196,11 +198,7 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
-                sparse: indexer_config.map(|config| SparseAttentionKernelConfig {
-                    num_heads: config.num_heads,
-                    head_dim: config.head_dim,
-                    compression_ratio: config.compression_ratio,
-                }),
+                sparse_compression_ratio: indexer_config.map(|config| config.compression_ratio),
             },
         )
         .map_err(AttentionNewError::Kernel)?;
@@ -319,7 +317,6 @@ impl<B: Backend> Attention<B> {
                 indexer
                     .encode(
                         keys.expect("missing indexer state"),
-                        &self.kernel,
                         qkvg.subrange(indexer_offset * self.data_type.size_in_bytes()..),
                         self.projection_dim,
                         self.rope.as_ref().unwrap(),

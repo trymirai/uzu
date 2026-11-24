@@ -48,7 +48,7 @@ fn bench_attention(c: &mut Criterion) {
             sliding_window_size: None,
             scale: None,
             data_type: DataType::BF16,
-            sparse: None,
+            sparse_compression_ratio: None,
         },
     )
     .expect("kernel");
