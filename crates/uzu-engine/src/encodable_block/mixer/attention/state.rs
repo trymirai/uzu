@@ -1,13 +1,15 @@
 use std::any::Any;
 
-use super::{Attention, indexer::IndexerCache};
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, GpuBuffer, Kernels, SparseBuffer,
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{Mixer, MixerState},
+    encodable_block::mixer::{
+        Mixer, MixerState,
+        attention::{Attention, indexer::IndexerCache},
+    },
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity

@@ -1,4 +1,3 @@
-use super::AttentionNewError;
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
@@ -16,7 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        mixer::attention::{ATTENTION_SUFFIX_CAPACITY, rope::RoPE},
+        mixer::attention::{ATTENTION_SUFFIX_CAPACITY, AttentionNewError, rope::RoPE},
     },
     safetensors::ParameterTree,
 };

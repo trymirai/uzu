@@ -1,13 +1,15 @@
 use std::sync::OnceLock;
 
-use super::RadixTopKSmallMetalKernel;
 use crate::{
     backends::{
         common::{
             BufferMut, BufferRef,
             kernel::radix_top_k_small::{MAX_K, RadixTopKSmall},
         },
-        metal::{Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError},
+        metal::{
+            Metal, command_buffer::MetalCommandBufferEncoding, context::MetalContext, error::MetalError,
+            kernel::RadixTopKSmallMetalKernel,
+        },
     },
     data_type::DataType,
 };
