@@ -4962,6 +4962,7 @@ name = "nagare"
 version = "0.7.5"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "bindings",
  "bindings-types",
  "blake3",

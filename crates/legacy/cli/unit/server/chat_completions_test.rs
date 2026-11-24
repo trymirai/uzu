@@ -406,17 +406,64 @@ fn message_content_accepts_string_null_and_text_parts() {
         ]}"#,
     )
     .messages;
-    assert_eq!(messages[0].content.as_deref(), Some("plain"));
-    assert_eq!(messages[1].content, None);
-    assert_eq!(messages[2].content.as_deref(), Some("Hello world"));
+    assert_eq!(messages[0].content, vec![OaiContentPart::Text("plain".to_string())]);
+    assert!(messages[1].content.is_empty());
+    assert_eq!(messages[2].content, vec![OaiContentPart::Text("Hello world".to_string())]);
 
     let missing = request(r#"{"messages":[{"role":"user"}]}"#);
-    assert_eq!(missing.messages[0].content, None);
+    assert!(missing.messages[0].content.is_empty());
 
-    let image = serde_json::from_str::<ChatCompletionRequest>(
-        r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]}"#,
+    let audio = serde_json::from_str::<ChatCompletionRequest>(
+        r#"{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AA==","format":"wav"}}]}]}"#,
     );
-    assert!(image.is_err());
+    assert!(audio.is_err());
+}
+
+#[test]
+fn image_url_parts_become_image_blocks_in_order() {
+    let messages = messages_with_support(
+        r#"{"messages":[{"role":"user","content":[
+            {"type":"text","text":"Compare"},
+            {"type":"image_url","image_url":{"url":"https://example.com/cat.jpeg","detail":"low"}},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}},
+            {"type":"text","text":"these"}
+        ]}]}"#,
+        ThinkingSupport::Unsupported,
+    );
+    assert_eq!(
+        messages,
+        vec![
+            ChatMessage::user()
+                .with_text("Compare".to_string())
+                .with_block(ChatContentBlock::Image {
+                    url: "https://example.com/cat.jpeg".to_string(),
+                })
+                .with_block(ChatContentBlock::Image {
+                    url: "data:image/png;base64,AA==".to_string(),
+                })
+                .with_text("these".to_string())
+        ]
+    );
+}
+
+#[test]
+fn image_url_parts_reject_local_paths_and_non_user_roles() {
+    for url in ["/etc/passwd", "file:///etc/passwd", "cat.jpeg"] {
+        let body = format!(
+            r#"{{"messages":[{{"role":"user","content":[{{"type":"image_url","image_url":{{"url":"{url}"}}}}]}}]}}"#
+        );
+        assert!(serde_json::from_str::<ChatCompletionRequest>(&body).is_err(), "url: {url}");
+    }
+    let missing_url = r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{}}]}]}"#;
+    assert!(serde_json::from_str::<ChatCompletionRequest>(missing_url).is_err());
+
+    for role in ["system", "assistant", "tool"] {
+        let body = format!(
+            r#"{{"messages":[{{"role":"{role}","content":[{{"type":"image_url","image_url":{{"url":"https://example.com/cat.jpeg"}}}}]}}]}}"#
+        );
+        let error = build_messages(&request(&body), ThinkingSupport::Unsupported).unwrap_err();
+        assert!(matches!(error, MessageBuildError::Content(_)), "role: {role}, got {error:?}");
+    }
 }
 
 #[test]
