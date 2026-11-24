@@ -1,6 +1,5 @@
 use crate::backends::common::{Backend, BufferMut, BufferRef, CommandBuffer, Kernels};
 
-#[cfg(any(backend = "metal", backend = "vulkan", backend = "cpu"))] // TODO: webgpu
 pub const MAX_K: u32 = 512;
 
 pub trait RadixTopKSmall: Sized + Send + Sync {

@@ -366,7 +366,7 @@ fn stride_checks(
         .collect())
 }
 
-fn canonical_struct<'a>(
+fn canonical_pointee<'a>(
     kernel_name: &str,
     variants: &[SlangEntryPointVariant],
     gpu_types: &[&GpuTypes],
@@ -378,6 +378,14 @@ fn canonical_struct<'a>(
         return Ok(None);
     };
     let pointee = &layout.name;
+    if pointee == "uint" {
+        ensure!(
+            layout.stride == 4 && layout.alignment == 4 && layout.fields.is_empty(),
+            "{kernel_name}: '{}' does not have the layout of u32",
+            field.name
+        );
+        return Ok(Some(("u32", parse_quote! { u32 }, 4, 4)));
+    }
     let Some(path) =
         gpu_type_paths.full_path_for(pointee).filter(|_| gpu_type_paths.kind_for(pointee) == Some(GpuTypeKind::Struct))
     else {
@@ -484,7 +492,7 @@ fn encode_arguments(
             .with_context(|| format!("{kernel_name}: no reflected field for '{name}'"))?;
         let start = field.offset;
         let end = start + field.size;
-        let canonical = canonical_struct(kernel_name, variants, gpu_types, gpu_type_paths, field, layout_checks)?;
+        let canonical = canonical_pointee(kernel_name, variants, gpu_types, gpu_type_paths, field, layout_checks)?;
         let (argument_type, bytes) = match (&argument.ty, canonical) {
             (KernelArgumentType::Buffer(access), _) => {
                 ensure!(field.size == 8 && field.layout.is_some(), "{kernel_name}: '{name}' is not a device address");
