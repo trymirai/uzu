@@ -25,7 +25,7 @@ pub struct Indexer<B: Backend> {
     norm_params: QKVNormParams,
     query_norm_scales: Option<B::GlobalGpuBuffer>,
     key_norm_scales: Option<B::GlobalGpuBuffer>,
-    prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
+    prepare: [<B::Kernels as Kernels>::AttentionPrepareKernel; 2],
     kernel: <B::Kernels as Kernels>::IndexerKernel,
 }
 
@@ -62,8 +62,8 @@ impl<B: Backend> Indexer<B> {
         };
         let query_norm_scales = load_norm(0, &config.query_norm_config, "query_norm").await?;
         let key_norm_scales = load_norm(1, &config.key_norm_config, "key_norm").await?;
-        Ok(Self {
-            prepare: <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+        let prepare = |has_trie| {
+            <B::Kernels as Kernels>::AttentionPrepareKernel::new(
                 context,
                 DataType::BF16,
                 config.head_dim,
@@ -76,9 +76,12 @@ impl<B: Backend> Indexer<B> {
                 false,
                 true,
                 config.compression_ratio,
-                true,
+                has_trie,
             )
-            .map_err(AttentionNewError::Backend)?,
+            .map_err(AttentionNewError::Backend)
+        };
+        Ok(Self {
+            prepare: [prepare(false)?, prepare(true)?],
             kernel: <B::Kernels as Kernels>::IndexerKernel::new(
                 context,
                 config.num_heads,
@@ -120,13 +123,13 @@ impl<B: Backend> Indexer<B> {
         };
         let draft_rows_bytes = (suffix * self.config.compression_ratio) as usize * size_of::<i32>();
         let mut query_blocks = command_buffer.allocate_scratch(block_ids_bytes + draft_rows_bytes)?;
-        let nodes = self.kernel.prepare_draft_blocks(
+        self.kernel.prepare_draft_blocks(
             topology.nodes(),
             suffix,
             prefix,
             (&mut query_blocks).subrange_mut(block_ids_bytes..),
             command_buffer,
-        )?;
+        );
         let query_rows = suffix * query_heads;
         let mut query_codes =
             command_buffer.allocate_scratch((query_rows as usize * self.config.head_dim as usize).max(1))?;
@@ -134,7 +137,7 @@ impl<B: Backend> Indexer<B> {
             command_buffer.allocate_scratch((query_rows as usize * DataType::BF16.size_in_bytes()).max(1))?;
         let skipped_query_bytes =
             ((self.config.num_heads - query_heads) * self.config.head_dim) as usize * DataType::BF16.size_in_bytes();
-        self.prepare.encode(
+        self.prepare[usize::from(topology.nodes().is_some())].encode(
             projected.subrange(skipped_query_bytes..),
             &mut query_codes,
             &mut query_scales,
@@ -146,7 +149,6 @@ impl<B: Backend> Indexer<B> {
             self.query_norm_scales.as_ref(),
             self.key_norm_scales.as_ref(),
             None::<&B::GlobalGpuBuffer>,
-            Some(&nodes),
             Some((&query_blocks).subrange(block_ids_bytes..)),
             Some(&mut keys.unpooled_keys),
             self.norm_params,
@@ -159,7 +161,7 @@ impl<B: Backend> Indexer<B> {
             suffix,
             query_rows,
             Some(prefix),
-            Some(&nodes),
+            topology.nodes(),
             command_buffer,
         );
         if !requires_block_ranking {
@@ -183,7 +185,7 @@ impl<B: Backend> Indexer<B> {
                 query_blocks: &mut query_blocks,
                 blocks_per_query: block_budget,
             },
-            topology.nodes().is_some().then_some(&nodes),
+            topology.nodes(),
             command_buffer,
         )?;
         Ok(Some(KeyBlocks {

@@ -23,7 +23,7 @@ impl RadixTopKSmall for MetalRadixTopKSmall {
 
     fn new(context: &MetalContext) -> Result<Self, MetalError> {
         let kernels = [OnceLock::new(), OnceLock::new()];
-        kernels[1].set(RadixTopKSmallMetalKernel::new(context, DataType::BF16, true)?).ok();
+        kernels[1].set(RadixTopKSmallMetalKernel::new(context, DataType::BF16, true, true)?).ok();
         Ok(Self {
             kernels,
         })
@@ -43,10 +43,10 @@ impl RadixTopKSmall for MetalRadixTopKSmall {
         assert!(rows > 0 && columns > 0 && k > 0 && k <= MAX_K && k <= columns);
         let context = command_buffer.context.clone();
         let kernel = self.kernels[usize::from(sorted)].get_or_init(|| {
-            RadixTopKSmallMetalKernel::new(&context, DataType::BF16, sorted)
+            RadixTopKSmallMetalKernel::new(&context, DataType::BF16, sorted, true)
                 .expect("Failed to create radix top-k kernel")
         });
-        kernel.encode(input, output_ids, output_scores, rows, columns, k, command_buffer);
+        kernel.encode(input, output_ids, Some(output_scores), rows, columns, k, command_buffer);
         Ok(())
     }
 }

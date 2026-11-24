@@ -43,6 +43,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
     fused: bool,
     rope: bool,
     mode: PrepareMode,
+    has_trie: bool,
 ) -> PrepareOutput {
     const CACHE_TOKENS: usize = 64;
     const SUFFIX: usize = 2;
@@ -108,6 +109,9 @@ fn run_prepare<B: Backend, const DIM: usize>(
             }
         }
     }
+    if key_reference && !has_trie {
+        rows[row_stride + key_offset..row_stride + key_offset + DIM].fill(bf16::ZERO);
+    }
     let context = block_on(B::Context::new()).unwrap();
     let layout = kv_layout::<B>(&context, DIM as u32, 1);
     let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows);
@@ -138,7 +142,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[2],
         pool_keys,
         4 * u32::from(pool_keys),
-        true,
+        has_trie,
     )
     .unwrap();
     let nodes = create_buffer_with_data::<B, u32>(
@@ -150,7 +154,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
             parent: -1,
         })),
     );
-    let path_token_indices = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 3, 3, 4, 4]);
+    let block_token_rows = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 3, 3, 4, 4]);
     let mut raw_keys = create_buffer_with_data::<B, bf16>(&context, &[cached_key, vec![bf16::ZERO; 5 * DIM]].concat());
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
     let query_heads = if keys_only {
@@ -175,8 +179,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[0].then_some(&norm_scales[0]),
         affine[1].then_some(&norm_scales[1]),
         affine[2].then_some(&norm_scales[2]),
-        pool_keys.then_some(&nodes),
-        pool_keys.then_some(&path_token_indices),
+        pool_keys.then_some(&block_token_rows),
         pool_keys.then_some(&mut raw_keys),
         if fused {
             norm_params
@@ -192,14 +195,18 @@ fn run_prepare<B: Backend, const DIM: usize>(
         SUFFIX as u32,
         query_heads * SUFFIX as u32,
         pool_keys.then_some(PREFIX),
-        Some(&nodes),
+        has_trie.then_some(&nodes),
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    let raw_keys = pool_keys.then(|| buffer_to_vec::<B, bf16>(&context, &raw_keys));
+    if let Some(raw_keys) = &raw_keys {
+        assert_eq!(&raw_keys[3 * DIM..5 * DIM], keys.concat());
+    }
     PrepareOutput {
         codes: [&q_codes, &k_codes, &v_codes].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
         scales: [&q_scales, &k_scales, &v_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
-        raw_keys: pool_keys.then(|| buffer_to_vec::<B, bf16>(&context, &raw_keys)),
+        raw_keys,
     }
 }
 
@@ -218,18 +225,21 @@ fn test_attention_prepare_fused_norm() {
                         enabled,
                         affine,
                     };
-                    for rope in [false, true] {
+                    for (rope, has_trie) in [(false, true), (true, true), (true, false)] {
                         for_each_backend!(|B| {
-                            let separate = run_prepare::<B, DIM>(queries, case, false, rope, PrepareMode::Normal);
-                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::Normal);
+                            let separate =
+                                run_prepare::<B, DIM>(queries, case, false, rope, PrepareMode::Normal, has_trie);
+                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::Normal, has_trie);
                             assert_eq!(
                                 separate, fused,
                                 "fused norm mismatch D{DIM} queries={queries} full_layer={full_layer} rope={rope}"
                             );
-                            let pooled = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::PoolKeys);
+                            let pooled =
+                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::PoolKeys, has_trie);
                             let key_reference =
-                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeyReference);
-                            let keys_only = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeysOnly);
+                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeyReference, has_trie);
+                            let keys_only =
+                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeysOnly, has_trie);
                             assert_eq!(pooled.codes[1], keys_only.codes[1]);
                             assert_eq!(pooled.scales[1], keys_only.scales[1]);
                             assert_eq!(pooled.raw_keys, keys_only.raw_keys);

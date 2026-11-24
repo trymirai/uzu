@@ -415,7 +415,6 @@ impl<B: Backend> Attention<B> {
             self.qkv_norm_scales[1].as_ref(),
             self.qkv_norm_scales[2].as_ref(),
             None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
             None::<&mut B::GlobalGpuBuffer>,
             self.qkv_norm_params,
             num_q_heads,

@@ -7,8 +7,7 @@
 
 KERNEL(PrepareDraftBlocks)(
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
-    device uzu::trie::TrieNode* draft_nodes,
-    device int* draft_token_rows,
+    device int* block_token_rows,
     const constant uint& node_count,
     const constant uint& prefix_tokens,
     const constant uint& compression_ratio,
@@ -20,18 +19,16 @@ KERNEL(PrepareDraftBlocks)(
   if (node_index >= node_count)
     return;
 
-  const uzu::trie::TrieNode node =
-      has_trie ? trie[node_index] : uzu::trie::TrieNode{node_index, node_count - 1, node_index, int(node_index) - 1};
-  draft_nodes[node_index] = node;
+  const uint height = has_trie ? trie[node_index].height : node_index;
 
   int ancestor_index = int(node_index);
-  int token_position = int(prefix_tokens + node.height);
+  int token_position = int(prefix_tokens + height);
   for (int block_offset = int(compression_ratio) - 1; block_offset >= 0; --block_offset, --token_position) {
     int token_row = max(token_position, -1);
     if (has_trie && token_position >= int(prefix_tokens)) {
       token_row = int(prefix_tokens) + ancestor_index;
       ancestor_index = trie[ancestor_index].parent;
     }
-    draft_token_rows[node_index * compression_ratio + uint(block_offset)] = token_row;
+    block_token_rows[node_index * compression_ratio + uint(block_offset)] = token_row;
   }
 }

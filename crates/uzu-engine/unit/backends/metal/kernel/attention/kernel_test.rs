@@ -258,17 +258,13 @@ fn attention_matches_cpu() {
                         let mut packed = block_list.clone();
                         packed.resize(suffix * (blocks_per_query + COMPRESSION_RATIO), i32::MIN);
                         let mut query_blocks = create_buffer_with_data::<Metal, i32>(&metal, &packed);
-                        indexer
-                            .as_ref()
-                            .unwrap()
-                            .prepare_draft_blocks(
-                                trie.as_ref(),
-                                suffix as u32,
-                                prefix as u32,
-                                (&mut query_blocks).subrange_mut(suffix * blocks_per_query * size_of::<i32>()..),
-                                &mut command_buffer,
-                            )
-                            .unwrap();
+                        indexer.as_ref().unwrap().prepare_draft_blocks(
+                            trie.as_ref(),
+                            suffix as u32,
+                            prefix as u32,
+                            (&mut query_blocks).subrange_mut(suffix * blocks_per_query * size_of::<i32>()..),
+                            &mut command_buffer,
+                        );
                         query_blocks
                     });
                     prepare.encode(
@@ -279,7 +275,6 @@ fn attention_matches_cpu() {
                         append_kv.then_some(kv.k_scales.as_mut()),
                         append_kv.then_some(kv.v_codes.as_mut()),
                         append_kv.then_some(kv.v_scales.as_mut()),
-                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
@@ -549,15 +544,15 @@ fn radix_top_k_small_half() {
         &metal,
         &[f16::NEG_INFINITY, f16::MAX, f16::ONE, f16::NEG_ONE, f16::INFINITY, f16::from_f32(2.0)],
     );
-    for sorted in [false, true] {
-        let kernel = RadixTopKSmallMetalKernel::new(&metal, DataType::F16, sorted).unwrap();
+    for (sorted, write_scores) in [(false, false), (false, true), (true, false), (true, true)] {
+        let kernel = RadixTopKSmallMetalKernel::new(&metal, DataType::F16, sorted, write_scores).unwrap();
         let mut packed = create_buffer_with_data::<Metal, i32>(&metal, &[-123; 7]);
         let mut scores = create_buffer::<Metal, f32>(&metal, 3);
         let mut command_buffer = metal.create_command_buffer(None, None).unwrap();
         kernel.encode(
             &input,
             (&mut packed).subrange_mut(..3 * size_of::<i32>()),
-            &mut scores,
+            write_scores.then_some(&mut scores),
             1,
             6,
             3,
@@ -566,8 +561,14 @@ fn radix_top_k_small_half() {
         submit_command_buffer(command_buffer);
         let packed = buffer_to_vec::<Metal, i32>(&metal, &packed);
         assert_eq!(&packed[3..], &[-123; 4]);
-        let mut pairs: Vec<_> = packed[..3].iter().copied().zip(buffer_to_vec::<Metal, f32>(&metal, &scores)).collect();
-        pairs.sort_by_key(|&(id, _)| id);
-        assert_eq!(pairs, vec![(1, f16::MAX.to_f32()), (4, f32::INFINITY), (5, 2.0)]);
+        let mut ids = packed[..3].to_vec();
+        ids.sort_unstable();
+        assert_eq!(ids, [1, 4, 5]);
+        if write_scores {
+            let mut pairs: Vec<_> =
+                packed[..3].iter().copied().zip(buffer_to_vec::<Metal, f32>(&metal, &scores)).collect();
+            pairs.sort_by_key(|&(id, _)| id);
+            assert_eq!(pairs, vec![(1, f16::MAX.to_f32()), (4, f32::INFINITY), (5, 2.0)]);
+        }
     }
 }

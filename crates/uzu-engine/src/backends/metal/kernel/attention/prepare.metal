@@ -50,8 +50,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     const device float* query_norm_scales OPTIONAL(has_query_norm_scales),
     const device float* key_norm_scales OPTIONAL(has_key_norm_scales),
     const device float* value_norm_scales OPTIONAL(has_value_norm_scales),
-    const device uzu::trie::TrieNode* pool_nodes OPTIONAL(pool_keys),
-    const device int* pool_token_indices OPTIONAL(pool_keys),
+    const device int* block_token_rows OPTIONAL(pool_keys),
     device ElementT* raw_keys OPTIONAL(pool_keys),
     const constant uzu::qkv_norm::QKVNormParams& norm_params,
     const constant uint32_t& num_q_heads,
@@ -94,10 +93,11 @@ PUBLIC KERNEL(AttentionPrepare)(
   const bool is_pooled_key = pool_keys && is_key;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
-  const uint32_t rope_position =
-      !has_rope       ? 0
-      : is_pooled_key ? max(prefix_tokens + pool_nodes[token_idx].height + 1, compression_ratio) - compression_ratio
-                      : rope_position_offset + (has_trie ? trie[token_idx].height : token_idx);
+  const uint token_height = has_trie ? trie[token_idx].height : token_idx;
+  const uint32_t rope_position = !has_rope ? 0
+                                 : is_pooled_key
+                                     ? max(prefix_tokens + token_height + 1, compression_ratio) - compression_ratio
+                                     : rope_position_offset + token_height;
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
@@ -112,27 +112,34 @@ PUBLIC KERNEL(AttentionPrepare)(
     // One key head: cached partial block, then one raw row per draft node.
     const uint tail_rows = compression_ratio - 1;
     const uint block_start = prefix_tokens - prefix_tokens % compression_ratio;
-    const uint position = prefix_tokens + pool_nodes[token_idx].height;
+    const uint position = prefix_tokens + token_height;
     const bool completes_block = (position + 1) % compression_ratio == 0;
-    float sums[VALUES_PER_LANE] = {};
-    if (completes_block) {
-      METAL_PRAGMA_UNROLL
-      for (uint i = 0; i < compression_ratio; ++i) {
-        const uint slot = uint(pool_token_indices[token_idx * compression_ratio + i]);
-        const device ElementT* row =
-            slot >= prefix_tokens ? qkvg + size_t(slot - prefix_tokens) * input_row_stride + size_t(head_idx) * HEAD_DIM
-                                  : raw_keys + size_t(slot - block_start) * HEAD_DIM;
-        METAL_PRAGMA_UNROLL
-        for (ushort v = 0; v < VALUES_PER_LANE; ++v)
-          sums[v] += float(row[lane * VALUES_PER_LANE + v]);
-      }
-    }
     METAL_PRAGMA_UNROLL
     for (ushort v = 0; v < VALUES_PER_LANE; ++v) {
       const uint channel = lane * VALUES_PER_LANE + v;
       raw_keys[size_t(tail_rows + token_idx) * HEAD_DIM + channel] = head[channel];
-      pooled_key[channel] = float(ElementT(sums[v] / compression_ratio));
+      if (!completes_block)
+        k_codes[shape.k_code_index(kv_token_offset + token_idx, kv_head, channel)] = 0;
     }
+    if (!completes_block) {
+      if (lane == 0)
+        k_scales[shape.scale_index(kv_token_offset + token_idx, kv_head)] = bfloat(1.0f);
+      return;
+    }
+    float sums[VALUES_PER_LANE] = {};
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < compression_ratio; ++i) {
+      const uint slot = uint(block_token_rows[token_idx * compression_ratio + i]);
+      const device ElementT* row =
+          slot >= prefix_tokens ? qkvg + size_t(slot - prefix_tokens) * input_row_stride + size_t(head_idx) * HEAD_DIM
+                                : raw_keys + size_t(slot - block_start) * HEAD_DIM;
+      METAL_PRAGMA_UNROLL
+      for (ushort v = 0; v < VALUES_PER_LANE; ++v)
+        sums[v] += float(row[lane * VALUES_PER_LANE + v]);
+    }
+    METAL_PRAGMA_UNROLL
+    for (ushort v = 0; v < VALUES_PER_LANE; ++v)
+      pooled_key[lane * VALUES_PER_LANE + v] = float(ElementT(sums[v] / compression_ratio));
     simdgroup_barrier(mem_flags::mem_threadgroup);
   }
   const auto input = [&](uint channel) { return is_pooled_key ? ElementT(pooled_key[channel]) : head[channel]; };

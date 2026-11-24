@@ -43,7 +43,7 @@ impl IndexerMetalKernel {
                 PrepareDraftBlocksMetalKernel::new(context, true)?,
             ],
             scorers: [scorer(false)?, scorer(true)?],
-            top_k: RadixTopKSmallMetalKernel::new(context, DataType::F16, false)?,
+            top_k: RadixTopKSmallMetalKernel::new(context, DataType::F16, false, false)?,
         })
     }
 }
@@ -69,21 +69,17 @@ impl IndexerKernel for IndexerMetalKernel {
         trie: Option<impl BufferRef<Backend = Metal>>,
         rows: u32,
         prefix: u32,
-        draft_token_rows: impl BufferMut<Backend = Metal>,
+        block_token_rows: impl BufferMut<Backend = Metal>,
         command_buffer: &mut MetalCommandBufferEncoding,
-    ) -> Result<<Metal as Backend>::ScratchBuffer, MetalError> {
-        let mut nodes = command_buffer
-            .allocate_scratch(rows as usize * size_of::<crate::backends::common::gpu_types::trie::TrieNode>())?;
+    ) {
         self.prepare_draft[usize::from(trie.is_some())].encode(
             trie,
-            &mut nodes,
-            draft_token_rows,
+            block_token_rows,
             rows,
             prefix,
             self.compression_ratio,
             command_buffer,
         );
-        Ok(nodes)
     }
 
     fn select_blocks(
@@ -106,7 +102,6 @@ impl IndexerKernel for IndexerMetalKernel {
         let mut scores =
             command_buffer.allocate_scratch(rows as usize * candidates as usize * size_of::<half::f16>())?;
         let id_bytes = rows as usize * blocks as usize * size_of::<u32>();
-        let mut top_scores = command_buffer.allocate_scratch(id_bytes)?;
         let (rows_per_group, blocks_per_group) = score_tiling(self.use_mxu, rows);
         self.scorers[usize::from(trie.is_some())].encode(
             query_codes,
@@ -128,7 +123,7 @@ impl IndexerKernel for IndexerMetalKernel {
         self.top_k.encode(
             &scores,
             selected.query_blocks.subrange_mut(..id_bytes),
-            &mut top_scores,
+            None::<&mut <Metal as Backend>::ScratchBuffer>,
             rows,
             candidates,
             blocks,

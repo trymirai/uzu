@@ -70,11 +70,12 @@ VARIANTS(T, bfloat, half)
 KERNEL(RadixTopKSmall)(
     const device T* input,
     device uint* output_ids,
-    device float* output_scores,
+    device float* output_scores OPTIONAL(write_scores),
     constant uint& rows,
     constant uint& columns,
     constant uint& k,
     const bool sorted SPECIALIZE,
+    const bool write_scores SPECIALIZE,
     threadgroup atomic_uint histograms[2 * HISTOGRAM_SIZE],
     threadgroup uint simdgroup_totals[2 * SIMDGROUPS_PER_TG],
     threadgroup uint& chosen_bucket,
@@ -90,7 +91,7 @@ KERNEL(RadixTopKSmall)(
   const device ushort* row_scores = reinterpret_cast<const device ushort*>(row_input) - leading_pad;
   const uint padded_columns = leading_pad + columns;
   device uint* row_ids = output_ids + row * k;
-  device float* row_output_scores = output_scores + row * k;
+  device float* row_output_scores = write_scores ? output_scores + row * k : nullptr;
 
   for (uint index = lid; index < 2 * HISTOGRAM_SIZE; index += THREADS_PER_TG) {
     atomic_store_explicit(&histograms[index], 0u, memory_order_relaxed);
@@ -168,7 +169,8 @@ KERNEL(RadixTopKSmall)(
           winner_columns[slot] = column;
         } else {
           row_ids[slot] = column;
-          row_output_scores[slot] = float(row_input[column]);
+          if (write_scores)
+            row_output_scores[slot] = float(row_input[column]);
         }
       }
       above_threshold_slot += above_threshold;
@@ -189,7 +191,8 @@ KERNEL(RadixTopKSmall)(
         winners_ahead += winner_orders[other_slot] > winner_orders[slot];
       }
       row_ids[winners_ahead] = winner_columns[slot];
-      row_output_scores[winners_ahead] = float(row_input[winner_columns[slot]]);
+      if (write_scores)
+        row_output_scores[winners_ahead] = float(row_input[winner_columns[slot]]);
     }
   }
 }

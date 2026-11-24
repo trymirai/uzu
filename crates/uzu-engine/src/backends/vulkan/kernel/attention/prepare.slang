@@ -61,8 +61,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   [[Optional("has_query_norm_scales")]] Ptr<float, Access.Read> query_norm_scales,
   [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
   [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
-  [[Optional("pool_keys")]] Ptr<TrieNode, Access.Read> pool_nodes,
-  [[Optional("pool_keys")]] Ptr<int, Access.Read> pool_token_indices,
+  [[Optional("pool_keys")]] Ptr<int, Access.Read> block_token_rows,
   [[Optional("pool_keys")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
   QKVNormParams norm_params,
   uint num_q_heads,
@@ -107,26 +106,38 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   let has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
   let scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   let row = token * input_row_stride + head * HEAD_DIM;
-  // Trie nodes sit at their depth below the root, not at their row in the suffix.
+  let token_height = has_trie ? trie[token].height : token;
   let rope_position = !has_rope ? 0 : is_pooled_key
-    ? max(prefix_tokens + pool_nodes[token].height + 1, compression_ratio) - compression_ratio
-    : rope_position_offset + (has_trie ? trie[token].height : token);
+    ? max(prefix_tokens + token_height + 1, compression_ratio) - compression_ratio
+    : rope_position_offset + token_height;
   if (is_pooled_key) {
     // One key head: cached partial block, then one raw row per draft node.
     let block_start = prefix_tokens - prefix_tokens % compression_ratio;
-    let completes_block = (prefix_tokens + pool_nodes[token].height + 1) % compression_ratio == 0;
+    let completes_block = (prefix_tokens + token_height + 1) % compression_ratio == 0;
+    for (uint a = 0; a < dims; a++) {
+      let channel = first + a;
+      raw_keys[(compression_ratio - 1 + token) * HEAD_DIM + channel] = qkvg[row + channel];
+      if (!completes_block) {
+        k_codes[((kv_token_offset + token) * num_kv_heads + head - num_q_heads) * HEAD_DIM + channel] = int8_t(0);
+      }
+    }
+    if (!completes_block) {
+      if (lane == 0) {
+        k_scales[(kv_token_offset + token) * num_kv_heads + head - num_q_heads] = bf16.fromFloat(1.0);
+      }
+      return;
+    }
     for (uint a = 0; a < dims; a++) {
       let channel = first + a;
       var sum = 0.0;
-      for (uint i = 0; completes_block && i < compression_ratio; i++) {
-        let slot = uint(pool_token_indices[token * compression_ratio + i]);
+      for (uint i = 0; i < compression_ratio; i++) {
+        let slot = uint(block_token_rows[token * compression_ratio + i]);
         if (slot >= prefix_tokens) {
           sum += qkvg[(slot - prefix_tokens) * input_row_stride + head * HEAD_DIM + channel].toFloat();
         } else {
           sum += raw_keys[(slot - block_start) * HEAD_DIM + channel].toFloat();
         }
       }
-      raw_keys[(compression_ratio - 1 + token) * HEAD_DIM + channel] = qkvg[row + channel];
       prepare_pooled_key[channel] = ElementT.fromFloat(sum / float(compression_ratio)).toFloat();
     }
     GroupMemoryBarrierWithGroupSync();

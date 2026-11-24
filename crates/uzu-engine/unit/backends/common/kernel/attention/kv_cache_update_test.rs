@@ -62,7 +62,6 @@ fn prepare_cache<B: Backend>(
         None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
-        None::<&B::GlobalGpuBuffer>,
         None::<&mut B::GlobalGpuBuffer>,
         Default::default(),
         0,

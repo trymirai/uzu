@@ -201,7 +201,6 @@ impl<B: Backend> WeaverLayer<B> {
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
             None::<&mut B::GlobalGpuBuffer>,
             Default::default(),
             self.num_heads,

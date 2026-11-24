@@ -19,9 +19,9 @@ pub trait IndexerKernel: Sized + Send + Sync {
         trie: Option<impl BufferRef<Backend = Self::Backend>>,
         rows: u32,
         prefix: u32,
-        draft_token_rows: impl BufferMut<Backend = Self::Backend>,
+        block_token_rows: impl BufferMut<Backend = Self::Backend>,
         command_buffer: &mut <<Self::Backend as Backend>::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<<Self::Backend as Backend>::ScratchBuffer, <Self::Backend as Backend>::Error>;
+    );
 
     fn select_blocks(
         &self,
@@ -61,9 +61,9 @@ impl<B: Backend<Kernels: Kernels<IndexerKernel = Unsupported<B>>>> IndexerKernel
         _trie: Option<impl BufferRef<Backend = B>>,
         _rows: u32,
         _prefix: u32,
-        _draft_token_rows: impl BufferMut<Backend = B>,
+        _block_token_rows: impl BufferMut<Backend = B>,
         _command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<B::ScratchBuffer, B::Error> {
+    ) {
         unreachable!("unsupported indexer cannot encode")
     }
 

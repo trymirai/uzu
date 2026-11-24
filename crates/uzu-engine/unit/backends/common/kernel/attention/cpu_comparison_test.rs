@@ -99,7 +99,6 @@ fn run<B: Backend, T: DataTypeRepr>(
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
-            None::<&B::GlobalGpuBuffer>,
             None::<&mut B::GlobalGpuBuffer>,
             Default::default(),
             heads,
