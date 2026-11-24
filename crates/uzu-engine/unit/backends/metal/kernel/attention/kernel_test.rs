@@ -7,12 +7,13 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, Context, Kernels,
-            gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
+            gpu_types::{kv_layout, ring::RingParams, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
                 attention::KeyBlocks,
             },
         },
+        cpu::should_use_key,
         metal::{Metal, kernel::attention::AttentionMetalKernel},
     },
     data_type::DataType,
@@ -64,8 +65,8 @@ fn attention_matches_cpu() {
         .into_iter()
         .filter(|&(use_mxu, _)| !use_mxu || metal.supports_mxu)
     {
-        // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits)
-        for (q_heads, suffix, prefix, use_trie, reader, poison) in [
+        // (query heads, suffix, prefix, trie, shared KV, unwritten scale bits, window, ring offset, causal)
+        for (q_heads, suffix, prefix, use_trie, reader, poison, window, ring, causal) in [
             (8, 80, 16, false, false, NAN),
             (8, 24, 37, false, false, NAN),
             (8, 64, 0, true, false, NAN),
@@ -85,7 +86,23 @@ fn attention_matches_cpu() {
             (32, 8, 4097, true, false, NAN),
             (24, 63, 29, true, false, NAN),
             (24, 64, 0, true, false, NAN),
-        ] {
+        ]
+        .map(|(q_heads, suffix, prefix, use_trie, reader, poison)| {
+            (q_heads, suffix, prefix, use_trie, reader, poison, None, None, true)
+        })
+        .into_iter()
+        .chain([
+            (32, 1, 1024, false, false, NAN, Some(1024), Some(777), true),
+            (24, 3, 1024, true, false, NAN, Some(1024), Some(777), true),
+            (32, 3, 300, false, false, NAN, Some(33), None, true),
+            (8, 3, 70, false, false, NAN, Some(1), None, true),
+            (8, 200, 128, false, false, NAN, Some(9), Some(7), true),
+            (8, 16, 128, false, false, NAN, Some(64), Some(50), false),
+            (8, 40, 100, false, false, NAN, Some(33), Some(41), true),
+        ]) {
+            if sparse && window.is_some() {
+                continue;
+            }
             let (head_dim, kv_heads) = match q_heads {
                 24 | 32 if sparse => (256, 2),
                 8 => (64, 2),
@@ -114,7 +131,7 @@ fn attention_matches_cpu() {
                 flat_trie(0, &tokens, &PRng::new(0)).linearize().token_subtrie_ranges().collect()
             };
             let (shape, nodes) =
-                ((head_dim, q_heads, kv_heads, suffix, prefix, true), use_trie.then_some(trie.as_slice()));
+                ((head_dim, q_heads, kv_heads, suffix, prefix, causal), use_trie.then_some(trie.as_slice()));
             let gate_stride = q_heads * head_dim + 17;
             let gates = matches!(prefix, 37 | 4096).then(|| fill_attention(suffix * gate_stride, 3.0));
             let config = AttentionKernelConfig {
@@ -123,9 +140,9 @@ fn attention_matches_cpu() {
                 num_q_heads: q_heads as u32,
                 has_sinks: false,
                 gate_row_stride: gates.as_ref().map(|_| gate_stride as u32),
-                is_kv_cache_ring: false,
-                is_causal: true,
-                sliding_window_size: None,
+                is_kv_cache_ring: ring.is_some(),
+                is_causal: causal,
+                sliding_window_size: window.map(|window| window as u32),
                 scale: Some(1.0 / (head_dim as f32).sqrt()),
                 data_type: DataType::BF16,
                 sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
@@ -245,7 +262,9 @@ fn attention_matches_cpu() {
                         sinks: None,
                         suffix_length: suffix as u32,
                         trie: trie.as_ref(),
-                        cache: KVCacheView::full(prefix as u32),
+                        cache: ring.map_or(KVCacheView::full(prefix as u32), |offset| {
+                            KVCacheView::ring(prefix as u32, offset as u32)
+                        }),
                         gate: gate.as_ref(),
                         key_blocks: key_blocks.as_ref().map(|query_blocks| KeyBlocks {
                             query_blocks,
@@ -269,10 +288,25 @@ fn attention_matches_cpu() {
                 actual = step(&rows[prefix * stride..], prefix, nodes, false, true);
             }
             let label = format!(
-                "int8 attention mxu={use_mxu} sparse={sparse} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader}"
+                "int8 attention mxu={use_mxu} sparse={sparse} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader} window={window:?} ring={ring:?}"
             );
+            let ring_params = ring.map(|offset| RingParams {
+                ring_offset: offset as u32,
+                ring_length: prefix as u32,
+            });
             let mut expected = quantized_attention_reference(shape, nodes, &|node, key| {
-                !sparse || key >= tail_start(node) || !dropped(node, key / COMPRESSION_RATIO)
+                (!sparse || key >= tail_start(node) || !dropped(node, key / COMPRESSION_RATIO))
+                    && should_use_key(
+                        ring_params,
+                        nodes.map(|nodes| nodes.as_ptr()),
+                        config.sliding_window_size,
+                        node as u32,
+                        prefix as u32,
+                        prefix as u32,
+                        (prefix + nodes.map_or(node, |nodes| nodes[node].height as usize)) as u32,
+                        key as u32,
+                        causal,
+                    )
             });
             if let Some(gates) = &gates {
                 for (token, row) in expected.chunks_exact_mut(q_heads * head_dim).enumerate() {

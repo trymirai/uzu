@@ -6,3 +6,5 @@ mod error;
 mod kernel;
 
 pub use backend::Cpu;
+#[cfg(test)]
+pub use kernel::should_use_key;

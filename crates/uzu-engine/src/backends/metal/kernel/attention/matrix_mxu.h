@@ -8,6 +8,7 @@
 #include "kv_layout.h"
 #include "mask.h"
 #include "matrix_layout.h"
+#include "rotated_output.h"
 
 using namespace uzu::matmul;
 
@@ -118,6 +119,10 @@ METAL_FUNC void attention_matrix_mxu(
     device bfloat* partial_values,
     device float* partial_maxima,
     device float* partial_denominators,
+    device bfloat* output,
+    const device bfloat* gate,
+    uint gate_row_stride,
+    const device bfloat* sinks,
     const constant uzu::attention::AttnParams& params,
     uint query_tiles,
     uint num_splits,
@@ -125,12 +130,15 @@ METAL_FUNC void attention_matrix_mxu(
     uint trie_nodes,
     bool mask_free,
     bool is_trie,
+    bool has_output,
+    bool has_gate,
+    bool has_sinks,
     const device int* query_blocks,
     uint blocks_per_query,
     uint compression_ratio,
     uint num_kv_heads,
     threadgroup float* probability_exchange,
-    threadgroup ulong* row_masks,
+    threadgroup uint2* row_queries,
     threadgroup uint4* query_stage,
     ThreadContext thread_context,
     uint tile_split_index,
@@ -201,37 +209,18 @@ METAL_FUNC void attention_matrix_mxu(
                       );
   };
   const uint query_band_offset = uint(query_band) * uint(Layout::TILE_ROWS);
-  const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : prefix_length;
-  uint query_positions[ROWS_PER_LANE];
-  uint logical_queries[ROWS_PER_LANE];
-  METAL_PRAGMA_UNROLL
-  for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-    query_positions[row] = (query_row_base + lane_rows[row]) % params.q_len;
-    logical_queries[row] =
-        is_sliding_window ? suffix_position + (is_trie ? trie[query_positions[row]].height : query_positions[row]) : 0u;
-  }
-  if (!mask_free && is_causal && !is_kv_cache_ring && !is_sliding_window) {
-    ulong row_mask[ROWS_PER_LANE];
+  const uint ring_offset = is_kv_cache_ring ? ring_params.ring_offset : 0u;
+  const uint window = is_sliding_window ? sliding_window_size : INVALID_POSITION;
+  // behind wraps for a window of 0, whose span is 0: it sees nothing.
+  const uint behind = is_causal ? window - 1u : window / 2u;
+  const uint ahead = is_causal ? 0u : window / 2u;
+  const uint span = behind + ahead + 1u;
+  if (!IS_SPARSE && !mask_free && score_position.x == 0) {
     METAL_PRAGMA_UNROLL
     for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-      row_mask[row] = is_trie ? 0ul : ulong(prefix_length + query_positions[row]);
-    }
-    if (is_trie && trie_nodes <= 64) {
-      for (uint node_index = 0; node_index < trie_nodes; ++node_index) {
-        const uzu::trie::TrieNode node = trie[node_index];
-        METAL_PRAGMA_UNROLL
-        for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-          if (query_positions[row] >= node.trie_start && query_positions[row] <= node.trie_end) {
-            row_mask[row] |= (1ul << node_index);
-          }
-        }
-      }
-    }
-    if (score_position.x == 0) {
-      METAL_PRAGMA_UNROLL
-      for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
-        row_masks[query_band_offset + lane_rows[row]] = row_mask[row];
-      }
+      const uint query_index = (query_row_base + lane_rows[row]) % params.q_len;
+      const uint position = is_trie && is_sliding_window ? trie[query_index].height : query_index;
+      row_queries[query_band_offset + lane_rows[row]] = uint2(prefix_length - behind + position, query_index);
     }
   }
 
@@ -245,23 +234,44 @@ METAL_FUNC void attention_matrix_mxu(
       query_tile_index,
       is_trie
   );
-  const uint key_tiles =
-      IS_SPARSE ? (sparse_keys.key_count() + uint(uzu::kv_layout::TILE_KEYS) - 1u) / uint(uzu::kv_layout::TILE_KEYS)
-                : params.nk;
-  const uint first_block = (split_index * key_tiles) / num_splits;
   const uint tile_first_row = query_tile_index * uint(Layout::BLOCK_ROWS);
   const uint tile_last_row = min(tile_first_row + uint(Layout::BLOCK_ROWS) - 1u, num_query_rows - 1u);
-  const uint last_query_position = (tile_first_row / params.q_len == tile_last_row / params.q_len)
-                                       ? (tile_last_row % params.q_len)
-                                       : (params.q_len - 1u);
+  const bool one_head = tile_first_row / params.q_len == tile_last_row / params.q_len;
+  const uint first_query = one_head && !is_trie ? tile_first_row % params.q_len : 0u;
+  const uint last_query = one_head ? tile_last_row % params.q_len : params.q_len - 1u;
+  const uint first_visible = is_sliding_window ? max(prefix_length + first_query, behind) - behind : 0u;
+  auto key_position = [&](uint key) UZU_ALWAYS_INLINE {
+    if (key >= key_length) {
+      return INVALID_POSITION;
+    }
+    if (key >= prefix_length) {
+      return key;
+    }
+    return key >= ring_offset ? key - ring_offset : key + prefix_length - ring_offset;
+  };
+  constexpr uint BLOCK_KEYS = uzu::kv_layout::TILE_KEYS;
+  const uint ring_blocks = prefix_length / BLOCK_KEYS;
+  const uint ring_keys = first_visible < prefix_length ? prefix_length - first_visible : 0u;
+  const uint ring_slot = first_visible + ring_offset >= prefix_length ? first_visible + ring_offset - prefix_length
+                                                                      : first_visible + ring_offset;
+  const uint ring_start = ring_slot / BLOCK_KEYS < ring_blocks ? ring_slot / BLOCK_KEYS : 0u;
+  const bool identity = IS_SPARSE || !(is_kv_cache_ring || is_sliding_window);
+  const uint ring_count = identity || ring_keys == 0u
+                              ? 0u
+                              : min(ring_blocks, (ring_slot % BLOCK_KEYS + ring_keys + BLOCK_KEYS - 1u) / BLOCK_KEYS);
+  const uint suffix_start = identity ? 0u : max(first_visible, prefix_length) / BLOCK_KEYS;
+  auto visible_block = [&](uint i) UZU_ALWAYS_INLINE {
+    return i < ring_count ? (ring_start + i >= ring_blocks ? ring_start + i - ring_blocks : ring_start + i)
+                          : suffix_start + i - ring_count;
+  };
+  const uint key_tiles =
+      IS_SPARSE ? (sparse_keys.key_count() + BLOCK_KEYS - 1u) / BLOCK_KEYS : ring_count + params.nk - suffix_start;
+  const uint first_block = (split_index * key_tiles) / num_splits;
   const uint split_end = ((split_index + 1u) * key_tiles) / num_splits;
-  const uint end_block = is_causal ? min(split_end,
-                                         (prefix_length + last_query_position + uint(uzu::kv_layout::TILE_KEYS)) /
-                                             uint(uzu::kv_layout::TILE_KEYS))
-                                   : split_end;
+  const uint end_block =
+      is_causal ? min(split_end, ring_count + (prefix_length + last_query + BLOCK_KEYS) / BLOCK_KEYS - suffix_start)
+                : split_end;
   const uint block_count = end_block > first_block ? end_block - first_block : 0u;
-
-  const uint first_key = first_block * uint(uzu::kv_layout::TILE_KEYS);
 
   const AccumType log2_attention_scale = AccumType(params.scale) * AccumType(M_LOG2E_F);
 
@@ -289,30 +299,30 @@ METAL_FUNC void attention_matrix_mxu(
 
   threadgroup uint4* const staged_query =
       query_stage + uint(query_band) * uint(Scratch::QUERY_VECTORS_PER_BAND) + uint(lane);
-  threadgroup uint* const slot_lists = reinterpret_cast<threadgroup uint*>(row_masks);
+  threadgroup uint* const slot_lists = reinterpret_cast<threadgroup uint*>(row_queries);
   constexpr int LANE_KEYS = int(uzu::kv_layout::LANE_KEYS);
   constexpr int KEY_PAIRS = LANE_KEYS / int(uzu::kv_layout::PAIR_KEYS);
   const uint lane_first_key = uzu::kv_layout::lane_first_key(lane);
   const uint lane_channel = uzu::kv_layout::lane_channel(lane);
-  const uint first_key_offset = (uint)shape.k_code_index(first_key + lane_first_key, kv_head_index, lane_channel);
+  const uint first_key_offset = (uint)shape.k_code_index(lane_first_key, kv_head_index, lane_channel);
   uint first_value_offsets[KEY_PAIRS];
   METAL_PRAGMA_UNROLL
   for (int pair = 0; pair < KEY_PAIRS; ++pair) {
     first_value_offsets[pair] = (uint)shape.v_code_index(
-        first_key + lane_first_key + uint(pair) * uzu::kv_layout::PAIR_KEYS,
+        lane_first_key + uint(pair) * uzu::kv_layout::PAIR_KEYS,
         kv_head_index,
         channel_offset + lane_channel
     );
   }
-  const uint first_scale_index = shape.scale_index(first_key, kv_head_index);
+  const uint first_scale_index = shape.scale_index(0u, kv_head_index);
   auto compute_probabilities = [&](uint block_index,
                                    uint channel_slice,
                                    threadgroup float4* slot_stats,
                                    threadgroup float2* slot_sums,
                                    threadgroup uchar* slot_codes,
                                    threadgroup uint* step_slots) UZU_ALWAYS_INLINE {
-    const uint key_block = block_index + uint(channel_slice);
-    const uint key_base = first_key + key_block * uint(uzu::kv_layout::TILE_KEYS);
+    const uint key_block = visible_block(first_block + block_index + uint(channel_slice));
+    const uint key_base = key_block * uint(uzu::kv_layout::TILE_KEYS);
 
     uint lane_slot = uint(uzu::kv_layout::NO_KEY_SLOT);
     uint key_offset;
@@ -329,42 +339,6 @@ METAL_FUNC void attention_matrix_mxu(
     }
 
     ScoreFragment scores;
-    if (!IS_SPARSE && (is_kv_cache_ring || is_sliding_window)) {
-      bool any_visible = false;
-      scores.for_each_lane([&](ushort row, ushort column, thread AccumType& value) UZU_ALWAYS_INLINE {
-        const uint key = key_base + lane_column_key(column);
-        const bool visible = key < key_length && should_use_key(
-                                                     ring_params,
-                                                     trie,
-                                                     sliding_window_size,
-                                                     query_positions[row],
-                                                     prefix_length,
-                                                     suffix_position,
-                                                     logical_queries[row],
-                                                     key,
-                                                     is_kv_cache_ring,
-                                                     is_causal,
-                                                     is_trie,
-                                                     is_sliding_window
-                                                 );
-        any_visible |= visible;
-        value = visible ? 0.0f : -INFINITY;
-      });
-      if (is_sliding_window && !simd_any(any_visible)) {
-        *reinterpret_cast<threadgroup uint4*>(slot_codes + uint(channel_slice) * uint(Layout::SCORE_TILE_ELEMENTS)) =
-            uint4(0);
-        if (score_position.x == 0) {
-          slot_stats[uint(channel_slice) * STAT_ROWS] = float4(
-              metal::numeric_limits<AccumType>::lowest(),
-              0.0f,
-              metal::numeric_limits<AccumType>::lowest(),
-              0.0f
-          );
-          slot_sums[uint(channel_slice) * STAT_ROWS] = float2(0);
-        }
-        return;
-      }
-    }
 
     // Q x K^T (int8).
     Fragment<int, 1, KEY_FRAGMENTS, Ops> score;
@@ -395,6 +369,7 @@ METAL_FUNC void attention_matrix_mxu(
     AccumType key_scale_values[KEYS_PER_LANE];
     AccumType log2_value_scales[KEYS_PER_LANE];
     AccumType inverse_value_scales[KEYS_PER_LANE];
+    uint key_positions[KEYS_PER_LANE];
     {
       METAL_PRAGMA_UNROLL
       for (int fragment_col = 0; fragment_col < KEY_FRAGMENTS; ++fragment_col) {
@@ -409,12 +384,10 @@ METAL_FUNC void attention_matrix_mxu(
             scale_index = shape.scale_index(min(column_slot, params.k_len - 1u), kv_head_index);
             valid = column_slot < params.k_len;
           } else {
-            const uint key = key_base + lane_column_key(lane_col);
             scale_index =
                 first_scale_index + key_block * shape.scale_block_stride() + uint(score_position.x) + uint(scale_col);
-            valid = (mask_free || key < key_length) &&
-                    (!is_kv_cache_ring || key >= prefix_length ||
-                     (prefix_length + key - ring_params.ring_offset) % prefix_length < ring_params.ring_length);
+            key_positions[lane_col] = key_position(key_base + lane_column_key(lane_col));
+            valid = mask_free || key_positions[lane_col] != INVALID_POSITION;
           }
           // Zero so masked scores stay -inf.
           key_scale_values[lane_col] =
@@ -427,39 +400,38 @@ METAL_FUNC void attention_matrix_mxu(
     }
     scores.for_each_lane(
         [&](ushort row, ushort column, thread AccumType& value, thread int& integer_score) UZU_ALWAYS_INLINE {
-          if ((!is_kv_cache_ring && !is_sliding_window) || value != -INFINITY) {
-            value = metal::fma(
-                AccumType(integer_score) * key_scale_values[column],
-                query_score_scales[row],
-                log2_value_scales[column]
-            );
-          }
+          value = metal::fma(
+              AccumType(integer_score) * key_scale_values[column],
+              query_score_scales[row],
+              log2_value_scales[column]
+          );
         },
         score
     );
 
-    if (!IS_SPARSE && !mask_free && !is_kv_cache_ring && !is_sliding_window &&
-        key_base + uint(uzu::kv_layout::TILE_KEYS) > prefix_length) {
-      scores.map_coords(lane, [&](short row, short column, AccumType value) UZU_ALWAYS_INLINE {
-        const uint key = key_base + lane_key + uzu::kv_layout::column_key(uint(column) - uint(score_position.x));
-        bool visible = key < key_length;
-        if (is_causal) {
-          const ulong row_mask = row_masks[query_band_offset + uint(row)];
-          if (is_trie) {
-            if (visible && key >= prefix_length) {
-              if (trie_nodes <= 64) {
-                visible = ((row_mask >> ulong(key - prefix_length)) & 1ul) != 0ul;
-              } else {
-                const auto node = trie[key - prefix_length];
-                const uint query = (query_row_base + uint(row)) % params.q_len;
-                visible = query >= node.trie_start && query <= node.trie_end;
-              }
-            }
-          } else {
-            visible = visible && key <= uint(row_mask);
+    if (!IS_SPARSE && !mask_free) {
+      uint seen_by[KEYS_PER_LANE]; // first | last << 16
+      METAL_PRAGMA_UNROLL
+      for (int lane_col = 0; lane_col < KEYS_PER_LANE; ++lane_col) {
+        const uint key = key_base + lane_column_key(lane_col);
+        seen_by[lane_col] = 0xFFFF0000u;
+        if (is_trie && key >= prefix_length && key < key_length) {
+          const auto node = trie[key - prefix_length];
+          seen_by[lane_col] = node.trie_start | (node.trie_end << 16);
+          if (is_sliding_window) {
+            key_positions[lane_col] = prefix_length + node.height;
           }
         }
-        return visible ? value : -metal::numeric_limits<AccumType>::infinity();
+      }
+      scores.for_each_lane([&](ushort row, ushort column, thread AccumType& value) UZU_ALWAYS_INLINE {
+        const uint2 query = row_queries[query_band_offset + lane_rows[row]];
+        const uint oldest_visible = query.x;
+        const uint query_index = query.y;
+        bool visible = key_positions[column] - oldest_visible < span;
+        if (is_trie && is_causal) {
+          visible = visible && query_index >= (seen_by[column] & 0xFFFFu) && query_index <= (seen_by[column] >> 16);
+        }
+        value = visible ? value : -metal::numeric_limits<AccumType>::infinity();
       });
     }
 
@@ -510,9 +482,6 @@ METAL_FUNC void attention_matrix_mxu(
       const AccumType probability_code_sum[ROWS_PER_LANE] = {block_stats.y, block_stats.w};
       const float2 block_sums = slot_sums[published_block * STAT_ROWS];
       const AccumType denominator_sum[ROWS_PER_LANE] = {block_sums.x, block_sums.y};
-      if (is_sliding_window && simd_all(block_sums.x == 0.0f && block_sums.y == 0.0f)) {
-        continue;
-      }
       AccumType block_weights[ROWS_PER_LANE];
       METAL_PRAGMA_UNROLL
       for (int row = 0; row < ROWS_PER_LANE; ++row) {
@@ -545,7 +514,8 @@ METAL_FUNC void attention_matrix_mxu(
         METAL_PRAGMA_UNROLL
         for (int pair = 0; pair < KEY_PAIRS; ++pair) {
           value_offsets[uzu::kv_layout::PAIR_KEYS * pair] =
-              first_value_offsets[pair] + (block_index + published_block) * shape.block_stride();
+              first_value_offsets[pair] +
+              visible_block(first_block + block_index + published_block) * shape.block_stride();
         }
       }
       thread AccumType* output_elements = softmax.output.elements();
@@ -640,6 +610,39 @@ METAL_FUNC void attention_matrix_mxu(
     for (int row = 0; row < ROWS_PER_LANE; ++row) {
       partial_maxima[output_row + lane_rows[row]] = softmax.running_max[row];
       partial_denominators[output_row + lane_rows[row]] = softmax.denominator[row];
+    }
+  }
+
+  if (has_output) {
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint row = thread_context.simdgroup_index; row < uint(Layout::BLOCK_ROWS); row += NUM_SIMDGROUPS) {
+      const uint grouped_row = query_tile_index * uint(Layout::BLOCK_ROWS) + row;
+      if (grouped_row >= num_query_rows) {
+        continue;
+      }
+      const uint partial_row = output_row - query_band_offset + row;
+      const uint q_head_index = kv_head_index * params.gqa_factor + grouped_row / params.q_len;
+      const float row_sum = partial_denominators[partial_row];
+      const float row_max = partial_maxima[partial_row];
+      const float sink_term = has_sinks ? fast::exp2(float(sinks[q_head_index]) * M_LOG2E_F - row_max) : 0.0f;
+      const float share = row_sum > 0.0f ? row_sum / (row_sum + sink_term) : 0.0f;
+      float rotated[HEAD_DIM / METAL_SIMD_SIZE];
+      METAL_PRAGMA_UNROLL
+      for (ushort value_index = 0; value_index < HEAD_DIM / METAL_SIMD_SIZE; ++value_index) {
+        rotated[value_index] =
+            share * float(partial_values[size_t(partial_row) * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane]);
+      }
+      store_output_row<bfloat, HEAD_DIM>(
+          lane,
+          rotated,
+          output,
+          gate,
+          params,
+          kv_head_index,
+          grouped_row,
+          gate_row_stride,
+          has_gate
+      );
     }
   }
 }

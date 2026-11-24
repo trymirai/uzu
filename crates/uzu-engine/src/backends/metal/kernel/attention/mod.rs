@@ -33,6 +33,8 @@ struct KernelTile {
     prefix: Option<AttentionMatrixMetalKernel>,
     masked: AttentionMatrixMetalKernel,
     trie: AttentionMatrixMetalKernel,
+    masked_with_output: Option<AttentionMatrixMetalKernel>,
+    trie_with_output: Option<AttentionMatrixMetalKernel>,
 }
 
 impl AttentionMetalKernel {
@@ -62,7 +64,7 @@ impl AttentionMetalKernel {
             if simdgroups % slices != 0 {
                 continue;
             }
-            let kernel = |mask_free, is_trie| {
+            let kernel = |mask_free, is_trie, has_output| {
                 AttentionMatrixMetalKernel::new(
                     context,
                     DataType::BF16,
@@ -75,6 +77,9 @@ impl AttentionMetalKernel {
                     config.sliding_window_size.is_some(),
                     mask_free,
                     is_trie,
+                    has_output,
+                    has_output && config.gate_row_stride.is_some(),
+                    has_output && config.has_sinks,
                     config.num_groups,
                     None,
                 )
@@ -83,10 +88,12 @@ impl AttentionMetalKernel {
                 simdgroups,
                 rows: tile_rows(simdgroups),
                 prefix: (use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none())
-                    .then(|| kernel(true, false))
+                    .then(|| kernel(true, false, false))
                     .transpose()?,
-                masked: kernel(false, false)?,
-                trie: kernel(false, true)?,
+                masked: kernel(false, false, false)?,
+                trie: kernel(false, true, false)?,
+                masked_with_output: use_mxu.then(|| kernel(false, false, true)).transpose()?,
+                trie_with_output: use_mxu.then(|| kernel(false, true, true)).transpose()?,
             });
         }
         let mut vector = Vec::new();
@@ -161,6 +168,9 @@ impl AttentionMetalKernel {
                             false,
                             false,
                             is_trie,
+                            false,
+                            false,
+                            false,
                             config.num_groups,
                             Some(compression_ratio),
                         )
@@ -222,6 +232,12 @@ impl AttentionKernel for AttentionMetalKernel {
         let prefix_len = cache.prefix_len();
         let kv_length = prefix_len + suffix_length;
 
+        assert!(
+            cache
+                .ring_params()
+                .is_none_or(|ring| ring.ring_length == prefix_len && ring.ring_offset < prefix_len.max(1)),
+            "attention assumes a full ring"
+        );
         let gqa_factor = num_q_heads / num_groups;
         assert!(
             !self.use_mxu || input.k_codes.size().max(input.v_codes.size()) as u64 <= u64::from(u32::MAX),
@@ -256,7 +272,7 @@ impl AttentionKernel for AttentionMetalKernel {
         let tile = (self.use_mxu || (!direct && grouped_rows > 4)).then(|| {
             self.tiles
                 .iter()
-                .min_by_key(|tile| (grouped_rows.div_ceil(tile.rows) * tile.rows, std::cmp::Reverse(tile.rows)))
+                .min_by_key(|tile| policy::tile_order(tile.rows, grouped_rows, suffix_length, self.use_mxu))
                 .unwrap()
         });
         // Sparse: every query is padded to one tile of rows.
@@ -276,13 +292,17 @@ impl AttentionKernel for AttentionMetalKernel {
                 *compression_ratio,
             )
         } else {
-            let (threadgroups, groups_per_core) = match tile {
-                None => (split_rows.div_ceil(4 * vector_queries), 4),
-                Some(tile) => (num_groups * (padded_rows / tile.rows), 8_u32.div_ceil(tile.simdgroups).max(2)),
-            };
-            let fill_splits =
-                (command_buffer.context().gpu_core_count.max(1) * groups_per_core).div_ceil(threadgroups.max(1));
-            policy::splits(&params, head_dim, split_rows, fill_splits, self.use_mxu)
+            let threadgroups =
+                tile.map_or(split_rows.div_ceil(4 * vector_queries), |tile| num_groups * (padded_rows / tile.rows));
+            policy::splits(
+                &params,
+                head_dim,
+                split_rows,
+                command_buffer.context().gpu_core_count.max(1),
+                threadgroups,
+                tile.map(|tile| tile.simdgroups),
+                self.use_mxu,
+            )
         };
 
         let rows = split_rows * num_splits;
@@ -301,6 +321,14 @@ impl AttentionKernel for AttentionMetalKernel {
             ))
         };
         let (maxima, sums) = statistics.as_mut().map_or((None, None), |(maxima, sums)| (Some(maxima), Some(sums)));
+        let mut output = (!direct)
+            .then(|| {
+                command_buffer.allocate_scratch_for_shape(&[suffix_length, num_q_heads, head_dim], config.data_type)
+            })
+            .transpose()?;
+        let fused = tile
+            .and_then(|tile| trie.map_or(tile.masked_with_output.as_ref(), |_| tile.trie_with_output.as_ref()))
+            .filter(|_| sparse.is_none() && num_splits == 1);
         if let Some((key_blocks, core, ..)) = sparse {
             core.encode(
                 input.query_codes,
@@ -315,6 +343,10 @@ impl AttentionKernel for AttentionMetalKernel {
                 &mut values,
                 maxima.unwrap(),
                 sums.unwrap(),
+                None::<&mut <Metal as Backend>::ScratchBuffer>,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
+                None,
+                None::<&<Metal as Backend>::GlobalGpuBuffer>,
                 params,
                 suffix_length,
                 num_splits,
@@ -336,7 +368,12 @@ impl AttentionKernel for AttentionMetalKernel {
             let sums = sums.unwrap();
             for (kernel, trie, split_base, split_count) in [
                 (tile.prefix.as_ref().unwrap_or(&tile.masked), None, 0, prefix_splits),
-                (trie.map_or(&tile.masked, |_| &tile.trie), trie, prefix_splits, num_splits - prefix_splits),
+                (
+                    fused.unwrap_or_else(|| trie.map_or(&tile.masked, |_| &tile.trie)),
+                    trie,
+                    prefix_splits,
+                    num_splits - prefix_splits,
+                ),
             ] {
                 if split_count == 0 {
                     continue;
@@ -358,6 +395,10 @@ impl AttentionKernel for AttentionMetalKernel {
                     (&mut values).subrange_mut(range(head_dim as usize * DataType::BF16.size_in_bytes())),
                     (&mut *maxima).subrange_mut(range(DataType::F32.size_in_bytes())),
                     (&mut *sums).subrange_mut(range(DataType::F32.size_in_bytes())),
+                    output.as_mut().filter(|_| fused.is_some()),
+                    gate.filter(|_| fused.is_some()),
+                    config.gate_row_stride.filter(|_| fused.is_some()),
+                    sinks.filter(|_| fused.is_some()),
                     params,
                     query_tiles,
                     num_splits,
@@ -398,11 +439,10 @@ impl AttentionKernel for AttentionMetalKernel {
             );
         }
 
-        let Some((maxima, sums)) = statistics else {
-            return Ok(values);
+        let Some((maxima, sums)) = statistics.filter(|_| fused.is_none()) else {
+            return Ok(output.unwrap_or(values));
         };
-        let mut output =
-            command_buffer.allocate_scratch_for_shape(&[suffix_length, num_q_heads, head_dim], config.data_type)?;
+        let mut output = output.unwrap();
         self.combine.encode(
             &values,
             &maxima,

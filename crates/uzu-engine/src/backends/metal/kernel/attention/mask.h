@@ -8,6 +8,9 @@ using namespace uzu::ring;
 using namespace uzu::trie;
 using uzu::kv_layout::NO_KEY_SLOT;
 
+// A key no query sees (unfilled, past the end); also the width of "no window".
+constexpr constant uint INVALID_POSITION = 0x7FFFFFFFu;
+
 static inline bool should_use_key(
     const constant RingParams& ring_params,
     const device TrieNode* trie,
