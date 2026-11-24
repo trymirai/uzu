@@ -4,7 +4,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::{qkv_norm::QKVNormParams, trie::TrieNode},
         kernel::AttentionPrepareKernel,
     },
@@ -19,6 +19,7 @@ use crate::{
 struct PrepareOutput {
     codes: [Vec<u8>; 3],
     scales: [Vec<bf16>; 3],
+    raw_keys: Option<Vec<bf16>>,
 }
 
 #[derive(Clone, Copy)]
@@ -28,17 +29,34 @@ struct NormCase {
     affine: [bool; 3],
 }
 
+#[derive(Clone, Copy)]
+enum PrepareMode {
+    Normal,
+    PoolKeys,
+    KeysOnly,
+    KeyReference,
+}
+
 fn run_prepare<B: Backend, const DIM: usize>(
     num_q_heads: u32,
     normalization: NormCase,
     fused: bool,
     rope: bool,
-    block_mean: bool,
+    mode: PrepareMode,
+    has_trie: bool,
 ) -> PrepareOutput {
     const CACHE_TOKENS: usize = 64;
     const SUFFIX: usize = 2;
     const ROW_PADDING: usize = 5;
     const PREFIX: u32 = 3;
+    let pool_keys = matches!(mode, PrepareMode::PoolKeys | PrepareMode::KeysOnly);
+    let keys_only = matches!(mode, PrepareMode::KeysOnly);
+    let key_reference = matches!(mode, PrepareMode::KeyReference);
+    let rope_offset = if key_reference {
+        0
+    } else {
+        5
+    };
     let code_bytes = CACHE_TOKENS * DIM;
     let norm_params = QKVNormParams {
         enabled: normalization.enabled.map(u32::from),
@@ -50,17 +68,22 @@ fn run_prepare<B: Backend, const DIM: usize>(
         std::array::from_fn(|head| (0..DIM).map(|i| 0.5 + (i as f32 * 0.13 + head as f32).sin() * 0.3).collect());
     let mut rows = Vec::new();
     for token in 0..SUFFIX {
-        for head in (1 - num_q_heads) as usize..3 {
+        for head in 0..num_q_heads as usize + 2 {
+            let norm = if head < num_q_heads as usize {
+                0
+            } else {
+                head - num_q_heads as usize + 1
+            };
             let mut values = (0..DIM)
                 .map(|i| bf16::from_f32(((token * 3 * DIM + head * DIM + i) as f32 * 0.37).sin()))
                 .collect::<Vec<_>>();
-            if !fused && normalization.enabled[head] {
+            if !fused && normalization.enabled[norm] {
                 let sum = values.iter().map(|v| v.to_f32() * v.to_f32()).sum::<f32>();
-                let inverse_rms = (sum / DIM as f32 + norm_params.epsilon[head]).sqrt().recip();
+                let inverse_rms = (sum / DIM as f32 + norm_params.epsilon[norm]).sqrt().recip();
                 for (i, value) in values.iter_mut().enumerate() {
                     let normalized = value.to_f32() * inverse_rms;
-                    let scale = weights[head][i] + norm_params.scale_offset[head];
-                    *value = if !normalization.affine[head] {
+                    let scale = weights[norm][i] + norm_params.scale_offset[norm];
+                    *value = if !normalization.affine[norm] {
                         bf16::from_f32(normalized)
                     } else if normalization.full_layer {
                         bf16::from_f32(normalized * scale)
@@ -73,12 +96,29 @@ fn run_prepare<B: Backend, const DIM: usize>(
         }
         rows.extend([bf16::ZERO; ROW_PADDING]);
     }
+    let key_offset = num_q_heads as usize * DIM;
+    let row_stride = (num_q_heads as usize + 2) * DIM + ROW_PADDING;
+    let keys: [Vec<bf16>; SUFFIX] =
+        std::array::from_fn(|token| rows[token * row_stride + key_offset..][..DIM].to_vec());
+    let cached_key: Vec<_> = keys[0].iter().map(|value| bf16::from_f32(value.to_f32() * 0.5 + 0.25)).collect();
+    if key_reference {
+        for (token, previous) in [&cached_key, &keys[0]].into_iter().enumerate() {
+            for (channel, (&previous, &current)) in previous.iter().zip(&keys[token]).enumerate() {
+                rows[token * row_stride + key_offset + channel] =
+                    bf16::from_f32((previous.to_f32() + current.to_f32()) * 0.5);
+            }
+        }
+    }
+    if key_reference && !has_trie {
+        rows[row_stride + key_offset..row_stride + key_offset + DIM].fill(bf16::ZERO);
+    }
     let context = block_on(B::Context::new()).unwrap();
     let layout = kv_layout::<B>(&context, DIM as u32, 1);
     let qkvg = create_buffer_with_data::<B, bf16>(&context, &rows);
     let norm_scales = weights.map(|weights| create_buffer_with_data::<B, f32>(&context, &weights));
-    let mut q_codes = create_buffer_with_data::<B, i8>(&context, &vec![0; SUFFIX * DIM]);
-    let mut q_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; SUFFIX]);
+    let mut q_codes = create_buffer_with_data::<B, i8>(&context, &vec![0; num_q_heads.max(1) as usize * SUFFIX * DIM]);
+    let mut q_scales =
+        create_buffer_with_data::<B, bf16>(&context, &vec![bf16::ZERO; num_q_heads.max(1) as usize * SUFFIX]);
     let mut k_codes = create_buffer_with_data::<B, i8>(&context, &vec![0; code_bytes]);
     let mut v_codes = create_buffer_with_data::<B, u8>(&context, &vec![0; code_bytes]);
     let mut k_scales = create_buffer_with_data::<B, bf16>(&context, &[bf16::ZERO; CACHE_TOKENS]);
@@ -100,75 +140,80 @@ fn run_prepare<B: Backend, const DIM: usize>(
         affine[0],
         affine[1],
         affine[2],
-        block_mean,
-        4 * u32::from(block_mean),
-        false,
+        pool_keys,
+        4 * u32::from(pool_keys),
+        has_trie,
     )
     .unwrap();
     let nodes = create_buffer_with_data::<B, u32>(
         &context,
-        bytemuck::cast_slice(&[
-            TrieNode {
-                trie_start: 0,
-                trie_end: 0,
-                height: 0,
-                parent: -1,
-            },
-            TrieNode {
-                trie_start: 0,
-                trie_end: 0,
-                height: 4,
-                parent: -1,
-            },
-        ]),
+        bytemuck::cast_slice(&[0, 4].map(|height| TrieNode {
+            trie_start: 0,
+            trie_end: 0,
+            height,
+            parent: -1,
+        })),
     );
-    let windows = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 4, 4, 4, 4]);
-    let mut raw_keys =
-        create_buffer_with_data::<B, bf16>(&context, &[rows[..DIM].to_vec(), vec![bf16::ZERO; 5 * DIM]].concat());
+    let block_token_rows = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 3, 3, 4, 4]);
+    let mut raw_keys = create_buffer_with_data::<B, bf16>(&context, &[cached_key, vec![bf16::ZERO; 5 * DIM]].concat());
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let query_heads = if keys_only {
+        0
+    } else {
+        num_q_heads
+    };
+    let input_offset = if keys_only {
+        key_offset * DataType::BF16.size_in_bytes()
+    } else {
+        0
+    };
     kernel.encode(
-        &qkvg,
+        (&qkvg).subrange(input_offset..),
         &mut q_codes,
         &mut q_scales,
         Some(&mut k_codes),
         Some(&mut k_scales),
-        Some(&mut v_codes),
-        Some(&mut v_scales),
+        (!pool_keys).then_some(&mut v_codes),
+        (!pool_keys).then_some(&mut v_scales),
         rope.then_some(&rope_inverse_frequencies),
         affine[0].then_some(&norm_scales[0]),
         affine[1].then_some(&norm_scales[1]),
         affine[2].then_some(&norm_scales[2]),
-        block_mean.then_some(&nodes),
-        block_mean.then_some(&windows),
-        block_mean.then_some(&mut raw_keys),
+        pool_keys.then_some(&block_token_rows),
+        pool_keys.then_some(&mut raw_keys),
         if fused {
             norm_params
         } else {
             QKVNormParams::default()
         },
-        num_q_heads,
+        query_heads,
         rope.then_some(rope_dim),
         rope.then_some(1.0),
-        rope.then_some(5),
+        rope.then_some(rope_offset),
         33,
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
-        num_q_heads * SUFFIX as u32,
-        block_mean.then_some(PREFIX),
-        None::<&B::GlobalGpuBuffer>,
+        query_heads * SUFFIX as u32,
+        pool_keys.then_some(PREFIX),
+        has_trie.then_some(&nodes),
         &mut command_buffer,
     );
     block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    let raw_keys = pool_keys.then(|| buffer_to_vec::<B, bf16>(&context, &raw_keys));
+    if let Some(raw_keys) = &raw_keys {
+        assert_eq!(&raw_keys[3 * DIM..5 * DIM], keys.concat());
+    }
     PrepareOutput {
         codes: [&q_codes, &k_codes, &v_codes].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
         scales: [&q_scales, &k_scales, &v_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
+        raw_keys,
     }
 }
 
 #[uzu_test]
 fn test_attention_prepare_fused_norm() {
     fn check<const DIM: usize>() {
-        for queries in [0, 1] {
+        for queries in [0, 1, 4] {
             for full_layer in [false, true] {
                 for (enabled, affine) in [
                     ([true, true, false], [true, true, false]),
@@ -180,20 +225,29 @@ fn test_attention_prepare_fused_norm() {
                         enabled,
                         affine,
                     };
-                    for rope in [false, true] {
+                    for (rope, has_trie) in [(false, true), (true, true), (true, false)] {
                         for_each_backend!(|B| {
-                            let separate = run_prepare::<B, DIM>(queries, case, false, rope, false);
-                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, false);
+                            let separate =
+                                run_prepare::<B, DIM>(queries, case, false, rope, PrepareMode::Normal, has_trie);
+                            let fused = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::Normal, has_trie);
                             assert_eq!(
                                 separate, fused,
                                 "fused norm mismatch D{DIM} queries={queries} full_layer={full_layer} rope={rope}"
                             );
-                            if queries == 1 {
-                                let block_mean = run_prepare::<B, DIM>(queries, case, true, rope, true);
-                                assert_eq!(
-                                    (&block_mean.codes[0], &block_mean.scales[0]),
-                                    (&fused.codes[0], &fused.scales[0])
-                                );
+                            let pooled =
+                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::PoolKeys, has_trie);
+                            let key_reference =
+                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeyReference, has_trie);
+                            let keys_only =
+                                run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeysOnly, has_trie);
+                            assert_eq!(pooled.codes[1], keys_only.codes[1]);
+                            assert_eq!(pooled.scales[1], keys_only.scales[1]);
+                            assert_eq!(pooled.raw_keys, keys_only.raw_keys);
+                            assert!(keys_only.codes[0].iter().all(|&code| code == 0));
+                            assert!(keys_only.scales[0].iter().all(|&scale| scale == bf16::ZERO));
+                            for (head, reference) in [fused, key_reference].iter().enumerate() {
+                                assert_eq!(pooled.codes[head], reference.codes[head]);
+                                assert_eq!(pooled.scales[head], reference.scales[head]);
                             }
                         });
                     }

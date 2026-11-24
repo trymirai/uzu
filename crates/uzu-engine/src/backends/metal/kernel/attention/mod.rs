@@ -12,10 +12,7 @@ use crate::{
             context::MetalContext,
             error::MetalError,
             gpu_types::{attention::AttnParams, kv_layout},
-            kernel::{
-                AttentionBlockScoreMetalKernel, AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel,
-                AttentionVectorMetalKernel,
-            },
+            kernel::{AttentionMatrixCombineMetalKernel, AttentionMatrixMetalKernel, AttentionVectorMetalKernel},
         },
     },
     data_type::DataType,
@@ -27,7 +24,7 @@ pub struct AttentionMetalKernel {
     tiles: Vec<KernelTile>,
     vector: Vec<[AttentionVectorMetalKernel; 2]>,
     combine: AttentionMatrixCombineMetalKernel,
-    sparse: Option<(u32, u32, [AttentionMatrixMetalKernel; 2])>,
+    sparse: Option<SparseKernels>,
 }
 
 struct KernelTile {
@@ -36,6 +33,12 @@ struct KernelTile {
     prefix: Option<AttentionMatrixMetalKernel>,
     masked: AttentionMatrixMetalKernel,
     trie: AttentionMatrixMetalKernel,
+}
+
+struct SparseKernels {
+    rows: u32,
+    compression_ratio: u32,
+    cores: [AttentionMatrixMetalKernel; 2],
 }
 
 impl AttentionMetalKernel {
@@ -138,7 +141,7 @@ impl AttentionMetalKernel {
                             "sparse attention is causal without window or ring".to_string(),
                         ));
                     }
-                    if compression_ratio % kv_layout::LANE_KEYS != 0 {
+                    if compression_ratio == 0 || !compression_ratio.is_multiple_of(kv_layout::LANE_KEYS) {
                         return Err(MetalError::CannotCreateFunction(format!(
                             "sparse blocks of {compression_ratio} keys must fill whole lane groups of {} keys",
                             kv_layout::LANE_KEYS
@@ -168,7 +171,11 @@ impl AttentionMetalKernel {
                             Some(compression_ratio),
                         )
                     };
-                    Ok((rows, compression_ratio, [kernel(false)?, kernel(true)?]))
+                    Ok(SparseKernels {
+                        rows,
+                        compression_ratio,
+                        cores: [kernel(false)?, kernel(true)?],
+                    })
                 })
                 .transpose()?,
         })
@@ -244,9 +251,9 @@ impl AttentionKernel for AttentionMetalKernel {
             nk: kv_length.div_ceil(kv_layout::TILE_KEYS),
         };
         let sparse = match (key_blocks, &self.sparse) {
-            (None, None) => None,
-            (Some(key_blocks), Some((rows, compression_ratio, cores))) => {
-                Some((key_blocks, &cores[usize::from(trie.is_some())], *rows, *compression_ratio))
+            (None, _) => None,
+            (Some(key_blocks), Some(sparse)) => {
+                Some((key_blocks, &sparse.cores[usize::from(trie.is_some())], sparse.rows, sparse.compression_ratio))
             },
             _ => panic!("key_blocks must match AttentionKernelConfig::sparse_compression_ratio"),
         };
@@ -428,31 +435,3 @@ impl AttentionKernel for AttentionMetalKernel {
 #[cfg(test)]
 #[path = "../../../../../unit/backends/metal/kernel/attention/mod.rs"]
 mod tests;
-
-// Keeps AttentionBlockScore compiled until the QSA indexer wiring calls it.
-#[allow(dead_code)]
-fn encode_block_score(
-    context: &MetalContext,
-    buffer: impl BufferRef<Backend = Metal>,
-    scores: impl BufferMut<Backend = Metal>,
-    encoder: &mut MetalCommandBufferEncoding,
-) -> Result<(), MetalError> {
-    AttentionBlockScoreMetalKernel::new(context, 4, 128, false, 4, false)?.encode(
-        buffer,
-        buffer,
-        buffer,
-        buffer,
-        scores,
-        0,
-        0,
-        0,
-        0,
-        0,
-        16,
-        32,
-        0,
-        None::<&<Metal as Backend>::GlobalGpuBuffer>,
-        encoder,
-    );
-    Ok(())
-}

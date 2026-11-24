@@ -8,6 +8,7 @@ pub mod attention;
 pub mod delta_net_chunked_prefill;
 pub mod delta_net_tree_verify;
 pub mod gated_act_mul;
+pub mod indexer;
 pub mod kv_layout;
 pub mod matmul;
 pub mod radix_top_k_small;
@@ -29,6 +30,7 @@ pub trait Kernels: Sized {
 
     autogen_kernels!();
     type AttentionKernel: attention::AttentionKernel<Backend = Self::Backend>;
+    type IndexerKernel: indexer::IndexerKernel<Backend = Self::Backend>;
     type DeltaNetChunkedPrefill: delta_net_chunked_prefill::DeltaNetChunkedPrefill<Backend = Self::Backend>;
     type DeltaNetTreeVerify: delta_net_tree_verify::DeltaNetTreeVerify<Backend = Self::Backend>;
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;

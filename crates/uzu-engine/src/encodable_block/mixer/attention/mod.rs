@@ -10,7 +10,11 @@ use crate::{
             attention::KeyBlocks,
         },
     },
-    config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
+    config::{
+        normalization::UpcastMode,
+        rope::AnyRoPEConfig,
+        token_mixer::{attention::AttentionConfig, sparse_attention::SparseAttentionIndexerConfig},
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -21,13 +25,16 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
+mod indexer;
 mod state;
 
+use indexer::Indexer;
 pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheState};
 
 pub mod rope;
 
 pub struct Attention<B: Backend> {
+    indexer: Option<Indexer<B>>,
     head_dim: u32,
     num_q_heads: u32,
     num_groups: u32,
@@ -49,6 +56,8 @@ pub struct Attention<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum AttentionNewError<B: Backend> {
+    #[error("Sparse attention indexer is not supported by this backend")]
+    IndexerNotSupported,
     #[error("Attention kernel error: {0}")]
     Kernel(#[source] <<B::Kernels as Kernels>::AttentionKernel as AttentionKernel>::Error),
     #[error("Backend error: {0}")]
@@ -75,9 +84,34 @@ impl<B: Backend> Attention<B> {
         data_type: DataType,
         rope_config: Option<&AnyRoPEConfig>,
         config: &AttentionConfig,
+        indexer_config: Option<&SparseAttentionIndexerConfig>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
+        let indexer = if let Some(indexer_config) = indexer_config {
+            assert_eq!(data_type, DataType::BF16, "sparse attention requires bf16");
+            assert!(
+                config.is_causal
+                    && !config.is_kv_sharing
+                    && !config.has_sinks
+                    && !config.has_qkvg_biases
+                    && config.sliding_window_size.is_none(),
+                "sparse attention requires causal, no KV sharing, sinks, biases or sliding window"
+            );
+            Some(
+                Indexer::new(
+                    indexer_config.clone(),
+                    rope_config.expect("sparse attention requires RoPE"),
+                    &parameter_tree.subtree("indexer"),
+                    context,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        let attention_tree = indexer.as_ref().map(|_| parameter_tree.subtree("attention"));
+        let parameter_tree = attention_tree.as_ref().unwrap_or(parameter_tree);
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;
@@ -93,11 +127,12 @@ impl<B: Backend> Attention<B> {
             .map_err(AttentionNewError::Backend)?;
 
         let q_dim = num_q_heads * head_dim;
+        let indexer_dim = indexer_config.map_or(0, |config| (config.num_heads + 1) * config.head_dim);
 
         let projection_tree = parameter_tree.subtree("qkvg_projection");
         let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
             let kv_dim = num_kv_heads * head_dim;
-            q_dim + kv_dim + kv_dim
+            q_dim + kv_dim + kv_dim + indexer_dim
         } else {
             q_dim
         };
@@ -163,7 +198,7 @@ impl<B: Backend> Attention<B> {
                 sliding_window_size,
                 scale: config.scale,
                 data_type,
-                sparse_compression_ratio: None,
+                sparse_compression_ratio: indexer_config.map(|config| config.compression_ratio),
             },
         )
         .map_err(AttentionNewError::Kernel)?;
@@ -212,6 +247,7 @@ impl<B: Backend> Attention<B> {
 
         Ok((
             Self {
+                indexer,
                 head_dim,
                 num_q_heads,
                 num_groups,
@@ -238,7 +274,7 @@ impl<B: Backend> Attention<B> {
         &self,
         hidden: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
-        state: Option<MaybeMut<AttentionState<B>>>,
+        mut state: Option<MaybeMut<AttentionState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, AttentionEncodeError<B>> {
         let qkvg = self.projection.encode(hidden, batch_dim.size(), command_buffer)?;
@@ -249,6 +285,26 @@ impl<B: Backend> Attention<B> {
         });
 
         let attention_output = {
+            let key_blocks = if let Some(indexer) = &self.indexer {
+                let Some(MaybeMut::Mut(state)) = state.as_mut() else {
+                    panic!("sparse attention requires mutable state");
+                };
+                let cache = state.cache();
+                let indexer_offset = ((self.num_q_heads + 2 * self.num_groups) * self.head_dim) as usize;
+                indexer
+                    .encode(
+                        state.indexer.as_mut().expect("missing indexer state"),
+                        qkvg.subrange(indexer_offset * self.data_type.size_in_bytes()..),
+                        self.projection_dim,
+                        self.rope.as_ref().unwrap(),
+                        batch_dim,
+                        cache.prefix_len(),
+                        command_buffer,
+                    )
+                    .map_err(AttentionEncodeError::Backend)?
+            } else {
+                None
+            };
             let mut scratch_kv;
             let (mut kv, cache) = match state {
                 Some(MaybeMut::Mut(state)) => {
@@ -282,7 +338,10 @@ impl<B: Backend> Attention<B> {
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
                         trie,
-                        key_blocks: None::<KeyBlocks<&B::ConstantBuffer>>,
+                        key_blocks: key_blocks.as_ref().map(|blocks| KeyBlocks {
+                            query_blocks: &blocks.query_blocks,
+                            blocks_per_query: blocks.blocks_per_query,
+                        }),
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,
@@ -355,7 +414,6 @@ impl<B: Backend> Attention<B> {
             self.qkv_norm_scales[0].as_ref(),
             self.qkv_norm_scales[1].as_ref(),
             self.qkv_norm_scales[2].as_ref(),
-            None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             None::<&mut B::GlobalGpuBuffer>,
             self.qkv_norm_params,

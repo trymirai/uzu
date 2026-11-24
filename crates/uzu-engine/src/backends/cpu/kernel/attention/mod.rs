@@ -1,6 +1,7 @@
 use crate::backends::common::Backend;
 
 pub mod ancestor_attention;
+pub mod indexer_cache_update;
 pub mod kv_cache_update;
 pub mod prepare;
 

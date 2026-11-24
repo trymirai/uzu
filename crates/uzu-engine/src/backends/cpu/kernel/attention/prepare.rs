@@ -22,15 +22,14 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     q_scales: *mut bf16,
     #[optional(append_kv)] k_codes: Option<*mut i8>,
     #[optional(append_kv)] k_scales: Option<*mut bf16>,
-    #[optional(append_kv)] v_codes: Option<*mut u8>,
-    #[optional(append_kv)] v_scales: Option<*mut bf16>,
+    #[optional(append_kv && !pool_keys)] v_codes: Option<*mut u8>,
+    #[optional(append_kv && !pool_keys)] v_scales: Option<*mut bf16>,
     #[optional(has_rope)] rope_inverse_frequencies: Option<*const f32>,
     #[optional(has_query_norm_scales)] query_norm_scales: Option<*const f32>,
     #[optional(has_key_norm_scales)] key_norm_scales: Option<*const f32>,
     #[optional(has_value_norm_scales)] value_norm_scales: Option<*const f32>,
-    #[optional(block_mean)] pool_nodes: Option<*const TrieNode>,
-    #[optional(block_mean)] pool_windows: Option<*const i32>,
-    #[optional(block_mean)] raw_keys: Option<*mut ElementT>,
+    #[optional(pool_keys)] block_token_rows: Option<*const i32>,
+    #[optional(pool_keys)] raw_keys: Option<*mut ElementT>,
     norm_params: QKVNormParams,
     num_q_heads: u32,
     #[optional(has_rope)] rope_dim: Option<u32>,
@@ -40,7 +39,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     input_row_stride: u32,
     suffix_length: u32,
     query_rows: u32,
-    #[optional(block_mean)] prefix_tokens: Option<u32>,
+    #[optional(pool_keys)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
     #[specialize] has_rope: bool,
     #[specialize] num_kv_heads: u32,
@@ -49,7 +48,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[specialize] has_query_norm_scales: bool,
     #[specialize] has_key_norm_scales: bool,
     #[specialize] has_value_norm_scales: bool,
-    #[specialize] block_mean: bool,
+    #[specialize] pool_keys: bool,
     #[specialize] compression_ratio: u32,
     #[specialize] has_trie: bool,
 ) {
@@ -66,20 +65,26 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     } else {
         Vec::new()
     };
-    let mut mean = vec![ElementT::zero(); head_dim * usize::from(block_mean)];
+    let mut mean = vec![ElementT::zero(); head_dim * usize::from(pool_keys)];
     let ratio = compression_ratio as usize;
     let prefix = prefix_tokens.unwrap_or(0) as usize;
-    // Raw rows: the tokens after the last complete block, then one per suffix node.
+    // One key head: cached partial block, then one raw row per draft node.
     let block_start = prefix - prefix % ratio.max(1);
     let raw_row = |row: usize| unsafe { raw_keys.unwrap().add(row * head_dim) };
     let gqa_factor = num_q_heads / num_kv_heads;
     let v_head_start = num_q_heads + num_kv_heads;
-    for head in 0..v_head_start + num_kv_heads {
+    let head_count = if pool_keys {
+        v_head_start
+    } else {
+        v_head_start + num_kv_heads
+    };
+    for head in 0..head_count {
         let is_query = head < num_q_heads;
         if !append_kv && !is_query {
             continue;
         }
         let is_key = !is_query && head < v_head_start;
+        let is_pooled_key = pool_keys && is_key;
         let (kv_head, scales) = match (is_query, is_key) {
             (true, _) => (0, Some(q_scales)),
             (_, true) => (head - num_q_heads, k_scales),
@@ -93,27 +98,39 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             (2, has_value_norm_scales.then(|| value_norm_scales.unwrap()))
         };
         for token in 0..suffix_length {
-            let rope_row = if has_trie {
+            let height = if has_trie {
                 unsafe { (*trie.unwrap().add(token as usize)).height }
             } else {
                 token
             };
+            let rope_row = if is_pooled_key {
+                (prefix as u32 + height + 1).saturating_sub(compression_ratio)
+            } else {
+                height
+            };
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
-            if block_mean {
+            if is_pooled_key {
                 let token = token as usize;
                 unsafe { std::ptr::copy_nonoverlapping(source, raw_row(ratio - 1 + token), head_dim) };
+                if !(prefix + height as usize + 1).is_multiple_of(ratio) {
+                    let row = (kv_token_offset as usize + token) * num_kv_heads as usize + kv_head as usize;
+                    unsafe {
+                        std::ptr::write_bytes(k_codes.unwrap().add(row * head_dim), 0, head_dim);
+                        *k_scales.unwrap().add(row) = bf16::ONE;
+                    }
+                    continue;
+                }
                 values.fill(0.0);
-                let height = unsafe { (*pool_nodes.unwrap().add(token)).height } as usize;
-                if (prefix + height + 1).is_multiple_of(ratio) {
-                    for i in 0..ratio {
-                        let slot = unsafe { *pool_windows.unwrap().add(token * ratio + i) } as usize;
-                        let row = match slot.checked_sub(prefix) {
-                            Some(suffix_row) => unsafe { qkvg.add(suffix_row * input_row_stride as usize) },
-                            None => raw_row(slot - block_start).cast_const(),
-                        };
-                        for (channel, sum) in values.iter_mut().enumerate() {
-                            *sum += unsafe { *row.add(channel) }.to_f32().unwrap();
-                        }
+                for i in 0..ratio {
+                    let slot = unsafe { *block_token_rows.unwrap().add(token * ratio + i) } as usize;
+                    let row = match slot.checked_sub(prefix) {
+                        Some(suffix_row) => unsafe {
+                            qkvg.add(suffix_row * input_row_stride as usize + head as usize * head_dim)
+                        },
+                        None => raw_row(slot - block_start).cast_const(),
+                    };
+                    for (channel, sum) in values.iter_mut().enumerate() {
+                        *sum += unsafe { *row.add(channel) }.to_f32().unwrap();
                     }
                 }
                 for (mean, sum) in mean.iter_mut().zip(&values) {
@@ -146,7 +163,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                         source,
                         rope_inverse_frequencies.unwrap(),
                         rope_scale.unwrap(),
-                        rope_position_offset.unwrap() + rope_row,
+                        if is_pooled_key {
+                            rope_row
+                        } else {
+                            rope_position_offset.unwrap() + rope_row
+                        },
                         channel,
                         rope_dim,
                     )

@@ -5,17 +5,17 @@ import generated.kv_layout;
 import generated.qkv_norm;
 import generated.trie;
 
-groupshared float prepare_block_mean[ATTENTION_DIMS * SIMD_SIZE];
+groupshared float prepare_pooled_key[ATTENTION_DIMS * SIMD_SIZE];
 
 // A head's input channel: the block mean when the kernel pools blocks of keys, the projected row otherwise.
 ElementT prepare_input<ElementT : IStorageFloat>(
   Ptr<ElementT, Access.Read> qkvg,
   uint row,
   uint channel,
-  bool block_mean
+  bool is_pooled_key
 ) {
-  if (block_mean) {
-    return ElementT.fromFloat(prepare_block_mean[channel]);
+  if (is_pooled_key) {
+    return ElementT.fromFloat(prepare_pooled_key[channel]);
   }
   return qkvg[row + channel];
 }
@@ -55,15 +55,14 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   Ptr<bf16, Access.ReadWrite> q_scales,
   [[Optional("append_kv")]] Ptr<int8_t, Access.ReadWrite> k_codes,
   [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> k_scales,
-  [[Optional("append_kv")]] Ptr<uint8_t, Access.ReadWrite> v_codes,
-  [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> v_scales,
+  [[Optional("append_kv && !pool_keys")]] Ptr<uint8_t, Access.ReadWrite> v_codes,
+  [[Optional("append_kv && !pool_keys")]] Ptr<bf16, Access.ReadWrite> v_scales,
   [[Optional("has_rope")]] Ptr<float, Access.Read> rope_inverse_frequencies,
   [[Optional("has_query_norm_scales")]] Ptr<float, Access.Read> query_norm_scales,
   [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
   [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
-  [[Optional("block_mean")]] Ptr<TrieNode, Access.Read> pool_nodes,
-  [[Optional("block_mean")]] Ptr<int, Access.Read> pool_windows,
-  [[Optional("block_mean")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
+  [[Optional("pool_keys")]] Ptr<int, Access.Read> block_token_rows,
+  [[Optional("pool_keys")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
   QKVNormParams norm_params,
   uint num_q_heads,
   [[Optional("has_rope")]] uint rope_dim,
@@ -73,10 +72,10 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   uint input_row_stride,
   uint suffix_length,
   uint query_rows,
-  [[Optional("block_mean")]] uint prefix_tokens,
+  [[Optional("pool_keys")]] uint prefix_tokens,
   [[Optional("has_trie")]] Ptr<TrieNode, Access.Read> trie,
   [[Groups("suffix_length")]] uint token,
-  [[Groups("num_q_heads + num_kv_heads * 2")]] uint head,
+  [[Groups("num_q_heads + num_kv_heads * (if pool_keys { 1 } else { 2 })")]] uint head,
   [[Threads("32")]] uint tid,
   [[Specialize]] uint HEAD_DIM,
   [[Specialize]] bool has_rope,
@@ -86,7 +85,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   [[Specialize]] bool has_query_norm_scales,
   [[Specialize]] bool has_key_norm_scales,
   [[Specialize]] bool has_value_norm_scales,
-  [[Specialize]] bool block_mean,
+  [[Specialize]] bool pool_keys,
   [[Specialize]] uint compression_ratio,
   [[Specialize]] bool has_trie,
 ) {
@@ -96,6 +95,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     return;
   }
   let is_key = !is_query && head < num_q_heads + num_kv_heads;
+  let is_pooled_key = pool_keys && is_key;
   let lane = subgroup_invocation();
   let dims = HEAD_DIM / SIMD_SIZE;
   let first = lane * dims;
@@ -106,25 +106,39 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   let has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
   let scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   let row = token * input_row_stride + head * HEAD_DIM;
-  // Trie nodes sit at their depth below the root, not at their row in the suffix.
-  let rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
-  if (block_mean) {
-    // raw_keys: the open block's cached rows, then one row per suffix node.
+  let token_height = has_trie ? trie[token].height : token;
+  let rope_position = !has_rope ? 0 : is_pooled_key
+    ? max(prefix_tokens + token_height + 1, compression_ratio) - compression_ratio
+    : rope_position_offset + token_height;
+  if (is_pooled_key) {
+    // One key head: cached partial block, then one raw row per draft node.
     let block_start = prefix_tokens - prefix_tokens % compression_ratio;
-    let completes_block = (prefix_tokens + pool_nodes[token].height + 1) % compression_ratio == 0;
+    let completes_block = (prefix_tokens + token_height + 1) % compression_ratio == 0;
+    for (uint a = 0; a < dims; a++) {
+      let channel = first + a;
+      raw_keys[(compression_ratio - 1 + token) * HEAD_DIM + channel] = qkvg[row + channel];
+      if (!completes_block) {
+        k_codes[((kv_token_offset + token) * num_kv_heads + head - num_q_heads) * HEAD_DIM + channel] = int8_t(0);
+      }
+    }
+    if (!completes_block) {
+      if (lane == 0) {
+        k_scales[(kv_token_offset + token) * num_kv_heads + head - num_q_heads] = bf16.fromFloat(1.0);
+      }
+      return;
+    }
     for (uint a = 0; a < dims; a++) {
       let channel = first + a;
       var sum = 0.0;
-      for (uint i = 0; completes_block && i < compression_ratio; i++) {
-        let slot = uint(pool_windows[token * compression_ratio + i]);
+      for (uint i = 0; i < compression_ratio; i++) {
+        let slot = uint(block_token_rows[token * compression_ratio + i]);
         if (slot >= prefix_tokens) {
-          sum += qkvg[(slot - prefix_tokens) * input_row_stride + channel].toFloat();
+          sum += qkvg[(slot - prefix_tokens) * input_row_stride + head * HEAD_DIM + channel].toFloat();
         } else {
           sum += raw_keys[(slot - block_start) * HEAD_DIM + channel].toFloat();
         }
       }
-      raw_keys[(compression_ratio - 1 + token) * HEAD_DIM + channel] = qkvg[row + channel];
-      prepare_block_mean[channel] = ElementT.fromFloat(sum / float(compression_ratio)).toFloat();
+      prepare_pooled_key[channel] = ElementT.fromFloat(sum / float(compression_ratio)).toFloat();
     }
     GroupMemoryBarrierWithGroupSync();
   }
@@ -135,7 +149,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     for (uint base = 4 * lane; base < HEAD_DIM; base += 4 * SIMD_SIZE) {
       [unroll]
       for (uint i = 0; i < 4; i++) {
-        let value = prepare_input(qkvg, row, base + i, block_mean).toFloat();
+        let value = prepare_input(qkvg, row, base + i, is_pooled_key).toFloat();
         squares += value * value;
       }
     }
@@ -144,12 +158,12 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   float values[ATTENTION_DIMS];
   for (uint a = 0; a < dims; a++) {
     let channel = first + a;
-    let input = prepare_input(qkvg, row, channel, block_mean);
+    let input = prepare_input(qkvg, row, channel, is_pooled_key);
     var element = prepare_norm(input, channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
     if (has_rope && (is_query || is_key) && channel < rope_dim) {
       let half = rope_dim / 2;
       let paired_channel = channel < half ? channel + half : channel - half;
-      let paired_input = prepare_input(qkvg, row, paired_channel, block_mean);
+      let paired_input = prepare_input(qkvg, row, paired_channel, is_pooled_key);
       let paired =
         prepare_norm(paired_input, paired_channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
       let rotated =

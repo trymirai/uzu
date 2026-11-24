@@ -1,12 +1,9 @@
 use uzu_engine_macros::uzu_config;
 
-use crate::config::{
-    linear::LinearConfig, normalization::NormalizationConfig, token_mixer::attention::AttentionConfig,
-};
+use crate::config::{normalization::NormalizationConfig, token_mixer::attention::AttentionConfig};
 
 #[uzu_config]
 pub struct SparseAttentionIndexerConfig {
-    pub projection_config: LinearConfig,
     pub query_norm_config: NormalizationConfig,
     pub key_norm_config: NormalizationConfig,
     pub num_heads: u32,

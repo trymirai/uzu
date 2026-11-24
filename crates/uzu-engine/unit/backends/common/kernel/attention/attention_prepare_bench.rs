@@ -103,7 +103,6 @@ fn bench_attention_prepare(c: &mut Criterion) {
                         Some(&key_norm_scales),
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
-                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&mut <Metal as Backend>::GlobalGpuBuffer>,
                         norm_params,
                         NUM_Q_HEADS,

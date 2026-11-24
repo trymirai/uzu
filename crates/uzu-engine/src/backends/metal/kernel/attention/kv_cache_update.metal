@@ -2,9 +2,10 @@
 #include "../common/dsl.h"
 
 #include "kv_cache_update.h"
-#include "kv_layout.h"
+#include "cache_copy.h"
 
 namespace kv_layout = uzu::kv_layout;
+namespace kv_cache = uzu::kv_cache;
 
 PUBLIC KERNEL(KVCacheUpdate)(
     device int8_t* in_place_k_codes,
@@ -25,34 +26,27 @@ PUBLIC KERNEL(KVCacheUpdate)(
   // Tiles load before storing; encode_accept asserts this is safe.
   constexpr uint TILE = 2;
   for (uint first = 0; first < copy_count; first += TILE) {
-    int8_t k_codes[TILE];
+    kv_cache::KeyElement keys[TILE];
     uchar v_codes[TILE];
-    bfloat k_scales[TILE];
     bfloat v_scales[TILE];
     const auto load = [&](uint i) {
       const uint source = copies[first + i].source;
-      k_codes[i] = in_place_k_codes[shape.k_code_index(source, kv_head, channel)];
+      keys[i] = kv_cache::load_key(in_place_k_codes, in_place_k_scales, shape, source, kv_head, channel);
       if (!keys_only) {
         v_codes[i] = in_place_v_codes[shape.v_code_index(source, kv_head, channel)];
       }
-      if (channel == 0) {
-        k_scales[i] = in_place_k_scales[shape.scale_index(source, kv_head)];
-        if (!keys_only) {
-          v_scales[i] = in_place_v_scales[shape.scale_index(source, kv_head)];
-        }
+      if (channel == 0 && !keys_only) {
+        v_scales[i] = in_place_v_scales[shape.scale_index(source, kv_head)];
       }
     };
     const auto store = [&](uint i) {
       const uint destination = copies[first + i].destination;
-      in_place_k_codes[shape.k_code_index(destination, kv_head, channel)] = k_codes[i];
+      kv_cache::store_key(in_place_k_codes, in_place_k_scales, shape, destination, kv_head, channel, keys[i]);
       if (!keys_only) {
         in_place_v_codes[shape.v_code_index(destination, kv_head, channel)] = v_codes[i];
       }
-      if (channel == 0) {
-        in_place_k_scales[shape.scale_index(destination, kv_head)] = k_scales[i];
-        if (!keys_only) {
-          in_place_v_scales[shape.scale_index(destination, kv_head)] = v_scales[i];
-        }
+      if (channel == 0 && !keys_only) {
+        in_place_v_scales[shape.scale_index(destination, kv_head)] = v_scales[i];
       }
     };
     METAL_PRAGMA_UNROLL

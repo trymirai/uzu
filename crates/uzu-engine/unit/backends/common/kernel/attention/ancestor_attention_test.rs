@@ -136,7 +136,6 @@ impl<B: Backend> Runner<B> {
                 None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
-                None::<&B::GlobalGpuBuffer>,
                 None::<&mut B::GlobalGpuBuffer>,
                 Default::default(),
                 0,

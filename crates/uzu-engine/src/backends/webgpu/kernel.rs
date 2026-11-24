@@ -24,6 +24,7 @@ impl Kernels for WebGPUKernels {
 
     autogen_kernels!();
     type AttentionKernel = Unsupported<WebGPU>;
+    type IndexerKernel = Unsupported<WebGPU>;
     type DeltaNetChunkedPrefill = Unsupported<WebGPU>;
     type DeltaNetTreeVerify = Unsupported<WebGPU>;
     type MatmulKernel = Unsupported<WebGPU>;

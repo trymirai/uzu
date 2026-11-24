@@ -99,7 +99,7 @@ impl<B: Backend> dyn Mixer<B> {
         match config {
             AnyTokenMixerConfig::AttentionConfig(config) => {
                 let (attention, in_projection_input_hadamard_factors) =
-                    Attention::new(hidden_dim, data_type, rope_config, config, parameter_tree, context).await?;
+                    Attention::new(hidden_dim, data_type, rope_config, config, None, parameter_tree, context).await?;
 
                 Ok((Box::new(attention), in_projection_input_hadamard_factors))
             },
@@ -119,7 +119,19 @@ impl<B: Backend> dyn Mixer<B> {
 
                 Ok((Box::new(short_conv), in_projection_input_hadamard_factors))
             },
-            AnyTokenMixerConfig::SparseAttentionConfig(_) => todo!("sparse attention"),
+            AnyTokenMixerConfig::SparseAttentionConfig(config) => {
+                let (attention, input_rht) = Attention::new(
+                    hidden_dim,
+                    data_type,
+                    rope_config,
+                    &config.attention_config,
+                    Some(&config.indexer_config),
+                    parameter_tree,
+                    context,
+                )
+                .await?;
+                Ok((Box::new(attention), input_rht))
+            },
         }
     }
 }

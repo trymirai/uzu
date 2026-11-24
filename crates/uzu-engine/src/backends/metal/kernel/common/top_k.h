@@ -15,4 +15,4 @@ static inline float top_k_score_from_key(uint key) {
   return as_type<float>(bits);
 }
 
-static inline uint top_k_bf16_key(ushort bits) { return uint(bits ^ ((bits & 0x8000) ? 0xffff : 0x8000)); }
+static inline uint top_k_16bit_key(ushort bits) { return uint(bits ^ ((bits & 0x8000) ? 0xffff : 0x8000)); }

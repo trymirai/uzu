@@ -34,6 +34,7 @@ impl Kernels for CpuKernels {
 
     autogen_kernels!();
     type AttentionKernel = attention::AttentionCpuKernel;
+    type IndexerKernel = Unsupported<Cpu>;
     type DeltaNetChunkedPrefill = Unsupported<Cpu>;
     type DeltaNetTreeVerify = Unsupported<Cpu>;
     type MatmulKernel = matmul::MatmulCpuKernel;

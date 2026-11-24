@@ -20,6 +20,7 @@ const _: () = {
 
 mod attention;
 pub mod gdn;
+mod indexer;
 pub mod matmul;
 mod radix_top_k_small;
 
@@ -32,6 +33,7 @@ impl Kernels for MetalKernels {
 
     autogen_kernels!();
     type AttentionKernel = attention::AttentionMetalKernel;
+    type IndexerKernel = indexer::IndexerMetalKernel;
     type DeltaNetChunkedPrefill = gdn::chunked::MetalDeltaNetChunkedPrefill;
     type DeltaNetTreeVerify = TreeVerifyBlocks<Metal>;
     type MatmulKernel = matmul::MatmulMetalKernel;
