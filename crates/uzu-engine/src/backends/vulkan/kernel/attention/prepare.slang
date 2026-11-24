@@ -23,7 +23,7 @@ ElementT prepare_input<ElementT : IStorageFloat>(
 float prepare_norm<ElementT : IStorageFloat>(
   ElementT value,
   uint channel,
-  float inverse_rms,
+  float row_scale,
   Ptr<float, Access.Read> scales,
   bool has_scales,
   bool enabled,
@@ -33,7 +33,7 @@ float prepare_norm<ElementT : IStorageFloat>(
   if (!enabled) {
     return value.toFloat();
   }
-  let normalized = value.toFloat() * inverse_rms;
+  let normalized = value.toFloat() * row_scale;
   if (!has_scales) {
     return ElementT.fromFloat(normalized).toFloat();
   }
@@ -100,7 +100,8 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   let dims = HEAD_DIM / SIMD_SIZE;
   let first = lane * dims;
   let norm = is_query ? 0u : is_key ? 1u : 2u;
-  let enabled = norm_params.enabled[norm] != 0;
+  let op = norm_params.op[norm];
+  let enabled = op != uint(QKVL2Op::None);
   let full_layer = norm_params.full_layer[norm] != 0;
   let scale_offset = norm_params.scale_offset[norm];
   let has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
@@ -129,7 +130,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     GroupMemoryBarrierWithGroupSync();
   }
 
-  var inverse_rms = 1.0;
+  var row_scale = 1.0;
   if (enabled) {
     var squares = 0.0;
     for (uint base = 4 * lane; base < HEAD_DIM; base += 4 * SIMD_SIZE) {
@@ -139,19 +140,24 @@ func AttentionPrepare<ElementT : IStorageFloat>(
         squares += value * value;
       }
     }
-    inverse_rms = rms_inverse<SIMD_SIZE>(squares, HEAD_DIM, norm_params.epsilon[norm]);
+    if (op == uint(QKVL2Op::Clip)) {
+      let sum_squares = workgroup_reduce<Sum<float>, SIMD_SIZE>(squares);
+      row_scale = min(1.0, norm_params.clip_threshold[norm] / (sqrt(sum_squares) + norm_params.epsilon[norm]));
+    } else {
+      row_scale = rms_inverse<SIMD_SIZE>(squares, HEAD_DIM, norm_params.epsilon[norm]);
+    }
   }
   float values[ATTENTION_DIMS];
   for (uint a = 0; a < dims; a++) {
     let channel = first + a;
     let input = prepare_input(qkvg, row, channel, block_mean);
-    var element = prepare_norm(input, channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
+    var element = prepare_norm(input, channel, row_scale, scales, has_scales, enabled, full_layer, scale_offset);
     if (has_rope && (is_query || is_key) && channel < rope_dim) {
       let half = rope_dim / 2;
       let paired_channel = channel < half ? channel + half : channel - half;
       let paired_input = prepare_input(qkvg, row, paired_channel, block_mean);
       let paired =
-        prepare_norm(paired_input, paired_channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
+        prepare_norm(paired_input, paired_channel, row_scale, scales, has_scales, enabled, full_layer, scale_offset);
       let rotated =
         rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, rope_position, channel, rope_dim);
       element = ElementT.fromFloat(rotated).toFloat();
