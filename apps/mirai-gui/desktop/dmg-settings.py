@@ -14,12 +14,13 @@ symlinks = {"Applications": "/Applications"}
 # UDRW image is the classic "unsupported format" notary rejection).
 format = "UDZO"
 background = os.environ["DMG_BACKGROUND"]
-window_rect = ((100, 100), (638, 398))
+window_rect = ((100, 100), (660, 408))
 icon_size = 128
+text_size = 13
 default_view = "icon-view"
 show_icon_preview = False
 
 icon_locations = {
-    app_name: (165, 200),
-    "Applications": (473, 200),
+    app_name: (180, 184),
+    "Applications": (480, 184),
 }
