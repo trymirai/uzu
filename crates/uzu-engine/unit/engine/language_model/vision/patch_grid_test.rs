@@ -4,13 +4,16 @@ use super::{VisionImage, VisionImageError, merged_image_grid};
 
 #[uzu_test]
 fn vision_image_validation() {
-    let grid = |width, height, bytes, patch_size, merge_size| {
+    let grid_in_pixel_range = |width, height, bytes, patch_size, merge_size, min_pixels, max_pixels| {
         let image = VisionImage {
             width,
             height,
             pixels: vec![0; bytes].into_boxed_slice(),
         };
-        merged_image_grid(&image, patch_size, merge_size, 2, 64)
+        merged_image_grid(&image, patch_size, merge_size, 2, 64, min_pixels, max_pixels)
+    };
+    let grid = |width, height, bytes, patch_size, merge_size| {
+        grid_in_pixel_range(width, height, bytes, patch_size, merge_size, 0, u32::MAX)
     };
 
     assert_eq!(grid(8, 4, 96, 2, 2).unwrap(), (2, 1));
@@ -21,6 +24,13 @@ fn vision_image_validation() {
         assert!(matches!(
             grid(width, height, (width * height * 3) as usize, 2, 2),
             Err(VisionImageError::InvalidDimensions { .. })
+        ));
+    }
+    assert_eq!(grid_in_pixel_range(8, 4, 96, 2, 2, 32, 32).unwrap(), (2, 1));
+    for (min_pixels, max_pixels) in [(33, u32::MAX), (0, 31)] {
+        assert!(matches!(
+            grid_in_pixel_range(8, 4, 96, 2, 2, min_pixels, max_pixels),
+            Err(VisionImageError::PixelCount { .. })
         ));
     }
     for (patch, merge) in [(0, 2), (2, 0), (u32::MAX, 2)] {
