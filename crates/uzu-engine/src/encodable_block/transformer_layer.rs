@@ -206,6 +206,13 @@ impl<B: Backend> Sublayer<B> {
         layer_parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
+        if config.connection_config.is_some() {
+            todo!("sublayer connection config");
+        }
+        if config.output_conv_config.is_some() {
+            todo!("sublayer output convolution");
+        }
+
         let parameter_tree = layer_parameter_tree.subtree(name);
 
         let conv = if let Some(conv_config) = &config.conv_config {

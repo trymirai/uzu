@@ -5,7 +5,10 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
-    config::mlp::dense_mlp::DenseMLPConfig,
+    config::{
+        activation::{AnyActivation, silu::SiLU},
+        mlp::dense_mlp::DenseMLPConfig,
+    },
     data_type::DataType,
     encodable_block::{
         linear::{InputRhtParameters, Linear, LinearBlockError},
@@ -37,6 +40,18 @@ impl<B: Backend> DenseMlp<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<InputRhtParameters<B>>), DenseMlpNewError<B>> {
+        if config.up_soft_cap.is_some() {
+            todo!("dense MLP up projection soft cap");
+        }
+        if matches!(
+            config.activation,
+            AnyActivation::SiLU(SiLU {
+                soft_cap: Some(_),
+                ..
+            })
+        ) {
+            todo!("soft-capped SiLU activation");
+        }
         let (up, up_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             model_dimension,
             2 * hidden_dimension,

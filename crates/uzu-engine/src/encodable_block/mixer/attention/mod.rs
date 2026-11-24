@@ -13,7 +13,11 @@ use crate::{
             attention::KeyBlocks,
         },
     },
-    config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
+    config::{
+        normalization::UpcastMode,
+        rope::AnyRoPEConfig,
+        token_mixer::attention::{AttentionConfig, HeadNormConfig},
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::{BatchKind, BatchTopology},
@@ -121,6 +125,16 @@ impl<B: Backend> Attention<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, AttentionNewError<B>> {
+        if config.logit_soft_cap.is_some() {
+            todo!("attention logit soft capping");
+        }
+        if config.log_scaling_config.is_some() {
+            todo!("attention log scaling");
+        }
+        if config.stacked_projection_config.is_some() {
+            todo!("attention stacked projections");
+        }
+
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;
@@ -134,7 +148,8 @@ impl<B: Backend> Attention<B> {
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
         let key_norm_config = (!is_kv_sharing).then(|| config.key_norm_config.clone()).flatten();
-        let value_norm_config = (!is_kv_sharing).then(|| config.value_norm_config()).flatten();
+        let value_norm_config =
+            (!is_kv_sharing).then(|| config.value_norm_config().map(HeadNormConfig::Normalization)).flatten();
         let mut qkv_norm_params = QKVNormParams::default();
         let mut qkv_norm_scales = [None, None, None];
         for (i, (config, name)) in
@@ -142,16 +157,23 @@ impl<B: Backend> Attention<B> {
                 .into_iter()
                 .enumerate()
         {
-            let Some(config) = config else {
-                continue;
-            };
-            qkv_norm_params.op[i] = QKVL2Op::RmsNorm as u32;
-            qkv_norm_params.full_layer[i] = u32::from(config.upcast_mode == UpcastMode::FullLayer);
-            qkv_norm_params.epsilon[i] = config.epsilon;
-            qkv_norm_params.scale_offset[i] = config.scale_offset.unwrap_or(0.0);
-            if config.has_scale {
-                qkv_norm_scales[i] =
-                    Some(parameter_tree.subtree(name).read_buffer("scales", &[head_dim], DataType::F32).await?);
+            match config {
+                None => {},
+                Some(HeadNormConfig::L2Clip(config)) => {
+                    qkv_norm_params.op[i] = QKVL2Op::Clip as u32;
+                    qkv_norm_params.epsilon[i] = config.epsilon;
+                    qkv_norm_params.clip_threshold[i] = config.threshold;
+                },
+                Some(HeadNormConfig::Normalization(config)) => {
+                    qkv_norm_params.op[i] = QKVL2Op::RmsNorm as u32;
+                    qkv_norm_params.full_layer[i] = u32::from(config.upcast_mode == UpcastMode::FullLayer);
+                    qkv_norm_params.epsilon[i] = config.epsilon;
+                    qkv_norm_params.scale_offset[i] = config.scale_offset.unwrap_or(0.0);
+                    if config.has_scale {
+                        qkv_norm_scales[i] =
+                            Some(parameter_tree.subtree(name).read_buffer("scales", &[head_dim], DataType::F32).await?);
+                    }
+                },
             }
         }
 

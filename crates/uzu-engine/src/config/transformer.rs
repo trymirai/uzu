@@ -11,4 +11,5 @@ pub struct TransformerConfig {
     pub output_norm_config: Option<NormalizationConfig>,
     pub model_dim: u32,
     pub hidden_dim: u32,
+    pub layer_order: Option<Box<[u32]>>,
 }

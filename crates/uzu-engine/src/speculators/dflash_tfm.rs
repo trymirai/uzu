@@ -11,7 +11,10 @@ use crate::{
         gpu_types::trie::TrieNode as GpuTrieNode,
         kernel::{LinearizeChainKernel, LinearizeTreeKernel},
     },
-    config::speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig},
+    config::{
+        AnyDraftAdapterConfig,
+        speculator::{AnySpeculatorConfig, dflash::DFlashSpeculatorConfig},
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -137,8 +140,10 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
 
         let data_type = DataType::BF16;
 
-        let AnySpeculatorConfig::DFlashSpeculatorConfig(config) =
-            serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
+        let config = match serde_json::from_slice(&file::read(model_path.join("config.json")).await?)? {
+            AnySpeculatorConfig::DFlashSpeculatorConfig(config) => config,
+            AnySpeculatorConfig::DFlareSpeculatorConfig(_) => todo!("DFlare speculator"),
+        };
         let draft_vocab_size = config.draft_config.vocab_size;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
@@ -152,19 +157,19 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             &*context,
         )
         .await?;
-        let weaver = if let Some(weaver_config) = &config.weaver_config {
-            Some(
+        let weaver = match &config.adapter_config {
+            Some(AnyDraftAdapterConfig::WeaverConfig(weaver_config)) => Some(
                 Weaver::new(
                     draft_vocab_size,
                     weaver_config,
                     target_embedding.readout_input_hadamard_factors(),
-                    &speculator_tree.subtree("weaver"),
+                    &speculator_tree.subtree("adapter"),
                     &*context,
                 )
                 .await?,
-            )
-        } else {
-            None
+            ),
+            Some(AnyDraftAdapterConfig::DSparkConfig(_)) => todo!("DSpark adapter"),
+            None => None,
         };
         let confidence_head = match &config.confidence_head_config {
             Some(head_config) => Some(

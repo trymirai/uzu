@@ -4,7 +4,9 @@ pub mod clipping;
 pub mod confidence_head;
 pub mod confidence_head_tree_attention;
 pub mod decoder;
+pub mod dflare;
 pub mod dflash;
+pub mod dspark;
 pub mod embedding;
 pub mod linear;
 pub mod mlp;
@@ -22,3 +24,6 @@ pub mod transformer_layer;
 pub mod vision;
 pub mod weaver;
 pub mod weight_matrix;
+
+#[uzu_engine_macros::uzu_config_abstract(weaver::WeaverConfig, dspark::DSparkConfig)]
+pub struct DraftAdapterConfig;
