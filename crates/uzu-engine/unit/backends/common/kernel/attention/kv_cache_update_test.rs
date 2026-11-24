@@ -5,7 +5,7 @@ use crate::{
     backends::common::{
         Backend, Context, Kernels,
         gpu_types::kv_cache_update::Copy,
-        kernel::{AttentionPrepareKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
+        kernel::{AttentionPrepareKernel, IndexerCacheUpdateKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
     data_type::DataType,
     encodable_block::mixer::attention::KVCache,
@@ -140,4 +140,44 @@ fn test_kv_copy() {
     for keys_only in [false, true] {
         for_each_backend!(|B| check_kv_copy::<B>(keys_only));
     }
+}
+
+#[uzu_test]
+fn test_indexer_cache_update() {
+    const DIM: usize = 128;
+    const DRAFT_ROWS: usize = 16;
+    const RATIO: u32 = 4;
+    for_each_backend!(|B| {
+        let context = create_context::<B>();
+        let mut codes: Vec<i8> = (0..2 * DRAFT_ROWS * DIM).map(|i| (i % 251) as u8 as i8).collect();
+        let mut scales: Vec<bf16> = (0..2 * DRAFT_ROWS).map(|i| bf16::from_f32(i as f32 + 0.25)).collect();
+        let mut unpooled: Vec<bf16> =
+            (0..(DRAFT_ROWS + RATIO as usize - 1) * DIM).map(|i| bf16::from_f32(i as f32 / 16.0)).collect();
+        let mut block_codes = create_buffer_with_data::<B, i8>(&context, &codes);
+        let mut block_scales = create_buffer_with_data::<B, bf16>(&context, &scales);
+        let mut unpooled_keys = create_buffer_with_data::<B, bf16>(&context, &unpooled);
+        let kernel =
+            <<B as Backend>::Kernels as Kernels>::IndexerCacheUpdateKernel::new(&context, DIM as u32, RATIO).unwrap();
+        let accepted = [0, 2, 3, 5, 7, 8, 10];
+        let mut command = context.create_command_buffer(None, None).unwrap();
+        kernel.encode(
+            &mut block_codes,
+            &mut block_scales,
+            &mut unpooled_keys,
+            &accepted,
+            accepted.len() as u32,
+            2,
+            DRAFT_ROWS as u32,
+            &mut command,
+        );
+        submit_command_buffer(command);
+        codes.copy_within(2 * DIM..3 * DIM, DRAFT_ROWS * DIM);
+        codes.copy_within(8 * DIM..9 * DIM, (DRAFT_ROWS + 1) * DIM);
+        scales[DRAFT_ROWS] = scales[2];
+        scales[DRAFT_ROWS + 1] = scales[8];
+        unpooled.copy_within(13 * DIM..14 * DIM, 0);
+        assert_eq!(buffer_to_vec::<B, i8>(&context, &block_codes), codes);
+        assert_eq!(buffer_to_vec::<B, bf16>(&context, &block_scales), scales);
+        assert_eq!(buffer_to_vec::<B, bf16>(&context, &unpooled_keys), unpooled);
+    });
 }

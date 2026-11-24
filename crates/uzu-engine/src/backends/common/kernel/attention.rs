@@ -100,8 +100,8 @@ pub struct AttentionArguments<
     pub gate: Option<GT>,
 }
 
-pub struct KeyBlocks<T> {
-    pub query_blocks: T,
+pub struct KeyBlocks<ST> {
+    pub query_blocks: ST,
     pub blocks_per_query: u32,
 }
 

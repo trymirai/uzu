@@ -1,12 +1,13 @@
 use std::any::Any;
 
+use super::{Attention, indexer::IndexerCache};
 use crate::{
     backends::common::{
         Backend, CommandBuffer, CommandBufferEncoding, Context, DeviceCapabilities, GpuBuffer, Kernels, SparseBuffer,
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{Mixer, MixerState, attention::Attention},
+    encodable_block::mixer::{Mixer, MixerState},
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
@@ -105,6 +106,7 @@ impl<B: Backend> KVCache<B> {
 }
 
 pub struct AttentionState<B: Backend> {
+    pub indexer: Option<IndexerCache<B>>,
     cache: KVCacheState,
     pub kv: KVCache<B>,
     kv_cache_update: <B::Kernels as Kernels>::KVCacheUpdateKernel,
@@ -165,6 +167,11 @@ impl<B: Backend> AttentionState<B> {
         )?;
 
         Ok(Self {
+            indexer: if let Some(indexer) = &attention.indexer {
+                Some(IndexerCache::new(&indexer.config, max_prefix_elements, context)?)
+            } else {
+                None
+            },
             cache,
             kv,
             kv_cache_update,
@@ -200,6 +207,9 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
+        if let Some(indexer) = &mut self.indexer {
+            indexer.encode_accept(self.cache.prefix_len(), accepted_indices, command_buffer);
+        }
         let copies = self.cache.accept(accepted_indices);
         assert!(
             copies

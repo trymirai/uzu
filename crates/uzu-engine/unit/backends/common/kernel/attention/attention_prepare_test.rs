@@ -4,7 +4,7 @@ use uzu_engine_macros::uzu_test;
 
 use crate::{
     backends::common::{
-        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+        Backend, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::{qkv_norm::QKVNormParams, trie::TrieNode},
         kernel::AttentionPrepareKernel,
     },
@@ -19,6 +19,7 @@ use crate::{
 struct PrepareOutput {
     codes: [Vec<u8>; 3],
     scales: [Vec<bf16>; 3],
+    raw_keys: Option<Vec<bf16>>,
 }
 
 #[derive(Clone, Copy)]
@@ -32,6 +33,7 @@ struct NormCase {
 enum PrepareMode {
     Normal,
     PoolKeys,
+    KeysOnly,
     KeyReference,
 }
 
@@ -46,7 +48,8 @@ fn run_prepare<B: Backend, const DIM: usize>(
     const SUFFIX: usize = 2;
     const ROW_PADDING: usize = 5;
     const PREFIX: u32 = 3;
-    let pool_keys = matches!(mode, PrepareMode::PoolKeys);
+    let pool_keys = matches!(mode, PrepareMode::PoolKeys | PrepareMode::KeysOnly);
+    let keys_only = matches!(mode, PrepareMode::KeysOnly);
     let key_reference = matches!(mode, PrepareMode::KeyReference);
     let rope_offset = if key_reference {
         0
@@ -150,8 +153,18 @@ fn run_prepare<B: Backend, const DIM: usize>(
     let path_token_indices = create_buffer_with_data::<B, i32>(&context, &[0, 0, 3, 3, 3, 3, 4, 4]);
     let mut raw_keys = create_buffer_with_data::<B, bf16>(&context, &[cached_key, vec![bf16::ZERO; 5 * DIM]].concat());
     let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    let query_heads = if keys_only {
+        0
+    } else {
+        num_q_heads
+    };
+    let input_offset = if keys_only {
+        key_offset * DataType::BF16.size_in_bytes()
+    } else {
+        0
+    };
     kernel.encode(
-        &qkvg,
+        (&qkvg).subrange(input_offset..),
         &mut q_codes,
         &mut q_scales,
         Some(&mut k_codes),
@@ -170,14 +183,14 @@ fn run_prepare<B: Backend, const DIM: usize>(
         } else {
             QKVNormParams::default()
         },
-        num_q_heads,
+        query_heads,
         rope.then_some(rope_dim),
         rope.then_some(1.0),
         rope.then_some(rope_offset),
         33,
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
-        num_q_heads * SUFFIX as u32,
+        query_heads * SUFFIX as u32,
         pool_keys.then_some(PREFIX),
         Some(&nodes),
         &mut command_buffer,
@@ -186,6 +199,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
     PrepareOutput {
         codes: [&q_codes, &k_codes, &v_codes].map(|buffer| buffer_to_vec::<B, u8>(&context, buffer)),
         scales: [&q_scales, &k_scales, &v_scales].map(|buffer| buffer_to_vec::<B, bf16>(&context, buffer)),
+        raw_keys: pool_keys.then(|| buffer_to_vec::<B, bf16>(&context, &raw_keys)),
     }
 }
 
@@ -215,6 +229,12 @@ fn test_attention_prepare_fused_norm() {
                             let pooled = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::PoolKeys);
                             let key_reference =
                                 run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeyReference);
+                            let keys_only = run_prepare::<B, DIM>(queries, case, true, rope, PrepareMode::KeysOnly);
+                            assert_eq!(pooled.codes[1], keys_only.codes[1]);
+                            assert_eq!(pooled.scales[1], keys_only.scales[1]);
+                            assert_eq!(pooled.raw_keys, keys_only.raw_keys);
+                            assert!(keys_only.codes[0].iter().all(|&code| code == 0));
+                            assert!(keys_only.scales[0].iter().all(|&scale| scale == bf16::ZERO));
                             for (head, reference) in [fused, key_reference].iter().enumerate() {
                                 assert_eq!(pooled.codes[head], reference.codes[head]);
                                 assert_eq!(pooled.scales[head], reference.scales[head]);

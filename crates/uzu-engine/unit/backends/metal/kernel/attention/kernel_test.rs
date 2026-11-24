@@ -145,6 +145,36 @@ fn attention_matches_cpu() {
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
+            if sparse && !use_mxu && q_heads == 24 && suffix == 1 && prefix == 1024 {
+                let codes =
+                    create_buffer_with_data::<Metal, i8>(&metal, &[vec![1; 128], vec![-1; 128]].concat().repeat(6));
+                let scales = create_buffer_with_data::<Metal, bf16>(&metal, &[bf16::ONE; 12]);
+                let mut selected = create_buffer_with_data::<Metal, i32>(&metal, &[-123; 12]);
+                let mut command = metal.create_command_buffer(None, None).unwrap();
+                kernel
+                    .select_blocks(
+                        &codes,
+                        &scales,
+                        &codes,
+                        &scales,
+                        2,
+                        16,
+                        8,
+                        4,
+                        KeyBlocks {
+                            query_blocks: &mut selected,
+                            blocks_per_query: 2,
+                        },
+                        None::<&<Metal as Backend>::ConstantBuffer>,
+                        &mut command,
+                    )
+                    .unwrap();
+                submit_command_buffer(command);
+                let mut selected = buffer_to_vec::<Metal, i32>(&metal, &selected);
+                selected[..4].chunks_exact_mut(2).for_each(|ids| ids.sort_unstable());
+                assert_eq!(&selected[..4], &[0, 2, 1, 3]);
+                assert_eq!(&selected[4..], &[-123; 8]);
+            }
             let (queries, keys, values) = attention_inputs(shape);
             let stride = (q_heads + 2 * kv_heads) * head_dim;
             let mut rows = vec![bf16::ZERO; (prefix + suffix) * stride];

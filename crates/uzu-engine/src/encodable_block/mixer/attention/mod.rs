@@ -28,7 +28,7 @@ use crate::{
 mod indexer;
 mod state;
 
-use indexer::Indexer;
+use indexer::{Indexer, IndexerCache};
 pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheState};
 
 pub mod rope;
@@ -288,21 +288,49 @@ impl<B: Backend> Attention<B> {
 
         let attention_output = {
             let mut scratch_kv;
-            let (mut kv, cache) = match state {
+            let mut scratch_keys;
+            let (mut kv, cache, keys) = match state {
                 Some(MaybeMut::Mut(state)) => {
                     let cache = state.cache();
-                    (MaybeMut::Mut(&mut state.kv), cache)
+                    (MaybeMut::Mut(&mut state.kv), cache, state.indexer.as_mut())
                 },
-                Some(MaybeMut::Const(state)) => (MaybeMut::Const(&state.kv), state.cache()),
+                Some(MaybeMut::Const(state)) => {
+                    assert!(self.indexer.is_none(), "sparse attention cannot share KV state");
+                    (MaybeMut::Const(&state.kv), state.cache(), None)
+                },
                 None => {
                     assert!(self.num_kv_heads.is_some(), "stateless query-only attention");
                     assert!(batch_dim.is_flat(), "stateless attention doesn't support trie");
                     scratch_kv = KVCache::allocate_scratch(self.kernel.kv_layout(), batch_dim.size(), command_buffer)
                         .map_err(AttentionEncodeError::Backend)?;
-                    (MaybeMut::Mut(&mut scratch_kv), KVCacheState::new(0, self.ring_capacity))
+                    let cache = KVCacheState::new(0, self.ring_capacity);
+                    scratch_keys = self
+                        .indexer
+                        .as_ref()
+                        .map(|indexer| IndexerCache::new(&indexer.config, batch_dim.size(), command_buffer.context()))
+                        .transpose()
+                        .map_err(AttentionEncodeError::Backend)?;
+                    (MaybeMut::Mut(&mut scratch_kv), cache, scratch_keys.as_mut())
                 },
             };
             let trie = batch_dim.nodes();
+            let key_blocks = if let Some(indexer) = &self.indexer {
+                let indexer_offset = ((self.num_q_heads + 2 * self.num_groups) * self.head_dim) as usize;
+                indexer
+                    .encode(
+                        keys.expect("missing indexer state"),
+                        &self.kernel,
+                        qkvg.subrange(indexer_offset * self.data_type.size_in_bytes()..),
+                        self.projection_dim,
+                        self.rope.as_ref().unwrap(),
+                        batch_dim,
+                        cache.prefix_len(),
+                        command_buffer,
+                    )
+                    .map_err(AttentionEncodeError::Backend)?
+            } else {
+                None
+            };
             let (queries, query_scales) = self
                 .prepare(&qkvg, &mut kv, cache, self.num_q_heads, batch_dim.size(), trie, command_buffer)
                 .map_err(AttentionEncodeError::Backend)?;
@@ -320,7 +348,10 @@ impl<B: Backend> Attention<B> {
                     AttentionArguments {
                         suffix_length: batch_dim.size(),
                         trie,
-                        key_blocks: None::<KeyBlocks<&B::ConstantBuffer>>,
+                        key_blocks: key_blocks.as_ref().map(|blocks| KeyBlocks {
+                            query_blocks: &blocks.query_blocks,
+                            blocks_per_query: blocks.blocks_per_query,
+                        }),
                         sinks: self.sinks.as_ref(),
                         cache,
                         gate,
