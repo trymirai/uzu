@@ -1,6 +1,7 @@
 use std::io;
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use futures::TryStreamExt;
 use shoji::{
     traits::backend::chat_token::StreamImage,
     types::session::chat::{ChatContentBlock, ChatMessage},
@@ -39,10 +40,15 @@ pub(crate) fn get_image_urls(messages: &[ChatMessage]) -> impl Iterator<Item = &
     })
 }
 
-pub(crate) async fn load_images(images: &mut [StreamImage]) -> Result<(), ChatSessionError> {
+pub(crate) async fn load_images(
+    images: &mut [StreamImage],
+    max_pixels: Option<u32>,
+) -> Result<(), ChatSessionError> {
     for image in images {
         image.bytes = if is_remote(&image.url) {
-            download_image(&image.url).await.map_err(ChatSessionError::backend)?
+            let pixels =
+                max_pixels.ok_or_else(|| ChatSessionError::backend("Remote image requires a model pixel limit"))?;
+            download_image(&image.url, u64::from(pixels) * 4).await?
         } else if is_data(&image.url) {
             let (bytes, header_length) = decode_data_url(&image.url).map_err(ChatSessionError::backend)?;
             image.url.truncate(header_length);
@@ -64,10 +70,33 @@ fn decode_data_url(url: &str) -> Result<(Vec<u8>, usize), String> {
     Ok((bytes, header.len()))
 }
 
-async fn download_image(url: &str) -> Result<Vec<u8>, reqwest::Error> {
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
-    let response = client.get(url).send().await?.error_for_status()?;
-    Ok(response.bytes().await?.to_vec())
+async fn download_image(
+    url: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ChatSessionError> {
+    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(ChatSessionError::backend)?;
+    let response = client.get(url).send().await.map_err(ChatSessionError::backend)?;
+    let response = response.error_for_status().map_err(ChatSessionError::backend)?;
+    read_image_response(response, max_bytes).await
+}
+
+async fn read_image_response(
+    response: reqwest::Response,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ChatSessionError> {
+    let too_large = || ChatSessionError::backend(format!("Remote image exceeds the {max_bytes}-byte download limit"));
+    if response.content_length().is_some_and(|length| length > max_bytes) {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.try_next().await.map_err(ChatSessionError::backend)? {
+        if chunk.len() as u64 > max_bytes - bytes.len() as u64 {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn is_data(url: &str) -> bool {
@@ -82,6 +111,22 @@ fn is_remote(url: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_family = "wasm"))]
+    #[tokio::test]
+    async fn image_stream_enforces_limit_without_content_length() {
+        for (limit, accepted) in [(4, true), (3, false)] {
+            let chunks = futures::stream::iter([Ok::<_, io::Error>(b"ab".to_vec()), Ok(b"cd".to_vec())]);
+            let response = reqwest::Response::from(http::Response::new(reqwest::Body::wrap_stream(chunks)));
+            assert_eq!(response.content_length(), None);
+            let result = read_image_response(response, limit).await;
+            if accepted {
+                assert_eq!(result.unwrap(), b"abcd");
+            } else {
+                assert!(result.unwrap_err().to_string().contains("3-byte download limit"));
+            }
+        }
+    }
+
     #[tokio::test]
     async fn data_url_image_loads_without_a_file() {
         let url = "data:image/png;base64,aGVsbG8=";
@@ -91,7 +136,7 @@ mod tests {
             url: url.to_owned(),
             bytes: Vec::new(),
         }];
-        load_images(&mut images).await.unwrap();
+        load_images(&mut images, None).await.unwrap();
         assert_eq!(images[0].bytes, b"hello");
         assert_eq!(images[0].url, "data:image/png;base64");
 
@@ -100,7 +145,7 @@ mod tests {
                 url: url.to_owned(),
                 bytes: Vec::new(),
             }];
-            assert!(load_images(&mut images).await.is_err(), "url: {url}");
+            assert!(load_images(&mut images, None).await.is_err(), "url: {url}");
         }
     }
 }

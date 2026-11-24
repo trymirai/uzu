@@ -155,7 +155,7 @@ impl Session {
             Ok(cached_tokens) => cached_tokens,
             Err(error) => return error_stream(error),
         };
-        if let Err(error) = load_images(&mut self.input.images).await {
+        if let Err(error) = load_images(&mut self.input.images, self.instance.max_image_pixels()).await {
             return error_stream(error);
         }
 

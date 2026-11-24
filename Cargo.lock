@@ -4969,6 +4969,7 @@ dependencies = [
  "bon",
  "futures",
  "hanashi",
+ "http 1.5.0",
  "indexmap 2.14.2",
  "inventory",
  "keisoku",

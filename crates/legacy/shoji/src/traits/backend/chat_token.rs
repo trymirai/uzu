@@ -66,6 +66,10 @@ pub trait Instance:
         config: ChatConfig,
     ) -> Box<dyn Instance>;
 
+    fn max_image_pixels(&self) -> Option<u32> {
+        None
+    }
+
     fn with_image_pad_token_id(
         &self,
         image_pad_token_id: u64,
