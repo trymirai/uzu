@@ -17,11 +17,15 @@ use crate::{
     tests::{
         assert::assert_eq_float,
         helpers::{
-            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_non_cpu_backend,
-            submit_command_buffer,
+            buffer_to_vec, create_buffer, create_buffer_with_data, create_context, for_each_backend,
+            for_each_non_cpu_backend, submit_command_buffer,
         },
     },
 };
+
+// The normalization of Qwen3 Flash Next's n-gram injection.
+const NORM_EPSILON: f32 = 1e-6;
+const NORM_SCALE_OFFSET: f32 = 1.0;
 
 fn values<T: DataTypeRepr + Float>(
     count: usize,
@@ -62,8 +66,8 @@ fn run_gate<T: DataTypeRepr + Float, B: Backend>(
         num_tokens,
         stream_count,
         model_dim,
-        1e-6,
-        0.0,
+        NORM_EPSILON,
+        NORM_SCALE_OFFSET,
         &mut command_buffer,
     );
     submit_command_buffer(command_buffer);
@@ -339,4 +343,145 @@ fn test_ngram_conv_inject_trie_matches_flat_paths() {
             &format!("{message} (state)"),
         );
     }
+}
+
+// Golden values from lalamo's `NGramInjection.__call__` (lalamo 1edce60e) in f32, with
+// `LALAMO_TOKENS` tokens, `LALAMO_STREAM_COUNT` streams of `LALAMO_MODEL_DIM` channels
+// and kernel size `LALAMO_KERNEL_SIZE`. Its inputs are the ones `run_gate` uses (keys,
+// values and stream are what lalamo's projections and residual stream were replaced
+// with), plus conv weights `values(channels * kernel_size, 0.8)` and conv state
+// `values((kernel_size - 1) * channels, 3.1)`. `LALAMO_GATED` and `LALAMO_CONV_INPUT` are
+// the input and output of its conv norm, `LALAMO_STREAM` and `LALAMO_NEXT_STATE` its
+// outputs.
+const LALAMO_TOKENS: u32 = 3;
+const LALAMO_STREAM_COUNT: u32 = 2;
+const LALAMO_MODEL_DIM: u32 = 4;
+const LALAMO_KERNEL_SIZE: u32 = 3;
+const LALAMO_GATED: [f32; 24] = [
+    0.6112729,
+    0.10230985,
+    -0.4205,
+    -0.8863972,
+    0.49883264,
+    0.08349052,
+    -0.34315136,
+    -0.72334933,
+    -1.2284976,
+    -1.4070793,
+    -1.3952196,
+    -1.1945235,
+    -1.1299777,
+    -1.294238,
+    -1.2833292,
+    -1.0987281,
+    -0.82324374,
+    -0.35333267,
+    0.16440098,
+    0.65988374,
+    -0.794918,
+    -0.34117538,
+    0.15874435,
+    0.6371788,
+];
+const LALAMO_CONV_INPUT: [f32; 24] = [
+    2.6206017,
+    0.40854195,
+    -1.4263563,
+    -2.273679,
+    0.9928298,
+    0.0712853,
+    0.038569164,
+    0.5624419,
+    -2.3330412,
+    -2.4889717,
+    -2.096461,
+    -1.3573056,
+    -0.8838864,
+    -0.4342938,
+    0.056689057,
+    0.33575803,
+    -3.6413865,
+    -1.455712,
+    0.5753589,
+    1.7463877,
+    -1.3795607,
+    -0.2540031,
+    -0.015557912,
+    -0.43200558,
+];
+const LALAMO_STREAM: [f32; 24] = [
+    5.4942446,
+    1.5275517,
+    1.4621111,
+    3.309548,
+    1.1090249,
+    0.6942991,
+    -0.6599423,
+    -1.7999171,
+    -2.6816583,
+    -3.1699562,
+    -0.5408721,
+    1.428448,
+    -2.1067216,
+    -1.6714953,
+    0.8040596,
+    1.0784534,
+    0.36863428,
+    0.97623503,
+    1.6626774,
+    4.0301228,
+    0.28460628,
+    -0.01978743,
+    0.1975377,
+    0.6229009,
+];
+const LALAMO_NEXT_STATE: [f32; 16] = [
+    -2.3330412,
+    -2.4889717,
+    -2.096461,
+    -1.3573056,
+    -0.8838864,
+    -0.4342938,
+    0.056689057,
+    0.33575803,
+    -3.6413865,
+    -1.455712,
+    0.5753589,
+    1.7463877,
+    -1.3795607,
+    -0.2540031,
+    -0.015557912,
+    -0.43200558,
+];
+
+#[uzu_test]
+fn test_ngram_gate_matches_lalamo() {
+    for_each_backend!(|B| {
+        let (gated, conv_input) = run_gate::<f32, B>(LALAMO_TOKENS, LALAMO_STREAM_COUNT, LALAMO_MODEL_DIM);
+        let message = format!("NGramGate differs from lalamo with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<f32>(&LALAMO_GATED, &gated, tolerance::<f32>(), &format!("{message} (gated)"));
+        assert_eq_float::<f32>(&LALAMO_CONV_INPUT, &conv_input, tolerance::<f32>(), &format!("{message} (conv input)"));
+    });
+}
+
+#[uzu_test]
+fn test_ngram_conv_inject_matches_lalamo() {
+    let channels = LALAMO_STREAM_COUNT * LALAMO_MODEL_DIM;
+    let input = ConvInput::<f32> {
+        conv_input: LALAMO_CONV_INPUT.to_vec(),
+        state: values(((LALAMO_KERNEL_SIZE - 1) * channels) as usize, 3.1),
+        weights: values((channels * LALAMO_KERNEL_SIZE) as usize, 0.8),
+        gated: LALAMO_GATED.to_vec(),
+        // The same stream `run_gate` reads its queries from.
+        stream: values((LALAMO_TOKENS * channels) as usize, 1.3),
+        num_tokens: LALAMO_TOKENS,
+        channels,
+        kernel_size: LALAMO_KERNEL_SIZE,
+    };
+    for_each_backend!(|B| {
+        let (stream, next_state) = run_conv_on::<f32, B>(&input);
+        let message = format!("NGramConvInject differs from lalamo with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<f32>(&LALAMO_STREAM, &stream, tolerance::<f32>(), &format!("{message} (stream)"));
+        assert_eq_float::<f32>(&LALAMO_NEXT_STATE, &next_state, tolerance::<f32>(), &format!("{message} (state)"));
+    });
 }
