@@ -14,12 +14,15 @@ impl<B: Backend> VisionModel<B> {
         image: &VisionImage,
     ) -> Result<(u32, u32), VisionImageError> {
         let config = &self.config.encoder_config;
+        let preprocessing_config = &self.config.preprocessing_config;
         merged_image_grid(
             image,
             config.patch_size,
             config.spatial_merge_size,
             config.temporal_patch_size,
             config.model_dim,
+            preprocessing_config.min_pixels,
+            preprocessing_config.max_pixels,
         )
     }
 

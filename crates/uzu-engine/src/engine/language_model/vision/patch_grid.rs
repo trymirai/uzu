@@ -16,6 +16,12 @@ pub enum VisionImageError {
         height: u32,
         block_size: u32,
     },
+    #[error("Image has {pixels} pixels, expected from {min_pixels} to {max_pixels}")]
+    PixelCount {
+        pixels: u32,
+        min_pixels: u32,
+        max_pixels: u32,
+    },
     #[error("RGB buffer contains {actual} bytes, expected {expected}")]
     PixelLength {
         actual: usize,
@@ -25,13 +31,15 @@ pub enum VisionImageError {
     ImageTooLarge,
 }
 
-/// Checks the RGB buffer and the two vision kernel dispatch sizes before returning the merged grid.
+/// Checks the pixel count, the RGB buffer and the two vision kernel dispatch sizes before returning the merged grid.
 pub(super) fn merged_image_grid(
     image: &VisionImage,
     patch_size: u32,
     merge_size: u32,
     temporal_patch_size: u32,
     model_dim: u32,
+    min_pixels: u32,
+    max_pixels: u32,
 ) -> Result<(u32, u32), VisionImageError> {
     let block_size =
         patch_size.checked_mul(merge_size).filter(|&size| size != 0).ok_or(VisionImageError::InvalidBlockSize {
@@ -47,10 +55,16 @@ pub(super) fn merged_image_grid(
         });
     }
 
-    let expected = width
-        .checked_mul(height)
-        .and_then(|pixels| pixels.checked_mul(CHANNELS))
-        .ok_or(VisionImageError::ImageTooLarge)?;
+    let pixels = width.checked_mul(height).ok_or(VisionImageError::ImageTooLarge)?;
+    if !(min_pixels..=max_pixels).contains(&pixels) {
+        return Err(VisionImageError::PixelCount {
+            pixels,
+            min_pixels,
+            max_pixels,
+        });
+    }
+
+    let expected = pixels.checked_mul(CHANNELS).ok_or(VisionImageError::ImageTooLarge)?;
     if image.pixels.len() != expected as usize {
         return Err(VisionImageError::PixelLength {
             actual: image.pixels.len(),
