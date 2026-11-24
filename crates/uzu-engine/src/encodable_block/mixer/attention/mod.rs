@@ -31,6 +31,15 @@ pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheState
 pub mod mrope;
 pub mod rope;
 
+enum AttentionPositions<'a, B: Backend> {
+    Sequential(u32),
+    Trie {
+        offset: u32,
+        nodes: &'a B::GlobalGpuBuffer,
+    },
+    Explicit(&'a RoPEPositions<B>),
+}
+
 pub struct Attention<B: Backend> {
     head_dim: u32,
     num_q_heads: u32,
@@ -260,18 +269,32 @@ impl<B: Backend> Attention<B> {
                     (MaybeMut::Mut(&mut scratch_kv), KVCacheState::new(0, self.ring_capacity))
                 },
             };
+
+            let grid_positions: Option<RoPEPositions<B>>;
+            let rope_positions = match rope_positions {
+                Some(positions) => Some(positions),
+                None => {
+                    grid_positions = self
+                        .grid_rope_positions(cache, batch_dim.size(), command_buffer)
+                        .map_err(AttentionEncodeError::Backend)?;
+                    grid_positions.as_ref()
+                },
+            };
+
             let trie = batch_dim.nodes();
+            let rope_cursor = cache.rope_cursor();
+            let positions = match (rope_positions, trie) {
+                (Some(_), Some(_)) => panic!("trie rows rotate by their heights"),
+                (Some(positions), None) => AttentionPositions::Explicit(positions),
+                (None, Some(nodes)) => AttentionPositions::Trie {
+                    offset: rope_cursor.position()[0],
+                    nodes,
+                },
+                (None, None) => AttentionPositions::Sequential(rope_cursor.position()[0]),
+            };
+
             let (queries, query_scales) = self
-                .prepare(
-                    &qkvg,
-                    &mut kv,
-                    cache,
-                    self.num_q_heads,
-                    rope_positions,
-                    batch_dim.size(),
-                    trie,
-                    command_buffer,
-                )
+                .prepare(&qkvg, &mut kv, cache, self.num_q_heads, batch_dim.size(), positions, command_buffer)
                 .map_err(AttentionEncodeError::Backend)?;
             let input = AttentionInput {
                 query_codes: &queries,
@@ -308,7 +331,12 @@ impl<B: Backend> Attention<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let cache = state.cache();
-        self.prepare(key_value, &mut MaybeMut::Mut(&mut state.kv), cache, 0, None, batch_dim, None, command_buffer)?;
+        let grid_positions = self.grid_rope_positions(cache, batch_dim, command_buffer)?;
+        let positions = match &grid_positions {
+            Some(positions) => AttentionPositions::Explicit(positions),
+            None => AttentionPositions::Sequential(cache.rope_cursor().position()[0]),
+        };
+        self.prepare(key_value, &mut MaybeMut::Mut(&mut state.kv), cache, 0, batch_dim, positions, command_buffer)?;
         state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
         Ok(())
     }
@@ -319,9 +347,8 @@ impl<B: Backend> Attention<B> {
         kv: &mut MaybeMut<'_, KVCache<B>>,
         cache: KVCacheState,
         num_q_heads: u32,
-        rope_positions: Option<&RoPEPositions<B>>,
         suffix_length: u32,
-        trie: Option<&B::GlobalGpuBuffer>,
+        positions: AttentionPositions<'_, B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         assert_eq!(kv.layout, self.kernel.kv_layout(), "shared KV layout mismatch");
@@ -345,18 +372,18 @@ impl<B: Backend> Attention<B> {
         let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
         let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
 
-        // Rows of an image grid don't follow one another, so the kernel takes a position for each of them
-        let cursor = cache.rope_cursor();
-        let grid_positions = match rope {
-            Some(rope) if cursor.in_grid() => Some(rope.positions(cursor, suffix_length, command_buffer)?),
-            _ => None,
-        };
-        let rope_positions = rope_positions.or(grid_positions.as_ref());
-        let prepare = match (rope_positions, trie) {
-            (Some(_), Some(_)) => panic!("trie rows rotate by their heights"),
-            (Some(_), None) => self.prepare_at_positions.as_ref().expect("positions for attention without RoPE"),
-            (None, Some(_)) => &self.prepare_trie,
-            (None, None) => &self.prepare,
+        let (prepare, rope_offset, trie, rope_positions) = match positions {
+            AttentionPositions::Sequential(offset) => (&self.prepare, offset, None, None),
+            AttentionPositions::Trie {
+                offset,
+                nodes,
+            } => (&self.prepare_trie, offset, Some(nodes), None),
+            AttentionPositions::Explicit(positions) => (
+                self.prepare_at_positions.as_ref().expect("positions for attention without RoPE"),
+                0, // The kernel reads each position from the supplied buffer.
+                None,
+                Some(&positions.positions),
+            ),
         };
         prepare.encode(
             qkvg,
@@ -377,17 +404,30 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| cursor.position()[0]),
+            rope.map(|_| rope_offset),
             cache.prefix_len(),
             input_row_stride,
             suffix_length,
             num_q_heads / self.num_groups * suffix_length,
             None,
             trie,
-            rope_positions.map(|rope_positions| &rope_positions.positions),
+            rope_positions,
             command_buffer,
         );
         Ok((query_codes, query_scales))
+    }
+
+    fn grid_rope_positions(
+        &self,
+        cache: KVCacheState,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<Option<RoPEPositions<B>>, B::Error> {
+        let cursor = cache.rope_cursor();
+        match self.rope.as_ref() {
+            Some(rope) if cursor.in_grid() => rope.positions(cursor, row_count, command_buffer).map(Some),
+            _ => Ok(None),
+        }
     }
 
     fn get_projection_dim(config: &AttentionConfig) -> u32 {

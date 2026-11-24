@@ -17,8 +17,9 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 #[derive(Clone, Copy)]
 pub struct KVCacheState {
     context_length: u32,
-    rope_cursor: RoPECursor,
     ring_capacity: Option<u32>,
+    /// For multimodal models, the RoPE position of a row may differ from its index in the context.
+    rope_cursor: RoPECursor,
 }
 
 impl KVCacheState {
@@ -29,10 +30,10 @@ impl KVCacheState {
         assert!(ring_capacity != Some(0), "zero ring capacity");
         Self {
             context_length,
+            ring_capacity,
             rope_cursor: RoPECursor::Sequence {
                 position: context_length,
             },
-            ring_capacity,
         }
     }
 
