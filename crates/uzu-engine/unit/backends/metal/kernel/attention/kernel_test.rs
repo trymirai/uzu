@@ -171,7 +171,7 @@ fn attention_matches_cpu() {
                     .unwrap();
                 submit_command_buffer(command);
                 let mut selected = buffer_to_vec::<Metal, i32>(&metal, &selected);
-                selected[..4].chunks_exact_mut(2).for_each(|ids| ids.sort_unstable());
+                selected[..4].as_chunks_mut::<2>().0.iter_mut().for_each(|ids| ids.sort_unstable());
                 assert_eq!(&selected[..4], &[0, 2, 1, 3]);
                 assert_eq!(&selected[4..], &[-123; 8]);
             }
