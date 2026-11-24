@@ -140,12 +140,10 @@ func AttentionPrepare<ElementT : IStorageFloat>(
         squares += value * value;
       }
     }
-    if (op == uint(QKVL2Op::Clip)) {
-      let sum_squares = workgroup_reduce<Sum<float>, SIMD_SIZE>(squares);
-      row_scale = min(1.0, norm_params.clip_threshold[norm] / (sqrt(sum_squares) + norm_params.epsilon[norm]));
-    } else {
-      row_scale = rms_inverse<SIMD_SIZE>(squares, HEAD_DIM, norm_params.epsilon[norm]);
-    }
+    let sum_squares = workgroup_reduce<Sum<float>, SIMD_SIZE>(squares);
+    let epsilon = norm_params.epsilon[norm];
+    row_scale = op == uint(QKVL2Op::Clip) ? min(1.0, norm_params.clip_threshold[norm] / (sqrt(sum_squares) + epsilon))
+                                          : rsqrt(sum_squares / float(HEAD_DIM) + epsilon);
   }
   float values[ATTENTION_DIMS];
   for (uint a = 0; a < dims; a++) {

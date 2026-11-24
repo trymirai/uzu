@@ -96,7 +96,8 @@ PUBLIC KERNEL(AttentionPrepare)(
   const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
-  const bool norm_enabled = norm_params.op[norm_index] != uint32_t(uzu::qkv_norm::QKVL2Op::None);
+  const uint32_t norm_op = norm_params.op[norm_index];
+  const bool norm_enabled = norm_op != uint32_t(uzu::qkv_norm::QKVL2Op::None);
   const bool norm_full_layer = norm_params.full_layer[norm_index];
   const float norm_scale_offset = norm_params.scale_offset[norm_index];
   const bool has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
@@ -144,7 +145,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     }
     const float sum_sq = simd_sum(sum);
     const float epsilon = norm_params.epsilon[norm_index];
-    row_scale = norm_params.op[norm_index] == uint32_t(uzu::qkv_norm::QKVL2Op::Clip)
+    row_scale = norm_op == uint32_t(uzu::qkv_norm::QKVL2Op::Clip)
                     ? min(1.0f, norm_params.clip_threshold[norm_index] / (sqrt(sum_sq) + epsilon))
                     : rsqrt(sum_sq / float(HEAD_DIM) + epsilon);
   }

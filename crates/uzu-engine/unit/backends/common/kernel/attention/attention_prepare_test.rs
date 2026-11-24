@@ -32,6 +32,7 @@ struct NormCase {
 }
 
 const CLIP_THRESHOLDS: [f32; 3] = [2.0, 22.627417, 0.0];
+const CLIP_NORM_RATIOS: [f32; 2] = [0.5, 3.0];
 
 fn run_prepare<B: Backend, const DIM: usize>(
     num_q_heads: u32,
@@ -62,7 +63,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
                 .collect::<Vec<_>>();
             let op = normalization.ops[head];
             if op == QKVL2Op::Clip {
-                let target = CLIP_THRESHOLDS[head] * [0.5, 3.0][token];
+                let target = CLIP_THRESHOLDS[head] * CLIP_NORM_RATIOS[token];
                 let norm = values.iter().map(|v| v.to_f32() * v.to_f32()).sum::<f32>().sqrt();
                 values.iter_mut().for_each(|value| *value = bf16::from_f32(value.to_f32() * target / norm));
             }
