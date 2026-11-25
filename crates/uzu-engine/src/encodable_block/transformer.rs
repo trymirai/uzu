@@ -57,6 +57,7 @@ impl<B: Backend> TransformerState<B> {
 
     pub fn encode_accept(
         &mut self,
+        batch_dim: &BatchTopology<B>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
@@ -68,7 +69,7 @@ impl<B: Backend> TransformerState<B> {
                     continue;
                 };
 
-                layer_state.encode_accept(accepted_indices, command_buffer)?;
+                layer_state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
             }
 
             self.context_length += accepted_indices.len() as u32;

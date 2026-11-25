@@ -672,7 +672,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         if batch_dim.full_accept() {
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut command_buffer)
+                .encode_accept(&batch_dim, &(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -748,7 +748,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         self.model_state
             .transformer_state
-            .encode_accept(accepted_token_indices, &mut command_buffer)
+            .encode_accept(batch_dim, accepted_token_indices, &mut command_buffer)
             .map_err(LanguageModelStreamError::Backend)?;
 
         if let Some(speculator) = self.model.speculator.as_ref() {
@@ -796,9 +796,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let token_ids = command_buffer
             .allocate_constant_from_slice(&tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>())
             .map_err(LanguageModelStreamError::Backend)?;
+        let batch_dim = BatchTopology::flat(row_count);
         let output = self.model.decoder.encode(
             &token_ids,
-            &BatchTopology::flat(row_count),
+            &batch_dim,
             sample.then(|| (row_count - 1..row_count).into()),
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
             &mut self.model_state.transformer_state,
@@ -806,7 +807,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         )?;
         drop(encode_span);
 
-        self.accept_prefill(row_count, output.hidden_features.as_deref(), command_buffer)?;
+        self.accept_prefill(&batch_dim, output.hidden_features.as_deref(), command_buffer)?;
         self.model_state.tokens.extend_from_slice(tokens);
 
         if !sample && let Some(length) = self.options.sampling_method.suffix_repetition_length() {
@@ -847,10 +848,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 image.embeddings.subrange(start as usize * row_size..(start + length) as usize * row_size),
                 &mut embedded,
             );
+            let batch_dim = BatchTopology::image(image.width, image.height, start..start + length);
             let output = self.model.decoder.encode_embedded(
                 embedded,
                 None::<&B::ScratchBuffer>,
-                &BatchTopology::flat(length),
+                &batch_dim,
                 None,
                 self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
                 Some(&mut self.model_state.transformer_state),
@@ -858,21 +860,21 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             )?;
             drop(encode_span);
 
-            self.accept_prefill(length, output.hidden_features.as_deref(), command_buffer)?;
+            self.accept_prefill(&batch_dim, output.hidden_features.as_deref(), command_buffer)?;
         }
         Ok(())
     }
 
     fn accept_prefill(
         &mut self,
-        row_count: u32,
+        batch_dim: &BatchTopology<B>,
         hidden_features: Option<&[B::ScratchBuffer]>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), LanguageModelStreamError<B>> {
-        let rows = (0..row_count).collect::<Box<[_]>>();
+        let rows = (0..batch_dim.size()).collect::<Box<[_]>>();
         self.model_state
             .transformer_state
-            .encode_accept(&rows, command_buffer)
+            .encode_accept(batch_dim, &rows, command_buffer)
             .map_err(LanguageModelStreamError::Backend)?;
         if let Some(speculator) = self.model.speculator.as_ref() {
             speculator.encode_accept(

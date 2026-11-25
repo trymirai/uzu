@@ -1,12 +1,17 @@
+use std::ops::Range;
+
 use crate::backends::common::Backend;
 
 pub enum BatchKind<B: Backend> {
-    /// Rows continue each other.
     Sequence,
-    /// Rows are nodes of a trie of continuations; `is_flat` when the trie is a single chain.
     Trie {
         nodes: B::GlobalGpuBuffer,
         is_flat: bool,
+    },
+    Image {
+        width: u32,
+        height: u32,
+        first_cell: u32,
     },
 }
 
@@ -37,6 +42,25 @@ impl<B: Backend> BatchTopology<B> {
         }
     }
 
+    pub fn image(
+        width: u32,
+        height: u32,
+        cells: Range<u32>,
+    ) -> Self {
+        Self {
+            kind: BatchKind::Image {
+                width,
+                height,
+                first_cell: cells.start,
+            },
+            size: cells.end - cells.start,
+        }
+    }
+
+    pub fn kind(&self) -> &BatchKind<B> {
+        &self.kind
+    }
+
     pub fn size(&self) -> u32 {
         self.size
     }
@@ -47,11 +71,14 @@ impl<B: Backend> BatchTopology<B> {
 
     pub fn is_flat(&self) -> bool {
         match self.kind {
-            BatchKind::Sequence => true,
             BatchKind::Trie {
                 is_flat,
                 ..
             } => is_flat,
+            BatchKind::Sequence
+            | BatchKind::Image {
+                ..
+            } => true,
         }
     }
 
@@ -61,7 +88,10 @@ impl<B: Backend> BatchTopology<B> {
                 nodes,
                 ..
             } => Some(nodes),
-            BatchKind::Sequence => None,
+            BatchKind::Sequence
+            | BatchKind::Image {
+                ..
+            } => None,
         }
     }
 }

@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::qkv_norm::QKVNormParams,
+        gpu_types::{qkv_norm::QKVNormParams, rope::RoPEGridParams},
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             attention::KeyBlocks,
@@ -13,7 +13,7 @@ use crate::{
     config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
     encodable_block::{
-        batch_topology::BatchTopology,
+        batch_topology::{BatchKind, BatchTopology},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::RoPE},
     },
@@ -179,13 +179,14 @@ impl<B: Backend> Attention<B> {
         .map_err(AttentionNewError::Kernel)?;
 
         let has_rope = rope.is_some();
+        let has_mrope = rope.as_ref().is_some_and(|rope| rope.frequency_pairs_per_axis.is_some());
         let new_prepare = |has_trie: bool| {
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(
                 context,
                 data_type,
                 head_dim,
                 has_rope,
-                false,
+                has_mrope,
                 num_groups,
                 kernel.kv_layout().backend_opaque_layout,
                 !is_kv_sharing,
@@ -255,7 +256,16 @@ impl<B: Backend> Attention<B> {
 
             let trie = batch_dim.nodes();
             let (queries, query_scales) = self
-                .prepare(&qkvg, &mut kv, cache, self.num_q_heads, batch_dim.size(), trie, command_buffer)
+                .prepare(
+                    &qkvg,
+                    &mut kv,
+                    cache,
+                    batch_dim.kind(),
+                    self.num_q_heads,
+                    batch_dim.size(),
+                    trie,
+                    command_buffer,
+                )
                 .map_err(AttentionEncodeError::Backend)?;
             let input = AttentionInput {
                 query_codes: &queries,
@@ -292,8 +302,18 @@ impl<B: Backend> Attention<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let cache = state.cache();
-        self.prepare(key_value, &mut MaybeMut::Mut(&mut state.kv), cache, 0, batch_dim, None, command_buffer)?;
-        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
+        let batch_dim = BatchTopology::flat(batch_dim);
+        self.prepare(
+            key_value,
+            &mut MaybeMut::Mut(&mut state.kv),
+            cache,
+            batch_dim.kind(),
+            0,
+            batch_dim.size(),
+            None,
+            command_buffer,
+        )?;
+        state.encode_accept(&batch_dim, &(0..batch_dim.size()).collect::<Box<[u32]>>(), command_buffer)?;
         Ok(())
     }
 
@@ -302,6 +322,7 @@ impl<B: Backend> Attention<B> {
         qkvg: impl BufferRef<Backend = B>,
         kv: &mut MaybeMut<'_, KVCache<B>>,
         cache: KVCacheState,
+        batch_kind: &BatchKind<B>,
         num_q_heads: u32,
         suffix_length: u32,
         trie: Option<&B::GlobalGpuBuffer>,
@@ -332,6 +353,25 @@ impl<B: Backend> Attention<B> {
         } else {
             &self.prepare
         };
+
+        let rope_grid_params =
+            rope.and_then(|rope| rope.frequency_pairs_per_axis).map(|[_, height_pairs, width_pairs]| {
+                let (grid_width, grid_height, first_cell) = match batch_kind {
+                    &BatchKind::Image {
+                        width,
+                        height,
+                        first_cell,
+                    } => (width, height, first_cell),
+                    _ => (1, 1, 0),
+                };
+                RoPEGridParams {
+                    grid_width,
+                    grid_height,
+                    first_cell,
+                    height_pairs,
+                    width_pairs,
+                }
+            });
         prepare.encode(
             qkvg,
             &mut query_codes,
@@ -351,8 +391,8 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| cache.context_length()),
-            None,
+            rope.map(|_| cache.rope_position()),
+            rope_grid_params,
             cache.prefix_len(),
             input_row_stride,
             suffix_length,

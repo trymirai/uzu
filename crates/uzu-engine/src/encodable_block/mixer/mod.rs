@@ -33,6 +33,7 @@ pub trait MixerState<B: Backend>: Any + Send {
 
     fn encode_accept(
         &mut self,
+        batch_dim: &BatchTopology<B>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
