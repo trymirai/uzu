@@ -11,6 +11,7 @@ use crate::{
         },
     },
     data_type::DataTypeRepr,
+    engine::language_model::vision::patch_grid::vision_patch_coordinates,
 };
 
 #[kernel(AttentionPrepare)]
@@ -109,8 +110,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                 let grid_size = grid.grid_width * grid.grid_height;
                 rope_position =
                     rope_position_offset.unwrap() + cell / grid_size * grid.grid_width.max(grid.grid_height);
-                grid_row = cell % grid_size / grid.grid_width;
-                grid_column = cell % grid_size % grid.grid_width;
+                (grid_column, grid_row) = vision_patch_coordinates(cell % grid_size, grid.grid_width, grid.merge_size);
             }
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             if block_mean {
@@ -161,10 +161,12 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                         let grid = rope_grid.unwrap();
                         position += mrope_axis_offset(
                             (channel % (rope_dim / 2)) as u32,
+                            (rope_dim / 2) as u32,
                             grid_row,
                             grid_column,
                             grid.height_pairs,
                             grid.width_pairs,
+                            grid.interleaved_axes != 0,
                         );
                     }
                     apply_rope::<ElementT, _>(

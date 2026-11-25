@@ -8,6 +8,7 @@
 #include "../generated/qkv_norm.h"
 #include "../generated/rope.h"
 #include "../generated/trie.h"
+#include "../vision/patch_grid.h"
 
 namespace kv_layout = uzu::kv_layout;
 
@@ -154,8 +155,9 @@ PUBLIC KERNEL(AttentionPrepare)(
     const uint32_t cell = rope_grid.first_cell + (has_trie ? trie[token_idx].height : token_idx);
     const uint32_t grid_size = rope_grid.grid_width * rope_grid.grid_height;
     rope_position = rope_position_offset + cell / grid_size * metal::max(rope_grid.grid_width, rope_grid.grid_height);
-    grid_row = cell % grid_size / rope_grid.grid_width;
-    grid_column = cell % grid_size % rope_grid.grid_width;
+    const uint2 patch = vision_patch_coordinates(cell % grid_size, rope_grid.grid_width, rope_grid.merge_size);
+    grid_row = patch.y;
+    grid_column = patch.x;
   }
 
   float values[VALUES_PER_LANE];
@@ -188,8 +190,15 @@ PUBLIC KERNEL(AttentionPrepare)(
 
       uint32_t position = rope_position;
       if (has_mrope) {
-        position +=
-            mrope_axis_offset(channel % half_dim, grid_row, grid_column, rope_grid.height_pairs, rope_grid.width_pairs);
+        position += mrope_axis_offset(
+            channel % half_dim,
+            half_dim,
+            grid_row,
+            grid_column,
+            rope_grid.height_pairs,
+            rope_grid.width_pairs,
+            rope_grid.interleaved_axes != 0
+        );
       }
       element = ElementT(
           rope_rotate(float(element), paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim)

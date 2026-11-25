@@ -848,7 +848,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 image.embeddings.subrange(start as usize * row_size..(start + length) as usize * row_size),
                 &mut embedded,
             );
-            let batch_dim = BatchTopology::image(image.width, image.height, start..start + length);
+            let batch_dim = BatchTopology::image(image.width, image.height, 1, start..start + length);
             let output = self.model.decoder.encode_embedded(
                 embedded,
                 None::<&B::ScratchBuffer>,

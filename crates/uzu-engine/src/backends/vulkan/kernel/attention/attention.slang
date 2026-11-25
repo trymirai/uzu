@@ -45,9 +45,24 @@ public float rope_rotate(
   return value * (cos(reduced) * scale) + signed_paired * (sin(reduced) * scale);
 }
 
-// Interleaved M-RoPE: pairs 1, 4, 7, ... add the grid row, pairs 2, 5, 8, ... the grid column, while the axis has pairs
-// left. The rest stay at the grid's position.
-public uint mrope_axis_offset(uint pair, uint grid_row, uint grid_column, uint height_pairs, uint width_pairs) {
+// The M-RoPE axis offset of a pair. Interleaved axes: pairs 1, 4, 7, ... add the grid row, pairs 2, 5, 8, ... the grid
+// column, while the axis has pairs left. Otherwise the pairs of an axis are contiguous: position, then row, then column.
+public uint mrope_axis_offset(
+  uint pair,
+  uint pairs,
+  uint grid_row,
+  uint grid_column,
+  uint height_pairs,
+  uint width_pairs,
+  bool interleaved_axes
+) {
+  if (!interleaved_axes) {
+    let position_pairs = pairs - height_pairs - width_pairs;
+    if (pair < position_pairs) {
+      return 0;
+    }
+    return pair < position_pairs + height_pairs ? grid_row : grid_column;
+  }
   if (pair % 3 == 1 && pair < 3 * height_pairs) {
     return grid_row;
   }

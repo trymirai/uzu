@@ -218,6 +218,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
                 width,
                 height,
                 first_cell,
+                ..
             } if first_cell + count == width * height => width.max(height),
             BatchKind::Image {
                 ..

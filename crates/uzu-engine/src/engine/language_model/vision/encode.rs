@@ -6,7 +6,10 @@ use crate::{
         Backend,
         common::{CommandBuffer, CommandBufferEncoding, kernel::VisionPatchifyKernel},
     },
-    encodable_block::{linear::LinearEncodeError, mlp::MlpEncodeError, vision_layer::VisionLayerEncodeError},
+    encodable_block::{
+        batch_topology::BatchTopology, linear::LinearEncodeError, mlp::MlpEncodeError,
+        vision_layer::VisionLayerEncodeError,
+    },
     engine::language_model::vision::{model::VisionModel, patch_grid::VisionImageError},
 };
 
@@ -91,8 +94,9 @@ impl<B: Backend> VisionModel<B> {
         let mut stream = self.patch_emb.encode(patches, rows, command_buffer)?;
         self.pos_emb.encode(&mut stream, grid_width, grid_height, encoder_config.spatial_merge_size, command_buffer);
 
+        let batch_dim = BatchTopology::image(grid_width, grid_height, encoder_config.spatial_merge_size, 0..rows);
         for layer in self.layers.iter() {
-            stream = layer.encode(stream, rows, command_buffer)?;
+            stream = layer.encode(stream, &batch_dim, command_buffer)?;
         }
 
         let normalized = self

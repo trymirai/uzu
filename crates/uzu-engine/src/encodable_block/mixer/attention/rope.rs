@@ -9,6 +9,7 @@ pub struct RoPE<B: Backend> {
     pub dim: u32,
     pub max_sequence_length: u32,
     pub frequency_pairs_per_axis: Option<[u32; 3]>,
+    pub interleaved_axes: bool,
 }
 
 impl<B: Backend> RoPE<B> {
@@ -95,6 +96,7 @@ impl<B: Backend> RoPE<B> {
                 AnyRoPEConfig::MultimodalRoPEConfig(config) => Some(config.frequency_pairs_per_axis),
                 _ => None,
             },
+            interleaved_axes: true,
             ..Self::from_inverse_frequencies(
                 &inverse_frequencies,
                 scale,
@@ -122,6 +124,7 @@ impl<B: Backend> RoPE<B> {
             dim,
             max_sequence_length,
             frequency_pairs_per_axis: None,
+            interleaved_axes: false,
         })
     }
 }

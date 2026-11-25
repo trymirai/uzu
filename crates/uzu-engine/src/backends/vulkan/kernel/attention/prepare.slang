@@ -5,6 +5,7 @@ import generated.kv_layout;
 import generated.qkv_norm;
 import generated.rope;
 import generated.trie;
+import vision.patch_grid;
 
 groupshared float prepare_block_mean[ATTENTION_DIMS * SIMD_SIZE];
 
@@ -118,8 +119,9 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     let cell = rope_grid.first_cell + (has_trie ? trie[token].height : token);
     let grid_size = rope_grid.grid_width * rope_grid.grid_height;
     rope_position = rope_position_offset + cell / grid_size * max(rope_grid.grid_width, rope_grid.grid_height);
-    grid_row = cell % grid_size / rope_grid.grid_width;
-    grid_column = cell % grid_size % rope_grid.grid_width;
+    let patch = vision_patch_coordinates(cell % grid_size, rope_grid.grid_width, rope_grid.merge_size);
+    grid_row = patch.y;
+    grid_column = patch.x;
   }
   if (block_mean) {
     // raw_keys: the open block's cached rows, then one row per suffix node.
@@ -167,8 +169,15 @@ func AttentionPrepare<ElementT : IStorageFloat>(
         prepare_norm(paired_input, paired_channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
       var position = rope_position;
       if (has_mrope) {
-        position +=
-          mrope_axis_offset(channel % half, grid_row, grid_column, rope_grid.height_pairs, rope_grid.width_pairs);
+        position += mrope_axis_offset(
+          channel % half,
+          half,
+          grid_row,
+          grid_column,
+          rope_grid.height_pairs,
+          rope_grid.width_pairs,
+          rope_grid.interleaved_axes != 0
+        );
       }
       let rotated = rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim);
       element = ElementT.fromFloat(rotated).toFloat();

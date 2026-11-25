@@ -132,10 +132,11 @@ impl<B: Backend> VisionLayer<B> {
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        row_count: u32,
+        batch_dim: &BatchTopology<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, VisionLayerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("vision layer");
+        let row_count = batch_dim.size();
         let elements = row_count * self.model_dim;
 
         let hidden = self
@@ -145,7 +146,7 @@ impl<B: Backend> VisionLayer<B> {
 
         let attention = {
             let command_buffer = &mut *command_buffer.debug_group("attention");
-            self.attention.attend(hidden, &BatchTopology::flat(row_count), None, command_buffer)?
+            self.attention.attend(hidden, batch_dim, None, command_buffer)?
         };
 
         self.residual_add.encode(
@@ -294,7 +295,11 @@ fn vision_rope<B: Backend>(
     let inverse_frequencies: Vec<f32> = (0..half_dim)
         .map(|pair| 1.0 / rope_config.base.powf((2 * (pair % frequency_count)) as f32 / half_dim as f32))
         .collect();
-    RoPE::from_inverse_frequencies(&inverse_frequencies, 1.0, rope_config.head_dim, u32::MAX, context)
+    Ok(RoPE {
+        // The first half of the pairs rotates by the patch row, the second by its column
+        frequency_pairs_per_axis: Some([0, frequency_count, frequency_count]),
+        ..RoPE::from_inverse_frequencies(&inverse_frequencies, 1.0, rope_config.head_dim, u32::MAX, context)?
+    })
 }
 
 fn get_padded_buffer<B: Backend, T: DataTypeRepr>(

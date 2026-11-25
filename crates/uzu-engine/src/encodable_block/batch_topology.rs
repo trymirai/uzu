@@ -11,6 +11,7 @@ pub enum BatchKind<B: Backend> {
     Image {
         width: u32,
         height: u32,
+        merge_size: u32,
         first_cell: u32,
     },
 }
@@ -45,12 +46,14 @@ impl<B: Backend> BatchTopology<B> {
     pub fn image(
         width: u32,
         height: u32,
+        merge_size: u32,
         cells: Range<u32>,
     ) -> Self {
         Self {
             kind: BatchKind::Image {
                 width,
                 height,
+                merge_size,
                 first_cell: cells.start,
             },
             size: cells.end - cells.start,

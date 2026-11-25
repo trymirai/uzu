@@ -354,24 +354,27 @@ impl<B: Backend> Attention<B> {
             &self.prepare
         };
 
-        let rope_grid_params =
-            rope.and_then(|rope| rope.frequency_pairs_per_axis).map(|[_, height_pairs, width_pairs]| {
-                let (grid_width, grid_height, first_cell) = match batch_kind {
-                    &BatchKind::Image {
-                        width,
-                        height,
-                        first_cell,
-                    } => (width, height, first_cell),
-                    _ => (1, 1, 0),
-                };
-                RoPEGridParams {
-                    grid_width,
-                    grid_height,
+        let rope_grid_params = rope.and_then(|rope| {
+            let [_, height_pairs, width_pairs] = rope.frequency_pairs_per_axis?;
+            let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
+                &BatchKind::Image {
+                    width,
+                    height,
+                    merge_size,
                     first_cell,
-                    height_pairs,
-                    width_pairs,
-                }
-            });
+                } => (width, height, merge_size, first_cell),
+                _ => (1, 1, 1, 0),
+            };
+            Some(RoPEGridParams {
+                grid_width,
+                grid_height,
+                first_cell,
+                height_pairs,
+                width_pairs,
+                merge_size,
+                interleaved_axes: u32::from(rope.interleaved_axes),
+            })
+        });
         prepare.encode(
             qkvg,
             &mut query_codes,
