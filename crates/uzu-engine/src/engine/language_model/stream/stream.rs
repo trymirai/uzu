@@ -256,6 +256,16 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         Ok(record(command_buffer, self.options.timestamps.as_ref()))
     }
 
+    fn submit_and_restart_prefill(
+        &self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+        pendings: &mut Vec<<B::CommandBuffer as CommandBuffer>::Pending>,
+    ) -> Result<(), LanguageModelStreamError<B>> {
+        let next = self.start_recording("prefill")?;
+        pendings.push(mem::replace(command_buffer, next).end_encoding().submit());
+        Ok(())
+    }
+
     async fn resolve_take(
         &mut self,
         mut job: GenerationJob<B>,
@@ -323,6 +333,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .map_err(LanguageModelStreamError::Backend)?;
 
         let mut command_buffer = self.start_recording("prefill")?;
+        let mut pendings = Vec::with_capacity(number_of_batches);
 
         command_buffer.debug_point(&format!(
             "prefill at context {}, suffix {} ({} batches)",
@@ -344,6 +355,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                             false,
                             &mut command_buffer,
                         )?;
+                        self.submit_and_restart_prefill(&mut command_buffer, &mut pendings)?;
                     }
                 },
                 LanguageModelInput::Image(image) => {
@@ -363,6 +375,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 false,
                 &mut command_buffer,
             )?;
+            self.submit_and_restart_prefill(&mut command_buffer, &mut pendings)?;
             final_chunk = last;
         }
 
@@ -443,6 +456,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         self.metrics.num_tokens_prefilled += total_input_length;
         self.metrics.num_tokens_proposed += 1;
 
+        pendings.push(command_buffer.end_encoding().submit());
+
         Ok(GenerationJob::Pending {
             output_norm,
             output_tokens: output_token,
@@ -451,7 +466,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             trie_cpu: None,
             hidden_features: decoder_output.hidden_features,
             capture_span: None,
-            pendings: Box::new([command_buffer.end_encoding().submit()]),
+            pendings: pendings.into_boxed_slice(),
         })
     }
 
@@ -867,7 +882,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let tokens_u32 = tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>();
 
         if model.decoder.has_ngram_embeddings() {
-            // TODO(perf): we could hash and fetch all of the prefill rows at once instead of per-batch.
+            // Prevous worked overlapped here.
+            // TODO(perf): we could also overlap the encoding if we do the thing of filling the
+            // buffer after encoding and dispatching an event
             model
                 .decoder
                 .prepare_ngram_rows(&mut model_state.transformer_state, &tokens_u32, None)
