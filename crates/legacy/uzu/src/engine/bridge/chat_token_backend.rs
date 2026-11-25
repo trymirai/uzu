@@ -247,6 +247,10 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
     fn sampling_defaults(&self) -> SamplingParameters {
         self.sampling_defaults
     }
+
+    fn vision_supported(&self) -> bool {
+        self.model.vision_config().is_some()
+    }
 }
 
 struct UzuChatTokenStream<S> {
