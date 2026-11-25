@@ -23,6 +23,7 @@ let package = Package(
         .target(
             name: "Uzu",
             dependencies: ["uzu", "UzuMetalIOSimulatorStubs"],
+            path: "Sources/Uzu",
             linkerSettings: [
                 .linkedFramework("SystemConfiguration", .when(platforms: [.macOS])),
                 .linkedFramework("Metal"),
@@ -42,11 +43,13 @@ let package = Package(
             dependencies: [
                 "Uzu",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
+            ],
+            path: "Sources/Examples"
         ),
         .testTarget(
             name: "UzuTests",
             dependencies: ["Uzu"],
+            path: "Tests/UzuTests",
         ),
     ]
 )
