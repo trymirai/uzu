@@ -57,6 +57,7 @@ KERNEL(AttentionMatrix)(
     threadgroup float probability_exchange[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::EXCHANGE_FLOATS],
     threadgroup uint2 row_queries[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::ROW_QUERIES],
     threadgroup uint4 query_stage[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::STAGING_VECTORS],
+    threadgroup bfloat tile_values OPTIONAL(has_output)[NUM_SIMDGROUPS * 1024], // one 16 x 64 bf16 slice per simdgroup
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
     const uint kv_head_index GROUPS(num_kv_heads),
@@ -100,6 +101,7 @@ KERNEL(AttentionMatrix)(
         probability_exchange,
         row_queries,
         query_stage,
+        tile_values,
         thread_context,
         tile_split_index,
         kv_head_index

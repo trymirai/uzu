@@ -140,6 +140,7 @@ METAL_FUNC void attention_matrix_mxu(
     threadgroup float* probability_exchange,
     threadgroup uint2* row_queries,
     threadgroup uint4* query_stage,
+    threadgroup bfloat* tile_values,
     ThreadContext thread_context,
     uint tile_split_index,
     uint kv_head_index
@@ -602,35 +603,44 @@ METAL_FUNC void attention_matrix_mxu(
   const uint row_base = IS_SPARSE ? query_tile_index : query_tile_index * uint(Layout::BLOCK_ROWS) + query_band_offset;
   const uint output_row =
       ((split_index - split_base) * num_kv_heads + kv_head_index) * query_tiles * uint(Layout::BLOCK_ROWS) + row_base;
-  softmax.output
-      .store(lane, partial_values + size_t(output_row) * HEAD_DIM + channel_offset, int(query_row_step * HEAD_DIM));
-
-  if (channel_slice == 0 && score_position.x == 0) {
-    METAL_PRAGMA_UNROLL
-    for (int row = 0; row < ROWS_PER_LANE; ++row) {
-      partial_maxima[output_row + lane_rows[row]] = softmax.running_max[row];
-      partial_denominators[output_row + lane_rows[row]] = softmax.denominator[row];
+  if (IS_SPARSE || !has_output) {
+    softmax.output
+        .store(lane, partial_values + size_t(output_row) * HEAD_DIM + channel_offset, int(query_row_step * HEAD_DIM));
+    if (channel_slice == 0 && score_position.x == 0) {
+      METAL_PRAGMA_UNROLL
+      for (int row = 0; row < ROWS_PER_LANE; ++row) {
+        partial_maxima[output_row + lane_rows[row]] = softmax.running_max[row];
+        partial_denominators[output_row + lane_rows[row]] = softmax.denominator[row];
+      }
     }
-  }
+  } else {
+    // One split: the slices meet in threadgroup memory, then each simdgroup finishes whole rows.
+    threadgroup float2* tile_stats = reinterpret_cast<threadgroup float2*>(row_queries);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    softmax.output.store(lane, tile_values + query_band_offset * HEAD_DIM + channel_offset, HEAD_DIM);
+    if (channel_slice == 0 && score_position.x == 0) {
+      METAL_PRAGMA_UNROLL
+      for (int row = 0; row < ROWS_PER_LANE; ++row) {
+        tile_stats[query_band_offset + uint(score_position.y) + uint(row * Ops::THREAD_ELEMENT_ROW_STRIDE)] =
+            float2(softmax.running_max[row], softmax.denominator[row]);
+      }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  if (has_output) {
-    threadgroup_barrier(mem_flags::mem_device);
+    constexpr ushort VALUES_PER_LANE = HEAD_DIM / METAL_SIMD_SIZE;
     for (uint row = thread_context.simdgroup_index; row < uint(Layout::BLOCK_ROWS); row += NUM_SIMDGROUPS) {
-      const uint grouped_row = query_tile_index * uint(Layout::BLOCK_ROWS) + row;
+      const uint grouped_row = row_base - query_band_offset + row;
       if (grouped_row >= num_query_rows) {
         continue;
       }
-      const uint partial_row = output_row - query_band_offset + row;
+      const float2 stats = tile_stats[row];
       const uint q_head_index = kv_head_index * params.gqa_factor + grouped_row / params.q_len;
-      const float row_sum = partial_denominators[partial_row];
-      const float row_max = partial_maxima[partial_row];
-      const float sink_term = has_sinks ? fast::exp2(float(sinks[q_head_index]) * M_LOG2E_F - row_max) : 0.0f;
-      const float share = row_sum > 0.0f ? row_sum / (row_sum + sink_term) : 0.0f;
-      float rotated[HEAD_DIM / METAL_SIMD_SIZE];
+      const float sink_term = has_sinks ? fast::exp2(float(sinks[q_head_index]) * M_LOG2E_F - stats.x) : 0.0f;
+      const float share = stats.y > 0.0f ? stats.y / (stats.y + sink_term) : 0.0f;
+      float rotated[VALUES_PER_LANE];
       METAL_PRAGMA_UNROLL
-      for (ushort value_index = 0; value_index < HEAD_DIM / METAL_SIMD_SIZE; ++value_index) {
-        rotated[value_index] =
-            share * float(partial_values[size_t(partial_row) * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane]);
+      for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+        rotated[value_index] = share * float(tile_values[row * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane]);
       }
       store_output_row<bfloat, HEAD_DIM>(
           lane,

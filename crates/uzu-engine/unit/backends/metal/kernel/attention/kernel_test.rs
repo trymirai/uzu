@@ -99,6 +99,11 @@ fn attention_matches_cpu() {
             (8, 200, 128, false, false, NAN, Some(9), Some(7), true),
             (8, 16, 128, false, false, NAN, Some(64), Some(50), false),
             (8, 40, 100, false, false, NAN, Some(33), Some(41), true),
+            (32, 3, 16, false, false, NAN, None, None, true),
+            (24, 8, 32, true, false, NAN, Some(2), None, true),
+            (24, 8, 64, true, false, NAN, Some(3), Some(5), true),
+            (24, 1, 50, false, false, NAN, None, None, true),
+            (8, 80, 16384, false, false, NAN, None, None, true),
         ]) {
             if sparse && window.is_some() {
                 continue;
@@ -133,12 +138,18 @@ fn attention_matches_cpu() {
             let (shape, nodes) =
                 ((head_dim, q_heads, kv_heads, suffix, prefix, causal), use_trie.then_some(trie.as_slice()));
             let gate_stride = q_heads * head_dim + 17;
-            let gates = matches!(prefix, 37 | 4096).then(|| fill_attention(suffix * gate_stride, 3.0));
+            let gates = matches!(prefix, 16 | 37 | 4096).then(|| fill_attention(suffix * gate_stride, 3.0));
+            let sinks = matches!(prefix, 16 | 50 | 300 | 1024 | 4097).then(|| {
+                fill_attention(q_heads, 1.0)
+                    .into_iter()
+                    .map(|sink| bf16::from_f32(8.0 * sink.to_f32()))
+                    .collect::<Vec<_>>()
+            });
             let config = AttentionKernelConfig {
                 head_dim: head_dim as u32,
                 num_groups: kv_heads as u32,
                 num_q_heads: q_heads as u32,
-                has_sinks: false,
+                has_sinks: sinks.is_some(),
                 gate_row_stride: gates.as_ref().map(|_| gate_stride as u32),
                 is_kv_cache_ring: ring.is_some(),
                 is_causal: causal,
@@ -148,6 +159,7 @@ fn attention_matches_cpu() {
                 sparse_compression_ratio: sparse.then_some(COMPRESSION_RATIO as u32),
             };
             let gate = gates.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
+            let sink_buffer = sinks.as_ref().map(|data| create_buffer_with_data::<Metal, bf16>(&metal, data));
             let kernel = AttentionMetalKernel::new_with_mxu(&metal, &config, use_mxu).unwrap();
             let (queries, keys, values) = attention_inputs(shape);
             // Fused QKV rows from `attention_inputs`; its queries are head-major.
@@ -259,7 +271,7 @@ fn attention_matches_cpu() {
                         v_scales: kv.v_scales.as_ref(),
                     };
                     let arguments = AttentionArguments {
-                        sinks: None,
+                        sinks: sink_buffer.as_ref(),
                         suffix_length: suffix as u32,
                         trie: trie.as_ref(),
                         cache: ring.map_or(KVCacheView::full(prefix as u32), |offset| {
@@ -294,7 +306,7 @@ fn attention_matches_cpu() {
                 ring_offset: offset as u32,
                 ring_length: prefix as u32,
             });
-            let mut expected = quantized_attention_reference(shape, nodes, &|node, key| {
+            let mut expected = quantized_attention_reference(shape, nodes, sinks.as_deref(), &|node, key| {
                 (!sparse || key >= tail_start(node) || !dropped(node, key / COMPRESSION_RATIO))
                     && should_use_key(
                         ring_params,
@@ -345,6 +357,7 @@ fn attention_inputs(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>, Vec<bf16>) 
 fn quantized_attention_reference(
     shape: AttentionShape,
     nodes: Option<&[GpuTrieNode]>,
+    sinks: Option<&[bf16]>,
     attended: &dyn Fn(usize, usize) -> bool,
 ) -> Vec<bf16> {
     fn hadamard_transform(row: &mut [f32]) {
@@ -417,7 +430,8 @@ fn quantized_attention_reference(
             }
             let maximum = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let weights: Vec<f32> = scores.iter().map(|score| (score - maximum).exp()).collect();
-            let denominator: f32 = weights.iter().sum();
+            let denominator: f32 =
+                weights.iter().sum::<f32>() + sinks.map_or(0.0, |sinks| (sinks[head].to_f32() - maximum).exp());
             let output = &mut result[(token * q_heads + head) * head_dim..][..head_dim];
             for (key, weight) in weights.iter().enumerate() {
                 let v = &values[(key * kv_heads + kv_head) * head_dim..][..head_dim];
