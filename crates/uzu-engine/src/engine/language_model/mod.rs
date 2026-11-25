@@ -67,10 +67,7 @@ impl<B: Backend> Engine<B> {
         model_path: &Path,
     ) -> Result<LanguageModel<B>, EngineLoadLanguageModelError<B>> {
         let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
-
-        let vision_path = model_path.join("vision");
-        let vision_path = file::exists(&vision_path).await.then_some(vision_path);
-        if vision_path.is_some() && config.decoder_config.ple_model_config.is_some() {
+        if config.vision_config.is_some() && config.decoder_config.ple_model_config.is_some() {
             return Err(EngineLoadLanguageModelError::UnsupportedVisionPerLayerEmbedding);
         }
 
@@ -108,8 +105,17 @@ impl<B: Backend> Engine<B> {
         let context_ring_update = <B::Kernels as Kernels>::ContextRingUpdateKernel::new(&self.context)
             .map_err(EngineLoadLanguageModelError::Backend)?;
 
-        let vision_model = if let Some(path) = vision_path.as_deref() {
-            Some(VisionModel::new(path, data_type, decoder.embedding().model_dim(), self.context.as_ref()).await?)
+        let vision_model = if let Some(vision_config) = config.vision_config {
+            Some(
+                VisionModel::new(
+                    data_type,
+                    vision_config,
+                    &weight_loader.tree().subtree("vision_encoder"),
+                    decoder.embedding().model_dim(),
+                    self.context.as_ref(),
+                )
+                .await?,
+            )
         } else {
             None
         };
