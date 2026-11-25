@@ -64,7 +64,6 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& query_rows,
     const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
-    const device uint32_t* rope_positions OPTIONAL(has_rope_positions),
     const bool has_rope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
@@ -75,7 +74,6 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool block_mean SPECIALIZE,
     const uint32_t compression_ratio SPECIALIZE,
     const bool has_trie SPECIALIZE,
-    const bool has_rope_positions SPECIALIZE,
     threadgroup float block_mean_row OPTIONAL(block_mean)[HEAD_DIM],
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
@@ -95,6 +93,7 @@ PUBLIC KERNEL(AttentionPrepare)(
   const bool is_key = !is_query && head_idx < num_q_heads + num_kv_heads;
   const uint32_t kv_head = is_key ? head_idx - num_q_heads : head_idx - num_q_heads - num_kv_heads;
 
+  const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
   const bool norm_enabled = norm_params.enabled[norm_index];
@@ -145,8 +144,6 @@ PUBLIC KERNEL(AttentionPrepare)(
     }
     inverse_rms = rsqrt(simd_sum(sum) / float(HEAD_DIM) + norm_params.epsilon[norm_index]);
   }
-
-  const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   float values[VALUES_PER_LANE];
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
@@ -174,10 +171,8 @@ PUBLIC KERNEL(AttentionPrepare)(
           norm_full_layer,
           norm_scale_offset
       ));
-      const uint32_t position =
-          has_rope_positions ? rope_positions[size_t(token_idx) * half_dim + channel % half_dim] : rope_position;
       element = ElementT(
-          rope_rotate(float(element), paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim)
+          rope_rotate(float(element), paired, rope_inverse_frequencies, rope_scale, rope_position, channel, rope_dim)
       );
     }
     values[value_index] = float(element);

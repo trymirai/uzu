@@ -833,7 +833,6 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let image = vision_model.prefill(image, command_buffer)?;
         drop(encode_span);
 
-        self.model_state.transformer_state.begin_grid(image.width, image.height);
         let row_count = image.width * image.height;
         for start in (0..row_count).step_by(ATTENTION_SUFFIX_CAPACITY as usize) {
             let length = (row_count - start).min(ATTENTION_SUFFIX_CAPACITY);

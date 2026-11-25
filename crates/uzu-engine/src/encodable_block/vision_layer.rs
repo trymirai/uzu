@@ -17,10 +17,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{LinearMatmul, LinearMatmulError},
-        mixer::attention::{
-            Attention, AttentionEncodeError, AttentionNewError,
-            rope::{RoPE, RoPEPositions},
-        },
+        mixer::attention::{Attention, AttentionEncodeError, AttentionNewError, rope::RoPE},
         mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
     },
@@ -135,7 +132,6 @@ impl<B: Backend> VisionLayer<B> {
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        rope_positions: &RoPEPositions<B>,
         row_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, VisionLayerEncodeError<B>> {
@@ -149,13 +145,7 @@ impl<B: Backend> VisionLayer<B> {
 
         let attention = {
             let command_buffer = &mut *command_buffer.debug_group("attention");
-            self.attention.attend(
-                hidden,
-                Some(rope_positions),
-                &BatchTopology::flat(row_count),
-                None,
-                command_buffer,
-            )?
+            self.attention.attend(hidden, &BatchTopology::flat(row_count), None, command_buffer)?
         };
 
         self.residual_add.encode(

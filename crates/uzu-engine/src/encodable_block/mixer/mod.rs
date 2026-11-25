@@ -36,14 +36,6 @@ pub trait MixerState<B: Backend>: Any + Send {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error>;
-
-    /// The next `width * height` rows are an image grid
-    fn begin_grid(
-        &mut self,
-        _width: u32,
-        _height: u32,
-    ) {
-    }
 }
 
 impl<'a, B: Backend> MaybeMut<'a, dyn MixerState<B>> {

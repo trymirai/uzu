@@ -49,7 +49,6 @@ fn bench_attention_prepare(c: &mut Criterion) {
         false,
         0,
         false,
-        false,
     )
     .expect("kernel");
     let norm_params = QKVNormParams {
@@ -116,7 +115,6 @@ fn bench_attention_prepare(c: &mut Criterion) {
                         suffix_length,
                         NUM_Q_HEADS / NUM_KV_HEADS * suffix_length,
                         None,
-                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         command_buffer,
                     );

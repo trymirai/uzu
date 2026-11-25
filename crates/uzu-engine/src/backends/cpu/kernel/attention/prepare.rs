@@ -42,7 +42,6 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
-    #[optional(has_rope_positions)] rope_positions: Option<*const u32>,
     #[specialize] has_rope: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
@@ -53,7 +52,6 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[specialize] block_mean: bool,
     #[specialize] compression_ratio: u32,
     #[specialize] has_trie: bool,
-    #[specialize] has_rope_positions: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
@@ -144,19 +142,11 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    let position = if has_rope_positions {
-                        let half_rope_dim = rope_dim / 2;
-                        unsafe {
-                            *rope_positions.unwrap().add(token as usize * half_rope_dim + channel % half_rope_dim)
-                        }
-                    } else {
-                        rope_position_offset.unwrap() + rope_row
-                    };
-                    apply_rope(
+                    apply_rope::<ElementT, _>(
                         source,
                         rope_inverse_frequencies.unwrap(),
                         rope_scale.unwrap(),
-                        position,
+                        rope_position_offset.unwrap() + rope_row,
                         channel,
                         rope_dim,
                     )

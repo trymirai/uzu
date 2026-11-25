@@ -6,10 +6,7 @@ use crate::{
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{
-        Mixer, MixerState,
-        attention::{Attention, mrope::RoPECursor},
-    },
+    encodable_block::mixer::{Mixer, MixerState, attention::Attention},
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
@@ -18,8 +15,6 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 pub struct KVCacheState {
     context_length: u32,
     ring_capacity: Option<u32>,
-    /// For multimodal models, the RoPE position of a row may differ from its index in the context.
-    rope_cursor: RoPECursor,
 }
 
 impl KVCacheState {
@@ -31,18 +26,11 @@ impl KVCacheState {
         Self {
             context_length,
             ring_capacity,
-            rope_cursor: RoPECursor::Sequence {
-                position: context_length,
-            },
         }
     }
 
     pub fn context_length(self) -> u32 {
         self.context_length
-    }
-
-    pub fn rope_cursor(self) -> RoPECursor {
-        self.rope_cursor
     }
 
     pub fn prefix_len(self) -> u32 {
@@ -87,7 +75,6 @@ impl KVCacheState {
                 });
             }
             self.context_length += 1;
-            self.rope_cursor = self.rope_cursor.advance();
         }
         copies
     }
@@ -235,14 +222,6 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         }
 
         Ok(())
-    }
-
-    fn begin_grid(
-        &mut self,
-        width: u32,
-        height: u32,
-    ) {
-        self.cache.rope_cursor = self.cache.rope_cursor.begin_grid(width, height);
     }
 }
 

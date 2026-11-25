@@ -1,3 +1,4 @@
+use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
@@ -13,7 +14,10 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         vision_layer::{VisionLayer, VisionLayerNewError},
     },
-    engine::language_model::vision::position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+    engine::language_model::vision::{
+        patch_grid::{VisionImageError, merged_image_grid},
+        position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+    },
     safetensors::ParameterTree,
     utils::buffer::create_buffer_with_data,
 };
@@ -165,5 +169,30 @@ impl<B: Backend> VisionModel<B> {
             merger_norm,
             merger_mlp,
         })
+    }
+
+    pub fn merged_image_grid(
+        &self,
+        image: &VisionImage,
+    ) -> Result<(u32, u32), VisionImageError> {
+        let config = &self.config.encoder_config;
+        let preprocessing_config = &self.config.preprocessing_config;
+        merged_image_grid(
+            image,
+            config.patch_size,
+            config.spatial_merge_size,
+            config.temporal_patch_size,
+            config.model_dim,
+            preprocessing_config.min_pixels,
+            preprocessing_config.max_pixels,
+        )
+    }
+
+    pub fn image_token_count(
+        &self,
+        image: &VisionImage,
+    ) -> Result<usize, VisionImageError> {
+        let (token_columns, token_rows) = self.merged_image_grid(image)?;
+        Ok((token_columns * token_rows) as usize)
     }
 }

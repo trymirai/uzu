@@ -6,15 +6,8 @@ use crate::{
         Backend,
         common::{CommandBuffer, CommandBufferEncoding, kernel::VisionPatchifyKernel},
     },
-    config::vision::VisionRoPEConfig,
-    encodable_block::{
-        linear::LinearEncodeError, mixer::attention::rope::RoPEPositions, mlp::MlpEncodeError,
-        vision_layer::VisionLayerEncodeError,
-    },
-    engine::language_model::vision::{
-        model::VisionModel,
-        patch_grid::{VisionImageError, vision_patch_coordinates},
-    },
+    encodable_block::{linear::LinearEncodeError, mlp::MlpEncodeError, vision_layer::VisionLayerEncodeError},
+    engine::language_model::vision::{model::VisionModel, patch_grid::VisionImageError},
 };
 
 pub struct VisionPrefilledImage<B: Backend> {
@@ -98,17 +91,8 @@ impl<B: Backend> VisionModel<B> {
         let mut stream = self.patch_emb.encode(patches, rows, command_buffer)?;
         self.pos_emb.encode(&mut stream, grid_width, grid_height, encoder_config.spatial_merge_size, command_buffer);
 
-        let rope = Self::vision_rope(
-            &encoder_config.rope_config,
-            grid_width,
-            grid_height,
-            encoder_config.spatial_merge_size,
-            command_buffer,
-        )
-        .map_err(VisionEncodeError::Backend)?;
-
         for layer in self.layers.iter() {
-            stream = layer.encode(stream, &rope, rows, command_buffer)?;
+            stream = layer.encode(stream, rows, command_buffer)?;
         }
 
         let normalized = self
@@ -120,30 +104,5 @@ impl<B: Backend> VisionModel<B> {
         let embeddings = self.merger_mlp.encode(normalized, merged_rows, command_buffer)?;
 
         Ok(embeddings)
-    }
-
-    fn vision_rope(
-        rope_config: &VisionRoPEConfig,
-        grid_width: u32,
-        grid_height: u32,
-        merge_size: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<RoPEPositions<B>, B::Error> {
-        let frequency_count = rope_config.head_dim / 4;
-
-        RoPEPositions::new(
-            (grid_width * grid_height) as usize,
-            rope_config.head_dim,
-            |row, pair| {
-                let (x, y) = vision_patch_coordinates(row as u32, grid_width, merge_size);
-                // the first quarter of channels rotates by the row, the second by the column
-                if pair < frequency_count {
-                    y
-                } else {
-                    x
-                }
-            },
-            command_buffer,
-        )
     }
 }
