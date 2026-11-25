@@ -20,6 +20,19 @@ METAL_FUNC float rope_rotate(
   return element * (cos_val * scale) + signed_paired * (sin_val * scale);
 }
 
+// Interleaved M-RoPE: pairs 1, 4, 7, ... add the grid row, pairs 2, 5, 8, ... the grid column, while the axis has pairs
+// left. The rest stay at the grid's position.
+METAL_FUNC uint32_t
+mrope_axis_offset(uint32_t pair, uint32_t grid_row, uint32_t grid_column, uint32_t height_pairs, uint32_t width_pairs) {
+  if (pair % 3 == 1 && pair < 3 * height_pairs) {
+    return grid_row;
+  }
+  if (pair % 3 == 2 && pair < 3 * width_pairs) {
+    return grid_column;
+  }
+  return 0;
+}
+
 template <typename ResultT, typename ElementT>
 METAL_FUNC ResultT apply_rope(
     const device ElementT* head,

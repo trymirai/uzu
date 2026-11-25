@@ -45,6 +45,18 @@ public float rope_rotate(
   return value * (cos(reduced) * scale) + signed_paired * (sin(reduced) * scale);
 }
 
+// Interleaved M-RoPE: pairs 1, 4, 7, ... add the grid row, pairs 2, 5, 8, ... the grid column, while the axis has pairs
+// left. The rest stay at the grid's position.
+public uint mrope_axis_offset(uint pair, uint grid_row, uint grid_column, uint height_pairs, uint width_pairs) {
+  if (pair % 3 == 1 && pair < 3 * height_pairs) {
+    return grid_row;
+  }
+  if (pair % 3 == 2 && pair < 3 * width_pairs) {
+    return grid_column;
+  }
+  return 0;
+}
+
 float rotation_sign(uint channel) {
   return ((ROTATION_SIGN_BITS[(channel / WORD_BITS) % 8] >> (channel % WORD_BITS)) & 1u) != 0 ? -1.0 : 1.0;
 }

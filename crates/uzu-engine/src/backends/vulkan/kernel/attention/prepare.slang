@@ -3,6 +3,7 @@ import attention.attention;
 import common.workgroup_reduction;
 import generated.kv_layout;
 import generated.qkv_norm;
+import generated.rope;
 import generated.trie;
 
 groupshared float prepare_block_mean[ATTENTION_DIMS * SIMD_SIZE];
@@ -69,6 +70,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   [[Optional("has_rope")]] uint rope_dim,
   [[Optional("has_rope")]] float rope_scale,
   [[Optional("has_rope")]] uint rope_position_offset,
+  [[Optional("has_mrope")]] RoPEGridParams rope_grid,
   uint kv_token_offset,
   uint input_row_stride,
   uint suffix_length,
@@ -80,6 +82,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   [[Threads("32")]] uint tid,
   [[Specialize]] uint HEAD_DIM,
   [[Specialize]] bool has_rope,
+  [[Specialize]] bool has_mrope,
   [[Specialize]] uint num_kv_heads,
   [[Specialize]] uint backend_opaque_layout,
   [[Specialize]] bool append_kv,
@@ -107,7 +110,17 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   let scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   let row = token * input_row_stride + head * HEAD_DIM;
   // Trie nodes sit at their depth below the root, not at their row in the suffix.
-  let rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
+  var rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
+  var grid_row = 0u;
+  var grid_column = 0u;
+  if (has_mrope) {
+    // Rows are cells of grids in raster order: a text token is a 1x1 grid.
+    let cell = rope_grid.first_cell + (has_trie ? trie[token].height : token);
+    let grid_size = rope_grid.grid_width * rope_grid.grid_height;
+    rope_position = rope_position_offset + cell / grid_size * max(rope_grid.grid_width, rope_grid.grid_height);
+    grid_row = cell % grid_size / rope_grid.grid_width;
+    grid_column = cell % grid_size % rope_grid.grid_width;
+  }
   if (block_mean) {
     // raw_keys: the open block's cached rows, then one row per suffix node.
     let block_start = prefix_tokens - prefix_tokens % compression_ratio;
@@ -152,8 +165,12 @@ func AttentionPrepare<ElementT : IStorageFloat>(
       let paired_input = prepare_input(qkvg, row, paired_channel, block_mean);
       let paired =
         prepare_norm(paired_input, paired_channel, inverse_rms, scales, has_scales, enabled, full_layer, scale_offset);
-      let rotated =
-        rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, rope_position, channel, rope_dim);
+      var position = rope_position;
+      if (has_mrope) {
+        position +=
+          mrope_axis_offset(channel % half, grid_row, grid_column, rope_grid.height_pairs, rope_grid.width_pairs);
+      }
+      let rotated = rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim);
       element = ElementT.fromFloat(rotated).toFloat();
     }
     values[a] = element;
