@@ -55,12 +55,12 @@ fn batch_topology<B: Backend>(
     nodes: &[TrieNode],
     flat: bool,
 ) -> BatchTopology<B> {
-    BatchTopology::new(
-        (!flat).then(|| create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes))),
-        TOKENS.len() as u32,
-        flat,
-        flat,
-    )
+    if flat {
+        BatchTopology::flat(TOKENS.len() as u32)
+    } else {
+        let nodes = create_buffer_with_data::<B, u32>(context, bytemuck::cast_slice(nodes));
+        BatchTopology::trie(nodes, TOKENS.len() as u32, false)
+    }
 }
 
 fn ring(
