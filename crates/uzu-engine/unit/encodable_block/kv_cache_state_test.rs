@@ -6,7 +6,7 @@ fn accept(
     state: &mut KVCacheState,
     indices: &[u32],
 ) -> Vec<(u32, u32)> {
-    state.accept(indices).into_iter().map(|copy| (copy.source, copy.destination)).collect()
+    state.accept(indices, indices.len() as u32).into_iter().map(|copy| (copy.source, copy.destination)).collect()
 }
 
 #[uzu_test]

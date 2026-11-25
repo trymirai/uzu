@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
-    config::{rope::AnyRoPEConfig, transformer::TransformerConfig},
+    config::transformer::TransformerConfig,
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -39,20 +39,6 @@ impl<B: Backend> TransformerState<B> {
         self.context_length
     }
 
-    pub fn begin_grid(
-        &mut self,
-        width: u32,
-        height: u32,
-    ) {
-        for layer_state in &mut self.layer_states {
-            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                continue;
-            };
-
-            layer_state.begin_grid(width, height);
-        }
-    }
-
     pub fn prepare(
         &mut self,
         context_length: u32,
@@ -71,6 +57,7 @@ impl<B: Backend> TransformerState<B> {
 
     pub fn encode_accept(
         &mut self,
+        batch_dim: &BatchTopology<B>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
@@ -82,7 +69,7 @@ impl<B: Backend> TransformerState<B> {
                     continue;
                 };
 
-                layer_state.encode_accept(accepted_indices, command_buffer)?;
+                layer_state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
             }
 
             self.context_length += accepted_indices.len() as u32;
@@ -100,11 +87,6 @@ pub enum TransformerNewError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Layer error: {0}")]
     Layer(#[from] TransformerLayerError<B>),
-    #[error("M-RoPE frequency pairs per axis sum to {frequency_pairs}, but the RoPE head has {head_pairs} pairs")]
-    MRoPEFrequencyPairs {
-        frequency_pairs: u32,
-        head_pairs: u32,
-    },
     #[error("Normalization error: {0}")]
     Normalization(#[from] NormalizationNewError<B>),
     #[error("Residual error: {0}")]
@@ -155,17 +137,6 @@ impl<B: Backend> Transformer<B> {
         let mut layers = Vec::with_capacity(num_layers as usize);
         for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
             let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
-
-            if let Some(AnyRoPEConfig::MultimodalRoPEConfig(multimodal_config)) = &layer_config.rope_config {
-                let frequency_pairs = multimodal_config.frequency_pairs_per_axis.iter().sum::<u32>();
-                let head_pairs = multimodal_config.head_dim / 2;
-                if frequency_pairs != head_pairs {
-                    return Err(TransformerNewError::MRoPEFrequencyPairs {
-                        frequency_pairs,
-                        head_pairs,
-                    });
-                }
-            }
 
             let layer = TransformerLayer::new(
                 transformer_config.model_dim,

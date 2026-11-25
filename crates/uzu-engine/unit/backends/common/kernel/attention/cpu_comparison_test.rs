@@ -75,6 +75,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             config.data_type,
             dim,
             false,
+            false,
             config.num_groups,
             kernel.kv_layout().backend_opaque_layout,
             true,
@@ -84,7 +85,6 @@ fn run<B: Backend, T: DataTypeRepr>(
             false,
             0,
             trie.is_some(),
-            false,
         )
         .unwrap();
         prepare.encode(
@@ -107,13 +107,13 @@ fn run<B: Backend, T: DataTypeRepr>(
             None,
             None,
             None,
+            None,
             start,
             stride,
             length,
             heads / config.num_groups * length,
             None,
             trie,
-            None::<&B::GlobalGpuBuffer>,
             &mut command,
         );
     }

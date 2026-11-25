@@ -4,13 +4,19 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
-        common::gpu_types::{kv_layout, qkv_norm::QKVNormParams, trie::TrieNode},
+        common::gpu_types::{
+            kv_layout,
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEGridParams,
+            trie::TrieNode,
+        },
         cpu::kernel::{
             activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
-            attention::rope::apply_rope,
+            attention::rope::{apply_rope, mrope_axis_offset},
         },
     },
     data_type::DataTypeRepr,
+    engine::language_model::vision::patch_grid::vision_patch_coordinates,
 };
 
 #[kernel(AttentionPrepare)]
@@ -36,14 +42,15 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[optional(has_rope)] rope_dim: Option<u32>,
     #[optional(has_rope)] rope_scale: Option<f32>,
     #[optional(has_rope)] rope_position_offset: Option<u32>,
+    #[optional(has_mrope)] rope_grid: Option<RoPEGridParams>,
     kv_token_offset: u32,
     input_row_stride: u32,
     suffix_length: u32,
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
-    #[optional(has_rope_positions)] rope_positions: Option<*const u32>,
     #[specialize] has_rope: bool,
+    #[specialize] has_mrope: bool,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
     #[specialize] append_kv: bool,
@@ -53,7 +60,6 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[specialize] block_mean: bool,
     #[specialize] compression_ratio: u32,
     #[specialize] has_trie: bool,
-    #[specialize] has_rope_positions: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
     let rope_dim = if has_rope {
@@ -63,7 +69,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     };
     assert_eq!(backend_opaque_layout, 0);
     let mut values = vec![0.0f32; head_dim];
-    let mut normalized = if norm_params.enabled.iter().any(|&enabled| enabled != 0) {
+    let mut normalized = if norm_params.op.iter().any(|&op| op != QKVL2Op::None as u32) {
         vec![ElementT::zero(); head_dim]
     } else {
         Vec::new()
@@ -100,6 +106,17 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             } else {
                 token
             };
+            let mut rope_position = rope_position_offset.unwrap_or(0) + rope_row;
+            let (mut grid_row, mut grid_column) = (0, 0);
+            if has_mrope {
+                // Rows are cells of grids in raster order: a text token is a 1x1 grid, a trie node sits at its height
+                let grid = rope_grid.unwrap();
+                let cell = grid.first_cell + rope_row;
+                let grid_size = grid.grid_width * grid.grid_height;
+                rope_position =
+                    rope_position_offset.unwrap() + cell / grid_size * grid.grid_width.max(grid.grid_height);
+                (grid_column, grid_row) = vision_patch_coordinates(cell % grid_size, grid.grid_width, grid.merge_size);
+            }
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             if block_mean {
                 let token = token as usize;
@@ -123,12 +140,17 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                 }
                 source = mean.as_ptr();
             }
-            if norm_params.enabled[norm] != 0 {
+            let op = norm_params.op[norm];
+            if op != QKVL2Op::None as u32 {
                 let input = unsafe { std::slice::from_raw_parts(source, head_dim) };
                 let sum: f32 = input.iter().map(|v| v.to_f32().unwrap().powi(2)).sum();
-                let inverse_rms = (sum / head_dim as f32 + norm_params.epsilon[norm]).sqrt().recip();
+                let row_scale = if op == QKVL2Op::Clip as u32 {
+                    (norm_params.clip_threshold[norm] / (sum.sqrt() + norm_params.epsilon[norm])).min(1.0)
+                } else {
+                    (sum / head_dim as f32 + norm_params.epsilon[norm]).sqrt().recip()
+                };
                 for (channel, output) in normalized.iter_mut().enumerate() {
-                    let value = input[channel].to_f32().unwrap() * inverse_rms;
+                    let value = input[channel].to_f32().unwrap() * row_scale;
                     *output = if let Some(scales) = norm_scales {
                         let scale = unsafe { *scales.add(channel) } + norm_params.scale_offset[norm];
                         if norm_params.full_layer[norm] != 0 {
@@ -144,15 +166,20 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
-                    let position = if has_rope_positions {
-                        let half_rope_dim = rope_dim / 2;
-                        unsafe {
-                            *rope_positions.unwrap().add(token as usize * half_rope_dim + channel % half_rope_dim)
-                        }
-                    } else {
-                        rope_position_offset.unwrap() + rope_row
-                    };
-                    apply_rope(
+                    let mut position = rope_position;
+                    if has_mrope {
+                        let grid = rope_grid.unwrap();
+                        position += mrope_axis_offset(
+                            (channel % (rope_dim / 2)) as u32,
+                            (rope_dim / 2) as u32,
+                            grid_row,
+                            grid_column,
+                            grid.height_pairs,
+                            grid.width_pairs,
+                            grid.interleaved_axes != 0,
+                        );
+                    }
+                    apply_rope::<ElementT, _>(
                         source,
                         rope_inverse_frequencies.unwrap(),
                         rope_scale.unwrap(),

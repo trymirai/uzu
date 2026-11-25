@@ -6,9 +6,9 @@ use crate::{
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{
-        Mixer, MixerState,
-        attention::{Attention, mrope::RoPECursor},
+    encodable_block::{
+        batch_topology::{BatchKind, BatchTopology},
+        mixer::{Mixer, MixerState, attention::Attention},
     },
 };
 
@@ -18,8 +18,7 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 pub struct KVCacheState {
     context_length: u32,
     ring_capacity: Option<u32>,
-    /// For multimodal models, the RoPE position of a row may differ from its index in the context.
-    rope_cursor: RoPECursor,
+    rope_position: u32,
 }
 
 impl KVCacheState {
@@ -31,9 +30,7 @@ impl KVCacheState {
         Self {
             context_length,
             ring_capacity,
-            rope_cursor: RoPECursor::Sequence {
-                position: context_length,
-            },
+            rope_position: context_length,
         }
     }
 
@@ -41,8 +38,8 @@ impl KVCacheState {
         self.context_length
     }
 
-    pub fn rope_cursor(self) -> RoPECursor {
-        self.rope_cursor
+    pub fn rope_position(self) -> u32 {
+        self.rope_position
     }
 
     pub fn prefix_len(self) -> u32 {
@@ -68,6 +65,7 @@ impl KVCacheState {
     fn accept(
         &mut self,
         accepted_indices: &[u32],
+        rope_advance: u32,
     ) -> Vec<Copy> {
         assert!(accepted_indices.is_sorted_by(|a, b| a < b), "unsorted accept");
         let suffix_base = self.prefix_len();
@@ -87,8 +85,8 @@ impl KVCacheState {
                 });
             }
             self.context_length += 1;
-            self.rope_cursor = self.rope_cursor.advance();
         }
+        self.rope_position += rope_advance;
         copies
     }
 }
@@ -210,10 +208,24 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
 
     fn encode_accept(
         &mut self,
+        batch_dim: &BatchTopology<B>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let copies = self.cache.accept(accepted_indices);
+        let count = accepted_indices.len() as u32;
+        let rope_advance = match batch_dim.kind() {
+            &BatchKind::Image {
+                width,
+                height,
+                first_cell,
+                ..
+            } if first_cell + count == width * height => width.max(height),
+            BatchKind::Image {
+                ..
+            } => 0,
+            _ => count,
+        };
+        let copies = self.cache.accept(accepted_indices, rope_advance);
         assert!(
             copies
                 .iter()
@@ -235,14 +247,6 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         }
 
         Ok(())
-    }
-
-    fn begin_grid(
-        &mut self,
-        width: u32,
-        height: u32,
-    ) {
-        self.cache.rope_cursor = self.cache.rope_cursor.begin_grid(width, height);
     }
 }
 

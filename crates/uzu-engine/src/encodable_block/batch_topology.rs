@@ -1,33 +1,67 @@
+use std::ops::Range;
+
 use crate::backends::common::Backend;
 
+pub enum BatchKind<B: Backend> {
+    Sequence,
+    Trie {
+        nodes: B::GlobalGpuBuffer,
+        is_flat: bool,
+    },
+    Image {
+        width: u32,
+        height: u32,
+        merge_size: u32,
+        first_cell: u32,
+    },
+}
+
 pub struct BatchTopology<B: Backend> {
-    /// Present iff the batch is a trie.
-    nodes: Option<B::GlobalGpuBuffer>,
+    kind: BatchKind<B>,
     size: u32,
-    is_flat: bool,
-    full_accept: bool,
 }
 
 impl<B: Backend> BatchTopology<B> {
     pub fn flat(size: u32) -> Self {
-        Self::new(None, size, true, true)
+        Self {
+            kind: BatchKind::Sequence,
+            size,
+        }
     }
 
-    pub(crate) fn new(
-        nodes: Option<B::GlobalGpuBuffer>,
+    pub fn trie(
+        nodes: B::GlobalGpuBuffer,
         size: u32,
-        full_accept: bool,
         is_flat: bool,
     ) -> Self {
-        let is_trie = nodes.is_some();
-        assert_eq!(full_accept, !is_trie, "a batch is either a trie or fully accepted");
-        assert!(is_trie || is_flat, "node-less batches are sequential");
         Self {
-            nodes,
+            kind: BatchKind::Trie {
+                nodes,
+                is_flat,
+            },
             size,
-            full_accept,
-            is_flat,
         }
+    }
+
+    pub fn image(
+        width: u32,
+        height: u32,
+        merge_size: u32,
+        cells: Range<u32>,
+    ) -> Self {
+        Self {
+            kind: BatchKind::Image {
+                width,
+                height,
+                merge_size,
+                first_cell: cells.start,
+            },
+            size: cells.end - cells.start,
+        }
+    }
+
+    pub fn kind(&self) -> &BatchKind<B> {
+        &self.kind
     }
 
     pub fn size(&self) -> u32 {
@@ -35,14 +69,32 @@ impl<B: Backend> BatchTopology<B> {
     }
 
     pub fn full_accept(&self) -> bool {
-        self.full_accept
+        !matches!(self.kind, BatchKind::Trie { .. })
     }
 
     pub fn is_flat(&self) -> bool {
-        self.is_flat
+        match self.kind {
+            BatchKind::Trie {
+                is_flat,
+                ..
+            } => is_flat,
+            BatchKind::Sequence
+            | BatchKind::Image {
+                ..
+            } => true,
+        }
     }
 
     pub fn nodes(&self) -> Option<&B::GlobalGpuBuffer> {
-        self.nodes.as_ref()
+        match &self.kind {
+            BatchKind::Trie {
+                nodes,
+                ..
+            } => Some(nodes),
+            BatchKind::Sequence
+            | BatchKind::Image {
+                ..
+            } => None,
+        }
     }
 }

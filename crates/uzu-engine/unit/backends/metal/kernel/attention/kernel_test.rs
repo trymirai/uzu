@@ -159,7 +159,7 @@ fn attention_matches_cpu() {
             let tail_start =
                 |node: usize| (prefix + usize::from(!use_trie) * (node + 1)) / COMPRESSION_RATIO * COMPRESSION_RATIO;
             // q16 exercises dense parity with every block selected.
-            let dropped = |node: usize, block: usize| q_heads != 16 && (block * 7 + node).is_multiple_of(5);
+            let dropped = |node: usize, block: usize| q_heads != 16 && (block * 7 + node) % 5 == 0;
             let completes = |node: usize, a: usize| {
                 (prefix + trie[a].height as usize + 1).is_multiple_of(COMPRESSION_RATIO)
                     && (trie[a].trie_start as usize..=trie[a].trie_end as usize).contains(&node)
@@ -202,6 +202,7 @@ fn attention_matches_cpu() {
                         DataType::BF16,
                         head_dim as u32,
                         false,
+                        false,
                         kv_heads as u32,
                         kernel.kv_layout().backend_opaque_layout,
                         append_kv,
@@ -211,7 +212,6 @@ fn attention_matches_cpu() {
                         false,
                         0,
                         trie.is_some(),
-                        false,
                     )
                     .unwrap();
                     let mut query_codes = create_buffer::<Metal, i8>(&metal, kv_heads * query_rows * head_dim);
@@ -243,13 +243,13 @@ fn attention_matches_cpu() {
                         None,
                         None,
                         None,
+                        None,
                         prefix as u32,
                         stride as u32,
                         suffix as u32,
                         query_rows as u32,
                         None,
                         trie.as_ref(),
-                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         &mut command_buffer,
                     );
                     if !attend {

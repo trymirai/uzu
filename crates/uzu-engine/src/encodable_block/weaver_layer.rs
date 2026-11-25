@@ -97,6 +97,7 @@ impl<B: Backend> WeaverLayer<B> {
             DATA_TYPE,
             head_dim,
             true,
+            false,
             num_heads,
             prefix_attention.kv_layout().backend_opaque_layout,
             true,
@@ -105,7 +106,6 @@ impl<B: Backend> WeaverLayer<B> {
             false,
             false,
             0,
-            false,
             false,
         )
         .map_err(WeaverNewError::Backend)?;
@@ -209,12 +209,12 @@ impl<B: Backend> WeaverLayer<B> {
             Some(rope.dim),
             Some(rope.scale),
             Some(0),
+            None,
             0,
             3 * self.model_dim,
             token_count,
             token_count,
             None,
-            None::<&B::GlobalGpuBuffer>,
             None::<&B::GlobalGpuBuffer>,
             command_buffer,
         );

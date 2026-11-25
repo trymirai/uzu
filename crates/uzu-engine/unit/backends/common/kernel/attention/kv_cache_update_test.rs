@@ -38,6 +38,7 @@ fn prepare_cache<B: Backend>(
         DataType::BF16,
         HEAD_DIM,
         false,
+        false,
         NUM_HEADS,
         layout.backend_opaque_layout,
         true,
@@ -46,7 +47,6 @@ fn prepare_cache<B: Backend>(
         false,
         false,
         0,
-        false,
         false,
     )
     .unwrap();
@@ -70,12 +70,12 @@ fn prepare_cache<B: Backend>(
         None,
         None,
         None,
+        None,
         0,
         ROW_WIDTH as u32,
         KEYS,
         0,
         None,
-        None::<&B::GlobalGpuBuffer>,
         None::<&B::GlobalGpuBuffer>,
         &mut command,
     );

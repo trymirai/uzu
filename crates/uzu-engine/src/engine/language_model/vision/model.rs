@@ -1,5 +1,4 @@
-use std::{io, path::Path};
-
+use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
@@ -15,17 +14,18 @@ use crate::{
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         vision_layer::{VisionLayer, VisionLayerNewError},
     },
-    engine::language_model::vision::position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
-    safetensors::{ParameterLoader, ParameterLoaderError},
-    utils::{buffer::create_buffer_with_data, file},
+    engine::language_model::vision::{
+        patch_grid::{VisionImageError, merged_image_grid},
+        position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+    },
+    safetensors::ParameterTree,
+    utils::buffer::create_buffer_with_data,
 };
 
 #[derive(Debug, Error)]
 pub enum VisionLoadError<B: Backend> {
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
-    #[error("I/O error: {0}")]
-    IO(#[from] io::Error),
     #[error("Vision layer error: {0}")]
     Layer(#[from] VisionLayerNewError<B>),
     #[error("Linear block error: {0}")]
@@ -37,12 +37,8 @@ pub enum VisionLoadError<B: Backend> {
         output_dim: u32,
         decoder_model_dim: u32,
     },
-    #[error("ParameterLoader error: {0}")]
-    ParameterLoader(#[from] ParameterLoaderError<B>),
     #[error("Position embedding error: {0}")]
     PositionEmbedding(#[from] VisionPositionEmbeddingNewError<B>),
-    #[error("Serde error: {0}")]
-    Serde(#[from] serde_json::Error),
     #[error("MLP error: {0}")]
     UngatedMlp(#[from] UngatedMlpNewError<B>),
     #[error("Unsupported data type: {0:?}")]
@@ -66,17 +62,15 @@ pub struct VisionModel<B: Backend> {
 
 impl<B: Backend> VisionModel<B> {
     pub async fn new(
-        vision_path: &Path,
         data_type: DataType,
+        config: VisionConfig,
+        parameter_tree: &ParameterTree<'_, B>,
         decoder_model_dim: u32,
         context: &B::Context,
     ) -> Result<Self, VisionLoadError<B>> {
         if data_type != DataType::BF16 {
             return Err(VisionLoadError::UnsupportedDataType(data_type));
         };
-
-        let config_file_content = &file::read(vision_path.join("config.json")).await?;
-        let config = serde_json::from_slice::<VisionConfig>(config_file_content)?;
 
         // The patchify kernels take RGB pixels
         if config.encoder_config.in_channels != CHANNELS {
@@ -91,9 +85,6 @@ impl<B: Backend> VisionModel<B> {
             });
         }
 
-        let loader = ParameterLoader::new(vision_path.join("model.safetensors"), context).await?;
-        let encoder_tree = loader.tree().subtree("encoder");
-
         let patchify =
             <B::Kernels as Kernels>::VisionPatchifyKernel::new(context, data_type).map_err(VisionLoadError::Backend)?;
 
@@ -106,7 +97,7 @@ impl<B: Backend> VisionModel<B> {
             model_dim,
             data_type,
             true,
-            &encoder_tree.subtree("patch_embedding"),
+            &parameter_tree.subtree("patch_embedding"),
             context,
         )
         .await?;
@@ -116,14 +107,14 @@ impl<B: Backend> VisionModel<B> {
             data_type,
             num_positions,
             model_dim,
-            &encoder_tree.subtree("position_embedding"),
+            &parameter_tree.subtree("position_embedding"),
             context,
         )
         .await?;
 
         let mut layers = Vec::with_capacity(config.encoder_config.layer_configs.len());
         for (index, layer_config) in config.encoder_config.layer_configs.iter().enumerate() {
-            let layer_tree = encoder_tree.subtree(&format!("layers.{index}"));
+            let layer_tree = parameter_tree.subtree(&format!("layers.{index}"));
             let vision_layer = VisionLayer::new(
                 data_type,
                 layer_config,
@@ -144,7 +135,7 @@ impl<B: Backend> VisionModel<B> {
             None,
             ShortcutMode::None,
             &config.encoder_config.merger_norm_config,
-            &encoder_tree.subtree("merger_norm"),
+            &parameter_tree.subtree("merger_norm"),
             context,
         )
         .await?;
@@ -153,15 +144,13 @@ impl<B: Backend> VisionModel<B> {
         let merger_mlp = UngatedMlp::new(
             data_type,
             &config.encoder_config.merger_mlp_config,
-            &encoder_tree.subtree("merger_mlp"),
+            &parameter_tree.subtree("merger_mlp"),
             merged_dim,
             merged_dim,
             config.encoder_config.output_dim,
             context,
         )
         .await?;
-
-        loader.assert_all_tensors_read()?;
 
         let image_mean = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_mean)
             .map_err(VisionLoadError::Backend)?;
@@ -180,5 +169,30 @@ impl<B: Backend> VisionModel<B> {
             merger_norm,
             merger_mlp,
         })
+    }
+
+    pub fn merged_image_grid(
+        &self,
+        image: &VisionImage,
+    ) -> Result<(u32, u32), VisionImageError> {
+        let config = &self.config.encoder_config;
+        let preprocessing_config = &self.config.preprocessing_config;
+        merged_image_grid(
+            image,
+            config.patch_size,
+            config.spatial_merge_size,
+            config.temporal_patch_size,
+            config.model_dim,
+            preprocessing_config.min_pixels,
+            preprocessing_config.max_pixels,
+        )
+    }
+
+    pub fn image_token_count(
+        &self,
+        image: &VisionImage,
+    ) -> Result<usize, VisionImageError> {
+        let (token_columns, token_rows) = self.merged_image_grid(image)?;
+        Ok((token_columns * token_rows) as usize)
     }
 }

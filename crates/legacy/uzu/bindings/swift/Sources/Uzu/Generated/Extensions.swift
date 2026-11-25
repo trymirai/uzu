@@ -19,38 +19,28 @@ extension ChatConfig {
 }
 
 extension ChatMessage {
-    public static func assistant() -> ChatMessage {
-        chatMessageAssistant()
-    }
-}
-
-extension ChatMessage {
-    public static func developer() -> ChatMessage {
-        chatMessageDeveloper()
-    }
-}
-
-extension ChatMessage {
     public static func forRole(role: ChatRole) -> ChatMessage {
         chatMessageForRole(role: role)
     }
-}
 
-extension ChatMessage {
     public static func system() -> ChatMessage {
         chatMessageSystem()
     }
-}
 
-extension ChatMessage {
-    public static func tool() -> ChatMessage {
-        chatMessageTool()
+    public static func developer() -> ChatMessage {
+        chatMessageDeveloper()
     }
-}
 
-extension ChatMessage {
     public static func user() -> ChatMessage {
         chatMessageUser()
+    }
+
+    public static func assistant() -> ChatMessage {
+        chatMessageAssistant()
+    }
+
+    public static func tool() -> ChatMessage {
+        chatMessageTool()
     }
 }
 
@@ -60,15 +50,34 @@ extension ChatReplyConfig {
     }
 }
 
-extension ClassificationMessage {
-    public static func assistant(content: String) -> ClassificationMessage {
-        classificationMessageAssistant(content: content)
+extension ChatSessionStream {
+    public func iterator() -> AsyncThrowingStream<ChatSessionStreamChunk, Swift.Error> {
+        AsyncThrowingStream<ChatSessionStreamChunk, Swift.Error> { continuation in
+            let task = Task {
+                while !Task.isCancelled {
+                    let item = await self.next()
+                    guard let item else {
+                        continuation.finish()
+                        break
+                    }
+                    continuation.yield(item)
+                }
+            }
+            continuation.onTermination = { [weak self] _ in
+                task.cancel()
+                self?.cancelToken().cancel()
+            }
+        }
     }
 }
 
 extension ClassificationMessage {
     public static func user(content: String) -> ClassificationMessage {
         classificationMessageUser(content: content)
+    }
+
+    public static func assistant(content: String) -> ClassificationMessage {
+        classificationMessageAssistant(content: content)
     }
 }
 
@@ -78,9 +87,49 @@ extension Device {
     }
 }
 
+extension DownloaderStream {
+    public func iterator() -> AsyncThrowingStream<DownloadState, Swift.Error> {
+        AsyncThrowingStream<DownloadState, Swift.Error> { continuation in
+            let task = Task {
+                while !Task.isCancelled {
+                    let item = await self.next()
+                    guard let item else {
+                        continuation.finish()
+                        break
+                    }
+                    continuation.yield(item)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+}
+
 extension Engine {
     public static func create(config: EngineConfig) async throws -> Engine {
         try await engineCreate(config: config)
+    }
+}
+
+extension EngineCallback {
+    public typealias Closure = @Sendable () -> Void
+
+    private final class EngineCallbackHandlerClosureWrapper: Sendable, EngineCallbackHandler {
+        private let closure: Closure
+
+        init(closure: @escaping Closure) {
+            self.closure = closure
+        }
+
+        func onEvent() {
+            closure()
+        }
+    }
+
+    public static func create(closure: @escaping Closure) -> EngineCallback {
+        EngineCallback.create(handler: EngineCallbackHandlerClosureWrapper(closure: closure))
     }
 }
 
@@ -108,73 +157,6 @@ extension Player {
     }
 }
 
-extension ToolCallArgumentStream {
-    public static func create(tools: [ToolNamespace]) -> ToolCallArgumentStream {
-        toolCallArgumentStreamCreate(tools: tools)
-    }
-}
-
-extension EngineCallback {
-    public typealias Closure = @Sendable () -> Void
-
-    private final class EngineCallbackHandlerClosureWrapper: Sendable, EngineCallbackHandler {
-        private let closure: Closure
-
-        init(closure: @escaping Closure) {
-            self.closure = closure
-        }
-
-        func onEvent() {
-            closure()
-        }
-    }
-
-    public static func create(closure: @escaping Closure) -> EngineCallback {
-        EngineCallback.create(handler: EngineCallbackHandlerClosureWrapper(closure: closure))
-    }
-}
-
-extension ChatSessionStream {
-    public func iterator() -> AsyncThrowingStream<ChatSessionStreamChunk, Swift.Error> {
-        AsyncThrowingStream<ChatSessionStreamChunk, Swift.Error> { continuation in
-            let task = Task {
-                while !Task.isCancelled {
-                    let item = await self.next()
-                    guard let item else {
-                        continuation.finish()
-                        break
-                    }
-                    continuation.yield(item)
-                }
-            }
-            continuation.onTermination = { [weak self] _ in
-                task.cancel()
-                self?.cancelToken().cancel()
-            }
-        }
-    }
-}
-
-extension DownloaderStream {
-    public func iterator() -> AsyncThrowingStream<DownloadState, Swift.Error> {
-        AsyncThrowingStream<DownloadState, Swift.Error> { continuation in
-            let task = Task {
-                while !Task.isCancelled {
-                    let item = await self.next()
-                    guard let item else {
-                        continuation.finish()
-                        break
-                    }
-                    continuation.yield(item)
-                }
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
-    }
-}
-
 extension TextToSpeechSessionStream {
     public func iterator() -> AsyncThrowingStream<TextToSpeechSessionStreamChunk, Swift.Error> {
         AsyncThrowingStream<TextToSpeechSessionStreamChunk, Swift.Error> { continuation in
@@ -196,3 +178,8 @@ extension TextToSpeechSessionStream {
     }
 }
 
+extension ToolCallArgumentStream {
+    public static func create(tools: [ToolNamespace]) -> ToolCallArgumentStream {
+        toolCallArgumentStreamCreate(tools: tools)
+    }
+}

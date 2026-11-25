@@ -522,7 +522,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
         let is_flat = matches!(source, ProposalSource::Argmax { .. });
 
         Ok(TreeProposal {
-            topology: BatchTopology::new(Some(nodes), budget, false, is_flat),
+            topology: BatchTopology::trie(nodes, budget, is_flat),
             token_ids,
             seeds,
         })
