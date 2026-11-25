@@ -63,6 +63,4 @@ pub trait Instance:
     fn stop_token_ids(&self) -> Option<Box<[u64]>>;
 
     fn sampling_defaults(&self) -> SamplingParameters;
-
-    fn vision_supported(&self) -> bool;
 }
