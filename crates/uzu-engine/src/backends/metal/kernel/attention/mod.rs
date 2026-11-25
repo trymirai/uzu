@@ -419,10 +419,11 @@ impl AttentionKernel for AttentionMetalKernel {
                     trie,
                     cache.ring_params(),
                     config.sliding_window_size,
-                    Some((&mut values).subrange_mut(range(head_dim as usize * DataType::BF16.size_in_bytes())))
-                        .filter(|_| is_split),
-                    Some(maxima.subrange_mut(range(DataType::F32.size_in_bytes()))).filter(|_| is_split),
-                    Some(sums.subrange_mut(range(DataType::F32.size_in_bytes()))).filter(|_| is_split),
+                    is_split.then_some(
+                        (&mut values).subrange_mut(range(head_dim as usize * DataType::BF16.size_in_bytes())),
+                    ),
+                    is_split.then_some(maxima.subrange_mut(range(DataType::F32.size_in_bytes()))),
+                    is_split.then_some(sums.subrange_mut(range(DataType::F32.size_in_bytes()))),
                     output.as_mut().filter(|_| !is_split),
                     gate.filter(|_| !is_split),
                     config.gate_row_stride.filter(|_| !is_split),
