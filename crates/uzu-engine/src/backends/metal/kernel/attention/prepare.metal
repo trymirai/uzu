@@ -16,7 +16,7 @@ template <typename T>
 METAL_FUNC T prepare_norm(
     T value,
     uint channel,
-    float inverse_rms,
+    float row_scale,
     const device float* scales,
     bool has_scales,
     bool enabled,
@@ -26,7 +26,7 @@ METAL_FUNC T prepare_norm(
   if (!enabled) {
     return value;
   }
-  const float normalized = float(value) * inverse_rms;
+  const float normalized = float(value) * row_scale;
   if (!has_scales) {
     return T(normalized);
   }
@@ -99,7 +99,8 @@ PUBLIC KERNEL(AttentionPrepare)(
 
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
-  const bool norm_enabled = norm_params.enabled[norm_index];
+  const uint32_t norm_op = norm_params.op[norm_index];
+  const bool norm_enabled = norm_op != uint32_t(uzu::qkv_norm::QKVL2Op::None);
   const bool norm_full_layer = norm_params.full_layer[norm_index];
   const float norm_scale_offset = norm_params.scale_offset[norm_index];
   const bool has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
@@ -134,7 +135,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     simdgroup_barrier(mem_flags::mem_threadgroup);
   }
   const auto input = [&](uint channel) { return block_mean ? ElementT(block_mean_row[channel]) : head[channel]; };
-  float inverse_rms = 1.0f;
+  float row_scale = 1.0f;
   if (norm_enabled) {
     float sum = 0.0f;
     METAL_PRAGMA_UNROLL
@@ -145,7 +146,11 @@ PUBLIC KERNEL(AttentionPrepare)(
         sum += value * value;
       }
     }
-    inverse_rms = rsqrt(simd_sum(sum) / float(HEAD_DIM) + norm_params.epsilon[norm_index]);
+    const float sum_sq = simd_sum(sum);
+    const float epsilon = norm_params.epsilon[norm_index];
+    row_scale = norm_op == uint32_t(uzu::qkv_norm::QKVL2Op::Clip)
+                    ? min(1.0f, norm_params.clip_threshold[norm_index] / (sqrt(sum_sq) + epsilon))
+                    : rsqrt(sum_sq / float(HEAD_DIM) + epsilon);
   }
 
   uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
@@ -167,7 +172,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     ElementT element = prepare_norm(
         input(channel),
         channel,
-        inverse_rms,
+        row_scale,
         norm_scales,
         has_scales,
         norm_enabled,
@@ -180,7 +185,7 @@ PUBLIC KERNEL(AttentionPrepare)(
       const float paired = float(prepare_norm(
           input(paired_channel),
           paired_channel,
-          inverse_rms,
+          row_scale,
           norm_scales,
           has_scales,
           norm_enabled,

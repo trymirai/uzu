@@ -5,7 +5,11 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::common::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
-        gpu_types::{qkv_norm::QKVNormParams, rope::RoPEGridParams, trie::TrieNode},
+        gpu_types::{
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEGridParams,
+            trie::TrieNode,
+        },
         kernel::AttentionPrepareKernel,
     },
     data_type::DataType,
@@ -24,9 +28,12 @@ struct PrepareOutput {
 #[derive(Clone, Copy)]
 struct NormCase {
     full_layer: bool,
-    enabled: [bool; 3],
+    ops: [QKVL2Op; 3],
     affine: [bool; 3],
 }
+
+const CLIP_THRESHOLDS: [f32; 3] = [2.0, 22.627417, 0.0];
+const CLIP_NORM_RATIOS: [f32; 2] = [0.5, 3.0];
 
 fn run_prepare<B: Backend, const DIM: usize>(
     num_q_heads: u32,
@@ -41,9 +48,10 @@ fn run_prepare<B: Backend, const DIM: usize>(
     const PREFIX: u32 = 3;
     let code_bytes = CACHE_TOKENS * DIM;
     let norm_params = QKVNormParams {
-        enabled: normalization.enabled.map(u32::from),
+        op: normalization.ops.map(|op| op as u32),
         full_layer: [u32::from(normalization.full_layer); 3],
         epsilon: [1e-6, 1e-5, 1e-4],
+        clip_threshold: CLIP_THRESHOLDS,
         scale_offset: [0.0, 1.0, 0.25],
     };
     let weights: [Vec<f32>; 3] =
@@ -54,11 +62,21 @@ fn run_prepare<B: Backend, const DIM: usize>(
             let mut values = (0..DIM)
                 .map(|i| bf16::from_f32(((token * 3 * DIM + head * DIM + i) as f32 * 0.37).sin()))
                 .collect::<Vec<_>>();
-            if !fused && normalization.enabled[head] {
+            let op = normalization.ops[head];
+            if op == QKVL2Op::Clip {
+                let target = CLIP_THRESHOLDS[head] * CLIP_NORM_RATIOS[token];
+                let norm = values.iter().map(|v| v.to_f32() * v.to_f32()).sum::<f32>().sqrt();
+                values.iter_mut().for_each(|value| *value = bf16::from_f32(value.to_f32() * target / norm));
+            }
+            if !fused && op != QKVL2Op::None {
                 let sum = values.iter().map(|v| v.to_f32() * v.to_f32()).sum::<f32>();
-                let inverse_rms = (sum / DIM as f32 + norm_params.epsilon[head]).sqrt().recip();
+                let row_scale = if op == QKVL2Op::Clip {
+                    (norm_params.clip_threshold[head] / (sum.sqrt() + norm_params.epsilon[head])).min(1.0)
+                } else {
+                    (sum / DIM as f32 + norm_params.epsilon[head]).sqrt().recip()
+                };
                 for (i, value) in values.iter_mut().enumerate() {
-                    let normalized = value.to_f32() * inverse_rms;
+                    let normalized = value.to_f32() * row_scale;
                     let scale = weights[head][i] + norm_params.scale_offset[head];
                     *value = if !normalization.affine[head] {
                         bf16::from_f32(normalized)
@@ -169,17 +187,21 @@ fn run_prepare<B: Backend, const DIM: usize>(
 
 #[uzu_test]
 fn test_attention_prepare_fused_norm() {
+    use QKVL2Op::{Clip, RmsNorm};
+
     fn check<const DIM: usize>() {
         for queries in [0, 1] {
             for full_layer in [false, true] {
-                for (enabled, affine) in [
-                    ([true, true, false], [true, true, false]),
-                    ([true, true, true], [false, false, false]),
-                    ([false, true, true], [false, false, true]),
+                for (ops, affine) in [
+                    ([RmsNorm, RmsNorm, QKVL2Op::None], [true, true, false]),
+                    ([RmsNorm, RmsNorm, RmsNorm], [false, false, false]),
+                    ([QKVL2Op::None, RmsNorm, RmsNorm], [false, false, true]),
+                    ([Clip, Clip, RmsNorm], [false, false, true]),
+                    ([Clip, Clip, QKVL2Op::None], [false, false, false]),
                 ] {
                     let case = NormCase {
                         full_layer,
-                        enabled,
+                        ops,
                         affine,
                     };
                     for rope in [false, true] {

@@ -4,7 +4,12 @@ use uzu_engine_macros::kernel;
 
 use crate::{
     backends::{
-        common::gpu_types::{kv_layout, qkv_norm::QKVNormParams, rope::RoPEGridParams, trie::TrieNode},
+        common::gpu_types::{
+            kv_layout,
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEGridParams,
+            trie::TrieNode,
+        },
         cpu::kernel::{
             activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
             attention::rope::{apply_rope, mrope_axis_offset},
@@ -64,7 +69,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     };
     assert_eq!(backend_opaque_layout, 0);
     let mut values = vec![0.0f32; head_dim];
-    let mut normalized = if norm_params.enabled.iter().any(|&enabled| enabled != 0) {
+    let mut normalized = if norm_params.op.iter().any(|&op| op != QKVL2Op::None as u32) {
         vec![ElementT::zero(); head_dim]
     } else {
         Vec::new()
@@ -135,12 +140,17 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                 }
                 source = mean.as_ptr();
             }
-            if norm_params.enabled[norm] != 0 {
+            let op = norm_params.op[norm];
+            if op != QKVL2Op::None as u32 {
                 let input = unsafe { std::slice::from_raw_parts(source, head_dim) };
                 let sum: f32 = input.iter().map(|v| v.to_f32().unwrap().powi(2)).sum();
-                let inverse_rms = (sum / head_dim as f32 + norm_params.epsilon[norm]).sqrt().recip();
+                let row_scale = if op == QKVL2Op::Clip as u32 {
+                    (norm_params.clip_threshold[norm] / (sum.sqrt() + norm_params.epsilon[norm])).min(1.0)
+                } else {
+                    (sum / head_dim as f32 + norm_params.epsilon[norm]).sqrt().recip()
+                };
                 for (channel, output) in normalized.iter_mut().enumerate() {
-                    let value = input[channel].to_f32().unwrap() * inverse_rms;
+                    let value = input[channel].to_f32().unwrap() * row_scale;
                     *output = if let Some(scales) = norm_scales {
                         let scale = unsafe { *scales.add(channel) } + norm_params.scale_offset[norm];
                         if norm_params.full_layer[norm] != 0 {

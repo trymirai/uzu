@@ -31,6 +31,7 @@ metal = [
 
 vulkan = [
     "cpu",
+    "bytemuck/min_const_generics",
     "dep:ash",
     "dep:vk-mem",
     "dep:dirs",

@@ -1,11 +1,9 @@
-use std::sync::mpsc::Sender;
-
 use derive_more::Debug;
 use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, TimestampSpan, capture_matcher::CaptureError},
+    backends::common::{Backend, capture_matcher::CaptureError},
     encodable_block::decoder::DecoderError,
     engine::language_model::{
         LanguageModel,
@@ -14,7 +12,7 @@ use crate::{
         vision::encode::VisionPrefillError,
     },
     speculators::dflash_tfm::DFlashTreeError,
-    utils::trace,
+    utils::{timestamps::TimestampSender, trace},
 };
 pub use crate::{
     encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,
@@ -30,7 +28,7 @@ pub enum LanguageModelInput<'a> {
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
-    pub timestamps: Option<Sender<Box<[TimestampSpan]>>>,
+    pub timestamps: Option<TimestampSender>,
     pub grammar: Option<Grammar>,
 }
 

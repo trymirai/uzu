@@ -4,7 +4,10 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::{qkv_norm::QKVNormParams, rope::RoPEGridParams},
+        gpu_types::{
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEGridParams,
+        },
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             attention::KeyBlocks,
@@ -139,7 +142,7 @@ impl<B: Backend> Attention<B> {
             let Some(config) = config else {
                 continue;
             };
-            qkv_norm_params.enabled[i] = 1;
+            qkv_norm_params.op[i] = QKVL2Op::RmsNorm as u32;
             qkv_norm_params.full_layer[i] = u32::from(config.upcast_mode == UpcastMode::FullLayer);
             qkv_norm_params.epsilon[i] = config.epsilon;
             qkv_norm_params.scale_offset[i] = config.scale_offset.unwrap_or(0.0);

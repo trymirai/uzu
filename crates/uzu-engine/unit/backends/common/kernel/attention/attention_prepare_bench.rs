@@ -7,7 +7,11 @@ use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{
-        common::{Backend, Kernels, gpu_types::qkv_norm::QKVNormParams, kernel::AttentionPrepareKernel},
+        common::{
+            Backend, Kernels,
+            gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
+            kernel::AttentionPrepareKernel,
+        },
         metal::Metal,
     },
     data_type::DataType,
@@ -53,9 +57,10 @@ fn bench_attention_prepare(c: &mut Criterion) {
     )
     .expect("kernel");
     let norm_params = QKVNormParams {
-        enabled: [1, 1, 0],
+        op: [QKVL2Op::RmsNorm as u32, QKVL2Op::RmsNorm as u32, QKVL2Op::None as u32],
         full_layer: [0; 3],
         epsilon: [1e-6; 3],
+        clip_threshold: [0.0; 3],
         scale_offset: [1.0, 1.0, 0.0],
     };
     let mut norm_scales = || {
