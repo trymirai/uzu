@@ -12,10 +12,11 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
+        transformer::{
+            Transformer, TransformerEncodeError, TransformerEncodeOutput, TransformerNewError, TransformerState,
+        },
     },
     safetensors::ParameterTree,
-    utils::size_for_shape::size_for_shape,
 };
 
 #[derive(Debug, Error)]
@@ -144,36 +145,6 @@ impl<B: Backend> Decoder<B> {
         self.transformer.create_empty_state(max_context_length, context)
     }
 
-    pub fn prefill_embeddings(
-        &self,
-        embeddings: &B::ScratchBuffer,
-        rows: std::ops::Range<u32>,
-        hidden_feature_layer_indices: Option<&[u32]>,
-        state: &mut TransformerState<B>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<Option<Box<[B::ScratchBuffer]>>, DecoderError<B>> {
-        let row_count = rows.end - rows.start;
-        let row_size = size_for_shape(&[self.embedding.model_dim()], self.embedding.data_type());
-        let mut embedded =
-            command_buffer.allocate_scratch(row_count as usize * row_size).map_err(DecoderError::Backend)?;
-        command_buffer.encode_copy(
-            embeddings.subrange(rows.start as usize * row_size..rows.end as usize * row_size),
-            &mut embedded,
-        );
-
-        let output = self.transformer.encode(
-            embedded,
-            None::<&B::ScratchBuffer>,
-            &BatchTopology::flat(row_count),
-            None,
-            hidden_feature_layer_indices,
-            Some(state),
-            command_buffer,
-        )?;
-
-        Ok(output.hidden_features)
-    }
-
     pub fn encode(
         &self,
         token_ids: impl BufferRef<Backend = B>,
@@ -200,7 +171,7 @@ impl<B: Backend> Decoder<B> {
             None
         };
 
-        let transformer_output = self.transformer.encode(
+        let transformer_output = self.encode_embedded(
             embedded,
             per_layer_inputs.as_ref(),
             batch_dim,
@@ -234,5 +205,26 @@ impl<B: Backend> Decoder<B> {
             hidden_features: transformer_output.hidden_features,
             final_hidden,
         })
+    }
+
+    pub fn encode_embedded(
+        &self,
+        embedded: B::ScratchBuffer,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        batch_dim: &BatchTopology<B>,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerEncodeOutput<B>, DecoderError<B>> {
+        Ok(self.transformer.encode(
+            embedded,
+            per_layer_inputs,
+            batch_dim,
+            output_range,
+            hidden_feature_layer_indices,
+            state,
+            command_buffer,
+        )?)
     }
 }

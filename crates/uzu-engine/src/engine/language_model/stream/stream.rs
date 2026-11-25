@@ -833,21 +833,32 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let image = vision_model.prefill(image, command_buffer)?;
         drop(encode_span);
 
+        let embedding = self.model.decoder.embedding();
+        let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
         let row_count = image.width * image.height;
         for start in (0..row_count).step_by(ATTENTION_SUFFIX_CAPACITY as usize) {
             let length = (row_count - start).min(ATTENTION_SUFFIX_CAPACITY);
 
             let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
-            let hidden_features = self.model.decoder.prefill_embeddings(
-                &image.embeddings,
-                start..start + length,
+            let mut embedded = command_buffer
+                .allocate_scratch(length as usize * row_size)
+                .map_err(LanguageModelStreamError::Backend)?;
+            command_buffer.encode_copy(
+                image.embeddings.subrange(start as usize * row_size..(start + length) as usize * row_size),
+                &mut embedded,
+            );
+            let output = self.model.decoder.encode_embedded(
+                embedded,
+                None::<&B::ScratchBuffer>,
+                &BatchTopology::flat(length),
+                None,
                 self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
-                &mut self.model_state.transformer_state,
+                Some(&mut self.model_state.transformer_state),
                 command_buffer,
             )?;
             drop(encode_span);
 
-            self.accept_prefill(length, hidden_features.as_deref(), command_buffer)?;
+            self.accept_prefill(length, output.hidden_features.as_deref(), command_buffer)?;
         }
         Ok(())
     }
