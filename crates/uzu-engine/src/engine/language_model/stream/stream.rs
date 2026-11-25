@@ -20,13 +20,14 @@ use crate::{
     encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
     engine::language_model::{
         LanguageModel,
+        grammar::Grammar,
         state::LanguageModelState,
         stream::{LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie,
     utils::{
         size_for_shape::size_for_shape,
-        timestamps::{CpuSpan, record, wait},
+        timestamps::{CpuSpan, TimestampSender, record, wait},
     },
 };
 
@@ -103,6 +104,79 @@ impl<B: Backend> GenerationJob<B> {
             Self::Invalid => unreachable!(),
         }
     }
+
+    async fn resolve(
+        &mut self,
+        context: &B::Context,
+        grammar: Option<&mut Grammar>,
+        timestamps: Option<&TimestampSender>,
+    ) -> Result<&ResolvedJob<B>, LanguageModelStreamError<B>> {
+        let owned = mem::replace(self, GenerationJob::Invalid);
+        let resolved = match owned {
+            GenerationJob::Pending {
+                output_norm: output_norm_buffer,
+                output_tokens: output_tokens_buffer,
+                batch_dim,
+                input_token_ids,
+                hidden_features,
+                capture_span,
+                pendings,
+            } => {
+                let _span = CpuSpan::start(timestamps, "resolve");
+                for pending in pendings {
+                    wait(pending, timestamps).await.map_err(LanguageModelStreamError::Backend)?;
+                }
+                let gpu_tokens =
+                    context.copyout::<u32>(&output_tokens_buffer).await.map_err(LanguageModelStreamError::Backend)?;
+
+                let mut output_tokens = gpu_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
+
+                let accepted_indices_and_input_tokens = if batch_dim.full_accept() {
+                    if let Some(grammar) = grammar {
+                        for &token_id in &output_tokens {
+                            grammar.accept_token(token_id)?
+                        }
+                    }
+                    None
+                } else {
+                    let input_tokens = context
+                        .copyout::<u32>(input_token_ids.as_ref().expect("trie batch carries token ids"))
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let trie_nodes = context
+                        .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie batch carries trie nodes"))
+                        .await
+                        .map_err(LanguageModelStreamError::Backend)?;
+
+                    let (accepted_token_indicies, accepted_input_token_ids, accepted_output_token_ids) =
+                        trie::accept(&trie_nodes, &output_tokens, &input_tokens, grammar)?;
+
+                    output_tokens = accepted_output_token_ids;
+                    Some((accepted_token_indicies, accepted_input_token_ids))
+                };
+
+                ResolvedJob {
+                    output_tokens,
+                    output_norm_buffer,
+                    output_tokens_buffer,
+                    batch_dim,
+                    hidden_features,
+                    accepted_indices_and_input_tokens,
+                    capture_span,
+                }
+            },
+            GenerationJob::Resolved(resolved) => resolved,
+            GenerationJob::Invalid => unreachable!(),
+        };
+
+        *self = GenerationJob::Resolved(resolved);
+        let GenerationJob::Resolved(resolved) = &*self else {
+            unreachable!()
+        };
+
+        Ok(resolved)
+    }
 }
 
 impl<'a, B: Backend> StreamEnqueuer<'a, B> {
@@ -163,93 +237,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         })
     }
 
-    async fn resolve<'b>(
-        &mut self,
-        job: &'b mut GenerationJob<B>,
-    ) -> Result<&'b ResolvedJob<B>, LanguageModelStreamError<B>> {
-        let owned = mem::replace(job, GenerationJob::Invalid);
-        let resolved = match owned {
-            GenerationJob::Pending {
-                output_norm: output_norm_buffer,
-                output_tokens: output_tokens_buffer,
-                batch_dim,
-                input_token_ids,
-                hidden_features,
-                capture_span,
-                pendings,
-            } => {
-                let _span = CpuSpan::start(self.options.timestamps.as_ref(), "resolve");
-                for pending in pendings {
-                    wait(pending, self.options.timestamps.as_ref()).await.map_err(LanguageModelStreamError::Backend)?;
-                }
-                let gpu_tokens = self
-                    .model
-                    .engine
-                    .context
-                    .copyout::<u32>(&output_tokens_buffer)
-                    .await
-                    .map_err(LanguageModelStreamError::Backend)?;
-
-                let mut output_tokens = gpu_tokens.iter().map(|&t| t as u64).collect::<Box<[_]>>();
-
-                let accepted_indices_and_input_tokens = if batch_dim.full_accept() {
-                    if let Some(grammar) = self.options.grammar.as_mut() {
-                        for &token_id in &output_tokens {
-                            grammar.accept_token(token_id)?
-                        }
-                    }
-                    None
-                } else {
-                    let input_tokens = self
-                        .model
-                        .engine
-                        .context
-                        .copyout::<u32>(input_token_ids.as_ref().expect("trie batch carries token ids"))
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
-
-                    let trie_nodes = self
-                        .model
-                        .engine
-                        .context
-                        .copyout::<TrieNodeGpu>(batch_dim.nodes().expect("trie batch carries trie nodes"))
-                        .await
-                        .map_err(LanguageModelStreamError::Backend)?;
-
-                    let (accepted_token_indicies, accepted_input_token_ids, accepted_output_token_ids) =
-                        trie::accept(&trie_nodes, &output_tokens, &input_tokens, self.options.grammar.as_mut())?;
-
-                    output_tokens = accepted_output_token_ids;
-                    Some((accepted_token_indicies, accepted_input_token_ids))
-                };
-
-                ResolvedJob {
-                    output_tokens,
-                    output_norm_buffer,
-                    output_tokens_buffer,
-                    batch_dim,
-                    hidden_features,
-                    accepted_indices_and_input_tokens,
-                    capture_span,
-                }
-            },
-            GenerationJob::Resolved(resolved) => resolved,
-            GenerationJob::Invalid => unreachable!(),
-        };
-
-        *job = GenerationJob::Resolved(resolved);
-        let GenerationJob::Resolved(resolved) = &*job else {
-            unreachable!()
-        };
-
-        Ok(resolved)
-    }
-
     async fn resolve_take(
         &mut self,
         mut job: GenerationJob<B>,
     ) -> Result<ResolvedJob<B>, LanguageModelStreamError<B>> {
-        self.resolve(&mut job).await?;
+        job.resolve(&self.model.engine.context, self.options.grammar.as_mut(), self.options.timestamps.as_ref())
+            .await?;
         let GenerationJob::Resolved(resolved) = job else {
             unreachable!()
         };
@@ -475,7 +468,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 (norm_buffer.subrange(..), token_buffer.subrange(..))
             } else {
                 // TODO: CPU-bubble: for `accepted_indices`, to find where the root of the speculator should be.
-                let resolved = self.resolve(&mut last_job).await?;
+                let resolved = last_job
+                    .resolve(
+                        &self.model.engine.context,
+                        self.options.grammar.as_mut(),
+                        self.options.timestamps.as_ref(),
+                    )
+                    .await?;
                 let batch_dim = &resolved.batch_dim;
                 let norm_buffer = resolved.output_norm_buffer.as_ref().unwrap();
                 let token_buffer = &resolved.output_tokens_buffer;
@@ -551,7 +550,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             } else {
                 // Technically a bubble, but only hit if at the very end of
                 // context window.
-                let resolved = self.resolve(&mut last_job).await?;
+                let resolved = last_job
+                    .resolve(
+                        &self.model.engine.context,
+                        self.options.grammar.as_mut(),
+                        self.options.timestamps.as_ref(),
+                    )
+                    .await?;
                 let (accepted_indices, _) = resolved.accepted_indices_and_input_tokens.as_ref().unwrap();
                 let row = (*accepted_indices.last().unwrap()) as usize;
                 row * token_word_bytes..(row + 1) * token_word_bytes
@@ -606,7 +611,9 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             );
 
             // Not a CPU-bubble, forward pass is overlapped.
-            self.resolve(&mut last_job).await?;
+            last_job
+                .resolve(&self.model.engine.context, self.options.grammar.as_mut(), self.options.timestamps.as_ref())
+                .await?;
         }
 
         let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
