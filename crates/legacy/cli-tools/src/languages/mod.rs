@@ -1,3 +1,4 @@
+mod foreign_extensions;
 mod python;
 mod rust;
 mod swift;
