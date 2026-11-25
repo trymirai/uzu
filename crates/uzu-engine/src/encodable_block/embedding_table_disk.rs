@@ -118,22 +118,31 @@ impl EmbeddingTableDisk {
 /// Deduplicated lookups.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn lookup(query: &[(&EmbeddingTableDisk, impl AsRef<[u32]>)]) -> io::Result<Vec<Vec<u8>>> {
-    // Read each distinct id once per table. Sorting also makes the reads go in file order.
+    // Read each distinct id once per table
     let mut unique = query
         .iter()
         .map(|(table, ids)| {
-            let mut ids = ids.as_ref().to_vec();
-            ids.sort_unstable();
-            ids.dedup();
-            let rows = vec![0u8; ids.len() * table.row_size];
-            (ids, rows)
+            let mut unique_ids = Vec::new();
+            let mut unique_index = HashMap::new();
+            let indices = ids
+                .as_ref()
+                .iter()
+                .map(|&id| {
+                    *unique_index.entry(id).or_insert_with(|| {
+                        unique_ids.push(id);
+                        unique_ids.len() - 1
+                    })
+                })
+                .collect::<Vec<usize>>();
+            let rows = vec![0u8; unique_ids.len() * table.row_size];
+            (unique_ids, indices, rows)
         })
         .collect::<Vec<_>>();
 
     let reads = query
         .iter()
         .zip(&mut unique)
-        .flat_map(|((table, _), (unique_ids, unique_rows))| {
+        .flat_map(|((table, _), (unique_ids, _, unique_rows))| {
             unique_ids
                 .iter()
                 .zip(unique_rows.chunks_exact_mut(table.row_size))
@@ -146,11 +155,10 @@ pub fn lookup(query: &[(&EmbeddingTableDisk, impl AsRef<[u32]>)]) -> io::Result<
     let outputs = query
         .iter()
         .zip(&unique)
-        .map(|((table, ids), (unique_ids, unique_rows))| {
+        .map(|((table, _), (_, indices, unique_rows))| {
             let row_size = table.row_size;
-            let mut rows = Vec::with_capacity(ids.as_ref().len() * row_size);
-            for id in ids.as_ref() {
-                let index = unique_ids.binary_search(id).unwrap();
+            let mut rows = Vec::with_capacity(indices.len() * row_size);
+            for &index in indices {
                 rows.extend_from_slice(&unique_rows[index * row_size..(index + 1) * row_size]);
             }
             rows
