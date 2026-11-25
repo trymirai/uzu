@@ -39,3 +39,21 @@
 - **Row-shaped combine** (one simdgroup per row, no threadgroup memory): rejected; batch-1 decode +2..+7 %.
 - **No in-core ending** (always core + combine): +7..+13 % sliding prefill. That is why the output path exists.
 - **Pre-M5 mask unification:** sliding −5..−12 % on M2 / M4 Pro.
+
+## Update (2026-11-25, after the cleanup landed on this branch)
+- **Landed (commit "Attention cleanup: …"):**
+  - `is_split` replaces `has_output`: `output` is OPTIONAL(!is_split), partials are OPTIONAL(is_split);
+  - PSOs are indexed by mask kind × is_split;
+  - the core stores un-normalised partials;
+  - `finish_row` (`rotated_output.h`) has three callers: the MXU output path, the combine and the vector direct path;
+  - a threadgroup-memory limit check: the no-split output kernel is built only if it fits the device limit (32 KB on M5 Max), otherwise the call takes the split route.
+- **For you:**
+  - the simdgroup output path (`!is_split`) should call `finish_row` and must respect the same limit check;
+  - expected payoff: pre-M5 sliding prefill (it still always pays partials + combine).
+- **Pre-M5 findings (M4 Pro, vs b171b8ffa):**
+  - The un-normalised accumulator costs global 4k batch 2/8 +2.3/+3.3 % and trie batch 8 +2.2 %; sliding is neutral. Unresolved; the suspect is the simd core or the combine.
+  - The single-mask port (`docs/attention_simd_vector_mask.diff`, against b171b8ffa; needs a rebase onto this branch's `vector.metal`):
+    - sliding −5.5..−7.8 %;
+    - global batch 2/8 at 4k/32k/128k +1.2..+1.8 %;
+    - the cause is in `matrix_simd.h`, on the 1- and 4-simdgroup tiles; not found.
+- **Inkling decode batch 1 on pre-M5:** runs the vector split kernel (grouped rows ≤ 4). Batch 2 and up run the simd tiles.

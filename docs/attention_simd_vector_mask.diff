@@ -1,0 +1,336 @@
+diff --git a/crates/uzu-engine/src/backends/cpu/kernel/attention/mod.rs b/crates/uzu-engine/src/backends/cpu/kernel/attention/mod.rs
+index 909d86751..5a93bbd1c 100644
+--- a/crates/uzu-engine/src/backends/cpu/kernel/attention/mod.rs
++++ b/crates/uzu-engine/src/backends/cpu/kernel/attention/mod.rs
+@@ -6,8 +6,6 @@ pub mod prepare;
+ 
+ mod compute;
+ mod mask;
+-#[cfg(test)]
+-pub use mask::should_use_key;
+ mod rope;
+ 
+ use crate::backends::{
+diff --git a/crates/uzu-engine/src/backends/cpu/kernel/mod.rs b/crates/uzu-engine/src/backends/cpu/kernel/mod.rs
+index 1bf183d1f..a15728362 100644
+--- a/crates/uzu-engine/src/backends/cpu/kernel/mod.rs
++++ b/crates/uzu-engine/src/backends/cpu/kernel/mod.rs
+@@ -6,8 +6,6 @@ use crate::backends::{
+ mod activation;
+ pub(crate) mod activation_transform;
+ mod attention;
+-#[cfg(test)]
+-pub use attention::should_use_key;
+ mod confidence_head;
+ mod convolution;
+ mod embedding;
+diff --git a/crates/uzu-engine/src/backends/cpu/mod.rs b/crates/uzu-engine/src/backends/cpu/mod.rs
+index 14435cd83..9b136fb1e 100644
+--- a/crates/uzu-engine/src/backends/cpu/mod.rs
++++ b/crates/uzu-engine/src/backends/cpu/mod.rs
+@@ -6,5 +6,3 @@ mod error;
+ mod kernel;
+ 
+ pub use backend::Cpu;
+-#[cfg(test)]
+-pub use kernel::should_use_key;
+diff --git a/crates/uzu-engine/src/backends/metal/kernel/attention/mask.h b/crates/uzu-engine/src/backends/metal/kernel/attention/mask.h
+index 6efb73d2b..dc5060729 100644
+--- a/crates/uzu-engine/src/backends/metal/kernel/attention/mask.h
++++ b/crates/uzu-engine/src/backends/metal/kernel/attention/mask.h
+@@ -11,73 +11,55 @@ using uzu::kv_layout::NO_KEY_SLOT;
+ // A key no query sees (unfilled, past the end); also the width of "no window".
+ constexpr constant uint INVALID_POSITION = 0x7FFFFFFFu;
+ 
+-static inline bool should_use_key(
+-    const constant RingParams& ring_params,
+-    const device TrieNode* trie,
+-    const constant uint& sliding_window_size,
+-    const uint q_seq_idx,
+-    const uint prefix_length,
+-    const uint suffix_position,
+-    const uint query_position,
+-    const uint i,
+-    const bool is_kv_cache_ring,
+-    const bool is_causal,
+-    const bool is_trie,
+-    const bool is_sliding_window
+-) {
+-  bool use_key = true;
+-
+-  uint key_position;
+-
+-  if (i >= prefix_length) {
+-    // We're in the suffix
+-    uint key_position_in_suffix = i - prefix_length;
+-
+-    if (is_trie) {
+-      // Trie, get position from the flat trie buffer
+-      TrieNode key_trie = trie[key_position_in_suffix];
+-
+-      key_position = suffix_position + key_trie.height;
+-
+-      if (is_causal) {
+-        use_key &= q_seq_idx >= key_trie.trie_start && q_seq_idx <= key_trie.trie_end;
+-      }
+-    } else {
+-      // Non-trie, position equals index in the suffix
+-      key_position = suffix_position + key_position_in_suffix;
++// A query sees the keys whose position is in [position - behind, position + ahead], and in a causal trie only its own
++// branch. Keys are addressed by slot; a prefix slot's position is its age in the ring.
++struct KeyMask {
++  const device TrieNode* trie;
++  uint prefix_length;
++  uint ring_offset;
++  uint behind;
++  uint span;
++  bool is_causal;
++  bool is_trie;
++  bool is_sliding_window;
+ 
+-      if (is_causal) {
+-        use_key &= key_position_in_suffix <= q_seq_idx;
+-      }
+-    }
++  METAL_FUNC KeyMask(
++      const device TrieNode* trie,
++      const constant RingParams& ring_params,
++      const constant uint& sliding_window_size,
++      const uint prefix_length,
++      const bool is_causal,
++      const bool is_kv_cache_ring,
++      const bool is_trie,
++      const bool is_sliding_window
++  )
++      : trie(trie), prefix_length(prefix_length), ring_offset(is_kv_cache_ring ? ring_params.ring_offset : 0u),
++        is_causal(is_causal), is_trie(is_trie), is_sliding_window(is_sliding_window) {
++    const uint window = is_sliding_window ? sliding_window_size : INVALID_POSITION;
++    // behind wraps for a window of 0, whose span is 0: it sees nothing.
++    behind = is_causal ? window - 1u : window / 2u;
++    span = behind + (is_causal ? 0u : window / 2u) + 1u;
++  }
+ 
+-  } else {
+-    // We're in the prefix
+-    if (is_kv_cache_ring) {
+-      // Ring, calculate position in the ring
+-      key_position = (prefix_length + i - ring_params.ring_offset) % prefix_length;
+-      // Ring also skips entries that aren't filled yet
+-      use_key &= key_position < ring_params.ring_length;
+-    } else {
+-      // Non-ring, position equals to the index in the kvcache buffer
+-      key_position = i;
+-    }
++  METAL_FUNC uint oldest_visible(const uint query_index) const {
++    return prefix_length - behind + (is_trie && is_sliding_window ? trie[query_index].height : query_index);
+   }
+ 
+-  if (is_sliding_window) {
+-    if (is_causal) {
+-      use_key &= key_position <= query_position && (query_position - key_position) < sliding_window_size;
+-    } else {
+-      if (key_position <= query_position) {
+-        use_key &= (query_position - key_position) <= (sliding_window_size / 2);
+-      } else {
+-        use_key &= (key_position - query_position) <= (sliding_window_size / 2);
++  METAL_FUNC bool sees(const uint oldest_visible, const uint query_index, const uint key) const {
++    uint position = key;
++    bool visible = true;
++    if (key >= prefix_length) {
++      if (is_trie) {
++        const TrieNode node = trie[key - prefix_length];
++        position = is_sliding_window ? prefix_length + node.height : key;
++        visible = !is_causal || (query_index >= node.trie_start && query_index <= node.trie_end);
+       }
++    } else {
++      position = key >= ring_offset ? key - ring_offset : key + prefix_length - ring_offset;
+     }
++    return visible && position - oldest_visible < span;
+   }
+-
+-  return use_key;
+-}
++};
+ 
+ struct SparseKeys {
+   const device int* blocks;
+diff --git a/crates/uzu-engine/src/backends/metal/kernel/attention/matrix_simd.h b/crates/uzu-engine/src/backends/metal/kernel/attention/matrix_simd.h
+index 179724f61..5057bff02 100644
+--- a/crates/uzu-engine/src/backends/metal/kernel/attention/matrix_simd.h
++++ b/crates/uzu-engine/src/backends/metal/kernel/attention/matrix_simd.h
+@@ -178,8 +178,17 @@ METAL_FUNC void attention_matrix_simd(
+   );
+   const uint num_blocks = ((IS_SPARSE ? sparse_keys.key_count() : params.k_len) + BK - 1) / BK;
+   const uint block_begin = split * num_blocks / num_splits;
+-  const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : params.q_off;
+-  const uint logical_query = suffix_position + (is_trie ? trie[query_position].height : query_position);
++  const KeyMask key_mask(
++      trie,
++      ring_params,
++      sliding_window_size,
++      params.q_off,
++      is_causal,
++      is_kv_cache_ring,
++      is_trie,
++      is_sliding_window
++  );
++  const uint oldest_visible = IS_SPARSE ? 0u : key_mask.oldest_visible(query_position);
+   const uint tile_first = query_tile * BLOCK_ROWS;
+   const uint tile_last = min(tile_first + BLOCK_ROWS - 1u, grouped_rows - 1u);
+   const uint last_query =
+@@ -275,20 +284,7 @@ METAL_FUNC void attention_matrix_simd(
+                   is_trie ? ((trie_mask >> (key - params.q_off)) & 1ul) != 0ul : key <= params.q_off + query_position;
+             }
+           } else {
+-            visible = should_use_key(
+-                ring_params,
+-                trie,
+-                sliding_window_size,
+-                query_position,
+-                params.q_off,
+-                suffix_position,
+-                logical_query,
+-                key,
+-                is_kv_cache_ring,
+-                is_causal,
+-                is_trie,
+-                is_sliding_window
+-            );
++            visible = key_mask.sees(oldest_visible, query_position, key);
+           }
+         }
+         return visible ? score : -INFINITY;
+diff --git a/crates/uzu-engine/src/backends/metal/kernel/attention/vector.metal b/crates/uzu-engine/src/backends/metal/kernel/attention/vector.metal
+index 7f0969447..5fa539933 100644
+--- a/crates/uzu-engine/src/backends/metal/kernel/attention/vector.metal
++++ b/crates/uzu-engine/src/backends/metal/kernel/attention/vector.metal
+@@ -59,10 +59,19 @@ KERNEL(AttentionVector)(
+   const uint key_row = lane / CHANNEL_LANES;
+   const uint channel_group = lane % CHANNEL_LANES;
+   const uint kv_head = row / (params.q_len * params.gqa_factor);
+-  const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : params.q_off;
++  const KeyMask key_mask(
++      trie,
++      ring_params,
++      sliding_window_size,
++      params.q_off,
++      is_causal,
++      is_kv_cache_ring,
++      is_trie,
++      is_sliding_window
++  );
+   const uzu::kv_layout::KVShape shape{HEAD_DIM, num_kv_heads, uzu::kv_layout::KVLayout::RowMajor};
+   uint q_position[QUERIES];
+-  uint query_position[QUERIES];
++  uint oldest_visible[QUERIES];
+   float query_scale[QUERIES];
+   float4 result[QUERIES][N] = {};
+   float maximum[QUERIES];
+@@ -70,7 +79,7 @@ KERNEL(AttentionVector)(
+   METAL_PRAGMA_UNROLL
+   for (uint q = 0; q < QUERIES; ++q) {
+     q_position[q] = (row + q) % params.q_len;
+-    query_position[q] = suffix_position + (is_trie ? trie[q_position[q]].height : q_position[q]);
++    oldest_visible[q] = key_mask.oldest_visible(q_position[q]);
+     query_scale[q] = float(query_scales[row + q]) * params.scale * M_LOG2E_F;
+     maximum[q] = !SPLIT_KV && has_sinks ? float(sinks[(row + q) / params.q_len]) * M_LOG2E_F : -INFINITY;
+     denominator[q] = !SPLIT_KV && has_sinks ? 1.0f : 0.0f;
+@@ -111,20 +120,7 @@ KERNEL(AttentionVector)(
+       METAL_PRAGMA_UNROLL
+       for (uint i = 0; i < KEYS_PER_LANE; ++i) {
+         const uint key = first_key + key_row + i * KEY_ROWS;
+-        const bool visible = key < params.k_len && should_use_key(
+-                                                       ring_params,
+-                                                       trie,
+-                                                       sliding_window_size,
+-                                                       q_position[q],
+-                                                       params.q_off,
+-                                                       suffix_position,
+-                                                       query_position[q],
+-                                                       key,
+-                                                       is_kv_cache_ring,
+-                                                       is_causal,
+-                                                       is_trie,
+-                                                       is_sliding_window
+-                                                   );
++        const bool visible = key < params.k_len && key_mask.sees(oldest_visible[q], q_position[q], key);
+         const size_t scale_index = shape.scale_index(key, kv_head);
+         scores[q][i] = visible ? scores[q][i] * query_scale[q] * float(key_scales[scale_index]) : -INFINITY;
+         value_scale[i] = visible ? float(value_scales[scale_index]) : 0.0f;
+diff --git a/crates/uzu-engine/unit/backends/metal/kernel/attention/kernel_test.rs b/crates/uzu-engine/unit/backends/metal/kernel/attention/kernel_test.rs
+index d152a3294..3fff15c1c 100644
+--- a/crates/uzu-engine/unit/backends/metal/kernel/attention/kernel_test.rs
++++ b/crates/uzu-engine/unit/backends/metal/kernel/attention/kernel_test.rs
+@@ -7,13 +7,12 @@ use crate::{
+     backends::{
+         common::{
+             Backend, CommandBufferEncoding, Context, Kernels,
+-            gpu_types::{kv_layout, ring::RingParams, trie::TrieNode as GpuTrieNode},
++            gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
+             kernel::{
+                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
+                 attention::KeyBlocks,
+             },
+         },
+-        cpu::should_use_key,
+         metal::{Metal, kernel::attention::AttentionMetalKernel},
+     },
+     data_type::DataType,
+@@ -302,23 +301,9 @@ fn attention_matches_cpu() {
+             let label = format!(
+                 "int8 attention mxu={use_mxu} sparse={sparse} q{q_heads} S{suffix} L{prefix} trie={use_trie} reader={reader} window={window:?} ring={ring:?}"
+             );
+-            let ring_params = ring.map(|offset| RingParams {
+-                ring_offset: offset as u32,
+-                ring_length: prefix as u32,
+-            });
+             let mut expected = quantized_attention_reference(shape, nodes, sinks.as_deref(), &|node, key| {
+                 (!sparse || key >= tail_start(node) || !dropped(node, key / COMPRESSION_RATIO))
+-                    && should_use_key(
+-                        ring_params,
+-                        nodes.map(|nodes| nodes.as_ptr()),
+-                        config.sliding_window_size,
+-                        node as u32,
+-                        prefix as u32,
+-                        prefix as u32,
+-                        (prefix + nodes.map_or(node, |nodes| nodes[node].height as usize)) as u32,
+-                        key as u32,
+-                        causal,
+-                    )
++                    && within_window(node, key, prefix, ring, window, causal, nodes)
+             });
+             if let Some(gates) = &gates {
+                 for (token, row) in expected.chunks_exact_mut(q_heads * head_dim).enumerate() {
+@@ -343,6 +328,32 @@ fn attention_matches_cpu() {
+     }
+ }
+ 
++// A ring slot's position is its age, a trie node's its height; a non-causal window reaches half its size either way.
++fn within_window(
++    node: usize,
++    key: usize,
++    prefix: usize,
++    ring: Option<usize>,
++    window: Option<usize>,
++    causal: bool,
++    nodes: Option<&[GpuTrieNode]>,
++) -> bool {
++    let height = |index: usize| nodes.map_or(index, |nodes| nodes[index].height as usize);
++    let position = if key >= prefix {
++        prefix + height(key - prefix)
++    } else {
++        ring.map_or(key, |offset| (prefix + key - offset) % prefix)
++    };
++    let query = prefix + height(node);
++    window.is_none_or(|window| {
++        if causal {
++            position <= query && query - position < window
++        } else {
++            position.abs_diff(query) <= window / 2
++        }
++    })
++}
++
+ fn attention_inputs(shape: AttentionShape) -> (Vec<bf16>, Vec<bf16>, Vec<bf16>) {
+     let (dim, q_heads, kv_heads, suffix, prefix, _) = shape;
+     let mut rng = SmallRng::seed_from_u64(42);
