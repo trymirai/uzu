@@ -331,8 +331,6 @@ METAL_FUNC void attention_matrix_simd(
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
-  const float inverse_sum = denominator > 0.0f ? 1.0f / denominator : 0.0f;
-  output.map([&](float value) { return value * inverse_sum; });
   const uint partial_row = (split * num_kv_heads + kv_head_index) * query_tiles * BLOCK_ROWS + row_base;
   output.store(lane, partial_values + size_t(partial_row) * HEAD_DIM + channel_base, int(query_row_step * HEAD_DIM));
   if (slice == 0 && position.x == 0) {

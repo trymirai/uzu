@@ -29,10 +29,10 @@ KERNEL(AttentionMatrix)(
     const device uzu::trie::TrieNode* trie OPTIONAL(is_trie),
     const constant uzu::ring::RingParams& ring_params OPTIONAL(is_kv_cache_ring),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
-    device bfloat* partial_values,
-    device float* partial_maxima,
-    device float* partial_denominators,
-    device bfloat* output OPTIONAL(has_output),
+    device bfloat* partial_values OPTIONAL(is_split),
+    device float* partial_maxima OPTIONAL(is_split),
+    device float* partial_denominators OPTIONAL(is_split),
+    device bfloat* output OPTIONAL(!is_split),
     const device bfloat* gate OPTIONAL(has_gate),
     const constant uint& gate_row_stride OPTIONAL(has_gate),
     const device bfloat* sinks OPTIONAL(has_sinks),
@@ -49,20 +49,23 @@ KERNEL(AttentionMatrix)(
     const bool is_sliding_window SPECIALIZE,
     const bool mask_free SPECIALIZE,
     const bool is_trie SPECIALIZE,
-    const bool has_output SPECIALIZE,
+    const bool is_split SPECIALIZE,
     const bool has_gate SPECIALIZE,
     const bool has_sinks SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint compression_ratio SPECIALIZE_IF(IS_SPARSE),
-    threadgroup float probability_exchange[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::EXCHANGE_FLOATS],
-    threadgroup uint2 row_queries[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::ROW_QUERIES],
+    threadgroup float exchange[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::EXCHANGE_FLOATS + AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::ROW_QUERIES_FLOATS],
     threadgroup uint4 query_stage[AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::STAGING_VECTORS],
-    threadgroup bfloat tile_values OPTIONAL(has_output)[NUM_SIMDGROUPS * 1024], // one 16 x 64 bf16 slice per simdgroup
+    threadgroup bfloat tile_values OPTIONAL(!is_split)[NUM_SIMDGROUPS * 1024], // one 16 x 64 bf16 slice per simdgroup
     const ThreadContext thread_context,
     const uint tile_split_index GROUPS(query_tiles * split_count),
     const uint kv_head_index GROUPS(num_kv_heads),
     const uint thread_index THREADS(NUM_SIMDGROUPS * METAL_SIMD_SIZE)
 ) {
+  threadgroup float* probability_exchange = exchange;
+  threadgroup uint2* row_queries = reinterpret_cast<threadgroup uint2*>(
+      exchange + AttentionMatrixScratch<HEAD_DIM, USE_MXU, NUM_SIMDGROUPS, IS_SPARSE>::EXCHANGE_FLOATS
+  );
   if constexpr (USE_MXU) {
     attention_matrix_mxu<ScaleType, HEAD_DIM, NUM_SIMDGROUPS, IS_SPARSE>(
         query_codes,
@@ -91,7 +94,7 @@ KERNEL(AttentionMatrix)(
         trie_nodes,
         mask_free,
         is_trie,
-        has_output,
+        is_split,
         has_gate,
         has_sinks,
         query_blocks,

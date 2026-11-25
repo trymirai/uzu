@@ -87,19 +87,6 @@ struct AttentionMatrixSoftmax {
       output.map_rows(rescale, [](AccumType value, AccumType factor) UZU_ALWAYS_INLINE { return value * factor; });
     }
   }
-
-  METAL_FUNC void normalize() thread {
-    output.map_rows(value_bias, [](AccumType value, AccumType bias) UZU_ALWAYS_INLINE { return value - bias; });
-
-    AccumType inverse_denominator[ROWS_PER_LANE];
-    METAL_PRAGMA_UNROLL
-    for (int row = 0; row < ROWS_PER_LANE; ++row) {
-      inverse_denominator[row] = denominator[row] > AccumType(0) ? AccumType(1) / denominator[row] : AccumType(1);
-    }
-    output.map_rows(inverse_denominator, [](AccumType value, AccumType inverse_sum) UZU_ALWAYS_INLINE {
-      return value * inverse_sum;
-    });
-  }
 };
 
 template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE>
@@ -130,7 +117,7 @@ METAL_FUNC void attention_matrix_mxu(
     uint trie_nodes,
     bool mask_free,
     bool is_trie,
-    bool has_output,
+    bool is_split,
     bool has_gate,
     bool has_sinks,
     const device int* query_blocks,
@@ -598,12 +585,12 @@ METAL_FUNC void attention_matrix_mxu(
     block_index += blocks_in_step;
   }
 
-  softmax.normalize();
+  softmax.output.map_rows(softmax.value_bias, [](float value, float bias) UZU_ALWAYS_INLINE { return value - bias; });
 
   const uint row_base = IS_SPARSE ? query_tile_index : query_tile_index * uint(Layout::BLOCK_ROWS) + query_band_offset;
   const uint output_row =
       ((split_index - split_base) * num_kv_heads + kv_head_index) * query_tiles * uint(Layout::BLOCK_ROWS) + row_base;
-  if (IS_SPARSE || !has_output) {
+  if (IS_SPARSE || is_split) {
     softmax.output
         .store(lane, partial_values + size_t(output_row) * HEAD_DIM + channel_offset, int(query_row_step * HEAD_DIM));
     if (channel_slice == 0 && score_position.x == 0) {
@@ -614,7 +601,7 @@ METAL_FUNC void attention_matrix_mxu(
       }
     }
   } else {
-    // One split: the slices meet in threadgroup memory, then each simdgroup finishes whole rows.
+    // Output path: the slices meet in threadgroup memory, then each simdgroup finishes whole rows.
     threadgroup float2* tile_stats = reinterpret_cast<threadgroup float2*>(row_queries);
     threadgroup_barrier(mem_flags::mem_threadgroup);
     softmax.output.store(lane, tile_values + query_band_offset * HEAD_DIM + channel_offset, HEAD_DIM);
@@ -634,17 +621,18 @@ METAL_FUNC void attention_matrix_mxu(
         continue;
       }
       const float2 stats = tile_stats[row];
-      const uint q_head_index = kv_head_index * params.gqa_factor + grouped_row / params.q_len;
-      const float sink_term = has_sinks ? fast::exp2(float(sinks[q_head_index]) * M_LOG2E_F - stats.x) : 0.0f;
-      const float share = stats.y > 0.0f ? stats.y / (stats.y + sink_term) : 0.0f;
       float rotated[VALUES_PER_LANE];
       METAL_PRAGMA_UNROLL
       for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
-        rotated[value_index] = share * float(tile_values[row * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane]);
+        rotated[value_index] = float(tile_values[row * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane]);
       }
-      store_output_row<bfloat, HEAD_DIM>(
+      finish_row<bfloat, HEAD_DIM>(
           lane,
           rotated,
+          stats.x,
+          stats.y,
+          sinks,
+          has_sinks,
           output,
           gate,
           params,

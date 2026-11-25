@@ -6,9 +6,13 @@
 #include "kv_layout.h"
 
 template <typename T, ushort HEAD_DIM>
-METAL_FUNC void store_output_row(
+METAL_FUNC void finish_row(
     const ushort lane,
     thread float* rotated,
+    const float row_max,
+    const float denominator,
+    const device T* sinks,
+    const bool has_sinks,
     device T* output,
     const device T* gate,
     const constant uzu::attention::AttnParams& params,
@@ -24,6 +28,12 @@ METAL_FUNC void store_output_row(
   device T* output_row =
       output + size_t(q_head_index) * params.o_strides[1] + size_t(query_position) * params.o_strides[2];
   const device T* gate_row = gate + query_position * gate_row_stride + q_head_index * HEAD_DIM;
+  const float sink_term = has_sinks ? fast::exp2(float(sinks[q_head_index]) * M_LOG2E_F - row_max) : 0.0f;
+  const float inverse_denominator = denominator > 0.0f ? 1.0f / (denominator + sink_term) : 0.0f;
+  METAL_PRAGMA_UNROLL
+  for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+    rotated[value_index] *= inverse_denominator;
+  }
   hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane, rotated);
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {

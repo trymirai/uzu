@@ -23,7 +23,7 @@ KERNEL(AttentionMatrixCombine)(
     const constant uint& gate_row_stride OPTIONAL(has_gate),
     const bool has_gate SPECIALIZE,
     const bool has_sinks SPECIALIZE,
-    threadgroup float rotation[BD],
+    threadgroup float rotation[2 * BD],
     const uint grouped_row_idx GROUPS(grouped_rows),
     const uint kv_head_idx GROUPS(kv_heads),
     const uint column THREADS(BD)
@@ -33,7 +33,7 @@ KERNEL(AttentionMatrixCombine)(
   const uint q_head_idx = kv_head_idx * params.gqa_factor + grouped_row_idx / params.q_len;
   const device float* row_maxs = partial_maxs + row;
   const device float* row_sums = partial_sums + row;
-  const device bfloat* row_means = partials + row * BD + column;
+  const device bfloat* row_values = partials + row * BD + column;
 
   float numerator = 0.0f;
   float denominator = 0.0f;
@@ -56,27 +56,29 @@ KERNEL(AttentionMatrixCombine)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  denominator = has_sinks ? fast::exp2(sink - global_max) : 0.0f;
   threadgroup float* split_weights = rotation;
+  threadgroup float* split_masses = rotation + BD;
   for (uint chunk_start = 0; chunk_start < num_splits; chunk_start += BD) {
     const uint split = chunk_start + column;
     float weight = 0.0f;
+    float mass = 0.0f;
     if (split < num_splits && row_sums[split * split_rows] > 0.0f) {
-      weight = fast::exp2(row_maxs[split * split_rows] - global_max) * row_sums[split * split_rows];
+      weight = fast::exp2(row_maxs[split * split_rows] - global_max);
+      mass = weight * row_sums[split * split_rows];
     }
     split_weights[column] = weight;
+    split_masses[column] = mass;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     const uint chunk_size = metal::min(num_splits - chunk_start, uint(BD));
     _Pragma("clang loop unroll_count(8)") for (uint i = 0; i < chunk_size; ++i) {
       const float split_weight = split_weights[i];
-      denominator += split_weight;
-      numerator += split_weight * float(row_means[size_t(chunk_start + i) * split_rows * BD]);
+      denominator += split_masses[i];
+      numerator += split_weight * float(row_values[size_t(chunk_start + i) * split_rows * BD]);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
-  const float mean = denominator > 0.0f ? numerator / denominator : 0.0f;
 
-  rotation[column] = mean;
+  rotation[column] = numerator;
   threadgroup_barrier(mem_flags::mem_threadgroup);
   if (column >= METAL_SIMD_SIZE) {
     return;
@@ -87,9 +89,13 @@ KERNEL(AttentionMatrixCombine)(
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
     rotated[value_index] = rotation[value_index * METAL_SIMD_SIZE + column];
   }
-  store_output_row<T, BD>(
+  finish_row<T, BD>(
       ushort(column),
       rotated,
+      global_max,
+      denominator,
+      sinks,
+      has_sinks,
       output,
       gate,
       params,

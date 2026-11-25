@@ -130,6 +130,13 @@ pub fn bindgen(
                 #dispatch_code
             }
         }
+
+        #[allow(dead_code)]
+        impl #struct_name {
+            pub fn static_threadgroup_memory_length(&self) -> usize {
+                self.pipeline.static_threadgroup_memory_length()
+            }
+        }
     };
 
     Ok(kernel_tokens)
