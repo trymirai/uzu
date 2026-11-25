@@ -69,31 +69,33 @@ pub async fn wait<Pending: CommandBufferPending>(
     Ok(completed)
 }
 
-#[must_use = "the span ends when dropped"]
-pub struct CpuSpan {
-    recording: Option<(Sender<Box<[TimestampSpan]>>, String, Instant)>,
+pub struct CpuSpan<'a> {
+    timestamps: &'a TimestampSender,
+    name: String,
+    start: Instant,
 }
 
-impl CpuSpan {
+impl<'a> CpuSpan<'a> {
+    #[must_use = "the span ends when dropped"]
     pub fn start(
         timestamps: Option<&'a TimestampSender>,
         name: &str,
-    ) -> Self {
-        Self {
-            recording: timestamps.map(|timestamps| (timestamps.sender().clone(), name.to_owned(), Instant::now())),
-        }
+    ) -> Option<Self> {
+        Some(Self {
+            timestamps: timestamps?,
+            name: name.to_owned(),
+            start: Instant::now(),
+        })
     }
 }
 
-impl Drop for CpuSpan {
+impl Drop for CpuSpan<'_> {
     fn drop(&mut self) {
-        if let Some((sender, name, start)) = self.recording.take() {
-            let _ = sender.send(Box::new([TimestampSpan {
-                name,
-                source: TimestampSource::Cpu,
-                start,
-                end: Instant::now(),
-            }]));
-        }
+        let _ = self.timestamps.sender().send(Box::new([TimestampSpan {
+            name: mem::take(&mut self.name),
+            source: TimestampSource::Cpu,
+            start: self.start,
+            end: Instant::now(),
+        }]));
     }
 }
