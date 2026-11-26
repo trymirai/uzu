@@ -6,11 +6,8 @@ use crate::{
     sync::SyncTask,
 };
 
-/// The files the TypeScript build stamps with the version, kept in step without building.
-pub enum TypeScriptVersionSyncTask {
-    Constant,
-    NapiLoader,
-}
+/// The napi loader the TypeScript build stamps with the version, kept in step without building.
+pub struct TypeScriptVersionSyncTask;
 
 impl SyncTask for TypeScriptVersionSyncTask {
     fn process(
@@ -20,13 +17,8 @@ impl SyncTask for TypeScriptVersionSyncTask {
         input: &str,
     ) -> Result<String> {
         let version = &workspace.workspace.package.version;
-        match self {
-            Self::Constant => replace_versions(input, r"(export const VERSION = ')[^']*(')", version),
-            Self::NapiLoader => {
-                let output = replace_versions(input, r"(bindingPackageVersion !== ')[^']*(')", version)?;
-                replace_versions(&output, r"(version mismatch, expected )\S+( but got)", version)
-            },
-        }
+        let output = replace_versions(input, r"(bindingPackageVersion !== ')[^']*(')", version)?;
+        replace_versions(&output, r"(version mismatch, expected )\S+( but got)", version)
     }
 }
 
