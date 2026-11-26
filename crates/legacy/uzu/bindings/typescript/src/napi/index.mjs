@@ -108,6 +108,7 @@ export const ModelSpecializationDecision = cjs.ModelSpecializationDecision;
 export const ModelSpecializationSpeculation = cjs.ModelSpecializationSpeculation;
 export const ModelSpecializationTextToSpeech = cjs.ModelSpecializationTextToSpeech;
 export const ModelSpecializationTranslation = cjs.ModelSpecializationTranslation;
+export const ModelSpecializationVision = cjs.ModelSpecializationVision;
 export const ModelVendor = cjs.ModelVendor;
 export const PcmBatch = cjs.PcmBatch;
 export const ReplyEnergyComponents = cjs.ReplyEnergyComponents;

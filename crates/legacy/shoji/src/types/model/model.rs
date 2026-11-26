@@ -192,4 +192,9 @@ impl Model {
     pub fn is_speculation_capable(&self) -> bool {
         self.specializations.contains(&ModelSpecialization::Speculation {})
     }
+
+    #[bindings::export(Method(Getter))]
+    pub fn is_vision_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Vision {})
+    }
 }
