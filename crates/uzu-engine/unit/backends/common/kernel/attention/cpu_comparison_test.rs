@@ -121,7 +121,7 @@ fn run<B: Backend, T: DataTypeRepr>(
     let gate = config.gate_row_stride.map(|stride| {
         create_buffer_with_data::<B, T>(
             &context,
-            &(0..suffix * stride).map(|i| T::from((i * 7 % 37) as f32 / 9.0 - 2.0).unwrap()).collect::<Vec<_>>(),
+            &(0..suffix * stride).map(|i| T::from((i * 7 % 37) as f32 / 17.0 - 1.0).unwrap()).collect::<Vec<_>>(),
         )
     });
     let result = kernel
