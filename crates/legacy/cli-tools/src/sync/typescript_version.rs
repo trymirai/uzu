@@ -1,9 +1,8 @@
-use anyhow::{Result, anyhow};
-use regex::Regex;
+use anyhow::Result;
 
 use crate::{
     configs::{PlatformsConfig, WorkspaceManifest},
-    sync::SyncTask,
+    sync::{SyncTask, replace::replace_required},
 };
 
 /// The napi loader the TypeScript build stamps with the version, kept in step without building.
@@ -16,20 +15,8 @@ impl SyncTask for TypeScriptVersionSyncTask {
         workspace: &WorkspaceManifest,
         input: &str,
     ) -> Result<String> {
-        let version = &workspace.workspace.package.version;
-        let output = replace_versions(input, r"(bindingPackageVersion !== ')[^']*(')", version)?;
-        replace_versions(&output, r"(version mismatch, expected )\S+( but got)", version)
+        let replacement = format!("${{1}}{}${{2}}", workspace.workspace.package.version);
+        let output = replace_required(input, r"(bindingPackageVersion !== ')[^']*(')", &replacement)?;
+        replace_required(&output, r"(version mismatch, expected )\S+( but got)", &replacement)
     }
-}
-
-fn replace_versions(
-    input: &str,
-    pattern: &str,
-    version: &str,
-) -> Result<String> {
-    let regex = Regex::new(pattern)?;
-    if !regex.is_match(input) {
-        return Err(anyhow!("Nothing matches {pattern}"));
-    }
-    Ok(regex.replace_all(input, format!("${{1}}{version}${{2}}").as_str()).into_owned())
 }
