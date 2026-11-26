@@ -1,7 +1,7 @@
-use std::io;
+use std::{io, time::Duration};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use futures::TryStreamExt;
+use futures::StreamExt;
 use shoji::{
     traits::backend::chat_token::StreamImage,
     types::session::chat::{ChatContentBlock, ChatMessage},
@@ -9,9 +9,11 @@ use shoji::{
 
 use crate::chat::ChatSessionError;
 
-pub(crate) type ImageHash = [u8; 32];
-
+const IMAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_IMAGE_DOWNLOAD_BYTES_PER_TURN: usize = 64 * 1024 * 1024;
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
+pub(crate) type ImageHash = [u8; 32];
 
 pub(crate) fn get_image_hashes(messages: &[ChatMessage]) -> Result<Vec<ImageHash>, ChatSessionError> {
     let urls = get_image_urls(messages);
@@ -41,15 +43,13 @@ pub(crate) fn get_image_urls(messages: &[ChatMessage]) -> impl Iterator<Item = &
     })
 }
 
-pub(crate) async fn load_images(
-    images: &mut [StreamImage],
-    max_pixels: Option<u32>,
-) -> Result<(), ChatSessionError> {
+pub(crate) async fn load_images(images: &mut [StreamImage]) -> Result<(), ChatSessionError> {
+    let mut remaining = MAX_IMAGE_DOWNLOAD_BYTES_PER_TURN;
     for image in images {
         image.bytes = if is_remote(&image.url) {
-            let pixels =
-                max_pixels.ok_or_else(|| ChatSessionError::backend("Remote image requires a model pixel limit"))?;
-            download_image(&image.url, u64::from(pixels) * 4).await?
+            let bytes = download_image(&image.url, remaining).await?;
+            remaining -= bytes.len();
+            bytes
         } else if is_data(&image.url) {
             let (bytes, header_length) = decode_data_url(&image.url).map_err(ChatSessionError::backend)?;
             image.url.truncate(header_length);
@@ -73,30 +73,43 @@ fn decode_data_url(url: &str) -> Result<(Vec<u8>, usize), String> {
 
 async fn download_image(
     url: &str,
-    max_bytes: u64,
+    remaining: usize,
 ) -> Result<Vec<u8>, ChatSessionError> {
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(ChatSessionError::backend)?;
-    let response = client.get(url).send().await.map_err(ChatSessionError::backend)?;
-    let response = response.error_for_status().map_err(ChatSessionError::backend)?;
-    read_image_response(response, max_bytes).await
+    let response = client
+        .get(url)
+        .timeout(IMAGE_DOWNLOAD_TIMEOUT)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(ChatSessionError::backend)?;
+    read_image_response(response, remaining).await
 }
 
 async fn read_image_response(
     response: reqwest::Response,
-    max_bytes: u64,
+    remaining: usize,
 ) -> Result<Vec<u8>, ChatSessionError> {
-    let too_large = || ChatSessionError::backend(format!("Remote image exceeds the {max_bytes}-byte download limit"));
-    if response.content_length().is_some_and(|length| length > max_bytes) {
-        return Err(too_large());
+    let over_max_download_size = || {
+        ChatSessionError::backend(format!(
+            "Image downloads exceed the {MAX_IMAGE_DOWNLOAD_BYTES_PER_TURN}-byte turn limit"
+        ))
+    };
+
+    if response.content_length().is_some_and(|length| length > remaining as u64) {
+        return Err(over_max_download_size());
     }
+
     let mut bytes = Vec::new();
-    let mut chunks = response.bytes_stream();
-    while let Some(chunk) = chunks.try_next().await.map_err(ChatSessionError::backend)? {
-        if chunk.len() as u64 > max_bytes - bytes.len() as u64 {
-            return Err(too_large());
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(ChatSessionError::backend)?;
+        if chunk.len() > remaining - bytes.len() {
+            return Err(over_max_download_size());
         }
         bytes.extend_from_slice(&chunk);
     }
+
     Ok(bytes)
 }
 
@@ -123,7 +136,7 @@ mod tests {
             if accepted {
                 assert_eq!(result.unwrap(), b"abcd");
             } else {
-                assert!(result.unwrap_err().to_string().contains("3-byte download limit"));
+                assert!(result.unwrap_err().to_string().contains("turn limit"));
             }
         }
     }
@@ -137,7 +150,7 @@ mod tests {
             url: url.to_owned(),
             bytes: Vec::new(),
         }];
-        load_images(&mut images, None).await.unwrap();
+        load_images(&mut images).await.unwrap();
         assert_eq!(images[0].bytes, b"hello");
         assert_eq!(images[0].url, "data:image/png;base64");
 
@@ -146,7 +159,7 @@ mod tests {
                 url: url.to_owned(),
                 bytes: Vec::new(),
             }];
-            assert!(load_images(&mut images, None).await.is_err(), "url: {url}");
+            assert!(load_images(&mut images).await.is_err(), "url: {url}");
         }
     }
 }

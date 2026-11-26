@@ -1,29 +1,7 @@
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu},
+    backends::common::{Backend, Context, CpuBuffer, GlobalBufferCpuGpu},
     config::rope::AnyRoPEConfig,
 };
-
-pub struct RoPEPositions<B: Backend> {
-    pub positions: B::ConstantBuffer,
-}
-
-impl<B: Backend> RoPEPositions<B> {
-    pub fn new(
-        row_count: usize,
-        dim: u32,
-        position: impl Fn(usize, u32) -> u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<Self, B::Error> {
-        let positions = (0..row_count)
-            .flat_map(|row| (0..dim / 2).map(move |pair_index| (row, pair_index)))
-            .map(|(row, pair_index)| position(row, pair_index))
-            .collect::<Box<[u32]>>();
-
-        Ok(Self {
-            positions: command_buffer.allocate_constant_from_slice(&positions)?,
-        })
-    }
-}
 
 pub struct RoPE<B: Backend> {
     pub inverse_frequencies: B::GlobalGpuBuffer,
@@ -31,6 +9,7 @@ pub struct RoPE<B: Backend> {
     pub dim: u32,
     pub max_sequence_length: u32,
     pub frequency_pairs_per_axis: Option<[u32; 3]>,
+    pub interleaved_axes: bool,
 }
 
 impl<B: Backend> RoPE<B> {
@@ -117,6 +96,7 @@ impl<B: Backend> RoPE<B> {
                 AnyRoPEConfig::MultimodalRoPEConfig(config) => Some(config.frequency_pairs_per_axis),
                 _ => None,
             },
+            interleaved_axes: true,
             ..Self::from_inverse_frequencies(
                 &inverse_frequencies,
                 scale,
@@ -144,6 +124,7 @@ impl<B: Backend> RoPE<B> {
             dim,
             max_sequence_length,
             frequency_pairs_per_axis: None,
+            interleaved_axes: false,
         })
     }
 }

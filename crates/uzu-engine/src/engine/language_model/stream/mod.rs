@@ -1,20 +1,18 @@
-use std::sync::mpsc::Sender;
-
 use derive_more::Debug;
 use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, TimestampSpan, capture_matcher::CaptureError},
+    backends::common::{Backend, capture_matcher::CaptureError},
     encodable_block::decoder::DecoderError,
     engine::language_model::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
-        vision::encode::VisionPrefillError,
+        vision::model::VisionEncodeError,
     },
     speculators::dflash_tfm::DFlashTreeError,
-    utils::trace,
+    utils::{timestamps::TimestampSender, trace},
 };
 pub use crate::{
     encodable_block::sampling::SamplingMethod, engine::language_model::stream::stream::LanguageModelStream,
@@ -30,7 +28,7 @@ pub enum LanguageModelInput<'a> {
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
-    pub timestamps: Option<Sender<Box<[TimestampSpan]>>>,
+    pub timestamps: Option<TimestampSender>,
     pub grammar: Option<Grammar>,
 }
 
@@ -52,8 +50,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     NoSeedToken,
     #[error("Context overflow")]
     ContextOverflow,
-    #[error("Image error: {0}")]
-    Vision(#[from] VisionPrefillError<B>),
+    #[error("Vision error: {0}")]
+    Vision(#[from] VisionEncodeError<B>),
 }
 
 impl<B: Backend> LanguageModel<B> {

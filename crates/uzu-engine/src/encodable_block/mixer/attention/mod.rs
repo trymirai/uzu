@@ -4,7 +4,10 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::qkv_norm::QKVNormParams,
+        gpu_types::{
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEGridParams,
+        },
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             attention::KeyBlocks,
@@ -13,12 +16,9 @@ use crate::{
     config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
     encodable_block::{
-        batch_topology::BatchTopology,
+        batch_topology::{BatchKind, BatchTopology},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
-        mixer::{
-            Mixer, MixerEncodeError, MixerState,
-            attention::rope::{RoPE, RoPEPositions},
-        },
+        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::RoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -28,17 +28,7 @@ mod state;
 
 pub use state::{ATTENTION_SUFFIX_CAPACITY, AttentionState, KVCache, KVCacheState};
 
-pub mod mrope;
 pub mod rope;
-
-enum AttentionPositions<'a, B: Backend> {
-    Sequential(u32),
-    Trie {
-        offset: u32,
-        nodes: &'a B::GlobalGpuBuffer,
-    },
-    Explicit(&'a RoPEPositions<B>),
-}
 
 pub struct Attention<B: Backend> {
     head_dim: u32,
@@ -55,7 +45,6 @@ pub struct Attention<B: Backend> {
     qkv_norm_scales: [Option<B::GlobalGpuBuffer>; 3],
     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
     prepare_trie: <B::Kernels as Kernels>::AttentionPrepareKernel,
-    prepare_at_positions: Option<<B::Kernels as Kernels>::AttentionPrepareKernel>,
     sinks: Option<B::GlobalGpuBuffer>,
     kernel: <B::Kernels as Kernels>::AttentionKernel,
     out_projection: Box<dyn Linear<B>>,
@@ -153,7 +142,7 @@ impl<B: Backend> Attention<B> {
             let Some(config) = config else {
                 continue;
             };
-            qkv_norm_params.enabled[i] = 1;
+            qkv_norm_params.op[i] = QKVL2Op::RmsNorm as u32;
             qkv_norm_params.full_layer[i] = u32::from(config.upcast_mode == UpcastMode::FullLayer);
             qkv_norm_params.epsilon[i] = config.epsilon;
             qkv_norm_params.scale_offset[i] = config.scale_offset.unwrap_or(0.0);
@@ -193,12 +182,14 @@ impl<B: Backend> Attention<B> {
         .map_err(AttentionNewError::Kernel)?;
 
         let has_rope = rope.is_some();
-        let new_prepare = |has_trie: bool, has_rope_positions: bool| {
+        let has_mrope = rope.as_ref().is_some_and(|rope| rope.frequency_pairs_per_axis.is_some());
+        let new_prepare = |has_trie: bool| {
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(
                 context,
                 data_type,
                 head_dim,
                 has_rope,
+                has_mrope,
                 num_groups,
                 kernel.kv_layout().backend_opaque_layout,
                 !is_kv_sharing,
@@ -208,13 +199,11 @@ impl<B: Backend> Attention<B> {
                 false,
                 0,
                 has_trie,
-                has_rope_positions,
             )
             .map_err(AttentionNewError::Backend)
         };
-        let prepare = new_prepare(false, false)?;
-        let prepare_trie = new_prepare(true, false)?;
-        let prepare_at_positions = has_rope.then(|| new_prepare(false, true)).transpose()?;
+        let prepare = new_prepare(false)?;
+        let prepare_trie = new_prepare(true)?;
 
         Ok(Self {
             head_dim,
@@ -231,7 +220,6 @@ impl<B: Backend> Attention<B> {
             qkv_norm_scales,
             prepare,
             prepare_trie,
-            prepare_at_positions,
             sinks,
             kernel,
             out_projection,
@@ -241,7 +229,6 @@ impl<B: Backend> Attention<B> {
     pub fn attend(
         &self,
         hidden: B::ScratchBuffer,
-        rope_positions: Option<&RoPEPositions<B>>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<AttentionState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -270,31 +257,18 @@ impl<B: Backend> Attention<B> {
                 },
             };
 
-            let grid_positions: Option<RoPEPositions<B>>;
-            let rope_positions = match rope_positions {
-                Some(positions) => Some(positions),
-                None => {
-                    grid_positions = self
-                        .grid_rope_positions(cache, batch_dim.size(), command_buffer)
-                        .map_err(AttentionEncodeError::Backend)?;
-                    grid_positions.as_ref()
-                },
-            };
-
             let trie = batch_dim.nodes();
-            let rope_cursor = cache.rope_cursor();
-            let positions = match (rope_positions, trie) {
-                (Some(_), Some(_)) => panic!("trie rows rotate by their heights"),
-                (Some(positions), None) => AttentionPositions::Explicit(positions),
-                (None, Some(nodes)) => AttentionPositions::Trie {
-                    offset: rope_cursor.position()[0],
-                    nodes,
-                },
-                (None, None) => AttentionPositions::Sequential(rope_cursor.position()[0]),
-            };
-
             let (queries, query_scales) = self
-                .prepare(&qkvg, &mut kv, cache, self.num_q_heads, batch_dim.size(), positions, command_buffer)
+                .prepare(
+                    &qkvg,
+                    &mut kv,
+                    cache,
+                    batch_dim.kind(),
+                    self.num_q_heads,
+                    batch_dim.size(),
+                    trie,
+                    command_buffer,
+                )
                 .map_err(AttentionEncodeError::Backend)?;
             let input = AttentionInput {
                 query_codes: &queries,
@@ -331,13 +305,10 @@ impl<B: Backend> Attention<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let cache = state.cache();
-        let grid_positions = self.grid_rope_positions(cache, batch_dim, command_buffer)?;
-        let positions = match &grid_positions {
-            Some(positions) => AttentionPositions::Explicit(positions),
-            None => AttentionPositions::Sequential(cache.rope_cursor().position()[0]),
-        };
-        self.prepare(key_value, &mut MaybeMut::Mut(&mut state.kv), cache, 0, batch_dim, positions, command_buffer)?;
-        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
+        let batch_dim = BatchTopology::flat(batch_dim);
+        let kv = &mut MaybeMut::Mut(&mut state.kv);
+        self.prepare(key_value, kv, cache, batch_dim.kind(), 0, batch_dim.size(), None, command_buffer)?;
+        state.encode_accept(&batch_dim, &(0..batch_dim.size()).collect::<Box<[u32]>>(), command_buffer)?;
         Ok(())
     }
 
@@ -346,9 +317,10 @@ impl<B: Backend> Attention<B> {
         qkvg: impl BufferRef<Backend = B>,
         kv: &mut MaybeMut<'_, KVCache<B>>,
         cache: KVCacheState,
+        batch_kind: &BatchKind<B>,
         num_q_heads: u32,
         suffix_length: u32,
-        positions: AttentionPositions<'_, B>,
+        trie: Option<&B::GlobalGpuBuffer>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), B::Error> {
         assert_eq!(kv.layout, self.kernel.kv_layout(), "shared KV layout mismatch");
@@ -371,20 +343,40 @@ impl<B: Backend> Attention<B> {
         // K/V-only calls still need bound query buffers.
         let mut query_codes = command_buffer.allocate_scratch((query_count * self.head_dim as usize).max(1))?;
         let mut query_scales = command_buffer.allocate_scratch(query_count.max(1) * DataType::BF16.size_in_bytes())?;
-
-        let (prepare, rope_offset, trie, rope_positions) = match positions {
-            AttentionPositions::Sequential(offset) => (&self.prepare, offset, None, None),
-            AttentionPositions::Trie {
-                offset,
-                nodes,
-            } => (&self.prepare_trie, offset, Some(nodes), None),
-            AttentionPositions::Explicit(positions) => (
-                self.prepare_at_positions.as_ref().expect("positions for attention without RoPE"),
-                0, // The kernel reads each position from the supplied buffer.
-                None,
-                Some(&positions.positions),
-            ),
+        let prepare = if trie.is_some() {
+            &self.prepare_trie
+        } else {
+            &self.prepare
         };
+
+        let rope_grid_params = rope.and_then(|rope| {
+            let [_, height_pairs, width_pairs] = rope.frequency_pairs_per_axis?;
+            let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
+                &BatchKind::Image {
+                    width,
+                    height,
+                    merge_size,
+                    first_cell,
+                } => (width, height, merge_size, first_cell),
+                _ => (1, 1, 1, 0),
+            };
+            Some(RoPEGridParams {
+                grid_width,
+                grid_height,
+                first_cell,
+                height_pairs,
+                width_pairs,
+                merge_size,
+                interleaved_axes: u32::from(rope.interleaved_axes),
+            })
+        });
+        let rope_position_offset = rope.map(|rope| {
+            if rope.frequency_pairs_per_axis.is_some() {
+                cache.rope_position()
+            } else {
+                cache.context_length()
+            }
+        });
         prepare.encode(
             qkvg,
             &mut query_codes,
@@ -404,47 +396,21 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| rope_offset),
+            rope_position_offset,
+            rope_grid_params,
             cache.prefix_len(),
             input_row_stride,
             suffix_length,
             num_q_heads / self.num_groups * suffix_length,
             None,
             trie,
-            rope_positions,
             command_buffer,
         );
         Ok((query_codes, query_scales))
     }
 
-    fn grid_rope_positions(
-        &self,
-        cache: KVCacheState,
-        row_count: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<Option<RoPEPositions<B>>, B::Error> {
-        let cursor = cache.rope_cursor();
-        match self.rope.as_ref() {
-            Some(rope) if cursor.in_grid() => rope.positions(cursor, row_count, command_buffer).map(Some),
-            _ => Ok(None),
-        }
-    }
-
     fn get_projection_dim(config: &AttentionConfig) -> u32 {
-        let q_dim = config.num_heads * config.head_dim;
-        let kv_dim = if config.is_kv_sharing {
-            0
-        } else {
-            2 * config.num_groups * config.head_dim
-        };
-
-        let gate_dim = if config.has_gate {
-            q_dim
-        } else {
-            0
-        };
-
-        q_dim + kv_dim + gate_dim
+        config.qkvg_head_count() * config.head_dim
     }
 }
 
@@ -476,7 +442,7 @@ impl<B: Backend> Mixer<B> for Attention<B> {
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, None, batch_dim, state, command_buffer)?;
+        let output = self.attend(hidden, batch_dim, state, command_buffer)?;
 
         Ok(output)
     }

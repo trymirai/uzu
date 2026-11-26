@@ -1,19 +1,22 @@
 //! Export of [`TimestampSpan`]s as Chrome traces, viewable in [Perfetto](https://ui.perfetto.dev). Not available in wasm.
 
 use std::{
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::{
         LazyLock,
         atomic::{AtomicUsize, Ordering},
-        mpsc::{self, Sender},
+        mpsc,
     },
     time::{Duration, Instant},
 };
 
 use serde_json::json;
 
-use crate::backends::common::{TimestampSource, TimestampSpan};
+use crate::{
+    backends::common::{TimestampSource, TimestampSpan},
+    utils::timestamps::TimestampSender,
+};
 
 const CPU_TRACK: u32 = 1;
 const GPU_TRACK: u32 = 2;
@@ -30,7 +33,7 @@ impl<W: io::Write> ChromeTraceWriter<W> {
     ) -> io::Result<Self> {
         let track =
             |track, name| json!({"ph": "M", "name": "thread_name", "pid": 0, "tid": track, "args": {"name": name}});
-        write!(writer, "[{},\n{}", track(CPU_TRACK, "CPU"), track(GPU_TRACK, "GPU"),)?;
+        writer.write_all(format!("[{},\n{}", track(CPU_TRACK, "CPU"), track(GPU_TRACK, "GPU")).as_bytes())?;
         writer.flush()?;
         Ok(Self {
             writer,
@@ -42,6 +45,7 @@ impl<W: io::Write> ChromeTraceWriter<W> {
         &mut self,
         spans: &[TimestampSpan],
     ) -> io::Result<()> {
+        let mut batch = Vec::<u8>::new();
         for span in spans {
             let track = match span.source {
                 TimestampSource::Cpu => CPU_TRACK,
@@ -60,8 +64,9 @@ impl<W: io::Write> ChromeTraceWriter<W> {
                 "dur": micros(span.end.saturating_duration_since(span.start)),
                 "args": {"path": span.name},
             });
-            write!(self.writer, ",\n{event}")?;
+            write!(batch, ",\n{event}")?;
         }
+        self.writer.write_all(&batch)?;
         self.writer.flush()
     }
 
@@ -72,8 +77,8 @@ impl<W: io::Write> ChromeTraceWriter<W> {
     }
 }
 
-/// Creates a sender if `UZU_TRACE` is set to a path.
-pub fn sender_from_env() -> Option<Sender<Box<[TimestampSpan]>>> {
+/// Creates a sender if `UZU_TRACE` is set to a path. Dropping it waits until the trace file is complete.
+pub fn sender_from_env() -> Option<TimestampSender> {
     static ORIGIN: LazyLock<Instant> = LazyLock::new(Instant::now);
     static TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -83,7 +88,7 @@ pub fn sender_from_env() -> Option<Sender<Box<[TimestampSpan]>>> {
     let (sender, receiver) = mpsc::channel::<Box<[TimestampSpan]>>();
 
     let write = move || -> io::Result<()> {
-        let file = io::BufWriter::new(std::fs::File::create(&path)?);
+        let file = std::fs::File::create(&path)?;
         let mut trace = ChromeTraceWriter::new(file, origin)?;
         for spans in receiver {
             trace.write(&spans)?;
@@ -96,11 +101,13 @@ pub fn sender_from_env() -> Option<Sender<Box<[TimestampSpan]>>> {
             eprintln!("uzu: failed to write trace: {error}");
         }
     });
-    if let Err(error) = spawned {
-        eprintln!("uzu: failed to start the trace writer: {error}");
-        return None;
+    match spawned {
+        Ok(writer) => Some(TimestampSender::with_consumer(sender, writer)),
+        Err(error) => {
+            eprintln!("uzu: failed to start the trace writer: {error}");
+            None
+        },
     }
-    Some(sender)
 }
 
 fn numbered(

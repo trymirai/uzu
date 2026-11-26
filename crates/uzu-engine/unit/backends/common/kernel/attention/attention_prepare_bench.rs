@@ -7,7 +7,11 @@ use uzu_engine_macros::uzu_bench;
 
 use crate::{
     backends::{
-        common::{Backend, Kernels, gpu_types::qkv_norm::QKVNormParams, kernel::AttentionPrepareKernel},
+        common::{
+            Backend, Kernels,
+            gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
+            kernel::AttentionPrepareKernel,
+        },
         metal::Metal,
     },
     data_type::DataType,
@@ -40,6 +44,7 @@ fn bench_attention_prepare(c: &mut Criterion) {
         DataType::BF16,
         HEAD_DIM,
         true,
+        false,
         NUM_KV_HEADS,
         layout.backend_opaque_layout,
         true,
@@ -49,13 +54,13 @@ fn bench_attention_prepare(c: &mut Criterion) {
         false,
         0,
         false,
-        false,
     )
     .expect("kernel");
     let norm_params = QKVNormParams {
-        enabled: [1, 1, 0],
+        op: [QKVL2Op::RmsNorm as u32, QKVL2Op::RmsNorm as u32, QKVL2Op::None as u32],
         full_layer: [0; 3],
         epsilon: [1e-6; 3],
+        clip_threshold: [0.0; 3],
         scale_offset: [1.0, 1.0, 0.0],
     };
     let mut norm_scales = || {
@@ -111,12 +116,12 @@ fn bench_attention_prepare(c: &mut Criterion) {
                         Some(HEAD_DIM),
                         Some(1.0),
                         Some(PREFIX_TOKENS),
+                        None,
                         PREFIX_TOKENS,
                         input_row_stride,
                         suffix_length,
                         NUM_Q_HEADS / NUM_KV_HEADS * suffix_length,
                         None,
-                        None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         None::<&<Metal as Backend>::GlobalGpuBuffer>,
                         command_buffer,
                     );

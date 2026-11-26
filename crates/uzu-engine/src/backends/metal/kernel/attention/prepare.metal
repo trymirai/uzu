@@ -6,7 +6,9 @@
 #include "int8_quantization.h"
 #include "rope.h"
 #include "../generated/qkv_norm.h"
+#include "../generated/rope.h"
 #include "../generated/trie.h"
+#include "../vision/patch_grid.h"
 
 namespace kv_layout = uzu::kv_layout;
 
@@ -14,7 +16,7 @@ template <typename T>
 METAL_FUNC T prepare_norm(
     T value,
     uint channel,
-    float inverse_rms,
+    float row_scale,
     const device float* scales,
     bool has_scales,
     bool enabled,
@@ -24,7 +26,7 @@ METAL_FUNC T prepare_norm(
   if (!enabled) {
     return value;
   }
-  const float normalized = float(value) * inverse_rms;
+  const float normalized = float(value) * row_scale;
   if (!has_scales) {
     return T(normalized);
   }
@@ -58,14 +60,15 @@ PUBLIC KERNEL(AttentionPrepare)(
     const constant uint32_t& rope_dim OPTIONAL(has_rope),
     const constant float& rope_scale OPTIONAL(has_rope),
     const constant uint32_t& rope_position_offset OPTIONAL(has_rope),
+    const constant uzu::rope::RoPEGridParams& rope_grid OPTIONAL(has_mrope),
     const constant uint32_t& kv_token_offset,
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
     const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
-    const device uint32_t* rope_positions OPTIONAL(has_rope_positions),
     const bool has_rope SPECIALIZE,
+    const bool has_mrope SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
     const bool append_kv SPECIALIZE,
@@ -75,7 +78,6 @@ PUBLIC KERNEL(AttentionPrepare)(
     const bool block_mean SPECIALIZE,
     const uint32_t compression_ratio SPECIALIZE,
     const bool has_trie SPECIALIZE,
-    const bool has_rope_positions SPECIALIZE,
     threadgroup float block_mean_row OPTIONAL(block_mean)[HEAD_DIM],
     const uint32_t token_idx GROUPS(suffix_length),
     const uint32_t head_idx GROUPS(num_q_heads + num_kv_heads * 2),
@@ -97,7 +99,8 @@ PUBLIC KERNEL(AttentionPrepare)(
 
   const device ElementT* head = qkvg + size_t(token_idx) * input_row_stride + size_t(head_idx) * HEAD_DIM;
   const uint norm_index = is_query ? 0 : is_key ? 1 : 2;
-  const bool norm_enabled = norm_params.enabled[norm_index];
+  const uint32_t norm_op = norm_params.op[norm_index];
+  const bool norm_enabled = norm_op != uint32_t(uzu::qkv_norm::QKVL2Op::None);
   const bool norm_full_layer = norm_params.full_layer[norm_index];
   const float norm_scale_offset = norm_params.scale_offset[norm_index];
   const bool has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
@@ -132,7 +135,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     simdgroup_barrier(mem_flags::mem_threadgroup);
   }
   const auto input = [&](uint channel) { return block_mean ? ElementT(block_mean_row[channel]) : head[channel]; };
-  float inverse_rms = 1.0f;
+  float row_scale = 1.0f;
   if (norm_enabled) {
     float sum = 0.0f;
     METAL_PRAGMA_UNROLL
@@ -143,10 +146,25 @@ PUBLIC KERNEL(AttentionPrepare)(
         sum += value * value;
       }
     }
-    inverse_rms = rsqrt(simd_sum(sum) / float(HEAD_DIM) + norm_params.epsilon[norm_index]);
+    const float sum_sq = simd_sum(sum);
+    const float epsilon = norm_params.epsilon[norm_index];
+    row_scale = norm_op == uint32_t(uzu::qkv_norm::QKVL2Op::Clip)
+                    ? min(1.0f, norm_params.clip_threshold[norm_index] / (sqrt(sum_sq) + epsilon))
+                    : rsqrt(sum_sq / float(HEAD_DIM) + epsilon);
   }
 
-  const uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
+  uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
+  uint32_t grid_row = 0;
+  uint32_t grid_column = 0;
+  if (has_mrope) {
+    const uint32_t cell = rope_grid.first_cell + (has_trie ? trie[token_idx].height : token_idx);
+    const uint32_t grid_size = rope_grid.grid_width * rope_grid.grid_height;
+    rope_position = rope_position_offset + cell / grid_size * metal::max(rope_grid.grid_width, rope_grid.grid_height);
+    const uint2 patch = vision_patch_coordinates(cell % grid_size, rope_grid.grid_width, rope_grid.merge_size);
+    grid_row = patch.y;
+    grid_column = patch.x;
+  }
+
   float values[VALUES_PER_LANE];
   METAL_PRAGMA_UNROLL
   for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
@@ -154,7 +172,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     ElementT element = prepare_norm(
         input(channel),
         channel,
-        inverse_rms,
+        row_scale,
         norm_scales,
         has_scales,
         norm_enabled,
@@ -167,15 +185,26 @@ PUBLIC KERNEL(AttentionPrepare)(
       const float paired = float(prepare_norm(
           input(paired_channel),
           paired_channel,
-          inverse_rms,
+          row_scale,
           norm_scales,
           has_scales,
           norm_enabled,
           norm_full_layer,
           norm_scale_offset
       ));
-      const uint32_t position =
-          has_rope_positions ? rope_positions[size_t(token_idx) * half_dim + channel % half_dim] : rope_position;
+
+      uint32_t position = rope_position;
+      if (has_mrope) {
+        position += mrope_axis_offset(
+            channel % half_dim,
+            half_dim,
+            grid_row,
+            grid_column,
+            rope_grid.height_pairs,
+            rope_grid.width_pairs,
+            rope_grid.interleaved_axes != 0
+        );
+      }
       element = ElementT(
           rope_rotate(float(element), paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim)
       );

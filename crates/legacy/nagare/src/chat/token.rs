@@ -155,8 +155,18 @@ impl Session {
             Ok(cached_tokens) => cached_tokens,
             Err(error) => return error_stream(error),
         };
-        if let Err(error) = load_images(&mut self.input.images, self.instance.max_image_pixels()).await {
-            return error_stream(error);
+        match cancel_token.run_until_cancelled(load_images(&mut self.input.images)).await {
+            Some(Ok(())) => {},
+            Some(Err(error)) => return error_stream(error),
+            None => {
+                return stream::once(async {
+                    Ok(Output {
+                        finish_reason: Some(ChatReplyFinishReason::Cancelled),
+                        ..Default::default()
+                    })
+                })
+                .boxed();
+            },
         }
 
         let instance = self.instance.as_ref();

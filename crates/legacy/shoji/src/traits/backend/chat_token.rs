@@ -33,7 +33,6 @@ pub struct StreamConfig {
 
 pub struct StreamImage {
     pub url: String,
-    /// Encoded image file contents read from `url`
     pub bytes: Vec<u8>,
 }
 
@@ -65,10 +64,6 @@ pub trait Instance:
         &self,
         config: ChatConfig,
     ) -> Box<dyn Instance>;
-
-    fn max_image_pixels(&self) -> Option<u32> {
-        None
-    }
 
     fn with_image_pad_token_id(
         &self,

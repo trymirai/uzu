@@ -105,6 +105,7 @@ impl<B: Backend> Runner<B> {
                 DataType::BF16,
                 HEAD_DIM as u32,
                 false,
+                false,
                 NUM_HEADS,
                 layout.backend_opaque_layout,
                 true,
@@ -113,7 +114,6 @@ impl<B: Backend> Runner<B> {
                 false,
                 false,
                 0,
-                false,
                 false,
             )
             .unwrap();
@@ -144,12 +144,12 @@ impl<B: Backend> Runner<B> {
                 None,
                 None,
                 None,
+                None,
                 0,
                 kv_width as u32,
                 length as u32,
                 0,
                 None,
-                None::<&B::GlobalGpuBuffer>,
                 None::<&B::GlobalGpuBuffer>,
                 &mut command,
             );

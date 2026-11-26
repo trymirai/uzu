@@ -39,7 +39,7 @@ struct AttentionMatrixScratch {
   UZU_CONST int SIMD_KEYS = IS_SPARSE || HEAD_DIM == 512 ? 16 : 32;
   UZU_CONST int CHUNK_KEYS = 128;
   UZU_CONST int CHUNK_TABLE_WORDS = CHUNK_KEYS * int(sizeof(int) + 2 * sizeof(float)) / int(sizeof(ulong));
-  UZU_CONST int ROW_MASKS =
+  UZU_CONST int ROW_WINDOWS =
       USE_MXU ? (IS_SPARSE ? uzu::kv_layout::TILE_KEYS * HEAD_DIM / uzu::kv_layout::SLICE_DIMS : Layout::BLOCK_ROWS)
               : CHUNK_TABLE_WORDS;
 
@@ -47,4 +47,17 @@ struct AttentionMatrixScratch {
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
   UZU_CONST int EXCHANGE_FLOATS = USE_MXU ? 2 * SLOT_FLOATS : NUM_SIMDGROUPS * 8 * SIMD_KEYS;
   UZU_CONST int STAGING_VECTORS = USE_MXU ? QUERY_VECTORS : SIMD_KEYS * (HEAD_DIM + 8) / 8;
+
+  // Also holds the output tile.
+  UZU_CONST int OUTPUT_TILE_BYTES =
+      Layout::SIMDGROUPS * Layout::TILE_ROWS * int(uzu::kv_layout::SLICE_DIMS) * int(sizeof(bfloat));
+  UZU_CONST int TILE_SCRATCH_VECTORS = USE_MXU && OUTPUT_TILE_BYTES > STAGING_VECTORS* int(sizeof(uint4))
+                                           ? OUTPUT_TILE_BYTES / int(sizeof(uint4))
+                                           : STAGING_VECTORS;
+
+  // Apple GPU threadgroup limit.
+  UZU_CONST int MAX_THREADGROUP_BYTES = 32768;
+  UZU_CONST int TOTAL_BYTES = TILE_SCRATCH_VECTORS * int(sizeof(uint4)) + EXCHANGE_FLOATS * int(sizeof(float)) +
+                              ROW_WINDOWS * int(sizeof(uint2));
+  static_assert(TOTAL_BYTES <= MAX_THREADGROUP_BYTES, "threadgroup memory over 32 KB");
 };

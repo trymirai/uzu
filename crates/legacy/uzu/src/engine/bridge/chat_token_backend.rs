@@ -255,10 +255,6 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
         })
     }
 
-    fn max_image_pixels(&self) -> Option<u32> {
-        self.model.vision_config().map(|config| config.preprocessing_config.max_pixels)
-    }
-
     fn with_image_pad_token_id(
         &self,
         image_pad_token_id: u64,

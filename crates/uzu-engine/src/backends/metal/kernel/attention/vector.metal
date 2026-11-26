@@ -1,11 +1,10 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "../common/sigmoid_gate.h"
-#include "../hadamard_transform/hadamard_transform.h"
 #include "../generated/attention.h"
 #include "kv_layout.h"
 #include "mask.h"
+#include "rotated_output.h"
 
 using namespace metal;
 
@@ -72,8 +71,8 @@ KERNEL(AttentionVector)(
     q_position[q] = (row + q) % params.q_len;
     query_position[q] = suffix_position + (is_trie ? trie[q_position[q]].height : q_position[q]);
     query_scale[q] = float(query_scales[row + q]) * params.scale * M_LOG2E_F;
-    maximum[q] = !SPLIT_KV && has_sinks ? float(sinks[(row + q) / params.q_len]) * M_LOG2E_F : -INFINITY;
-    denominator[q] = !SPLIT_KV && has_sinks ? 1.0f : 0.0f;
+    maximum[q] = -INFINITY;
+    denominator[q] = 0.0f;
   }
   const uint begin = SPLIT_KV ? split * params.nk / num_splits : 0;
   const uint end = SPLIT_KV ? (split + 1) * params.nk / num_splits : (params.k_len + TILE_KEYS - 1) / TILE_KEYS;
@@ -168,10 +167,6 @@ KERNEL(AttentionVector)(
   }
   METAL_PRAGMA_UNROLL
   for (uint q = 0; q < QUERIES; ++q) {
-    const float inverse = denominator[q] > 0.0f ? 1.0f / denominator[q] : 0.0f;
-    METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < N; ++i)
-      result[q][i] *= inverse;
     if constexpr (SPLIT_KV) {
       const size_t partial_row = size_t(split) * rows + row + q;
       METAL_PRAGMA_UNROLL
@@ -192,17 +187,21 @@ KERNEL(AttentionVector)(
         const float4 values = simd_shuffle(result[q][i / 4], ushort((i % 4) * 8 + lane / 4));
         rotated[i] = values[lane % 4];
       }
-      hadamard::simdgroup_transform<VALUES_PER_LANE, METAL_SIMD_SIZE>(lane, rotated);
-      const uint q_head = (row + q) / params.q_len;
-      const uint output_base = q_head * params.o_strides[1] + q_position[q] * params.o_strides[2];
-      METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < VALUES_PER_LANE; ++i) {
-        const uint channel = i * METAL_SIMD_SIZE + lane;
-        T value = T(rotated[i] * uzu::kv_layout::rotation_sign(channel));
-        if (has_gate)
-          value = uzu::apply_sigmoid_gate(value, gate[q_position[q] * gate_row_stride + q_head * HEAD_DIM + channel]);
-        output[output_base + channel] = value;
-      }
+      store_output_row<T, HEAD_DIM>(
+          lane,
+          rotated,
+          maximum[q],
+          denominator[q],
+          sinks,
+          has_sinks,
+          output,
+          gate,
+          params,
+          kv_head,
+          row + q - kv_head * params.q_len * params.gqa_factor,
+          gate_row_stride,
+          has_gate
+      );
     }
   }
 }
