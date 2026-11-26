@@ -134,7 +134,11 @@ impl MetalTimestampRecorder {
             .scan(None, |previous_timestamp, (slot, &slot_ticks)| {
                 let timestamp = match slot_ticks {
                     0 => previous_timestamp.ok_or(MetalError::UnwrittenTimestamp(slot)),
-                    slot_ticks => Ok(clock.to_instant(slot_ticks)),
+                    slot_ticks => {
+                        // This is to make sure that the timestamps are resolved in order.
+                        let instant = clock.to_instant(slot_ticks);
+                        Ok(previous_timestamp.map_or(instant, |previous: Instant| previous.max(instant)))
+                    },
                 };
                 *previous_timestamp = timestamp.as_ref().ok().copied();
                 Some(timestamp)
