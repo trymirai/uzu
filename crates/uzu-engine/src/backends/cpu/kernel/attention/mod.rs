@@ -6,8 +6,6 @@ pub mod prepare;
 
 mod compute;
 mod mask;
-#[cfg(test)]
-pub use mask::should_use_key;
 mod rope;
 
 use crate::backends::{

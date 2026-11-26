@@ -6,8 +6,6 @@ use crate::backends::{
 mod activation;
 pub(crate) mod activation_transform;
 mod attention;
-#[cfg(test)]
-pub use attention::should_use_key;
 mod confidence_head;
 mod convolution;
 mod embedding;
