@@ -643,6 +643,7 @@ export declare class Model {
   get isTextToSpeechCapable(): boolean
   get isTranslationCapable(): boolean
   get isSpeculationCapable(): boolean
+  get isVisionCapable(): boolean
 }
 
 export declare class ModelAccessibilityOnDevice {
@@ -731,6 +732,10 @@ export declare class ModelSpecializationTextToSpeech {
 }
 
 export declare class ModelSpecializationTranslation {
+  constructor()
+}
+
+export declare class ModelSpecializationVision {
   constructor()
 }
 
@@ -979,7 +984,7 @@ export type ModelSource =
   ModelSourceRegistry | ModelSourceFilesystem
 
 export type ModelSpecialization =
-  ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationDecision | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation
+  ModelSpecializationChat | ModelSpecializationClassification | ModelSpecializationDecision | ModelSpecializationTextToSpeech | ModelSpecializationTranslation | ModelSpecializationSpeculation | ModelSpecializationVision
 
 export type PcmBatchError =
   | { type: 'UnableToSaveAsWav'; message: string }
