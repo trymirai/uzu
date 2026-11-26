@@ -203,14 +203,15 @@ impl<B: Backend> VisionModel<B> {
         image: &VisionImage,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<VisionEncodedImage<B>, VisionEncodeError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group("vision encode");
-
+        let (width, height) = self.merged_image_grid(image)?;
         let encoder_config = &self.config.encoder_config;
         let patch_size = encoder_config.patch_size;
         let grid_width = image.width / patch_size;
         let grid_height = image.height / patch_size;
         let rows = grid_width * grid_height;
         let patch_dim = encoder_config.in_channels * encoder_config.temporal_patch_size * patch_size * patch_size;
+
+        let command_buffer = &mut *command_buffer.debug_group("vision encode");
 
         let pixels = command_buffer.allocate_constant_from_slice(&image.pixels).map_err(VisionEncodeError::Backend)?;
         let mut patches = command_buffer
@@ -245,8 +246,6 @@ impl<B: Backend> VisionModel<B> {
 
         let merged_rows = rows / encoder_config.spatial_merge_size.pow(2);
         let embeddings = self.merger_mlp.encode(normalized, merged_rows, command_buffer)?;
-
-        let (width, height) = self.merged_image_grid(image)?;
 
         Ok(VisionEncodedImage {
             embeddings,

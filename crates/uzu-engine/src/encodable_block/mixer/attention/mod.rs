@@ -370,6 +370,13 @@ impl<B: Backend> Attention<B> {
                 interleaved_axes: u32::from(rope.interleaved_axes),
             })
         });
+        let rope_position_offset = rope.map(|rope| {
+            if rope.frequency_pairs_per_axis.is_some() {
+                cache.rope_position()
+            } else {
+                cache.context_length()
+            }
+        });
         prepare.encode(
             qkvg,
             &mut query_codes,
@@ -389,7 +396,7 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| cache.rope_position()),
+            rope_position_offset,
             rope_grid_params,
             cache.prefix_len(),
             input_row_stride,
