@@ -30,6 +30,13 @@ pub enum VisionLayerNewError<B: Backend> {
     Attention(#[from] AttentionNewError<B>),
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
+    #[error(
+        "Vision RoPE dimension {rope_dim} must be a positive multiple of 4 at most equal to the attention head width {head_dim}"
+    )]
+    InvalidRoPEDimension {
+        rope_dim: u32,
+        head_dim: u32,
+    },
     #[error("Linear error: {0}")]
     LinearMatmul(#[from] LinearMatmulError<B>),
     #[error("Normalization error: {0}")]
@@ -69,7 +76,16 @@ impl<B: Backend> VisionLayer<B> {
         hidden_dim: u32,
         context: &B::Context,
     ) -> Result<Self, VisionLayerNewError<B>> {
-        let padded_head_dim = config.attention_config.head_dim.next_power_of_two().max(64);
+        let head_dim = config.attention_config.head_dim;
+        let rope_dim = rope_config.head_dim;
+        if rope_dim == 0 || !rope_dim.is_multiple_of(4) || rope_dim > head_dim {
+            return Err(VisionLayerNewError::InvalidRoPEDimension {
+                rope_dim,
+                head_dim,
+            });
+        }
+
+        let padded_head_dim = head_dim.next_power_of_two().max(64);
         let attention = Self::load_padded_attention::<bf16>(
             data_type,
             &config.attention_config,
@@ -201,7 +217,7 @@ impl<B: Backend> VisionLayer<B> {
             .subtree("weights")
             .read_slice::<T>("weights", &[qkv_heads * config.head_dim, model_dim])
             .await?;
-        let qkv_weights_buf = get_padded_buffer::<B, T>(
+        let qkv_weights_buf = create_padded_buffer::<B, T>(
             context,
             &qkv_weights_slice,
             config.head_dim as usize,
@@ -212,7 +228,7 @@ impl<B: Backend> VisionLayer<B> {
 
         let qkv_biases_buf = if config.has_qkvg_biases {
             let qkv_biases_slice = qkv_proj_tree.read_slice::<T>("biases", &[qkv_heads * config.head_dim]).await?;
-            let qkv_biases_buf = get_padded_buffer::<B, T>(
+            let qkv_biases_buf = create_padded_buffer::<B, T>(
                 context,
                 &qkv_biases_slice,
                 config.head_dim as usize,
@@ -240,7 +256,7 @@ impl<B: Backend> VisionLayer<B> {
             .subtree("weights")
             .read_slice::<T>("weights", &[model_dim, config.num_heads * config.head_dim])
             .await?;
-        let out_weights_buf = get_padded_buffer::<B, T>(
+        let out_weights_buf = create_padded_buffer::<B, T>(
             context,
             &out_weights_slice,
             config.head_dim as usize,
@@ -269,7 +285,7 @@ impl<B: Backend> VisionLayer<B> {
         padded_config.head_dim = padded_head_dim;
         padded_config.scale = Some(config.scale.unwrap_or(1.0 / (config.head_dim as f32).sqrt()));
 
-        let rope = vision_rope(rope_config, context).map_err(VisionLayerNewError::Backend)?;
+        let rope = create_vision_rope(rope_config, context).map_err(VisionLayerNewError::Backend)?;
         let attention = Attention::with_projections(
             data_type,
             Some(rope),
@@ -285,7 +301,7 @@ impl<B: Backend> VisionLayer<B> {
     }
 }
 
-fn vision_rope<B: Backend>(
+fn create_vision_rope<B: Backend>(
     rope_config: &VisionRoPEConfig,
     context: &B::Context,
 ) -> Result<RoPE<B>, B::Error> {
@@ -302,7 +318,7 @@ fn vision_rope<B: Backend>(
     })
 }
 
-fn get_padded_buffer<B: Backend, T: DataTypeRepr>(
+fn create_padded_buffer<B: Backend, T: DataTypeRepr>(
     context: &B::Context,
     data: &[T],
     head_dim: usize,
