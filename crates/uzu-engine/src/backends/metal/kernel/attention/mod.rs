@@ -259,7 +259,7 @@ impl AttentionKernel for AttentionMetalKernel {
         let tile = (self.use_mxu || (!direct && grouped_rows > 4)).then(|| {
             self.tiles
                 .iter()
-                .min_by_key(|tile| (grouped_rows.div_ceil(tile.rows) * tile.rows, std::cmp::Reverse(tile.rows)))
+                .min_by_key(|tile| policy::tile_order(tile.rows, grouped_rows, suffix_length, self.use_mxu))
                 .unwrap()
         });
         // Sparse: every query is padded to one tile of rows.
@@ -279,13 +279,17 @@ impl AttentionKernel for AttentionMetalKernel {
                 *compression_ratio,
             )
         } else {
-            let (threadgroups, groups_per_core) = match tile {
-                None => (split_rows.div_ceil(4 * vector_queries), 4),
-                Some(tile) => (num_groups * (padded_rows / tile.rows), 8_u32.div_ceil(tile.simdgroups).max(2)),
-            };
-            let fill_splits =
-                (command_buffer.context().gpu_core_count.max(1) * groups_per_core).div_ceil(threadgroups.max(1));
-            policy::splits(&params, head_dim, split_rows, fill_splits, self.use_mxu)
+            let threadgroups =
+                tile.map_or(split_rows.div_ceil(4 * vector_queries), |tile| num_groups * (padded_rows / tile.rows));
+            policy::splits(
+                &params,
+                head_dim,
+                split_rows,
+                command_buffer.context().gpu_core_count.max(1),
+                threadgroups,
+                tile.map(|tile| tile.simdgroups),
+                self.use_mxu,
+            )
         };
 
         let rows = split_rows * num_splits;
