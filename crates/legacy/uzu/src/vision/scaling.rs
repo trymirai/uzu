@@ -36,7 +36,7 @@ pub fn scale(
     min_pixels: u32,
     max_pixels: u32,
 ) -> Result<VisionImage, VisionScalingError> {
-    let image = get_rgb_image(image_bytes)?;
+    let image = get_rgb_image(image_bytes, image::Limits::default())?;
     let (width, height) = get_new_size(&image, factor, min_pixels, max_pixels)?;
     let image = imageops::resize(&image, width, height, FilterType::CatmullRom);
     Ok(VisionImage {
@@ -46,13 +46,19 @@ pub fn scale(
     })
 }
 
-fn get_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionScalingError> {
-    let reader = ImageReader::new(Cursor::new(image_bytes)).with_guessed_format().map_err(ImageError::from)?;
+fn get_rgb_image(
+    image_bytes: &[u8],
+    mut limits: image::Limits,
+) -> Result<RgbImage, VisionScalingError> {
+    let mut reader = ImageReader::new(Cursor::new(image_bytes)).with_guessed_format().map_err(ImageError::from)?;
     if reader.format().is_none() && image_bytes.get(4..8) == Some(b"ftyp".as_slice()) {
-        return get_heic_rgb_image(image_bytes);
+        return get_heic_rgb_image(image_bytes, limits);
     }
 
+    reader.limits(limits.clone());
     let mut decoder = reader.into_decoder()?;
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
     let orientation = decoder.orientation()?;
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
@@ -60,13 +66,17 @@ fn get_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionScalingError> {
 }
 
 /// HEIC orientation (`irot`/`imir`) is applied by the decoder.
-fn get_heic_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, VisionScalingError> {
+fn get_heic_rgb_image(
+    image_bytes: &[u8],
+    mut limits: image::Limits,
+) -> Result<RgbImage, VisionScalingError> {
     let mut decoder = HeifDecoder::new(ZCursor::new(image_bytes));
     decoder.decode_headers()?;
     let output_bytes = decoder.output_buffer_size().ok_or_else(|| {
         ImageError::Limits(image::error::LimitError::from_kind(image::error::LimitErrorKind::InsufficientMemory))
     })?;
-    image::Limits::default().reserve_usize(output_bytes)?;
+    limits.reserve_usize(output_bytes)?;
+
     let pixels = decoder.decode()?;
     let colorspace = decoder.colorspace();
     let (Some(width), Some(height)) = (decoder.width(), decoder.height()) else {
