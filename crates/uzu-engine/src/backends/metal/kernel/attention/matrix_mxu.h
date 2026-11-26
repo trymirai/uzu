@@ -92,9 +92,8 @@ struct AttentionMatrixSoftmax {
 struct RowRange {
   uint packed;
 
-  METAL_FUNC RowRange() thread = default;
-  METAL_FUNC RowRange(uint first, uint last) thread : packed(first | last << 16) {}
-  METAL_FUNC static RowRange all() { return RowRange(0u, metal::numeric_limits<ushort>::max()); }
+  METAL_FUNC static RowRange make(uint first, uint last) { return {first | last << 16}; }
+  METAL_FUNC static RowRange all() { return make(0u, metal::numeric_limits<ushort>::max()); }
   METAL_FUNC bool contains(uint row) const thread { return row >= (packed & 0xFFFFu) && row <= packed >> 16; }
 };
 
@@ -456,7 +455,7 @@ METAL_FUNC void attention_matrix_mxu(
         seeing_rows[lane_col] = RowRange::all();
         if (is_trie && key >= prefix_length && key < key_length) {
           const auto node = trie[key - prefix_length];
-          seeing_rows[lane_col] = RowRange(node.trie_start, node.trie_end);
+          seeing_rows[lane_col] = RowRange::make(node.trie_start, node.trie_end);
           if (is_sliding_window) {
             key_positions[lane_col] = prefix_length + node.height;
           }
