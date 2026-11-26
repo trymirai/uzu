@@ -1,4 +1,4 @@
-# Mirai
+# Uzu Chat
 
 Desktop chat app for local LLMs on the [uzu](https://github.com/trymirai/uzu) engine.
 Tauri v2, React, Rust.
@@ -27,14 +27,14 @@ pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 
 ## Preview a fresh start on macOS
 
-Quit Mirai, the CLI, and other apps using the shared model cache. From the
+Quit Uzu Chat, the CLI, and other apps using the shared model cache. From the
 repository root, move the current state into a new backup directory:
 
 ```bash
 python3 scripts/mirai-data.py backup ~/mirai-preview-backup
 ```
 
-This moves chats, settings, logs, the model cache, and Mirai's WebView data
+This moves chats, settings, logs, the model cache, and the app's WebView data
 aside. Add `--keep-cache` to leave `~/.cache/mirai` available, for testing a
 fresh app with existing models. Moves require the backup and data to be on
 the same filesystem; model files are not copied.
@@ -62,7 +62,7 @@ unsigned `.deb` and NSIS installers. The app and bundled CLI are built from the 
 commit using its existing version. Manual runs do not create a release or tag,
 change versions, or publish an updater manifest.
 
-These builds use the normal Mirai app identity, local data, and release update
+These builds use the normal Uzu Chat app identity, local data, and release update
 feed; installing one replaces the regular app. Published engine releases still
 use this workflow to build and publish the app automatically.
 

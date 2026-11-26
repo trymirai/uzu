@@ -79,7 +79,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
-                .title("Mirai")
+                .title("Uzu Chat")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(MIN_WIDTH, MIN_HEIGHT);
             #[cfg(not(target_os = "macos"))]

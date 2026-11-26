@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Move Mirai data aside for a fresh-start preview, then restore over test data."""
+"""Move Uzu Chat data aside for a fresh-start preview, then restore over test data."""
 
 import argparse
 import json
@@ -30,7 +30,7 @@ def check_location(data_home, backup_dir):
     for relative in PATHS.values():
         source = (data_home / relative).resolve()
         if source == backup_dir or source in backup_dir.parents or backup_dir in source.parents:
-            raise ValueError(f"Backup directory overlaps Mirai data: {source}")
+            raise ValueError(f"Backup directory overlaps Uzu Chat data: {source}")
 
 
 def check_filesystem(paths, directory):
@@ -80,7 +80,7 @@ def backup(data_home, backup_dir, keep_cache=False):
         (backup_dir / MANIFEST).unlink(missing_ok=True)
         backup_dir.rmdir()
         raise
-    print(f"Moved Mirai data to {backup_dir}")
+    print(f"Moved Uzu Chat data to {backup_dir}")
     if keep_cache:
         print("Left ~/.cache/mirai in place; restore will also leave it untouched.")
 
@@ -120,7 +120,7 @@ def restore(data_home, backup_dir):
         staging.rmdir()
         raise
     shutil.rmtree(staging)
-    print("Restored Mirai data, replacing the test data. Backup consumed.")
+    print("Restored Uzu Chat data, replacing the test data. Backup consumed.")
     if "cache" not in entries:
         print("Left the current ~/.cache/mirai untouched.")
 
@@ -128,7 +128,7 @@ def restore(data_home, backup_dir):
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
-        epilog="Quit Mirai, the CLI, and other apps using its shared cache before either operation. "
+        epilog="Quit Uzu Chat, the CLI, and other apps using its shared cache before either operation. "
         "Use a new backup directory on the same filesystem as the data. "
         "restore-overwrite discards current test data and consumes the backup.",
     )
@@ -148,9 +148,9 @@ def main():
             ["pgrep", "-x", "Mirai|mirai-gui|mirai|cli"], capture_output=True, text=True,
         )
         if running.returncode == 0:
-            raise ValueError(f"Quit Mirai and the CLI first (PIDs: {', '.join(running.stdout.split())})")
+            raise ValueError(f"Quit Uzu Chat and the CLI first (PIDs: {', '.join(running.stdout.split())})")
         if running.returncode != 1:
-            raise ValueError(f"Cannot check for running Mirai processes: {running.stderr.strip()}")
+            raise ValueError(f"Cannot check for running Uzu Chat processes: {running.stderr.strip()}")
         if args.action == "backup":
             backup(data_home, backup_dir, args.keep_cache)
         else:

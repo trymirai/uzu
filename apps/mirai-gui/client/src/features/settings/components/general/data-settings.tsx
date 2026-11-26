@@ -60,7 +60,7 @@ export function DataSettings() {
         <>
           <SettingRow
             title="Export logs"
-            description="Save the current Mirai log file for debugging"
+            description="Save the current Uzu Chat log file for debugging"
             control={
               <Button
                 kind="primary"
