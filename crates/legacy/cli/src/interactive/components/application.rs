@@ -150,14 +150,16 @@ pub fn Application(
         model_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
-    // TODO agolokoz:
-    // Temporary default for vision testing. Restore selected_model_id after testing.
-    let identifier = props.model.clone().unwrap_or_else(|| "trymirai/Qwen3.5-9B-M-Vision".to_owned());
+    let requested_model = props.model.clone().or_else(|| state.read().preferences().selected_model_id.clone());
 
     hooks.use_future({
         let engine = state.read().engine.clone();
         let mut state = state;
         async move {
+            let Some(identifier) = requested_model else {
+                state.write().flow = Some(Box::new(ModelRegistriesFlow));
+                return;
+            };
             match engine.model(identifier.clone()).await {
                 Ok(Some(model)) => {
                     let model_exists = model.is_downloadable()
