@@ -90,11 +90,13 @@ struct AttentionMatrixSoftmax {
 };
 
 struct RowRange {
-  uint packed;
+  uint packed; // first | last << 16
 
   METAL_FUNC static RowRange make(uint first, uint last) { return {first | last << 16}; }
   METAL_FUNC static RowRange all() { return make(0u, metal::numeric_limits<ushort>::max()); }
-  METAL_FUNC bool contains(uint row) const thread { return row >= (packed & 0xFFFFu) && row <= packed >> 16; }
+  METAL_FUNC uint first() const thread { return packed & 0xFFFFu; }
+  METAL_FUNC uint last() const thread { return packed >> 16; }
+  METAL_FUNC bool contains(uint row) const thread { return row >= first() && row <= last(); }
 };
 
 struct VisibleKeyBlocks {
